@@ -221,10 +221,14 @@ jobs:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
-      - name: Free runner disk space
+      - name: Free runner disk space, drop preinstalled browsers
         # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        # Browser tests belong to the `browser` job, which runs the pinned Chromium. Tests
+        # that discover a system browser would start the runner's preinstalled Chrome, which
+        # cannot create its sandbox here (unprivileged user namespaces are restricted).
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser
           df -h /
       - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
         # A step, not a `services:` container: services cannot pass server arguments.
@@ -248,8 +252,8 @@ jobs:
         with:
           tool: cargo-nextest,cargo-llvm-cov
       - name: Unit and integration tests with coverage (nextest under cargo-llvm-cov)
-        run: cargo llvm-cov nextest --workspace --exclude crawlx-bench --lcov --output-path lcov.info
-      - run: cargo nextest run -p crawlx-bench -E 'not test(/browser_/)'
+        run: cargo llvm-cov nextest --no-fail-fast --workspace --exclude crawlx-bench --lcov --output-path lcov.info
+      - run: cargo nextest run --no-fail-fast -p crawlx-bench -E 'not test(/browser_/)'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-lcov
