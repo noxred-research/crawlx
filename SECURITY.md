@@ -3,6 +3,10 @@
 We take the security of crawlx and of the people who run it seriously. This page says which versions are
 supported, how to report a vulnerability, what you can expect from us, and what is in and out of scope.
 
+> **Intended use.** crawlx is built and intended for security research and authorized testing only: testing
+> systems you own or have written authorization to test. It is not for unauthorized scraping, credential
+> attacks, evading a site's protections or any other abuse. See [Responsible use](#responsible-use).
+
 ## Supported versions
 
 | Version | Supported |
@@ -94,7 +98,12 @@ particular configuration. Examples:
 - the background requests that the pinned stock Chromium attempts, which the egress policy denies and logs
   (see [data and secrets](docs/design/data-and-secrets.md#chromium-background-traffic));
 - missing hardening that is documented as a known limitation in the [changelog](CHANGELOG.md);
-- reports from automated scanners without a demonstrated impact, and social engineering of maintainers.
+- reports from automated scanners without a demonstrated impact, and social engineering of maintainers;
+- reports that depend on running crawlx against a system you do not own and are not authorized to test.
+  Research on crawlx itself must use your own deployment or a local fixture (see [Safe harbor](#safe-harbor));
+- abuse of crawlx by third parties against systems you operate. We cannot act on deployments we do not run;
+  report that activity to the operator or hosting provider concerned, and tell us if you believe a safety
+  control in crawlx failed to stop it, which is in scope.
 
 ### Authorization records
 
@@ -121,10 +130,17 @@ The egress filter (SSRF protection) and the independent safety kernel (see the
 
 ## Responsible use
 
-Use crawlx only against systems you own or are authorized to test, and respect the policies of the sites you
-crawl. The authorization record states what you are authorized to do; it does not verify that you are.
-Misuse of crawlx against systems you are not authorized to test is not covered by this policy and is your
-responsibility.
+crawlx is built and intended for **security research and authorized testing only**: testing systems you own,
+or systems you have written authorization to test. Do not use it for unauthorized scraping, credential
+attacks, evading a site's protections or any other abuse. This is the project's intended-use policy and a
+condition of support and community participation; the [AGPL-3.0-only](LICENSE) license itself is unchanged.
+
+The project enforces this in code: privileged modes need an
+[authorization record](docs/design/safety-model.md#authorization-records), the default `read_only` profile
+cannot change server state, a hard safety kernel adjudicates every browser action, and a deny-first egress
+policy bounds every request. An authorization record states what you are authorized to do; it does not
+verify that you are. Misuse of crawlx against systems you are not authorized to test is not covered by this
+policy, is not covered by the safe harbor above, and is your responsibility.
 
 ## Verifying a release
 

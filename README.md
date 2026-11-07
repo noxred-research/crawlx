@@ -2,16 +2,24 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
-  <img alt="crawlx: a safe-by-default hybrid web crawler" src="docs/assets/banner-light.svg" width="100%">
+  <img alt="crawlx: next-generation AI/LLM-native crawler for authorized security research" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
-**Crawl static sites and dynamic web applications, with a safety kernel that never sleeps.**
+**Next-generation AI/LLM-native crawler for authorized security research.**
+
+Map the real attack surface of modern web applications, on systems you own or are explicitly authorized to test.
 
 [![License: AGPL-3.0-only](https://img.shields.io/github/license/noxred-research/crawlx?color=blue)](LICENSE) [![CI](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml/badge.svg)](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/noxred-research/crawlx?include_prereleases&sort=semver)](https://github.com/noxred-research/crawlx/releases) [![Rust 1.97.1](https://img.shields.io/badge/rust-1.97.1-orange?logo=rust)](rust-toolchain.toml) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md) [![Security policy](https://img.shields.io/badge/security-policy-informational?logo=github)](SECURITY.md)
 
 [Why crawlx](#why-crawlx) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) · [CLI](#command-line-overview) · [Responsible use](#responsible-use) · [Security](#security) · [Docs](docs/README.md)
 
 </div>
+
+> [!IMPORTANT]
+> **Security research and authorized testing only.** crawlx is built for testing systems you own or have
+> written authorization to test. It is not for unauthorized scraping, credential attacks, evading a site's
+> protections, or any other abuse. Privileged modes require an [authorization record](docs/design/safety-model.md#authorization-records),
+> and a hard safety kernel refuses actions outside the run's profile. See [Responsible use](#responsible-use).
 
 <p align="center">
   <img src="docs/assets/demo.svg" alt="Animated terminal: a static crawl, then a dynamic observe-only crawl that blocks the cloud metadata address" width="860">
@@ -21,19 +29,52 @@
 
 ## Why crawlx
 
-Most crawlers are either fast HTTP fetchers that miss everything behind JavaScript, or browser
-automations that are slow, fragile and happy to click "Delete account". crawlx runs both planes under
-one set of rules.
+Security testing of modern applications has two problems. Plain HTTP crawlers miss everything that only
+exists after JavaScript runs: routes, endpoints, forms and state behind clicks. Browser automation sees it,
+but is slow, fragile and one careless click away from "Delete account". crawlx treats both as engineering
+problems under one set of rules.
 
-- **It sees the whole app.** A URL plane for documents and a browser plane for single-page and
-  script-heavy applications, in one run (`--mode hybrid`, the default).
-- **It is careful by default.** The default profile cannot change server state. An independent safety
+- **It maps the surface you cannot see from the HTML.** A URL plane for documents plus a browser plane that
+  reads the accessibility tree, recognizes elements across page changes and groups page states, in one run
+  (`--mode hybrid`, the default).
+- **It is careful by construction.** The default profile cannot change server state. An independent safety
   kernel classifies every browser action, and a deny-first egress policy covers every request.
-- **It survives crashes.** Every action is journaled before it is performed. After a crash, an
-  `unknown` outcome is reconciled by looking at the page, never retried blindly.
-- **It is reproducible.** Decisions derive from a seed and recorded paths can be replayed.
-- **It fits your stack.** A CLI for one-shot crawls; an API with workers for fleets; a
-  Firecrawl-compatible facade and an MCP server for existing clients.
+- **It leaves a trail you can defend.** Every action is journaled before it is performed, crashes are
+  reconciled rather than retried blindly, and runs replay from a seed.
+- **It is AI/LLM-native, with a leash.** Models can plan and rank; they never authorize.
+  [Details below](#aillm-native-with-a-leash).
+- **It handles findings responsibly.** Secrets are detected without storing their values, sensitive
+  results can run under zero data retention, and retained artifacts are encrypted at rest.
+
+## Responsible use
+
+crawlx is built and intended for **security research and authorized testing only**: testing systems you own,
+or systems you have **written authorization** to test. This is the project's intended-use policy and a
+condition of community participation and support; the [AGPL-3.0-only](LICENSE) license itself is unchanged.
+
+Do not use crawlx for unauthorized scraping, credential attacks, evading a site's protections, or any
+other abuse. You are responsible for your use.
+
+How the project enforces this in code, not just in words:
+
+- **Authorization records.** Anything privileged (private-network access, the `test_environment` and
+  `authorized_security_test` profiles, the robots override) needs an operator-created record naming the
+  authorizer, the exact origins, the permitted risk classes and a validity window of at most 90 days. The
+  record bounds every request of the run and is re-checked while it runs. It states what you are authorized
+  to do; it does not verify that you are.
+- **A hard safety kernel.** The default `read_only` profile refuses actions that could change server state.
+  Higher profiles still deny financial transactions and security-setting changes unless
+  `authorized_security_test` and an explicit approval apply, and no model hint can loosen a decision. See the [risk matrix](docs/design/safety-matrix.md).
+- **Scope and robots by default.** Robots is honored (overriding it needs an authorization record) and a host
+  scope applies.
+- **Network guardrails.** Loopback, private, link-local and cloud-metadata addresses are refused on every
+  redirect hop and browser request; crawling is rate-limited per origin (one request in flight, at least
+  250 ms apart, backing off on `429` and `503`).
+- **Opt-in features that touch a target's defenses** (the stealth launch profile, captcha solving) exist for
+  testing systems you own or are authorized to test. They are refused under the default profile and must
+  not be used anywhere else.
+
+Details: [safety model](docs/design/safety-model.md) · [SECURITY.md](SECURITY.md).
 
 <a id="release-status"></a>
 
@@ -47,14 +88,36 @@ one set of rules.
 
 | Capability | What you get |
 |---|---|
-| 🌐 **Static crawling** | Scope (`fqdn`, `rdn`, `dn`, `none`), robots (RFC 9309), sitemaps and feeds, URL canonicalization and shape filters, near-duplicate page filters, conditional requests, bounded bodies and redirects |
-| 🧭 **Dynamic crawling** | Chromium over CDP, accessibility-tree discovery, durable element identity, reversible state clustering, a learned enablement graph, seeded and reproducible form input |
-| 🛡️ **Safe by default** | `read_only` profile, a hard safety kernel, a deny-first SSRF policy, per-origin politeness, authorization records for anything privileged, an independent safety auditor |
-| ♻️ **Crash-safe** | Intent journal with `unknown`-outcome reconciliation, fenced leases, checkpoints, a recovery ladder |
-| 📦 **Output** | Markdown pages, `metadata.json`, `links.json`, `report.json`, JSONL, templates, wordlists, bounded WARC/WACZ archives, a REST and SSE API |
-| 🔌 **Integrations** | Firecrawl-compatible API facade, MCP server, Katana-style crawl flags, OpenAI-compatible LLM endpoints, optional ONNX ranker and typed-decision service |
-| 🔒 **Privacy** | Zero-data-retention mode, secret redaction in logs and exports, encrypted artifact custody, tenant row-level security |
+| 🎯 **Attack-surface discovery** | Chromium over CDP and accessibility-tree discovery of single-page and script-heavy apps; durable element identity, reversible state clustering and a learned enablement graph show what each action reveals; sitemaps, feeds and known files; URL canonicalization and shape filters keep large sites tractable |
+| 🔎 **Form and endpoint discovery** | Form and input extraction (`--form-extraction`), XHR extraction, JavaScript endpoint mining (regex and AST), technology detection, page-type classification, custom field rules, seeded and reproducible form input |
+| 🧠 **AI/LLM-native** | A constrained LLM planner, a typed-decision service and an ONNX ranker, LLM-assisted form values, LLM-ready Markdown and chunks, an MCP server; models advise and never authorize ([details](#aillm-native-with-a-leash)) |
+| 🔑 **Secret detection** | Nine secret kinds found in fetched content (cloud, source-host, chat and payment tokens, JWTs, private keys, generic keys), reported as kind, location and a keyed hash, never the value |
+| 🛡️ **Guardrails** | `read_only` default profile, an independent hard safety kernel, authorization records, robots and scope enforcement, a deny-first SSRF policy, per-origin politeness, an independent safety auditor |
+| 🧾 **Audit and replay** | Intent journal with `unknown`-outcome reconciliation, a recorded safety verdict per action, fenced leases, checkpoints, seed-derived decisions and recorded-path replay |
+| 🔒 **Handling sensitive findings** | Zero-data-retention mode, secret redaction in logs and exports, encrypted artifact custody, tenant row-level security |
+| 📦 **Output** | JSONL, `metadata.json`, `links.json`, `report.json`, Markdown pages, templates, wordlists, bounded WARC/WACZ archives, a REST and SSE API |
+| 🔌 **Interoperability** | A Firecrawl-compatible API facade and Katana-style flags so existing tooling can plug in, plus an OpenAI-compatible provider interface |
 | 🚢 **Operations** | PostgreSQL and S3-compatible storage, Docker Compose, Helm chart, Prometheus metrics, OTLP, alert rules, [runbooks](docs/ops/runbooks.md) |
+
+### AI/LLM-native, with a leash
+
+Every AI feature is optional and off by default. The rule is the same everywhere: **models advise, the safety
+kernel decides.**
+
+| Feature | What it does | Turn it on |
+|---|---|---|
+| **LLM-guided planning** | A constrained planner DSL: the model returns a bounded plan (at most 20 steps) of candidate indexes and value references, never free-form selectors or URLs; the plan is validated before use | `--planner-endpoint`, `dynamic.llmPlanner` (`off`, `stalled_only`, `enabled`) |
+| **Typed-decision service and ONNX ranker** | Calibrated, abstaining rankings over a crawler-built shortlist of safe candidate actions; circuit-broken and time-boxed | `--model-endpoint`, `--system1-mode shadow\|advisory` (`advisory` needs a signed gate), `onnx` cargo feature |
+| **LLM-assisted form values** | An OpenAI-compatible model proposes values for fields the form filler cannot classify; call-capped (default 100) and recordable for offline replay | `--ai-url`, `--ai-model`, `--ai-record`, `--ai-replay` |
+| **Extract, agent and search endpoints** | The Firecrawl-compatible facade serves `/extract`, `/agent` and `/search` over an OpenAI-compatible provider you configure (and SearXNG for search) | `OPENAI_BASE_URL`, `MODEL_NAME`, `SEARXNG_ENDPOINT` |
+| **LLM-ready output** | Clean Markdown, structured metadata and optional word-window chunks of extracted text | `extract.content.chunks` |
+| **MCP server** | Exposes crawl, scrape, map, search and extract tools to agent tooling over stdio | `crawlx mcp` |
+| **Understanding web apps** | The accessibility tree gives roles, names and states, so elements keep a stable identity across re-renders and layout changes | built in (`--mode dynamic`) |
+
+The guardrails around models are structural. The model crate does not depend on the safety kernel and cannot
+authorize anything; a model hint can only make a decision stricter. Page text reaches a model only inside
+provenance-tagged untrusted fields. Zero-data-retention runs keep to the default model and skip optional LLM
+refinement steps.
 
 ### Capability highlights
 
@@ -176,10 +239,10 @@ The OpenAPI document is served at `/v1/openapi.json`. Without Compose, run `craw
 `crawlx serve` and `crawlx worker` against your own PostgreSQL; see the
 [walkthrough](docs/walkthrough.md) and [operations](docs/ops/README.md).
 
-### Firecrawl-compatible clients
+### Tooling interoperability: Firecrawl-compatible API
 
-The API serves Firecrawl's v2 endpoints under `/compat/firecrawl/v2`. With the stack above, the same key
-works there:
+So that existing tooling can plug in, the API serves Firecrawl's v2 endpoints under `/compat/firecrawl/v2`. With
+the stack above, the same key works there:
 
 ```
 curl -s http://127.0.0.1:8080/compat/firecrawl/v2/scrape -H "Authorization: Bearer $KEY" \
@@ -399,25 +462,11 @@ when unset. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
 
-## Responsible use
-
-Use crawlx only against systems you own or are authorized to test, and respect the policies of the sites
-you crawl. You are responsible for your use. By default crawlx:
-
-- honors `robots.txt`; overriding it requires an operator-created authorization record;
-- runs the `read_only` profile, which refuses actions that could change server state;
-- refuses loopback, private, link-local and cloud-metadata addresses, on every redirect hop and every
-  browser request;
-- crawls politely: one request in flight per origin, at least 250 ms apart, backing off on `429` and `503`.
-
-Privileged requests (private networks, the `test_environment` and `authorized_security_test` profiles, the
-robots override) need an authorization record. The record states what you are authorized to do; it does
-not verify that you are. Details: [safety model](docs/design/safety-model.md).
-
 ## Security
 
-Report vulnerabilities privately through GitHub private vulnerability reporting, never in a public issue.
-[SECURITY.md](SECURITY.md) has the supported versions, response times, safe-harbor terms and scope.
+Report vulnerabilities in crawlx privately through GitHub private vulnerability reporting, never in a public
+issue. [SECURITY.md](SECURITY.md) has the supported versions, response times, safe-harbor terms, scope and the
+intended-use statement.
 
 Releases are built from a tag by a gated workflow that publishes a source archive, a CycloneDX SBOM and
 `SHA256SUMS` as a draft for a maintainer to publish; verification steps are in

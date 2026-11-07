@@ -13,6 +13,22 @@ Security vulnerabilities are **not** reported through issues or pull requests; f
 [SECURITY.md](SECURITY.md). Everyone taking part in the project is expected to follow the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
+## Intended use and what we accept
+
+crawlx is built for security research and authorized testing only: testing systems you own or have written
+authorization to test. Contributions must fit that purpose. We will decline changes that:
+
+- add capabilities aimed at unauthorized scraping, credential attacks, exploitation, or evading a site's
+  protections;
+- weaken, bypass or add exceptions to the safety kernel, the egress (SSRF) policy, authorization-record
+  enforcement, robots handling or the politeness limits;
+- make a model able to authorize an action (models advise; the kernel decides);
+- ship real-world target lists, harvested data, credentials or exploit payloads in code, fixtures or tests.
+
+Test only against local fixtures (the CrawlerGym server) or systems you own. Never point your development
+runs at someone else's site, and never include evidence from one in an issue or pull request. See the
+[safety model](docs/design/safety-model.md) and [Responsible use](README.md#responsible-use).
+
 ## Choose your path
 
 | If you want to | Start here |

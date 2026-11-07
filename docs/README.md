@@ -7,10 +7,14 @@
 
 # crawlx documentation
 
-crawlx is a Rust hybrid web crawler: a Firecrawl-compatible URL and content crawling plane combined
-with a browser-interaction plane for dynamic applications (accessibility-tree discovery, semantic
-element identity, a probabilistic enablement graph, reversible state clustering and a hard safety
-kernel), with optional typed-decision and LLM guidance.
+crawlx is a next-generation AI/LLM-native crawler for **authorized security research**: it maps the attack
+surface of dynamic web applications with a URL plane and a browser-interaction plane (accessibility-tree
+discovery, semantic element identity, a probabilistic enablement graph, reversible state clustering), under a
+hard safety kernel. Optional typed-decision, ONNX-ranker and LLM guidance advises and never authorizes.
+
+crawlx is built and intended for testing systems you own or have written authorization to test. It is not for
+unauthorized scraping, credential attacks, evading a site's protections or any other abuse. See
+[Responsible use](../README.md#responsible-use) and the [safety model](design/safety-model.md).
 
 crawlx is pre-1.0. Production qualification is in progress; see the
 [README](../README.md#release-status) and the [changelog](../CHANGELOG.md) for known limitations.
