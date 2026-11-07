@@ -497,3 +497,16 @@ If crawlx saves you time, a star helps others find it.
 crawlx is licensed under the [GNU AGPL version 3 only](LICENSE) (`AGPL-3.0-only`), not “version 3 or
 later.” Third-party dependencies, vendored sources and embedded resources keep their own licenses and
 notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+crawlx is built and intended for security research and authorized testing only (see
+[Responsible use](#responsible-use)); this is a project policy and does not change the license.
+
+### Project owners
+
+crawlx is owned and maintained by:
+
+- [Noxtica](https://noxtica.com)
+- [NoxRed Security Research](https://noxred.ai)
+- [CrawlX](https://crawlx.dev)
+- [Kaan Keskin](https://www.linkedin.com/in/keskinkaan/)
+- [Onur Yalcin](https://www.linkedin.com/in/imonuryalcin/)
