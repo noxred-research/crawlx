@@ -86,7 +86,7 @@ const SLOW_LOGIN: &str = r##"recorded:{"steps":[
 ]}"##;
 
 async fn run(duration_seconds: u32) -> (RunReport, Arc<FakeBackend>, Vec<serde_json::Value>) {
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
     crawl.mode = CrawlMode::Dynamic;
     crawl.safety.profile = SafetyProfile::TestEnvironment;
