@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>stale-rerender</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  #list { list-style: none; padding: 0; }
+  #list li { border: 1px solid #ccd; padding: 8px; margin: 0 0 6px; display: flex; gap: 12px; align-items: center; }
+  #list li span { flex: 1; }
+</style>
+</head>
+<body>
+<h1>Projects</h1>
+<p>Render <span id="renders">0</span>; rerender delay <span id="delay-out">?</span> ms after each observation. Last: <span id="out">none</span></p>
+<label for="delay">Rerender delay (ms, 0 disables)</label>
+<input id="delay" type="number" min="0" max="5000" step="50" value="300">
+<button id="rerender-now" type="button">Rerender now</button>
+<ul id="list"></ul>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var NAMES = ['Apollo', 'Borealis', 'Cascade', 'Dynamo', 'Eclipse', 'Fathom', 'Granite', 'Helix'];
+  var render = 0;
+  var out = $('out');
+  var timer = null;
+
+  // The whole list is rebuilt: new nodes, same ids and labels, shuffled order, so any locator
+  // taken before the rerender (backend node id, index path) is stale while the logical
+  // controls are unchanged.
+  function draw() {
+    render += 1;
+    var rng = __gym.rngFor('render-' + render);
+    var order = __gym.shuffle(NAMES.map(function (n, i) { return i; }), rng);
+    var list = $('list');
+    list.textContent = '';
+    order.forEach(function (i) {
+      var li = document.createElement('li');
+      li.setAttribute('data-render', String(render));
+      var span = document.createElement('span');
+      span.textContent = NAMES[i] + ' (rev ' + Math.floor(rng() * 90 + 10) + ')';
+      var open = document.createElement('a');
+      open.id = 'open-' + (i + 1);
+      open.href = '/stale-rerender/project.html?id=' + (i + 1);
+      open.textContent = 'Open';
+      open.addEventListener('click', function (ev) { __gym.hit('open-' + (i + 1), ev); });
+      var star = document.createElement('button');
+      star.type = 'button';
+      star.id = 'star-' + (i + 1);
+      star.textContent = 'Star';
+      star.addEventListener('click', function (ev) {
+        __gym.hit('star-' + (i + 1), ev);
+        __gym.api('POST', 'projects/' + (i + 1) + '/star').then(function () { out.textContent = 'star-' + (i + 1); });
+      });
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.id = 'remove-' + (i + 1);
+      del.textContent = 'Remove';
+      del.addEventListener('click', function (ev) {
+        __gym.hit('remove-' + (i + 1), ev);
+        __gym.api('DELETE', 'projects/' + (i + 1)).then(function () { out.textContent = 'remove-' + (i + 1); });
+      });
+      li.appendChild(span); li.appendChild(open); li.appendChild(star); li.appendChild(del);
+      list.appendChild(li);
+    });
+    $('renders').textContent = String(render);
+    __gym.probe('renders', String(render));
+  }
+
+  // An "observation" is anything that reads layout: the first pointer movement or focus
+  // after a render schedules the next rerender `delay` ms later (injected staleness).
+  function schedule() {
+    var delay = Number($('delay').value) || 0;
+    $('delay-out').textContent = String(delay);
+    if (timer) clearTimeout(timer);
+    if (delay > 0) timer = setTimeout(function () { timer = null; draw(); }, delay);
+  }
+  ['pointermove', 'focusin', 'scroll', 'keydown'].forEach(function (evName) {
+    window.addEventListener(evName, function () { if (!timer) schedule(); }, { passive: true });
+  });
+  $('delay').addEventListener('change', function (ev) { __gym.hit('delay', ev); schedule(); });
+  $('rerender-now').addEventListener('click', function (ev) { __gym.hit('rerender-now', ev); draw(); });
+  draw();
+  $('delay-out').textContent = $('delay').value;
+})();
+</script>
+</body>
+</html>

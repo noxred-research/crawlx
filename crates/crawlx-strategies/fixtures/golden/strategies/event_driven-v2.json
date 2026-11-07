@@ -1,0 +1,507 @@
+{
+  "strategy": "event_driven",
+  "version": 2,
+  "context": {
+    "candidates": 48,
+    "keyed_actions": 70,
+    "hidden_targets": 2,
+    "seed": 42
+  },
+  "rounds": [
+    {
+      "phase": "greedy",
+      "proposals": [
+        {
+          "key_id": "1559d8c7a3c4d00ef0b7ac8018529499",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a4c1d50b81f94467963cfac50c5aa0fcb17c8b0a6f10e4d369b99fd1f0ea6cc8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 312,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a4c1d50b81f9]"
+        },
+        {
+          "key_id": "1ab0a825f5721c4acef993f86f79efb3",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "13c675d39363b2599a5218a3f381b7708de2fee22df7fd98375731fae2a40598",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 392,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click button [13c675d39363]"
+        },
+        {
+          "key_id": "2397bd1856940aaf4559618d6fef23f8",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "ad903b0d17e833cc40dfcc74a031a2aaca978b8a4206569ebc9320b7a409c385",
+            "action_kind": "type",
+            "input_class": "text:short_valid",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "type",
+          "target_backend_node": 262,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "type textbox [ad903b0d17e8]"
+        },
+        {
+          "key_id": "2a7d0fbf9ae3b28d8da474894f6ac35f",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a0c38d0f0a635a750043d79286e14a0a578f1a6010edf89efd04679cd6b4c9e8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 322,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a0c38d0f0a63]"
+        },
+        {
+          "key_id": "473d7048b7708b9b2ac5f12ad8c414a0",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "b974545181389d6c221dfd00d6cdfc7a5fb3d304c74e03570641710dd96f788d",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 72,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/settings",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [b97454518138]"
+        }
+      ]
+    },
+    {
+      "phase": "state_recovery",
+      "proposals": [
+        {
+          "key_id": "1559d8c7a3c4d00ef0b7ac8018529499",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a4c1d50b81f94467963cfac50c5aa0fcb17c8b0a6f10e4d369b99fd1f0ea6cc8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 312,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a4c1d50b81f9]"
+        },
+        {
+          "key_id": "1ab0a825f5721c4acef993f86f79efb3",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "13c675d39363b2599a5218a3f381b7708de2fee22df7fd98375731fae2a40598",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 392,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click button [13c675d39363]"
+        },
+        {
+          "key_id": "2397bd1856940aaf4559618d6fef23f8",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "ad903b0d17e833cc40dfcc74a031a2aaca978b8a4206569ebc9320b7a409c385",
+            "action_kind": "type",
+            "input_class": "text:short_valid",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "type",
+          "target_backend_node": 262,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "type textbox [ad903b0d17e8]"
+        },
+        {
+          "key_id": "2a7d0fbf9ae3b28d8da474894f6ac35f",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a0c38d0f0a635a750043d79286e14a0a578f1a6010edf89efd04679cd6b4c9e8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 322,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a0c38d0f0a63]"
+        },
+        {
+          "key_id": "473d7048b7708b9b2ac5f12ad8c414a0",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "b974545181389d6c221dfd00d6cdfc7a5fb3d304c74e03570641710dd96f788d",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 72,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/settings",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [b97454518138]"
+        }
+      ]
+    },
+    {
+      "phase": "enablement_recovery",
+      "proposals": [
+        {
+          "key_id": "1559d8c7a3c4d00ef0b7ac8018529499",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a4c1d50b81f94467963cfac50c5aa0fcb17c8b0a6f10e4d369b99fd1f0ea6cc8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 312,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a4c1d50b81f9]"
+        },
+        {
+          "key_id": "1ab0a825f5721c4acef993f86f79efb3",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "13c675d39363b2599a5218a3f381b7708de2fee22df7fd98375731fae2a40598",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 392,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click button [13c675d39363]"
+        },
+        {
+          "key_id": "2397bd1856940aaf4559618d6fef23f8",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "ad903b0d17e833cc40dfcc74a031a2aaca978b8a4206569ebc9320b7a409c385",
+            "action_kind": "type",
+            "input_class": "text:short_valid",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "type",
+          "target_backend_node": 262,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "type textbox [ad903b0d17e8]"
+        },
+        {
+          "key_id": "2a7d0fbf9ae3b28d8da474894f6ac35f",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a0c38d0f0a635a750043d79286e14a0a578f1a6010edf89efd04679cd6b4c9e8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 322,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a0c38d0f0a63]"
+        },
+        {
+          "key_id": "473d7048b7708b9b2ac5f12ad8c414a0",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "b974545181389d6c221dfd00d6cdfc7a5fb3d304c74e03570641710dd96f788d",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 72,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "event_driven",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/settings",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [b97454518138]"
+        }
+      ]
+    }
+  ]
+}

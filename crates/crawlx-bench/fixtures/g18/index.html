@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g18 sign in</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  form, nav { border: 1px solid #ccd; padding: 12px; margin: 0 0 12px; }
+  label { display: block; margin: 6px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Account</h1>
+<p id="state" aria-live="polite">Signed out</p>
+<form id="login-form" aria-label="Sign in">
+  <label for="login-user">User</label>
+  <input id="login-user" name="user" type="text" autocomplete="username">
+  <label for="login-pass">Password</label>
+  <input id="login-pass" name="password" type="password" autocomplete="current-password">
+  <label for="login-mode">Session mode</label>
+  <select id="login-mode" name="mode">
+    <option value="silent">Silent refresh</option>
+    <option value="hard">Hard logout on expiry</option>
+  </select>
+  <button id="login" type="submit">Sign in</button>
+</form>
+<nav aria-label="Areas">
+  <a id="go-silent" href="/g18/silent.html">Silent-refresh area</a>
+  <a id="go-hard" href="/g18/hard.html">Hard-logout area</a>
+</nav>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  ['login-user', 'login-pass', 'login-mode'].forEach(function (id) {
+    $(id).addEventListener('focus', function (ev) { __gym.hit(id, ev); });
+  });
+  ['go-silent', 'go-hard'].forEach(function (id) {
+    $(id).addEventListener('click', function (ev) { __gym.hit(id, ev); });
+  });
+  $('login').addEventListener('click', function (ev) { __gym.hit('login', ev); });
+  $('login-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    fetch('/g18/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'user=' + encodeURIComponent(f.user.value) + '&password=' + encodeURIComponent(f.password.value) + '&mode=' + encodeURIComponent(f.mode.value)
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      $('state').textContent = j.ok ? 'Signed in as ' + j.user + ' (' + j.mode + ')' : 'Sign-in failed';
+    });
+  });
+  fetch('/g18/api/me').then(function (r) { return r.json(); }).then(function (j) {
+    if (j.ok) $('state').textContent = 'Signed in as ' + j.user + ', ' + j.uses_left + ' uses left';
+  });
+})();
+</script>
+</body>
+</html>

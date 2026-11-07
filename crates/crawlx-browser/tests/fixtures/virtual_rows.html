@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- Original crawlx MIT fixture: ten mounted rows, five-row overlap per 100 CSS pixels. -->
+<html lang="en"><meta charset="utf-8"><title>Owned virtual rows</title>
+<style>
+body { margin: 0; }
+#virtual { position: relative; overflow: auto; width: 480px; height: 100px; }
+#space { height: 2100px; pointer-events: none; }
+#rows { position: absolute; left: 0; right: 0; }
+.row { height: 10px; white-space: pre; margin: 0; }
+</style>
+<div id="virtual" tabindex="0" aria-label="Virtual rows"><div id="space"></div><div id="rows"></div></div>
+<script>
+const box = document.getElementById('virtual');
+const layer = document.getElementById('rows');
+const special = ['C++', 'C#', 'naïve', 'naive', '東京', '东 京', 'pré\n  texte', 'row:7!', 'row:7?', '🙂'];
+const mode = new URLSearchParams(location.search);
+let moved = false;
+function render() {
+  const base = Math.floor(box.scrollTop / 100) * 5;
+  layer.style.top = box.scrollTop + 'px';
+  layer.replaceChildren(...Array.from({length: 10}, (_, n) => {
+    const row = document.createElement('pre'); row.className = 'row';
+    row.textContent = special[base + n] ?? ('row ' + (base + n));
+    return row;
+  }));
+}
+box.addEventListener('scroll', () => {
+  if (box.scrollTop > 100) {
+    moved = true;
+    if (mode.has('navigate')) { location.href = '/static'; return; }
+    if (mode.has('replace')) { box.replaceWith(box.cloneNode(true)); return; }
+  }
+  if (moved && mode.has('refuseRestore') && box.scrollTop === 50) box.scrollTop = 55;
+  render();
+});
+box.scrollTop = 50;
+render();
+</script></html>

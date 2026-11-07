@@ -1,0 +1,107 @@
+[package]
+name = "crawlx-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+description = "cargo-fuzz targets for crawlx parsers; excluded from the main workspace"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Own workspace: the root `Cargo.toml` excludes `fuzz/` so the fuzz profile, the libFuzzer
+# runtime and `-C instrument-coverage` never leak into the product build.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+crawlx-core = { path = "../crates/crawlx-core" }
+crawlx-url = { path = "../crates/crawlx-url" }
+crawlx-policy = { path = "../crates/crawlx-policy" }
+crawlx-extract = { path = "../crates/crawlx-extract" }
+crawlx-model = { path = "../crates/crawlx-model" }
+crawlx-browser = { path = "../crates/crawlx-browser" }
+serde_json = "1"
+url = "2"
+
+[lib]
+name = "crawlx_fuzz"
+path = "src/lib.rs"
+
+# Every target is a `#![no_main]` libFuzzer entry under `--cfg fuzzing` (what `cargo fuzz`
+# passes) and a plain stdin-driven binary otherwise, so `cargo check --manifest-path
+# fuzz/Cargo.toml` works on stable and a crash input can be replayed without nightly.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
+[[bin]]
+name = "url_canonicalize"
+path = "fuzz_targets/url_canonicalize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_classify"
+path = "fuzz_targets/param_classify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "robots_parse"
+path = "fuzz_targets/robots_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sitemap_parse"
+path = "fuzz_targets/sitemap_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_extract"
+path = "fuzz_targets/html_extract.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "action_plan_validate"
+path = "fuzz_targets/action_plan_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scope_pattern_compile"
+path = "fuzz_targets/scope_pattern_compile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ssrf_ip_forms"
+path = "fuzz_targets/ssrf_ip_forms.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cdp_decode"
+path = "fuzz_targets/cdp_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_request"
+path = "fuzz_targets/api_request.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

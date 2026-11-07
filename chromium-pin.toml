@@ -1,0 +1,17 @@
+# Pinned browser build. crawlx-browser compares Browser.getVersion
+# against this at launch and fails with BrowserError::PinMismatch unless
+# --allow-unpinned is set (development only, recorded as pinned = false).
+[chromium]
+version = "155.0.8059.84"
+# CDP protocol revision the chromiumoxide 0.8 generated types correspond to.
+cdp_revision = "1.3"
+chromiumoxide = "=0.8.0"
+os = "linux"
+arch = "x86_64"
+# Chrome for Testing archive of the pinned build. Refresh procedure on a pin bump:
+#   curl -sSLo chrome-linux64.zip \
+#     https://storage.googleapis.com/chrome-for-testing-public/<version>/linux64/chrome-linux64.zip
+#   sha256sum chrome-linux64.zip   # paste below; the version must also change in cdp-surface.toml
+# A packaged distro build (e.g. /usr/bin/chromium-browser) is verified by version string only.
+download_url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/linux64/chrome-linux64.zip"
+sha256 = "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc"

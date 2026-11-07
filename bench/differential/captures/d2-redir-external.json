@@ -1,0 +1,1022 @@
+{
+  "accessLog": {
+    "entries": [
+      {
+        "host": "127.0.0.1:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/sitemap.xml"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/sitemap.xml"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/301"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/302chain"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/hop/1"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/hop/2"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/long"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/1"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/2"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/3"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/4"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/5"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/6"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/7"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/rel"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/8"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/9"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/10"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/11"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/long/12"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target-long"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/blocked"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/cross"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/private/blocked-target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/meta"
+      },
+      {
+        "host": "other.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/cross-target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target-meta"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/missing"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/nope"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/303"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/307"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/308"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/missing"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/nope"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/target"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/missing"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/nope"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-b"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/redir/go/loop-a"
+      }
+    ]
+  },
+  "completed": 6,
+  "completedAt": "2026-10-28T12:20:37.932Z",
+  "crawlxSample": {
+    "family": "d2-redir-external",
+    "job": "01a18274-808f-771d-b092-62d665779bde",
+    "provenance": "black_box_run",
+    "request": {
+      "allowExternalLinks": true,
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/d2/redir/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T12:20:35.600Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [
+        "http://gym.test:4101/d2/redir/go/301",
+        "http://gym.test:4101/d2/redir/go/302chain",
+        "http://gym.test:4101/d2/redir/go/long",
+        "http://gym.test:4101/d2/redir/go/loop-a",
+        "http://gym.test:4101/d2/redir/go/rel",
+        "http://gym.test:4101/d2/redir/go/cross",
+        "http://gym.test:4101/d2/redir/go/blocked",
+        "http://gym.test:4101/d2/redir/go/meta",
+        "http://gym.test:4101/d2/redir/go/missing",
+        "http://gym.test:4101/d2/redir/go/303",
+        "http://gym.test:4101/d2/redir/go/307",
+        "http://gym.test:4101/d2/redir/go/308",
+        "http://gym.test:4101/d2/redir/target"
+      ],
+      "markdown": "d2 redir: index is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Redirect case go 301](http://gym.test:4101/d2/redir/go/301)\n    \n*   [Redirect case go 302chain](http://gym.test:4101/d2/redir/go/302chain)\n    \n*   [Redirect case go long](http://gym.test:4101/d2/redir/go/long)\n    \n*   [Redirect case go loop a](http://gym.test:4101/d2/redir/go/loop-a)\n    \n*   [Redirect case go rel](http://gym.test:4101/d2/redir/go/rel)\n    \n*   [Redirect case go cross](http://gym.test:4101/d2/redir/go/cross)\n    \n*   [Redirect case go blocked](http://gym.test:4101/d2/redir/go/blocked)\n    \n*   [Redirect case go meta](http://gym.test:4101/d2/redir/go/meta)\n    \n*   [Redirect case go missing](http://gym.test:4101/d2/redir/go/missing)\n    \n*   [Redirect case go 303](http://gym.test:4101/d2/redir/go/303)\n    \n*   [Redirect case go 307](http://gym.test:4101/d2/redir/go/307)\n    \n*   [Redirect case go 308](http://gym.test:4101/d2/redir/go/308)\n    \n*   [Redirect case target](http://gym.test:4101/d2/redir/target)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18274-820b-712e-b33b-b329a12ace45",
+        "sourceURL": "http://gym.test:4101/d2/redir/",
+        "statusCode": 200,
+        "title": "d2 redir: index",
+        "url": "http://gym.test:4101/d2/redir/"
+      },
+      "rawHtmlBytes": 1134,
+      "rawHtmlSha256": "73a3a7179e78af6cdd9e70a01d9667cb369b23f53fc4b49a7493d870370e6fc3"
+    },
+    {
+      "links": [],
+      "markdown": "d2 redir: target long is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18274-84ba-72cc-82cf-36133937edef",
+        "sourceURL": "http://gym.test:4101/d2/redir/go/long",
+        "statusCode": 200,
+        "title": "d2 redir: target long",
+        "url": "http://gym.test:4101/d2/redir/target-long"
+      },
+      "rawHtmlBytes": 319,
+      "rawHtmlSha256": "b028bdda82c70ac4fdd441d338ebafaf5f227cff66d4be4ccac679b1b1f71583"
+    },
+    {
+      "links": [],
+      "markdown": "d2 redir: meta refresh is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18274-84cf-70ed-b421-b9283e259b3f",
+        "sourceURL": "http://gym.test:4101/d2/redir/go/meta",
+        "statusCode": 200,
+        "title": "d2 redir: meta refresh",
+        "url": "http://gym.test:4101/d2/redir/go/meta"
+      },
+      "rawHtmlBytes": 388,
+      "rawHtmlSha256": "c02187db521a3bee883d516b041a38bd24770d1f98fd7fb109dfeae5c2b46aad"
+    },
+    {
+      "links": [],
+      "markdown": "d2 redir: cross target is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18274-84c9-7398-9ddc-e854db080759",
+        "sourceURL": "http://gym.test:4101/d2/redir/go/cross",
+        "statusCode": 200,
+        "title": "d2 redir: cross target",
+        "url": "http://other.test:4101/d2/redir/cross-target"
+      },
+      "rawHtmlBytes": 322,
+      "rawHtmlSha256": "28dad27f8c8a88501d333f455b717ba76f073cbed135fd7ee24453ab07f3a50d"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/d2/redir/"
+      ],
+      "markdown": "d2 redir: target is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/redir/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18274-84da-7276-b9aa-6ec374167c62",
+        "sourceURL": "http://gym.test:4101/d2/redir/target",
+        "statusCode": 200,
+        "title": "d2 redir: target",
+        "url": "http://gym.test:4101/d2/redir/target"
+      },
+      "rawHtmlBytes": 344,
+      "rawHtmlSha256": "ddfa6879e208877f6adbeaef3c1cc6d81706b2ead18d2995429c3409ce83d082"
+    },
+    {
+      "links": [],
+      "markdown": "not found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "error": "Not Found",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18274-84d1-75d8-9920-0f7d7cec3ca2",
+        "sourceURL": "http://gym.test:4101/d2/redir/go/missing",
+        "statusCode": 404,
+        "url": "http://gym.test:4101/d2/redir/nope"
+      },
+      "rawHtmlBytes": 10,
+      "rawHtmlSha256": "709009e02c8e364113b28205aadde30cce270d709073f28153c85fdc5036c96d"
+    }
+  ],
+  "duration": 2.332,
+  "errors": {
+    "errors": [
+      {
+        "code": "SCRAPE_ALL_ENGINES_FAILED",
+        "error": "All scraping engines failed to retrieve content from this URL. Engines tried: [playwright, fetch]. This usually happens when: (1) The URL is invalid or the page doesn't exist (404), (2) The website is blocking automated access, (3) The website is down or unreachable, (4) The page requires authentication. Double check the URL is correct and accessible in a browser. Check your server logs for more detailed error information from each engine.",
+        "id": "01a18274-84c0-7739-9b20-bc7978674286",
+        "timestamp": "2026-10-28T12:20:37.943Z",
+        "url": "http://gym.test:4101/d2/redir/go/loop-a"
+      },
+      {
+        "code": "CRAWL_DENIAL",
+        "error": "This URL is blocked by the website's robots.txt file, which instructs crawlers not to access this page. Firecrawl respects robots.txt by default. To crawl this URL anyway, set ignoreRobotsTxt: true in your crawl request (note: this may violate the website's crawling policies).",
+        "id": "01a18274-84cd-74fe-b9a1-fc59f3ebced5",
+        "timestamp": "2026-10-28T12:20:37.366Z",
+        "url": "http://gym.test:4101/d2/redir/go/blocked"
+      }
+    ],
+    "robotsBlocked": [
+      "http://gym.test:4101/d2/redir/private/blocked-target"
+    ]
+  },
+  "expiresAt": "2026-10-29T12:20:47.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 6,
+  "warning": "One or more pages could not be crawled because the site's robots.txt disallows them. See the robotsBlocked list on GET /v2/crawl/01a18274-808f-771d-b092-62d665779bde/errors. Teams with the feature enabled can set ignoreRobotsTxt: true."
+}

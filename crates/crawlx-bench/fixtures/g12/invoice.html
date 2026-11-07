@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g12 Invoice</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  dl { display: grid; grid-template-columns: 120px 1fr; gap: 4px 12px; max-width: 360px; }
+  dt { color: #556; } dd { margin: 0; }
+</style>
+</head>
+<body>
+<h1 id="title">Invoice</h1>
+<dl>
+  <dt>Customer</dt><dd id="customer"></dd>
+  <dt>Amount</dt><dd id="amount"></dd>
+  <dt>Status</dt><dd id="status">open</dd>
+</dl>
+<p><button type="button" id="pay">Mark paid</button></p>
+<p><a id="inv-back" href="/g12/">Back to index</a></p>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var id = parseInt(q.get('id') || '1', 10);
+  var CUSTOMERS = ['Acme Corp', 'Globex', 'Initech', 'Umbrella', 'Hooli', 'Stark Industries'];
+  var rng = __gym.rngFor('invoice-' + id);
+  document.title = 'Invoice #' + id;
+  document.getElementById('title').textContent = 'Invoice #' + id;
+  document.getElementById('customer').textContent = __gym.pick(CUSTOMERS, rng);
+  document.getElementById('amount').textContent = '$' + (100 + Math.floor(rng() * 9000)) + '.00';
+
+  if (q.get('action') === 'delete') {
+    __gym.api('POST', 'invoice/' + id + '/delete');
+    document.getElementById('status').textContent = 'deleted';
+  }
+
+  document.getElementById('pay').addEventListener('click', function (ev) {
+    __gym.hit('pay', ev);
+    __gym.api('POST', 'invoice/' + id + '/pay');
+    document.getElementById('status').textContent = 'paid';
+  });
+  document.getElementById('inv-back').addEventListener('click', function (ev) { __gym.hit('inv-back', ev); });
+})();
+</script>
+</body>
+</html>

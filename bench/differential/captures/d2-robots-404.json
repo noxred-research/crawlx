@@ -1,0 +1,566 @@
+{
+  "accessLog": {
+    "entries": [
+      {
+        "host": "127.0.0.1:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/sitemap.xml"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/sitemap.xml"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/sitemap.xml"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/file.pdf"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/open"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/private/x"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/docs/file.pdf"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/private/open/y"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/file.pdf"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/docs/file.pdf"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/docs/file.pdf.html"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/export.dat"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/docs/export.dat"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/docs/export.dat.html"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/tmp1"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/tmp/z"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/search"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/early-blocked"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/late-blocked"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/ua-star"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/fc-only"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/cx-only"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/ok/a"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/ok/b"
+      },
+      {
+        "host": "e404.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/robots/search",
+        "query": "q=1"
+      }
+    ]
+  },
+  "completed": 21,
+  "completedAt": "2026-10-28T12:21:21.988Z",
+  "crawlxSample": {
+    "family": "d2-robots-404",
+    "job": "01a18275-2d44-70a3-bd36-6cbd7dc34d79",
+    "provenance": "black_box_run",
+    "request": {
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://e404.gym.test:4101/d2/robots/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T12:21:19.813Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [
+        "http://e404.gym.test:4101/d2/robots/open",
+        "http://e404.gym.test:4101/d2/robots/private/x",
+        "http://e404.gym.test:4101/d2/robots/private/open/y",
+        "http://e404.gym.test:4101/d2/robots/file.pdf",
+        "http://e404.gym.test:4101/d2/robots/docs/file.pdf",
+        "http://e404.gym.test:4101/d2/robots/docs/file.pdf.html",
+        "http://e404.gym.test:4101/d2/robots/export.dat",
+        "http://e404.gym.test:4101/d2/robots/docs/export.dat",
+        "http://e404.gym.test:4101/d2/robots/docs/export.dat.html",
+        "http://e404.gym.test:4101/d2/robots/tmp1",
+        "http://e404.gym.test:4101/d2/robots/tmp/z",
+        "http://e404.gym.test:4101/d2/robots/search",
+        "http://e404.gym.test:4101/d2/robots/early-blocked",
+        "http://e404.gym.test:4101/d2/robots/late-blocked",
+        "http://e404.gym.test:4101/d2/robots/ua-star",
+        "http://e404.gym.test:4101/d2/robots/fc-only",
+        "http://e404.gym.test:4101/d2/robots/cx-only",
+        "http://e404.gym.test:4101/d2/robots/ok/a",
+        "http://e404.gym.test:4101/d2/robots/ok/b",
+        "http://e404.gym.test:4101/d2/robots/search?q=1"
+      ],
+      "markdown": "d2 robots: index is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Robots case open](http://e404.gym.test:4101/d2/robots/open)\n    \n*   [Robots case private x](http://e404.gym.test:4101/d2/robots/private/x)\n    \n*   [Robots case private open y](http://e404.gym.test:4101/d2/robots/private/open/y)\n    \n*   [Robots case file pdf](http://e404.gym.test:4101/d2/robots/file.pdf)\n    \n*   [Robots case docs file pdf](http://e404.gym.test:4101/d2/robots/docs/file.pdf)\n    \n*   [Robots case docs file pdf html](http://e404.gym.test:4101/d2/robots/docs/file.pdf.html)\n    \n*   [Robots case export dat](http://e404.gym.test:4101/d2/robots/export.dat)\n    \n*   [Robots case docs export dat](http://e404.gym.test:4101/d2/robots/docs/export.dat)\n    \n*   [Robots case docs export dat html](http://e404.gym.test:4101/d2/robots/docs/export.dat.html)\n    \n*   [Robots case tmp1](http://e404.gym.test:4101/d2/robots/tmp1)\n    \n*   [Robots case tmp z](http://e404.gym.test:4101/d2/robots/tmp/z)\n    \n*   [Robots case search](http://e404.gym.test:4101/d2/robots/search)\n    \n*   [Robots case early blocked](http://e404.gym.test:4101/d2/robots/early-blocked)\n    \n*   [Robots case late blocked](http://e404.gym.test:4101/d2/robots/late-blocked)\n    \n*   [Robots case ua star](http://e404.gym.test:4101/d2/robots/ua-star)\n    \n*   [Robots case fc only](http://e404.gym.test:4101/d2/robots/fc-only)\n    \n*   [Robots case cx only](http://e404.gym.test:4101/d2/robots/cx-only)\n    \n*   [Robots case ok a](http://e404.gym.test:4101/d2/robots/ok/a)\n    \n*   [Robots case ok b](http://e404.gym.test:4101/d2/robots/ok/b)\n    \n*   [Robots case search q 1](http://e404.gym.test:4101/d2/robots/search?q=1)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-2e62-7609-9130-73ffb5ad565c",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/",
+        "statusCode": 200,
+        "title": "d2 robots: index",
+        "url": "http://e404.gym.test:4101/d2/robots/"
+      },
+      "rawHtmlBytes": 1644,
+      "rawHtmlSha256": "b7b83d85747378f1abdce1e79c56c8b790df4f2d6df8d56ceb2f92ff949f4a3f"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: open is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30a0-73f7-a762-0587643f3e17",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/open",
+        "statusCode": 200,
+        "title": "d2 robots: open",
+        "url": "http://e404.gym.test:4101/d2/robots/open"
+      },
+      "rawHtmlBytes": 301,
+      "rawHtmlSha256": "9d5ae30aa88f7afd4f56bed70112d67d6246bc4dacb0f54077658698041ce41c"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: private x is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30ab-72aa-bbcc-33dabfffa2d5",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/private/x",
+        "statusCode": 200,
+        "title": "d2 robots: private x",
+        "url": "http://e404.gym.test:4101/d2/robots/private/x"
+      },
+      "rawHtmlBytes": 316,
+      "rawHtmlSha256": "d80db13fe62362bb063877a49c415e85c958682be9cc0513128e4aaa7e02525d"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: private open y is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30ae-761f-b3c2-8172857bc551",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/private/open/y",
+        "statusCode": 200,
+        "title": "d2 robots: private open y",
+        "url": "http://e404.gym.test:4101/d2/robots/private/open/y"
+      },
+      "rawHtmlBytes": 331,
+      "rawHtmlSha256": "14e893e9b19a4c61cf4778c30a489902367bd4b8157f9b02e388262dea16dace"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: file pdf is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30b2-73a8-a972-5043f24589fc",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/file.pdf",
+        "statusCode": 200,
+        "title": "d2 robots: file pdf",
+        "url": "http://e404.gym.test:4101/d2/robots/file.pdf"
+      },
+      "rawHtmlBytes": 313,
+      "rawHtmlSha256": "1045238c9e90298d98a7a533f32c24fd11f1d05fea789fe0d3f1c6ddd5f9e2ee"
+    },
+    {
+      "links": [
+        "http://e404.gym.test:4101/d2/robots/docs/export.dat",
+        "http://e404.gym.test:4101/d2/robots/docs/export.dat.html"
+      ],
+      "markdown": "d2 robots: docs file pdf is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Robots case docs export dat](http://e404.gym.test:4101/d2/robots/docs/export.dat)\n    \n*   [Robots case docs export dat html](http://e404.gym.test:4101/d2/robots/docs/export.dat.html)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30b8-76ba-92bd-b6b8b54a7f01",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/docs/file.pdf",
+        "statusCode": 200,
+        "title": "d2 robots: docs file pdf",
+        "url": "http://e404.gym.test:4101/d2/robots/docs/file.pdf"
+      },
+      "rawHtmlBytes": 494,
+      "rawHtmlSha256": "591ed003c0cedc369929b964ac2b5fe77ded2d2dd8d18ff4f807e5fc6ec9e2ec"
+    },
+    {
+      "links": [
+        "http://e404.gym.test:4101/d2/robots/docs/export.dat",
+        "http://e404.gym.test:4101/d2/robots/docs/export.dat.html"
+      ],
+      "markdown": "d2 robots: docs file pdf html is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Robots case docs export dat](http://e404.gym.test:4101/d2/robots/docs/export.dat)\n    \n*   [Robots case docs export dat html](http://e404.gym.test:4101/d2/robots/docs/export.dat.html)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30bc-7187-b002-b7df9f1acd96",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/docs/file.pdf.html",
+        "statusCode": 200,
+        "title": "d2 robots: docs file pdf html",
+        "url": "http://e404.gym.test:4101/d2/robots/docs/file.pdf.html"
+      },
+      "rawHtmlBytes": 509,
+      "rawHtmlSha256": "e423699a2da8940381a34c441785b96a878fec3acf9a727fec0a3bf783791d67"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: export dat is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30c1-74c3-8a58-c896a6abe8df",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/export.dat",
+        "statusCode": 200,
+        "title": "d2 robots: export dat",
+        "url": "http://e404.gym.test:4101/d2/robots/export.dat"
+      },
+      "rawHtmlBytes": 319,
+      "rawHtmlSha256": "00ecae361a3dbccc5dbfb87c8058d82527f4c10a6dd2d5115113d974bdac4551"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: docs export dat is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30c4-7529-8c99-17df06bde6cb",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/docs/export.dat",
+        "statusCode": 200,
+        "title": "d2 robots: docs export dat",
+        "url": "http://e404.gym.test:4101/d2/robots/docs/export.dat"
+      },
+      "rawHtmlBytes": 334,
+      "rawHtmlSha256": "6cc743e93f8d3d324206aeae98d0e9cca5b2e219de25a3549bf927f7b699d8ac"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: docs export dat html is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30c9-718b-81cf-17effdcc716a",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/docs/export.dat.html",
+        "statusCode": 200,
+        "title": "d2 robots: docs export dat html",
+        "url": "http://e404.gym.test:4101/d2/robots/docs/export.dat.html"
+      },
+      "rawHtmlBytes": 349,
+      "rawHtmlSha256": "03feb7ec8b9bca91037b47212f35c94f1c9afcda0e0a1b71d58f85c1acede2e5"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: tmp1 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30ce-7313-9158-a66e7c496ef7",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/tmp1",
+        "statusCode": 200,
+        "title": "d2 robots: tmp1",
+        "url": "http://e404.gym.test:4101/d2/robots/tmp1"
+      },
+      "rawHtmlBytes": 301,
+      "rawHtmlSha256": "f64dab4a50895b2953f28b3e6f73b221516814b68bdca793cfc188613502637a"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: tmp z is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30d2-71f2-8a67-c25add26075a",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/tmp/z",
+        "statusCode": 200,
+        "title": "d2 robots: tmp z",
+        "url": "http://e404.gym.test:4101/d2/robots/tmp/z"
+      },
+      "rawHtmlBytes": 304,
+      "rawHtmlSha256": "98b0c29a3a83d31c9d643f9ee2ca3a85d9daa7200587c45a17c5499f6a01971e"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: search is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30d5-7265-9b9c-dd5148868077",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/search",
+        "statusCode": 200,
+        "title": "d2 robots: search",
+        "url": "http://e404.gym.test:4101/d2/robots/search"
+      },
+      "rawHtmlBytes": 307,
+      "rawHtmlSha256": "b93b2ef0aca169b5a6295bd29b29c446ae8b815e791e2e8afc071060b27a81fd"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: early blocked is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30da-77a5-af5a-2d652fc5ad84",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/early-blocked",
+        "statusCode": 200,
+        "title": "d2 robots: early blocked",
+        "url": "http://e404.gym.test:4101/d2/robots/early-blocked"
+      },
+      "rawHtmlBytes": 328,
+      "rawHtmlSha256": "056a6899e1749059d2a583506600d3a623f7f651618d853c7583184f35045d0d"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: late blocked is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30dd-7104-8b75-41b79e062810",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/late-blocked",
+        "statusCode": 200,
+        "title": "d2 robots: late blocked",
+        "url": "http://e404.gym.test:4101/d2/robots/late-blocked"
+      },
+      "rawHtmlBytes": 325,
+      "rawHtmlSha256": "be3e2441a8ae28468b5c8e1db8ac403f5a8549842873d0df26d2450eb08e8470"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: ua star is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30e0-751a-b249-d5438c039a96",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/ua-star",
+        "statusCode": 200,
+        "title": "d2 robots: ua star",
+        "url": "http://e404.gym.test:4101/d2/robots/ua-star"
+      },
+      "rawHtmlBytes": 310,
+      "rawHtmlSha256": "24f829bf0f8e74394fc6c550fe3a2bb1e68f5d31758ea2c0550240858bb401cc"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: fc only is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30e2-716e-801f-5fbb2cb4397a",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/fc-only",
+        "statusCode": 200,
+        "title": "d2 robots: fc only",
+        "url": "http://e404.gym.test:4101/d2/robots/fc-only"
+      },
+      "rawHtmlBytes": 310,
+      "rawHtmlSha256": "121cd6cad5c0acb12a8275f542f5ebe665cf599d074a2ba8be92568e2fa04b36"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: ok a is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30e9-7049-a56a-8a27331812ff",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/ok/a",
+        "statusCode": 200,
+        "title": "d2 robots: ok a",
+        "url": "http://e404.gym.test:4101/d2/robots/ok/a"
+      },
+      "rawHtmlBytes": 301,
+      "rawHtmlSha256": "cf57c66dbb8cdd35fa9b2623895b216cf7e20bbfc782322872ee75045b5339af"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: cx only is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30e6-751e-8e03-e3eb9d1b3a9f",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/cx-only",
+        "statusCode": 200,
+        "title": "d2 robots: cx only",
+        "url": "http://e404.gym.test:4101/d2/robots/cx-only"
+      },
+      "rawHtmlBytes": 310,
+      "rawHtmlSha256": "d3eba4240845045f3a373b9550e2b3a3686f7fd8e556f411c98c333434dfc36e"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: ok b is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30ec-729d-9a87-82465b08d067",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/ok/b",
+        "statusCode": 200,
+        "title": "d2 robots: ok b",
+        "url": "http://e404.gym.test:4101/d2/robots/ok/b"
+      },
+      "rawHtmlBytes": 301,
+      "rawHtmlSha256": "17690ec4c4d4828ca42d0b93cdd5d1033fb4126736f68bc1ed282f6c9b35d042"
+    },
+    {
+      "links": [],
+      "markdown": "d2 robots: search is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18275-30ef-705a-aa07-dbb50fae1121",
+        "sourceURL": "http://e404.gym.test:4101/d2/robots/search?q=1",
+        "statusCode": 200,
+        "title": "d2 robots: search",
+        "url": "http://e404.gym.test:4101/d2/robots/search?q=1"
+      },
+      "rawHtmlBytes": 307,
+      "rawHtmlSha256": "b93b2ef0aca169b5a6295bd29b29c446ae8b815e791e2e8afc071060b27a81fd"
+    }
+  ],
+  "duration": 2.175,
+  "errors": {
+    "errors": [],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T12:21:31.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 21
+}

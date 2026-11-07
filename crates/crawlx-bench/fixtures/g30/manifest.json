@@ -1,0 +1,152 @@
+{
+  "id": "g30",
+  "title": "localStorage role and IndexedDB premium flag gate the menu (role x menu truth table; browser_storage_digest privacy gating)",
+  "version": 1,
+  "url_path": "/g30/",
+  "controls": [
+    {
+      "id": "login-member",
+      "selector": "#login-member",
+      "role": "button",
+      "name": "Sign in as member",
+      "logical_id": "login-member"
+    },
+    {
+      "id": "login-admin",
+      "selector": "#login-admin",
+      "role": "button",
+      "name": "Sign in as admin",
+      "logical_id": "login-admin"
+    },
+    {
+      "id": "logout",
+      "selector": "#logout",
+      "role": "button",
+      "name": "Sign out",
+      "logical_id": "logout"
+    },
+    {
+      "id": "enable-premium",
+      "selector": "#enable-premium",
+      "role": "button",
+      "name": "Enable premium",
+      "logical_id": "enable-premium"
+    },
+    {
+      "id": "m-dashboard",
+      "selector": "#m-dashboard",
+      "role": "button",
+      "name": "Dashboard",
+      "logical_id": "m-dashboard"
+    },
+    {
+      "id": "m-invoices",
+      "selector": "#m-invoices",
+      "role": "button",
+      "name": "My invoices",
+      "logical_id": "m-invoices"
+    },
+    {
+      "id": "m-profile",
+      "selector": "#m-profile",
+      "role": "button",
+      "name": "Profile",
+      "logical_id": "m-profile"
+    },
+    {
+      "id": "a-users",
+      "selector": "#a-users",
+      "role": "button",
+      "name": "Users",
+      "logical_id": "a-users"
+    },
+    {
+      "id": "a-audit",
+      "selector": "#a-audit",
+      "role": "button",
+      "name": "Audit log",
+      "logical_id": "a-audit"
+    },
+    {
+      "id": "a-settings",
+      "selector": "#a-settings",
+      "role": "button",
+      "name": "Site settings",
+      "logical_id": "a-settings"
+    },
+    {
+      "id": "a-billing",
+      "selector": "#a-billing",
+      "role": "button",
+      "name": "Billing",
+      "logical_id": "a-billing"
+    },
+    {
+      "id": "p-export",
+      "selector": "#p-export",
+      "role": "button",
+      "name": "Export workspace",
+      "logical_id": "p-export"
+    },
+    {
+      "id": "p-api",
+      "selector": "#p-api",
+      "role": "button",
+      "name": "API keys",
+      "logical_id": "p-api"
+    }
+  ],
+  "expected": {
+    "operations": [],
+    "role_controls": [
+      {
+        "role": "anonymous",
+        "storage": "none",
+        "controls": [
+          "login-member",
+          "login-admin"
+        ]
+      },
+      {
+        "role": "member",
+        "storage": "local_storage",
+        "controls": [
+          "logout",
+          "enable-premium",
+          "m-dashboard",
+          "m-invoices",
+          "m-profile"
+        ]
+      },
+      {
+        "role": "admin",
+        "storage": "local_storage",
+        "controls": [
+          "logout",
+          "enable-premium",
+          "m-dashboard",
+          "m-invoices",
+          "m-profile",
+          "a-users",
+          "a-audit",
+          "a-settings",
+          "a-billing"
+        ]
+      },
+      {
+        "role": "premium",
+        "storage": "indexed_db",
+        "controls": [
+          "p-export",
+          "p-api"
+        ]
+      }
+    ],
+    "target_recall_min": 1.0,
+    "volatile_regions": [
+      "#out",
+      "#role",
+      "#premium"
+    ]
+  }
+}

@@ -1,0 +1,105 @@
+{{- $root := . -}}
+{{- $pools := list (dict "name" "worker" "replicas" .Values.worker.replicas "chromium" .Values.image.chromiumVersion "canary" false) -}}
+{{- if .Values.worker.canary.enabled -}}
+{{- $pools = append $pools (dict "name" "worker-canary" "replicas" .Values.worker.canary.replicas "chromium" (required "worker.canary.chromiumVersion is required when the canary is enabled" .Values.worker.canary.chromiumVersion) "canary" true) -}}
+{{- end -}}
+{{- range $pool := $pools }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $root.Release.Name }}-{{ $pool.name }}
+  labels: { app: crawlx-worker, app.kubernetes.io/part-of: crawlx }
+spec:
+  replicas: {{ $pool.replicas }}
+  selector:
+    matchLabels: { app: crawlx-worker, release: {{ $root.Release.Name }}, pool: {{ $pool.name }} }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 1 }
+  template:
+    metadata:
+      labels:
+        app: crawlx-worker
+        release: {{ $root.Release.Name }}
+        pool: {{ $pool.name }}
+        crawlx.dev/egress: allowed
+        chromium: {{ $pool.chromium | quote }}
+        {{- if $pool.canary }}
+        canary: "true"
+        {{- end }}
+      annotations:
+        checksum/config: {{ include "crawlx.configToml" $root | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $root.Values.worker.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- include "crawlx.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+        seccompProfile:
+          type: Localhost
+          localhostProfile: {{ $root.Values.worker.seccompProfile }}
+      containers:
+        - name: worker
+          image: {{ $root.Values.image.registry }}/crawlx-worker:{{ $root.Values.image.tag }}-chromium{{ $pool.chromium }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          args:
+            - worker
+            - --max-sessions={{ $root.Values.config.worker.max_sessions }}
+            - --contexts-per-browser={{ $root.Values.config.worker.contexts_per_browser }}
+            - --artifacts-dir=/var/lib/crawlx/artifacts
+            - --metrics-bind=127.0.0.1:9464
+          env:
+            {{- include "crawlx.commonEnv" $root | nindent 12 }}
+            {{- include "crawlx.deliveryEnv" $root | nindent 12 }}
+            {{- include "crawlx.capabilityEnv" (dict "root" $root "worker" true) | nindent 12 }}
+            {{- include "crawlx.artifactCustodyEnv" (dict "root" $root "worker" true) | nindent 12 }}
+            - name: TMPDIR
+              value: /tmp/crawlx
+            - name: CRAWLX_PARSE_MEMORY_BYTES
+              value: {{ $root.Values.worker.parseMemoryBytes | int64 | quote }}
+            {{- if $root.Values.config.object_store.endpoint }}
+            - name: CRAWLX_S3_ENDPOINT
+              value: {{ $root.Values.config.object_store.endpoint | quote }}
+            - name: CRAWLX_S3_BUCKET
+              value: {{ $root.Values.config.object_store.bucket | quote }}
+            - name: CRAWLX_S3_REGION
+              value: {{ $root.Values.config.object_store.region | quote }}
+            {{- end }}
+          securityContext:
+            {{- include "crawlx.containerSecurityContext" $root | nindent 12 }}
+            seccompProfile:
+              type: Localhost
+              localhostProfile: {{ $root.Values.worker.seccompProfile }}
+          resources:
+            {{- toYaml $root.Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/crawlx, readOnly: true }
+            - { name: secrets, mountPath: /run/secrets/crawlx, readOnly: true }
+            - { name: tmp, mountPath: /tmp/crawlx }
+            - { name: shm, mountPath: /dev/shm }
+            - { name: artifacts, mountPath: /var/lib/crawlx/artifacts }
+            {{- include "crawlx.operatorCapabilityMounts" $root | nindent 12 }}
+        {{- include "crawlx.metricsSidecar" $root | nindent 8 }}
+      volumes:
+        - name: config
+          configMap: { name: {{ $root.Release.Name }}-config }
+        - name: secrets
+          projected:
+            sources:
+              - secret:
+                  name: {{ $root.Values.secrets.database }}
+                  items: [{ key: database_url, path: database_url }]
+              - secret:
+                  name: {{ $root.Values.secrets.objectStore }}
+                  optional: true
+                  items: [{ key: object_store_credentials, path: object_store_credentials }]
+              {{- include "crawlx.capabilitySources" (dict "root" $root "worker" true) | nindent 14 }}
+              {{- include "crawlx.artifactCustodySources" (dict "root" $root "worker" true) | nindent 14 }}
+        - { name: tmp, emptyDir: { medium: Memory, sizeLimit: {{ $root.Values.worker.tmpfs.profiles }} } }
+        - { name: shm, emptyDir: { medium: Memory, sizeLimit: {{ $root.Values.worker.tmpfs.shm }} } }
+        - name: artifacts
+          persistentVolumeClaim: { claimName: {{ $root.Values.artifacts.existingClaim }} }
+        - name: metrics-config
+          configMap: { name: {{ $root.Release.Name }}-metrics-sidecar }
+        {{- include "crawlx.operatorCapabilityVolumes" $root | nindent 8 }}
+{{- end }}

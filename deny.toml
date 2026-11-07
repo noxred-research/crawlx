@@ -1,0 +1,36 @@
+[graph]
+all-features = true
+
+[licenses]
+# CDLA-Permissive-2.0: webpki-roots (Mozilla root store data), permissive.
+allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "MPL-2.0", "Unicode-DFS-2016", "CC0-1.0", "OpenSSL", "Apache-2.0 WITH LLVM-exception", "BSL-1.0", "CDLA-Permissive-2.0", "MIT-0"]
+confidence-threshold = 0.8
+# Source-only workspace crates remain `publish = false`; AGPL-3.0-only is the project license.
+private = { ignore = true }
+
+[advisories]
+yanked = "deny"
+unmaintained = "workspace"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace path dependencies carry no version (private crates); cargo-deny counts those as
+# wildcards unless told otherwise.
+allow-wildcard-paths = true
+deny = [
+  { crate = "openssl-sys", reason = "use rustls" },
+  # Libraries use thiserror; anyhow only in the binary crate.
+  # `prost-derive` is a proc-macro (compile-time only) reached through `all-features`
+  # (`opentelemetry-proto`); it never reaches a crawlx library's error surface.
+  # `protobuf-codegen`/`protobuf-parse` are build dependencies of `pprof` (its `protobuf-codec`
+  # feature, behind `crawlx serve|worker --pprof-bind`): they generate `profile.proto` bindings at
+  # compile time and are not linked into any crawlx error type.
+  # `ocrs` (the optional `ocrs` OCR backend of crawlx-extract) returns `anyhow::Result`; its errors
+  # are turned into `OcrError::Backend(String)` at the call site and never leave crawlx-extract.
+  { crate = "anyhow", wrappers = ["crawlx-cli", "prost-derive", "protobuf-codegen", "protobuf-parse", "ocrs"], reason = "anyhow is allowed only in crawlx-cli; library crates use thiserror" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

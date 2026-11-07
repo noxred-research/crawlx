@@ -1,0 +1,146 @@
+{
+  "id": "g17",
+  "title": "target=_blank links, window.open, an OAuth popup to the fixture IdP and a popup storm (tab policy bounded, maxTabs 3)",
+  "version": 1,
+  "url_path": "/g17/",
+  "controls": [
+    {
+      "id": "open-help",
+      "selector": "#open-help",
+      "role": "link",
+      "name": "Help (new tab)",
+      "logical_id": "open-help"
+    },
+    {
+      "id": "open-terms",
+      "selector": "#open-terms",
+      "role": "link",
+      "name": "Terms (new tab, noopener)",
+      "logical_id": "open-terms"
+    },
+    {
+      "id": "open-window",
+      "selector": "#open-window",
+      "role": "button",
+      "name": "Open preview window",
+      "logical_id": "open-window"
+    },
+    {
+      "id": "oauth-start",
+      "selector": "#oauth-start",
+      "role": "button",
+      "name": "Sign in with GymID",
+      "logical_id": "oauth-start"
+    },
+    {
+      "id": "idp-user",
+      "selector": "#idp-user",
+      "role": "textbox",
+      "name": "User",
+      "logical_id": "idp-user",
+      "page": "/idp.html?client=gym"
+    },
+    {
+      "id": "idp-authorize",
+      "selector": "#idp-authorize",
+      "role": "button",
+      "name": "Authorize",
+      "logical_id": "idp-authorize",
+      "page": "/idp.html?client=gym",
+      "effect": "POST /g17/api/oauth/authorize",
+      "risk": "credential_change"
+    },
+    {
+      "id": "idp-deny",
+      "selector": "#idp-deny",
+      "role": "button",
+      "name": "Deny",
+      "logical_id": "idp-deny",
+      "page": "/idp.html?client=gym",
+      "effect": "POST /g17/api/oauth/authorize"
+    },
+    {
+      "id": "profile",
+      "selector": "#profile",
+      "role": "button",
+      "name": "View profile",
+      "logical_id": "profile",
+      "requires": [
+        "oauth-start"
+      ],
+      "effect": "GET /g17/api/profile"
+    },
+    {
+      "id": "storm",
+      "selector": "#storm",
+      "role": "button",
+      "name": "Open ten windows",
+      "logical_id": "storm"
+    },
+    {
+      "id": "help-back",
+      "selector": "#help-back",
+      "role": "link",
+      "name": "Back to the app",
+      "logical_id": "help-back",
+      "page": "/help.html"
+    },
+    {
+      "id": "terms-back",
+      "selector": "#terms-back",
+      "role": "link",
+      "name": "Back to the app",
+      "logical_id": "terms-back",
+      "page": "/terms.html"
+    },
+    {
+      "id": "preview-close",
+      "selector": "#preview-close",
+      "role": "button",
+      "name": "Close preview",
+      "logical_id": "preview-close",
+      "page": "/preview.html"
+    },
+    {
+      "id": "storm-close",
+      "selector": "#storm-close",
+      "role": "button",
+      "name": "Close",
+      "logical_id": "storm-close",
+      "page": "/storm.html?n=1"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g17/api/oauth/authorize",
+      "POST /g17/api/oauth/token",
+      "GET /g17/api/profile",
+      "POST /g17/api/form/oauth-code"
+    ],
+    "enablement": [
+      {
+        "requires": [
+          "oauth-start"
+        ],
+        "target": "profile",
+        "kind": "simple"
+      }
+    ],
+    "forbidden_ops": [
+      {
+        "method": "POST",
+        "path_prefix": "/g17/api/oauth/authorize",
+        "profiles": [
+          "read_only"
+        ]
+      }
+    ],
+    "unauthorized_actions": 0,
+    "target_recall_min": 0.9,
+    "volatile_regions": [
+      "#out",
+      "#opened",
+      "#auth-state"
+    ]
+  }
+}

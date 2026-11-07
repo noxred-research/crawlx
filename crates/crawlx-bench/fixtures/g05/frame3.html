@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g05 frame three</title>
+{{GYM_JS}}
+<style>
+  body { font: 14px/1.3 system-ui, sans-serif; margin: 8px; background: #fff4f4; }
+  button { margin: 4px; }
+</style>
+</head>
+<body>
+<p>Frame three (cross-origin document: served from the other loopback host name, lineage main/f3)</p>
+<button id="f3-1" type="button">Save</button>
+<button id="f3-2" type="button">Cancel</button>
+<button id="f3-3" type="button">Open</button>
+<button id="f3-4" type="button">Edit</button>
+<button id="f3-5" type="button">Delete</button>
+<script>
+(function () {
+  for (var i = 1; i <= 5; i++) {
+    (function (id) {
+      document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); });
+    })('f3-' + i);
+  }
+})();
+</script>
+</body>
+</html>

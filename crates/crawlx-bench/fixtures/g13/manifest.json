@@ -1,0 +1,371 @@
+{
+  "id": "g13",
+  "title": "Menus revealed only on pointer hover, closed on mouse leave (18 targets behind 6 hover triggers)",
+  "version": 1,
+  "url_path": "/g13/",
+  "controls": [
+    {
+      "id": "menu-1",
+      "selector": "#menu-1",
+      "role": "generic",
+      "name": "File",
+      "logical_id": "menu-1",
+      "mechanism": "listener"
+    },
+    {
+      "id": "menu-1-1",
+      "selector": "#menu-1-1",
+      "role": "menuitem",
+      "name": "New file",
+      "logical_id": "menu-1-1",
+      "requires": [
+        "menu-1"
+      ]
+    },
+    {
+      "id": "menu-1-2",
+      "selector": "#menu-1-2",
+      "role": "menuitem",
+      "name": "Open file",
+      "logical_id": "menu-1-2",
+      "requires": [
+        "menu-1"
+      ]
+    },
+    {
+      "id": "menu-1-3",
+      "selector": "#menu-1-3",
+      "role": "menuitem",
+      "name": "Save file",
+      "logical_id": "menu-1-3",
+      "requires": [
+        "menu-1"
+      ]
+    },
+    {
+      "id": "menu-2",
+      "selector": "#menu-2",
+      "role": "generic",
+      "name": "Edit",
+      "logical_id": "menu-2",
+      "mechanism": "listener"
+    },
+    {
+      "id": "menu-2-1",
+      "selector": "#menu-2-1",
+      "role": "menuitem",
+      "name": "Undo edit",
+      "logical_id": "menu-2-1",
+      "requires": [
+        "menu-2"
+      ]
+    },
+    {
+      "id": "menu-2-2",
+      "selector": "#menu-2-2",
+      "role": "menuitem",
+      "name": "Redo edit",
+      "logical_id": "menu-2-2",
+      "requires": [
+        "menu-2"
+      ]
+    },
+    {
+      "id": "menu-2-3",
+      "selector": "#menu-2-3",
+      "role": "menuitem",
+      "name": "Find text",
+      "logical_id": "menu-2-3",
+      "requires": [
+        "menu-2"
+      ]
+    },
+    {
+      "id": "menu-3",
+      "selector": "#menu-3",
+      "role": "generic",
+      "name": "View",
+      "logical_id": "menu-3",
+      "mechanism": "listener"
+    },
+    {
+      "id": "menu-3-1",
+      "selector": "#menu-3-1",
+      "role": "menuitem",
+      "name": "Zoom in",
+      "logical_id": "menu-3-1",
+      "requires": [
+        "menu-3"
+      ]
+    },
+    {
+      "id": "menu-3-2",
+      "selector": "#menu-3-2",
+      "role": "menuitem",
+      "name": "Zoom out",
+      "logical_id": "menu-3-2",
+      "requires": [
+        "menu-3"
+      ]
+    },
+    {
+      "id": "menu-3-3",
+      "selector": "#menu-3-3",
+      "role": "menuitem",
+      "name": "Full screen",
+      "logical_id": "menu-3-3",
+      "requires": [
+        "menu-3"
+      ]
+    },
+    {
+      "id": "menu-4",
+      "selector": "#menu-4",
+      "role": "generic",
+      "name": "Insert",
+      "logical_id": "menu-4",
+      "mechanism": "listener"
+    },
+    {
+      "id": "menu-4-1",
+      "selector": "#menu-4-1",
+      "role": "menuitem",
+      "name": "Insert image",
+      "logical_id": "menu-4-1",
+      "requires": [
+        "menu-4"
+      ]
+    },
+    {
+      "id": "menu-4-2",
+      "selector": "#menu-4-2",
+      "role": "menuitem",
+      "name": "Insert table",
+      "logical_id": "menu-4-2",
+      "requires": [
+        "menu-4"
+      ]
+    },
+    {
+      "id": "menu-4-3",
+      "selector": "#menu-4-3",
+      "role": "menuitem",
+      "name": "Insert link",
+      "logical_id": "menu-4-3",
+      "requires": [
+        "menu-4"
+      ]
+    },
+    {
+      "id": "menu-5",
+      "selector": "#menu-5",
+      "role": "generic",
+      "name": "Tools",
+      "logical_id": "menu-5",
+      "mechanism": "listener"
+    },
+    {
+      "id": "menu-5-1",
+      "selector": "#menu-5-1",
+      "role": "menuitem",
+      "name": "Spell check",
+      "logical_id": "menu-5-1",
+      "requires": [
+        "menu-5"
+      ]
+    },
+    {
+      "id": "menu-5-2",
+      "selector": "#menu-5-2",
+      "role": "menuitem",
+      "name": "Word count",
+      "logical_id": "menu-5-2",
+      "requires": [
+        "menu-5"
+      ]
+    },
+    {
+      "id": "menu-5-3",
+      "selector": "#menu-5-3",
+      "role": "menuitem",
+      "name": "Macros",
+      "logical_id": "menu-5-3",
+      "requires": [
+        "menu-5"
+      ]
+    },
+    {
+      "id": "menu-6",
+      "selector": "#menu-6",
+      "role": "generic",
+      "name": "Help",
+      "logical_id": "menu-6",
+      "mechanism": "listener"
+    },
+    {
+      "id": "menu-6-1",
+      "selector": "#menu-6-1",
+      "role": "menuitem",
+      "name": "Help topics",
+      "logical_id": "menu-6-1",
+      "requires": [
+        "menu-6"
+      ]
+    },
+    {
+      "id": "menu-6-2",
+      "selector": "#menu-6-2",
+      "role": "menuitem",
+      "name": "Keyboard shortcuts",
+      "logical_id": "menu-6-2",
+      "requires": [
+        "menu-6"
+      ]
+    },
+    {
+      "id": "menu-6-3",
+      "selector": "#menu-6-3",
+      "role": "menuitem",
+      "name": "About editor",
+      "logical_id": "menu-6-3",
+      "requires": [
+        "menu-6"
+      ]
+    }
+  ],
+  "expected": {
+    "enablement": [
+      {
+        "requires": [
+          "menu-1"
+        ],
+        "target": "menu-1-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-1"
+        ],
+        "target": "menu-1-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-1"
+        ],
+        "target": "menu-1-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-2"
+        ],
+        "target": "menu-2-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-2"
+        ],
+        "target": "menu-2-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-2"
+        ],
+        "target": "menu-2-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-3"
+        ],
+        "target": "menu-3-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-3"
+        ],
+        "target": "menu-3-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-3"
+        ],
+        "target": "menu-3-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-4"
+        ],
+        "target": "menu-4-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-4"
+        ],
+        "target": "menu-4-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-4"
+        ],
+        "target": "menu-4-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-5"
+        ],
+        "target": "menu-5-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-5"
+        ],
+        "target": "menu-5-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-5"
+        ],
+        "target": "menu-5-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-6"
+        ],
+        "target": "menu-6-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-6"
+        ],
+        "target": "menu-6-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-6"
+        ],
+        "target": "menu-6-3",
+        "kind": "simple"
+      }
+    ],
+    "operations": [],
+    "target_recall_min": 0.9,
+    "volatile_regions": [
+      "#out"
+    ]
+  }
+}

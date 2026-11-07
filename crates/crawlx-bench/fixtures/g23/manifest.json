@@ -1,0 +1,142 @@
+{
+  "id": "g23",
+  "title": "Canvas/WebGL control panel with no accessibility nodes (10 canvas controls must be reported as unsupported_surface, never blind-clicked)",
+  "version": 1,
+  "url_path": "/g23/",
+  "controls": [
+    {
+      "id": "cv-1",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Power",
+      "logical_id": "cv-1",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-2",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Mode",
+      "logical_id": "cv-2",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-3",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Fan",
+      "logical_id": "cv-3",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-4",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Heat",
+      "logical_id": "cv-4",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-5",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Cool",
+      "logical_id": "cv-5",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-6",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Timer",
+      "logical_id": "cv-6",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-7",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Lock",
+      "logical_id": "cv-7",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-8",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Eco",
+      "logical_id": "cv-8",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-9",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Swing",
+      "logical_id": "cv-9",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "cv-10",
+      "selector": "#panel",
+      "role": "none",
+      "name": "Light",
+      "logical_id": "cv-10",
+      "mechanism": "unsupported",
+      "expected": "not_actionable",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "reset-panel",
+      "selector": "#reset-panel",
+      "role": "button",
+      "name": "Reset panel",
+      "logical_id": "reset-panel"
+    }
+  ],
+  "expected": {
+    "operations": [],
+    "target_precision_min": 1.0,
+    "volatile_regions": [
+      "#out"
+    ]
+  }
+}

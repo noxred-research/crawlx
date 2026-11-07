@@ -1,0 +1,31 @@
+[package]
+name = "crawlx-observe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: observation bundles, network epochs, quiescence"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-url = { path = "../crawlx-url" }
+async-trait.workspace = true
+chrono.workspace = true
+regex.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+tokio.workspace = true
+
+[[bench]]
+name = "network_tracker"
+harness = false
+
+[lints]
+workspace = true

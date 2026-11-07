@@ -1,0 +1,66 @@
+[package]
+name = "crawlx-extract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: HTML to text/markdown, metadata and link extraction"
+
+[features]
+default = ["js-ast", "ocrs"]
+# JavaScript AST endpoint pass (`endpoints::ast`); without it the regex pass is the only script miner.
+js-ast = ["dep:oxc_parser", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_allocator", "dep:oxc_span"]
+# Pure-Rust OCR backend (`ocr.backend = ocrs`, models from `CRAWLX_OCR_MODELS`); without it only `tesseract` and `off` exist.
+ocrs = ["dep:ocrs", "dep:rten"]
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-url = { path = "../crawlx-url" }
+calamine = { workspace = true, features = ["dates"] }
+cfb.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+ego-tree.workspace = true
+encoding_rs.workspace = true
+icu_segmenter.workspace = true
+http.workspace = true
+image.workspace = true
+lopdf.workspace = true
+ocrs = { workspace = true, optional = true }
+oxc_allocator = { workspace = true, optional = true }
+oxc_ast = { workspace = true, optional = true }
+oxc_ast_visit = { workspace = true, optional = true }
+oxc_parser = { workspace = true, optional = true }
+oxc_span = { workspace = true, optional = true }
+quick-xml.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+regex.workspace = true
+regex-syntax.workspace = true
+rten = { workspace = true, optional = true }
+scraper.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+similar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+url.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+# Parity test only: `kb::classify_endpoint` mirrors `crawlx_observe::network::classify_endpoint`.
+crawlx-observe = { path = "../crawlx-observe" }
+criterion.workspace = true
+proptest.workspace = true
+# `tests/parse_memory_ceiling.rs`: peak heap of the HTML parse path (the dependency, not this crate, owns the `unsafe`).
+peak_alloc.workspace = true
+
+[[bench]]
+name = "extract"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g18 hard logout</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  button { margin: 4px; }
+  form { border: 1px solid #ccd; padding: 12px; margin: 12px 0; }
+  label { display: block; margin: 6px 0 2px; }
+</style>
+</head>
+<body>
+<h1>Hard-logout area</h1>
+<p id="h-state" aria-live="polite">checking session</p>
+<p>When the session expires here the app logs out completely and asks for credentials again; no silent refresh.</p>
+<button id="h-load" type="button">Load profile</button>
+<div id="h-slot"></div>
+<form id="h-login-form" aria-label="Sign in again" hidden>
+  <label for="h-user">User</label>
+  <input id="h-user" name="user" type="text" autocomplete="username">
+  <label for="h-pass">Password</label>
+  <input id="h-pass" name="password" type="password" autocomplete="current-password">
+  <button id="h-login" type="submit">Sign in again</button>
+</form>
+<a id="h-home" href="/g18/">Back</a>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var logouts = 0;
+  function hardLogout() {
+    return fetch('/g18/api/logout', { method: 'POST' }).then(function () {
+      logouts += 1;
+      __gym.probe('hard-logouts', String(logouts));
+      $('h-state').textContent = 'Session expired: signed out';
+      $('h-login-form').hidden = false;
+      var s = $('h-secret');
+      if (s) s.remove();
+    });
+  }
+  function protectedCall(path, opts) {
+    return fetch('/g18/api/' + path, opts).then(function (r) {
+      if (r.status !== 401) return r.json();
+      return hardLogout().then(function () { return { ok: false, expired: true }; });
+    });
+  }
+  function reveal() {
+    if ($('h-secret')) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'h-secret';
+    b.textContent = 'Secret action';
+    b.addEventListener('click', function (ev) {
+      __gym.hit('h-secret', ev);
+      protectedCall('secret', { method: 'POST' }).then(function (j) { if (j.ok) $('h-state').textContent = 'Secret done'; });
+    });
+    $('h-slot').appendChild(b);
+  }
+  $('h-load').addEventListener('click', function (ev) {
+    __gym.hit('h-load', ev);
+    protectedCall('me').then(function (j) {
+      if (j.ok) { $('h-state').textContent = 'Profile of ' + j.user + ' (' + j.uses_left + ' uses left)'; reveal(); }
+    });
+  });
+  ['h-user', 'h-pass'].forEach(function (id) { $(id).addEventListener('focus', function (ev) { __gym.hit(id, ev); }); });
+  $('h-login').addEventListener('click', function (ev) { __gym.hit('h-login', ev); });
+  $('h-login-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target;
+    fetch('/g18/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'user=' + encodeURIComponent(f.user.value) + '&password=' + encodeURIComponent(f.password.value) + '&mode=hard'
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j.ok) { $('h-state').textContent = 'Signed in again as ' + j.user; $('h-login-form').hidden = true; reveal(); }
+      else $('h-state').textContent = 'Sign-in failed';
+    });
+  });
+  $('h-home').addEventListener('click', function (ev) { __gym.hit('h-home', ev); });
+  protectedCall('me').then(function (j) {
+    if (j.ok) { $('h-state').textContent = 'Signed in as ' + j.user; reveal(); }
+    else if (!j.expired) { $('h-state').textContent = 'Not signed in'; $('h-login-form').hidden = false; }
+  });
+})();
+</script>
+</body>
+</html>

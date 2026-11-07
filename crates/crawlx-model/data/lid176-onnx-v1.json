@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "modelId": "fasttext-lid176-fp32-onnx",
+  "revision": "64f7d31b705bc4a7424c82762b323c6ee8c68b94",
+  "source": "https://huggingface.co/TigreGotico/lid176-onnx/tree/64f7d31b705bc4a7424c82762b323c6ee8c68b94",
+  "originalSource": "https://fasttext.cc/docs/en/language-identification.html",
+  "license": "CC-BY-SA-3.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+  "attribution": "Original fastText/lid.176: Armand Joulin, Edouard Grave, Piotr Bojanowski, Tomas Mikolov and collaborators, Meta/Facebook Research. ONNX conversion: Tigre Gotico Lda. Weights retain CC-BY-SA-3.0 independently of crawlx source licensing.",
+  "trainingData": "Upstream reports Wikipedia, Tatoeba and SETimes under CC-BY-SA. This is upstream provenance, not an independently audited training corpus.",
+  "conversion": "Pinned model card reports direct re-export, no retraining; graph Gather/ReduceMean/MatMul/Sigmoid, with external UTF-8 signed-byte FNV-1a n-grams and Huffman path combination. No conversion-repository Python source is copied into runtime.",
+  "validation": "Downloaded files SHA-256 checked against the immutable Hugging Face LFS graph digest and locally computed auxiliary digests. No inference, parity, held-out quality or 176-language support gate was run by this implementation owner.",
+  "files": {
+    "lid176.onnx": "52a8a740a0c6a9b5a6ba0c384f4cc537893dfae6f3e7dca4ced23701ba772d2e",
+    "config.json": "deab42e22328633d964c8dcbfadee549a087a873646077fbd8a342d995731016",
+    "labels.json": "e42bc979dd04055bb02fc8194a05523904c66e535c1920f8f95008e33ab737cb",
+    "vocab.txt": "a89a468d0964645801fb3895b202e51b931980c3cc3b2f12a500166e4dc2810a",
+    "hs_tree.json": "b3a98e212804aa7b28b07b7b7cd5502066efa770ae674c8dfb734697d49d3d88",
+    "README.md": "e746899e5c6094e33b9924f0dfc35ea040fbd6c8875d3b8d1b91a6c2248884b3"
+  }
+}

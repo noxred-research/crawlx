@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>g22 contextual items</title>{{GYM_JS}}</head>
+<body>
+<h1>Items</h1>
+<nav aria-label="Selected owner">
+  <a id="owner-alice" href="worker.html?tab=alice-active">Alice's item</a>
+  <a id="owner-bob" href="worker.html?tab=bob-active">Bob's item</a>
+</nav>
+<p id="context" role="status">Loading selected item</p>
+<!-- Identity, label and position stay fixed while native navigation changes context. -->
+<button id="delete" type="button" disabled>Delete</button>
+<p id="out" role="status"></p>
+<script>
+(function () {
+  var selected = new URL(location.href).searchParams.get('tab') || 'alice-active';
+  var owner = selected.startsWith('bob-') ? 'bob' : 'alice';
+  var item = owner === 'alice' ? 1 : 2;
+  __gym.api('GET', 'items').then(function (state) {
+    var current = state.items.find(function (row) { return row.id === item; });
+    var prior = current.archived ? 'archived' : 'active';
+    // The selected tab names the real server state, not an effect claimed by a beacon.
+    history.replaceState(null, '', 'worker.html?tab=' + owner + '-' + prior);
+    state.items.forEach(function (row) {
+      document.getElementById('owner-' + row.owner).href =
+        'worker.html?tab=' + row.owner + '-' + (row.archived ? 'archived' : 'active');
+    });
+    document.getElementById('context').textContent =
+      'Principal ' + state.user + ', owner ' + current.owner + ', prior state ' + prior;
+    document.getElementById('delete').disabled = false;
+  });
+  document.getElementById('delete').addEventListener('click', function (event) {
+    __gym.hit('delete', event);
+    __gym.api('DELETE', 'items/' + item).then(function (result) {
+      document.getElementById('out').textContent = result.behavior + ':' + result.state;
+    });
+  });
+})();
+</script>
+</body>
+</html>

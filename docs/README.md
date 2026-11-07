@@ -1,0 +1,55 @@
+# crawlx documentation
+
+crawlx is a Rust hybrid web crawler: a Firecrawl-compatible URL and content crawling plane combined
+with a browser-interaction plane for dynamic applications (accessibility-tree discovery, semantic
+element identity, a probabilistic enablement graph, reversible state clustering and a hard safety
+kernel), with optional typed-decision and LLM guidance.
+
+crawlx is pre-1.0. Production qualification is in progress; see the
+[README](../README.md#release-status) and the [changelog](../CHANGELOG.md) for known limitations.
+
+## Design
+
+| Page | Covers |
+|---|---|
+| [Architecture](design/architecture.md) | Workspace crates and their layering, processes, data flow, the Session Actor, scheduling, storage and telemetry |
+| [Crawl model](design/crawl-model.md) | URL plane, browser plane, element identity, observation epochs, state clustering, enablement graph, strategies, the intent journal and the gates |
+| [Safety model](design/safety-model.md) | Safety profiles, the hard safety kernel, authorization records, egress and SSRF policy, robots, rate limits |
+| [Safety risk matrix](design/safety-matrix.md) | Generated table of what each profile allows per action class |
+| [Data and secrets](design/data-and-secrets.md) | Retention modes, zero data retention, secret boundaries, encrypted artifact custody, parse-memory budget, Chromium background traffic |
+
+## Integrations and operations
+
+| Page | Covers |
+|---|---|
+| [Firecrawl clients and integrations](integrations.md) | Pointing Firecrawl's SDKs, CLI and third-party integrations at the compatibility facade, the endpoints served, operator protocol and acquisition-service boundary |
+| [Operations](ops/README.md) | Provisioning and validation of optional operator capabilities |
+| [Operator runbooks](ops/runbooks.md) | Runbooks RB-01 to RB-12, alert cards, the `crawlx admin` command table, backup, restore and rollback |
+
+## Project
+
+- [README](../README.md): what crawlx is, quick start and configuration pointers
+- [CONTRIBUTING](../CONTRIBUTING.md): coding standards, checks and contribution flow
+- [SECURITY](../SECURITY.md): private vulnerability reporting
+- [CHANGELOG](../CHANGELOG.md) and [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)
+- Deployment files: [`docker/`](../docker/), [`deploy/helm/crawlx/`](../deploy/helm/crawlx/Chart.yaml),
+  [`deploy/k8s/`](../deploy/k8s/README.md), [`deploy/systemd/`](../deploy/systemd/)
+- Gate mechanism for milestone-gated strategies: [`gates/README.md`](../gates/README.md)
+
+## Fixed vocabulary
+
+These terms are used consistently across the code and the documentation:
+`ActionContextKey`, `ElementIdentityV1`, `ObservedDescriptor`, `RuntimeLocator`,
+`ObservationEpoch`, `StateSignature`, Session Actor, safety kernel, trust lanes
+(`trusted_ui` / `diagnostic`), `QuiescencePolicy`, intent journal, safety profiles
+(`read_only` / `test_environment` / `authorized_security_test`), query-parameter classes
+(`RESOURCE_ID` / `NAVIGATION` / `FILTER` / `TRACKING` / `SESSION` / `ACTION_BEARING`), value
+partitions, and round-robin role runs.
+
+## Crate map
+
+`crawlx-core`, `crawlx-api`, `crawlx-policy`, `crawlx-url`, `crawlx-fetch`, `crawlx-extract`,
+`crawlx-browser`, `crawlx-observe`, `crawlx-elements`, `crawlx-state`, `crawlx-graph`,
+`crawlx-strategies`, `crawlx-forms`, `crawlx-model`, `crawlx-safety`, `crawlx-storage`,
+`crawlx-scheduler`, `crawlx-telemetry`, `crawlx-worker`, `crawlx-bench`, `crawlx-cli`.
+Responsibilities are in the [architecture page](design/architecture.md).

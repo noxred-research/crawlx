@@ -1,0 +1,2303 @@
+{
+  "wireSample": {
+    "provenance": "black_box_run",
+    "system": "firecrawl",
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5",
+    "apiRoot": "http://127.0.0.1:3102",
+    "origin": "http://gym.test:4101"
+  },
+  "family": "wire-val",
+  "scenarios": [
+    {
+      "id": "no-body",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {},
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "string",
+                "message": "Invalid input: expected string, received undefined",
+                "path": [
+                  "url"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 8
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "malformed-json",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST_INVALID_JSON",
+            "error": "Bad request, malformed JSON",
+            "success": false
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "body-array",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": [
+            1
+          ],
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "object",
+                "message": "Invalid input: expected object, received array",
+                "path": []
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "body-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": "x",
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST_INVALID_JSON",
+            "error": "Bad request, malformed JSON",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-not-a-url",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "notaurl"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "custom",
+                "message": "URL must have a valid top-level domain or be an IP address",
+                "path": [
+                  "url"
+                ]
+              }
+            ],
+            "error": "URL must have a valid top-level domain or be an IP address",
+            "success": false
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-ftp",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "ftp://gym.test/x"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_format",
+                "format": "regex",
+                "message": "URL uses unsupported protocol",
+                "origin": "string",
+                "path": [
+                  "url"
+                ],
+                "pattern": "/^https?:\\/\\//i"
+              },
+              {
+                "code": "custom",
+                "message": "Invalid URL",
+                "path": [
+                  "url"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-javascript",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "javascript:alert(1)"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_format",
+                "format": "url",
+                "message": "Invalid URL",
+                "path": [
+                  "url"
+                ]
+              },
+              {
+                "code": "custom",
+                "message": "URL must have a valid top-level domain or be an IP address",
+                "path": [
+                  "url"
+                ]
+              },
+              {
+                "code": "custom",
+                "message": "Invalid URL",
+                "path": [
+                  "url"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-bare-host",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "gym.test"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-bd87-72ae-842e-f1f27c1a824e",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-bd87-72ae-842e-f1f27c1a824e"
+          },
+          "elapsed_ms": 33
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-bd87-72ae-842e-f1f27c1a824e",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-number",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": 5
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "string",
+                "message": "Invalid input: expected string, received number",
+                "path": [
+                  "url"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-empty",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": ""
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_format",
+                "format": "url",
+                "message": "Invalid URL",
+                "path": [
+                  "url"
+                ]
+              },
+              {
+                "code": "custom",
+                "message": "URL must have a valid top-level domain or be an IP address",
+                "path": [
+                  "url"
+                ]
+              },
+              {
+                "code": "custom",
+                "message": "Invalid URL",
+                "path": [
+                  "url"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-credentials",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://user:secret@gym.test/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "custom",
+                "message": "Invalid URL",
+                "path": [
+                  "url"
+                ]
+              }
+            ],
+            "error": "Invalid URL",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-loopback",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://127.0.0.1/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-bdb5-71fa-818e-fbc501b93c61",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-bdb5-71fa-818e-fbc501b93c61"
+          },
+          "elapsed_ms": 12
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-bdb5-71fa-818e-fbc501b93c61",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "url-metadata-address",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://169.254.169.254/latest/meta-data/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-bdc5-748a-95e4-450fe196f618",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-bdc5-748a-95e4-450fe196f618"
+          },
+          "elapsed_ms": 8016
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-bdc5-748a-95e4-450fe196f618",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "unknown-key",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "bogusKey": 1,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "unrecognized_keys",
+                "keys": [
+                  "bogusKey"
+                ],
+                "message": "Unrecognized key: \"bogusKey\"",
+                "path": []
+              }
+            ],
+            "error": "Unrecognized key in body -- please review the v2 API documentation for request body changes",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "valid-minimal",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-dd1a-70cb-a915-24e4b5444b8a",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-dd1a-70cb-a915-24e4b5444b8a"
+          },
+          "elapsed_ms": 17
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-dd1a-70cb-a915-24e4b5444b8a",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "limit-negative",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": -1,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-dd31-77be-a09e-116f7cc30cd3",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-dd31-77be-a09e-116f7cc30cd3"
+          },
+          "elapsed_ms": 22
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-dd31-77be-a09e-116f7cc30cd3",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "limit-zero",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 0,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-dd4a-7036-91a4-9be7a9647e61",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-dd4a-7036-91a4-9be7a9647e61"
+          },
+          "elapsed_ms": 11
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-dd4a-7036-91a4-9be7a9647e61",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "limit-fractional",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 1.5,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-dd5a-72ea-9b01-5da22d271a8f",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-dd5a-72ea-9b01-5da22d271a8f"
+          },
+          "elapsed_ms": 15
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-dd5a-72ea-9b01-5da22d271a8f",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "limit-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": "10",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "number",
+                "message": "Invalid input: expected number, received string",
+                "path": [
+                  "limit"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "limit-null",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": null,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "number",
+                "message": "Invalid input: expected number, received null",
+                "path": [
+                  "limit"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "max-depth-negative",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxDiscoveryDepth": -3,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-dd73-757a-8239-1c881115935b",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-dd73-757a-8239-1c881115935b"
+          },
+          "elapsed_ms": 9
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-dd73-757a-8239-1c881115935b",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 10
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "max-depth-fractional",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxDiscoveryDepth": 1.5,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-dd87-70ad-8b63-3f890ae8d6fc",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-dd87-70ad-8b63-3f890ae8d6fc"
+          },
+          "elapsed_ms": 21
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-dd87-70ad-8b63-3f890ae8d6fc",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 8
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "max-depth-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxDiscoveryDepth": "2",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "number",
+                "message": "Invalid input: expected number, received string",
+                "path": [
+                  "maxDiscoveryDepth"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "max-concurrency-zero",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxConcurrency": 0,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "too_small",
+                "inclusive": false,
+                "message": "Too small: expected number to be >0",
+                "minimum": 0,
+                "origin": "number",
+                "path": [
+                  "maxConcurrency"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "max-concurrency-negative",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxConcurrency": -2,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "too_small",
+                "inclusive": false,
+                "message": "Too small: expected number to be >0",
+                "minimum": 0,
+                "origin": "number",
+                "path": [
+                  "maxConcurrency"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "max-concurrency-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxConcurrency": "2",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "number",
+                "message": "Invalid input: expected number, received string",
+                "path": [
+                  "maxConcurrency"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "delay-negative",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "delay": -1,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "too_small",
+                "inclusive": false,
+                "message": "Too small: expected number to be >0",
+                "minimum": 0,
+                "origin": "number",
+                "path": [
+                  "delay"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "delay-zero",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "delay": 0,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "too_small",
+                "inclusive": false,
+                "message": "Too small: expected number to be >0",
+                "minimum": 0,
+                "origin": "number",
+                "path": [
+                  "delay"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 0
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "delay-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "delay": "1",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "number",
+                "message": "Invalid input: expected number, received string",
+                "path": [
+                  "delay"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "sitemap-bogus",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "sitemap": "bogus",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_value",
+                "message": "Invalid option: expected one of \"skip\"|\"include\"|\"only\"",
+                "path": [
+                  "sitemap"
+                ],
+                "values": [
+                  "skip",
+                  "include",
+                  "only"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "sitemap-only",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "sitemap": "only",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-ddb0-713a-ac40-77c2cd348a89",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-ddb0-713a-ac40-77c2cd348a89"
+          },
+          "elapsed_ms": 12
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-ddb0-713a-ac40-77c2cd348a89",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "sitemap-null",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "sitemap": null,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_value",
+                "message": "Invalid option: expected one of \"skip\"|\"include\"|\"only\"",
+                "path": [
+                  "sitemap"
+                ],
+                "values": [
+                  "skip",
+                  "include",
+                  "only"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "include-paths-bad-regex",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "includePaths": [
+              "("
+            ],
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "custom",
+                "message": "Invalid includePaths pattern \"(\": unclosed group. includePaths patterns use Rust regex (RE2-style) syntax.",
+                "path": [
+                  "includePaths"
+                ]
+              }
+            ],
+            "error": "Invalid includePaths pattern \"(\": unclosed group. includePaths patterns use Rust regex (RE2-style) syntax.",
+            "success": false
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "include-paths-not-array",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "includePaths": "a",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "array",
+                "message": "Invalid input: expected array, received string",
+                "path": [
+                  "includePaths"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "include-paths-number",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "includePaths": [
+              1
+            ],
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "string",
+                "message": "Invalid input: expected string, received number",
+                "path": [
+                  "includePaths",
+                  0
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 0
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "exclude-paths-bad-regex",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "excludePaths": [
+              "[a-"
+            ],
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "custom",
+                "message": "Invalid excludePaths pattern \"[a-\": unclosed character class. excludePaths patterns use Rust regex (RE2-style) syntax.",
+                "path": [
+                  "excludePaths"
+                ]
+              }
+            ],
+            "error": "Invalid excludePaths pattern \"[a-\": unclosed character class. excludePaths patterns use Rust regex (RE2-style) syntax.",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "include-and-exclude-same",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "excludePaths": [
+              "a"
+            ],
+            "includePaths": [
+              "a"
+            ],
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-ddcc-744b-8b88-fd7878ca69de",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-ddcc-744b-8b88-fd7878ca69de"
+          },
+          "elapsed_ms": 11
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-ddcc-744b-8b88-fd7878ca69de",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "regex-on-full-url",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "includePaths": [
+              "^http"
+            ],
+            "regexOnFullURL": true,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-dddb-74aa-830a-4a289fe3bd61",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-dddb-74aa-830a-4a289fe3bd61"
+          },
+          "elapsed_ms": 15
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-dddb-74aa-830a-4a289fe3bd61",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 5
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "crawl-entire-domain-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "crawlEntireDomain": "yes",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "boolean",
+                "message": "Invalid input: expected boolean, received string",
+                "path": [
+                  "crawlEntireDomain"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "allow-external-links-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "allowExternalLinks": "true",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "boolean",
+                "message": "Invalid input: expected boolean, received string",
+                "path": [
+                  "allowExternalLinks"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "allow-subdomains-number",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "allowSubdomains": 1,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "boolean",
+                "message": "Invalid input: expected boolean, received number",
+                "path": [
+                  "allowSubdomains"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "ignore-query-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "ignoreQueryParameters": "true",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "boolean",
+                "message": "Invalid input: expected boolean, received string",
+                "path": [
+                  "ignoreQueryParameters"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "deduplicate-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "deduplicateSimilarURLs": "false",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "boolean",
+                "message": "Invalid input: expected boolean, received string",
+                "path": [
+                  "deduplicateSimilarURLs"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "ignore-robots-txt",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "ignoreRobotsTxt": true,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 403,
+          "response": {
+            "error": "The ignoreRobotsTxt parameter is an enterprise feature. Contact support@firecrawl.com to explore whether it can be enabled for your team.",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "allow-backward-links-v1",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "allowBackwardLinks": true,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "unrecognized_keys",
+                "keys": [
+                  "allowBackwardLinks"
+                ],
+                "message": "Unrecognized key: \"allowBackwardLinks\"",
+                "path": []
+              }
+            ],
+            "error": "Unrecognized key in body -- please review the v2 API documentation for request body changes",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "max-depth-v1",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxDepth": 2,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "unrecognized_keys",
+                "keys": [
+                  "maxDepth"
+                ],
+                "message": "Unrecognized key: \"maxDepth\"",
+                "path": []
+              }
+            ],
+            "error": "Unrecognized key in body -- please review the v2 API documentation for request body changes",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "ignore-sitemap-v1",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "ignoreSitemap": true,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "unrecognized_keys",
+                "keys": [
+                  "ignoreSitemap"
+                ],
+                "message": "Unrecognized key: \"ignoreSitemap\"",
+                "path": []
+              }
+            ],
+            "error": "Unrecognized key in body -- please review the v2 API documentation for request body changes",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "webhook-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": "https://hooks.example.test/x"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-de04-772d-8db6-d2fb24c6edbc",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-de04-772d-8db6-d2fb24c6edbc"
+          },
+          "elapsed_ms": 19
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-de04-772d-8db6-d2fb24c6edbc",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "webhook-nondefault-port",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "url": "http://gym.test:9/hook"
+            }
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828d-de1a-73dd-9cda-34153d8921c5",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828d-de1a-73dd-9cda-34153d8921c5"
+          },
+          "elapsed_ms": 14
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1828d-de1a-73dd-9cda-34153d8921c5",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "webhook-bad-url",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "url": "notaurl"
+            }
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_format",
+                "format": "url",
+                "message": "Invalid URL",
+                "path": [
+                  "webhook",
+                  "url"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "webhook-unknown-event",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "events": [
+                "bogus"
+              ],
+              "url": "https://hooks.example.test/x"
+            }
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_value",
+                "message": "Invalid option: expected one of \"completed\"|\"failed\"|\"page\"|\"started\"",
+                "path": [
+                  "webhook",
+                  "events",
+                  0
+                ],
+                "values": [
+                  "completed",
+                  "failed",
+                  "page",
+                  "started"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "webhook-metadata-array",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "metadata": [
+                1,
+                2
+              ],
+              "url": "https://hooks.example.test/x"
+            }
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "record",
+                "message": "Invalid input: expected record, received array",
+                "path": [
+                  "webhook",
+                  "metadata"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "scrape-options-bad-format",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "scrapeOptions": {
+              "formats": [
+                "nonsense"
+              ]
+            },
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_union",
+                "errors": [
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"markdown\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "markdown"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"html\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "html"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"rawHtml\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "rawHtml"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"rawBase64\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "rawBase64"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"links\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "links"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"images\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "images"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"summary\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "summary"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"json\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "json"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"deterministicJson\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "deterministicJson"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"changeTracking\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "changeTracking"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"screenshot\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "screenshot"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"attributes\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "attributes"
+                      ]
+                    },
+                    {
+                      "code": "invalid_type",
+                      "expected": "array",
+                      "message": "Invalid input: expected array, received undefined",
+                      "path": [
+                        "selectors"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"branding\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "branding"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"product\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "product"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"menu\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "menu"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"question\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "question"
+                      ]
+                    },
+                    {
+                      "code": "invalid_type",
+                      "expected": "string",
+                      "message": "Invalid input: expected string, received undefined",
+                      "path": [
+                        "question"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"highlights\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "highlights"
+                      ]
+                    },
+                    {
+                      "code": "invalid_type",
+                      "expected": "string",
+                      "message": "Invalid input: expected string, received undefined",
+                      "path": [
+                        "query"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"query\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "query"
+                      ]
+                    },
+                    {
+                      "code": "invalid_type",
+                      "expected": "string",
+                      "message": "Invalid input: expected string, received undefined",
+                      "path": [
+                        "prompt"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"audio\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "audio"
+                      ]
+                    }
+                  ],
+                  [
+                    {
+                      "code": "invalid_value",
+                      "message": "Invalid input: expected \"video\"",
+                      "path": [
+                        "type"
+                      ],
+                      "values": [
+                        "video"
+                      ]
+                    }
+                  ]
+                ],
+                "message": "Invalid input",
+                "path": [
+                  "scrapeOptions",
+                  "formats",
+                  0
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 5
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "scrape-options-not-object",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "scrapeOptions": 3,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "object",
+                "message": "Invalid input: expected object, received number",
+                "path": [
+                  "scrapeOptions"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "scrape-options-timeout-negative",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "scrapeOptions": {
+              "timeout": -1
+            },
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "too_small",
+                "inclusive": false,
+                "message": "Too small: expected number to be >0",
+                "minimum": 0,
+                "origin": "number",
+                "path": [
+                  "scrapeOptions",
+                  "timeout"
+                ]
+              },
+              {
+                "code": "too_small",
+                "inclusive": true,
+                "message": "Too small: expected number to be >=1000",
+                "minimum": 1000,
+                "origin": "number",
+                "path": [
+                  "scrapeOptions",
+                  "timeout"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "scrape-options-wait-for-huge",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "scrapeOptions": {
+              "waitFor": 100000000
+            },
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "too_big",
+                "inclusive": true,
+                "maximum": 60000,
+                "message": "Too big: expected number to be <=60000",
+                "origin": "number",
+                "path": [
+                  "scrapeOptions",
+                  "waitFor"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 0
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "crawler-options-v1-shape",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "crawlerOptions": {
+              "limit": 5
+            },
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "unrecognized_keys",
+                "keys": [
+                  "crawlerOptions"
+                ],
+                "message": "Unrecognized key: \"crawlerOptions\"",
+                "path": []
+              }
+            ],
+            "error": "Unrecognized key in body -- please review the v2 API documentation for request body changes",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "status-unknown-id",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "GET",
+          "path": "/v2/crawl/00000000-0000-4000-8000-000000000000",
+          "status": 404,
+          "response": {
+            "error": "Job not found",
+            "success": false
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "status-malformed-id",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "GET",
+          "path": "/v2/crawl/not-a-uuid",
+          "status": 400,
+          "response": {
+            "error": "Invalid job ID format. Job ID must be a valid UUID.",
+            "success": false
+          },
+          "elapsed_ms": 0
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "errors-unknown-id",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "GET",
+          "path": "/v2/crawl/00000000-0000-4000-8000-000000000000/errors",
+          "status": 404,
+          "response": {
+            "error": "Job not found",
+            "success": false
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "cancel-unknown-id",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "DELETE",
+          "path": "/v2/crawl/00000000-0000-4000-8000-000000000000",
+          "status": 404,
+          "response": {
+            "error": "Job not found"
+          },
+          "elapsed_ms": 1
+        }
+      ],
+      "notes": {}
+    }
+  ],
+  "accessLog": {
+    "entries": [
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "127.0.0.1:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      }
+    ]
+  }
+}

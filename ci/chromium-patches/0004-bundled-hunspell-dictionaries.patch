@@ -1,0 +1,408 @@
+Subject: [PATCH] Load verified packaged Hunspell dictionaries before downloading
+
+Base: Chromium 155.0.8059.84
+Base revision: 5869fe313571d75152b77813cf0a4ee26a4e6df0
+Source base: https://raw.githubusercontent.com/chromium/chromium/155.0.8059.84/
+Each input below is the source-base URL followed by its path.
+Original inputs:
+  chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc
+    sha256 a63975b983e108b6f130fb4ab9bc3d83df29475b49f1bb6e1f4cb269c9dc2692
+  chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h
+    sha256 0157235019e2db37eff3b508c52bc925692c4e7b533921b5289cf77167edbe27
+  chrome/browser/spellchecker/spellcheck_service_unittest.cc
+    sha256 ada9ded97c3b8ff8ddde5d9487f13f9496f17d7dc1c952e9a603e22abfd6ead4
+  chrome/browser/spellchecker/spellcheck_service_browsertest.cc
+    sha256 768e8968b5bead52df31b31d521218a0655e21077a109537d626e2dc5ba9d856
+  chrome/test/BUILD.gn
+    sha256 4b1c4e75e9298e44953d57c11d3aeb12dee6b036b6f9071a887d3a7cc213e832
+
+Linux retains DIR_APP_DICTIONARIES as the writable user-data location. Open and
+validate that dictionary first, deleting corrupt writable copies as before.
+If unavailable, open DIR_ASSETS/Dictionaries/<versioned-language>.bdic read-only
+and run the same BDict::Verify validation. Never delete an invalid packaged
+copy. Return the writable location on failure so the existing initialization,
+download URL, download, and retry behavior remain unchanged. No switch disables
+spellchecking or language selection. Windows, Android and platform spellcheck
+behavior remain unchanged.
+
+The package MUST include real en-US-10-2.bdic bytes next to the Linux executable
+under Dictionaries/. The required install step, exact source revision, SHA-256
+inputs and redistribution notices are in ci/chromium-dictionaries.toml. That
+config is a packaging contract with an executable install_command, not an
+implicitly consumed GN setting. Run it after staging chrome and before creating
+the final browser archive. Without that step the normal download still occurs.
+
+Dictionary input observed locally:
+  repository https://chromium.googlesource.com/chromium/deps/hunspell_dictionaries.git
+  revision cee14e319bb7603a1157bb4d1e216be64ee82b77 (pinned by DEPS:2430-2431)
+  path en-US-10-2.bdic
+  bytes 451982
+  sha256 b0d80e6b6c5491879365e176ecbd98074602a663429bcfcfb0a5a8375c051f13
+  source URL https://chromium.googlesource.com/chromium/deps/hunspell_dictionaries/+/cee14e319bb7603a1157bb4d1e216be64ee82b77/en-US-10-2.bdic
+
+License evidence: README_en_US.txt:88-109,173-205,288-344 supplies SCOWL,
+WordNet, VarCon and modified-Ispell BSD notices and distribution conditions.
+README.chromium:49-59 documents BDICT derivation; :89-118 records en_US delta
+additions under the existing COPYING GPL/LGPL/MPL tri-license. Ship complete
+README_en_US.txt, README.chromium, LICENSE and COPYING, not only the generic
+README license label. The package command also preserves en_US.aff, en_US.dic
+and en_US.dic_delta and marks the Chromium-derived binary as modified in NOTICE.
+No dictionary regeneration or fake fixture is used.
+
+Source trace (relative to source base):
+- chrome/common/chrome_paths.cc:275-290 keeps Linux dictionaries in user data
+  and creates that directory; leave this writable path contract unchanged.
+- base/base_paths.cc:74-75 resolves DIR_ASSETS through DIR_MODULE.
+- components/spellcheck/common/spellcheck_common.cc:140-146 pins en-US to 10-2.
+- third_party/hunspell/google/bdict.cc:19-65 validates bounds, format and digest.
+- components/spellcheck/renderer/spellcheck_unittest.cc:40-49 uses the same real
+  pinned third_party/hunspell_dictionaries fixture directory.
+
+Regression cases added to existing spellchecker unit-test target:
+  SpellcheckHunspellDictionaryTest.InstalledDictionaryForFreshProfile
+  SpellcheckHunspellDictionaryTest.UserDictionaryTakesPrecedence
+  SpellcheckHunspellDictionaryTest.CorruptUserFallsBackToInstalled
+  SpellcheckHunspellDictionaryTest.CorruptInstalledPreservedAndNotReady
+  SpellcheckHunspellDictionaryTest.MissingInstalledRetainsDownloadPath
+  SpellcheckHunspellDictionaryTest.OtherLanguagesRetainDownloadPath
+They exercise the real initializer, BDict verification, IsReady, selected file,
+immutable-file preservation, writable corruption deletion and download target.
+The existing DeleteCorruptedBDICT browser test uses an empty assets directory
+so installing a valid packaged dictionary cannot mask its expected failure.
+Chrome unit_tests declares the actual BDICT as Linux runtime data so isolated
+test packages retain the fixture; no renderer test target is required.
+
+Parent checks after applying and packaging:
+  unit_tests --gtest_filter='SpellcheckHunspellDictionaryTest.*'
+  browser_tests --gtest_filter='SpellcheckServiceBrowserTest.DeleteCorruptedBDICT'
+  Real fresh-profile G24 smoke with staged dictionary and owned netlog evidence.
+No build, test, lint, format, applicability check or browser execution was run
+for this candidate. Input hashes/revision/size were read from the exact checkout.
+
+diff --git a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc
+--- a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc
++++ b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc
+@@ -10,6 +10,7 @@
+ #include <string>
+ #include <utility>
+ 
++#include "base/base_paths.h"
+ #include "base/check_op.h"
+ #include "base/containers/span.h"
+ #include "base/files/file_util.h"
+@@ -337,7 +338,8 @@
+ // static
+ SpellcheckHunspellDictionary::DictionaryFile
+ SpellcheckHunspellDictionary::OpenDictionaryFile(base::TaskRunner* task_runner,
+-                                                 const base::FilePath& path) {
++                                                const base::FilePath& path,
++                                                bool delete_invalid_file) {
+   base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                 base::BlockingType::MAY_BLOCK);
+ 
+@@ -364,14 +366,16 @@
+   dictionary.path = path;
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+-  // Open the dictionary file and verify there is no corruption. If verification
+-  // fails the file must be deleted.
++  // Open the dictionary file and verify there is no corruption. Invalid
++  // downloaded files are deleted; packaged files must remain read-only.
+ 
+   dictionary.file.Initialize(dictionary.path,
+                              base::File::FLAG_READ | base::File::FLAG_OPEN);
+   if (!dictionary.file.IsValid()) {
+     dictionary.file.Close();
+-    base::DeleteFile(dictionary.path);
++    if (delete_invalid_file) {
++      base::DeleteFile(dictionary.path);
++    }
+     return dictionary;
+   }
+ 
+@@ -380,7 +384,9 @@
+   if (!dictionary.file.ReadAndCheck(0, data) ||
+       !hunspell::BDict::Verify(data)) {
+     dictionary.file.Close();
+-    base::DeleteFile(dictionary.path);
++    if (delete_invalid_file) {
++      base::DeleteFile(dictionary.path);
++    }
+   }
+ 
+   return dictionary;
+@@ -404,7 +410,26 @@
+   base::FilePath dict_path =
+       spellcheck::GetVersionedFileName(language, dict_dir);
+ 
+-  return OpenDictionaryFile(task_runner, dict_path);
++  DictionaryFile dictionary =
++      OpenDictionaryFile(task_runner, dict_path, /*delete_invalid_file=*/true);
++#if BUILDFLAG(IS_LINUX)
++  // Keep the user-data location as the download destination and give valid
++  // user dictionaries precedence over the read-only packaged assets.
++  if (!dictionary.file.IsValid()) {
++    base::FilePath assets_dir;
++    if (base::PathService::Get(base::DIR_ASSETS, &assets_dir)) {
++      DictionaryFile packaged_dictionary = OpenDictionaryFile(
++          task_runner,
++          spellcheck::GetVersionedFileName(
++              language, assets_dir.Append(FILE_PATH_LITERAL("Dictionaries"))),
++          /*delete_invalid_file=*/false);
++      if (packaged_dictionary.file.IsValid()) {
++        return packaged_dictionary;
++      }
++    }
++  }
++#endif  // BUILDFLAG(IS_LINUX)
++  return dictionary;
+ }
+ 
+ void SpellcheckHunspellDictionary::InitializeDictionaryLocationComplete(
+diff --git a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h
+--- a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h
++++ b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h
+@@ -98,6 +98,8 @@
+   static void SetDownloadURLForTesting(const GURL url);
+ 
+  private:
++  friend class SpellcheckHunspellDictionaryTest;
++
+   // Dictionary download status.
+   enum DownloadStatus {
+     DOWNLOAD_NONE,
+@@ -140,9 +142,10 @@
+ 
+ #if !BUILDFLAG(IS_ANDROID)
+   // Figures out the location for the dictionary, verifies its contents, and
+-  // opens it.
++  // opens it. Only writable user/download locations may delete invalid files.
+   static DictionaryFile OpenDictionaryFile(base::TaskRunner* task_runner,
+-                                           const base::FilePath& path);
++                                           const base::FilePath& path,
++                                           bool delete_invalid_file);
+ 
+   // Gets the default location for the dictionary file.
+   static DictionaryFile InitializeDictionaryLocation(
+diff --git a/chrome/browser/spellchecker/spellcheck_service_unittest.cc b/chrome/browser/spellchecker/spellcheck_service_unittest.cc
+--- a/chrome/browser/spellchecker/spellcheck_service_unittest.cc
++++ b/chrome/browser/spellchecker/spellcheck_service_unittest.cc
+@@ -8,18 +8,26 @@
+ #include <optional>
+ #include <ostream>
+ 
++#include "base/base_paths.h"
+ #include "base/command_line.h"
++#include "base/files/file_util.h"
++#include "base/files/scoped_temp_dir.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
+ #include "base/memory/raw_ptr.h"
++#include "base/path_service.h"
+ #include "base/process/kill.h"
+ #include "base/strings/string_split.h"
+ #include "base/strings/string_util.h"
+ #include "base/supports_user_data.h"
+ #include "base/test/run_until.h"
+ #include "base/test/scoped_feature_list.h"
++#include "base/test/scoped_path_override.h"
++#include "base/threading/thread_restrictions.h"
+ #include "build/build_config.h"
+ #include "chrome/browser/spellchecker/spellcheck_factory.h"
++#include "chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h"
++#include "chrome/common/chrome_paths.h"
+ #include "chrome/common/chrome_switches.h"
+ #include "chrome/common/pref_names.h"
+ #include "chrome/test/base/testing_profile.h"
+@@ -28,6 +36,7 @@
+ #include "components/spellcheck/browser/pref_names.h"
+ #include "components/spellcheck/browser/spellcheck_platform.h"
+ #include "components/spellcheck/common/spellcheck.mojom.h"
++#include "components/spellcheck/common/spellcheck_common.h"
+ #include "components/spellcheck/common/spellcheck_features.h"
+ #include "components/user_prefs/user_prefs.h"
+ #include "content/public/test/browser_task_environment.h"
+@@ -35,6 +44,7 @@
+ #include "mojo/public/cpp/bindings/pending_receiver.h"
+ #include "mojo/public/cpp/bindings/receiver_set.h"
+ #include "testing/gtest/include/gtest/gtest.h"
++#include "url/gurl.h"
+ 
+ struct TestCase {
+   TestCase(
+@@ -602,3 +612,128 @@
+       GetParam().expected_tag_passed_to_spellcheck_generic);
+ }
+ #endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
++
++#if BUILDFLAG(IS_LINUX)
++class SpellcheckHunspellDictionaryTest : public testing::Test {
++ protected:
++  void SetUp() override {
++    ASSERT_TRUE(user_dir_.CreateUniqueTempDir());
++    ASSERT_TRUE(assets_dir_.CreateUniqueTempDir());
++    dictionary_override_ = std::make_unique<base::ScopedPathOverride>(
++        chrome::DIR_APP_DICTIONARIES, user_dir_.GetPath());
++    assets_override_ = std::make_unique<base::ScopedPathOverride>(
++        base::DIR_ASSETS, assets_dir_.GetPath());
++    ASSERT_TRUE(base::CreateDirectory(InstalledPath().DirName()));
++    base::FilePath source_root;
++    ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT,
++                                       &source_root));
++    fixture_path_ = spellcheck::GetVersionedFileName(
++        "en-US", source_root.AppendASCII("third_party")
++                     .AppendASCII("hunspell_dictionaries"));
++    ASSERT_TRUE(base::PathExists(fixture_path_));
++  }
++
++  base::FilePath UserPath(const std::string& language = "en-US") const {
++    return spellcheck::GetVersionedFileName(language, user_dir_.GetPath());
++  }
++
++  base::FilePath InstalledPath() const {
++    return spellcheck::GetVersionedFileName(
++        "en-US", assets_dir_.GetPath().AppendASCII("Dictionaries"));
++  }
++
++  void InstallDictionary(const base::FilePath& destination) {
++    ASSERT_TRUE(base::CopyFile(fixture_path_, destination));
++  }
++
++  std::unique_ptr<SpellcheckHunspellDictionary> Open(
++      const std::string& language = "en-US") {
++    auto dictionary = std::make_unique<SpellcheckHunspellDictionary>(
++        language, std::string(), nullptr, nullptr);
++    dictionary->dictionary_file_ =
++        SpellcheckHunspellDictionary::InitializeDictionaryLocation(
++            dictionary->task_runner_.get(), language);
++    return dictionary;
++  }
++
++  base::FilePath OpenedPath(const SpellcheckHunspellDictionary& dictionary) {
++    return dictionary.dictionary_file_.path;
++  }
++
++  GURL DownloadURL(SpellcheckHunspellDictionary& dictionary) {
++    return dictionary.GetDictionaryURL();
++  }
++
++  content::BrowserTaskEnvironment task_environment_;
++  base::ScopedAllowBlockingForTesting allow_blocking_;
++  base::ScopedTempDir user_dir_;
++  base::ScopedTempDir assets_dir_;
++  base::FilePath fixture_path_;
++  std::unique_ptr<base::ScopedPathOverride> dictionary_override_;
++  std::unique_ptr<base::ScopedPathOverride> assets_override_;
++};
++
++TEST_F(SpellcheckHunspellDictionaryTest, InstalledDictionaryForFreshProfile) {
++  InstallDictionary(InstalledPath());
++  auto dictionary = Open();
++  EXPECT_TRUE(dictionary->IsReady());
++  EXPECT_EQ(InstalledPath(), OpenedPath(*dictionary));
++  EXPECT_FALSE(base::PathExists(UserPath()));
++  EXPECT_TRUE(base::ContentsEqual(fixture_path_, InstalledPath()));
++}
++
++TEST_F(SpellcheckHunspellDictionaryTest, UserDictionaryTakesPrecedence) {
++  InstallDictionary(InstalledPath());
++  InstallDictionary(UserPath());
++  auto dictionary = Open();
++  EXPECT_TRUE(dictionary->IsReady());
++  EXPECT_EQ(UserPath(), OpenedPath(*dictionary));
++  EXPECT_TRUE(base::ContentsEqual(fixture_path_, InstalledPath()));
++}
++
++TEST_F(SpellcheckHunspellDictionaryTest, CorruptUserFallsBackToInstalled) {
++  InstallDictionary(InstalledPath());
++  ASSERT_TRUE(base::WriteFile(UserPath(), "BDic corrupt user dictionary"));
++  auto dictionary = Open();
++  EXPECT_TRUE(dictionary->IsReady());
++  EXPECT_EQ(InstalledPath(), OpenedPath(*dictionary));
++  EXPECT_FALSE(base::PathExists(UserPath()));
++  EXPECT_TRUE(base::ContentsEqual(fixture_path_, InstalledPath()));
++}
++
++TEST_F(SpellcheckHunspellDictionaryTest, CorruptInstalledPreservedAndNotReady) {
++  const std::string corrupt = "BDic corrupt installed dictionary";
++  ASSERT_TRUE(base::WriteFile(InstalledPath(), corrupt));
++  ASSERT_TRUE(base::WriteFile(UserPath(), "BDic corrupt user dictionary"));
++  auto dictionary = Open();
++  EXPECT_FALSE(dictionary->IsReady());
++  EXPECT_EQ(UserPath(), OpenedPath(*dictionary));
++  EXPECT_FALSE(base::PathExists(UserPath()));
++  std::string contents;
++  ASSERT_TRUE(base::ReadFileToString(InstalledPath(), &contents));
++  EXPECT_EQ(corrupt, contents);
++  EXPECT_EQ(
++      GURL("https://redirector.gvt1.com/edgedl/chrome/dict/en-us-10-2.bdic"),
++      DownloadURL(*dictionary));
++}
++
++TEST_F(SpellcheckHunspellDictionaryTest, MissingInstalledRetainsDownloadPath) {
++  auto dictionary = Open();
++  EXPECT_FALSE(dictionary->IsReady());
++  EXPECT_EQ(UserPath(), OpenedPath(*dictionary));
++  EXPECT_FALSE(base::PathExists(InstalledPath()));
++  EXPECT_EQ(
++      GURL("https://redirector.gvt1.com/edgedl/chrome/dict/en-us-10-2.bdic"),
++      DownloadURL(*dictionary));
++}
++
++TEST_F(SpellcheckHunspellDictionaryTest, OtherLanguagesRetainDownloadPath) {
++  InstallDictionary(InstalledPath());
++  auto dictionary = Open("fr");
++  EXPECT_FALSE(dictionary->IsReady());
++  EXPECT_EQ(UserPath("fr"), OpenedPath(*dictionary));
++  EXPECT_EQ(GURL("https://redirector.gvt1.com/edgedl/chrome/dict/" +
++                 base::ToLowerASCII(UserPath("fr").BaseName().MaybeAsASCII())),
++            DownloadURL(*dictionary));
++}
++#endif  // BUILDFLAG(IS_LINUX)
+diff --git a/chrome/browser/spellchecker/spellcheck_service_browsertest.cc b/chrome/browser/spellchecker/spellcheck_service_browsertest.cc
+--- a/chrome/browser/spellchecker/spellcheck_service_browsertest.cc
++++ b/chrome/browser/spellchecker/spellcheck_service_browsertest.cc
+@@ -11,6 +11,7 @@
+ #include <string_view>
+ #include <vector>
+ 
++#include "base/base_paths.h"
+ #include "base/command_line.h"
+ #include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+@@ -24,6 +25,7 @@
+ #include "base/synchronization/waitable_event.h"
+ #include "base/test/metrics/histogram_tester.h"
+ #include "base/test/scoped_feature_list.h"
++#include "base/test/scoped_path_override.h"
+ #include "base/threading/thread_restrictions.h"
+ #include "base/values.h"
+ #include "build/build_config.h"
+@@ -590,6 +592,11 @@
+   }
+ #endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Exercise corruption without a valid packaged dictionary masking the failure.
++  base::ScopedPathOverride assets_override(base::DIR_ASSETS);
++#endif
++
+   // Corrupted BDICT data: please do not use this BDICT data for other tests.
+   const uint8_t kCorruptedBDICT[] = {
+       0x42, 0x44, 0x69, 0x63, 0x02, 0x00, 0x01, 0x00, 0x20, 0x00, 0x00, 0x00,
+
+diff --git a/chrome/test/BUILD.gn b/chrome/test/BUILD.gn
+--- a/chrome/test/BUILD.gn
++++ b/chrome/test/BUILD.gn
+@@ -4774,6 +4774,11 @@
+     "//tools/metrics/histograms/enums.xml",
+     "//tools/metrics/histograms/metadata/sync/enums.xml",
+   ]
+ 
++  if (is_linux) {
++    # SpellcheckHunspellDictionaryTest validates the pinned real BDICT.
++    data += [ "//third_party/hunspell_dictionaries/en-US-10-2.bdic" ]
++  }
++
+   if (is_android) {
+     # Trim data specifically to what is used by unit tests on Android.

@@ -1,0 +1,1 @@
+{"seedUrl":"https://a.test/","roles":[{"name":"admin","credentialRef":{"kind":"env","name":"ADMIN"}},{"name":"admin"}],"runsPerRole":9,"targetIsolation":"per_role_replica"}

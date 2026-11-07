@@ -1,0 +1,17 @@
+# Development profile: PostgreSQL only. Object storage is the
+# filesystem artifact store in dev; MinIO/S3 is a deployment concern.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: crawlx
+      POSTGRES_PASSWORD: crawlx
+      POSTGRES_DB: crawlx
+    ports:
+      - "54329:5432"
+    command: ["postgres", "-c", "synchronous_commit=on"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crawlx"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

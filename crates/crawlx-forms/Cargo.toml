@@ -1,0 +1,31 @@
+[package]
+name = "crawlx-forms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: input classification, deterministic value partitions, form grouping"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+chrono.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+uuid.workspace = true
+
+[[bench]]
+name = "partitions"
+harness = false
+
+[lints]
+workspace = true

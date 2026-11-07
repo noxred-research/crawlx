@@ -1,0 +1,703 @@
+# Divergence ledger of the Firecrawl differential harness.
+#
+# Every documented difference between Firecrawl (pinned commit
+# c31e88c07afe941bfd8aebde61684eeba042abb5) and crawlx. The runner
+# (`crawlx-differential`, crates/crawlx-bench/src/differential) consults this file for each
+# difference it finds; an admission difference without an entry fails the run, a content,
+# metadata or counter difference without an entry is a warning. A divergence caused by a crawlx
+# defect is fixed, never recorded here.
+#
+# Entry fields:
+#   id            stable id, FAMILY-NNN (families: see `families.json`)
+#   family        test family
+#   families      optional: ids of families.json the entry applies to (the runner label); absent = every
+#                 family. Family-specific entries must not tolerate the same difference elsewhere.
+#   level         C1 admission, C2 content, C3 lifecycle
+#   kind          admission | robots | markdown | links | metadata | counter
+#   side          admission/robots only: firecrawl_only | crawlx_only
+#   match         glob over the normalized URL key (`{origin}/path?query`; `*` is the only
+#                 wildcard); for `counter`, the field name (status, total, completed,
+#                 markdown_corpus_mean, metadata_rate). Absent = matches all.
+#   field         metadata only: title | description | language | statusCode | contentType
+#   class         intentional_security | intentional_correctness | firecrawl_bug | unsupported_feature
+#   source        provenance (R3): documentation URL, black-box run id, SDK type, RFC section
+#   rationale     why
+#   user_visible  what a migrating user sees; required for intentional classes
+
+version = 1
+
+[[divergence]]
+id = "QRY-001"
+family = "QRY"
+level = "C1"
+kind = "admission"
+side = "firecrawl_only"
+match = "*?utm_*"
+class = "intentional_correctness"
+source = "Firecrawl `ignoreQueryParameters` request option; crawlx query-parameter classification (crates/crawlx-policy)"
+rationale = "With its default query handling (`ignoreQueryParameters: false`) Firecrawl fetches every distinct query string as a distinct page. crawlx in `native_defaults`/`classify` mode drops TRACKING and SESSION parameters, so `?utm_*` variants collapse onto the canonical page. The compat facade's `strict` mode uses `keep_all` and has no such difference; this entry applies only when the crawlx side ran with `classify` (`crawlx-differential --query-policy classify`)."
+user_visible = "Tracking-parameter variants of a page count as one page once a tenant moves to native defaults."
+
+[[divergence]]
+id = "CNT-001"
+family = "CNT"
+families = ["s1", "s1-depth", "s1-exclude", "s1-sitemap-skip"]
+level = "C3"
+kind = "counter"
+match = "completed"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/s1.json (404 and 500 pages are data[] documents, errors[] empty)"
+rationale = "Firecrawl returns a page that answered 4xx or 5xx as a data[] document (metadata.statusCode and metadata.error set, markdown of the error body) and counts it in total and completed; errors[] stays empty. crawlx's URL plane records such a fetch as failed (frontier row failed, reason http_NNN, GET /errors), stores no page and counts it in failed, not succeeded, so its completed is lower by the number of error pages. The authored sample of 2026-10-20 had assumed the opposite."
+user_visible = "completed (and total in the facade) is lower by the number of pages that answered with an HTTP error status; those URLs are in /errors instead of data[]."
+
+[[divergence]]
+id = "CNT-002"
+family = "CNT"
+families = ["s1", "s1-depth", "s1-sitemap-skip", "s1-ignore-query", "s1-entire-domain"]
+level = "C3"
+kind = "counter"
+match = "total"
+class = "intentional_correctness"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; trailing slash; crates/crawlx-url/src/canonical.rs `TrailingSlash::Keep` (the facade workers' default); `deduplicateSimilarURLs: false` run of s1: 35 documents instead of 34"
+rationale = "crawlx keeps `/a` and `/a/` as distinct resources by default (TrailingSlash::Keep) and fetches both when a site links both spellings; Firecrawl's default deduplicateSimilarURLs=true fetches one of them. The in-process crawlx run uses the facade's canonicalization (`--trailing-slash keep`), the admission keys of this scorecard strip the slash, so only the cardinality differs."
+user_visible = "total is higher by one per page a site links both with and without a trailing slash; both fetches hit the origin."
+
+[[divergence]]
+id = "JSE-001"
+family = "SCOPE"
+families = ["d1", "g12", "hybrid-mix", "s1-entire-domain"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "*/api/:path"
+class = "intentional_correctness"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; Katana `-jc` endpoint mining"
+rationale = "crawlx mines endpoint URLs from page scripts (scope.jsEndpoints, default on, katana -jc parity); the gym client library inlined in every fixture page contains `fetch('/' + FIXTURE + '/api/' + path)`, which yields the placeholder URL `/<fixture>/api/:path`. Firecrawl's link extraction reads anchors only and does not look into scripts."
+user_visible = "crawlx also requests URLs named in a page's script text; Firecrawl never does. Set scope.jsEndpoints=false natively to turn it off (the compat facade has no field for it)."
+
+[[divergence]]
+id = "JSE-002"
+family = "SCOPE"
+families = ["s1-entire-domain"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/api*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5"
+rationale = "With crawlEntireDomain the fixture page `/d1/` (linked from s1) is followed; its inlined client library names `/api/form/<id>` and `/api/...` endpoints in script text, which crawlx mines and Firecrawl does not."
+user_visible = "see JSE-001."
+
+[[divergence]]
+id = "JSE-003"
+family = "SCOPE"
+families = ["s1-entire-domain"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/__gym"
+class = "intentional_correctness"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5"
+rationale = "The inlined client library posts to `/__gym/...` (the fixture's own event beacon); the path appears in script text and is mined by crawlx."
+user_visible = "see JSE-001."
+
+[[divergence]]
+id = "JSE-004"
+family = "LINK"
+families = ["hybrid-mix"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/hybrid-mix/receipt.html"
+class = "intentional_correctness"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; fixture hybrid-mix (the billing view builds `<a href=\"/hybrid-mix/receipt.html\">` in a script string)"
+rationale = "The only reference to receipt.html is inside a JavaScript string of the SPA (shown after a plan change). crawlx mines it as an endpoint; Firecrawl renders the page with Playwright but never clicks, so it does not see the link."
+user_visible = "see JSE-001."
+
+[[divergence]]
+id = "JSE-005"
+family = "QRY"
+families = ["g12"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/g12/invoice"
+class = "intentional_correctness"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; fixture g12 (script text `'/g12/invoice'`)"
+rationale = "The invoice page script builds `/g12/invoice` URLs; crawlx mines the bare path (a 404 for the fixture: `/g12/invoice` has no `id`), Firecrawl does not read scripts."
+user_visible = "see JSE-001."
+
+[[divergence]]
+id = "ACT-001"
+family = "QRY"
+families = ["g12"]
+level = "C1"
+kind = "admission"
+side = "firecrawl_only"
+match = "*action=delete*"
+class = "intentional_security"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; ACTION_BEARING parameters; crates/crawlx-policy denial reason `action_bearing_query` (frontier row policy_blocked)"
+rationale = "The index links `/g12/invoice?id=1&action=delete`. crawlx never issues a GET for a URL whose query carries an action-bearing parameter (`action=delete`); Firecrawl fetched it and received the normal invoice page."
+user_visible = "URLs whose query names a destructive action (action=delete, ...) are not fetched; they appear in /errors policyBlocked, not in data[]."
+
+[[divergence]]
+id = "RND-001"
+family = "RENDER"
+families = ["g12"]
+level = "C2"
+kind = "markdown"
+match = "{origin}/g12/*"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/g12.json"
+rationale = "The fixture fills invoice and list pages with client-side script (title, customer, amount). Firecrawl's default engine renders with Playwright and returns the final DOM; crawlx's static plane returns the HTML as served (placeholder title `g12 Invoice`, no field values). The dynamic plane is native-only (the Firecrawl facade starts static crawls)."
+user_visible = "Pages whose content is produced by JavaScript are returned as served, without the rendered DOM."
+
+[[divergence]]
+id = "RND-002"
+family = "RENDER"
+families = ["g12"]
+level = "C2"
+kind = "metadata"
+match = "{origin}/g12/invoice*"
+field = "title"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/g12.json"
+rationale = "document.title is set by script after load (`Invoice #N`); the served HTML carries `g12 Invoice`."
+user_visible = "title of script-rendered pages is the served one."
+
+[[divergence]]
+id = "RND-003"
+family = "RENDER"
+families = ["hybrid-mix"]
+level = "C2"
+kind = "markdown"
+match = "{origin}/hybrid-mix/app.html"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/hybrid-mix.json"
+rationale = "app.html is a hash-routed SPA with an empty body in the served HTML; Firecrawl's rendered DOM holds the home view, crawlx's static extraction is empty."
+user_visible = "SPA pages are empty without the dynamic plane."
+
+[[divergence]]
+id = "RND-004"
+family = "RENDER"
+families = ["hybrid-mix"]
+level = "C2"
+kind = "links"
+match = "{origin}/hybrid-mix/app.html"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/hybrid-mix.json"
+rationale = "Same page: the SPA's links exist only in the rendered DOM."
+user_visible = "SPA pages list no links without the dynamic plane."
+
+[[divergence]]
+id = "RND-005"
+family = "RENDER"
+families = ["g12", "hybrid-mix"]
+level = "C2"
+kind = "counter"
+match = "markdown_corpus_mean"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; RND-001, RND-003"
+rationale = "The corpus mean falls below 0.98 because of the script-rendered pages documented by RND-001 and RND-003 (g12: 11 of 12 compared pages, hybrid-mix: 1 of 7)."
+user_visible = "see RND-001."
+
+[[divergence]]
+id = "RND-006"
+family = "RENDER"
+families = ["g12"]
+level = "C2"
+kind = "counter"
+match = "metadata_rate"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; RND-002"
+rationale = "The metadata equality rate falls below 0.99 because of the script-set titles documented by RND-002."
+user_visible = "see RND-002."
+
+[[divergence]]
+id = "LNK-001"
+family = "LINK"
+families = ["g12"]
+level = "C2"
+kind = "links"
+match = "{origin}/g12"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; real scrape of /g12/ with onlyMainContent true: 0 links, false: 12 links; crates/crawlx-extract/src/lib.rs (`links` is extracted from the whole document before main-content selection)"
+rationale = "Firecrawl's links output obeys onlyMainContent (default true), which drops <nav> anchors from markdown and links alike; crawlx's page record lists every anchor of the document (the URL plane follows nav links), so the link sets differ on pages whose links sit in <nav>."
+user_visible = "links[] of a compat document includes anchors outside the main content that Firecrawl omits."
+
+[[divergence]]
+id = "LNK-002"
+family = "LINK"
+families = ["hybrid-mix"]
+level = "C2"
+kind = "links"
+match = "{origin}/hybrid-mix"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; as LNK-001; bench/differential/captures/hybrid-mix.json"
+rationale = "The index page of hybrid-mix keeps its links in <nav>; same cause as LNK-001."
+user_visible = "see LNK-001."
+
+[[divergence]]
+id = "HSH-001"
+family = "RENDER"
+families = ["hybrid-mix"]
+level = "C3"
+kind = "counter"
+match = "total"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/hybrid-mix.json (app.html#/home, #/reports, #/billing, #/members are four documents)"
+rationale = "Firecrawl, rendering with Playwright, treats hash-route fragments (`app.html#/reports`) as separate pages and returns one document per route; crawlx drops fragments (they are client-side state) and fetches app.html once. total and completed therefore differ by the number of extra routes, net of the documented script-mined URLs."
+user_visible = "Hash-routed SPA views are one page."
+
+[[divergence]]
+id = "HSH-002"
+family = "RENDER"
+families = ["hybrid-mix"]
+level = "C3"
+kind = "counter"
+match = "completed"
+class = "unsupported_feature"
+source = "black-box run 2026-10-28 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; HSH-001"
+rationale = "Same cause as HSH-001 for the completed counter."
+user_visible = "see HSH-001."
+
+# ---- families of fixture `d2` (2026-10-29 run; Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5) ----
+# SCOPE / EXT / REDIR / ROBOTS. Each entry names the families it was measured in; the requested
+# set (fixture access log) of a URL is documented by the admission entry of the same URL and side.
+
+[[divergence]]
+id = "SUB-001"
+family = "SCOPE"
+families = ["d2-scope", "d2-external"]
+level = "C1"
+kind = "admission"
+side = "firecrawl_only"
+match = "http://www.gym.test:{port}/d2/scope/*"
+class = "unsupported_feature"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-scope.json (links to `www.gym.test` from the seed host `gym.test` are followed without allowSubdomains); crates/crawlx-core/src/config.rs `HostScope::Fqdn`"
+rationale = "Firecrawl treats `www.<domain>` as the seed's own site: with default options (no allowSubdomains) it crawled /d2/scope/www and /d2/scope/www2 on `www.gym.test`, while it did not follow `app.gym.test`, `deep.app.gym.test` or `notgym.test`. crawlx's default host scope is the exact seed host (`fqdn`), so `www.gym.test` is a different host that only allowSubdomains admits (d2-subdomains: both systems fetch it)."
+user_visible = "Links between `example.com` and `www.example.com` are not followed with default options; set allowSubdomains (or scope.hostScope rdn natively) to crawl both."
+
+[[divergence]]
+id = "EXT-001"
+family = "EXT"
+families = ["d2-external", "d2-sub-ext"]
+level = "C1"
+kind = "admission"
+side = "firecrawl_only"
+match = "http://*:{port}/d2/scope/*2"
+class = "intentional_security"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-external.json, d2-sub-ext.json; `allowExternalLinks` follows one hop; crates/crawlx-policy/src/scope.rs (`leaf_only`)"
+rationale = "With allowExternalLinks Firecrawl follows the links found on external pages as well: sub2, deep2, www2 and ext2 (linked only from pages on other hosts) were fetched, i.e. the crawl continues across hosts until `limit`. crawlx fetches an external page once and treats it as a leaf: its links are not followed, so a crawl cannot walk across third-party sites. d2-sub-ext: crawlx follows subdomain pages (in scope) transitively and differs only on the page behind the external host (`ext2`)."
+user_visible = "allowExternalLinks fetches the external pages a crawled page links to, one hop; the pages those pages link to are not crawled."
+
+[[divergence]]
+id = "LNK-003"
+family = "LINK"
+families = ["d2-scope", "d2-subdomains", "d2-external", "d2-sub-ext"]
+level = "C2"
+kind = "links"
+match = "{origin}/d2/scope"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-scope.json (`<a href=\"#frag\">` on /d2/scope/)"
+rationale = "Firecrawl lists a same-page fragment anchor in links[] as the page's own URL (`/d2/scope/#frag`); crawlx's links[] omits anchors that point into the same document, they are not links to another resource."
+user_visible = "links[] has no entry for `#fragment` anchors of the page itself."
+
+[[divergence]]
+id = "LNK-004"
+family = "LINK"
+families = ["d2-scope", "d2-subdomains", "d2-external", "d2-sub-ext"]
+level = "C2"
+kind = "markdown"
+match = "{origin}/d2/scope"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; LNK-003"
+rationale = "Same cause as LNK-003 in the markdown: the list item for the `#frag` anchor is rendered by Firecrawl (`[Fragment](http://.../d2/scope/#frag)`) and dropped by crawlx."
+user_visible = "see LNK-003."
+
+[[divergence]]
+id = "RED-001"
+family = "REDIR"
+families = ["d2-redir", "d2-redir-external"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/d2/redir/go/*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-redir.json (data[] holds /d2/redir/target once; the access log shows go/301, go/302chain, go/303, go/307, go/308 and go/rel were requested by both systems)"
+rationale = "Both systems follow the redirects, but Firecrawl reports a redirected page under its final URL only and, when that URL was already crawled, not at all (no data[] and no errors[] entry for the redirecting URL); crawlx records each redirecting URL it fetched as a frontier row of its own (deduplicated by content when the target is crawled too). The requested sets (fixture access log) are equal for these URLs."
+user_visible = "total counts every URL fetched, including the URLs that redirect to a page that is also crawled; the redirecting URL has its own entry."
+
+[[divergence]]
+id = "RED-002"
+family = "REDIR"
+families = ["d2-redir", "d2-redir-external"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/d2/redir/target-meta"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; Katana `-jc` discovery mines `<meta http-equiv=refresh>`"
+rationale = "go/meta answers 200 with `<meta http-equiv=\"refresh\" content=\"0; url=/d2/redir/target-meta\">`. crawlx mines the refresh target as a link and fetches it; Firecrawl returns the page itself and never requests the target."
+user_visible = "Pages that only a meta refresh points to are crawled."
+
+[[divergence]]
+id = "RED-003"
+family = "REDIR"
+families = ["d2-redir-external"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "http://other.test:{port}/d2/redir/cross-target"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-redir-external.json (document go/cross has metadata.url http://other.test:.../cross-target)"
+rationale = "With allowExternalLinks the cross-origin redirect of go/cross is followed by both systems; Firecrawl reports the target only as the final URL (`metadata.url`) of the go/cross document, crawlx also lists it as a page of its own (and fetches it a second time, deduplicated by content)."
+user_visible = "see RED-001."
+
+[[divergence]]
+id = "RED-004"
+family = "REDIR"
+families = ["d2-redir", "d2-redir-external"]
+level = "C1"
+kind = "requested"
+side = "firecrawl_only"
+match = "{origin}/d2/redir/*long*"
+class = "intentional_security"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; access log of bench/differential/captures/d2-redir.json (go/long is a chain of 12 redirects: Firecrawl fetched hops 11 and 12 and the target, crawlx stopped with too_many_redirects); crates/crawlx-fetch redirect limit"
+rationale = "crawlx follows at most 10 redirects per fetch and records `too_many_redirects`; Firecrawl followed the 12-hop chain to its end and returned the final page (go/long is a failed row for crawlx). Redirect loops are bounded too: Firecrawl requested /d2/redir/go/loop-a 63 times and loop-b 60 times (access log) before it gave up with SCRAPE_ALL_ENGINES_FAILED, crawlx 6 and 5 times (too_many_redirects)."
+user_visible = "A URL whose redirect chain is longer than 10 hops fails with too_many_redirects."
+
+[[divergence]]
+id = "ROB-001"
+family = "ROBOTS"
+families = ["d2-robots"]
+level = "C1"
+kind = "robots"
+side = "firecrawl_only"
+match = "{origin}/d2/robots/*file.pdf"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-robots.json (robotsBlocked lists /d2/robots/file.pdf and /d2/robots/docs/file.pdf for `Disallow: /d2/robots/*.pdf$`)"
+rationale = "Firecrawl matches the `*.pdf$` wildcard rule and lists the PDF URLs in robotsBlocked. crawlx's default extension filter drops `.pdf` URLs before robots.txt is consulted (frontier row policy_blocked extension_filtered), so they never reach the robots-blocked set; neither system fetches them."
+user_visible = "URLs of filtered file types appear in policyBlocked (extension_filtered), not in robotsBlocked."
+
+[[divergence]]
+id = "ROB-002"
+family = "ROBOTS"
+families = ["d2-robots-404", "d2-robots-403", "d2-robots-ua", "d2-robots-big", "d2-robots-503"]
+level = "C1"
+kind = "admission"
+side = "firecrawl_only"
+match = "{origin}/d2/robots/*file.pdf"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-robots-404.json (no robots rule applies and Firecrawl fetched /d2/robots/file.pdf and /d2/robots/docs/file.pdf)"
+rationale = "Firecrawl fetches PDF URLs (it parses them as documents); crawlx's default extension filter never fetches `.pdf` (policy_blocked extension_filtered)."
+user_visible = "PDF links are not fetched by crawls; use /parse for documents."
+
+[[divergence]]
+id = "ROB-003"
+family = "ROBOTS"
+families = ["d2-robots-big"]
+level = "C1"
+kind = "robots"
+side = "firecrawl_only"
+match = "{origin}/d2/robots/late-blocked"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-robots-big.json (robots.txt of 580 KB, `Disallow: /d2/robots/late-blocked` after byte 520000); RFC 9309 section 2.5 (a crawler MUST parse at least 500 KiB)"
+rationale = "Firecrawl applies the whole robots.txt: the rule after byte 520000 blocks /d2/robots/late-blocked (robotsBlocked), while `early-blocked` is blocked by both. crawlx reads at most 500 KiB of robots.txt (RFC 9309 limit) and ignores the rest, so the late rule does not apply and the page is fetched."
+user_visible = "Rules after the first 500 KiB of a robots.txt are not honored."
+
+[[divergence]]
+id = "ROB-004"
+family = "ROBOTS"
+families = ["d2-robots-big"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/d2/robots/late-blocked"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; ROB-003"
+rationale = "Consequence of ROB-003: crawlx fetches the page its 500 KiB limit leaves open."
+user_visible = "see ROB-003."
+
+[[divergence]]
+id = "ROB-005"
+family = "ROBOTS"
+families = ["d2-robots-503"]
+level = "C1"
+kind = "admission"
+side = "firecrawl_only"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-robots-503.json (robots.txt answered 503; Firecrawl fetched every page); RFC 9309 section 2.3.1.4"
+rationale = "A robots.txt that answers 5xx is `unreachable`: RFC 9309 tells a crawler to assume complete disallow. crawlx does (the seed is a robots_blocked row, nothing is fetched); Firecrawl behaves as if there were no robots.txt and crawls the whole site."
+user_visible = "A site whose robots.txt answers a server error is not crawled until the robots.txt is reachable."
+
+[[divergence]]
+id = "ROB-006"
+family = "ROBOTS"
+families = ["d2-robots-503"]
+level = "C1"
+kind = "robots"
+side = "crawlx_only"
+match = "{origin}/d2/robots"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; ROB-005"
+rationale = "The seed itself is robots_blocked under crawlx's complete-disallow reading of an unreachable robots.txt."
+user_visible = "see ROB-005."
+
+[[divergence]]
+id = "ROB-007"
+family = "ROBOTS"
+families = ["d2-robots-ua"]
+level = "C1"
+kind = "robots"
+side = "firecrawl_only"
+match = "{origin}/d2/robots/fc-only"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-robots-ua.json (groups `*`, `FirecrawlAgent`, `crawlx`); RFC 9309 section 2.2.1"
+rationale = "Both systems use only the most specific robots.txt group for their own product token and ignore the `*` group when one matches: Firecrawl is `FirecrawlAgent` (it blocks fc-only), crawlx is `crawlx` (it blocks cx-only). The two tokens differ by design."
+user_visible = "A robots.txt group addressed to `FirecrawlAgent` does not apply to crawlx; address `crawlx` (or set robotsUserAgent)."
+
+[[divergence]]
+id = "ROB-008"
+family = "ROBOTS"
+families = ["d2-robots-ua"]
+level = "C1"
+kind = "robots"
+side = "crawlx_only"
+match = "{origin}/d2/robots/cx-only"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; ROB-007"
+rationale = "The crawlx group blocks cx-only for crawlx, not for Firecrawl."
+user_visible = "see ROB-007."
+
+[[divergence]]
+id = "ROB-009"
+family = "ROBOTS"
+families = ["d2-robots-ua"]
+level = "C1"
+kind = "admission"
+side = "crawlx_only"
+match = "{origin}/d2/robots/fc-only"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; ROB-007"
+rationale = "crawlx fetches fc-only, which only the FirecrawlAgent group blocks."
+user_visible = "see ROB-007."
+
+[[divergence]]
+id = "ROB-010"
+family = "ROBOTS"
+families = ["d2-robots-ua"]
+level = "C1"
+kind = "admission"
+side = "firecrawl_only"
+match = "{origin}/d2/robots/cx-only"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; ROB-007"
+rationale = "Firecrawl fetches cx-only, which only the crawlx group blocks."
+user_visible = "see ROB-007."
+
+[[divergence]]
+id = "CNT-003"
+family = "CNT"
+families = ["d2-redir", "d2-redir-external"]
+level = "C3"
+kind = "counter"
+match = "total"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/d2-redir.json (total 5 = the 5 data[] documents; errors[] holds go/loop-a SCRAPE_ALL_ENGINES_FAILED, go/blocked and go/cross CRAWL_DENIAL)"
+rationale = "Firecrawl's total counts the scrape jobs that returned a document; a URL that ends in an errors[] entry of a redirect denial or a failed fetch (CRAWL_DENIAL, SCRAPE_ALL_ENGINES_FAILED) is not counted. crawlx's total is the number of URLs it fetched (attempted), including those that failed or whose redirect was denied; the difference is these URLs on top of the documented admission differences."
+user_visible = "total includes URLs whose fetch failed on a redirect (too_many_redirects) or whose redirect target was denied."
+
+[[divergence]]
+id = "CNT-004"
+family = "CNT"
+families = ["d2-redir-external"]
+level = "C3"
+kind = "counter"
+match = "completed"
+class = "intentional_security"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; RED-004"
+rationale = "go/long is attempted by both systems but completes only for Firecrawl (12-hop redirect chain; crawlx stops at 10 hops with too_many_redirects), which shifts completed by one on top of the documented admission differences."
+user_visible = "see RED-004."
+
+# ---- wire families (2026-10-29; `crawlx-differential wire`, bench/differential/wire-scenarios.json) ----
+# kind `behavior`: `match` is `<scenario>/<observation>`, `|` separates alternatives, `*` globs. A
+# `scenario/*` entry documents every observation of the scenario (decision, codes, settle step).
+
+[[divergence]]
+id = "VAL-001"
+family = "VAL"
+families = ["wire-val", "wire-prec"]
+level = "C0"
+kind = "behavior"
+match = "unknown-key/*|allow-backward-links-v1/*|max-depth-v1/*|ignore-sitemap-v1/*|crawler-options-v1-shape/*|canonical-over-alias/*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-val.json (`400 unrecognized_keys`: bogusKey, allowBackwardLinks, maxDepth, ignoreSitemap, crawlerOptions); v1 request aliases, crates/crawlx-api/src/routes/compat_crawl.rs `resolve_aliases`"
+rationale = "Firecrawl v2 rejects every key it does not know, including the v1 spellings. The crawlx facade keeps v1 clients working: v1 aliases are read with a deprecation warning, any other unknown key is ignored with an `unsupported_option` warning in the 200 body."
+user_visible = "A request with a v1 option or a misspelled key is accepted (with a warning in `warnings[]`) instead of rejected with 400."
+
+[[divergence]]
+id = "VAL-002"
+family = "VAL"
+families = ["wire-val"]
+level = "C0"
+kind = "behavior"
+match = "limit-null/*|sitemap-null/*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-val.json (`limit: null`, `sitemap: null` answer 400 invalid_type / invalid_value)"
+rationale = "An explicit JSON `null` is an absent option for the crawlx facade (the SDKs of other languages serialize unset options as null); Firecrawl's schema rejects it."
+user_visible = "`null` option values are accepted and mean the default."
+
+[[divergence]]
+id = "VAL-003"
+family = "VAL"
+families = ["wire-val"]
+level = "C0"
+kind = "behavior"
+match = "delay-zero/*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-val.json (`delay: 0` is 400 `Too small: expected number to be >0`)"
+rationale = "Firecrawl requires `delay` > 0; crawlx treats 0 as no politeness delay."
+user_visible = "`delay: 0` is accepted."
+
+[[divergence]]
+id = "VAL-004"
+family = "VAL"
+families = ["wire-val", "wire-clamp"]
+level = "C0"
+kind = "behavior"
+match = "limit-fractional/*|limit-negative/*|limit-zero/*|limit-beyond-int32/*|max-depth-fractional/*|max-depth-negative/*|max-depth-huge/*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-val.json, wire-clamp.json (limit -1 / 0 crawl one page, 1.5 and 99999999999 are accepted; maxDiscoveryDepth -3, 1.5 and 100000 are accepted); crates/crawlx-api/src/routes/compat_crawl.rs `Cx::uint`"
+rationale = "Firecrawl accepts out-of-range, negative and fractional `limit` / `maxDiscoveryDepth` and coerces them silently (a limit of 0 or less crawls the seed only; a huge limit or depth is unbounded). The crawlx facade validates the range (`limit` 1..=4294967295, `maxDiscoveryDepth` 0..=65535, integers only) and answers 400 with the offending path; values inside the range above the plan maximum are clamped with a `limit_clamped` warning (see wire-clamp `limit-huge`)."
+user_visible = "A negative, zero or fractional `limit`/`maxDiscoveryDepth`, or one beyond the 32-bit (16-bit) range, is a 400 instead of a silent coercion."
+
+[[divergence]]
+id = "VAL-005"
+family = "VAL"
+families = ["wire-val"]
+level = "C0"
+kind = "behavior"
+match = "url-loopback/*|url-metadata-address/*"
+class = "intentional_security"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5 with ALLOW_LOCAL_WEBHOOKS=true (docker-compose.firecrawl.yaml: the harness must let the self-host fetch the gym on the host); recorded, not required to match"
+rationale = "The reference accepts a loopback and a link-local metadata address as the crawl seed because the harness opens its private-address guard for the gym; crawlx always denies them at admission (`url_denied`, `UNSUPPORTED_SITE`)."
+user_visible = "Seeds that resolve to loopback, link-local or metadata addresses are refused with 403."
+
+[[divergence]]
+id = "PREC-001"
+family = "PREC"
+families = ["wire-prec"]
+level = "C0"
+kind = "behavior"
+match = "prompt-only/*|prompt-explicit-include/*"
+class = "reference_unavailable"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-prec.json (`400 Failed to process natural language prompt`: the self-host has no LLM provider)"
+rationale = "A crawl `prompt` needs an LLM provider; the harness's self-host has none, so Firecrawl refuses the request before any precedence can be observed. The crawlx facade accepts the request without a model and applies the explicit options (`prompt-explicit-include` crawls only `/d2/tiny/a`: explicit `includePaths` are not overridden)."
+
+[[divergence]]
+id = "CLAMP-001"
+family = "CLAMP"
+families = ["wire-clamp"]
+level = "C0"
+kind = "behavior"
+match = "max-concurrency-huge/request.warning"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-clamp.json (`maxConcurrency: 100000` is accepted without any warning); crawlx clamps with a visible warning"
+rationale = "Both systems accept an oversized maxConcurrency and crawl the whole site. The crawlx facade clamps it to 256 and says so in `warnings[]` (`limit_clamped`); the 200 body of Firecrawl carries no warning."
+user_visible = "`warnings[]` of the crawl request names a clamped option."
+
+[[divergence]]
+id = "CAN-001"
+family = "CANCEL"
+families = ["wire-cancel"]
+level = "C3"
+kind = "behavior"
+match = "cancel-finished/after:cancel.code|cancel-immediately/after:status.warning"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-cancel.json (cancel of a completed crawl: 409 `Crawl is already completed` without a `code`; the status body of a cancelled crawl carries a robots `warning` string)"
+rationale = "Both answer 409 to the cancel of a finished crawl; crawlx adds the machine-readable `code: invalid_state` and carries no robots warning string in the status body."
+user_visible = "The 409 body has a `code`."
+
+[[divergence]]
+id = "CAN-002"
+family = "CANCEL"
+families = ["wire-cancel", "wire-webhook"]
+level = "C3"
+kind = "behavior"
+match = "cancel-mid-crawl/final.*|cancelled-crawl/final.*"
+class = "unsupported_feature"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-cancel.json (cancel once `completed` reached 3 on the 41-page slow site: 4 documents, total 41); crates/crawlx-worker/src/url_plane.rs (`persist_counters` once per leased batch)"
+rationale = "Firecrawl's `completed` moves per page, so a cancel issued when it reads 3 stops the crawl after 4 documents. crawlx persists the URL-plane counters once per leased batch: `completed` jumps from 0 to the batch size, the cancel lands after the first batch (17 documents, total 17). The cancel itself works: the crawl is `cancelled`, a second cancel is idempotent and the gym sees no page request after it (`quiet` is equal; before this run's fix of `process_batch` the facade kept fetching its batch, 12 requests)."
+user_visible = "`completed`/`total` of a running crawl advance in leased batches, so a cancel acts at a batch boundary."
+
+[[divergence]]
+id = "ZDR-001"
+family = "ZDR"
+families = ["wire-zdr"]
+level = "C3"
+kind = "behavior"
+match = "zdr-true/*|zdr-scrape/*"
+class = "reference_unavailable"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-zdr.json (`403 Zero Data Retention (ZDR) is not enabled for your team`: the flag is a team entitlement of the hosted service, absent without database authentication)"
+rationale = "The database-less self-host has no team flags, so Firecrawl refuses every `zeroDataRetention: true` request before a crawl exists; no purge behavior can be observed on the reference. crawlx accepts it, runs the crawl with `retention.mode: zdr` and serves the pages once through the delivery buffer (crates/crawlx-api/tests/api_zdr.rs). `zdr-false` and `zdr-string` agree. The scrape of `zdr-scrape` fails for the in-process rig (the facade's inline scrape resolves `gym.test` with the system resolver), which the reference never reached."
+
+[[divergence]]
+id = "VAL-006"
+family = "VAL"
+families = ["wire-val"]
+level = "C0"
+kind = "behavior"
+match = "body-string/request.code|malformed-json/request.code|cancel-unknown-id/request.code|errors-unknown-id/request.code|status-unknown-id/request.code|status-malformed-id/*|ignore-robots-txt/request.code|url-credentials/*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-val.json; Firecrawl error codes"
+rationale = "Both systems reach the same accept/reject decision for these requests (a non-JSON or non-object body, an unknown or malformed crawl id, an entitlement-gated option, credentials in the URL). The error vocabulary differs: Firecrawl answers `BAD_REQUEST_INVALID_JSON`, a `400` for a malformed id and a code-less body for an unknown crawl; crawlx answers `malformed_request`, `404 not_found`, `ROBOTS_OVERRIDE_NOT_AUTHORIZED` and, for a URL with credentials, an admission denial (`403 UNSUPPORTED_SITE`, path `/seedUrl`) instead of `400`."
+user_visible = "Error `code` strings and the HTTP status of some rejections differ; the success/failure decision is the same."
+
+[[divergence]]
+id = "VAL-007"
+family = "VAL"
+families = ["wire-val"]
+level = "C0"
+kind = "behavior"
+match = "webhook-nondefault-port/*"
+class = "intentional_security"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5 with ALLOW_LOCAL_WEBHOOKS=true (docker-compose.firecrawl.yaml); crates/crawlx-policy EgressPolicy (default ports only)"
+rationale = "Firecrawl accepts a webhook destination on any port; crawlx admission allows only the default ports 80/443 for webhook URLs (`url_denied`, `port not allowed`), a guard against probing internal services through webhook delivery."
+user_visible = "A webhook URL with a non-default port is refused with 400."
+
+[[divergence]]
+id = "WH-001"
+family = "WH"
+families = ["wire-webhook"]
+level = "C3"
+kind = "behavior"
+match = "basic/webhook.terminal_events|basic/webhook.types|events-completed-only/webhook.*|cancelled-crawl/webhook.terminal_events|cancelled-crawl/webhook.types"
+class = "reference_unavailable"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-webhook.json (sink received `crawl.started` and every `crawl.page` but no `crawl.completed` within 5 s of the crawl's terminal status; with `events: [\"completed\"]` nothing arrived)"
+rationale = "The database-less self-host of the harness delivered the started and page events and no terminal `crawl.completed` event within the observation window (5 s after the terminal status; 45 s in the retry scenario); the cause was not isolated [INFERENCE: the completion event is sent by a worker path that needs the team/database record this self-host lacks]. crawlx delivers `crawl.started`, one `crawl.page` per document and exactly one `crawl.completed`."
+user_visible = "crawlx emits exactly one terminal webhook event per crawl."
+
+[[divergence]]
+id = "WH-002"
+family = "WH"
+families = ["wire-webhook"]
+level = "C3"
+kind = "behavior"
+match = "retry-after-failure/*"
+class = "intentional_correctness"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-webhook.json (sink answered 500 to the first two deliveries, `crawl.started` and the first `crawl.page`: neither was delivered again); delivery retried with backoff"
+rationale = "Firecrawl did not redeliver the two events the sink refused (they are missing from the stream). crawlx keeps them in the outbox and delivers them again on its retry schedule (10 s, 30 s, 2 min, ...; at most 8 attempts), so the stream carries the refused events a second time, after the events that succeeded."
+user_visible = "Failed webhook deliveries are retried with backoff; a receiver must tolerate a late repeat of an event it refused (`webhookId` is stable per delivery)."
+
+[[divergence]]
+id = "WH-003"
+family = "WH"
+families = ["wire-webhook"]
+level = "C3"
+kind = "behavior"
+match = "*/webhook.deliveries|*/webhook.envelope.*|*/webhook.signature_headers|*/webhook.success_flag|*/webhook.content_type"
+class = "unsupported_feature"
+source = "black-box run 2026-10-29 against Firecrawl c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-webhook.json (headers of a delivery: accept, accept-language, content-type, sec-fetch-mode, user-agent `undici`; body keys data, id, metadata, success, type, webhookId)"
+rationale = "Soft observables that follow from WH-001 and WH-002 or from configuration: the delivery counts, the envelope of the `crawl.completed` event Firecrawl did not send, and the signature header (`x-firecrawl-signature`: crawlx signs with the configured webhook secret, the self-host had none configured so it sends no signature). The page events agree: same keys (`data`, `id`, `metadata`, `success`, `type`, `webhookId`), one document per `crawl.page`, metadata and custom headers echoed."
+user_visible = "Deliveries carry `x-firecrawl-signature` when a webhook secret is configured."

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g20 shared workspace</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  nav, form { border: 1px solid #ccd; padding: 10px; margin: 0 0 12px; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #ccd; padding: 6px 10px; text-align: left; }
+  button { margin: 2px; }
+  label { margin-right: 8px; }
+</style>
+</head>
+<body>
+<h1>Invoices</h1>
+<p>Signed in as <strong id="who">anonymous</strong>. Last: <span id="out">none</span></p>
+<nav aria-label="Principals">
+  <button id="login-alice" type="button">Sign in as Alice (member)</button>
+  <button id="login-bob" type="button">Sign in as Bob (member)</button>
+  <button id="login-admin" type="button">Sign in as Admin</button>
+  <button id="logout" type="button">Sign out</button>
+</nav>
+<form id="create-form" aria-label="New invoice">
+  <label for="new-title">Title</label>
+  <input id="new-title" name="title" type="text" autocomplete="off">
+  <label for="new-visibility">Visibility</label>
+  <select id="new-visibility" name="visibility">
+    <option value="private">Private</option>
+    <option value="shared">Shared</option>
+  </select>
+  <button id="create" type="submit">Create invoice</button>
+</form>
+<table aria-label="Invoices">
+  <thead><tr><th>Invoice</th><th>Owner</th><th>Visibility</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  function login(user) {
+    return fetch('/g20/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'user=' + user + '&password=gym-pass'
+    }).then(function () { return refresh(); });
+  }
+  function refresh() {
+    return __gym.api('GET', 'invoices').then(function (j) {
+      $('who').textContent = j.user || 'anonymous';
+      var tb = $('rows');
+      tb.textContent = '';
+      (j.invoices || []).forEach(function (inv) {
+        var tr = document.createElement('tr');
+        tr.id = 'row-' + inv.id;
+        tr.innerHTML = '<td><a id="view-' + inv.id + '" href="/g20/invoice.html?id=' + inv.id + '">' + inv.title + '</a></td>' +
+          '<td>' + inv.owner + '</td><td>' + inv.visibility + '</td><td class="st">' + inv.status + '</td>' +
+          '<td><button id="edit-' + inv.id + '" type="button">Mark paid</button>' +
+          '<button id="comment-' + inv.id + '" type="button">Comment</button>' +
+          '<button id="delete-' + inv.id + '" type="button">Delete</button></td>';
+        tb.appendChild(tr);
+        $('view-' + inv.id).addEventListener('click', function (ev) { __gym.hit('view-' + inv.id, ev); });
+        $('edit-' + inv.id).addEventListener('click', function (ev) {
+          __gym.hit('edit-' + inv.id, ev);
+          __gym.api('PUT', 'invoices/' + inv.id, { status: 'paid' }).then(function (r) { out.textContent = 'edit:' + inv.id + ':' + (r.ok ? r.context : 'denied'); refresh(); });
+        });
+        $('comment-' + inv.id).addEventListener('click', function (ev) {
+          __gym.hit('comment-' + inv.id, ev);
+          __gym.api('POST', 'invoices/' + inv.id + '/comments', { text: 'Reviewed by ' + ($('who').textContent) }).then(function (r) { out.textContent = 'comment:' + inv.id + ':' + (r.ok ? r.context : 'denied'); });
+        });
+        $('delete-' + inv.id).addEventListener('click', function (ev) {
+          __gym.hit('delete-' + inv.id, ev);
+          __gym.api('DELETE', 'invoices/' + inv.id).then(function (r) { out.textContent = 'delete:' + inv.id + ':' + (r.ok ? r.context : 'denied'); refresh(); });
+        });
+      });
+    });
+  }
+  ['alice', 'bob', 'admin'].forEach(function (u) {
+    $('login-' + u).addEventListener('click', function (ev) { __gym.hit('login-' + u, ev); login(u); });
+  });
+  $('logout').addEventListener('click', function (ev) { __gym.hit('logout', ev); __gym.api('POST', 'logout').then(refresh); });
+  ['new-title', 'new-visibility'].forEach(function (id) { $(id).addEventListener('focus', function (ev) { __gym.hit(id, ev); }); });
+  $('create').addEventListener('click', function (ev) { __gym.hit('create', ev); });
+  $('create-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    __gym.api('POST', 'invoices', { title: $('new-title').value || 'Untitled', visibility: $('new-visibility').value })
+      .then(function (r) { out.textContent = r.ok ? 'created:' + r.id : 'create denied'; refresh(); });
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,548 @@
+{
+  "success": true,
+  "status": "completed",
+  "total": 34,
+  "completed": 32,
+  "creditsUsed": 34,
+  "expiresAt": "2026-10-17T02:00:00.000Z",
+  "next": null,
+  "data": [
+    {
+      "markdown": "Gym Static Site: a static page of the CrawlerGym s1 site.\n\n- [About](http://gym.test/s1/about/)\n- [Contact](http://gym.test/s1/contact/)\n- [Team](http://gym.test/s1/team/)\n- [Careers](http://gym.test/s1/careers/)\n- [Pricing](http://gym.test/s1/pricing/)\n- [Blog](http://gym.test/s1/blog/)\n- [Docs](http://gym.test/s1/docs/)\n- [Products](http://gym.test/s1/products/)\n- [About (newsletter)](http://gym.test/s1/about?utm_source=newsletter)\n- [Blog (no slash)](http://gym.test/s1/blog)\n- [Docs (campaign)](http://gym.test/s1/docs/?utm_medium=email&utm_campaign=spring)\n- [Partner](https://external.example/partner)\n- [Example](https://www.example.org/)\n- [Single page app](http://gym.test/d1/)\n- [Private area](http://gym.test/s1/private/)\n- [Missing page](http://gym.test/s1/missing)\n- [Broken page](http://gym.test/s1/error)\n",
+      "links": [
+        "http://gym.test/s1/about/",
+        "http://gym.test/s1/contact/",
+        "http://gym.test/s1/team/",
+        "http://gym.test/s1/careers/",
+        "http://gym.test/s1/pricing/",
+        "http://gym.test/s1/blog/",
+        "http://gym.test/s1/docs/",
+        "http://gym.test/s1/products/",
+        "http://gym.test/s1/about?utm_source=newsletter",
+        "http://gym.test/s1/blog",
+        "http://gym.test/s1/docs/?utm_medium=email&utm_campaign=spring",
+        "https://external.example/partner",
+        "https://www.example.org/",
+        "http://gym.test/d1/",
+        "http://gym.test/s1/private/",
+        "http://gym.test/s1/missing",
+        "http://gym.test/s1/error"
+      ],
+      "metadata": {
+        "title": "Gym Static Site",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/",
+        "url": "http://gym.test/s1/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "About: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Team](http://gym.test/s1/team/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/team/"
+      ],
+      "metadata": {
+        "title": "About",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/about/",
+        "url": "http://gym.test/s1/about/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Contact: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [About our team](http://gym.test/s1/about/#team)\n- [Email us](mailto:hello@gym.test)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/about/#team"
+      ],
+      "metadata": {
+        "title": "Contact",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/contact/",
+        "url": "http://gym.test/s1/contact/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Team: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Careers](http://gym.test/s1/careers/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/careers/"
+      ],
+      "metadata": {
+        "title": "Team",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/team/",
+        "url": "http://gym.test/s1/team/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Careers: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Careers",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/careers/",
+        "url": "http://gym.test/s1/careers/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Pricing: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Products](http://gym.test/s1/products/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/products/"
+      ],
+      "metadata": {
+        "title": "Pricing",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/pricing/",
+        "url": "http://gym.test/s1/pricing/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Blog: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Post 1](http://gym.test/s1/blog/post-1/)\n- [Post 2](http://gym.test/s1/blog/post-2/)\n- [Post 3](http://gym.test/s1/blog/post-3/)\n- [Post 4](http://gym.test/s1/blog/post-4/)\n- [Post 5](http://gym.test/s1/blog/post-5/)\n- [Post 6](http://gym.test/s1/blog/post-6/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/blog/post-1/",
+        "http://gym.test/s1/blog/post-2/",
+        "http://gym.test/s1/blog/post-3/",
+        "http://gym.test/s1/blog/post-4/",
+        "http://gym.test/s1/blog/post-5/",
+        "http://gym.test/s1/blog/post-6/"
+      ],
+      "metadata": {
+        "title": "Blog",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/blog/",
+        "url": "http://gym.test/s1/blog/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Post 1: a static page of the CrawlerGym s1 site.\n\n- [Back to the blog](http://gym.test/s1/blog/)\n- [Next post](http://gym.test/s1/blog/post-2/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/blog/",
+        "http://gym.test/s1/blog/post-2/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Post 1",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/blog/post-1/",
+        "url": "http://gym.test/s1/blog/post-1/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Post 2: a static page of the CrawlerGym s1 site.\n\n- [Back to the blog](http://gym.test/s1/blog/)\n- [Next post](http://gym.test/s1/blog/post-3/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/blog/",
+        "http://gym.test/s1/blog/post-3/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Post 2",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/blog/post-2/",
+        "url": "http://gym.test/s1/blog/post-2/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Post 3: a static page of the CrawlerGym s1 site.\n\n- [Back to the blog](http://gym.test/s1/blog/)\n- [Next post](http://gym.test/s1/blog/post-4/)\n- [Home](http://gym.test/s1/)\n- [Leaked draft](http://gym.test/s1/private/secret)\n",
+      "links": [
+        "http://gym.test/s1/blog/",
+        "http://gym.test/s1/blog/post-4/",
+        "http://gym.test/s1/",
+        "http://gym.test/s1/private/secret"
+      ],
+      "metadata": {
+        "title": "Post 3",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/blog/post-3/",
+        "url": "http://gym.test/s1/blog/post-3/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Post 4: a static page of the CrawlerGym s1 site.\n\n- [Back to the blog](http://gym.test/s1/blog/)\n- [Next post](http://gym.test/s1/blog/post-5/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/blog/",
+        "http://gym.test/s1/blog/post-5/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Post 4",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/blog/post-4/",
+        "url": "http://gym.test/s1/blog/post-4/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Post 5: a static page of the CrawlerGym s1 site.\n\n- [Back to the blog](http://gym.test/s1/blog/)\n- [Next post](http://gym.test/s1/blog/post-6/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/blog/",
+        "http://gym.test/s1/blog/post-6/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Post 5",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/blog/post-5/",
+        "url": "http://gym.test/s1/blog/post-5/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Post 6: a static page of the CrawlerGym s1 site.\n\n- [Back to the blog](http://gym.test/s1/blog/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/blog/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Post 6",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/blog/post-6/",
+        "url": "http://gym.test/s1/blog/post-6/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Documentation: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Introduction](http://gym.test/s1/docs/intro/)\n- [Guide](http://gym.test/s1/docs/guide/)\n- [API](http://gym.test/s1/docs/api/)\n- [FAQ](http://gym.test/s1/docs/faq/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/docs/intro/",
+        "http://gym.test/s1/docs/guide/",
+        "http://gym.test/s1/docs/api/",
+        "http://gym.test/s1/docs/faq/"
+      ],
+      "metadata": {
+        "title": "Documentation",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/docs/",
+        "url": "http://gym.test/s1/docs/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Introduction: a static page of the CrawlerGym s1 site.\n\n- [Docs index](http://gym.test/s1/docs/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/docs/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Introduction",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/docs/intro/",
+        "url": "http://gym.test/s1/docs/intro/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Guide: a static page of the CrawlerGym s1 site.\n\n- [Docs index](http://gym.test/s1/docs/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/docs/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Guide",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/docs/guide/",
+        "url": "http://gym.test/s1/docs/guide/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "API: a static page of the CrawlerGym s1 site.\n\n- [Docs index](http://gym.test/s1/docs/)\n- [Home](http://gym.test/s1/)\n- [Guide (from API)](http://gym.test/s1/docs/guide/?utm_source=api)\n",
+      "links": [
+        "http://gym.test/s1/docs/",
+        "http://gym.test/s1/",
+        "http://gym.test/s1/docs/guide/?utm_source=api"
+      ],
+      "metadata": {
+        "title": "API",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/docs/api/",
+        "url": "http://gym.test/s1/docs/api/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "FAQ: a static page of the CrawlerGym s1 site.\n\n- [Docs index](http://gym.test/s1/docs/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/docs/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "FAQ",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/docs/faq/",
+        "url": "http://gym.test/s1/docs/faq/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Products: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Alpha](http://gym.test/s1/products/alpha/)\n- [Beta](http://gym.test/s1/products/beta/)\n- [Gamma](http://gym.test/s1/products/gamma/)\n- [Delta](http://gym.test/s1/products/delta/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/products/alpha/",
+        "http://gym.test/s1/products/beta/",
+        "http://gym.test/s1/products/gamma/",
+        "http://gym.test/s1/products/delta/"
+      ],
+      "metadata": {
+        "title": "Products",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/products/",
+        "url": "http://gym.test/s1/products/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "alpha: a static page of the CrawlerGym s1 site.\n\n- [All products](http://gym.test/s1/products/)\n- [Home](http://gym.test/s1/)\n- [Beta (cross-sell)](http://gym.test/s1/products/beta/?utm_source=cross)\n",
+      "links": [
+        "http://gym.test/s1/products/",
+        "http://gym.test/s1/",
+        "http://gym.test/s1/products/beta/?utm_source=cross"
+      ],
+      "metadata": {
+        "title": "alpha",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/products/alpha/",
+        "url": "http://gym.test/s1/products/alpha/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "beta: a static page of the CrawlerGym s1 site.\n\n- [All products](http://gym.test/s1/products/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/products/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "beta",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/products/beta/",
+        "url": "http://gym.test/s1/products/beta/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "gamma: a static page of the CrawlerGym s1 site.\n\n- [All products](http://gym.test/s1/products/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/products/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "gamma",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/products/gamma/",
+        "url": "http://gym.test/s1/products/gamma/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "delta: a static page of the CrawlerGym s1 site.\n\n- [All products](http://gym.test/s1/products/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/products/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "delta",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/products/delta/",
+        "url": "http://gym.test/s1/products/delta/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Archive 1: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Archive 1",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/archive/y1/",
+        "url": "http://gym.test/s1/archive/y1/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Archive 2: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Archive 2",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/archive/y2/",
+        "url": "http://gym.test/s1/archive/y2/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Archive 3: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Archive 3",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/archive/y3/",
+        "url": "http://gym.test/s1/archive/y3/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Archive 4: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Archive 4",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/archive/y4/",
+        "url": "http://gym.test/s1/archive/y4/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Archive 5: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Archive 5",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/archive/y5/",
+        "url": "http://gym.test/s1/archive/y5/",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "About: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Team](http://gym.test/s1/team/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/team/"
+      ],
+      "metadata": {
+        "title": "About",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/about?utm_source=newsletter",
+        "url": "http://gym.test/s1/about?utm_source=newsletter",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Documentation: a static page of the CrawlerGym s1 site.\n\n- [Home](http://gym.test/s1/)\n- [Introduction](http://gym.test/s1/docs/intro/)\n- [Guide](http://gym.test/s1/docs/guide/)\n- [API](http://gym.test/s1/docs/api/)\n- [FAQ](http://gym.test/s1/docs/faq/)\n",
+      "links": [
+        "http://gym.test/s1/",
+        "http://gym.test/s1/docs/intro/",
+        "http://gym.test/s1/docs/guide/",
+        "http://gym.test/s1/docs/api/",
+        "http://gym.test/s1/docs/faq/"
+      ],
+      "metadata": {
+        "title": "Documentation",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/docs/?utm_medium=email&utm_campaign=spring",
+        "url": "http://gym.test/s1/docs/?utm_medium=email&utm_campaign=spring",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "Guide: a static page of the CrawlerGym s1 site.\n\n- [Docs index](http://gym.test/s1/docs/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/docs/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "Guide",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/docs/guide/?utm_source=api",
+        "url": "http://gym.test/s1/docs/guide/?utm_source=api",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "markdown": "beta: a static page of the CrawlerGym s1 site.\n\n- [All products](http://gym.test/s1/products/)\n- [Home](http://gym.test/s1/)\n",
+      "links": [
+        "http://gym.test/s1/products/",
+        "http://gym.test/s1/"
+      ],
+      "metadata": {
+        "title": "beta",
+        "language": "en",
+        "sourceURL": "http://gym.test/s1/products/beta/?utm_source=cross",
+        "url": "http://gym.test/s1/products/beta/?utm_source=cross",
+        "statusCode": 200,
+        "contentType": "text/html; charset=utf-8"
+      }
+    }
+  ],
+  "errors": {
+    "errors": [
+      {
+        "id": "e1",
+        "timestamp": "2026-10-16T02:00:01.000Z",
+        "url": "http://gym.test/s1/missing",
+        "code": "SCRAPE_HTTP_ERROR",
+        "error": "HTTP 404"
+      },
+      {
+        "id": "e2",
+        "timestamp": "2026-10-16T02:00:02.000Z",
+        "url": "http://gym.test/s1/error",
+        "code": "SCRAPE_HTTP_ERROR",
+        "error": "HTTP 500"
+      }
+    ],
+    "robotsBlocked": [
+      "http://gym.test/s1/private/",
+      "http://gym.test/s1/private/secret"
+    ]
+  },
+  "crawlxSample": {
+    "provenance": "authored_sample",
+    "note": "Authored from the s1 fixture manifest semantics (crates/crawlx-bench/fixtures/s1, keep_all query handling); not a black-box capture. bench/differential/run.sh overwrites it with a real export from the pinned Firecrawl commit when the nightly job runs."
+  }
+}

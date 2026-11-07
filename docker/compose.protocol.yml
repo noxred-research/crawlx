@@ -1,0 +1,16 @@
+# Reviewed registry and credentials stay outside Compose values and container arguments.
+services:
+  worker:
+    environment:
+      CRAWLX_PROTOCOL_REGISTRY: /run/secrets/protocol_registry.json
+    secrets:
+      - { source: protocol_registry, target: protocol_registry.json }
+    volumes:
+      - type: bind
+        source: ${CRAWLX_PROTOCOL_CREDENTIALS_DIR:?set CRAWLX_PROTOCOL_CREDENTIALS_DIR to an operator-owned credentials directory}
+        target: /run/secrets/crawlx-protocol
+        read_only: true
+        bind: { create_host_path: false }
+secrets:
+  protocol_registry:
+    file: ${CRAWLX_PROTOCOL_REGISTRY:?set CRAWLX_PROTOCOL_REGISTRY to a reviewed registry JSON file}

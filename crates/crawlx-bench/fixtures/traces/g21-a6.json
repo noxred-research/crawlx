@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "fixture": "g21",
+  "seed": 11,
+  "variant": "A6",
+  "steps": [
+    {
+      "snapshot": {
+        "url": "http://gym.test/g21/",
+        "title": "Conjunctive preconditions",
+        "controls": [
+          {
+            "context_id": "2f2d4cc540fce001fb84825ad6847df0",
+            "identity": "5e3b84b7ddee5d4e7cea84b16d37c8843e889badfea58f7e0b4b7c9209afa72d",
+            "family": "button|",
+            "control": "x1",
+            "role": "button",
+            "name": "First prerequisite"
+          },
+          {
+            "context_id": "c18403fa3e450d5ccec22579795578a3",
+            "identity": "a2aef21082354a128e432e134557243f907dfe62c16da2873b91c93b782c45dc",
+            "family": "button|",
+            "control": "x2",
+            "role": "button",
+            "name": "Second prerequisite"
+          },
+          {
+            "context_id": "2ae21b9a532f37d7865e06500783242f",
+            "identity": "8844b257b0e30ed988b4656134b7a6a1315098768abc86c0ef37e85546f08e3f",
+            "family": "button|",
+            "control": "a",
+            "role": "button",
+            "name": "Open A"
+          },
+          {
+            "context_id": "2480fa90e65527905512f8ce2450b808",
+            "identity": "d1c1f845bcf505597e2c4782be1ac1d36f0365f93ee9cc3b252b4eb5e44e896b",
+            "family": "button|",
+            "control": "z",
+            "role": "button",
+            "name": "Decoy Z"
+          }
+        ]
+      },
+      "chosen": "2480fa90e65527905512f8ce2450b808",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g21/",
+        "title": "Conjunctive preconditions",
+        "controls": [
+          {
+            "context_id": "2f2d4cc540fce001fb84825ad6847df0",
+            "identity": "5e3b84b7ddee5d4e7cea84b16d37c8843e889badfea58f7e0b4b7c9209afa72d",
+            "family": "button|",
+            "control": "x1",
+            "role": "button",
+            "name": "First prerequisite"
+          },
+          {
+            "context_id": "c18403fa3e450d5ccec22579795578a3",
+            "identity": "a2aef21082354a128e432e134557243f907dfe62c16da2873b91c93b782c45dc",
+            "family": "button|",
+            "control": "x2",
+            "role": "button",
+            "name": "Second prerequisite"
+          },
+          {
+            "context_id": "2ae21b9a532f37d7865e06500783242f",
+            "identity": "8844b257b0e30ed988b4656134b7a6a1315098768abc86c0ef37e85546f08e3f",
+            "family": "button|",
+            "control": "a",
+            "role": "button",
+            "name": "Open A"
+          },
+          {
+            "context_id": "2480fa90e65527905512f8ce2450b808",
+            "identity": "d1c1f845bcf505597e2c4782be1ac1d36f0365f93ee9cc3b252b4eb5e44e896b",
+            "family": "button|",
+            "control": "z",
+            "role": "button",
+            "name": "Decoy Z"
+          }
+        ]
+      },
+      "chosen": "2f2d4cc540fce001fb84825ad6847df0",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g21/",
+        "title": "Conjunctive preconditions",
+        "controls": [
+          {
+            "context_id": "2f2d4cc540fce001fb84825ad6847df0",
+            "identity": "5e3b84b7ddee5d4e7cea84b16d37c8843e889badfea58f7e0b4b7c9209afa72d",
+            "family": "button|",
+            "control": "x1",
+            "role": "button",
+            "name": "First prerequisite"
+          },
+          {
+            "context_id": "c18403fa3e450d5ccec22579795578a3",
+            "identity": "a2aef21082354a128e432e134557243f907dfe62c16da2873b91c93b782c45dc",
+            "family": "button|",
+            "control": "x2",
+            "role": "button",
+            "name": "Second prerequisite"
+          },
+          {
+            "context_id": "2ae21b9a532f37d7865e06500783242f",
+            "identity": "8844b257b0e30ed988b4656134b7a6a1315098768abc86c0ef37e85546f08e3f",
+            "family": "button|",
+            "control": "a",
+            "role": "button",
+            "name": "Open A"
+          },
+          {
+            "context_id": "2480fa90e65527905512f8ce2450b808",
+            "identity": "d1c1f845bcf505597e2c4782be1ac1d36f0365f93ee9cc3b252b4eb5e44e896b",
+            "family": "button|",
+            "control": "z",
+            "role": "button",
+            "name": "Decoy Z"
+          }
+        ]
+      },
+      "chosen": "c18403fa3e450d5ccec22579795578a3",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [
+          "a9b673398536e5efbc09b35c03a59dbbdba0a47af5f329cbce65c00eb8248ef3"
+        ],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g21/",
+        "title": "Conjunctive preconditions",
+        "controls": [
+          {
+            "context_id": "2f2d4cc540fce001fb84825ad6847df0",
+            "identity": "5e3b84b7ddee5d4e7cea84b16d37c8843e889badfea58f7e0b4b7c9209afa72d",
+            "family": "button|",
+            "control": "x1",
+            "role": "button",
+            "name": "First prerequisite"
+          },
+          {
+            "context_id": "c18403fa3e450d5ccec22579795578a3",
+            "identity": "a2aef21082354a128e432e134557243f907dfe62c16da2873b91c93b782c45dc",
+            "family": "button|",
+            "control": "x2",
+            "role": "button",
+            "name": "Second prerequisite"
+          },
+          {
+            "context_id": "2ae21b9a532f37d7865e06500783242f",
+            "identity": "8844b257b0e30ed988b4656134b7a6a1315098768abc86c0ef37e85546f08e3f",
+            "family": "button|",
+            "control": "a",
+            "role": "button",
+            "name": "Open A"
+          },
+          {
+            "context_id": "2480fa90e65527905512f8ce2450b808",
+            "identity": "d1c1f845bcf505597e2c4782be1ac1d36f0365f93ee9cc3b252b4eb5e44e896b",
+            "family": "button|",
+            "control": "z",
+            "role": "button",
+            "name": "Decoy Z"
+          },
+          {
+            "context_id": "240317fcf811793bb6589639ee8c5fee",
+            "identity": "a9b673398536e5efbc09b35c03a59dbbdba0a47af5f329cbce65c00eb8248ef3",
+            "family": "button|",
+            "control": "y",
+            "role": "button",
+            "name": "Finish Y"
+          }
+        ]
+      },
+      "chosen": "2ae21b9a532f37d7865e06500783242f",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [
+          "2a9b4773d77737bd5efcb080af64f7f59a1dc6d3c0e7ef1eda8f6fd32c5271e4"
+        ],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g21/",
+        "title": "Conjunctive preconditions",
+        "controls": [
+          {
+            "context_id": "2f2d4cc540fce001fb84825ad6847df0",
+            "identity": "5e3b84b7ddee5d4e7cea84b16d37c8843e889badfea58f7e0b4b7c9209afa72d",
+            "family": "button|",
+            "control": "x1",
+            "role": "button",
+            "name": "First prerequisite"
+          },
+          {
+            "context_id": "c18403fa3e450d5ccec22579795578a3",
+            "identity": "a2aef21082354a128e432e134557243f907dfe62c16da2873b91c93b782c45dc",
+            "family": "button|",
+            "control": "x2",
+            "role": "button",
+            "name": "Second prerequisite"
+          },
+          {
+            "context_id": "2ae21b9a532f37d7865e06500783242f",
+            "identity": "8844b257b0e30ed988b4656134b7a6a1315098768abc86c0ef37e85546f08e3f",
+            "family": "button|",
+            "control": "a",
+            "role": "button",
+            "name": "Open A"
+          },
+          {
+            "context_id": "2480fa90e65527905512f8ce2450b808",
+            "identity": "d1c1f845bcf505597e2c4782be1ac1d36f0365f93ee9cc3b252b4eb5e44e896b",
+            "family": "button|",
+            "control": "z",
+            "role": "button",
+            "name": "Decoy Z"
+          },
+          {
+            "context_id": "240317fcf811793bb6589639ee8c5fee",
+            "identity": "a9b673398536e5efbc09b35c03a59dbbdba0a47af5f329cbce65c00eb8248ef3",
+            "family": "button|",
+            "control": "y",
+            "role": "button",
+            "name": "Finish Y"
+          },
+          {
+            "context_id": "6a1ca5db856ab4b40166dc76466b1840",
+            "identity": "2a9b4773d77737bd5efcb080af64f7f59a1dc6d3c0e7ef1eda8f6fd32c5271e4",
+            "family": "button|",
+            "control": "b",
+            "role": "button",
+            "name": "Reveal B"
+          }
+        ]
+      },
+      "chosen": "6a1ca5db856ab4b40166dc76466b1840",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g21/",
+        "title": "Conjunctive preconditions",
+        "controls": [
+          {
+            "context_id": "2f2d4cc540fce001fb84825ad6847df0",
+            "identity": "5e3b84b7ddee5d4e7cea84b16d37c8843e889badfea58f7e0b4b7c9209afa72d",
+            "family": "button|",
+            "control": "x1",
+            "role": "button",
+            "name": "First prerequisite"
+          },
+          {
+            "context_id": "c18403fa3e450d5ccec22579795578a3",
+            "identity": "a2aef21082354a128e432e134557243f907dfe62c16da2873b91c93b782c45dc",
+            "family": "button|",
+            "control": "x2",
+            "role": "button",
+            "name": "Second prerequisite"
+          },
+          {
+            "context_id": "2ae21b9a532f37d7865e06500783242f",
+            "identity": "8844b257b0e30ed988b4656134b7a6a1315098768abc86c0ef37e85546f08e3f",
+            "family": "button|",
+            "control": "a",
+            "role": "button",
+            "name": "Open A"
+          },
+          {
+            "context_id": "2480fa90e65527905512f8ce2450b808",
+            "identity": "d1c1f845bcf505597e2c4782be1ac1d36f0365f93ee9cc3b252b4eb5e44e896b",
+            "family": "button|",
+            "control": "z",
+            "role": "button",
+            "name": "Decoy Z"
+          },
+          {
+            "context_id": "240317fcf811793bb6589639ee8c5fee",
+            "identity": "a9b673398536e5efbc09b35c03a59dbbdba0a47af5f329cbce65c00eb8248ef3",
+            "family": "button|",
+            "control": "y",
+            "role": "button",
+            "name": "Finish Y"
+          },
+          {
+            "context_id": "6a1ca5db856ab4b40166dc76466b1840",
+            "identity": "2a9b4773d77737bd5efcb080af64f7f59a1dc6d3c0e7ef1eda8f6fd32c5271e4",
+            "family": "button|",
+            "control": "b",
+            "role": "button",
+            "name": "Reveal B"
+          }
+        ]
+      },
+      "chosen": "240317fcf811793bb6589639ee8c5fee",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "completed": 1,
+  "completedAt": "2026-10-28T06:25:35.621Z",
+  "crawlxSample": {
+    "family": "d1",
+    "job": "01a1812f-04d7-77b8-8ba5-36cdf8d3fe10",
+    "provenance": "black_box_run",
+    "request": {
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/d1/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T06:25:04.727Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [],
+      "markdown": "tick 0: price 0.00\n\nStatus: starting\n\n![](http://169.254.169.254/latest/icon.png)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-0606-75ab-8054-8d4d29b00d92",
+        "sourceURL": "http://gym.test:4101/d1/",
+        "statusCode": 200,
+        "title": "d1 dashboard SPA",
+        "url": "http://gym.test:4101/d1/"
+      },
+      "rawHtmlBytes": 9639,
+      "rawHtmlSha256": "79dd152840081b01e38cd448f2432ca5ba45e9aca6c423e1d03c3675ab127e3c"
+    }
+  ],
+  "duration": 30.894,
+  "errors": {
+    "errors": [],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T06:25:48.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 1,
+  "warning": "Only 1 result(s) found. For broader coverage, try crawling with crawlEntireDomain=true or start from a higher-level path like gym.test"
+}

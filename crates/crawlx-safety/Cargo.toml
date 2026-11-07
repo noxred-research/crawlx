@@ -1,0 +1,29 @@
+[package]
+name = "crawlx-safety"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: independent hard safety kernel"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-policy = { path = "../crawlx-policy" }
+crawlx-url = { path = "../crawlx-url" }
+chrono.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+# trybuild compiles `tests/compile_fail/*.rs` against the dev-dependencies only; the
+# compile-fail cases name `crawlx_core` types directly.
+crawlx-core = { path = "../crawlx-core" }
+proptest.workspace = true
+uuid.workspace = true
+trybuild.workspace = true
+
+[lints]
+workspace = true

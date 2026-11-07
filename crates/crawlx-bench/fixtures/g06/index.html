@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g06 Repeated cards</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; max-width: 720px; }
+  ul { list-style: none; padding: 0; margin: 16px 0; }
+  li { margin: 0 0 8px; }
+  article { border: 1px solid #99a; border-radius: 6px; padding: 8px 12px; display: flex; gap: 16px; align-items: center; }
+  article h3 { margin: 0; font-size: 16px; min-width: 90px; }
+  .when { color: #556; min-width: 120px; }
+</style>
+</head>
+<body>
+<h1>Cards</h1>
+<button type="button" id="rerender">Rerender</button>
+<p>Render count: <span id="renders">0</span></p>
+<ul id="cards"></ul>
+<script>
+(function () {
+  var N = 50;
+  var render = 0;
+  var likes = {};
+  var UNITS = [['minute', 59], ['hour', 23], ['day', 29]];
+
+  function ago(rng) {
+    var u = __gym.pick(UNITS, rng);
+    var n = 1 + Math.floor(rng() * u[1]);
+    return n + ' ' + u[0] + (n === 1 ? '' : 's') + ' ago';
+  }
+
+  function draw() {
+    var rng = __gym.rngFor('render-' + render);
+    var ids = [];
+    for (var i = 1; i <= N; i++) ids.push(i);
+    if (render > 0) ids = __gym.shuffle(ids, rng);
+    var data = {};
+    for (var k = 1; k <= N; k++) {
+      data[k] = { likes: Math.floor(rng() * 500), when: ago(rng) };
+    }
+    likes = {};
+    var list = document.getElementById('cards');
+    list.textContent = '';
+    ids.forEach(function (n) {
+      likes[n] = data[n].likes;
+      var li = document.createElement('li');
+      li.id = 'card-' + n;
+      var art = document.createElement('article');
+      art.setAttribute('aria-labelledby', 'title-' + n);
+      var h = document.createElement('h3');
+      h.id = 'title-' + n;
+      h.textContent = 'Card ' + n;
+      var t = document.createElement('span');
+      t.className = 'when';
+      t.textContent = data[n].when;
+      var like = document.createElement('button');
+      like.type = 'button';
+      like.id = 'like-' + n;
+      like.textContent = 'Like (' + likes[n] + ')';
+      like.addEventListener('click', function (ev) {
+        __gym.hit('like-' + n, ev);
+        likes[n] += 1;
+        like.textContent = 'Like (' + likes[n] + ')';
+      });
+      var open = document.createElement('a');
+      open.id = 'open-' + n;
+      open.href = '/g06/item?id=' + n;
+      open.textContent = 'Open';
+      open.addEventListener('click', function (ev) { __gym.hit('open-' + n, ev); });
+      art.appendChild(h);
+      art.appendChild(t);
+      art.appendChild(like);
+      art.appendChild(open);
+      li.appendChild(art);
+      list.appendChild(li);
+    });
+    document.getElementById('renders').textContent = String(render);
+  }
+
+  document.getElementById('rerender').addEventListener('click', function (ev) {
+    __gym.hit('rerender', ev);
+    render += 1;
+    draw();
+  });
+  draw();
+})();
+</script>
+</body>
+</html>

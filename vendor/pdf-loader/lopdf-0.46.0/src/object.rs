@@ -1,0 +1,1718 @@
+use crate::encodings;
+use crate::encodings::cmap::ToUnicodeCMap;
+use crate::encodings::{Differences, Encoding, Glyph};
+use crate::error::DecompressError;
+use crate::{Document, Error, Result};
+use indexmap::IndexMap;
+use log::warn;
+use std::cmp::max;
+use std::collections::HashSet;
+use std::fmt;
+use std::str;
+
+/// Every bounded decoder shares this one guard: a decoded buffer that has
+/// grown past `limit` is a decompression bomb and is rejected as such. A
+/// `limit` of `None` means the caller accepted an unbounded decode, so the
+/// check passes unconditionally.
+fn reject_over_limit(len: usize, limit: Option<usize>) -> Result<()> {
+    match limit {
+        Some(max) if len > max => Err(DecompressError::MemoryLimitExceeded { limit: max }.into()),
+        _ => Ok(()),
+    }
+}
+
+/// Starting capacity for a decoded buffer: a guess of twice the compressed
+/// size, never beyond one byte past the limit so a bomb cannot force a large
+/// allocation before a single byte has been decoded.
+fn initial_capacity(input_len: usize, limit: Option<usize>) -> usize {
+    let guess = input_len.saturating_mul(2);
+    match limit {
+        Some(max) => guess.min(max.saturating_add(1)),
+        None => guess,
+    }
+}
+
+/// Deflate `content` into a zlib stream. `level` follows the usual 0-9 zlib
+/// scale, which object streams map from their 0-6 builder setting.
+pub(crate) fn zlib_compress(content: &[u8], level: u32) -> Result<Vec<u8>> {
+    use flate2::Compression;
+    use flate2::write::ZlibEncoder;
+    use std::io::Write;
+
+    let compression = match level {
+        0 => Compression::none(),
+        1..=3 => Compression::fast(),
+        4..=6 => Compression::default(),
+        _ => Compression::best(),
+    };
+
+    let mut encoder = ZlibEncoder::new(Vec::new(), compression);
+    encoder.write_all(content)?;
+    Ok(encoder.finish()?)
+}
+
+/// Object identifier consists of two parts: object number and generation number.
+pub type ObjectId = (u32, u16);
+
+/// Dictionary object.
+#[derive(Clone, Default, PartialEq)]
+pub struct Dictionary(IndexMap<Vec<u8>, Object>);
+
+/// Stream object
+/// Warning - all streams must be indirect objects, while
+/// the stream dictionary may be a direct object
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stream {
+    /// Associated stream dictionary
+    pub dict: Dictionary,
+    /// Contents of the stream in bytes
+    pub content: Vec<u8>,
+    /// Can the stream be compressed by the `Document::compress()` function?
+    /// Font streams may not be compressed, for example
+    pub allows_compression: bool,
+    /// Stream data's position in PDF file.
+    pub start_position: Option<usize>,
+}
+
+/// Basic PDF object types defined in an enum.
+#[derive(Clone, PartialEq)]
+pub enum Object {
+    Null,
+    Boolean(bool),
+    Integer(i64),
+    Real(f32),
+    Name(Vec<u8>),
+    String(Vec<u8>, StringFormat),
+    Array(Vec<Object>),
+    Dictionary(Dictionary),
+    Stream(Stream),
+    Reference(ObjectId),
+}
+
+/// String objects can be written in two formats.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StringFormat {
+    #[default]
+    Literal,
+    Hexadecimal,
+}
+
+/// Lifts a value straight into an `Object` variant, so a payload type costs
+/// one macro line rather than a hand-written `From` impl.
+macro_rules! from_variants {
+    ($( $source:ty => $variant:ident($($arg:ident: $ty:ty),*) as $body:expr; )+) => {
+        $(
+            impl From<$source> for Object {
+                fn from($($arg: $ty),*) -> Self {
+                    Object::$variant($body)
+                }
+            }
+        )+
+    };
+}
+
+from_variants! {
+    bool => Boolean(value: bool) as value;
+    i64 => Integer(number: i64) as number;
+    String => Name(name: String) as name.into_bytes();
+    Vec<Object> => Array(array: Vec<Object>) as array;
+    Dictionary => Dictionary(dict: Dictionary) as dict;
+    Stream => Stream(stream: Stream) as stream;
+    ObjectId => Reference(id: ObjectId) as id;
+}
+
+macro_rules! from_smaller_ints {
+    ($( $Int:ty )+) => {
+        $(
+            impl From<$Int> for Object {
+                fn from(number: $Int) -> Self {
+                    Object::Integer(i64::from(number))
+                }
+            }
+        )+
+    };
+}
+
+from_smaller_ints! {
+    i8 i16 i32
+    u8 u16 u32
+}
+
+/// A borrowed name needs a lifetime, so it stays hand-written.
+impl<'a> From<&'a str> for Object {
+    fn from(name: &'a str) -> Self {
+        Object::Name(name.as_bytes().to_vec())
+    }
+}
+
+impl From<f64> for Object {
+    fn from(number: f64) -> Self {
+        Object::Real(number as f32)
+    }
+}
+
+impl From<f32> for Object {
+    fn from(number: f32) -> Self {
+        Object::Real(number)
+    }
+}
+
+/// Generates the `as_*` accessor pair for a variant whose payload is
+/// returned by reference, plus a mutable form reaching the payload itself.
+macro_rules! object_getters {
+    ($(
+        $get:ident / $get_mut:ident : $variant:ident => ($ret:ty, $mut_ty:ty) = $expected:literal, ($($pat:tt)*);
+    )+) => {
+        $(
+            pub fn $get(&self) -> Result<$ret> {
+                match self {
+                    Object::$variant($($pat)*) => Ok($($pat)*),
+                    other => Err(other.type_error($expected)),
+                }
+            }
+
+            pub fn $get_mut(&mut self) -> Result<$mut_ty> {
+                match self {
+                    Object::$variant($($pat)*) => Ok($($pat)*),
+                    other => Err(other.type_error($expected)),
+                }
+            }
+        )+
+    };
+}
+
+/// Generates the read-only accessor for a `Copy`-payload variant, which
+/// copies out rather than borrowing.
+macro_rules! object_copy_getters {
+    ($(
+        $get:ident : $variant:ident => $ret:ty = $expected:literal, $pat:ident;
+    )+) => {
+        $(
+            pub fn $get(&self) -> Result<$ret> {
+                match self {
+                    Object::$variant($pat) => Ok(*$pat),
+                    other => Err(other.type_error($expected)),
+                }
+            }
+        )+
+    };
+}
+
+impl Object {
+    pub fn string_literal<S: Into<Vec<u8>>>(s: S) -> Self {
+        Object::String(s.into(), StringFormat::Literal)
+    }
+
+    pub fn is_null(&self) -> bool {
+        matches!(*self, Object::Null)
+    }
+
+    /// Get the object value as a float.
+    /// Unlike [`Object::as_f32`] this will also cast an Integer to a Real.
+    pub fn as_float(&self) -> Result<f32> {
+        match self {
+            Object::Integer(value) => Ok(*value as f32),
+            Object::Real(value) => Ok(*value),
+            _ => Err(self.type_error("Integer or Real")),
+        }
+    }
+
+    object_copy_getters! {
+        as_bool: Boolean => bool = "Boolean", value;
+        as_i64: Integer => i64 = "Integer", value;
+        as_f32: Real => f32 = "Real", value;
+        as_reference: Reference => ObjectId = "Reference", value;
+    }
+
+    // Includes `as_name_mut`, the mutable counterpart of `as_name`; the other
+    // `_mut` accessors here predate this macro.
+    object_getters! {
+        as_name / as_name_mut: Name => (&[u8], &mut Vec<u8>) = "Name", (value);
+        as_array / as_array_mut: Array => (&Vec<Object>, &mut Vec<Object>) = "Array", (value);
+        as_dict / as_dict_mut: Dictionary => (&Dictionary, &mut Dictionary) = "Dictionary", (value);
+        as_stream / as_stream_mut: Stream => (&Stream, &mut Stream) = "Stream", (value);
+    }
+    /// `Object::String` also carries a [`StringFormat`], so it is not one of
+    /// the single-payload variants the macros above cover.
+    pub fn as_str(&self) -> Result<&[u8]> {
+        match self {
+            Object::String(string, _) => Ok(string),
+            _ => Err(self.type_error("String")),
+        }
+    }
+
+    pub fn as_str_mut(&mut self) -> Result<&mut Vec<u8>> {
+        match self {
+            Object::String(string, _) => Ok(string),
+            _ => Err(self.type_error("String")),
+        }
+    }
+
+    /// The mismatch error every `as_*` accessor reports, naming both what the
+    /// accessor wanted and what the object actually is.
+    fn type_error(&self, expected: &'static str) -> Error {
+        Error::ObjectType {
+            expected,
+            found: self.enum_variant(),
+        }
+    }
+
+    // TODO: maybe remove
+    pub fn type_name(&self) -> Result<&[u8]> {
+        match self {
+            Object::Dictionary(dict) => dict.get_type(),
+            Object::Stream(stream) => stream.dict.get_type(),
+            obj => Err(obj.type_error("Dictionary or Stream")),
+        }
+    }
+
+    pub fn enum_variant(&self) -> &'static str {
+        match self {
+            Object::Null => "Null",
+            Object::Boolean(_) => "Boolean",
+            Object::Integer(_) => "Integer",
+            Object::Real(_) => "Real",
+            Object::Name(_) => "Name",
+            Object::String(_, _) => "String",
+            Object::Array(_) => "Array",
+            Object::Dictionary(_) => "Dictionary",
+            Object::Stream(_) => "Stream",
+            Object::Reference(_) => "Reference",
+        }
+    }
+}
+
+impl fmt::Debug for Object {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Object::Null => write!(f, "Null"),
+            Object::Boolean(value) => write!(f, "{value}"),
+            Object::Integer(value) => write!(f, "{value}"),
+            Object::Real(value) => write!(f, "{value}"),
+            Object::Name(name) => write!(f, "/{}", String::from_utf8_lossy(name)),
+            Object::String(text, StringFormat::Literal) => write!(f, "({})", String::from_utf8_lossy(text)),
+            Object::String(text, StringFormat::Hexadecimal) => {
+                write!(f, "<")?;
+                for b in text {
+                    write!(f, "{b:02x}")?
+                }
+                write!(f, ">")
+            }
+            Object::Array(array) => {
+                let items = array.iter().map(|item| format!("{item:?}")).collect::<Vec<String>>();
+                write!(f, "[{}]", items.join(" "))
+            }
+            Object::Dictionary(dict) => write!(f, "{dict:?}"),
+            Object::Stream(stream) => write!(f, "{:?}stream...endstream", stream.dict),
+            Object::Reference(id) => write!(f, "{} {} R", id.0, id.1),
+        }
+    }
+}
+
+impl Dictionary {
+    pub fn new() -> Dictionary {
+        Dictionary(IndexMap::new())
+    }
+
+    pub fn has(&self, key: &[u8]) -> bool {
+        self.0.contains_key(key)
+    }
+
+    pub fn get(&self, key: &[u8]) -> Result<&Object> {
+        self.0
+            .get(key)
+            .ok_or_else(|| Error::DictKey(String::from_utf8_lossy(key).to_string()))
+    }
+
+    /// Extract object from dictionary, dereferencing
+    /// the object if it is a reference.
+    pub fn get_deref<'a>(&'a self, key: &[u8], doc: &'a Document) -> Result<&'a Object> {
+        doc.dereference(self.get(key)?).map(|(_, object)| object)
+    }
+
+    pub fn get_mut(&mut self, key: &[u8]) -> Result<&mut Object> {
+        self.0
+            .get_mut(key)
+            .ok_or_else(|| Error::DictKey(String::from_utf8_lossy(key).to_string()))
+    }
+
+    pub fn set<K, V>(&mut self, key: K, value: V)
+    where
+        K: Into<Vec<u8>>,
+        V: Into<Object>,
+    {
+        self.0.insert(key.into(), value.into());
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.len() == 0
+    }
+
+    pub fn remove(&mut self, key: &[u8]) -> Option<Object> {
+        self.0.swap_remove(key)
+    }
+
+    pub fn has_type(&self, type_name: &[u8]) -> bool {
+        self.get(b"Type").and_then(|s| s.as_name()).ok() == Some(type_name)
+    }
+
+    pub fn get_type(&self) -> Result<&[u8]> {
+        self.get(b"Type")
+            .and_then(Object::as_name)
+            .or_else(|_| self.get(b"Linearized").and(Ok(b"Linearized")))
+    }
+
+    pub fn iter(&'_ self) -> indexmap::map::Iter<'_, Vec<u8>, Object> {
+        self.0.iter()
+    }
+
+    pub fn iter_mut(&'_ mut self) -> indexmap::map::IterMut<'_, Vec<u8>, Object> {
+        self.0.iter_mut()
+    }
+
+    pub fn get_font_encoding<'a>(&'a self, doc: &'a Document) -> Result<Encoding<'a>> {
+        self.get_font_encoding_inner(doc, None)
+    }
+
+    /// Resolve this font's encoding, bounding any decompression it performs (for
+    /// example decoding a `/ToUnicode` CMap stream) to `max_decompressed_size`
+    /// bytes. This is the decompression-bomb-safe counterpart to
+    /// [`Dictionary::get_font_encoding`]: it is used by
+    /// [`crate::Document::extract_text_with_limit`] so a crafted font stream
+    /// cannot inflate without limit. Unlike other encoding errors (which fall
+    /// back to standard encoding), a detected size-limit violation is propagated
+    /// as [`DecompressError::MemoryLimitExceeded`].
+    pub fn get_font_encoding_with_limit<'a>(
+        &'a self, doc: &'a Document, max_decompressed_size: usize,
+    ) -> Result<Encoding<'a>> {
+        self.get_font_encoding_inner(doc, Some(max_decompressed_size))
+    }
+
+    fn get_font_encoding_inner<'a>(&'a self, doc: &'a Document, limit: Option<usize>) -> Result<Encoding<'a>> {
+        if !self.has_type(b"Font") {
+            return Err(Error::DictType {
+                expected: "Font",
+                found: String::from_utf8_lossy(self.get_type().unwrap_or(b"None")).to_string(),
+            });
+        }
+
+        // Not yet handled: TrueType cmap tables; DescendantFonts in CID-Keyed fonts;
+        // predefined CJK CMAPs other than those in SimpleEncoding; and the fallback
+        // font when `BaseEncoding` is undefined (Table 114, 9.6.6.1).
+        let result = (|| {
+            if let Ok(object) = self.get(b"Encoding") {
+                return self.get_base_encoding(object, doc, limit);
+            }
+
+            if let Ok(stream) = self.get_deref(b"ToUnicode", doc).and_then(Object::as_stream) {
+                return self.get_to_unicode_encoding(stream, limit);
+            }
+
+            Ok(Encoding::OneByteEncoding(&encodings::STANDARD_ENCODING))
+        })();
+
+        match result {
+            Ok(encoding) => Ok(encoding),
+            // A decompression bomb must surface rather than be swallowed into a fallback
+            // encoding, which would defeat the bounded caller's guard. Other errors stay lenient.
+            Err(err @ Error::Decompress(DecompressError::MemoryLimitExceeded { .. })) => Err(err),
+            Err(err) => {
+                warn!(
+                    "Could not parse the encoding, error: {err:#?}\nFont: {self:#?}. Using standard encoding as a fallback!"
+                );
+                Ok(Encoding::OneByteEncoding(&encodings::STANDARD_ENCODING))
+            }
+        }
+    }
+
+    /// Get a simple encoding from the /Encoding entry of a font dictionary.
+    fn get_base_encoding<'a>(
+        &'a self, mut object: &'a Object, doc: &'a Document, limit: Option<usize>,
+    ) -> Result<Encoding<'a>> {
+        // Set of visited to detect circular references.
+        let mut visited = HashSet::new();
+
+        loop {
+            match *object {
+                Object::Name(ref name) => {
+                    return self.base_encoding(doc, name, limit);
+                }
+                Object::Reference(id) => {
+                    if !visited.insert(id) {
+                        return Err(Error::ReferenceCycle(id));
+                    }
+
+                    let Ok(o) = doc.get_object(id) else {
+                        return Err(Error::ObjectNotFound(id));
+                    };
+
+                    object = o;
+                }
+                Object::Dictionary(ref dict) => {
+                    // `/Type` is optional, but must be `/Encoding` when present.
+                    match dict.get(b"Type").and_then(Object::as_name) {
+                        Ok(b"Encoding") | Err(_) => {
+                            let mut base = None;
+
+                            if let Ok(base_encoding) = dict.get(b"BaseEncoding")
+                                && let Ok(name) = base_encoding.as_name()
+                            {
+                                base = Some(self.base_encoding(doc, name, limit)?);
+                            }
+
+                            let base = match base {
+                                Some(base) => base,
+                                None => Encoding::OneByteEncoding(&encodings::STANDARD_ENCODING),
+                            };
+
+                            let Ok(differences) = dict.get(b"Differences") else {
+                                return Ok(base);
+                            };
+                            let differences = self.differences(base, differences.as_array()?)?;
+                            return Ok(Encoding::Differences(differences));
+                        }
+                        _ => {
+                            return Err(Error::ObjectType {
+                                expected: "Encoding Dictionary",
+                                found: "Dictionary with Type other than /Encoding",
+                            });
+                        }
+                    }
+                }
+                ref object => {
+                    return Err(object.type_error("Name or Reference or Dictionary"));
+                }
+            }
+        }
+    }
+
+    fn base_encoding<'a>(&'a self, doc: &'a Document, name: &'a [u8], limit: Option<usize>) -> Result<Encoding<'a>> {
+        match name {
+            b"StandardEncoding" => Ok(Encoding::OneByteEncoding(&encodings::STANDARD_ENCODING)),
+            b"MacRomanEncoding" => Ok(Encoding::OneByteEncoding(&encodings::MAC_ROMAN_ENCODING)),
+            b"MacExpertEncoding" => Ok(Encoding::OneByteEncoding(&encodings::MAC_EXPERT_ENCODING)),
+            b"WinAnsiEncoding" => Ok(Encoding::OneByteEncoding(&encodings::WIN_ANSI_ENCODING)),
+            b"PDFDocEncoding" => {
+                log::warn!("PDFDocEncoding is not a valid character encoding for a font");
+                Ok(Encoding::OneByteEncoding(&encodings::PDF_DOC_ENCODING))
+            }
+            b"Identity-H" | b"Identity-V" => {
+                let stream = self.get_deref(b"ToUnicode", doc)?.as_stream()?;
+                self.get_to_unicode_encoding(stream, limit)
+            }
+            name => Ok(Encoding::SimpleEncoding(name)),
+        }
+    }
+
+    fn differences<'a>(&'a self, base: Encoding<'a>, array: &[Object]) -> Result<Differences<'a>> {
+        let mut map = IndexMap::new();
+        let mut inverse = IndexMap::new();
+        let mut current_code = 0;
+
+        for obj in array {
+            match *obj {
+                Object::Integer(code) => {
+                    if !(0..=255).contains(&code) {
+                        return Err(Error::InvalidEncodingDifferenceCode { code });
+                    }
+
+                    current_code = code as u8;
+                }
+                Object::Name(ref name) => {
+                    let Some(glyph) = Glyph::from_name(name) else {
+                        return Err(Error::InvalidEncodingDifferenceGlyph {
+                            name: String::from_utf8_lossy(name).into_owned(),
+                        });
+                    };
+
+                    map.insert(current_code, glyph);
+                    inverse.insert(glyph, current_code);
+                    current_code = current_code.wrapping_add(1);
+                }
+                _ => {
+                    return Err(obj.type_error("Integer or Name"));
+                }
+            }
+        }
+
+        Ok(Differences {
+            base: Box::new(base),
+            map,
+            inverse,
+        })
+    }
+
+    fn get_to_unicode_encoding(&'_ self, stream: &Stream, limit: Option<usize>) -> Result<Encoding<'_>> {
+        let content = match limit {
+            Some(max) => stream.get_plain_content_with_limit(max)?,
+            None => stream.get_plain_content()?,
+        };
+        let cmap = ToUnicodeCMap::parse(content)?;
+        Ok(Encoding::UnicodeMapEncoding(cmap))
+    }
+
+    pub fn extend(&mut self, other: &Dictionary) {
+        let keep_both_objects =
+            |new_dict: &mut IndexMap<Vec<u8>, Object>, key: &Vec<u8>, value: &Object, old_value: Object| {
+                let mut final_array;
+
+                match value {
+                    Object::Array(array) => {
+                        final_array = Vec::with_capacity(array.len() + 1);
+                        final_array.push(old_value);
+                        final_array.extend(array.to_owned());
+                    }
+                    _ => {
+                        final_array = vec![value.to_owned(), old_value];
+                    }
+                }
+
+                new_dict.insert(key.to_owned(), Object::Array(final_array));
+            };
+
+        let mut new_dict = std::mem::take(&mut self.0);
+        new_dict.reserve_exact(other.0.len());
+
+        for (key, value) in other.0.iter() {
+            if let Some(old_value) = new_dict.get(key) {
+                let old_value = old_value.to_owned();
+                match (&old_value, value) {
+                    (Object::Dictionary(old_dict), Object::Dictionary(dict)) => {
+                        let mut replaced_dict = old_dict.to_owned();
+                        replaced_dict.extend(dict);
+                        new_dict.insert(key.to_owned(), Object::Dictionary(replaced_dict));
+                    }
+                    (Object::Array(old_array), Object::Array(array)) => {
+                        let mut replaced_array = old_array.to_owned();
+                        replaced_array.extend(array.to_owned());
+                        new_dict.insert(key.to_owned(), Object::Array(replaced_array));
+                    }
+                    (Object::Integer(_), Object::Integer(_))
+                    | (Object::Real(_), Object::Real(_))
+                    | (Object::String(_, _), Object::String(_, _))
+                    | (Object::Reference(_), Object::Reference(_)) => {
+                        // Two values of the same scalar type keep both, oldest first.
+                        new_dict.insert(key.to_owned(), Object::Array(vec![old_value, value.to_owned()]));
+                    }
+                    (Object::Null, _) | (Object::Boolean(_), _) | (Object::Name(_), _) | (Object::Stream(_), _) => {
+                        new_dict.insert(key.to_owned(), old_value);
+                    }
+                    (_, _) => keep_both_objects(&mut new_dict, key, value, old_value),
+                }
+            } else {
+                new_dict.insert(key.to_owned(), value.to_owned());
+            }
+        }
+
+        self.0 = new_dict;
+    }
+
+    /// Return a reference to the inner  [`IndexMap`].
+    pub fn as_hashmap(&self) -> &IndexMap<Vec<u8>, Object> {
+        &self.0
+    }
+
+    /// Return a mut reference to the inner [`IndexMap`].
+    pub fn as_hashmap_mut(&mut self) -> &mut IndexMap<Vec<u8>, Object> {
+        &mut self.0
+    }
+}
+
+#[macro_export]
+macro_rules! dictionary {
+	() => {
+		$crate::Dictionary::new()
+	};
+	($( $key: expr => $value: expr ),+ ,) => {
+		dictionary!( $($key => $value),+ )
+	};
+	($( $key: expr => $value: expr ),*) => {{
+		let mut dict = $crate::Dictionary::new();
+		$(
+			dict.set($key, $value);
+		)*
+		dict
+	}}
+}
+
+impl fmt::Debug for Dictionary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let entries = self
+            .into_iter()
+            .map(|(key, value)| format!("/{} {:?}", String::from_utf8_lossy(key), value))
+            .collect::<Vec<String>>();
+        write!(f, "<<{}>>", entries.concat())
+    }
+}
+
+impl IntoIterator for Dictionary {
+    type Item = (Vec<u8>, Object);
+    type IntoIter = indexmap::map::IntoIter<Vec<u8>, Object>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Dictionary {
+    type Item = (&'a Vec<u8>, &'a Object);
+    type IntoIter = indexmap::map::Iter<'a, Vec<u8>, Object>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Dictionary {
+    type Item = (&'a Vec<u8>, &'a mut Object);
+    type IntoIter = indexmap::map::IterMut<'a, Vec<u8>, Object>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+use std::iter::FromIterator;
+impl<K: Into<Vec<u8>>> FromIterator<(K, Object)> for Dictionary {
+    fn from_iter<I: IntoIterator<Item = (K, Object)>>(iter: I) -> Self {
+        let mut dict = Dictionary::new();
+        for (k, v) in iter {
+            dict.set(k, v);
+        }
+        dict
+    }
+}
+
+/// A [`std::io::Write`] adapter that appends to a `Vec<u8>` but refuses to grow
+/// it past `limit` bytes. Used to bound decoders (e.g. LZW) that write into a
+/// sink rather than being read from, so a decompression bomb cannot allocate an
+/// unbounded amount of memory. On overflow it fills up to exactly `limit` bytes
+/// and then returns an error, so the caller can detect the overflow by length.
+struct LimitedWriter<'a> {
+    inner: &'a mut Vec<u8>,
+    limit: usize,
+}
+
+impl<'a> LimitedWriter<'a> {
+    fn new(inner: &'a mut Vec<u8>, limit: usize) -> Self {
+        LimitedWriter { inner, limit }
+    }
+}
+
+impl std::io::Write for LimitedWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let remaining = self.limit.saturating_sub(self.inner.len());
+        if buf.len() > remaining {
+            // Fill up to the limit so the caller's `len() > max` check trips,
+            // then signal that no more may be written.
+            self.inner.extend_from_slice(&buf[..remaining]);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "decompression output exceeded limit",
+            ));
+        }
+        self.inner.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Stream {
+    pub fn new(mut dict: Dictionary, content: Vec<u8>) -> Stream {
+        dict.set("Length", content.len() as i64);
+        Stream {
+            dict,
+            content,
+            allows_compression: true,
+            start_position: None,
+        }
+    }
+
+    pub fn with_position(dict: Dictionary, position: usize) -> Stream {
+        Stream {
+            dict,
+            content: vec![],
+            allows_compression: true,
+            start_position: Some(position),
+        }
+    }
+
+    /// Default is that the stream may be compressed. On font streams,
+    /// set this to false, otherwise the font will be corrupt
+    #[inline]
+    pub fn with_compression(mut self, allows_compression: bool) -> Stream {
+        self.allows_compression = allows_compression;
+        self
+    }
+
+    pub fn filters(&self) -> Result<Vec<&[u8]>> {
+        let filter = self.dict.get(b"Filter")?;
+
+        if let Ok(name) = filter.as_name() {
+            Ok(vec![name])
+        } else if let Ok(names) = filter.as_array() {
+            names.iter().map(Object::as_name).collect()
+        } else {
+            Err(filter.type_error("Name or Array"))
+        }
+    }
+
+    pub fn set_content(&mut self, content: Vec<u8>) {
+        self.content = content;
+        self.dict.set("Length", self.content.len() as i64);
+    }
+
+    pub fn set_plain_content(&mut self, content: Vec<u8>) {
+        self.dict.remove(b"DecodeParms");
+        self.dict.remove(b"Filter");
+        self.set_content(content);
+    }
+
+    pub fn get_plain_content(&self) -> Result<Vec<u8>> {
+        self.plain_content(None)
+    }
+
+    /// Bomb-safe counterpart to [`Stream::get_plain_content`]: decode the stream,
+    /// rejecting it with [`DecompressError::MemoryLimitExceeded`] if the output
+    /// would exceed `max_output` bytes. An uncompressed stream whose raw content
+    /// already exceeds the limit is rejected too.
+    pub fn get_plain_content_with_limit(&self, max_output: usize) -> Result<Vec<u8>> {
+        self.plain_content(Some(max_output))
+    }
+
+    /// Shared implementation of [`Stream::get_plain_content`] and its bounded
+    /// counterpart: an unfiltered stream returns its raw bytes, a filtered one
+    /// goes through the decoder chain. Either way the limit is honored, which
+    /// for an unfiltered stream means bounding the raw content.
+    fn plain_content(&self, limit: Option<usize>) -> Result<Vec<u8>> {
+        match self.filters() {
+            Ok(filters) if !filters.is_empty() => self.decode_filters(limit),
+            _ => {
+                reject_over_limit(self.content.len(), limit)?;
+                Ok(self.content.clone())
+            }
+        }
+    }
+
+    pub fn compress(&mut self) -> Result<()> {
+        if self.dict.get(b"Filter").is_err() {
+            let compressed = zlib_compress(&self.content, 9)?;
+
+            if compressed.len() + 19 < self.content.len() {
+                self.dict.set("Filter", "FlateDecode");
+                self.set_content(compressed);
+            }
+        }
+        Ok(())
+    }
+
+    /// Decode this stream's content, applying its filters in order.
+    ///
+    /// # Warning: unbounded output
+    ///
+    /// This method places **no limit** on the size of the decompressed output.
+    /// A small compressed stream can inflate to an enormous size (a
+    /// "decompression bomb"), so calling this on untrusted input can exhaust
+    /// all available memory. When processing PDFs from an untrusted source,
+    /// prefer [`Stream::decompressed_content_with_limit`] or
+    /// [`Stream::decompress_to_writer`], and load documents with
+    /// [`crate::LoadOptions::max_decompressed_size`] set.
+    pub fn decompressed_content(&self) -> Result<Vec<u8>> {
+        self.decode_filters(None)
+    }
+
+    /// Decode this stream's content, rejecting the stream with
+    /// [`DecompressError::MemoryLimitExceeded`] if the decoded output would
+    /// exceed `max_output` bytes.
+    ///
+    /// This is the bomb-safe counterpart to [`Stream::decompressed_content`].
+    /// Each filter in the chain is bounded individually, so a stream with nested
+    /// filters (e.g. `/Filter [FlateDecode FlateDecode]`) can never allocate
+    /// more than roughly `max_output` bytes per layer before being rejected,
+    /// rather than expanding without limit.
+    pub fn decompressed_content_with_limit(&self, max_output: usize) -> Result<Vec<u8>> {
+        self.decode_filters(Some(max_output))
+    }
+
+    /// Decode this stream's content into a caller-provided writer, rejecting the
+    /// stream if the decoded output would exceed `max_output` bytes.
+    ///
+    /// The result is decoded with the same bomb-safe bound as
+    /// [`Stream::decompressed_content_with_limit`] (internal buffering is capped
+    /// at roughly `max_output` bytes) and then written to `writer`, which lets
+    /// callers direct the output straight into a file or a fixed-capacity buffer
+    /// of their choosing. Returns the number of bytes written on success, or
+    /// [`DecompressError::MemoryLimitExceeded`] if the limit would be exceeded.
+    pub fn decompress_to_writer<W: std::io::Write>(&self, writer: &mut W, max_output: usize) -> Result<usize> {
+        let data = self.decompressed_content_with_limit(max_output)?;
+        writer.write_all(&data)?;
+        Ok(data.len())
+    }
+
+    /// Shared decoder for [`Stream::decompressed_content`] and its bounded
+    /// variants. `limit` is `None` to decode without a size limit, or
+    /// `Some(max)` to cap the decoded output at `max` bytes per filter layer.
+    fn decode_filters(&self, limit: Option<usize>) -> Result<Vec<u8>> {
+        let decode_params = self.dict.get(b"DecodeParms").ok();
+        let filters = match self.filters() {
+            Ok(f) => f,
+            // No /Filter key means the stream is uncompressed. The raw content is
+            // already in memory, but still honor the caller's limit.
+            Err(_) => {
+                reject_over_limit(self.content.len(), limit)?;
+                return Ok(self.content.clone());
+            }
+        };
+
+        let mut input = self.content.as_slice();
+        let mut output = vec![];
+
+        // Filters are in decoding order.
+        for (index, filter) in filters.into_iter().enumerate() {
+            let params = match decode_params {
+                Some(Object::Array(params)) => params.get(index).and_then(|param| param.as_dict().ok()),
+                Some(Object::Dictionary(params)) => Some(params),
+                _ => None,
+            };
+            output = match filter {
+                b"FlateDecode" => Self::decompress_zlib(input, params, limit)?,
+                b"BrotliDecode" => Self::decompress_brotli(input, limit)?,
+                b"LZWDecode" => Self::decompress_lzw(input, params, limit)?,
+                b"ASCII85Decode" => Self::decode_ascii85(input, limit)?,
+                b"ASCIIHexDecode" => Self::decode_ascii_hex(input, limit)?,
+                b"RunLengthDecode" => Self::decode_run_length(input, limit)?,
+                _ => return Err(Error::Unimplemented("decompression algorithms")),
+            };
+            reject_over_limit(output.len(), limit)?;
+            input = &output;
+        }
+        Ok(output)
+    }
+
+    fn decompress_brotli(input: &[u8], limit: Option<usize>) -> Result<Vec<u8>> {
+        use brotli_decompressor::Decompressor;
+
+        // Unlike the Flate path there is no raw-deflate fallback, so a corrupt stream
+        // fails hard instead of yielding partial output. Intentional for a new filter.
+        let mut output = Vec::with_capacity(initial_capacity(input.len(), limit));
+        Self::read_capped(Decompressor::new(input, 4096), &mut output, limit)
+            .map_err(|err| Error::InvalidStream(format!("Brotli decompression failed: {err}")))?;
+        reject_over_limit(output.len(), limit)?;
+        // /DecodeParms predictors are deliberately NOT applied: pdf.js and pypdf ignore them
+        // and only MuPDF applies them. They would also corrupt [/BrotliDecode /FlateDecode]
+        // chains, since the shared dict-form /DecodeParms reaches every filter.
+        Ok(output)
+    }
+
+    /// Read `reader` to end, appending to `output`. When `limit` is `Some(max)`,
+    /// at most `max + 1` bytes are read, so an oversized (bomb) stream is
+    /// detected via the `> max` check by the caller without ever allocating the
+    /// full decompressed output.
+    fn read_capped<R: std::io::Read>(reader: R, output: &mut Vec<u8>, limit: Option<usize>) -> std::io::Result<()> {
+        use std::io::Read;
+
+        match limit {
+            Some(max) => Read::take(reader, (max as u64).saturating_add(1))
+                .read_to_end(output)
+                .map(|_| ()),
+            None => {
+                let mut reader = reader;
+                reader.read_to_end(output).map(|_| ())
+            }
+        }
+    }
+
+    fn decompress_lzw(input: &[u8], params: Option<&Dictionary>, limit: Option<usize>) -> Result<Vec<u8>> {
+        use weezl::{BitOrder, decode::Decoder};
+        const MIN_BITS: u8 = 9;
+
+        let early_change = params
+            .and_then(|p| p.get(b"EarlyChange").ok())
+            .and_then(|p| Object::as_i64(p).ok())
+            .map(|v| v != 0)
+            .unwrap_or(true);
+
+        let mut decoder = if early_change {
+            Decoder::with_tiff_size_switch(BitOrder::Msb, MIN_BITS - 1)
+        } else {
+            Decoder::new(BitOrder::Msb, MIN_BITS - 1)
+        };
+
+        let output = Self::decompress_lzw_loop(input, &mut decoder, limit);
+        reject_over_limit(output.len(), limit)?;
+        Self::decompress_predictor(output, params)
+    }
+
+    fn decompress_lzw_loop(input: &[u8], decoder: &mut weezl::decode::Decoder, limit: Option<usize>) -> Vec<u8> {
+        let mut output = vec![];
+
+        // With a limit, decode through a writer that stops accepting bytes at `max + 1`, so a
+        // bomb never allocates its full output; the caller rejects it via the `> max` check.
+        let status = match limit {
+            Some(max) => {
+                let mut sink = LimitedWriter::new(&mut output, max.saturating_add(1));
+                decoder.into_stream(&mut sink).decode_all(input).status
+            }
+            None => decoder.into_stream(&mut output).decode_all(input).status,
+        };
+        if let Err(err) = status {
+            warn!("{err}");
+        }
+
+        output
+    }
+
+    fn decompress_zlib(input: &[u8], params: Option<&Dictionary>, limit: Option<usize>) -> Result<Vec<u8>> {
+        use flate2::read::ZlibDecoder;
+
+        // Reserve a starting capacity, but never pre-allocate beyond the limit so
+        // a bomb cannot force a huge allocation up front.
+        let mut output = Vec::with_capacity(initial_capacity(input.len(), limit));
+
+        if !input.is_empty()
+            && let Err(err) = Self::read_capped(ZlibDecoder::new(input), &mut output, limit)
+        {
+            warn!("{err}");
+            // Zlib failed (e.g. a corrupt adler32 in encrypted PDFs); retry as raw deflate.
+            if output.is_empty() && input.len() > 2 {
+                use flate2::read::DeflateDecoder;
+                if let Err(raw_err) = Self::read_capped(DeflateDecoder::new(&input[2..]), &mut output, limit) {
+                    warn!("raw deflate fallback also failed: {raw_err}");
+                }
+            }
+        }
+        reject_over_limit(output.len(), limit)?;
+        Self::decompress_predictor(output, params)
+    }
+
+    fn decode_ascii85(input: &[u8], limit: Option<usize>) -> Result<Vec<u8>> {
+        let mut output = vec![];
+        let mut buffer: u32 = 0;
+        let mut count = 0;
+        // Check for EOD marker
+        let input_no_eod = if input.len() >= 2 && &input[input.len() - 2..] == b"~>" {
+            &input[..input.len() - 2]
+        } else {
+            log::warn!("ASCII85 stream is missing its EOD marker");
+            input
+        };
+        for &ch in input_no_eod {
+            // ASCII85 amplifies up to 4x (each `z` is four zero bytes), so bound the output
+            // here; each iteration adds at most 4 bytes, so it never exceeds max + 4.
+            reject_over_limit(output.len(), limit)?;
+            if ch == b'z' {
+                if count != 0 {
+                    return Err(DecompressError::Ascii85("z character is not allowed in the middle of a group").into());
+                }
+                output.extend_from_slice(&[0, 0, 0, 0]);
+                continue;
+            }
+
+            if ch.is_ascii_whitespace() {
+                continue;
+            }
+
+            if !(b'!'..=b'u').contains(&ch) {
+                break;
+            }
+            // A group must encode a value below 2^32. Both the multiply and the add can carry
+            // past u32::MAX, so guard both.
+            buffer = buffer
+                .checked_mul(85)
+                .and_then(|b| b.checked_add((ch - b'!') as u32))
+                .ok_or(DecompressError::Ascii85("group value out of range"))?;
+            count += 1;
+
+            if count == 5 {
+                output.extend_from_slice(&buffer.to_be_bytes());
+                buffer = 0;
+                count = 0;
+            }
+        }
+
+        if count > 0 {
+            for _ in count..5 {
+                buffer = buffer
+                    .checked_mul(85)
+                    .and_then(|b| b.checked_add(84))
+                    .ok_or(DecompressError::Ascii85("group value out of range"))?;
+            }
+
+            let bytes = buffer.to_be_bytes();
+            output.extend_from_slice(&bytes[..count - 1]);
+        }
+
+        Ok(output)
+    }
+
+    /// ASCIIHexDecode (PDF 32000-1:2008, 7.4.2): each byte is two hexadecimal
+    /// digits, ASCII whitespace is ignored, and `>` ends the data. A final odd
+    /// digit is treated as if followed by `0`; any other non-hex byte is an error.
+    fn decode_ascii_hex(input: &[u8], limit: Option<usize>) -> Result<Vec<u8>> {
+        let mut output = vec![];
+        let mut high: Option<u8> = None;
+        for &ch in input {
+            reject_over_limit(output.len(), limit)?;
+            if ch == b'>' {
+                break;
+            }
+            if ch.is_ascii_whitespace() {
+                continue;
+            }
+            let nibble = (ch as char)
+                .to_digit(16)
+                .ok_or(DecompressError::AsciiHex("invalid hexadecimal character"))? as u8;
+            match high.take() {
+                Some(h) => output.push((h << 4) | nibble),
+                None => high = Some(nibble),
+            }
+        }
+        if let Some(h) = high {
+            output.push(h << 4);
+        }
+        Ok(output)
+    }
+
+    /// RunLengthDecode (PDF 32000-1:2008, 7.4.5): a length byte `l` where
+    /// `0..=127` copies the next `l + 1` bytes literally, `129..=255` repeats the
+    /// next byte `257 - l` times, and `128` marks the end of data. A stream that
+    /// ends mid-run is decoded best-effort rather than treated as fatal.
+    fn decode_run_length(input: &[u8], limit: Option<usize>) -> Result<Vec<u8>> {
+        let mut output = vec![];
+        let mut i = 0;
+        while i < input.len() {
+            reject_over_limit(output.len(), limit)?;
+            let length = input[i];
+            i += 1;
+            match length {
+                128 => break,
+                0..=127 => {
+                    let end = (i + length as usize + 1).min(input.len());
+                    output.extend_from_slice(&input[i..end]);
+                    i = end;
+                }
+                _ => {
+                    let Some(&byte) = input.get(i) else { break };
+                    output.resize(output.len() + (257 - length as usize), byte);
+                    i += 1;
+                }
+            }
+        }
+        Ok(output)
+    }
+
+    fn decompress_predictor(mut data: Vec<u8>, params: Option<&Dictionary>) -> Result<Vec<u8>> {
+        use crate::filters::png;
+
+        let Some(params) = params else {
+            return Ok(data);
+        };
+
+        // Columns pack to a byte boundary, so a sub-byte depth still takes
+        // ceil(Columns*Colors*bits/8) bytes per row; the left reference is one
+        // whole byte, rounded up. A zero or absent value means one sample.
+        let sample =
+            |key: &[u8], default: i64| max(1, params.get(key).and_then(Object::as_i64).unwrap_or(default)) as usize;
+        let (columns, colors, bits) = (
+            sample(b"Columns", 1),
+            sample(b"Colors", 1),
+            sample(b"BitsPerComponent", 8),
+        );
+        if columns.checked_mul(colors).and_then(|n| n.checked_mul(bits)).is_none() {
+            return Err(DecompressError::Predictor("predictor row size overflows").into());
+        }
+
+        match params.get(b"Predictor").and_then(Object::as_i64).unwrap_or(1) {
+            // TIFF Predictor 2 (horizontal differencing), distinct from the PNG
+            // predictors below.
+            2 => Self::reverse_tiff_predictor2(data, columns, colors, bits),
+            // PNG predictors 10-15.
+            10..=15 => {
+                let bytes_per_row = (columns * colors * bits).div_ceil(8);
+                let bpp = (colors * bits).div_ceil(8);
+                data = png::decode_frame(data.as_slice(), bpp, bytes_per_row)?;
+                Ok(data)
+            }
+            _ => Ok(data),
+        }
+    }
+
+    /// Reverse TIFF Predictor 2 (horizontal differencing): each sample is the
+    /// running sum of the encoded differences of the same colour component along
+    /// its row (PDF 32000-1:2008 Table 10). Rows are `Columns * Colors` samples of
+    /// `BitsPerComponent` bits; sums wrap modulo `2^BitsPerComponent`. The 1-, 2-,
+    /// 4-, 8- and 16-bit depths PDF allows are all supported; sub-byte samples are
+    /// unpacked, summed and repacked (see [`reverse_tiff_predictor2_subbyte`]).
+    fn reverse_tiff_predictor2(mut data: Vec<u8>, columns: usize, colors: usize, bits: usize) -> Result<Vec<u8>> {
+        match bits {
+            8 => {
+                let stride = columns * colors;
+                if stride > 0 {
+                    for row in data.chunks_mut(stride) {
+                        for i in colors..row.len() {
+                            row[i] = row[i].wrapping_add(row[i - colors]);
+                        }
+                    }
+                }
+            }
+            16 => {
+                let stride = columns * colors * 2;
+                if stride > 0 {
+                    for row in data.chunks_mut(stride) {
+                        let samples = row.len() / 2;
+                        for s in colors..samples {
+                            let prev = u16::from_be_bytes([row[(s - colors) * 2], row[(s - colors) * 2 + 1]]);
+                            let cur = u16::from_be_bytes([row[s * 2], row[s * 2 + 1]]);
+                            row[s * 2..s * 2 + 2].copy_from_slice(&cur.wrapping_add(prev).to_be_bytes());
+                        }
+                    }
+                }
+            }
+            1 | 2 | 4 => {
+                let stride = (columns * colors * bits).div_ceil(8);
+                if stride > 0 {
+                    for row in data.chunks_mut(stride) {
+                        Self::reverse_tiff_predictor2_subbyte(row, columns, colors, bits);
+                    }
+                }
+            }
+            _ => {
+                return Err(DecompressError::Predictor(
+                    "TIFF Predictor 2 supports only 1-, 2-, 4-, 8- or 16-bit components",
+                )
+                .into());
+            }
+        }
+        Ok(data)
+    }
+
+    /// Reverse TIFF Predictor 2 for one sub-byte (1/2/4-bit) packed row in place.
+    /// Samples are unpacked MSB-first, summed per colour component modulo
+    /// `2^bits`, then repacked MSB-first; the row's trailing padding bits are kept.
+    fn reverse_tiff_predictor2_subbyte(row: &mut [u8], columns: usize, colors: usize, bits: usize) {
+        let mask = (1u16 << bits) - 1;
+        let samples = (columns * colors).min(row.len() * 8 / bits);
+        // Only the first `samples` components can occur in a row, so a huge
+        // `/Colors` must not size the accumulator.
+        let mut acc = vec![0u16; colors.min(samples)];
+        let mut out = vec![0u8; row.len()];
+        let mut in_bit = 0usize;
+        let mut out_buf = 0u32;
+        let mut out_bits = 0u32;
+        let mut out_idx = 0usize;
+        for s in 0..samples {
+            let byte = in_bit / 8;
+            let off = (in_bit % 8) as u32;
+            let window = ((row[byte] as u16) << 8) | *row.get(byte + 1).unwrap_or(&0) as u16;
+            let sample = (window >> (16 - off - bits as u32)) & mask;
+            in_bit += bits;
+
+            let c = s % colors;
+            acc[c] = (acc[c] + sample) & mask;
+
+            out_buf = (out_buf << bits) | acc[c] as u32;
+            out_bits += bits as u32;
+            if out_bits >= 8 {
+                out[out_idx] = (out_buf >> (out_bits - 8)) as u8;
+                out_idx += 1;
+                out_bits -= 8;
+            }
+        }
+        if out_bits > 0 && out_idx < out.len() {
+            let keep = 8 - out_bits;
+            out[out_idx] = ((out_buf << keep) as u8) | (row[out_idx] & ((1u8 << keep) - 1));
+        }
+        row.copy_from_slice(&out);
+    }
+
+    pub fn decompress(&mut self) -> Result<()> {
+        self.decompress_inner(None)
+    }
+
+    /// Decompress this stream in place like [`Stream::decompress`], but reject it
+    /// with [`DecompressError::MemoryLimitExceeded`] if the decoded output would
+    /// exceed `max_output` bytes. Used on the load path to bound the memory a
+    /// single object/xref stream can consume.
+    pub fn decompress_with_limit(&mut self, max_output: usize) -> Result<()> {
+        self.decompress_inner(Some(max_output))
+    }
+
+    /// Shared implementation of [`Stream::decompress`] and its bounded
+    /// counterpart: decode in place and drop the filter entries, so the stream
+    /// keeps the decoded bytes under its own `/Length`.
+    fn decompress_inner(&mut self, limit: Option<usize>) -> Result<()> {
+        let data = self.decode_filters(limit)?;
+        self.set_plain_content(data);
+        Ok(())
+    }
+
+    pub fn is_compressed(&self) -> bool {
+        self.dict.get(b"Filter").is_ok()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{Error, Object, error::DecompressError};
+
+    use super::Stream;
+
+    #[test]
+    fn test_decode_ascii85() {
+        let input = r#"9jqo^BlbD-BleB1DJ+*+F(f,q/0JhKF<GL>Cj@.4Gp$d7F!,L7@<6@)/0JDEF<G%<+EV:2F!,O<
+            DJ+*.@<*K0@<6L(Df-\0Ec5e;DffZ(EZee.Bl.9pF"AGXBPCsi+DGm>@3BB/F*&OCAfu2/AKYi(
+            DIb:@FD,*)+C]U=@3BN#EcYf8ATD3s@q?d$AftVqCh[NqF<G:8+EV:.+Cf>-FD5W8ARlolDIal(
+            DId<j@<?3r@:F%a+D58'ATD4$Bl@l3De:,-DJs`8ARoFb/0JMK@qB4^F!,R<AKZ&-DfTqBG%G>u
+            D.RTpAKYo'+CT/5+Cei#DII?(E,9)oF*2M7/c~>"#;
+        let expected = "Man is distinguished, not only by his reason, but by this singular passion from other animals, which is a lust of the mind, that by a perseverance of delight in the continued and indefatigable generation of knowledge, exceeds the short vehemence of any carnal pleasure.";
+        let output = Stream::decode_ascii85(input.as_bytes(), None).unwrap();
+        assert_eq!(&output, expected.as_bytes());
+    }
+
+    #[test]
+    fn test_lzw_decode_params_array_matches_filter_position() {
+        use crate::Dictionary;
+
+        // MSB-first 9-bit LZW codes: clear=256, 1, 1, 1, EOD=257.
+        // With TIFF Predictor 2 and three columns, the decoded bytes are [1, 2, 3].
+        let codes = [256u16, 1, 1, 1, 257];
+        let mut payload = vec![0u8; 6];
+        for (i, code) in codes.iter().enumerate() {
+            for bit in 0..9 {
+                let value = ((code >> (8 - bit)) & 1) as u8;
+                payload[(i * 9 + bit) / 8] |= value << (7 - (i * 9 + bit) % 8);
+            }
+        }
+
+        let mut params = Dictionary::new();
+        params.set("Predictor", 2i64);
+        params.set("Columns", 3i64);
+        params.set("Colors", 1i64);
+        params.set("BitsPerComponent", 8i64);
+
+        let scalar = Stream::new(
+            crate::dictionary! { "Filter" => "LZWDecode", "DecodeParms" => params.clone() },
+            payload.clone(),
+        );
+        let array = Stream::new(
+            crate::dictionary! {
+                "Filter" => Object::Array(vec![Object::Name(b"LZWDecode".to_vec())]),
+                "DecodeParms" => Object::Array(vec![Object::Dictionary(params.clone())]),
+            },
+            payload.clone(),
+        );
+        let hex = payload.iter().map(|byte| format!("{byte:02x}")).collect::<String>() + ">";
+        let chain = Stream::new(
+            crate::dictionary! {
+                "Filter" => Object::Array(vec![
+                    Object::Name(b"ASCIIHexDecode".to_vec()),
+                    Object::Name(b"LZWDecode".to_vec()),
+                ]),
+                "DecodeParms" => Object::Array(vec![
+                    Object::Null,
+                    Object::Dictionary(params),
+                ]),
+            },
+            hex.into_bytes(),
+        );
+
+        for stream in [scalar, array, chain] {
+            assert_eq!(stream.decompressed_content().unwrap(), [1, 2, 3]);
+        }
+    }
+
+    #[test]
+    fn test_decode_ascii85_overflow() {
+        let input = b"uuuuu~>";
+        let output = Stream::decode_ascii85(input, None);
+        // let expected: Result<Vec<u8>, Error> = Err(Error::ContentDecode);
+        assert!(matches!(output, Err(Error::Decompress(DecompressError::Ascii85(_)))));
+    }
+
+    #[test]
+    fn test_decode_ascii85_group_value_out_of_range() {
+        // 85 * 50529027 == u32::MAX, so "s8W-" hits the multiply ceiling and the 5th digit
+        // overflows the add; a multiply-only guard misses it. "s8W-!" is in range.
+        assert_eq!(
+            Stream::decode_ascii85(b"s8W-!~>", None).unwrap(),
+            vec![255, 255, 255, 255]
+        );
+
+        for input in [
+            &b"s8W-\"~>"[..], // value == 2^32 (issue #442)
+            &b"s8W-~>"[..],   // same overflow via the partial-group padding
+            &b"uuuuu~>"[..],  // overflow caught by the multiply
+        ] {
+            let out = Stream::decode_ascii85(input, None);
+            assert!(
+                matches!(out, Err(Error::Decompress(DecompressError::Ascii85(_)))),
+                "expected {input:?} to be rejected, got {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_decode_ascii85_valid_vectors() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"88/~>", &[72, 105]),
+            (b"87cURD_*#4DfTZ)+T~>", b"Hello, World!"),
+            (b"z~>", &[0, 0, 0, 0]),
+            (b":ddb~>", b"PDF"),
+            (
+                b"!!*-'\"9eu7#RLhG$k3[W&.oNg~>",
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                &Stream::decode_ascii85(input, None).unwrap(),
+                expected,
+                "input {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_decompress_tiff_predictor2() {
+        use crate::Dictionary;
+
+        fn params(colors: i64, columns: i64, bits: i64) -> Dictionary {
+            let mut p = Dictionary::new();
+            p.set("Predictor", 2i64);
+            p.set("Colors", colors);
+            p.set("Columns", columns);
+            p.set("BitsPerComponent", bits);
+            p
+        }
+
+        // 8-bit single component: running sum along the row, wrapping mod 256.
+        assert_eq!(
+            Stream::decompress_predictor(vec![10, 5, 250, 1], Some(&params(1, 4, 8))).unwrap(),
+            vec![10, 15, 9, 10]
+        );
+        // 8-bit, 3 colours: differencing is per component.
+        assert_eq!(
+            Stream::decompress_predictor(vec![255, 0, 128, 1, 2, 3], Some(&params(3, 2, 8))).unwrap(),
+            vec![255, 0, 128, 0, 2, 131]
+        );
+        // 8-bit: rows reconstruct independently.
+        assert_eq!(
+            Stream::decompress_predictor(vec![1, 2, 3, 10, 20, 30], Some(&params(1, 3, 8))).unwrap(),
+            vec![1, 3, 6, 10, 30, 60]
+        );
+        // 16-bit big-endian samples, sums wrap mod 2^16.
+        assert_eq!(
+            Stream::decompress_predictor(vec![0xFF, 0xFF, 0x00, 0x02], Some(&params(1, 2, 16))).unwrap(),
+            vec![0xFF, 0xFF, 0x00, 0x01]
+        );
+        // Sub-byte depths (1/2/4-bit) are now reconstructed instead of rejected;
+        // values verified against pdf.js. 1-bit, 8 columns: running sum mod 2.
+        assert_eq!(
+            Stream::decompress_predictor(vec![0b1010_1010], Some(&params(1, 8, 1))).unwrap(),
+            vec![0b1100_1100]
+        );
+        // 1-bit, 16 columns, two rows.
+        assert_eq!(
+            Stream::decompress_predictor(vec![255, 170, 8, 255], Some(&params(1, 16, 1))).unwrap(),
+            vec![170, 204, 15, 85]
+        );
+        // 2-bit and 4-bit, single component (rows have trailing padding bits).
+        assert_eq!(
+            Stream::decompress_predictor(vec![85, 179], Some(&params(1, 6, 2))).unwrap(),
+            vec![108, 147]
+        );
+        assert_eq!(
+            Stream::decompress_predictor(vec![25, 16], Some(&params(1, 3, 4))).unwrap(),
+            vec![26, 176]
+        );
+        // 4-bit, 2 colours: differencing stays per component.
+        assert_eq!(
+            Stream::decompress_predictor(vec![18, 34], Some(&params(2, 2, 4))).unwrap(),
+            vec![18, 52]
+        );
+        // A depth PDF never uses (not 1/2/4/8/16) is still rejected.
+        assert!(matches!(
+            Stream::decompress_predictor(vec![0, 0, 0], Some(&params(1, 4, 3))),
+            Err(Error::Decompress(DecompressError::Predictor(_)))
+        ));
+    }
+
+    #[test]
+    fn test_decompress_predictor_huge_params() {
+        use crate::Dictionary;
+
+        fn params(predictor: i64, colors: i64, columns: i64, bits: i64) -> Dictionary {
+            let mut p = Dictionary::new();
+            p.set("Predictor", predictor);
+            p.set("Colors", colors);
+            p.set("Columns", columns);
+            p.set("BitsPerComponent", bits);
+            p
+        }
+
+        // A huge /Colors used to size the sub-byte accumulator and panic with
+        // "capacity overflow"; only the samples present in the row matter.
+        assert_eq!(
+            Stream::decompress_predictor(vec![0b1010_1010], Some(&params(2, i64::MAX, 1, 1))).unwrap(),
+            vec![0b1010_1010]
+        );
+        // A row size that overflows is an error rather than a panic or a wrapped size.
+        for predictor in [2, 12] {
+            assert!(matches!(
+                Stream::decompress_predictor(vec![0, 1, 2, 3], Some(&params(predictor, i64::MAX, 3, 8))),
+                Err(Error::Decompress(DecompressError::Predictor(_)))
+            ));
+        }
+    }
+
+    #[test]
+    fn test_decompress_png_predictor_subbyte() {
+        use crate::Dictionary;
+
+        // Predictor 15 (PNG). Each row carries a leading filter-type byte. Decoded
+        // bytes verified against pdf.js and a real libpng-encoded 1-bit PNG.
+        fn params(colors: i64, columns: i64, bits: i64) -> Dictionary {
+            let mut p = Dictionary::new();
+            p.set("Predictor", 15i64);
+            p.set("Colors", colors);
+            p.set("Columns", columns);
+            p.set("BitsPerComponent", bits);
+            p
+        }
+
+        // 1-bit grayscale, 16 columns: 2 packed bytes/row. A 16-byte row width failed here
+        // with UnexpectedEof. Filters None/Sub/Up.
+        assert_eq!(
+            Stream::decompress_predictor(vec![0, 170, 204, 1, 15, 70, 2, 225, 65], Some(&params(1, 16, 1))).unwrap(),
+            vec![170, 204, 15, 85, 240, 150]
+        );
+        // 2-bit grayscale, 6 columns (Sub, Average).
+        assert_eq!(
+            Stream::decompress_predictor(vec![1, 108, 36, 3, 144, 141], Some(&params(1, 6, 2))).unwrap(),
+            vec![108, 144, 198, 56]
+        );
+        // 4-bit grayscale, 3 columns (Up, Paeth).
+        assert_eq!(
+            Stream::decompress_predictor(vec![2, 26, 176, 4, 171, 107], Some(&params(1, 3, 4))).unwrap(),
+            vec![26, 176, 197, 48]
+        );
+        // 2-bit RGB (3 colours), 4 columns: 3 bytes/row, left reference 1 byte.
+        assert_eq!(
+            Stream::decompress_predictor(vec![1, 108, 48, 72, 4, 175, 202, 241], Some(&params(3, 4, 2))).unwrap(),
+            vec![108, 156, 228, 27, 54, 141]
+        );
+    }
+
+    #[test]
+    fn test_decompress_zlib_corrupt_checksum() {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let original = b"BT /F1 12 Tf (Hello World) Tj ET";
+
+        // Compress with valid zlib
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(original).unwrap();
+        let mut compressed = encoder.finish().unwrap();
+
+        // Corrupt the adler32 checksum (last 4 bytes)
+        let len = compressed.len();
+        assert!(len >= 4);
+        for byte in &mut compressed[len - 4..] {
+            *byte ^= 0xFF;
+        }
+
+        // Normal zlib should fail, but our fallback should recover
+        let result = Stream::decompress_zlib(&compressed, None, None).unwrap();
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn test_uncompressed_stream_returns_raw_content() {
+        use crate::Dictionary;
+
+        // A stream with no /Filter should return its raw content from decompressed_content()
+        let content = b"/FullPage Do
+"
+        .to_vec();
+        let mut dict = Dictionary::new();
+        dict.set("Length", content.len() as i64);
+        let stream = Stream::new(dict, content.clone());
+
+        let result = stream
+            .decompressed_content()
+            .expect("should succeed for uncompressed stream");
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_uncompressed_stream_honors_limit() {
+        use crate::Dictionary;
+
+        // Even with no filter, an over-limit raw stream must be rejected so the
+        // caller's memory bound is never silently exceeded.
+        let content = vec![0u8; 1024];
+        let mut dict = Dictionary::new();
+        dict.set("Length", content.len() as i64);
+        let stream = Stream::new(dict, content);
+
+        assert!(matches!(
+            stream.decompressed_content_with_limit(512),
+            Err(Error::Decompress(DecompressError::MemoryLimitExceeded { limit: 512 }))
+        ));
+        assert!(stream.decompressed_content_with_limit(4096).is_ok());
+    }
+
+    #[test]
+    fn test_limited_writer_fills_to_limit_then_errors() {
+        use super::LimitedWriter;
+        use std::io::Write;
+
+        // The push-based (LZW) guard: the sink accepts bytes up to `limit`, then refuses
+        // further writes so the caller sees `len() > max` without unbounded allocation.
+        let mut buf = Vec::new();
+        let mut writer = LimitedWriter::new(&mut buf, 4);
+
+        assert_eq!(writer.write(b"ab").unwrap(), 2);
+        // This write would cross the limit: it fills to exactly 4 bytes, errors.
+        let err = writer.write(b"cdef").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::WriteZero);
+
+        assert_eq!(buf, b"abcd");
+    }
+
+    #[test]
+    fn test_ascii85_honors_limit() {
+        // Each `z` expands to four zero bytes, so 1 MiB decodes to 4 MiB; the decoder must stop
+        // at the limit (guards the chained `[FlateDecode ASCII85Decode]` bomb vector).
+        let mut input = vec![b'z'; 1024 * 1024];
+        input.extend_from_slice(b"~>");
+
+        let full = Stream::decode_ascii85(&input, None).unwrap();
+        assert_eq!(full.len(), 4 * 1024 * 1024, "unbounded ASCII85 amplifies 4x");
+
+        assert!(matches!(
+            Stream::decode_ascii85(&input, Some(1024 * 1024)),
+            Err(Error::Decompress(DecompressError::MemoryLimitExceeded { limit })) if limit == 1024 * 1024
+        ));
+    }
+
+    #[test]
+    fn test_lzw_bomb_rejected_with_limit() {
+        use crate::Dictionary;
+        use weezl::{BitOrder, encode::Encoder};
+
+        // A tiny LZW stream that decodes back to 8 MiB of zeros. The encoder must
+        // match lopdf's default decoder (`with_tiff_size_switch`, code size 8).
+        let plain = vec![0u8; 8 * 1024 * 1024];
+        let compressed = Encoder::with_tiff_size_switch(BitOrder::Msb, 8).encode(&plain).unwrap();
+        assert!(compressed.len() < 128 * 1024, "LZW bomb input should be tiny");
+
+        let mut dict = Dictionary::new();
+        dict.set("Filter", "LZWDecode");
+        let stream = Stream::new(dict, compressed);
+
+        // Bounded: the push-based LZW path (LimitedWriter + weezl) rejects it.
+        assert!(matches!(
+            stream.decompressed_content_with_limit(1024 * 1024),
+            Err(Error::Decompress(DecompressError::MemoryLimitExceeded { limit })) if limit == 1024 * 1024
+        ));
+        // Unbounded default still round-trips fully (proves the pairing is valid,
+        // so the rejection above is real and not a decode failure).
+        assert_eq!(stream.decompressed_content().unwrap().len(), 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_decode_ascii_hex() {
+        use crate::Dictionary;
+
+        // Whole-stream path: a `/Filter /ASCIIHexDecode` stream decodes to bytes.
+        let mut dict = Dictionary::new();
+        dict.set("Filter", "ASCIIHexDecode");
+        let stream = Stream::new(dict, b"48656C6C6F>".to_vec());
+        assert_eq!(stream.decompressed_content().unwrap(), b"Hello");
+
+        // Spec vectors (PDF 32000-1 7.4.2). Whitespace is ignored, `>` ends the
+        // data, and a trailing odd digit is padded with 0.
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"48 65 6C\n6C6F>", b"Hello"),
+            (b"901FA3>", &[0x90, 0x1F, 0xA3]),
+            (b"4A5>", &[0x4A, 0x50]),
+            (b"4>", &[0x40]),
+            (b">", &[]),
+            (b"4865>ffff", b"He"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                &Stream::decode_ascii_hex(input, None).unwrap(),
+                expected,
+                "input {input:?}"
+            );
+        }
+
+        // A byte that is neither a hex digit, whitespace, nor `>` is rejected.
+        assert!(matches!(
+            Stream::decode_ascii_hex(b"48XY>", None),
+            Err(Error::Decompress(DecompressError::AsciiHex(_)))
+        ));
+    }
+
+    #[test]
+    fn test_decode_run_length() {
+        use crate::Dictionary;
+
+        // Whole-stream path: literal run of 5, then 3 copies of 'A', then EOD.
+        let mut dict = Dictionary::new();
+        dict.set("Filter", "RunLengthDecode");
+        let mut data = vec![0x04];
+        data.extend_from_slice(b"Hello");
+        data.extend_from_slice(&[0xFE, b'A', 0x80]);
+        let stream = Stream::new(dict, data);
+        assert_eq!(stream.decompressed_content().unwrap(), b"HelloAAA");
+
+        // Spec vectors (PDF 32000-1 7.4.5): 0x81 = 128 copies, 0xFF = 2, 0x80 = end of data
+        // (trailing bytes dropped), and a run without an EOD marker decodes best-effort.
+        let cases: &[(&[u8], Vec<u8>)] = &[
+            (&[0x81, b'Z', 0x80], vec![b'Z'; 128]),
+            (&[0xFF, b'Q', 0x00, b'!', 0x80], b"QQ!".to_vec()),
+            (&[0x02, b'a', b'b', b'c', 0x80, b'x', b'y'], b"abc".to_vec()),
+            (&[0x01, b'H', b'i'], b"Hi".to_vec()),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                &Stream::decode_run_length(input, None).unwrap(),
+                expected,
+                "input {input:?}"
+            );
+        }
+
+        // Run-length can amplify up to 128x, so an over-limit stream must be
+        // rejected instead of allocating the full expansion (bomb guard).
+        let bomb: Vec<u8> = std::iter::repeat_n([0x81u8, b'x'], 4096).flatten().collect();
+        assert_eq!(Stream::decode_run_length(&bomb, None).unwrap().len(), 128 * 4096);
+        assert!(matches!(
+            Stream::decode_run_length(&bomb, Some(64 * 1024)),
+            Err(Error::Decompress(DecompressError::MemoryLimitExceeded { limit })) if limit == 64 * 1024
+        ));
+    }
+
+    #[test]
+    fn dictionary_lookup_miss_names_the_key() {
+        use super::{Dictionary, Object};
+
+        let mut dict = Dictionary::new();
+        dict.set("Present", 1);
+        assert!(matches!(dict.get(b"Present"), Ok(Object::Integer(1))));
+        assert!(matches!(dict.get(b"Missing"), Err(Error::DictKey(key)) if key == "Missing"));
+        assert!(matches!(dict.get_mut(b"Present"), Ok(Object::Integer(1))));
+        assert!(matches!(dict.get_mut(b"Missing"), Err(Error::DictKey(key)) if key == "Missing"));
+    }
+}

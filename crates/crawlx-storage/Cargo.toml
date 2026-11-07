@@ -1,0 +1,63 @@
+[package]
+name = "crawlx-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: PostgreSQL repositories, migrations, artifact store, retention"
+
+[features]
+# Statement-level failpoints in the outcome transaction (the atomic outcome drill); never on in release builds.
+chaos = []
+# `testkit::fake_s3`: an in-process S3-compatible server for the SDK code path of `S3Blobs`
+# (this crate's `tests/s3.rs` and the crawlx-bench canary scan). Test builds only.
+fake-s3 = ["dep:axum"]
+# Explicit test-only loopback AWS KMS protocol fixture; never auto-selected.
+fake-kms = ["dep:axum", "dep:base64"]
+
+[dependencies]
+axum = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+crawlx-core = { path = "../crawlx-core" }
+crawlx-telemetry = { path = "../crawlx-telemetry" }
+async-trait.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-kms.workspace = true
+aws-smithy-http-client.workspace = true
+bytes.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+hex.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+zip.workspace = true
+parking_lot.workspace = true
+redis.workspace = true
+ring = { workspace = true, features = ["std"] }
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+# Enables loopback SDK fixtures for this crate's own tests.
+crawlx-storage = { path = ".", features = ["fake-s3", "fake-kms"] }
+crawlx-policy = { path = "../crawlx-policy" }
+crawlx-state = { path = "../crawlx-state" }
+proptest.workspace = true
+
+[lints]
+workspace = true

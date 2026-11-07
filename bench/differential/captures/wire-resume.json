@@ -1,0 +1,523 @@
+{
+  "wireSample": {
+    "provenance": "black_box_run",
+    "system": "firecrawl",
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5",
+    "apiRoot": "http://127.0.0.1:3102",
+    "origin": "http://gym.test:4101"
+  },
+  "family": "wire-resume",
+  "scenarios": [
+    {
+      "id": "restart-mid-crawl",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 500,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/slow/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1827b-ef4c-76ce-8a88-25a56519f66d",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1827b-ef4c-76ce-8a88-25a56519f66d"
+          },
+          "elapsed_ms": 19
+        },
+        {
+          "step": "trigger",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-ef4c-76ce-8a88-25a56519f66d",
+          "status": 200,
+          "response": {
+            "completed": 6,
+            "createdAt": "2026-10-28T12:28:42.701Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/3",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/2",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/4",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/5",
+                "statusCode": 200
+              }
+            ],
+            "duration": 2.057,
+            "expiresAt": "2026-10-29T12:28:44.000Z",
+            "next": "http://127.0.0.1:3102/v2/crawl/01a1827b-ef4c-76ce-8a88-25a56519f66d?skip=6",
+            "status": "scraping",
+            "success": true,
+            "total": 41
+          },
+          "elapsed_ms": 5
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-ef4c-76ce-8a88-25a56519f66d",
+          "status": 200,
+          "response": {
+            "completed": 41,
+            "completedAt": "2026-10-28T12:29:47.999Z",
+            "createdAt": "2026-10-28T12:28:42.701Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/3",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/2",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/4",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/5",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/11",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/12",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/13",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/14",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/15",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/16",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/17",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/18",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/19",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/20",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/21",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/22",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/23",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/24",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/25",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/26",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/27",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/28",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/29",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/30",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/31",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/32",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/33",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/34",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/35",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/36",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/37",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/38",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/39",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/40",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/6",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/7",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/9",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/10",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/8",
+                "statusCode": 200
+              }
+            ],
+            "duration": 65.298,
+            "expiresAt": "2026-10-29T12:30:02.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 41
+          },
+          "elapsed_ms": 14
+        }
+      ],
+      "notes": {
+        "hook": {
+          "error": null,
+          "ok": true
+        },
+        "hook_to_final_ms": 76825
+      }
+    }
+  ],
+  "accessLog": {
+    "entries": [
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "127.0.0.1:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/1",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/2",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/3",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/4",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/5",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/7",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/6",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/9",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/8",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/10",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/11",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/12",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/13",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/14",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/15",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/16",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/17",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/18",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/19",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/20",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/21",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/22",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/23",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/24",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/25",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/26",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/27",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/28",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/29",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/30",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/31",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/32",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/33",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/34",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/35",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/36",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/37",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/38",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/39",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/40",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/6",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/7",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/8",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/10",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/9",
+        "host": "gym.test:4101"
+      }
+    ]
+  }
+}

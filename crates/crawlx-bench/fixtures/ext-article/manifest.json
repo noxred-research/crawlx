@@ -1,0 +1,19 @@
+{
+  "id": "ext-article",
+  "title": "Authored native article extraction layouts and metadata, MIT",
+  "version": 1,
+  "url_path": "/ext-article/main.html",
+  "controls": [],
+  "expected": {
+    "url_addressable_pages": [
+      "main.html",
+      "chrome.html",
+      "siblings.html",
+      "malformed.html",
+      "forum.html",
+      "comments.html",
+      "metadata.html",
+      "unicode.html"
+    ]
+  }
+}

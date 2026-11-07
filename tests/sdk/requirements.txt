@@ -1,0 +1,7 @@
+# The official Firecrawl Python SDK and LangChain's Firecrawl package (its FirecrawlLoader sits on
+# the SDK), driven by tests/sdk/test_sdk.py (run by crates/crawlx-cli/tests/sdk_python.rs).
+# Verified with Python 3.14: firecrawl-py 4.54.0, langchain-firecrawl 0.1.0 (requires
+# firecrawl-py >=4.3.6,<5 and langchain-core >=1.4,<2); pip resolves the rest (pydantic >= 2,
+# requests, python-dotenv, websockets, httpx, aiohttp, nest-asyncio, langsmith, ...).
+firecrawl-py==4.54.0
+langchain-firecrawl==0.1.0

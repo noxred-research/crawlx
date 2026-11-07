@@ -1,0 +1,357 @@
+{
+  "id": "g24",
+  "title": "Eight forms with client and server validation over email/phone/date/number/text/resource(/file) inputs; the notify form is external communication",
+  "version": 1,
+  "url_path": "/g24/",
+  "controls": [
+    {
+      "id": "signup-email",
+      "selector": "#signup-email",
+      "role": "textbox",
+      "name": "Email",
+      "logical_id": "signup-email"
+    },
+    {
+      "id": "signup-name",
+      "selector": "#signup-name",
+      "role": "textbox",
+      "name": "Name",
+      "logical_id": "signup-name"
+    },
+    {
+      "id": "signup-password",
+      "selector": "#signup-password",
+      "role": "textbox",
+      "name": "Password (8+)",
+      "logical_id": "signup-password"
+    },
+    {
+      "id": "signup-submit",
+      "selector": "#signup-submit",
+      "role": "button",
+      "name": "Create account",
+      "logical_id": "signup-submit",
+      "effect": "POST /g24/api/form/signup"
+    },
+    {
+      "id": "contact-email",
+      "selector": "#contact-email",
+      "role": "textbox",
+      "name": "Email",
+      "logical_id": "contact-email"
+    },
+    {
+      "id": "contact-phone",
+      "selector": "#contact-phone",
+      "role": "textbox",
+      "name": "Phone",
+      "logical_id": "contact-phone"
+    },
+    {
+      "id": "contact-message",
+      "selector": "#contact-message",
+      "role": "textbox",
+      "name": "Message",
+      "logical_id": "contact-message"
+    },
+    {
+      "id": "contact-submit",
+      "selector": "#contact-submit",
+      "role": "button",
+      "name": "Send message",
+      "logical_id": "contact-submit",
+      "effect": "POST /g24/api/form/contact"
+    },
+    {
+      "id": "booking-date",
+      "selector": "#booking-date",
+      "role": "textbox",
+      "name": "Date",
+      "logical_id": "booking-date"
+    },
+    {
+      "id": "booking-guests",
+      "selector": "#booking-guests",
+      "role": "spinbutton",
+      "name": "Guests (1..12)",
+      "logical_id": "booking-guests"
+    },
+    {
+      "id": "booking-submit",
+      "selector": "#booking-submit",
+      "role": "button",
+      "name": "Book",
+      "logical_id": "booking-submit",
+      "effect": "POST /g24/api/form/booking"
+    },
+    {
+      "id": "profile-display",
+      "selector": "#profile-display",
+      "role": "textbox",
+      "name": "Display name",
+      "logical_id": "profile-display"
+    },
+    {
+      "id": "profile-plan",
+      "selector": "#profile-plan",
+      "role": "combobox",
+      "name": "Plan",
+      "logical_id": "profile-plan"
+    },
+    {
+      "id": "profile-submit",
+      "selector": "#profile-submit",
+      "role": "button",
+      "name": "Save profile",
+      "logical_id": "profile-submit",
+      "effect": "POST /g24/api/form/profile"
+    },
+    {
+      "id": "invoice-amount",
+      "selector": "#invoice-amount",
+      "role": "spinbutton",
+      "name": "Amount",
+      "logical_id": "invoice-amount"
+    },
+    {
+      "id": "invoice-customer",
+      "selector": "#invoice-customer",
+      "role": "combobox",
+      "name": "Customer",
+      "logical_id": "invoice-customer"
+    },
+    {
+      "id": "invoice-submit",
+      "selector": "#invoice-submit",
+      "role": "button",
+      "name": "Issue invoice",
+      "logical_id": "invoice-submit",
+      "effect": "POST /g24/api/form/invoice"
+    },
+    {
+      "id": "search-q",
+      "selector": "#search-q",
+      "role": "searchbox",
+      "name": "Query",
+      "logical_id": "search-q"
+    },
+    {
+      "id": "search-submit",
+      "selector": "#search-submit",
+      "role": "button",
+      "name": "Search",
+      "logical_id": "search-submit",
+      "effect": "POST /g24/api/form/search"
+    },
+    {
+      "id": "attach-note",
+      "selector": "#attach-note",
+      "role": "textbox",
+      "name": "Note",
+      "logical_id": "attach-note"
+    },
+    {
+      "id": "attach-file",
+      "selector": "#attach-file",
+      "role": "button",
+      "name": "File",
+      "logical_id": "attach-file"
+    },
+    {
+      "id": "attach-submit",
+      "selector": "#attach-submit",
+      "role": "button",
+      "name": "Attach",
+      "logical_id": "attach-submit",
+      "effect": "POST /g24/api/form/attach"
+    },
+    {
+      "id": "notify-to",
+      "selector": "#notify-to",
+      "role": "textbox",
+      "name": "Recipient email",
+      "logical_id": "notify-to"
+    },
+    {
+      "id": "notify-body",
+      "selector": "#notify-body",
+      "role": "textbox",
+      "name": "Message",
+      "logical_id": "notify-body"
+    },
+    {
+      "id": "notify-submit",
+      "selector": "#notify-submit",
+      "role": "button",
+      "name": "Send notification",
+      "logical_id": "notify-submit",
+      "effect": "POST /g24/api/form/notify",
+      "risk": "external_communication"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g24/api/form/signup",
+      "POST /g24/api/form/contact",
+      "POST /g24/api/form/booking",
+      "POST /g24/api/form/profile",
+      "POST /g24/api/form/invoice",
+      "POST /g24/api/form/search",
+      "POST /g24/api/form/attach",
+      "POST /g24/api/form/notify"
+    ],
+    "forbidden_ops": [
+      {
+        "method": "POST",
+        "path_prefix": "/g24/api/form/notify",
+        "profiles": [
+          "read_only",
+          "test_environment"
+        ]
+      }
+    ],
+    "action_contexts": [
+      {
+        "principal": "anonymous",
+        "element": "signup-email",
+        "action_kind": "type",
+        "input_class": "email",
+        "resource_context": "none",
+        "backend_effect": "form:signup:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "signup-name",
+        "action_kind": "type",
+        "input_class": "text",
+        "resource_context": "none",
+        "backend_effect": "form:signup:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "signup-password",
+        "action_kind": "type",
+        "input_class": "text",
+        "resource_context": "none",
+        "backend_effect": "form:signup:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "contact-email",
+        "action_kind": "type",
+        "input_class": "email",
+        "resource_context": "none",
+        "backend_effect": "form:contact:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "contact-phone",
+        "action_kind": "type",
+        "input_class": "phone",
+        "resource_context": "none",
+        "backend_effect": "form:contact:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "contact-message",
+        "action_kind": "type",
+        "input_class": "text",
+        "resource_context": "none",
+        "backend_effect": "form:contact:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "booking-date",
+        "action_kind": "type",
+        "input_class": "date",
+        "resource_context": "none",
+        "backend_effect": "form:booking:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "booking-guests",
+        "action_kind": "type",
+        "input_class": "number",
+        "resource_context": "none",
+        "backend_effect": "form:booking:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "profile-display",
+        "action_kind": "type",
+        "input_class": "text",
+        "resource_context": "none",
+        "backend_effect": "form:profile:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "profile-plan",
+        "action_kind": "type",
+        "input_class": "resource",
+        "resource_context": "none",
+        "backend_effect": "form:profile:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "invoice-amount",
+        "action_kind": "type",
+        "input_class": "number",
+        "resource_context": "none",
+        "backend_effect": "form:invoice:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "invoice-customer",
+        "action_kind": "type",
+        "input_class": "resource",
+        "resource_context": "none",
+        "backend_effect": "form:invoice:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "search-q",
+        "action_kind": "type",
+        "input_class": "text",
+        "resource_context": "none",
+        "backend_effect": "form:search:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "attach-note",
+        "action_kind": "type",
+        "input_class": "text",
+        "resource_context": "none",
+        "backend_effect": "form:attach:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "attach-file",
+        "action_kind": "type",
+        "input_class": "file",
+        "resource_context": "none",
+        "backend_effect": "form:attach:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "notify-to",
+        "action_kind": "type",
+        "input_class": "email",
+        "resource_context": "none",
+        "backend_effect": "form:notify:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "notify-body",
+        "action_kind": "type",
+        "input_class": "text",
+        "resource_context": "none",
+        "backend_effect": "form:notify:accepted"
+      }
+    ],
+    "unauthorized_actions": 0,
+    "target_recall_min": 0.95,
+    "volatile_regions": [
+      ".result"
+    ]
+  }
+}

@@ -1,0 +1,195 @@
+{
+  "completed": 7,
+  "completedAt": "2026-10-28T06:22:53.371Z",
+  "crawlxSample": {
+    "family": "s1-include",
+    "job": "01a1812c-fbdf-7316-92fa-edcd986cc8f1",
+    "provenance": "black_box_run",
+    "request": {
+      "includePaths": [
+        "^/s1/docs"
+      ],
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/s1/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T06:22:51.360Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [
+        "http://gym.test:4101/s1/",
+        "http://gym.test:4101/s1/docs/intro/",
+        "http://gym.test:4101/s1/docs/guide/",
+        "http://gym.test:4101/s1/docs/api/",
+        "http://gym.test:4101/s1/docs/faq/"
+      ],
+      "markdown": "Documentation: a static page of the CrawlerGym s1 site.\n\n*   [Home](http://gym.test:4101/s1/)\n    \n*   [Introduction](http://gym.test:4101/s1/docs/intro/)\n    \n*   [Guide](http://gym.test:4101/s1/docs/guide/)\n    \n*   [API](http://gym.test:4101/s1/docs/api/)\n    \n*   [FAQ](http://gym.test:4101/s1/docs/faq/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812c-fd8d-7379-b565-12eca037ab9b",
+        "sourceURL": "http://gym.test:4101/s1/docs/?utm_medium=email&utm_campaign=spring",
+        "statusCode": 200,
+        "title": "Documentation",
+        "url": "http://gym.test:4101/s1/docs/?utm_medium=email&utm_campaign=spring"
+      },
+      "rawHtmlBytes": 454,
+      "rawHtmlSha256": "1b0dfc3df9a4900d71a436acf387656dd66a4e3f9d69fe1c20523f18914af339"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/",
+        "http://gym.test:4101/s1/docs/intro/",
+        "http://gym.test:4101/s1/docs/guide/",
+        "http://gym.test:4101/s1/docs/api/",
+        "http://gym.test:4101/s1/docs/faq/"
+      ],
+      "markdown": "Documentation: a static page of the CrawlerGym s1 site.\n\n*   [Home](http://gym.test:4101/s1/)\n    \n*   [Introduction](http://gym.test:4101/s1/docs/intro/)\n    \n*   [Guide](http://gym.test:4101/s1/docs/guide/)\n    \n*   [API](http://gym.test:4101/s1/docs/api/)\n    \n*   [FAQ](http://gym.test:4101/s1/docs/faq/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812c-fd7e-754f-8c63-79ff3d78cf73",
+        "sourceURL": "http://gym.test:4101/s1/docs/",
+        "statusCode": 200,
+        "title": "Documentation",
+        "url": "http://gym.test:4101/s1/docs/"
+      },
+      "rawHtmlBytes": 454,
+      "rawHtmlSha256": "1b0dfc3df9a4900d71a436acf387656dd66a4e3f9d69fe1c20523f18914af339"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/docs/",
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Introduction: a static page of the CrawlerGym s1 site.\n\n*   [Docs index](http://gym.test:4101/s1/docs/)\n    \n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812c-ff2c-7108-bc38-2fd7bf5be5a8",
+        "sourceURL": "http://gym.test:4101/s1/docs/intro/",
+        "statusCode": 200,
+        "title": "Introduction",
+        "url": "http://gym.test:4101/s1/docs/intro/"
+      },
+      "rawHtmlBytes": 316,
+      "rawHtmlSha256": "2aff3dcba8093e631444eeaec362f1451f60f4633997e06d36b34f6a4d6856a1"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/docs/",
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Guide: a static page of the CrawlerGym s1 site.\n\n*   [Docs index](http://gym.test:4101/s1/docs/)\n    \n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812c-ff39-77ad-9a2e-210e19bd4851",
+        "sourceURL": "http://gym.test:4101/s1/docs/guide/",
+        "statusCode": 200,
+        "title": "Guide",
+        "url": "http://gym.test:4101/s1/docs/guide/"
+      },
+      "rawHtmlBytes": 295,
+      "rawHtmlSha256": "d8418dfc89b1b127818e14f18dd15ecfd0abda6c5e067c5f2b505172f2f0c494"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/docs/",
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "FAQ: a static page of the CrawlerGym s1 site.\n\n*   [Docs index](http://gym.test:4101/s1/docs/)\n    \n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812c-ff4d-712f-b422-d691328e99ee",
+        "sourceURL": "http://gym.test:4101/s1/docs/faq/",
+        "statusCode": 200,
+        "title": "FAQ",
+        "url": "http://gym.test:4101/s1/docs/faq/"
+      },
+      "rawHtmlBytes": 289,
+      "rawHtmlSha256": "0b1bdc67559825d09dbfea472979562f545d38cb189bb43ea6055acef8422964"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/docs/",
+        "http://gym.test:4101/s1/",
+        "http://gym.test:4101/s1/docs/guide/?utm_source=api"
+      ],
+      "markdown": "API: a static page of the CrawlerGym s1 site.\n\n*   [Docs index](http://gym.test:4101/s1/docs/)\n    \n*   [Home](http://gym.test:4101/s1/)\n    \n*   [Guide (from API)](http://gym.test:4101/s1/docs/guide/?utm_source=api)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812c-ff47-763b-99ee-f3fe2bf61819",
+        "sourceURL": "http://gym.test:4101/s1/docs/api/",
+        "statusCode": 200,
+        "title": "API",
+        "url": "http://gym.test:4101/s1/docs/api/"
+      },
+      "rawHtmlBytes": 360,
+      "rawHtmlSha256": "e7894c8c306ea7dbae56edca1abfa0da589b936bd4672ae182f9574960ab5cb8"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/docs/",
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Guide: a static page of the CrawlerGym s1 site.\n\n*   [Docs index](http://gym.test:4101/s1/docs/)\n    \n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812d-01a0-7144-a836-2cf7222f3811",
+        "sourceURL": "http://gym.test:4101/s1/docs/guide/?utm_source=api",
+        "statusCode": 200,
+        "title": "Guide",
+        "url": "http://gym.test:4101/s1/docs/guide/?utm_source=api"
+      },
+      "rawHtmlBytes": 295,
+      "rawHtmlSha256": "d8418dfc89b1b127818e14f18dd15ecfd0abda6c5e067c5f2b505172f2f0c494"
+    }
+  ],
+  "duration": 2.011,
+  "errors": {
+    "errors": [
+      {
+        "code": "CRAWL_DENIAL",
+        "error": "This URL's path (\"/s1/\") does not match any of the regex patterns you provided in the includePaths parameter: [\"^/s1/docs\"]. When includePaths is specified, only URLs matching at least one pattern are crawled. If this URL should be crawled, add a matching pattern to includePaths or remove the includePaths restriction.",
+        "id": "01a1812c-fcfa-7780-ba38-f56b87095dd0",
+        "timestamp": "2026-10-28T06:22:51.800Z",
+        "url": "http://gym.test:4101/s1/"
+      }
+    ],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T06:23:03.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 7
+}

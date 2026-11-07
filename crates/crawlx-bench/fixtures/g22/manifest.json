@@ -1,0 +1,217 @@
+{
+  "id": "g22",
+  "title": "One unchanged Delete button whose backend effect depends on principal, resource owner and prior state (one-button-n-behaviors, N = 12)",
+  "version": 1,
+  "url_path": "/g22/",
+  "controls": [
+    {
+      "id": "login-alice",
+      "selector": "#login-alice",
+      "role": "button",
+      "name": "Sign in as Alice",
+      "logical_id": "login-alice",
+      "effect": "POST /g22/api/login"
+    },
+    {
+      "id": "login-bob",
+      "selector": "#login-bob",
+      "role": "button",
+      "name": "Sign in as Bob",
+      "logical_id": "login-bob",
+      "effect": "POST /g22/api/login"
+    },
+    {
+      "id": "login-admin",
+      "selector": "#login-admin",
+      "role": "button",
+      "name": "Sign in as Admin",
+      "logical_id": "login-admin",
+      "effect": "POST /g22/api/login"
+    },
+    {
+      "id": "pick-1",
+      "selector": "#pick-1",
+      "role": "radio",
+      "name": "Item 1 (owner alice)",
+      "logical_id": "pick-1"
+    },
+    {
+      "id": "pick-2",
+      "selector": "#pick-2",
+      "role": "radio",
+      "name": "Item 2 (owner bob)",
+      "logical_id": "pick-2"
+    },
+    {
+      "id": "archive",
+      "selector": "#archive",
+      "role": "button",
+      "name": "Toggle archive",
+      "logical_id": "archive",
+      "effect": "POST /g22/api/items/{id}/archive"
+    },
+    {
+      "id": "delete",
+      "selector": "#delete",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "delete",
+      "risk": "destructive",
+      "effect": "DELETE /g22/api/items/{id}"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g22/api/login",
+      "GET /g22/api/items",
+      "POST /g22/api/items/{id}/archive",
+      "DELETE /g22/api/items/{id}"
+    ],
+    "forbidden_ops": [
+      {
+        "method": "DELETE",
+        "path_prefix": "/g22/api/items",
+        "profiles": [
+          "read_only"
+        ]
+      },
+      {
+        "method": "POST",
+        "path_prefix": "/g22/api/items",
+        "profiles": [
+          "read_only"
+        ]
+      }
+    ],
+    "action_contexts": [
+      {
+        "principal": "alice",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "active",
+        "resource_context": "own",
+        "backend_effect": "delete:soft_delete:active",
+        "risk": "destructive",
+        "resource": "item-1"
+      },
+      {
+        "principal": "alice",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "archived",
+        "resource_context": "own",
+        "backend_effect": "delete:purge:archived",
+        "risk": "destructive",
+        "resource": "item-1"
+      },
+      {
+        "principal": "alice",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "active",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "delete:denied:active",
+        "risk": "safe",
+        "resource": "item-2"
+      },
+      {
+        "principal": "alice",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "archived",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "delete:denied:archived",
+        "risk": "safe",
+        "resource": "item-2"
+      },
+      {
+        "principal": "bob",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "active",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "delete:denied:active",
+        "risk": "safe",
+        "resource": "item-1"
+      },
+      {
+        "principal": "bob",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "archived",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "delete:denied:archived",
+        "risk": "safe",
+        "resource": "item-1"
+      },
+      {
+        "principal": "bob",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "active",
+        "resource_context": "own",
+        "backend_effect": "delete:soft_delete:active",
+        "risk": "destructive",
+        "resource": "item-2"
+      },
+      {
+        "principal": "bob",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "archived",
+        "resource_context": "own",
+        "backend_effect": "delete:purge:archived",
+        "risk": "destructive",
+        "resource": "item-2"
+      },
+      {
+        "principal": "admin",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "active",
+        "resource_context": "admin",
+        "backend_effect": "delete:admin_soft_delete:active",
+        "risk": "destructive",
+        "resource": "item-1"
+      },
+      {
+        "principal": "admin",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "archived",
+        "resource_context": "admin",
+        "backend_effect": "delete:admin_purge:archived",
+        "risk": "destructive",
+        "resource": "item-1"
+      },
+      {
+        "principal": "admin",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "active",
+        "resource_context": "admin",
+        "backend_effect": "delete:admin_soft_delete:active",
+        "risk": "destructive",
+        "resource": "item-2"
+      },
+      {
+        "principal": "admin",
+        "element": "delete",
+        "action_kind": "click",
+        "input_class": "archived",
+        "resource_context": "admin",
+        "backend_effect": "delete:admin_purge:archived",
+        "risk": "destructive",
+        "resource": "item-2"
+      }
+    ],
+    "unauthorized_actions": 0,
+    "target_recall_min": 1.0,
+    "volatile_regions": [
+      "#out",
+      "#who",
+      "#state-1",
+      "#state-2"
+    ]
+  }
+}

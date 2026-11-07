@@ -1,0 +1,172 @@
+# crawlx API: stateless, never touches a browser. The migrate Job runs the
+# same image before the Deployment rolls (expand-then-contract).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: crawlx-migrate
+  namespace: crawlx
+  labels: { app: crawlx-migrate }
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: { app: crawlx-migrate }
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+          args: ["migrate"]
+          env:
+            # the DDL role (crawlx_migrate), not the app role
+            - name: CRAWLX_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: crawlx-db-migrate, key: url } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crawlx-metrics-sidecar
+  namespace: crawlx
+data:
+  # The crawlx /metrics listener is loopback-only by design; this
+  # sidecar scrapes it inside the pod and forwards to the environment's collector.
+  config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: crawlx
+              scrape_interval: 15s
+              static_configs:
+                - targets: ["127.0.0.1:9464"]
+    exporters:
+      otlp:
+        endpoint: otel-collector.observability:4317
+        tls: { insecure: true }
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          exporters: [otlp]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crawlx-api
+  namespace: crawlx
+  labels: { app: crawlx-api }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: crawlx-api }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: crawlx-api }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: api
+          image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+          args:
+            - serve
+            - --bind=0.0.0.0:8080
+            - --metrics-bind=127.0.0.1:9464
+            - --artifacts-dir=/var/lib/crawlx/artifacts
+          env:
+            - name: CRAWLX_ENVIRONMENT
+              value: prod
+            - name: CRAWLX_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: crawlx-db, key: url } }
+            - name: CRAWLX_API_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: crawlx-db-api, key: url } }
+            - name: CRAWLX_WEBHOOK_SECRET
+              valueFrom: { secretKeyRef: { name: crawlx-webhook, key: signing_key } }
+            # Optional shared volatile transport. Absent secret disables ZDR admission.
+            - name: CRAWLX_ZDR_REDIS_URL
+              valueFrom: { secretKeyRef: { name: crawlx-zdr, key: url, optional: true } }
+            # Artifact custody: the API decrypts for reads and never writes encrypted data, so it
+            # needs only the key provider (the same one as the workers, no Redis URL). Without it the API
+            # starts and sealed artifacts fail with a clear error. Use CRAWLX_ARTIFACT_KMS_KEY_ID=<AWS KMS
+            # key ID/ARN> instead of the key file when workers use KMS (never both).
+            - name: CRAWLX_ARTIFACT_KEY_FILE
+              value: /run/secrets/crawlx-artifact/artifact_key
+            - name: CRAWLX_OTLP_ENDPOINT
+              value: http://otel-collector.observability:4317
+            # HTML parse admission budget: 512 MiB ceiling inside the 2Gi limit
+            - name: CRAWLX_PARSE_MEMORY_BYTES
+              value: "536870912"
+          ports:
+            - { name: http, containerPort: 8080 }
+          # /v1/openapi.json is the one unauthenticated route; it answers once the router is up.
+          readinessProbe:
+            httpGet: { path: /v1/openapi.json, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /v1/openapi.json, port: http }
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "500m", memory: 512Mi }
+            limits: { memory: 2Gi }
+          volumeMounts:
+            - { name: artifacts, mountPath: /var/lib/crawlx/artifacts }
+            - { name: artifact-key, mountPath: /run/secrets/crawlx-artifact, readOnly: true }
+        - name: metrics
+          image: otel/opentelemetry-collector-contrib:0.118.0
+          args: ["--config=/etc/otelcol/config.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "20m", memory: 64Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: metrics-config, mountPath: /etc/otelcol, readOnly: true }
+      volumes:
+        # Shared with workers in filesystem-store deployments; object-store deployments mount nothing here.
+        - name: artifacts
+          persistentVolumeClaim: { claimName: crawlx-artifacts }
+        - name: artifact-key
+          secret:
+            secretName: crawlx-artifact-key
+            items: [{ key: artifact_key, path: artifact_key, mode: 0440 }]
+        - name: metrics-config
+          configMap: { name: crawlx-metrics-sidecar }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crawlx-api
+  namespace: crawlx
+  labels: { app: crawlx-api }
+spec:
+  selector: { app: crawlx-api }
+  ports:
+    - { name: http, port: 80, targetPort: http }

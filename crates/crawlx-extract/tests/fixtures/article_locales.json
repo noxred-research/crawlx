@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "license": "MIT",
+  "provenance": "Independently authored native regression phrases; no upstream page, benchmark or model training corpus copied. This is a bounded held-out fixture, not population accuracy evidence.",
+  "tokens": [
+    {"text":"ภาษาไทย", "gold":[{"token":"ภาษา","start":0,"end":12},{"token":"ไทย","start":12,"end":21}]},
+    {"text":"हिन्दी भाषा", "gold":[{"token":"हिन्दी","start":0,"end":18},{"token":"भाषा","start":19,"end":31}]},
+    {"text":"café café", "gold":[{"token":"café","start":0,"end":5},{"token":"café","start":6,"end":12}]}
+  ],
+  "dates": [
+    {"locale":"fr-FR","raw":"4 février 2025","gold":"2025-02-04"},
+    {"locale":"de-DE","raw":"4. März 2025","gold":"2025-03-04"},
+    {"locale":"es-ES","raw":"4 de mayo de 2025","gold":"2025-05-04"},
+    {"locale":"en-GB","raw":"०४/०३/२०२५","gold":"2025-03-04"},
+    {"locale":"en-GB","raw":"٠٤/٠٣/٢٠٢٥","gold":"2025-03-04"},
+    {"locale":"en-US","raw":"04/03/2025","gold":"2025-04-03"}
+  ]
+}

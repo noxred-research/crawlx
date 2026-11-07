@@ -1,0 +1,27 @@
+# Opt-in source-build inputs. This does not promote an archive or change chromium-pin.toml.
+schema_version = 1
+chromium_version = "155.0.8059.84"
+source_url = "https://chromium.googlesource.com/chromium/src.git"
+source_revision = "5869fe313571d75152b77813cf0a4ee26a4e6df0"
+depot_tools_revision = "500126d6e351e4f0834b70f71b454ce5c3733c54"
+# Produced by the completed, pinned gclient sync; retain this receipt with the checkout.
+sync_receipt_sha256 = "f7a25c1995dbe14c3fa79bc3d9f6679c6596955d60382d8e421a2d47b3618007"
+gclient_sha256 = "3ad26ab9d434e0ce9399960e1a3ebe5cec98ebefe1fac7bcfc2443d46bcfe51c"
+# Sorted installed CIPD identities and manifest hashes, independent of package slot numbers.
+cipd_inventory_sha256 = "28561f26a76a984fbfde25c5f6af9e194598c0104abbe3538c388d71000a4f51"
+# Sorted first-class GCS object identities and installed checksum receipts from that sync.
+gcs_inventory_sha256 = "672de8f86e06747ac8194d66968555a01268c46346efe85311817919e3ac9526"
+archive_config = "infra/archive_config/linux-archive-rel.json"
+runtime_target = "//chrome:chrome"
+# chrome does not depend on the Linux setuid sandbox target; package its real output too.
+build_targets = ["chrome", "chrome_sandbox"]
+gn_args = [
+  "is_debug = false",
+  "is_component_build = false",
+  "symbol_level = 0",
+  "blink_symbol_level = 0",
+  "v8_symbol_level = 0",
+  "use_remoteexec = false",
+  "is_chrome_for_testing = true",
+  "is_chrome_branded = false",
+]

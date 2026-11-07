@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g17 tabs and OAuth</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  section { border: 1px solid #ccd; padding: 10px; margin: 0 0 12px; }
+  button, a { margin: 4px; }
+</style>
+</head>
+<body>
+<h1>Tabs, popups and sign-in</h1>
+<p>Last: <span id="out">none</span>. Windows opened by this page: <span id="opened">0</span></p>
+
+<section aria-label="New tabs">
+  <a id="open-help" href="/g17/help.html" target="_blank" rel="opener">Help (new tab)</a>
+  <a id="open-terms" href="/g17/terms.html" target="_blank" rel="noopener">Terms (new tab, noopener)</a>
+  <button id="open-window" type="button">Open preview window</button>
+</section>
+
+<section aria-label="Sign in">
+  <button id="oauth-start" type="button">Sign in with GymID</button>
+  <span id="auth-state">signed out</span>
+  <div id="profile-slot"></div>
+</section>
+
+<section aria-label="Popup storm">
+  <button id="storm" type="button">Open ten windows</button>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  var opened = 0;
+  function count() { opened += 1; $('opened').textContent = String(opened); __gym.probe('windows-opened', String(opened)); }
+
+  $('open-help').addEventListener('click', function (ev) { __gym.hit('open-help', ev); out.textContent = 'open-help'; });
+  $('open-terms').addEventListener('click', function (ev) { __gym.hit('open-terms', ev); out.textContent = 'open-terms'; });
+  $('open-window').addEventListener('click', function (ev) {
+    __gym.hit('open-window', ev);
+    out.textContent = 'open-window';
+    window.open('/g17/preview.html', 'preview', 'width=400,height=300');
+    count();
+  });
+
+  // --- OAuth: popup to the fixture IdP, which posts a code back; the opener exchanges it ---
+  var popup = null;
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'gym-oauth') return;
+    if (ev.data.error) { $('auth-state').textContent = 'denied'; return; }
+    __gym.form('oauth-code', { code: ev.data.code }).then(function () {
+      return fetch('/g17/api/oauth/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'code=' + encodeURIComponent(ev.data.code)
+      });
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) { $('auth-state').textContent = 'token rejected'; return; }
+      $('auth-state').textContent = 'signed in as ' + j.user;
+      if (!$('profile')) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.id = 'profile';
+        b.textContent = 'View profile';
+        b.addEventListener('click', function (e2) {
+          __gym.hit('profile', e2);
+          __gym.api('GET', 'profile').then(function (p) { out.textContent = 'profile:' + (p.user || '?'); });
+        });
+        $('profile-slot').appendChild(b);
+      }
+    });
+  });
+  $('oauth-start').addEventListener('click', function (ev) {
+    __gym.hit('oauth-start', ev);
+    out.textContent = 'oauth-start';
+    popup = window.open('/g17/idp.html?client=gym&redirect=' + encodeURIComponent(location.origin + '/g17/'), 'gym-idp', 'width=480,height=420');
+    count();
+  });
+
+  // --- popup storm: ten windows at once; a bounded tab policy must contain them ---
+  $('storm').addEventListener('click', function (ev) {
+    __gym.hit('storm', ev);
+    out.textContent = 'storm';
+    for (var i = 1; i <= 10; i++) {
+      window.open('/g17/storm.html?n=' + i, 'storm-' + i, 'width=200,height=120');
+      count();
+    }
+  });
+})();
+</script>
+</body>
+</html>

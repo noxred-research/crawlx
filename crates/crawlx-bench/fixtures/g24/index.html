@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g24 forms</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  form { border: 1px solid #ccd; padding: 12px; margin: 0 0 16px; max-width: 520px; }
+  label { display: block; margin: 6px 0 2px; }
+  .err { color: #a00; font-size: 13px; }
+  .result { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Forms</h1>
+<p>Eight forms; each field has a client-side rule and the server validates again. Input classes: email, phone, date, number, text, resource (plus file in the attachment form).</p>
+
+<form id="signup" aria-label="Sign up" novalidate>
+  <h2>1. Sign up</h2>
+  <label for="signup-email">Email</label><input id="signup-email" name="email" type="email" required autocomplete="off">
+  <label for="signup-name">Name</label><input id="signup-name" name="name" type="text" required minlength="2" autocomplete="off">
+  <label for="signup-password">Password (8+)</label><input id="signup-password" name="password" type="password" required minlength="8" autocomplete="new-password">
+  <button id="signup-submit" type="submit">Create account</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<form id="contact" aria-label="Contact" novalidate>
+  <h2>2. Contact</h2>
+  <label for="contact-email">Email</label><input id="contact-email" name="email" type="email" required autocomplete="off">
+  <label for="contact-phone">Phone</label><input id="contact-phone" name="phone" type="tel" required pattern="[+0-9() -]{7,20}" autocomplete="off">
+  <label for="contact-message">Message</label><textarea id="contact-message" name="message" required></textarea>
+  <button id="contact-submit" type="submit">Send message</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<form id="booking" aria-label="Booking" novalidate>
+  <h2>3. Booking</h2>
+  <label for="booking-date">Date</label><input id="booking-date" name="date" type="date" required>
+  <label for="booking-guests">Guests (1..12)</label><input id="booking-guests" name="guests" type="number" min="1" max="12" required>
+  <button id="booking-submit" type="submit">Book</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<form id="profile" aria-label="Profile" novalidate>
+  <h2>4. Profile</h2>
+  <label for="profile-display">Display name</label><input id="profile-display" name="display" type="text" required autocomplete="off">
+  <label for="profile-plan">Plan</label>
+  <select id="profile-plan" name="plan" required>
+    <option value="">Choose…</option>
+    <option value="free">Free</option>
+    <option value="team">Team</option>
+    <option value="enterprise">Enterprise</option>
+  </select>
+  <button id="profile-submit" type="submit">Save profile</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<form id="invoice" aria-label="Invoice" novalidate>
+  <h2>5. Invoice</h2>
+  <label for="invoice-amount">Amount</label><input id="invoice-amount" name="amount" type="number" min="0" step="0.01" required>
+  <label for="invoice-customer">Customer</label>
+  <select id="invoice-customer" name="customer" required>
+    <option value="">Choose…</option>
+    <option value="acme">Acme</option>
+    <option value="globex">Globex</option>
+    <option value="initech">Initech</option>
+  </select>
+  <button id="invoice-submit" type="submit">Issue invoice</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<form id="search" aria-label="Search" novalidate>
+  <h2>6. Search</h2>
+  <label for="search-q">Query</label><input id="search-q" name="q" type="search" required autocomplete="off">
+  <button id="search-submit" type="submit">Search</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<form id="attach" aria-label="Attachment" novalidate>
+  <h2>7. Attachment</h2>
+  <label for="attach-note">Note</label><input id="attach-note" name="note" type="text" required autocomplete="off">
+  <label for="attach-file">File</label><input id="attach-file" name="file" type="file">
+  <button id="attach-submit" type="submit">Attach</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<form id="notify" aria-label="Notify a user" action="/g24/api/form/notify" method="post" novalidate>
+  <h2>8. Notify a user (external communication)</h2>
+  <label for="notify-to">Recipient email</label><input id="notify-to" name="to" type="email" required autocomplete="off">
+  <label for="notify-body">Message</label><textarea id="notify-body" name="body" required></textarea>
+  <button id="notify-submit" type="submit">Send notification</button>
+  <p class="result" aria-live="polite"></p>
+</form>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var FORMS = ['signup', 'contact', 'booking', 'profile', 'invoice', 'search', 'attach', 'notify'];
+  FORMS.forEach(function (fid) {
+    var form = $(fid);
+    Array.prototype.forEach.call(form.querySelectorAll('input, select, textarea'), function (el) {
+      el.addEventListener('focus', function (ev) { __gym.hit(el.id, ev); });
+    });
+    $(fid + '-submit').addEventListener('click', function (ev) { __gym.hit(fid + '-submit', ev); });
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var result = form.querySelector('.result');
+      var bad = [];
+      Array.prototype.forEach.call(form.querySelectorAll('input, select, textarea'), function (el) {
+        if (el.type === 'file') return;
+        if (!el.checkValidity()) bad.push(el.name);
+      });
+      if (bad.length) {
+        result.textContent = 'Client rejected: ' + bad.join(', ');
+        __gym.probe('client-rejected-' + fid, bad.join(','));
+        return;
+      }
+      __gym.form(fid, form).then(function (r) {
+        result.textContent = r.ok ? 'Server accepted' : 'Server rejected: ' + JSON.stringify(r.errors || {});
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

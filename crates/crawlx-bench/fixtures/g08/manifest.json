@@ -1,0 +1,84 @@
+{
+  "id": "g08",
+  "title": "Clocks, tickers and aria-live regions updating every 250 ms (volatile regions labeled)",
+  "version": 1,
+  "url_path": "/g08/",
+  "controls": [
+    {
+      "id": "act-1",
+      "selector": "#act-1",
+      "role": "button",
+      "name": "Acknowledge",
+      "logical_id": "act-1"
+    },
+    {
+      "id": "act-2",
+      "selector": "#act-2",
+      "role": "button",
+      "name": "Pause feed",
+      "logical_id": "act-2"
+    },
+    {
+      "id": "act-3",
+      "selector": "#act-3",
+      "role": "button",
+      "name": "Resume feed",
+      "logical_id": "act-3"
+    },
+    {
+      "id": "act-4",
+      "selector": "#act-4",
+      "role": "button",
+      "name": "Open report",
+      "logical_id": "act-4"
+    },
+    {
+      "id": "act-5",
+      "selector": "#act-5",
+      "role": "button",
+      "name": "Export",
+      "logical_id": "act-5"
+    },
+    {
+      "id": "act-6",
+      "selector": "#act-6",
+      "role": "button",
+      "name": "Settings",
+      "logical_id": "act-6"
+    },
+    {
+      "id": "report-close",
+      "selector": "#report-close",
+      "role": "button",
+      "name": "Close report",
+      "logical_id": "report-close",
+      "requires": [
+        "act-4"
+      ]
+    }
+  ],
+  "expected": {
+    "operations": [],
+    "volatile_regions": [
+      "#clock",
+      "#clock-2",
+      "#ticker",
+      "#status",
+      "#log",
+      "#alerts",
+      "[aria-live]",
+      "#out"
+    ],
+    "enablement": [
+      {
+        "requires": [
+          "act-4"
+        ],
+        "target": "report-close",
+        "kind": "simple"
+      }
+    ],
+    "target_recall_min": 1.0,
+    "split_rate_max": 0.01
+  }
+}

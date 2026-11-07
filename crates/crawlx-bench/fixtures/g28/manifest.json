@@ -1,0 +1,95 @@
+{
+  "id": "g28",
+  "title": "Service-worker fetches, polling, beacons and a third-party tracker next to three trusted actions (labeled request origins)",
+  "version": 1,
+  "url_path": "/g28/",
+  "controls": [
+    {
+      "id": "refresh",
+      "selector": "#refresh",
+      "role": "button",
+      "name": "Refresh balance",
+      "logical_id": "refresh",
+      "effect": "GET /g28/api/balance"
+    },
+    {
+      "id": "save",
+      "selector": "#save",
+      "role": "button",
+      "name": "Save note",
+      "logical_id": "save",
+      "effect": "POST /g28/api/notes"
+    },
+    {
+      "id": "beacon-btn",
+      "selector": "#beacon-btn",
+      "role": "button",
+      "name": "Send feedback beacon",
+      "logical_id": "beacon-btn",
+      "effect": "POST /g28/api/beacon"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "GET /g28/api/balance",
+      "POST /g28/api/notes",
+      "POST /g28/api/beacon",
+      "GET /g28/api/poll",
+      "GET /g28/api/sw/activate",
+      "GET /g28/api/sw/sync",
+      "GET /g28/api/sw/navigation",
+      "GET /g28/api/tracker/pixel.gif",
+      "GET /g28/api/tracker/event"
+    ],
+    "traffic_origins": [
+      {
+        "path_prefix": "/g28/api/balance",
+        "origin": "page",
+        "caused_by": "refresh"
+      },
+      {
+        "path_prefix": "/g28/api/notes",
+        "origin": "page",
+        "caused_by": "save"
+      },
+      {
+        "path_prefix": "/g28/api/beacon",
+        "origin": "beacon",
+        "late": true,
+        "caused_by": "beacon-btn"
+      },
+      {
+        "path_prefix": "/g28/api/poll",
+        "origin": "poll",
+        "late": true
+      },
+      {
+        "path_prefix": "/g28/api/sw/",
+        "origin": "service_worker",
+        "late": true
+      },
+      {
+        "path_prefix": "/g28/sw.js",
+        "origin": "service_worker"
+      },
+      {
+        "path_prefix": "/g28/api/tracker/",
+        "origin": "third_party",
+        "third_party": true,
+        "late": true
+      },
+      {
+        "path_prefix": "/g28/tracker.js",
+        "origin": "third_party",
+        "third_party": true
+      }
+    ],
+    "target_recall_min": 1.0,
+    "volatile_regions": [
+      "#sw-state",
+      "#polls",
+      "#out",
+      "#balance"
+    ]
+  }
+}

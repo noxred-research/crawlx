@@ -1,0 +1,225 @@
+{
+  "benchmarks": {
+    "arbiter_select/proposals/2668": {
+      "median_ns": 6212061.0,
+      "p95_ns": 6695323.5
+    },
+    "calibration_apply/rows/10000": {
+      "median_ns": 1526417.1,
+      "p95_ns": 1943684.6
+    },
+    "candidate_ladder_ax_10k/discover_nodes/10000": {
+      "median_ns": 29474053.8,
+      "p95_ns": 38704915.0
+    },
+    "edge_update_batch/observe_transition_n/9800": {
+      "median_ns": 3252022.5,
+      "p95_ns": 4015682.4
+    },
+    "egress_deny_lookup/check_host/1000": {
+      "median_ns": 94817.2,
+      "p95_ns": 105423.2
+    },
+    "endpoints_discover_1mib/discover/1049399": {
+      "median_ns": 28198508.9,
+      "p95_ns": 81627762.1
+    },
+    "epoch_bump/events/10000": {
+      "median_ns": 8896.7,
+      "p95_ns": 9203.8
+    },
+    "form_group_structural/fields/200": {
+      "median_ns": 451042.4,
+      "p95_ns": 468588.0
+    },
+    "frontier_push_pop/breadth_first/100000": {
+      "median_ns": 114543959.0,
+      "p95_ns": 124569308.5
+    },
+    "html_to_markdown_100kb/parse_convert_render/103034": {
+      "median_ns": 1724662.3,
+      "p95_ns": 1810720.2
+    },
+    "identity_hash/descriptors/1000": {
+      "median_ns": 2789137.5,
+      "p95_ns": 3056069.2
+    },
+    "identity_weighted_match_1k/resolve_against_index/1000": {
+      "median_ns": 287421569.5,
+      "p95_ns": 681190788.0
+    },
+    "lease_claim/claim_complete_sessions/4": {
+      "median_ns": 941.0,
+      "p95_ns": 1879.3
+    },
+    "lease_claim/claim_complete_sessions/40": {
+      "median_ns": 1521.0,
+      "p95_ns": 2242.1
+    },
+    "lease_claim/drain_run_sessions_40": {
+      "median_ns": 32421.6,
+      "p95_ns": 35391.1
+    },
+    "lease_claim_pg/claim_complete_sessions/40": {
+      "median_ns": 2054656.5,
+      "p95_ns": 4000253.5
+    },
+    "lease_claim_pg/drain_run_sessions/40": {
+      "median_ns": 11888433.0,
+      "p95_ns": 15006806.2
+    },
+    "link_extract/parsed_doc/103034": {
+      "median_ns": 187153.5,
+      "p95_ns": 204162.0
+    },
+    "metadata_extract/parsed_doc/103034": {
+      "median_ns": 55463.8,
+      "p95_ns": 79658.2
+    },
+    "mock_engine_decide/shortlist/16": {
+      "median_ns": 45149.6,
+      "p95_ns": 48327.1
+    },
+    "novelty_by_action_context/candidates/2000_ledger_keys_10000": {
+      "median_ns": 2612463.8,
+      "p95_ns": 2724219.0
+    },
+    "ort_infer_shortlist16/engine_decide_candidates/4": {
+      "median_ns": 80352.9,
+      "p95_ns": 112904.5
+    },
+    "ort_infer_shortlist16/session_run_rows/5": {
+      "median_ns": 1848.0,
+      "p95_ns": 1983.0
+    },
+    "path_cost_search/reach_far_corner_edges/4902": {
+      "median_ns": 1837636.8,
+      "p95_ns": 1861879.0
+    },
+    "path_cost_search/reach_neighbour_edges/4902": {
+      "median_ns": 1473.7,
+      "p95_ns": 1592.8
+    },
+    "path_cost_search/reveal_hidden_edges/4902": {
+      "median_ns": 2097746.8,
+      "p95_ns": 2240652.0
+    },
+    "query_classify/builtin_table": {
+      "median_ns": 5046.1,
+      "p95_ns": 5150.8
+    },
+    "quiescence_event_loop/events/10000": {
+      "median_ns": 3503612.5,
+      "p95_ns": 3701644.2
+    },
+    "robots_match_longest/rules_200_paths/1000": {
+      "median_ns": 1053097.2,
+      "p95_ns": 1138770.3
+    },
+    "role_round_robin_plan_sessions_40": {
+      "median_ns": 3990.1,
+      "p95_ns": 4420.9
+    },
+    "scope_decide_regex/policy_decide_url/1000": {
+      "median_ns": 191531.7,
+      "p95_ns": 202296.3
+    },
+    "sitemap_parse_10mb/urlset/10485859": {
+      "median_ns": 17220341.0,
+      "p95_ns": 17538128.8
+    },
+    "state_fingerprint/nodes/10001": {
+      "median_ns": 2515348.8,
+      "p95_ns": 2680223.9
+    },
+    "state_fingerprint/nodes/1001": {
+      "median_ns": 238639.0,
+      "p95_ns": 250103.6
+    },
+    "state_mask_apply_nodes_10000": {
+      "median_ns": 1932306.6,
+      "p95_ns": 2121253.5
+    },
+    "state_match/attach_merge/5000": {
+      "median_ns": 2744451.1,
+      "p95_ns": 2828037.3
+    },
+    "state_match/exact_decision/5000": {
+      "median_ns": 2765893.1,
+      "p95_ns": 3061260.8
+    },
+    "state_match/lsh_candidates/5000": {
+      "median_ns": 2781920.8,
+      "p95_ns": 3067316.7
+    },
+    "state_split/apply_members/5000": {
+      "median_ns": 415506.7,
+      "p95_ns": 471513.6
+    },
+    "state_split/check_members/5000": {
+      "median_ns": 18576345.6,
+      "p95_ns": 19377133.0
+    },
+    "tokenize_shortlist/candidates/16": {
+      "median_ns": 37487.9,
+      "p95_ns": 41458.3
+    },
+    "url_canonicalize/classify": {
+      "median_ns": 847565.8,
+      "p95_ns": 867753.9
+    },
+    "url_canonicalize/keep_all": {
+      "median_ns": 860697.0,
+      "p95_ns": 872553.2
+    },
+    "url_filter/scope_decide": {
+      "median_ns": 45995.6,
+      "p95_ns": 50646.7
+    },
+    "utility_score_2k/proposals/2668": {
+      "median_ns": 3270025.0,
+      "p95_ns": 3563706.0
+    },
+    "value_partition_derive/all_partitions/1000": {
+      "median_ns": 495568.7,
+      "p95_ns": 505447.8
+    }
+  },
+  "gates": {
+    "arbiter_select/proposals/2668": {
+      "max_p95_ns": 10000000.0,
+      "note": "MAIN: deterministic action selection < 10 ms p95 over 2k candidates"
+    },
+    "lease_claim/claim_complete_sessions/40": {
+      "max_p95_ns": 5000000.0,
+      "note": "MAIN: scheduler operation p95 < 5 ms (memory repo; PostgreSQL figure from the integration benchmark)"
+    },
+    "lease_claim_pg/claim_complete_sessions/40": {
+      "max_p95_ns": 5000000.0,
+      "note": "MAIN: scheduler operation p95 < 5 ms against PostgreSQL (skipped when CRAWLX_TEST_DATABASE_URL is unset)"
+    },
+    "state_fingerprint/nodes/10001": {
+      "max_p95_ns": 15000000.0,
+      "note": "MAIN: 10k-node state fingerprint < 15 ms p95"
+    },
+    "state_match/attach_merge/5000": {
+      "max_p95_ns": 20000000.0,
+      "note": "MAIN: state candidate/merge decision < 20 ms p95 excluding the database"
+    },
+    "state_match/exact_decision/5000": {
+      "max_p95_ns": 20000000.0,
+      "note": "MAIN: state candidate/merge decision < 20 ms p95 excluding the database"
+    },
+    "url_canonicalize/classify": {
+      "max_p95_ns": 10000000.0,
+      "note": "MAIN: >= 100k short URLs/s/core, i.e. 1,000 URLs in <= 10 ms"
+    }
+  },
+  "runner": {
+    "cpu": "AMD Ryzen 9 9950X 16-Core (development host, shared with concurrent builds; not a reference runner)",
+    "machine": "x86_64",
+    "platform": "Linux-7.2.11-200.fc44.x86_64-x86_64-with-glibc2.43",
+    "recorded_on": "2026-10-20"
+  },
+  "version": 1
+}

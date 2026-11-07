@@ -1,0 +1,539 @@
+{
+  "strategy": "state_novelty",
+  "version": 2,
+  "context": {
+    "candidates": 48,
+    "keyed_actions": 70,
+    "hidden_targets": 2,
+    "seed": 42
+  },
+  "rounds": [
+    {
+      "phase": "greedy",
+      "proposals": [
+        {
+          "key_id": "5982a7653b731b47c463b1b8a0e1ab15",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "bb247afbac4155b92492060055c85b801ae250ccf99b2a31b6de38644d29ed9e",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 112,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://cdn.test/x",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [bb247afbac41]"
+        },
+        {
+          "key_id": "80893d5e053cfece425ebad4837340f5",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 82,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/help#faq",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [11546801c7b6]"
+        },
+        {
+          "key_id": "c2ae7e2531db1e4f7b65b241a48411a9",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "2b0c1f4e49d183a53645fd42d5c1e3b0e97160b69ff3e33a8f7ede67e514fa83",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 102,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://api.example/x",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate link [2b0c1f4e49d1]"
+        },
+        {
+          "key_id": "d0437d41c6357d9b6348a23a6ca47782",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 372,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/items/1",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [4c2ad0e4219f]"
+        },
+        {
+          "key_id": "d6513b568e86d8cd574ce141c223df3f",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 372,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/items/1",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate link [4c2ad0e4219f]"
+        }
+      ]
+    },
+    {
+      "phase": "state_recovery",
+      "proposals": [
+        {
+          "key_id": "5982a7653b731b47c463b1b8a0e1ab15",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "bb247afbac4155b92492060055c85b801ae250ccf99b2a31b6de38644d29ed9e",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 112,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://cdn.test/x",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [bb247afbac41]"
+        },
+        {
+          "key_id": "80893d5e053cfece425ebad4837340f5",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 82,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/help#faq",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [11546801c7b6]"
+        },
+        {
+          "key_id": "878ae4129f451208b841732cb3af79c6",
+          "rank": 5,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "c0706827227549234cd350cc09c65947a4ffa37b8db04cdb8b4333c29fa33fa5",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 12,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 666666,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click button [c07068272275]"
+        },
+        {
+          "key_id": "c2ae7e2531db1e4f7b65b241a48411a9",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "2b0c1f4e49d183a53645fd42d5c1e3b0e97160b69ff3e33a8f7ede67e514fa83",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 102,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://api.example/x",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate link [2b0c1f4e49d1]"
+        },
+        {
+          "key_id": "d0437d41c6357d9b6348a23a6ca47782",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 372,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/items/1",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [4c2ad0e4219f]"
+        },
+        {
+          "key_id": "d6513b568e86d8cd574ce141c223df3f",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 372,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/items/1",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate link [4c2ad0e4219f]"
+        }
+      ]
+    },
+    {
+      "phase": "enablement_recovery",
+      "proposals": [
+        {
+          "key_id": "5982a7653b731b47c463b1b8a0e1ab15",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "bb247afbac4155b92492060055c85b801ae250ccf99b2a31b6de38644d29ed9e",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 112,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://cdn.test/x",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [bb247afbac41]"
+        },
+        {
+          "key_id": "80893d5e053cfece425ebad4837340f5",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 82,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/help#faq",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [11546801c7b6]"
+        },
+        {
+          "key_id": "c2ae7e2531db1e4f7b65b241a48411a9",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "2b0c1f4e49d183a53645fd42d5c1e3b0e97160b69ff3e33a8f7ede67e514fa83",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 102,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://api.example/x",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate link [2b0c1f4e49d1]"
+        },
+        {
+          "key_id": "d0437d41c6357d9b6348a23a6ca47782",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 372,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/items/1",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [4c2ad0e4219f]"
+        },
+        {
+          "key_id": "d6513b568e86d8cd574ce141c223df3f",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 372,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "state_novelty",
+          "strategy_version": 2,
+          "confidence_micros": 840000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/items/1",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate link [4c2ad0e4219f]"
+        }
+      ]
+    }
+  ]
+}

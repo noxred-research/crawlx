@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g15 sliders</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  section { margin: 0 0 24px; }
+  #aria-slider { position: relative; width: 300px; height: 8px; background: #ccd; border-radius: 4px; margin: 16px 0; cursor: pointer; }
+  #aria-slider .thumb { position: absolute; top: -6px; width: 20px; height: 20px; margin-left: -10px; background: #335; border-radius: 50%; }
+  #pad { position: relative; width: 240px; height: 240px; border: 1px solid #889; background: #f4f4f8; cursor: crosshair; touch-action: none; }
+  #pad .dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; background: #a33; border-radius: 50%; }
+  .readout { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Sliders</h1>
+<p>Last: <span id="out">none</span></p>
+
+<section aria-labelledby="h-vol">
+  <h2 id="h-vol">Native range: volume (0..100, step 5)</h2>
+  <label for="volume">Volume</label>
+  <input id="volume" name="volume" type="range" min="0" max="100" step="5" value="40">
+  <span class="readout" id="volume-out">40</span>
+</section>
+
+<section aria-labelledby="h-temp">
+  <h2 id="h-temp">ARIA slider: temperature (-20..40 °C)</h2>
+  <div id="aria-slider" role="slider" tabindex="0" aria-label="Temperature" aria-valuemin="-20" aria-valuemax="40" aria-valuenow="20" aria-valuetext="20 °C">
+    <div class="thumb" id="thumb"></div>
+  </div>
+  <span class="readout" id="temp-out">20 °C</span>
+</section>
+
+<section aria-labelledby="h-pad">
+  <h2 id="h-pad">2D slider: pan (x 0..100, y 0..100)</h2>
+  <div id="pad" role="slider" tabindex="0" aria-label="Pan" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-valuetext="x 50, y 50">
+    <div class="dot" id="dot"></div>
+  </div>
+  <span class="readout" id="pad-out">x 50, y 50</span>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  // Input-class partition of a value against [min, max]: the scorecard checks that each
+  // control was exercised in all four partitions (min, max, typical, out_of_range).
+  function partition(v, min, max) {
+    if (v < min || v > max) return 'out_of_range';
+    if (v === min) return 'min';
+    if (v === max) return 'max';
+    return 'typical';
+  }
+  function report(id, value, min, max, ev) {
+    var p = partition(value, min, max);
+    __gym.hit(id, ev);
+    __gym.form('range-' + id, { value: String(value), partition: p });
+    out.textContent = id + '=' + value + ' (' + p + ')';
+  }
+
+  // --- native range ---
+  var vol = $('volume');
+  vol.addEventListener('change', function (ev) {
+    var v = Number(vol.value);
+    $('volume-out').textContent = String(v);
+    report('volume', v, 0, 100, ev);
+  });
+  vol.addEventListener('input', function () { $('volume-out').textContent = vol.value; });
+
+  // --- ARIA slider: click/drag sets the value; arrow keys step by 1 ---
+  var track = $('aria-slider');
+  var thumb = $('thumb');
+  var MIN = -20, MAX = 40;
+  var temp = 20;
+  function setTemp(v, ev) {
+    v = Math.round(v);
+    var clamped = Math.max(MIN, Math.min(MAX, v));
+    temp = clamped;
+    track.setAttribute('aria-valuenow', String(clamped));
+    track.setAttribute('aria-valuetext', clamped + ' °C');
+    thumb.style.left = ((clamped - MIN) / (MAX - MIN) * 100) + '%';
+    $('temp-out').textContent = clamped + ' °C';
+    report('aria-slider', v, MIN, MAX, ev);
+  }
+  thumb.style.left = ((temp - MIN) / (MAX - MIN) * 100) + '%';
+  function fromPointer(ev) {
+    var r = track.getBoundingClientRect();
+    var f = (ev.clientX - r.left) / r.width;
+    // pointer positions beyond the track edges ask for an out-of-range value
+    return MIN + f * (MAX - MIN);
+  }
+  track.addEventListener('pointerdown', function (ev) { setTemp(fromPointer(ev), ev); });
+  track.addEventListener('keydown', function (ev) {
+    var delta = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, Home: MIN - temp, End: MAX - temp, PageUp: 10, PageDown: -10 }[ev.key];
+    if (delta === undefined) return;
+    ev.preventDefault();
+    setTemp(temp + delta, ev);
+  });
+
+  // --- 2D pad ---
+  var pad = $('pad');
+  var dot = $('dot');
+  var px = 50, py = 50;
+  function setPan(x, y, ev) {
+    x = Math.round(x); y = Math.round(y);
+    var cx = Math.max(0, Math.min(100, x)), cy = Math.max(0, Math.min(100, y));
+    px = cx; py = cy;
+    dot.style.left = cx + '%';
+    dot.style.top = cy + '%';
+    pad.setAttribute('aria-valuenow', String(cx));
+    pad.setAttribute('aria-valuetext', 'x ' + cx + ', y ' + cy);
+    $('pad-out').textContent = 'x ' + cx + ', y ' + cy;
+    // the partition of a 2D value is the worse of its axes
+    var p = partition(x, 0, 100) === 'out_of_range' || partition(y, 0, 100) === 'out_of_range' ? 'out_of_range'
+      : (cx === 0 || cy === 0) ? 'min' : (cx === 100 || cy === 100) ? 'max' : 'typical';
+    __gym.hit('pad', ev);
+    __gym.form('range-pad', { value: x + ',' + y, partition: p });
+    out.textContent = 'pad=' + x + ',' + y + ' (' + p + ')';
+  }
+  dot.style.left = px + '%'; dot.style.top = py + '%';
+  pad.addEventListener('pointerdown', function (ev) {
+    var r = pad.getBoundingClientRect();
+    setPan((ev.clientX - r.left) / r.width * 100, (ev.clientY - r.top) / r.height * 100, ev);
+  });
+  pad.addEventListener('keydown', function (ev) {
+    var d = { ArrowLeft: [-5, 0], ArrowRight: [5, 0], ArrowUp: [0, -5], ArrowDown: [0, 5], Home: [-px, -py], End: [100 - px, 100 - py] }[ev.key];
+    if (!d) return;
+    ev.preventDefault();
+    setPan(px + d[0], py + d[1], ev);
+  });
+})();
+</script>
+</body>
+</html>

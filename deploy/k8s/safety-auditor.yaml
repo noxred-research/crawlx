@@ -1,0 +1,72 @@
+# Apply after migration 0022 and provisioning the two independent database login secrets.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crawlx-safety-audit
+  namespace: crawlx
+  labels: { app: crawlx-safety-auditor, app.kubernetes.io/part-of: crawlx }
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 30
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: { app: crawlx-safety-auditor }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: safety-audit
+              image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+              imagePullPolicy: IfNotPresent
+              args: ["admin", "safety-audit", "--json"]
+              env:
+                - name: CRAWLX_ENVIRONMENT
+                  value: prod
+                - name: CRAWLX_SAFETY_READER_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: crawlx-safety-reader, key: database_url }
+                - name: CRAWLX_SAFETY_PAUSE_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: crawlx-safety-pauser, key: database_url }
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: "50m", memory: 64Mi }
+                limits: { cpu: "500m", memory: 256Mi }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crawlx-safety-auditor
+  namespace: crawlx
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-safety-auditor }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-postgres } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    # Infrastructure DNS only, beyond PostgreSQL. No target or other service egress.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

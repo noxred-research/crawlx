@@ -1,0 +1,12 @@
+disallowed-methods = [
+  { path = "rand::thread_rng", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::random", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+]
+# Decision and hashing paths must be deterministic. The lint is
+# `warn` workspace-wide and `#![deny(clippy::disallowed_types)]` in crawlx-state, crawlx-graph
+# and crawlx-strategies; a lookup-only map that is never iterated may `#[allow]` it with a
+# reason on the item.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "use BTreeMap or a sorted Vec on decision and hashing paths; allow with a reason only for lookup-only maps" },
+  { path = "std::collections::HashSet", reason = "use BTreeSet or a sorted Vec on decision and hashing paths; allow with a reason only for lookup-only sets" },
+]

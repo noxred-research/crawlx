@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hybrid-mix app</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  header { display: flex; gap: 12px; align-items: center; }
+  [role=menu] { border: 1px solid #889; padding: 6px; background: #fff; }
+  [role=menu] a { display: block; padding: 4px 8px; }
+  [role=dialog] { border: 2px solid #335; padding: 16px; margin: 12px 0; background: #f4f4ff; }
+  button { margin: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <a id="app-home" href="#/home">Home</a>
+  <button id="app-menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="app-menu">Workspace menu</button>
+  <nav id="app-menu" role="menu" aria-label="Workspace" hidden>
+    <a id="menu-reports" role="menuitem" href="#/reports">Reports</a>
+    <a id="menu-billing" role="menuitem" href="#/billing">Billing</a>
+    <a id="menu-members" role="menuitem" href="#/members">Members</a>
+  </nav>
+  <a id="app-back" href="/hybrid-mix/">Back to site</a>
+</header>
+<main id="view"></main>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var view = $('view');
+  var menuBtn = $('app-menu-btn');
+  var menu = $('app-menu');
+  menuBtn.addEventListener('click', function (ev) {
+    __gym.hit('app-menu-btn', ev);
+    var open = menu.hidden;
+    menu.hidden = !open;
+    menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  ['app-home', 'menu-reports', 'menu-billing', 'menu-members', 'app-back'].forEach(function (id) {
+    $(id).addEventListener('click', function (ev) { __gym.hit(id, ev); });
+  });
+  var confirmed = false;
+  function viewHome() {
+    view.innerHTML = '<h1>Home</h1><p>Open the workspace menu to reach reports, billing and members.</p>';
+  }
+  function viewReports() {
+    view.innerHTML = '<h1>Reports</h1><button id="report-run" type="button">Run report</button><p id="report-out" aria-live="polite"></p>';
+    $('report-run').addEventListener('click', function (ev) {
+      __gym.hit('report-run', ev);
+      __gym.api('GET', 'reports/run').then(function () { $('report-out').textContent = 'Report ready'; });
+    });
+  }
+  function viewBilling() {
+    view.innerHTML = '<h1>Billing</h1><button id="plan-change" type="button">Change plan</button><div id="dialog-slot"></div>' +
+      (confirmed ? '<p>Plan changed. <a id="billing-receipt" href="/hybrid-mix/receipt.html">View receipt</a></p>' : '');
+    $('plan-change').addEventListener('click', function (ev) {
+      __gym.hit('plan-change', ev);
+      if ($('plan-dialog')) return;
+      var d = document.createElement('div');
+      d.id = 'plan-dialog';
+      d.setAttribute('role', 'dialog');
+      d.setAttribute('aria-modal', 'true');
+      d.setAttribute('aria-labelledby', 'plan-title');
+      d.innerHTML = '<h2 id="plan-title">Change plan?</h2><button id="plan-confirm" type="button">Confirm</button><button id="plan-cancel" type="button">Cancel</button>';
+      $('dialog-slot').appendChild(d);
+      $('plan-confirm').addEventListener('click', function (e2) {
+        __gym.hit('plan-confirm', e2);
+        __gym.api('POST', 'plan', { plan: 'team' }).then(function () { confirmed = true; viewBilling(); });
+      });
+      $('plan-cancel').addEventListener('click', function (e2) { __gym.hit('plan-cancel', e2); d.remove(); });
+    });
+    if (confirmed) $('billing-receipt').addEventListener('click', function (ev) { __gym.hit('billing-receipt', ev); });
+  }
+  function viewMembers() {
+    view.innerHTML = '<h1>Members</h1><button id="member-invite" type="button">Invite member</button><p id="member-out" aria-live="polite"></p>';
+    $('member-invite').addEventListener('click', function (ev) {
+      __gym.hit('member-invite', ev);
+      $('member-out').textContent = 'Invitation drafted (not sent)';
+    });
+  }
+  function route() {
+    var h = location.hash || '#/home';
+    if (h === '#/reports') viewReports();
+    else if (h === '#/billing') viewBilling();
+    else if (h === '#/members') viewMembers();
+    else viewHome();
+  }
+  window.addEventListener('hashchange', route);
+  if (!location.hash) history.replaceState(null, '', '#/home');
+  route();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Committed seed sets per benchmark suite. Loaded and validated by
+# `crawlx_bench::stats::SeedSets`. Sets nest (pr ⊂ nightly ⊂ release) so paired comparisons
+# across suites share seeds; `pilot` is the 30-seed set of §7.3.
+version = 1
+
+[suite.pr]
+rationale = "one seed: smoke and determinism re-run (PR suite)"
+seeds = [1]
+
+[suite.nightly]
+rationale = "8 seeds: the pilot of 2026-10-28 needs 8 seeds for a ±0.02 coverage half-width on G20 and ≤ 2 on G01/G06; G02/G26 (17/21) are release-suite fixtures"
+seeds = [1, 2, 3, 5, 8, 13, 21, 34]
+
+[suite.release]
+rationale = "21 seeds: the largest seeds_needed of the 2026-10-28 pilot (G26: variance 0.0021 → 21 seeds for ±0.02 at 95 %)"
+seeds = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181, 6765, 10946, 17711]
+
+[suite.pilot]
+rationale = "30 seeds for the pilot variance analysis"
+seeds = [
+  1, 2, 3, 5, 8, 13, 21, 34, 55, 89,
+  144, 233, 377, 610, 987, 1597, 2584, 4181, 6765, 10946,
+  17711, 28657, 46368, 75025, 121393, 196418, 317811, 514229, 832040, 1346269,
+]

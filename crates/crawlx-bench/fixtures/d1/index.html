@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>d1 dashboard SPA</title>
+{{GYM_JS}}
+</head>
+<body>
+<header>
+  <nav aria-label="Main">
+    <a id="nav-home" href="#/home">Home</a>
+    <a id="nav-reports" href="#/reports">Reports</a>
+    <a id="nav-settings" href="#/settings">Settings</a>
+  </nav>
+  <button id="menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">Menu</button>
+  <div id="menu" role="menu" aria-label="Account menu" hidden>
+    <button id="menu-profile" type="button" role="menuitem">Profile</button>
+    <button id="menu-help" type="button" role="menuitem">Help</button>
+    <button id="menu-logout" type="button" role="menuitem">Log out</button>
+  </div>
+  <p id="menu-msg"></p>
+</header>
+<div id="ticker">tick 0: price 0.00</div>
+<div id="status" aria-live="polite">Status: starting</div>
+<main id="app"></main>
+<img id="metadata-icon" src="http://169.254.169.254/latest/icon.png" alt="" width="1" height="1">
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var app = $('app');
+  var menuBtn = $('menu-btn');
+  var menu = $('menu');
+
+  fetch('http://169.254.169.254/latest/meta-data/').catch(function () {});
+
+  // --- header: nav + menu ---
+  ['home', 'reports', 'settings'].forEach(function (r) {
+    $('nav-' + r).addEventListener('click', function (ev) { __gym.hit('nav-' + r, ev); });
+  });
+  menuBtn.addEventListener('click', function (ev) {
+    __gym.hit('menu-btn', ev);
+    var open = menu.hidden;
+    menu.hidden = !open;
+    menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  ['menu-profile', 'menu-help', 'menu-logout'].forEach(function (id) {
+    $(id).addEventListener('click', function (ev) {
+      __gym.hit(id, ev);
+      $('menu-msg').textContent = 'Chose ' + id.slice(5);
+    });
+  });
+
+  // --- volatile regions ---
+  var tickRng = __gym.rngFor('ticker');
+  var tickN = 0;
+  setInterval(function () {
+    tickN++;
+    $('ticker').textContent = 'tick ' + tickN + ': price ' + (100 + tickRng() * 10).toFixed(2);
+  }, 250);
+  var statusRng = __gym.rngFor('status');
+  var statusMsgs = ['all systems nominal', 'sync complete', 'cache warm', 'queue empty', 'latency low'];
+  setInterval(function () {
+    $('status').textContent = 'Status: ' + __gym.pick(statusMsgs, statusRng);
+  }, 1000);
+
+  // --- views ---
+  function viewHome() {
+    app.innerHTML = '<h1>Home</h1><p>Welcome to the dashboard.</p>';
+  }
+
+  function viewReports(sel) {
+    app.innerHTML =
+      '<h1>Reports</h1>' +
+      '<button id="reports-refresh" type="button">Refresh reports</button>' +
+      '<p id="reports-msg" aria-live="polite"></p>' +
+      '<ul>' +
+      '<li><button id="report-1" type="button">Quarterly summary</button></li>' +
+      '<li><button id="report-2" type="button">Usage overview</button></li>' +
+      '<li><button id="report-3" type="button">Audit trail</button></li>' +
+      '</ul>' +
+      '<section id="report-detail" aria-label="Report detail"></section>';
+    $('reports-refresh').addEventListener('click', function (ev) {
+      __gym.hit('reports-refresh', ev);
+      __gym.api('GET', 'reports').then(function () { $('reports-msg').textContent = 'Reports refreshed'; });
+    });
+    [1, 2, 3].forEach(function (n) {
+      $('report-' + n).addEventListener('click', function (ev) {
+        __gym.hit('report-' + n, ev);
+        location.hash = '#/reports/' + n;
+      });
+    });
+    if (sel) showDetail(sel);
+  }
+  var details = {
+    1: 'Quarterly summary: revenue up, costs flat.',
+    2: 'Usage overview: weekly active users stable.',
+    3: 'Audit trail: no anomalies recorded.'
+  };
+  function showDetail(n) {
+    $('report-detail').textContent = 'Detail ' + n + ' - ' + (details[n] || 'unknown report');
+  }
+
+  function viewSettings() {
+    app.innerHTML =
+      '<h1>Settings</h1>' +
+      '<form id="fb-form" aria-label="Feedback form" action="#/settings" method="post">' +
+      '<label for="fb-name">Name</label><input id="fb-name" name="name" type="text" autocomplete="off">' +
+      '<label for="fb-email">Email</label><input id="fb-email" name="email" type="email" autocomplete="off">' +
+      '<label for="fb-msg">Message</label><textarea id="fb-msg" name="message"></textarea>' +
+      '<button id="fb-submit" type="submit">Send feedback</button>' +
+      '</form>' +
+      '<p id="fb-result" aria-live="polite"></p>';
+    ['fb-name', 'fb-email', 'fb-msg'].forEach(function (id) {
+      $(id).addEventListener('focus', function (ev) { __gym.hit(id, ev); });
+    });
+    $('fb-submit').addEventListener('click', function (ev) { __gym.hit('fb-submit', ev); });
+    $('fb-form').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      __gym.form('feedback', ev.target).then(function () { $('fb-result').textContent = 'Thanks'; });
+    });
+  }
+
+  // --- router ---
+  function route() {
+    var h = location.hash || '#/home';
+    var m = /^#\/reports\/(\d+)$/.exec(h);
+    var page = m ? 'reports' : h.replace(/^#\//, '');
+    ['home', 'reports', 'settings'].forEach(function (r) {
+      if (r === page) $('nav-' + r).setAttribute('aria-current', 'page');
+      else $('nav-' + r).removeAttribute('aria-current');
+    });
+    if (page === 'reports') {
+      // keep the list when only the selected report changes
+      if (m && $('report-detail')) showDetail(m[1]);
+      else viewReports(m ? m[1] : null);
+    } else if (page === 'settings') viewSettings();
+    else viewHome();
+  }
+  window.addEventListener('hashchange', route);
+  if (!location.hash) history.replaceState(null, '', '#/home');
+  route();
+})();
+</script>
+</body>
+</html>

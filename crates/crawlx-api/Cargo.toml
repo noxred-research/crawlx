@@ -1,0 +1,60 @@
+[package]
+name = "crawlx-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: Axum REST/SSE API, auth, idempotency, webhooks, compat facade"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-scheduler = { path = "../crawlx-scheduler" }
+crawlx-storage = { path = "../crawlx-storage" }
+crawlx-model = { path = "../crawlx-model" }
+crawlx-extract = { path = "../crawlx-extract" }
+crawlx-fetch = { path = "../crawlx-fetch" }
+crawlx-policy = { path = "../crawlx-policy" }
+crawlx-telemetry = { path = "../crawlx-telemetry" }
+crawlx-url = { path = "../crawlx-url" }
+crawlx-worker = { path = "../crawlx-worker" }
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+futures.workspace = true
+http-body.workspace = true
+hex.workspace = true
+hmac.workspace = true
+jsonschema.workspace = true
+http.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+crawlx-browser = { path = "../crawlx-browser" }
+crawlx-strategies = { path = "../crawlx-strategies" }
+http-body-util.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+tokio-tungstenite = "0.29"
+tower = { workspace = true, features = ["util"] }
+wiremock.workspace = true
+
+[lints]
+workspace = true

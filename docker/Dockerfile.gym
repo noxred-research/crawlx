@@ -1,0 +1,32 @@
+# crawlx-gym image: the CrawlerGym fixture server for staging and CI only.
+# Never deployed to a production namespace (the Helm chart refuses it outside `dev`/`staging`).
+#
+#   docker build -f docker/Dockerfile.gym -t crawlx-gym:dev .
+ARG RUST_VERSION=1.97.1
+ARG BASE_IMAGE=gcr.io/distroless/cc-debian12:nonroot
+
+FROM rust:${RUST_VERSION}-slim-bookworm AS builder
+# crawlx-bench links the fetch transport, including its bundled BoringSSL bindings.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential cmake clang libclang-dev git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml ./
+COPY crates ./crates
+COPY vendor ./vendor
+COPY chromium-pin.toml cdp-surface.toml ./
+# crawlx-bench compiles bench/seeds.toml in with `include_str!`
+COPY bench/seeds.toml ./bench/seeds.toml
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --locked --release -p crawlx-bench --bin gym-server \
+    && install -D -m 0755 target/release/gym-server /out/usr/local/bin/gym-server
+
+FROM ${BASE_IMAGE}
+LABEL org.opencontainers.image.title="crawlx-gym" \
+      org.opencontainers.image.description="CrawlerGym fixture server (staging/CI only)"
+COPY --from=builder /out/usr/local/bin/gym-server /usr/local/bin/gym-server
+USER 65532:65532
+EXPOSE 8090
+ENTRYPOINT ["/usr/local/bin/gym-server"]
+CMD ["--bind", "0.0.0.0:8090"]

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hybrid-mix</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  nav a { margin-right: 12px; }
+</style>
+</head>
+<body>
+<h1>Acme workspace</h1>
+<p>Server-rendered documentation on the left, a single-page app on the right. Last: <span id="out">none</span></p>
+<nav aria-label="Primary">
+  <a id="nav-docs" href="/hybrid-mix/docs-index.html">Documentation</a>
+  <a id="nav-app" href="/hybrid-mix/app.html">Open the app</a>
+  <a id="nav-pricing" href="/hybrid-mix/pricing.html">Pricing</a>
+</nav>
+<script>
+['nav-docs', 'nav-app', 'nav-pricing'].forEach(function (id) {
+  document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); });
+});
+</script>
+</body>
+</html>

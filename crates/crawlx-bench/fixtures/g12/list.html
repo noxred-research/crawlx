@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g12 Invoice list</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+</style>
+</head>
+<body>
+<h1 id="title">Invoice list</h1>
+<p id="meta"></p>
+<ul id="rows"></ul>
+<p><a id="list-back" href="/g12/">Back to index</a></p>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var page = parseInt(q.get('page') || '1', 10);
+  var desc = q.get('sort') === 'desc';
+  document.getElementById('title').textContent = 'Invoice list, page ' + page;
+  document.getElementById('meta').textContent = 'Sorted ' + (desc ? 'descending' : 'ascending');
+  var rows = document.getElementById('rows');
+  for (var i = 0; i < 5; i++) {
+    var n = (page - 1) * 5 + i + 1;
+    var li = document.createElement('li');
+    li.textContent = 'Invoice #' + n;
+    if (desc) rows.insertBefore(li, rows.firstChild); else rows.appendChild(li);
+  }
+  document.getElementById('list-back').addEventListener('click', function (ev) { __gym.hit('list-back', ev); });
+})();
+</script>
+</body>
+</html>

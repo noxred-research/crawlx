@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g19 timer-revealed controls</title>
+{{GYM_JS}}
+</head>
+<body>
+<main>
+  <h1>Timer panel</h1>
+  <p>Fixture {{FIXTURE}}. Controls below appear on their own schedule.</p>
+  <button id="trigger" type="button">Trigger</button>
+  <p id="trigger-note" aria-live="polite">Idle</p>
+  <section id="timed">
+    <button id="t1" type="button" hidden>Timer one</button>
+    <button id="t2" type="button" hidden>Timer two</button>
+    <button id="t3" type="button" hidden>Timer three</button>
+    <button id="t4" type="button" hidden>Timer four</button>
+    <button id="t5" type="button" hidden>Timer five</button>
+  </section>
+  <p id="result">No timer control used</p>
+</main>
+<script>
+(function () {
+  var result = document.getElementById('result');
+  document.getElementById('trigger').addEventListener('click', function (ev) {
+    __gym.hit('trigger', ev);
+  });
+  [['t1', 1000], ['t2', 3000], ['t3', 7000], ['t4', 1000], ['t5', 3000]].forEach(function (p) {
+    var id = p[0];
+    var el = document.getElementById(id);
+    el.addEventListener('click', function (ev) {
+      __gym.hit(id, ev);
+      result.textContent = 'Used ' + id;
+    });
+    setTimeout(function () {
+      el.hidden = false;
+      __gym.probe('revealed-' + id, String(p[1]));
+    }, p[1]);
+  });
+})();
+</script>
+</body>
+</html>

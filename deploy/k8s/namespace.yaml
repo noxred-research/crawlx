@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crawlx
+  labels:
+    # Pod Security Standards: every crawlx pod satisfies `restricted` (non-root, no privilege
+    # escalation, all capabilities dropped, seccomp set). The worker's Localhost seccomp profile
+    # is allowed by `restricted`.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

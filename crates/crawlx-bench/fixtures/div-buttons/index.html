@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>div-buttons</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(5, 140px); gap: 10px; }
+  .act { padding: 10px; border: 1px solid #889; border-radius: 4px; background: #f4f4f8; cursor: pointer; user-select: none; text-align: center; }
+  .act:hover { background: #e4e4f0; }
+  .chip { display: inline-block; padding: 4px 10px; border-radius: 12px; background: #dde; cursor: pointer; margin: 4px; }
+  .plain { padding: 10px; border: 1px dashed #bbb; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Div buttons</h1>
+<p>Thirty controls built from <code>div</code>/<code>span</code> with <code>cursor:pointer</code> only: no role, no tabindex, no ARIA. Last: <span id="out">none</span></p>
+<div class="grid" id="grid"></div>
+<p id="chips"></p>
+<div class="grid">
+  <div class="plain">Static text one</div>
+  <div class="plain">Static text two</div>
+  <div class="plain">Static text three</div>
+</div>
+<script>
+(function () {
+  var NAMES = ['Archive', 'Assign', 'Backup', 'Clone', 'Compare', 'Deploy', 'Download', 'Duplicate', 'Expand', 'Export',
+               'Favorite', 'Filter', 'Flag', 'Import', 'Invite', 'Lock', 'Merge', 'Mute', 'Pin', 'Preview'];
+  var CHIPS = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliet'];
+  var grid = document.getElementById('grid');
+  var chips = document.getElementById('chips');
+  var out = document.getElementById('out');
+  NAMES.forEach(function (name, i) {
+    var id = 'db-' + (i + 1);
+    var d = document.createElement('div');
+    d.className = 'act';
+    d.id = id;
+    d.textContent = name;
+    d.addEventListener('click', function (ev) { __gym.hit(id, ev); out.textContent = name; });
+    grid.appendChild(d);
+  });
+  CHIPS.forEach(function (name, i) {
+    var id = 'chip-' + (i + 1);
+    var s = document.createElement('span');
+    s.className = 'chip';
+    s.id = id;
+    s.textContent = name;
+    s.addEventListener('click', function (ev) { __gym.hit(id, ev); out.textContent = name; });
+    chips.appendChild(s);
+  });
+})();
+</script>
+</body>
+</html>

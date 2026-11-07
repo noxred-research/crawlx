@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Profile settings</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; max-width: 640px; }
+  label { display: block; margin: 8px 0; }
+  input { display: block; padding: 4px 6px; margin-top: 2px; width: 260px; }
+  .actions { display: flex; gap: 8px; margin: 12px 0; }
+</style>
+</head>
+<body>
+<a id="home-profile" href="/g26/">Home</a>
+<h1>Profile settings</h1>
+<form id="form-profile" aria-label="Your profile" onsubmit="return false">
+  <h2>Your profile</h2>
+    <label>Display name<input type="text" name="display_name" id="p-name" value="Ada"></label>
+    <label>Contact email<input type="text" name="email" id="p-email" value="ada@example.test"></label>
+  <div class="actions">
+    <button type="button" id="profile-save">Save profile</button>
+    <button type="button" id="profile-avatar">Upload avatar</button>
+    <button type="button" id="profile-email">Change email</button>
+  </div>
+</form>
+<p>Status: <span id="status">idle</span></p>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function status(t) { $('status').textContent = t; }
+  $('home-profile').addEventListener('click', function (ev) { __gym.hit('home-profile', ev); });
+  $('profile-save').addEventListener('click', function (ev) {
+    __gym.hit('profile-save', ev);
+    __gym.form('profile', $('form-profile')).then(function () { status('profile saved'); });
+  });
+  $('profile-avatar').addEventListener('click', function (ev) {
+    __gym.hit('profile-avatar', ev);
+    __gym.api('POST', 'profile/avatar').then(function () { status('avatar uploaded'); });
+  });
+  $('profile-email').addEventListener('click', function (ev) {
+    __gym.hit('profile-email', ev);
+    __gym.api('POST', 'profile/email', { email: $('p-email').value }).then(function () { status('email changed'); });
+  });
+})();
+</script>
+</body>
+</html>

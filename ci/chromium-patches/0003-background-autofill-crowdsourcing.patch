@@ -1,0 +1,278 @@
+Subject: [PATCH] Honor disabled background networking for Autofill crowdsourcing
+
+Base: Chromium 155.0.8059.84
+Base commit: 5869fe313571d75152b77813cf0a4ee26a4e6df0
+Source base: https://raw.githubusercontent.com/chromium/chromium/155.0.8059.84/
+Each input below is the source-base URL followed by its path.
+Original inputs:
+  chrome/browser/ui/autofill/chrome_autofill_client.cc
+    sha256 8d1ee3a6783d42d784b772bff9924ab8412c32b35f7f88886018d933cc28b652
+  chrome/browser/ui/autofill/chrome_autofill_client.h
+    sha256 9ea3c8c41d70b0951d4b830cd4ed757c55c87b317976cc3d69e862ef6104197d
+  chrome/browser/ui/autofill/chrome_autofill_client_unittest.cc
+    sha256 d329de10b508548d4f1d184c857d30b62cdf9c7684ae39bd6102de1464038d2f
+  components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.cc
+    sha256 f3abdb8791a542be8af550f67247445c665aee1cb720eb378b7de1a50df72b4b
+  components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.h
+    sha256 c15a03a71f0d465ae803f50be50b2cf3acaffbbd35d6a63ebcdbb4f59712b5e4
+  components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager_unittest.cc
+    sha256 76f9eef093c31c2cb9c55616dafce2070d83f08455c01a957bd26a0691c5fe69
+  components/autofill/core/browser/foundations/autofill_client.cc
+    sha256 138d72eba7e428c7ab5d5a95f01d5a6b46095362670d77b1bde8218d8e8fbc9b
+  components/autofill/core/browser/foundations/autofill_client.h
+    sha256 48c4cc356117e3d5105a029e639f0daacabc3d1d150663c2843e29ef3a56a583
+
+Use the AutofillClient boundary for embedder network policy. No existing
+crowdsourcing-specific consent/policy method exists on this base client.
+The new default-true method preserves other embedders and flag-absent Chrome.
+Only Chrome reads chrome/common/chrome_switches.h; components remain independent
+of Chrome. The switch is inline constexpr in //chrome/common:non_code_constants.
+
+With --disable-background-networking, IsEnabled() refuses both automatic server
+prediction queries and crowdsourcing vote uploads before encoding, cache lookup,
+upload throttling, or URL loader creation. This includes Password Manager votes
+using the same crowdsourcing manager. This is not credit-card/Wallet upload,
+page requests, authentication, cookies, TLS, Safe Browsing, security component
+data, or explicit model demand. Local heuristics, Autofill preferences, form
+filling, DOM editing, and native input paths are not disabled or modified.
+
+Queries keep the existing failure contract: return false and synchronously call
+a supplied callback exactly once with std::nullopt. No synthetic prediction
+response is generated. Uploads return false, have no callback, and do not consume
+upload-throttling state. No request means no network completion/error or retry.
+The process switch is a startup policy; this patch does not cancel an already
+in-flight request if tests mutate the command line later.
+
+Added regressions (not executed):
+- AutofillCrowdsourcingManagerTest.ClientCanDisableCrowdsourcing: valid form and
+  encoded votes produce no loaders under denied policy, query callback receives
+  std::nullopt once, both Autofill and Password Manager votes are refused, and
+  the same query/vote produce two loaders after allowing policy. Default client
+  policy and local Autofill/profile/Autocomplete enablement remain true.
+- ChromeAutofillClientTest.BackgroundNetworkingOnlyDisablesCrowdsourcing:
+  flag-absent/flag-present/flag-removed policy and manager enablement, with local
+  Autofill/profile/Autocomplete enablement unchanged while the flag is present.
+
+Candidate only. No build, test, lint, formatter, or applicability check ran.
+Parent must apply against the exact base, compile component and Chrome unit
+tests, run both new regressions and existing related suites, then prove G24
+network and native-input behavior with the rebuilt browser before pinning.
+
+diff --git a/chrome/browser/ui/autofill/chrome_autofill_client.cc b/chrome/browser/ui/autofill/chrome_autofill_client.cc
+--- a/chrome/browser/ui/autofill/chrome_autofill_client.cc
++++ b/chrome/browser/ui/autofill/chrome_autofill_client.cc
+@@ -98,6 +98,7 @@
+ #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+ #include "chrome/browser/webdata_services/web_data_service_factory.h"
+ #include "chrome/common/channel_info.h"
++#include "chrome/common/chrome_switches.h"
+ #include "chrome/common/url_constants.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "components/account_settings/account_setting_service.h"
+@@ -457,6 +458,11 @@
+   return *crowdsourcing_manager_;
+ }
+ 
++bool ChromeAutofillClient::IsAutofillCrowdsourcingAllowed() const {
++  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
++      ::switches::kDisableBackgroundNetworking);
++}
++
+ VotesUploader& ChromeAutofillClient::GetVotesUploader() {
+   return votes_uploader_;
+ }
+diff --git a/chrome/browser/ui/autofill/chrome_autofill_client.h b/chrome/browser/ui/autofill/chrome_autofill_client.h
+--- a/chrome/browser/ui/autofill/chrome_autofill_client.h
++++ b/chrome/browser/ui/autofill/chrome_autofill_client.h
+@@ -146,6 +146,7 @@
+   GetSubscriptionEligibilityService() const final;
+   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() final;
+   AutofillCrowdsourcingManager& GetCrowdsourcingManager() final;
++  bool IsAutofillCrowdsourcingAllowed() const final;
+   VotesUploader& GetVotesUploader() final;
+   AutofillOptimizationGuideDecider* GetAutofillOptimizationGuideDecider()
+       const final;
+diff --git a/chrome/browser/ui/autofill/chrome_autofill_client_unittest.cc b/chrome/browser/ui/autofill/chrome_autofill_client_unittest.cc
+--- a/chrome/browser/ui/autofill/chrome_autofill_client_unittest.cc
++++ b/chrome/browser/ui/autofill/chrome_autofill_client_unittest.cc
+@@ -11,6 +11,7 @@
+ #include "base/functional/bind.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/raw_ref.h"
++#include "base/test/scoped_command_line.h"
+ #include "base/test/scoped_feature_list.h"
+ #include "base/test/values_test_util.h"
+ #include "base/values.h"
+@@ -29,6 +30,7 @@
+ #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+ #include "chrome/browser/user_education/user_education_service.h"
+ #include "chrome/browser/user_education/user_education_service_factory.h"
++#include "chrome/common/chrome_switches.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+ #include "chrome/test/user_education/mock_browser_user_education_interface.h"
+@@ -52,6 +54,7 @@
+ #include "components/autofill/core/browser/payments/payments_autofill_client.h"
+ #include "components/autofill/core/browser/test_utils/autofill_test_util.h"
+ #include "components/autofill/core/browser/ui/mock_autofill_suggestion_delegate.h"
++#include "components/autofill/core/common/autofill_debug_features.h"
+ #include "components/autofill/core/common/autofill_features.h"
+ #include "components/autofill/core/common/autofill_payments_features.h"
+ #include "components/autofill/core/common/autofill_prefs.h"
+@@ -314,6 +317,29 @@
+   base::OnceCallback<void()> setup_flags_;
+ };
+ 
++TEST_F(ChromeAutofillClientTest, BackgroundNetworkingOnlyDisablesCrowdsourcing) {
++  base::test::ScopedFeatureList feature_list;
++  feature_list.InitAndEnableFeature(
++      features::debug::kAutofillServerCommunication);
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->RemoveSwitch(
++      ::switches::kDisableBackgroundNetworking);
++  EXPECT_TRUE(client()->IsAutofillCrowdsourcingAllowed());
++  EXPECT_TRUE(client()->GetCrowdsourcingManager().IsEnabled());
++
++  command_line.GetProcessCommandLine()->AppendSwitch(
++      ::switches::kDisableBackgroundNetworking);
++  EXPECT_FALSE(client()->IsAutofillCrowdsourcingAllowed());
++  EXPECT_FALSE(client()->GetCrowdsourcingManager().IsEnabled());
++  EXPECT_TRUE(client()->IsAutofillEnabled());
++  EXPECT_TRUE(client()->IsAutofillProfileEnabled());
++  EXPECT_TRUE(client()->IsAutocompleteEnabled());
++
++  command_line.GetProcessCommandLine()->RemoveSwitch(
++      ::switches::kDisableBackgroundNetworking);
++  EXPECT_TRUE(client()->GetCrowdsourcingManager().IsEnabled());
++}
++
+ // Tests that `ClassifyAsPasswordForm()` correctly recognizes a login form on a
+ // single frame.
+ TEST_F(ChromeAutofillClientTest, ClassifiesLoginFormOnMainFrame) {
+diff --git a/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.cc b/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.cc
+--- a/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.cc
++++ b/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.cc
+@@ -718,7 +718,8 @@
+ AutofillCrowdsourcingManager::~AutofillCrowdsourcingManager() = default;
+ 
+ bool AutofillCrowdsourcingManager::IsEnabled() const {
+-  return autofill_server_url_.is_valid() &&
++  return client_->IsAutofillCrowdsourcingAllowed() &&
++         autofill_server_url_.is_valid() &&
+          base::FeatureList::IsEnabled(
+              features::debug::kAutofillServerCommunication);
+ }
+diff --git a/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.h b/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.h
+--- a/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.h
++++ b/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager.h
+@@ -104,7 +104,8 @@
+       mojom::SubmissionSource form_submission_source,
+       bool is_password_manager_upload);
+ 
+-  // Returns true if the autofill server communication is enabled.
++  // Returns true if Autofill server communication is enabled and allowed by
++  // the client's network policy. This does not control local Autofill.
+   bool IsEnabled() const;
+ 
+   // Reset the upload history. This reduced space history prevents the autofill
+diff --git a/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager_unittest.cc b/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager_unittest.cc
+--- a/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager_unittest.cc
++++ b/components/autofill/core/browser/crowdsourcing/autofill_crowdsourcing_manager_unittest.cc
+@@ -277,6 +277,68 @@
+       this};
+ };
+ 
++TEST_F(AutofillCrowdsourcingManagerTest, ClientCanDisableCrowdsourcing) {
++  class PolicyAutofillClient : public TestAutofillClient {
++   public:
++    bool IsAutofillCrowdsourcingAllowed() const override { return allowed; }
++    bool allowed = false;
++  };
++
++  // Other embedders retain the default policy.
++  EXPECT_TRUE(autofill_client().IsAutofillCrowdsourcingAllowed());
++  PolicyAutofillClient client;
++  client.set_shared_url_loader_factory(autofill_client().GetURLLoaderFactory());
++  AutofillCrowdsourcingManager manager(&client, version_info::Channel::UNKNOWN);
++  FormData form = test::GetFormData(
++      {.fields = {{.role = NAME_FIRST},
++                  {.role = NAME_LAST},
++                  {.role = EMAIL_ADDRESS}}});
++  FormStructure form_structure(form);
++  form_structure.set_submission_source(SubmissionSource::FORM_SUBMISSION);
++  SetCorrectFieldHostFormSignatures(form_structure);
++  EncodeUploadRequestOptions options;
++  options.encoder = RandomizedEncoder::Create(client.GetPrefs());
++  options.observed_submission = true;
++  std::vector<AutofillUploadContents> uploads =
++      EncodeUploadRequest(form_structure, options);
++  ASSERT_FALSE(uploads.empty());
++
++  EXPECT_FALSE(manager.IsEnabled());
++  int callback_count = 0;
++  EXPECT_FALSE(manager.StartQueryRequest(
++      {form}, autofill_driver().GetIsolationInfo(),
++      base::BindLambdaForTesting(
++          [&](std::optional<AutofillCrowdsourcingManager::QueryResponse> response) {
++            ++callback_count;
++            EXPECT_FALSE(response.has_value());
++          })));
++  EXPECT_EQ(callback_count, 1);
++  for (bool password_manager_upload : {false, true}) {
++    EXPECT_FALSE(manager.StartUploadRequest(
++        uploads, form_structure.submission_source(), password_manager_upload));
++  }
++  task_environment().RunUntilIdle();
++  EXPECT_EQ(callback_count, 1);
++  EXPECT_EQ(url_loader_factory().NumPending(), 0);
++  EXPECT_TRUE(client.IsAutofillEnabled());
++  EXPECT_TRUE(client.IsAutofillProfileEnabled());
++  EXPECT_TRUE(client.IsAutocompleteEnabled());
++
++  // The same valid form and vote must reach the loader when policy allows it.
++  // Refused uploads must not consume the upload-throttling budget.
++  client.allowed = true;
++  EXPECT_TRUE(manager.IsEnabled());
++  EXPECT_TRUE(manager.StartQueryRequest(
++      {form}, autofill_driver().GetIsolationInfo(),
++      base::BindOnce(
++          [](std::optional<AutofillCrowdsourcingManager::QueryResponse>) {})));
++  EXPECT_TRUE(manager.StartUploadRequest(
++      std::move(uploads), form_structure.submission_source(),
++      /*is_password_manager_upload=*/false));
++  task_environment().RunUntilIdle();
++  EXPECT_EQ(url_loader_factory().NumPending(), 2);
++}
++
+ TEST_F(AutofillCrowdsourcingManagerTest, QueryAndUploadTest) {
+   std::vector<std::unique_ptr<FormStructure>> form_structures;
+   form_structures.push_back(std::make_unique<FormStructure>(
+diff --git a/components/autofill/core/browser/foundations/autofill_client.cc b/components/autofill/core/browser/foundations/autofill_client.cc
+--- a/components/autofill/core/browser/foundations/autofill_client.cc
++++ b/components/autofill/core/browser/foundations/autofill_client.cc
+@@ -85,6 +85,10 @@
+   return false;
+ }
+ 
++bool AutofillClient::IsAutofillCrowdsourcingAllowed() const {
++  return true;
++}
++
+ const EntityDataManager* AutofillClient::GetEntityDataManager() const {
+   return const_cast<AutofillClient*>(this)->GetEntityDataManager();
+ }
+diff --git a/components/autofill/core/browser/foundations/autofill_client.h b/components/autofill/core/browser/foundations/autofill_client.h
+--- a/components/autofill/core/browser/foundations/autofill_client.h
++++ b/components/autofill/core/browser/foundations/autofill_client.h
+@@ -409,6 +409,11 @@
+   // Autofill server.
+   virtual AutofillCrowdsourcingManager& GetCrowdsourcingManager() = 0;
+ 
++  // Returns whether automatic Autofill server prediction queries and vote
++  // uploads are allowed. This does not control local Autofill or form filling.
++  // Defaults to true for embedders without an additional network policy.
++  virtual bool IsAutofillCrowdsourcingAllowed() const;
++
+   // Returns whether the client has a PersonalDataManager.
+   //
+   // TODO(crbug.com/455121491) This is a temporary fix to avoid crashes when

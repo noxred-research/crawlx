@@ -1,0 +1,346 @@
+{
+  "strategy": "url_plane",
+  "version": 2,
+  "context": {
+    "candidates": 48,
+    "keyed_actions": 70,
+    "hidden_targets": 2,
+    "seed": 42
+  },
+  "rounds": [
+    {
+      "phase": "greedy",
+      "proposals": []
+    },
+    {
+      "phase": "state_recovery",
+      "proposals": [
+        {
+          "key_id": "20bbf78326d993147e959517e60de2ef",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "b974545181389d6c221dfd00d6cdfc7a5fb3d304c74e03570641710dd96f788d",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/settings",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/settings",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [b97454518138]"
+        },
+        {
+          "key_id": "22ac791f160acb6062432875dc71b2ba",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/help",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/help",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [11546801c7b6]"
+        },
+        {
+          "key_id": "41654169d9f867192b76dbbedb7fdb37",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/items/1",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/items/1",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [4c2ad0e4219f]"
+        },
+        {
+          "key_id": "980b16771c10a7b331eff5a297da991f",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "67ede3b739cf6a2fee8e763cc818379a2e8e08d09f4f45e328d272def6866934",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/pricing/plans",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/pricing/plans",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [67ede3b739cf]"
+        },
+        {
+          "key_id": "d05d0ad613c01cd940697a0ca32a3136",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "f7eff62b5adfcade590a7b3023a0725e0ef4c6c7eaf9b5581928609fd67dede4",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/about",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/about",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [f7eff62b5adf]"
+        }
+      ]
+    },
+    {
+      "phase": "enablement_recovery",
+      "proposals": [
+        {
+          "key_id": "20bbf78326d993147e959517e60de2ef",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "b974545181389d6c221dfd00d6cdfc7a5fb3d304c74e03570641710dd96f788d",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/settings",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/settings",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [b97454518138]"
+        },
+        {
+          "key_id": "22ac791f160acb6062432875dc71b2ba",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/help",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/help",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [11546801c7b6]"
+        },
+        {
+          "key_id": "41654169d9f867192b76dbbedb7fdb37",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "4c2ad0e4219f30daad401becb4517e190c403973e0faf6dc0fcd9e6326c715d1",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/items/1",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/items/1",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [4c2ad0e4219f]"
+        },
+        {
+          "key_id": "980b16771c10a7b331eff5a297da991f",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "67ede3b739cf6a2fee8e763cc818379a2e8e08d09f4f45e328d272def6866934",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/pricing/plans",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/pricing/plans",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [67ede3b739cf]"
+        },
+        {
+          "key_id": "d05d0ad613c01cd940697a0ca32a3136",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "f7eff62b5adfcade590a7b3023a0725e0ef4c6c7eaf9b5581928609fd67dede4",
+            "action_kind": "navigate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "navigate",
+          "target_backend_node": null,
+          "navigate_url": "https://app.example/about",
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "url_plane",
+          "strategy_version": 2,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "https://app.example/about",
+            "mutates_state": false
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "navigate link [f7eff62b5adf]"
+        }
+      ]
+    }
+  ]
+}

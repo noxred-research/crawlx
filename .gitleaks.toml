@@ -1,0 +1,27 @@
+# Secret-scan configuration (https://github.com/gitleaks/gitleaks). Run:
+#   gitleaks detect --no-git --source . --config .gitleaks.toml --redact -v
+title = "crawlx"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "throwaway test fixtures and synthetic canaries"
+paths = [
+  # Throwaway self-signed TLS keys for loopback tests; see the README.md next to each.
+  '''crates/crawlx-browser/tests/fixtures/selfsigned\.key''',
+  '''crates/crawlx-fetch/tests/fixtures/selfsigned\.key''',
+  '''crates/crawlx-fetch/tests/fixtures/proxy-leaf\.key''',
+  # Content hashes (sha256 digests), not credentials.
+  '''crates/crawlx-bench/fixtures/golden/traces/g03\.json''',
+  '''crates/crawlx-model/tests/fixtures/smoke-bundle/manifest\.json''',
+]
+# Obviously synthetic values used by redaction tests, plus an environment variable name.
+regexes = [
+  '''^abcdef0123456789abcdef01$''',
+  '''^(?:0123456789abcdef){2,4}$''',
+  '''^sk-very-secret-key-0123456789$''',
+  '''^tok-4f9a8b2c71d0$''',
+  '''^sess-9e8d7c6b5a40$''',
+  '''^CRAWLX_S3_SECRET_KEY$''',
+]

@@ -1,0 +1,169 @@
+Subject: [PATCH] signin: honor background networking suppression for account metrics
+
+Base: Chromium 155.0.8059.84
+Source-Base: https://raw.githubusercontent.com/chromium/chromium/155.0.8059.84/
+Original-SHA256: 8658a78b2fa2e09b846c1f8d1ae2b05fd214b95bcb35e656f5aa348d3a0db8d9  chrome/browser/signin/BUILD.gn
+Original-SHA256: 9259dfdb9b0d2d39af42dc77515740fe3f4a17c2de6f78c18bb8a24c8e4bd8a6  chrome/browser/signin/account_investigator_factory.cc
+Reference-SHA256: e73e2db1257bdafe37216df4315d330976d03545e95ca3c52333763879537bfa  chrome/common/chrome_switches.h
+Reference-SHA256: cbf3b87b865bf44777757d2702cb15372e00ffc763b271608f190b71eb6ac2ab  chrome/common/BUILD.gn
+
+Skip only the metrics service when --disable-background-networking is set.
+Keep IdentityManager and its cookie service dependencies unchanged. Gate before
+Initialize() can start the overdue periodic ListAccounts report. Without the
+switch, preserve eager creation, observation and periodic reporting.
+
+Add a parameterized browser regression using the production factory and real
+cookie service with a test ListAccounts response. Check eager timer startup,
+nullable lookup, cookie availability and on-change metrics in both switch modes.
+Browser tests add default switches after SetUpCommandLine(), so adjust this
+switch in SetUpDefaultCommandLine() instead. Tests have not been run.
+
+diff --git a/chrome/browser/signin/BUILD.gn b/chrome/browser/signin/BUILD.gn
+--- a/chrome/browser/signin/BUILD.gn
++++ b/chrome/browser/signin/BUILD.gn
+@@ -227,6 +227,7 @@
+     "//chrome/browser/ui:simple_message_box_headers",
+     "//chrome/browser/ui/dialogs:browser_dialogs",
+     "//chrome/browser/webdata_services",
++    "//chrome/common:non_code_constants",
+     "//components/application_locale_storage",
+     "//components/browser_actuator/public:feature_list",
+     "//components/contextual_tasks/public:feature_list",
+@@ -787,6 +788,7 @@
+ 
+     if (enable_dice_support) {
+       sources += [
++        "account_investigator_factory_browsertest.cc",
+         "account_metrics_id_allocator_browsertest.cc",
+         "account_preview_data_service_browsertest.cc",
+         "accounts_policy_manager_browsertest.cc",
+@@ -817,11 +819,13 @@
+         "//chrome/browser/ui/webui/signin:signin_ui_error",
+         "//chrome/browser/ui/webui/signin:test_support_ui",
+         "//chrome/browser/web_applications:web_applications_test_support",
++        "//chrome/common:non_code_constants",
+         "//chrome/test:test_support",
+         "//chrome/test:test_support_ui",
+         "//chrome/test/base:chrome_test_scoped_utils",
+         "//chrome/test/user_education",
+         "//components/embedder_support:user_agent",
++        "//components/prefs",
+         "//components/signin/core/browser:test_support",
+         "//components/signin/public/base",
+         "//components/signin/public/identity_manager",
+diff --git a/chrome/browser/signin/account_investigator_factory.cc b/chrome/browser/signin/account_investigator_factory.cc
+--- a/chrome/browser/signin/account_investigator_factory.cc
++++ b/chrome/browser/signin/account_investigator_factory.cc
+@@ -4,9 +4,11 @@
+ 
+ #include "chrome/browser/signin/account_investigator_factory.h"
+ 
++#include "base/command_line.h"
+ #include "base/no_destructor.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/signin/identity_manager_factory.h"
++#include "chrome/common/chrome_switches.h"
+ #include "components/pref_registry/pref_registry_syncable.h"
+ #include "components/prefs/pref_service_factory.h"
+ #include "components/signin/core/browser/account_investigator.h"
+@@ -40,6 +42,14 @@
+ std::unique_ptr<KeyedService>
+ AccountInvestigatorFactory::BuildServiceInstanceForBrowserContext(
+     content::BrowserContext* context) const {
++  // This metrics-only service must not initiate background ListAccounts fetches
++  // when background networking is disabled. IdentityManager and its cookie
++  // services remain available to explicit consumers.
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
++          switches::kDisableBackgroundNetworking)) {
++    return nullptr;
++  }
++
+   Profile* profile(Profile::FromBrowserContext(context));
+   std::unique_ptr<AccountInvestigator> investigator =
+       std::make_unique<AccountInvestigator>(
+diff --git a/chrome/browser/signin/account_investigator_factory_browsertest.cc b/chrome/browser/signin/account_investigator_factory_browsertest.cc
+new file mode 100644
+--- /dev/null
++++ b/chrome/browser/signin/account_investigator_factory_browsertest.cc
+@@ -0,0 +1,81 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/signin/account_investigator_factory.h"
++
++#include "base/command_line.h"
++#include "base/test/metrics/histogram_tester.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/signin/identity_manager_factory.h"
++#include "chrome/browser/signin/signin_browser_test_base.h"
++#include "chrome/common/chrome_switches.h"
++#include "components/prefs/pref_service.h"
++#include "components/signin/public/base/signin_pref_names.h"
++#include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
++#include "components/signin/public/identity_manager/identity_manager.h"
++#include "content/public/test/browser_test.h"
++#include "google_apis/gaia/gaia_id.h"
++#include "testing/gtest/include/gtest/gtest.h"
++
++namespace {
++
++class AccountInvestigatorFactoryBrowserTest
++    : public SigninBrowserTestBase,
++      public testing::WithParamInterface<bool> {
++ protected:
++  void SetUpDefaultCommandLine(base::CommandLine* command_line) override {
++    SigninBrowserTestBase::SetUpDefaultCommandLine(command_line);
++    // Browser tests normally disable background networking. Exercise both paths
++    // after the default switches have been installed, before profile creation.
++    command_line->RemoveSwitch(switches::kDisableBackgroundNetworking);
++    if (GetParam()) {
++      command_line->AppendSwitch(switches::kDisableBackgroundNetworking);
++    }
++  }
++};
++
++IN_PROC_BROWSER_TEST_P(AccountInvestigatorFactoryBrowserTest,
++                       BackgroundNetworkingControlsMetricsOnly) {
++  ASSERT_EQ(base::CommandLine::ForCurrentProcess()->HasSwitch(
++                switches::kDisableBackgroundNetworking),
++            GetParam());
++
++  // A fresh profile's overdue timer fires synchronously during Initialize().
++  // Check before GetForProfile() so a lazy lookup cannot mask lost eager startup.
++  EXPECT_EQ(GetProfile()
++                ->GetPrefs()
++                ->GetTime(prefs::kGaiaCookiePeriodicReportTime)
++                .is_null(),
++            GetParam());
++  EXPECT_EQ(AccountInvestigatorFactory::GetForProfile(GetProfile()) == nullptr,
++            GetParam());
++
++  ASSERT_EQ(IdentityManagerFactory::GetForProfile(GetProfile()),
++            identity_manager());
++  const base::HistogramTester histogram_tester;
++  // This uses the real cookie service with a test ListAccounts response, not a
++  // replacement AccountInvestigator factory. Cookie consumers must still work.
++  identity_test_env()->SetCookieAccounts(
++      {{"user@example.com", GaiaId("123")}});
++  const auto accounts = identity_manager()->GetAccountsInCookieJar();
++  ASSERT_TRUE(accounts.AreAccountsFresh());
++  const auto& signed_in_accounts =
++      accounts.GetPotentiallyInvalidSignedInAccounts();
++  ASSERT_EQ(signed_in_accounts.size(), 1u);
++  EXPECT_EQ(signed_in_accounts.front().email, "user@example.com");
++
++  if (GetParam()) {
++    EXPECT_TRUE(histogram_tester.GetTotalCountsForPrefix("Signin.CookieJar.")
++                    .empty());
++  } else {
++    histogram_tester.ExpectUniqueSample("Signin.CookieJar.SignedInCount_OnChange",
++                                       1, 1);
++  }
++}
++
++INSTANTIATE_TEST_SUITE_P(All,
++                         AccountInvestigatorFactoryBrowserTest,
++                         testing::Bool());
++
++}  // namespace

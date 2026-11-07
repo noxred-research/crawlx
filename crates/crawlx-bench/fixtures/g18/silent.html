@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g18 silent refresh</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  button { margin: 4px; }
+</style>
+</head>
+<body>
+<h1>Silent-refresh area</h1>
+<p id="s-state" aria-live="polite">checking session</p>
+<p>Every protected call uses one of the session's three uses; when the session expires the page refreshes it silently with the refresh cookie and retries.</p>
+<button id="s-load" type="button">Load profile</button>
+<button id="s-ping" type="button">Ping</button>
+<div id="s-slot"></div>
+<a id="s-home" href="/g18/">Back</a>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var refreshes = 0;
+  function protectedCall(path, opts) {
+    return fetch('/g18/api/' + path, opts).then(function (r) {
+      if (r.status !== 401) return r.json();
+      // expired: silent refresh, then retry exactly once
+      return fetch('/g18/api/refresh', { method: 'POST' }).then(function (rr) {
+        if (!rr.ok) { $('s-state').textContent = 'Session expired, no refresh token: please sign in'; return { ok: false, expired: true }; }
+        refreshes += 1;
+        __gym.probe('silent-refreshes', String(refreshes));
+        return fetch('/g18/api/' + path, opts).then(function (r2) { return r2.json(); });
+      });
+    });
+  }
+  function reveal() {
+    if ($('s-secret')) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.id = 's-secret';
+    b.textContent = 'Secret action';
+    b.addEventListener('click', function (ev) {
+      __gym.hit('s-secret', ev);
+      protectedCall('secret', { method: 'POST' }).then(function (j) { $('s-state').textContent = j.ok ? 'Secret done' : 'Secret refused'; });
+    });
+    $('s-slot').appendChild(b);
+  }
+  $('s-load').addEventListener('click', function (ev) {
+    __gym.hit('s-load', ev);
+    protectedCall('me').then(function (j) {
+      if (j.ok) { $('s-state').textContent = 'Profile of ' + j.user + ' (' + j.uses_left + ' uses left)'; reveal(); }
+    });
+  });
+  $('s-ping').addEventListener('click', function (ev) {
+    __gym.hit('s-ping', ev);
+    protectedCall('me').then(function (j) { $('s-state').textContent = j.ok ? 'pong (' + j.uses_left + ' left)' : 'not signed in'; });
+  });
+  $('s-home').addEventListener('click', function (ev) { __gym.hit('s-home', ev); });
+  protectedCall('me').then(function (j) {
+    $('s-state').textContent = j.ok ? 'Signed in as ' + j.user : 'Not signed in';
+    if (j.ok) reveal();
+  });
+})();
+</script>
+</body>
+</html>

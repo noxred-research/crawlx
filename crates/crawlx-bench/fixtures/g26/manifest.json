@@ -1,0 +1,175 @@
+{
+  "id": "g26",
+  "title": "State twins",
+  "version": 1,
+  "url_path": "/g26/",
+  "controls": [
+    {
+      "id": "idx-profile",
+      "selector": "#idx-profile",
+      "role": "link",
+      "name": "Profile settings",
+      "logical_id": "idx-profile"
+    },
+    {
+      "id": "idx-billing",
+      "selector": "#idx-billing",
+      "role": "link",
+      "name": "Billing settings",
+      "logical_id": "idx-billing"
+    },
+    {
+      "id": "idx-news-a",
+      "selector": "#idx-news-a",
+      "role": "link",
+      "name": "News A",
+      "logical_id": "idx-news-a"
+    },
+    {
+      "id": "idx-news-b",
+      "selector": "#idx-news-b",
+      "role": "link",
+      "name": "News B",
+      "logical_id": "idx-news-b"
+    },
+    {
+      "id": "home-profile",
+      "selector": "#home-profile",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "home-profile",
+      "page": "/settings-profile"
+    },
+    {
+      "id": "profile-save",
+      "selector": "#profile-save",
+      "role": "button",
+      "name": "Save profile",
+      "logical_id": "profile-save",
+      "page": "/settings-profile",
+      "effect": "POST /g26/api/form/profile"
+    },
+    {
+      "id": "profile-avatar",
+      "selector": "#profile-avatar",
+      "role": "button",
+      "name": "Upload avatar",
+      "logical_id": "profile-avatar",
+      "page": "/settings-profile",
+      "effect": "POST /g26/api/profile/avatar"
+    },
+    {
+      "id": "profile-email",
+      "selector": "#profile-email",
+      "role": "button",
+      "name": "Change email",
+      "logical_id": "profile-email",
+      "page": "/settings-profile",
+      "effect": "POST /g26/api/profile/email",
+      "risk": "credential_change"
+    },
+    {
+      "id": "home-billing",
+      "selector": "#home-billing",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "home-billing",
+      "page": "/settings-billing"
+    },
+    {
+      "id": "billing-update-card",
+      "selector": "#billing-update-card",
+      "role": "button",
+      "name": "Update card",
+      "logical_id": "billing-update-card",
+      "page": "/settings-billing",
+      "effect": "POST /g26/api/form/card"
+    },
+    {
+      "id": "billing-download",
+      "selector": "#billing-download",
+      "role": "button",
+      "name": "Download invoice",
+      "logical_id": "billing-download",
+      "page": "/settings-billing",
+      "effect": "GET /g26/api/billing/invoice"
+    },
+    {
+      "id": "billing-cancel",
+      "selector": "#billing-cancel",
+      "role": "button",
+      "name": "Cancel plan",
+      "logical_id": "billing-cancel",
+      "page": "/settings-billing",
+      "effect": "DELETE /g26/api/billing/plan",
+      "risk": "destructive"
+    },
+    {
+      "id": "home-news-a",
+      "selector": "#home",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "home-news-a",
+      "page": "/news-a"
+    },
+    {
+      "id": "news-a-refresh",
+      "selector": "#refresh",
+      "role": "button",
+      "name": "Refresh",
+      "logical_id": "news-a-refresh",
+      "page": "/news-a",
+      "effect": "POST /g26/api/news/refresh"
+    },
+    {
+      "id": "home-news-b",
+      "selector": "#home",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "home-news-b",
+      "page": "/news-b"
+    },
+    {
+      "id": "news-b-refresh",
+      "selector": "#refresh",
+      "role": "button",
+      "name": "Refresh",
+      "logical_id": "news-b-refresh",
+      "page": "/news-b",
+      "effect": "POST /g26/api/news/refresh"
+    }
+  ],
+  "expected": {
+    "state_classes": [
+      {
+        "page": "/settings-profile",
+        "class": "settings-profile"
+      },
+      {
+        "page": "/settings-billing",
+        "class": "settings-billing"
+      },
+      {
+        "page": "/news-a",
+        "class": "news"
+      },
+      {
+        "page": "/news-b",
+        "class": "news"
+      }
+    ],
+    "volatile_regions": [
+      "#clock",
+      "#updated"
+    ],
+    "operations": [
+      "POST /g26/api/form/profile",
+      "POST /g26/api/profile/avatar",
+      "POST /g26/api/profile/email",
+      "POST /g26/api/form/card",
+      "GET /g26/api/billing/invoice",
+      "DELETE /g26/api/billing/plan",
+      "POST /g26/api/news/refresh"
+    ]
+  }
+}

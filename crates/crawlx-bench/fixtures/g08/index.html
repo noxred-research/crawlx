@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g08 clocks and live regions</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  .volatile { font-family: ui-monospace, monospace; background: #f4f4f8; padding: 6px 10px; margin: 4px 0; }
+  button { margin: 4px; }
+</style>
+</head>
+<body>
+<h1>Dashboard</h1>
+<div id="clock" class="volatile" aria-hidden="true">00:00:00</div>
+<div id="clock-2" class="volatile" aria-hidden="true">Mon 00:00</div>
+<div id="ticker" class="volatile">ACME 0.00 (+0.00%)</div>
+<div id="status" class="volatile" aria-live="polite">Status: booting</div>
+<div id="log" class="volatile" role="log" aria-live="polite" aria-relevant="additions"></div>
+<div id="alerts" class="volatile" role="status" aria-live="assertive"></div>
+<p>Last action: <span id="out">none</span></p>
+<section aria-label="Actions">
+  <button id="act-1" type="button">Acknowledge</button>
+  <button id="act-2" type="button">Pause feed</button>
+  <button id="act-3" type="button">Resume feed</button>
+  <button id="act-4" type="button">Open report</button>
+  <button id="act-5" type="button">Export</button>
+  <button id="act-6" type="button">Settings</button>
+</section>
+<section id="report" hidden aria-label="Report">
+  <p>Quarterly report body.</p>
+  <button id="report-close" type="button">Close report</button>
+</section>
+<script>
+(function () {
+  // A seeded "clock": the displayed time is (seeded start + tick * 250 ms), never wall time,
+  // so every run with the same seed shows the same sequence.
+  var rng = __gym.rngFor('clock');
+  var start = Math.floor(rng() * 86400);
+  var tickRng = __gym.rngFor('ticker');
+  var statusRng = __gym.rngFor('status');
+  var tick = 0;
+  var price = 100;
+  var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var MSGS = ['all systems nominal', 'sync complete', 'cache warm', 'queue empty', 'latency low', 'rebalancing'];
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function hhmmss(s) { return pad(Math.floor(s / 3600) % 24) + ':' + pad(Math.floor(s / 60) % 60) + ':' + pad(s % 60); }
+  function $(id) { return document.getElementById(id); }
+  var paused = false;
+  setInterval(function () {
+    tick += 1;
+    var s = start + Math.floor(tick / 4);
+    $('clock').textContent = hhmmss(s);
+    $('clock-2').textContent = DAYS[Math.floor(s / 86400) % 7] + ' ' + hhmmss(s).slice(0, 5);
+    if (!paused) {
+      var delta = (tickRng() - 0.5) * 2;
+      price = Math.max(1, price + delta);
+      $('ticker').textContent = 'ACME ' + price.toFixed(2) + ' (' + (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%)';
+    }
+    if (tick % 4 === 0) $('status').textContent = 'Status: ' + __gym.pick(MSGS, statusRng);
+    if (tick % 8 === 0) {
+      var line = document.createElement('div');
+      line.textContent = hhmmss(s) + ' event ' + Math.floor(tick / 8);
+      $('log').appendChild(line);
+      while ($('log').childNodes.length > 5) $('log').removeChild($('log').firstChild);
+    }
+    if (tick % 20 === 0) $('alerts').textContent = 'Alert ' + Math.floor(tick / 20) + ' at ' + hhmmss(s);
+  }, 250);
+
+  function bind(id, fn) {
+    $(id).addEventListener('click', function (ev) { __gym.hit(id, ev); $('out').textContent = id; if (fn) fn(); });
+  }
+  bind('act-1');
+  bind('act-2', function () { paused = true; });
+  bind('act-3', function () { paused = false; });
+  bind('act-4', function () { $('report').hidden = false; });
+  bind('act-5');
+  bind('act-6');
+  bind('report-close', function () { $('report').hidden = true; });
+})();
+</script>
+</body>
+</html>

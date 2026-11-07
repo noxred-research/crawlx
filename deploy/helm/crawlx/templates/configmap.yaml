@@ -1,0 +1,41 @@
+{{- if and .Values.gym.enabled (eq .Values.environment "prod") -}}
+{{- fail "gym.enabled is not allowed when environment is prod: crawlx-gym never runs in production namespaces" -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels: { app.kubernetes.io/part-of: crawlx }
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  # The merged configuration surface; validated by `crawlx config check` (hook) before the roll.
+  crawlx.toml: |
+{{ include "crawlx.configToml" . | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-metrics-sidecar
+  labels: { app.kubernetes.io/part-of: crawlx }
+data:
+  config.yaml: |
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: crawlx
+              scrape_interval: {{ .Values.metricsSidecar.scrapeInterval }}
+              static_configs:
+                - targets: ["127.0.0.1:9464"]
+    exporters:
+      otlp:
+        endpoint: {{ default "" .Values.config.telemetry.otlp_endpoint | trimPrefix "http://" | quote }}
+        tls: { insecure: true }
+    service:
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          exporters: [otlp]

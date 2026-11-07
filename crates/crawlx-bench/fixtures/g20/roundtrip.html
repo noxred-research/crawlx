@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>G20 round-robin shared workspace</title>
+{{GYM_JS}}
+</head>
+<body>
+<h1>Shared invoice review</h1>
+<p id="status" aria-live="polite">Loading workspace</p>
+<div id="actions"></div>
+<script>
+(async function () {
+  var status = document.getElementById('status');
+  var actions = document.getElementById('actions');
+  // Only native worker clicks perform the workflow. Loading a turn only reads the list.
+  async function api(method, route, fields, step) {
+    var options = { method: method, headers: { 'content-type': 'application/json' } };
+    if (fields) options.body = JSON.stringify(fields);
+    var response = await fetch('/g20/api/' + route + '?roundtrip=' + step, options);
+    var body = await response.json();
+    if (!response.ok || !body.ok) throw new Error('Workspace operation failed: ' + route);
+    return body;
+  }
+  function button(id, label, perform) {
+    // Sharing is an external-communication risk. Expose the owned HTTP destination
+    // as real form evidence instead of asking the worker to trust an opaque callback.
+    var form = document.createElement('form');
+    form.method = 'post';
+    form.action = '/g20/api/invoices';
+    form.setAttribute('aria-label', 'Workspace webhook recipient');
+    var recipientLabel = document.createElement('label');
+    recipientLabel.htmlFor = id + '-recipient';
+    recipientLabel.textContent = 'Workspace webhook recipient';
+    var recipient = document.createElement('input');
+    recipient.id = recipientLabel.htmlFor;
+    recipient.name = 'recipient_webhook';
+    recipient.type = 'url';
+    recipient.readOnly = true;
+    recipient.value = new URL(form.action, location.href).href;
+    form.append(recipientLabel, recipient);
+    var control = document.createElement('button');
+    control.id = id;
+    control.type = 'submit';
+    control.textContent = label;
+    control.addEventListener('click', async function (event) {
+      event.preventDefault();
+      __gym.hit(id, event);
+      form.remove();
+      try { await perform(); } catch (error) { status.textContent = String(error); }
+    });
+    form.appendChild(control);
+    actions.appendChild(form);
+  }
+  var workspace = await api('GET', 'invoices', null, 'list');
+  var request = workspace.invoices.find(function (invoice) { return invoice.title === 'Round-robin request'; });
+  var response = workspace.invoices.find(function (invoice) { return invoice.title === 'Round-robin response'; });
+  status.textContent = 'Workspace ready for ' + workspace.user;
+  if (workspace.user === 'alice' && !request) {
+    button('roundtrip-create', 'Create shared review request', async function () {
+      await api('POST', 'invoices', { title: 'Round-robin request', visibility: 'shared' }, 'create');
+      status.textContent = 'Shared review request created';
+    });
+  } else if (workspace.user === 'bob' && request && !response) {
+    button('roundtrip-review', 'Review shared invoice and respond', async function () {
+      await api('GET', 'invoices/' + request.id, null, 'review-view');
+      await api('POST', 'invoices/' + request.id + '/comments', { text: 'Reviewed by Bob in round one' }, 'review-comment');
+      await api('POST', 'invoices', { title: 'Round-robin response', visibility: 'shared' }, 'review-response');
+      status.textContent = 'Bob reviewed the request and published his response';
+    });
+  } else if (workspace.user === 'alice' && request && response) {
+    button('roundtrip-observe', 'Read shared review response', async function () {
+      var original = await api('GET', 'invoices/' + request.id, null, 'observe-comment');
+      var reply = await api('GET', 'invoices/' + response.id, null, 'observe-response');
+      status.textContent = original.invoice.comments.map(function (comment) {
+        return comment.by + ': ' + comment.text;
+      }).join('; ') + '; response owner: ' + reply.invoice.owner;
+    });
+  }
+})();
+</script>
+</body>
+</html>

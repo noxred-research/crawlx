@@ -1,0 +1,444 @@
+# The Chrome DevTools Protocol surface crawlx uses.
+#
+# Every CDP method the adapter sends and every event it consumes is listed here.
+# `ci/lint-static.sh` checks that adapter method/event names match this catalog.
+# `crates/crawlx-browser/tests/cdp_surface.rs`, with Chromium configured, sends each
+# non-skipped command with a minimal payload and rejects `MethodNotFound`.
+# The `chromium-next` job runs the live check against Stable before a pin bump.
+#
+# `requires` tells the live test what a command needs: `browser` (the browser endpoint),
+# `page` (an attached page session) or `skip` (destructive, needs fixtures, or changes the
+# session in a way later probes cannot undo). Skip entries are not live-probed here;
+# dedicated runtime fixtures provide any command-specific execution evidence.
+
+[chromium]
+version = "155.0.8059.84"
+cdp_revision = "1.3"
+
+[[commands]]
+name = "Accessibility.enable"
+requires = "page"
+
+[[commands]]
+name = "Accessibility.getFullAXTree"
+requires = "page"
+
+[[commands]]
+name = "Accessibility.getPartialAXTree"
+requires = "page"
+params = { fetchRelatives = false, backendNodeId = 1 }
+
+[[commands]]
+name = "Browser.close"
+requires = "skip"
+
+[[commands]]
+name = "Browser.getVersion"
+requires = "browser"
+
+[[commands]]
+name = "DOM.describeNode"
+requires = "page"
+params = { depth = 0 }
+
+[[commands]]
+name = "DOM.enable"
+requires = "page"
+
+[[commands]]
+name = "DOM.focus"
+requires = "page"
+
+[[commands]]
+name = "DOM.getBoxModel"
+requires = "page"
+
+[[commands]]
+name = "DOM.getContentQuads"
+requires = "page"
+
+[[commands]]
+name = "DOM.getFrameOwner"
+requires = "page"
+params = { frameId = "crawlx-cdp-surface" }
+
+[[commands]]
+name = "DOM.getDocument"
+requires = "page"
+params = { depth = 0 }
+
+[[commands]]
+name = "DOM.performSearch"
+requires = "page"
+params = { query = "html", includeUserAgentShadowDOM = false }
+
+[[commands]]
+name = "DOM.getSearchResults"
+requires = "page"
+
+[[commands]]
+name = "DOM.discardSearchResults"
+requires = "page"
+
+[[commands]]
+name = "DOM.getNodeForLocation"
+requires = "page"
+params = { x = 1, y = 1 }
+
+[[commands]]
+name = "DOM.getOuterHTML"
+requires = "page"
+
+[[commands]]
+name = "DOM.querySelector"
+requires = "page"
+params = { nodeId = 1, selector = "html" }
+
+[[commands]]
+name = "DOM.querySelectorAll"
+requires = "page"
+params = { nodeId = 1, selector = "html" }
+
+[[commands]]
+name = "DOM.resolveNode"
+requires = "page"
+
+[[commands]]
+name = "DOM.scrollIntoViewIfNeeded"
+requires = "page"
+
+[[commands]]
+name = "DOM.setFileInputFiles"
+requires = "page"
+params = { files = [] }
+
+[[commands]]
+name = "DOMDebugger.getEventListeners"
+requires = "page"
+params = { objectId = "0" }
+
+[[commands]]
+name = "DOMSnapshot.captureSnapshot"
+requires = "page"
+params = { computedStyles = [] }
+
+[[commands]]
+name = "Emulation.setDeviceMetricsOverride"
+requires = "page"
+params = { width = 800, height = 600, deviceScaleFactor = 1, mobile = false }
+
+[[commands]]
+name = "Emulation.setLocaleOverride"
+requires = "page"
+params = { locale = "en-US" }
+
+[[commands]]
+name = "Emulation.setTimezoneOverride"
+requires = "page"
+params = { timezoneId = "" }
+
+[[commands]]
+name = "Emulation.setTouchEmulationEnabled"
+requires = "page"
+params = { enabled = false }
+
+[[commands]]
+name = "Emulation.setUserAgentOverride"
+requires = "page"
+params = { userAgent = "crawlx-cdp-surface" }
+
+[[commands]]
+name = "Fetch.continueRequest"
+requires = "skip"
+
+[[commands]]
+name = "Fetch.enable"
+requires = "page"
+params = { patterns = [] }
+
+[[commands]]
+name = "Fetch.failRequest"
+requires = "skip"
+
+[[commands]]
+name = "Input.dispatchDragEvent"
+requires = "page"
+params = { type = "dragCancel", x = 1, y = 1, data = { items = [], dragOperationsMask = 0 } }
+
+[[commands]]
+name = "Input.dispatchKeyEvent"
+requires = "page"
+params = { type = "keyUp" }
+
+[[commands]]
+name = "Input.dispatchMouseEvent"
+requires = "page"
+params = { type = "mouseMoved", x = 1, y = 1 }
+
+[[commands]]
+name = "Input.insertText"
+requires = "page"
+params = { text = "" }
+
+[[commands]]
+name = "Input.setInterceptDrags"
+requires = "page"
+params = { enabled = false }
+
+[[commands]]
+name = "Network.enable"
+requires = "page"
+
+[[commands]]
+name = "Network.getResponseBody"
+requires = "page"
+params = { requestId = "crawlx-cdp-surface" }
+
+[[commands]]
+name = "Network.streamResourceContent"
+requires = "page"
+params = { requestId = "crawlx-cdp-surface" }
+
+[[commands]]
+name = "Network.setBlockedURLs"
+requires = "page"
+params = { urls = [] }
+
+[[commands]]
+name = "Network.setExtraHTTPHeaders"
+requires = "page"
+params = { headers = {} }
+
+[[commands]]
+name = "Page.addScriptToEvaluateOnNewDocument"
+requires = "page"
+params = { source = "void 0" }
+
+[[commands]]
+name = "Page.bringToFront"
+requires = "page"
+
+[[commands]]
+name = "Page.captureScreenshot"
+requires = "page"
+params = { format = "png" }
+
+[[commands]]
+name = "Page.createIsolatedWorld"
+requires = "page"
+
+[[commands]]
+name = "Page.enable"
+requires = "page"
+
+[[commands]]
+name = "Page.getFrameTree"
+requires = "page"
+
+[[commands]]
+name = "Page.getLayoutMetrics"
+requires = "page"
+
+[[commands]]
+name = "Page.handleJavaScriptDialog"
+requires = "page"
+params = { accept = true }
+
+[[commands]]
+name = "Page.navigate"
+requires = "page"
+params = { url = "about:blank" }
+
+[[commands]]
+name = "Page.printToPDF"
+requires = "page"
+
+[[commands]]
+name = "Page.setLifecycleEventsEnabled"
+requires = "page"
+params = { enabled = true }
+
+[[commands]]
+name = "Runtime.callFunctionOn"
+requires = "page"
+params = { functionDeclaration = "function () { return 1 }", objectId = "0" }
+
+[[commands]]
+name = "Runtime.enable"
+requires = "page"
+
+[[commands]]
+name = "Runtime.evaluate"
+requires = "page"
+params = { expression = "1" }
+
+[[commands]]
+name = "Runtime.releaseObject"
+requires = "page"
+params = { objectId = "crawlx-cdp-surface" }
+
+[[commands]]
+name = "Runtime.runIfWaitingForDebugger"
+requires = "page"
+
+[[commands]]
+name = "Runtime.releaseObjectGroup"
+requires = "page"
+params = { objectGroup = "crawlx-cdp-surface" }
+
+[[commands]]
+name = "Security.setIgnoreCertificateErrors"
+requires = "page"
+params = { ignore = false }
+
+[[commands]]
+name = "Storage.getCookies"
+requires = "browser"
+
+[[commands]]
+name = "Storage.setCookies"
+requires = "browser"
+params = { cookies = [] }
+
+[[commands]]
+name = "Target.activateTarget"
+requires = "page"
+
+[[commands]]
+name = "Target.attachToTarget"
+requires = "skip"
+
+[[commands]]
+name = "Target.autoAttachRelated"
+requires = "browser"
+params = { targetId = "crawlx-cdp-surface", waitForDebuggerOnStart = false }
+
+[[commands]]
+name = "Target.closeTarget"
+requires = "skip"
+
+[[commands]]
+name = "Target.createBrowserContext"
+requires = "skip"
+
+[[commands]]
+name = "Target.createTarget"
+requires = "skip"
+
+[[commands]]
+name = "Target.disposeBrowserContext"
+requires = "skip"
+
+[[commands]]
+name = "Target.getBrowserContexts"
+requires = "browser"
+
+[[commands]]
+name = "Target.getTargetInfo"
+requires = "page"
+
+[[commands]]
+name = "Target.getTargets"
+requires = "browser"
+
+[[commands]]
+name = "Target.setDiscoverTargets"
+requires = "browser"
+params = { discover = true }
+
+[[commands]]
+name = "Target.setAutoAttach"
+requires = "page"
+params = { autoAttach = false, waitForDebuggerOnStart = false }
+
+[[commands]]
+name = "Browser.setDownloadBehavior"
+requires = "browser"
+params = { behavior = "deny", eventsEnabled = true }
+
+[[events]]
+name = "Target.attachedToTarget"
+
+[[events]]
+name = "Fetch.requestPaused"
+
+[[events]]
+name = "Browser.downloadWillBegin"
+
+[[events]]
+name = "Page.downloadWillBegin"
+
+[[events]]
+name = "Input.dragIntercepted"
+
+[[events]]
+name = "Inspector.targetCrashed"
+
+[[events]]
+name = "Network.dataReceived"
+
+[[events]]
+name = "Network.eventSourceMessageReceived"
+
+[[events]]
+name = "Network.loadingFailed"
+
+[[events]]
+name = "Network.loadingFinished"
+
+[[events]]
+name = "Network.requestWillBeSent"
+
+[[events]]
+name = "Network.responseReceived"
+
+[[events]]
+name = "Network.responseReceivedExtraInfo"
+
+[[events]]
+name = "Network.webSocketClosed"
+
+[[events]]
+name = "Network.webSocketCreated"
+
+[[events]]
+name = "Network.webSocketFrameReceived"
+
+[[events]]
+name = "Network.webSocketFrameSent"
+
+[[events]]
+name = "Page.frameNavigated"
+
+[[events]]
+name = "Page.frameStartedLoading"
+
+[[events]]
+name = "Page.frameStoppedLoading"
+
+[[events]]
+name = "Page.javascriptDialogOpening"
+
+[[events]]
+name = "Page.lifecycleEvent"
+
+[[events]]
+name = "Page.navigatedWithinDocument"
+
+[[events]]
+name = "Runtime.consoleAPICalled"
+
+[[events]]
+name = "Target.detachedFromTarget"
+
+[[events]]
+name = "Target.targetCrashed"
+
+[[events]]
+name = "Target.targetCreated"
+
+[[events]]
+name = "Target.targetDestroyed"
+
+[[events]]
+name = "Target.targetInfoChanged"

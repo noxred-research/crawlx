@@ -1,0 +1,128 @@
+[
+  {
+    "role": "button",
+    "text": "menu",
+    "region": null,
+    "tried": 0,
+    "row": "button menu  | tried 0"
+  },
+  {
+    "role": "button",
+    "text": "menu",
+    "region": null,
+    "tried": 2,
+    "row": "button menu  | tried 2"
+  },
+  {
+    "role": "button",
+    "text": "menu",
+    "region": null,
+    "tried": 3,
+    "row": "button menu  | tried 3"
+  },
+  {
+    "role": "button",
+    "text": "menu",
+    "region": null,
+    "tried": 7,
+    "row": "button menu  | tried 3"
+  },
+  {
+    "role": "link",
+    "text": "settings",
+    "region": "navigation:main",
+    "tried": 0,
+    "row": "link settings navigation:main | tried 0"
+  },
+  {
+    "role": "link",
+    "text": "settings",
+    "region": "navigation:main",
+    "tried": 1,
+    "row": "link settings navigation:main | tried 1"
+  },
+  {
+    "role": "link",
+    "text": "settings",
+    "region": "navigation:main",
+    "tried": 2,
+    "row": "link settings navigation:main | tried 2"
+  },
+  {
+    "role": "link",
+    "text": "settings",
+    "region": "navigation:main",
+    "tried": 3,
+    "row": "link settings navigation:main | tried 3"
+  },
+  {
+    "role": "link",
+    "text": "settings",
+    "region": "navigation:main",
+    "tried": 9,
+    "row": "link settings navigation:main | tried 3"
+  },
+  {
+    "role": "link",
+    "text": "settings",
+    "region": "navigation:main",
+    "tried": 4294967295,
+    "row": "link settings navigation:main | tried 3"
+  },
+  {
+    "role": "button",
+    "text": "",
+    "region": null,
+    "tried": 0,
+    "row": "button   | tried 0"
+  },
+  {
+    "role": "",
+    "text": "",
+    "region": null,
+    "tried": 1,
+    "row": "   | tried 1"
+  },
+  {
+    "role": "textbox",
+    "text": "Search",
+    "region": "",
+    "tried": 1,
+    "row": "textbox Search  | tried 1"
+  },
+  {
+    "role": "textbox",
+    "text": "Search",
+    "region": null,
+    "tried": 1,
+    "row": "textbox Search  | tried 1"
+  },
+  {
+    "role": "button",
+    "text": "Спасибо 日本語 ✓",
+    "region": "main",
+    "tried": 2,
+    "row": "button Спасибо 日本語 ✓ main | tried 2"
+  },
+  {
+    "role": "link",
+    "text": "café ☕ menu",
+    "region": "navigación:principal",
+    "tried": 3,
+    "row": "link café ☕ menu navigación:principal | tried 3"
+  },
+  {
+    "role": "combobox",
+    "text": "sort | newest 2",
+    "region": "toolbar",
+    "tried": 0,
+    "row": "combobox sort | newest 2 toolbar | tried 0"
+  },
+  {
+    "role": "checkbox",
+    "text": "Remember me on this device for thirty days then ask again",
+    "region": "form:login",
+    "tried": 5,
+    "row": "checkbox Remember me on this device for thirty days then ask again form:login | tried 3"
+  }
+]

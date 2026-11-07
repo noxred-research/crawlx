@@ -1,0 +1,13 @@
+# Opt in with -f docker/compose.identity.yml. The operator supplies one stable key file.
+services:
+  api:
+    environment:
+      CRAWLX_REQUEST_IDENTITY_KEY_FILE: /run/secrets/request_identity_key
+    secrets: [request_identity_key]
+  worker:
+    environment:
+      CRAWLX_REQUEST_IDENTITY_KEY_FILE: /run/secrets/request_identity_key
+    secrets: [request_identity_key]
+secrets:
+  request_identity_key:
+    file: ${CRAWLX_REQUEST_IDENTITY_KEY_FILE:?set CRAWLX_REQUEST_IDENTITY_KEY_FILE to an operator-provisioned 64hex file}

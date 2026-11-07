@@ -1,0 +1,11 @@
+{
+  "id": "d2",
+  "title": "Differential site 2: subdomain and external scope, redirect chains, robots rules, slow pages",
+  "version": 1,
+  "url_path": "/d2/",
+  "controls": [],
+  "expected": {
+    "operations": [],
+    "unauthorized_actions": 0
+  }
+}

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g09 WebSocket push reveals</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  section { border: 1px solid #ccd; padding: 10px; margin: 0 0 12px; }
+  button { margin: 4px; }
+</style>
+</head>
+<body>
+<h1>Live workspace</h1>
+<p>Socket: <span id="ws-state">connecting</span>. Last: <span id="out">none</span></p>
+<section aria-label="Requests">
+  <button id="a" type="button">Request A</button>
+  <div id="a-slot"></div>
+  <button id="b" type="button">Request B</button>
+  <div id="b-slot"></div>
+</section>
+<section aria-label="Decoys">
+  <button id="d1" type="button">Decoy one</button>
+  <button id="d2" type="button">Decoy two</button>
+  <button id="d3" type="button">Decoy three</button>
+  <button id="d4" type="button">Decoy four</button>
+  <button id="d5" type="button">Decoy five</button>
+  <button id="d6" type="button">Decoy six</button>
+</section>
+<section aria-label="Pushed" id="pushed"></section>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  var LABELS = { 'a-reply': 'Reply A', 'b-reply': 'Reply B', p1: 'Pushed one', p2: 'Pushed two', p3: 'Pushed three', p4: 'Pushed four', p5: 'Pushed five', p6: 'Pushed six' };
+  function reveal(id, slot) {
+    if ($(id)) return;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.id = id;
+    b.textContent = LABELS[id] || id;
+    b.addEventListener('click', function (ev) { __gym.hit(id, ev); out.textContent = id; });
+    slot.appendChild(b);
+    __gym.probe('revealed-' + id, '1');
+  }
+  var ws;
+  try {
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/g09/ws');
+  } catch (e) {
+    $('ws-state').textContent = 'unavailable';
+  }
+  if (ws) {
+    ws.onopen = function () { $('ws-state').textContent = 'open'; };
+    ws.onclose = function () { $('ws-state').textContent = 'closed'; };
+    ws.onmessage = function (m) {
+      var msg = {};
+      try { msg = JSON.parse(m.data); } catch (e) { return; }
+      // Unsolicited pushes reveal controls on the server's schedule, unrelated to any action.
+      if (msg.push) reveal(msg.push, $('pushed'));
+      // Replies to our own requests reveal the control the request asked for: true edges.
+      if (msg.reply === 'a-reply') reveal('a-reply', $('a-slot'));
+      if (msg.reply === 'b-reply') reveal('b-reply', $('b-slot'));
+    };
+  }
+  function request(name) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ req: name }));
+  }
+  $('a').addEventListener('click', function (ev) { __gym.hit('a', ev); out.textContent = 'a'; request('open-a'); });
+  $('b').addEventListener('click', function (ev) { __gym.hit('b', ev); out.textContent = 'b'; request('open-b'); });
+  for (var i = 1; i <= 6; i++) {
+    (function (id) {
+      $(id).addEventListener('click', function (ev) { __gym.hit(id, ev); out.textContent = id; });
+    })('d' + i);
+  }
+})();
+</script>
+</body>
+</html>

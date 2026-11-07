@@ -1,0 +1,721 @@
+{
+  "id": "g02",
+  "title": "ARIA-only widgets: tabs, menu, combobox, listbox, tree, dialog, toolbar (60 targets, rerender via Rerender)",
+  "version": 1,
+  "url_path": "/g02/",
+  "controls": [
+    {
+      "id": "tab-1",
+      "selector": "#tab-1",
+      "role": "tab",
+      "name": "Overview",
+      "logical_id": "tab-1"
+    },
+    {
+      "id": "tab-2",
+      "selector": "#tab-2",
+      "role": "tab",
+      "name": "Details",
+      "logical_id": "tab-2"
+    },
+    {
+      "id": "tab-3",
+      "selector": "#tab-3",
+      "role": "tab",
+      "name": "Reviews",
+      "logical_id": "tab-3"
+    },
+    {
+      "id": "tab-4",
+      "selector": "#tab-4",
+      "role": "tab",
+      "name": "History",
+      "logical_id": "tab-4"
+    },
+    {
+      "id": "tab-5",
+      "selector": "#tab-5",
+      "role": "tab",
+      "name": "Files",
+      "logical_id": "tab-5"
+    },
+    {
+      "id": "tab-6",
+      "selector": "#tab-6",
+      "role": "tab",
+      "name": "Settings",
+      "logical_id": "tab-6"
+    },
+    {
+      "id": "menu-btn",
+      "selector": "#menu-btn",
+      "role": "button",
+      "name": "Actions",
+      "logical_id": "menu-btn"
+    },
+    {
+      "id": "menu-1",
+      "selector": "#menu-1",
+      "role": "menuitem",
+      "name": "New",
+      "logical_id": "menu-1",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-2",
+      "selector": "#menu-2",
+      "role": "menuitem",
+      "name": "Open",
+      "logical_id": "menu-2",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-3",
+      "selector": "#menu-3",
+      "role": "menuitem",
+      "name": "Save",
+      "logical_id": "menu-3",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-4",
+      "selector": "#menu-4",
+      "role": "menuitem",
+      "name": "Save as",
+      "logical_id": "menu-4",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-5",
+      "selector": "#menu-5",
+      "role": "menuitem",
+      "name": "Export",
+      "logical_id": "menu-5",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-6",
+      "selector": "#menu-6",
+      "role": "menuitem",
+      "name": "Print",
+      "logical_id": "menu-6",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-7",
+      "selector": "#menu-7",
+      "role": "menuitem",
+      "name": "Share",
+      "logical_id": "menu-7",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-8",
+      "selector": "#menu-8",
+      "role": "menuitem",
+      "name": "Close",
+      "logical_id": "menu-8",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "cb",
+      "selector": "#cb",
+      "role": "combobox",
+      "name": "Fruit",
+      "logical_id": "cb"
+    },
+    {
+      "id": "cb-opt-1",
+      "selector": "#cb-opt-1",
+      "role": "option",
+      "name": "Apple",
+      "logical_id": "cb-opt-1",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "cb-opt-2",
+      "selector": "#cb-opt-2",
+      "role": "option",
+      "name": "Banana",
+      "logical_id": "cb-opt-2",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "cb-opt-3",
+      "selector": "#cb-opt-3",
+      "role": "option",
+      "name": "Cherry",
+      "logical_id": "cb-opt-3",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "cb-opt-4",
+      "selector": "#cb-opt-4",
+      "role": "option",
+      "name": "Damson",
+      "logical_id": "cb-opt-4",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "cb-opt-5",
+      "selector": "#cb-opt-5",
+      "role": "option",
+      "name": "Elder",
+      "logical_id": "cb-opt-5",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "cb-opt-6",
+      "selector": "#cb-opt-6",
+      "role": "option",
+      "name": "Fig",
+      "logical_id": "cb-opt-6",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "cb-opt-7",
+      "selector": "#cb-opt-7",
+      "role": "option",
+      "name": "Grape",
+      "logical_id": "cb-opt-7",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "cb-opt-8",
+      "selector": "#cb-opt-8",
+      "role": "option",
+      "name": "Honeydew",
+      "logical_id": "cb-opt-8",
+      "requires": [
+        "cb"
+      ]
+    },
+    {
+      "id": "lb-opt-1",
+      "selector": "#lb-opt-1",
+      "role": "option",
+      "name": "Red",
+      "logical_id": "lb-opt-1"
+    },
+    {
+      "id": "lb-opt-2",
+      "selector": "#lb-opt-2",
+      "role": "option",
+      "name": "Orange",
+      "logical_id": "lb-opt-2"
+    },
+    {
+      "id": "lb-opt-3",
+      "selector": "#lb-opt-3",
+      "role": "option",
+      "name": "Yellow",
+      "logical_id": "lb-opt-3"
+    },
+    {
+      "id": "lb-opt-4",
+      "selector": "#lb-opt-4",
+      "role": "option",
+      "name": "Green",
+      "logical_id": "lb-opt-4"
+    },
+    {
+      "id": "lb-opt-5",
+      "selector": "#lb-opt-5",
+      "role": "option",
+      "name": "Blue",
+      "logical_id": "lb-opt-5"
+    },
+    {
+      "id": "lb-opt-6",
+      "selector": "#lb-opt-6",
+      "role": "option",
+      "name": "Indigo",
+      "logical_id": "lb-opt-6"
+    },
+    {
+      "id": "lb-opt-7",
+      "selector": "#lb-opt-7",
+      "role": "option",
+      "name": "Violet",
+      "logical_id": "lb-opt-7"
+    },
+    {
+      "id": "lb-opt-8",
+      "selector": "#lb-opt-8",
+      "role": "option",
+      "name": "Black",
+      "logical_id": "lb-opt-8"
+    },
+    {
+      "id": "lb-opt-9",
+      "selector": "#lb-opt-9",
+      "role": "option",
+      "name": "White",
+      "logical_id": "lb-opt-9"
+    },
+    {
+      "id": "lb-opt-10",
+      "selector": "#lb-opt-10",
+      "role": "option",
+      "name": "Gray",
+      "logical_id": "lb-opt-10"
+    },
+    {
+      "id": "tree-1",
+      "selector": "#tree-1",
+      "role": "treeitem",
+      "name": "Projects",
+      "logical_id": "tree-1"
+    },
+    {
+      "id": "tree-1-1",
+      "selector": "#tree-1-1",
+      "role": "treeitem",
+      "name": "Alpha",
+      "logical_id": "tree-1-1",
+      "requires": [
+        "tree-1"
+      ]
+    },
+    {
+      "id": "tree-1-2",
+      "selector": "#tree-1-2",
+      "role": "treeitem",
+      "name": "Beta",
+      "logical_id": "tree-1-2",
+      "requires": [
+        "tree-1"
+      ]
+    },
+    {
+      "id": "tree-1-3",
+      "selector": "#tree-1-3",
+      "role": "treeitem",
+      "name": "Gamma",
+      "logical_id": "tree-1-3",
+      "requires": [
+        "tree-1"
+      ]
+    },
+    {
+      "id": "tree-2",
+      "selector": "#tree-2",
+      "role": "treeitem",
+      "name": "Teams",
+      "logical_id": "tree-2"
+    },
+    {
+      "id": "tree-2-1",
+      "selector": "#tree-2-1",
+      "role": "treeitem",
+      "name": "Core",
+      "logical_id": "tree-2-1",
+      "requires": [
+        "tree-2"
+      ]
+    },
+    {
+      "id": "tree-2-2",
+      "selector": "#tree-2-2",
+      "role": "treeitem",
+      "name": "Infra",
+      "logical_id": "tree-2-2",
+      "requires": [
+        "tree-2"
+      ]
+    },
+    {
+      "id": "tree-2-3",
+      "selector": "#tree-2-3",
+      "role": "treeitem",
+      "name": "Design",
+      "logical_id": "tree-2-3",
+      "requires": [
+        "tree-2"
+      ]
+    },
+    {
+      "id": "tree-3",
+      "selector": "#tree-3",
+      "role": "treeitem",
+      "name": "Archive",
+      "logical_id": "tree-3"
+    },
+    {
+      "id": "tree-3-1",
+      "selector": "#tree-3-1",
+      "role": "treeitem",
+      "name": "2024",
+      "logical_id": "tree-3-1",
+      "requires": [
+        "tree-3"
+      ]
+    },
+    {
+      "id": "tree-3-2",
+      "selector": "#tree-3-2",
+      "role": "treeitem",
+      "name": "2025",
+      "logical_id": "tree-3-2",
+      "requires": [
+        "tree-3"
+      ]
+    },
+    {
+      "id": "tree-3-3",
+      "selector": "#tree-3-3",
+      "role": "treeitem",
+      "name": "2026",
+      "logical_id": "tree-3-3",
+      "requires": [
+        "tree-3"
+      ]
+    },
+    {
+      "id": "dlg-open",
+      "selector": "#dlg-open",
+      "role": "button",
+      "name": "Open dialog",
+      "logical_id": "dlg-open"
+    },
+    {
+      "id": "dlg-confirm",
+      "selector": "#dlg-confirm",
+      "role": "button",
+      "name": "Confirm",
+      "logical_id": "dlg-confirm",
+      "requires": [
+        "dlg-open"
+      ]
+    },
+    {
+      "id": "dlg-cancel",
+      "selector": "#dlg-cancel",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "dlg-cancel",
+      "requires": [
+        "dlg-open"
+      ]
+    },
+    {
+      "id": "dlg-help",
+      "selector": "#dlg-help",
+      "role": "button",
+      "name": "Help",
+      "logical_id": "dlg-help",
+      "requires": [
+        "dlg-open"
+      ]
+    },
+    {
+      "id": "tb-1",
+      "selector": "#tb-1",
+      "role": "button",
+      "name": "Bold",
+      "logical_id": "tb-1"
+    },
+    {
+      "id": "tb-2",
+      "selector": "#tb-2",
+      "role": "button",
+      "name": "Italic",
+      "logical_id": "tb-2"
+    },
+    {
+      "id": "tb-3",
+      "selector": "#tb-3",
+      "role": "button",
+      "name": "Underline",
+      "logical_id": "tb-3"
+    },
+    {
+      "id": "tb-4",
+      "selector": "#tb-4",
+      "role": "button",
+      "name": "Link",
+      "logical_id": "tb-4"
+    },
+    {
+      "id": "tb-5",
+      "selector": "#tb-5",
+      "role": "button",
+      "name": "Image",
+      "logical_id": "tb-5"
+    },
+    {
+      "id": "tb-6",
+      "selector": "#tb-6",
+      "role": "button",
+      "name": "Code",
+      "logical_id": "tb-6"
+    },
+    {
+      "id": "tb-7",
+      "selector": "#tb-7",
+      "role": "button",
+      "name": "Quote",
+      "logical_id": "tb-7"
+    },
+    {
+      "id": "tb-8",
+      "selector": "#tb-8",
+      "role": "button",
+      "name": "List",
+      "logical_id": "tb-8"
+    },
+    {
+      "id": "tb-9",
+      "selector": "#tb-9",
+      "role": "button",
+      "name": "Undo",
+      "logical_id": "tb-9"
+    },
+    {
+      "id": "tb-10",
+      "selector": "#tb-10",
+      "role": "button",
+      "name": "Rerender",
+      "logical_id": "tb-10"
+    }
+  ],
+  "expected": {
+    "enablement": [
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-4",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-5",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-6",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-7",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-btn"
+        ],
+        "target": "menu-8",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-4",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-5",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-6",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-7",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb"
+        ],
+        "target": "cb-opt-8",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-1"
+        ],
+        "target": "tree-1-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-1"
+        ],
+        "target": "tree-1-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-1"
+        ],
+        "target": "tree-1-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-2"
+        ],
+        "target": "tree-2-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-2"
+        ],
+        "target": "tree-2-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-2"
+        ],
+        "target": "tree-2-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-3"
+        ],
+        "target": "tree-3-1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-3"
+        ],
+        "target": "tree-3-2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "tree-3"
+        ],
+        "target": "tree-3-3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "dlg-open"
+        ],
+        "target": "dlg-confirm",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "dlg-open"
+        ],
+        "target": "dlg-cancel",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "dlg-open"
+        ],
+        "target": "dlg-help",
+        "kind": "simple"
+      }
+    ],
+    "operations": [],
+    "target_recall_min": 0.95,
+    "target_precision_min": 0.95,
+    "split_rate_max": 0.02,
+    "collision_rate_max": 0.005,
+    "volatile_regions": [
+      "#renders",
+      "#out"
+    ]
+  }
+}

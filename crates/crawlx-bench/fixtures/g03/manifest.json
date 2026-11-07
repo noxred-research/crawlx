@@ -1,0 +1,207 @@
+{
+  "id": "g03",
+  "title": "Custom ARIA widgets",
+  "version": 1,
+  "url_path": "/g03/",
+  "controls": [
+    {
+      "id": "t1",
+      "selector": "#t1",
+      "role": "tab",
+      "name": "Overview",
+      "logical_id": "t1"
+    },
+    {
+      "id": "t2",
+      "selector": "#t2",
+      "role": "tab",
+      "name": "Details",
+      "logical_id": "t2"
+    },
+    {
+      "id": "t3",
+      "selector": "#t3",
+      "role": "tab",
+      "name": "Reviews",
+      "logical_id": "t3"
+    },
+    {
+      "id": "t4",
+      "selector": "#t4",
+      "role": "tab",
+      "name": "History",
+      "logical_id": "t4"
+    },
+    {
+      "id": "m0",
+      "selector": "#m0",
+      "role": "button",
+      "name": "Actions",
+      "logical_id": "m0"
+    },
+    {
+      "id": "m1",
+      "selector": "#m1",
+      "role": "menuitem",
+      "name": "Rename",
+      "requires": [
+        "m0"
+      ],
+      "logical_id": "m1"
+    },
+    {
+      "id": "m2",
+      "selector": "#m2",
+      "role": "menuitem",
+      "name": "Duplicate",
+      "requires": [
+        "m0"
+      ],
+      "logical_id": "m2"
+    },
+    {
+      "id": "m3",
+      "selector": "#m3",
+      "role": "menuitem",
+      "name": "Archive",
+      "requires": [
+        "m0"
+      ],
+      "logical_id": "m3"
+    },
+    {
+      "id": "m4",
+      "selector": "#m4",
+      "role": "menuitem",
+      "name": "Share",
+      "requires": [
+        "m0"
+      ],
+      "logical_id": "m4"
+    },
+    {
+      "id": "cb0",
+      "selector": "#cb0",
+      "role": "combobox",
+      "name": "Fruit",
+      "logical_id": "cb0"
+    },
+    {
+      "id": "o1",
+      "selector": "#o1",
+      "role": "option",
+      "name": "Apple",
+      "requires": [
+        "cb0"
+      ],
+      "logical_id": "o1"
+    },
+    {
+      "id": "o2",
+      "selector": "#o2",
+      "role": "option",
+      "name": "Banana",
+      "requires": [
+        "cb0"
+      ],
+      "logical_id": "o2"
+    },
+    {
+      "id": "o3",
+      "selector": "#o3",
+      "role": "option",
+      "name": "Cherry",
+      "requires": [
+        "cb0"
+      ],
+      "logical_id": "o3"
+    },
+    {
+      "id": "o4",
+      "selector": "#o4",
+      "role": "option",
+      "name": "Damson",
+      "requires": [
+        "cb0"
+      ],
+      "logical_id": "o4"
+    },
+    {
+      "id": "o5",
+      "selector": "#o5",
+      "role": "option",
+      "name": "Elderberry",
+      "requires": [
+        "cb0"
+      ],
+      "logical_id": "o5"
+    }
+  ],
+  "expected": {
+    "enablement": [
+      {
+        "requires": [
+          "m0"
+        ],
+        "target": "m1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "m0"
+        ],
+        "target": "m2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "m0"
+        ],
+        "target": "m3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "m0"
+        ],
+        "target": "m4",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb0"
+        ],
+        "target": "o1",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb0"
+        ],
+        "target": "o2",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb0"
+        ],
+        "target": "o3",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb0"
+        ],
+        "target": "o4",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "cb0"
+        ],
+        "target": "o5",
+        "kind": "simple"
+      }
+    ]
+  }
+}

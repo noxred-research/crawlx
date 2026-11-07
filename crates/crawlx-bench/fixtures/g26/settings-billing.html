@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Billing settings</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; max-width: 640px; }
+  label { display: block; margin: 8px 0; }
+  input { display: block; padding: 4px 6px; margin-top: 2px; width: 260px; }
+  .actions { display: flex; gap: 8px; margin: 12px 0; }
+</style>
+</head>
+<body>
+<a id="home-billing" href="/g26/">Home</a>
+<h1>Billing settings</h1>
+<form id="form-billing" aria-label="Your billing" onsubmit="return false">
+  <h2>Your billing</h2>
+    <label>Card number<input type="text" name="card" id="b-card" value="4242"></label>
+    <label>Billing contact<input type="text" name="contact" id="b-contact" value="billing@example.test"></label>
+  <div class="actions">
+    <button type="button" id="billing-update-card">Update card</button>
+    <button type="button" id="billing-download">Download invoice</button>
+    <button type="button" id="billing-cancel">Cancel plan</button>
+  </div>
+</form>
+<p>Status: <span id="status">idle</span></p>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function status(t) { $('status').textContent = t; }
+  $('home-billing').addEventListener('click', function (ev) { __gym.hit('home-billing', ev); });
+  $('billing-update-card').addEventListener('click', function (ev) {
+    __gym.hit('billing-update-card', ev);
+    __gym.form('card', $('form-billing')).then(function () { status('card updated'); });
+  });
+  $('billing-download').addEventListener('click', function (ev) {
+    __gym.hit('billing-download', ev);
+    __gym.api('GET', 'billing/invoice').then(function () { status('invoice downloaded'); });
+  });
+  $('billing-cancel').addEventListener('click', function (ev) {
+    __gym.hit('billing-cancel', ev);
+    __gym.api('DELETE', 'billing/plan').then(function () { status('plan cancelled'); });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,168 @@
+{
+  "completed": 6,
+  "completedAt": "2026-10-28T06:23:40.549Z",
+  "crawlxSample": {
+    "family": "s1-sitemap-only",
+    "job": "01a1812d-adce-7579-a39b-ee09090987de",
+    "provenance": "black_box_run",
+    "request": {
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      },
+      "sitemap": "only"
+    },
+    "seedUrl": "http://gym.test:4101/s1/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T06:23:36.910Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [
+        "http://gym.test:4101/s1/about/",
+        "http://gym.test:4101/s1/contact/",
+        "http://gym.test:4101/s1/team/",
+        "http://gym.test:4101/s1/careers/",
+        "http://gym.test:4101/s1/pricing/",
+        "http://gym.test:4101/s1/blog/",
+        "http://gym.test:4101/s1/docs/",
+        "http://gym.test:4101/s1/products/",
+        "http://gym.test:4101/s1/about?utm_source=newsletter",
+        "http://gym.test:4101/s1/blog",
+        "http://gym.test:4101/s1/docs/?utm_medium=email&utm_campaign=spring",
+        "https://external.example/partner",
+        "https://www.example.org/",
+        "http://gym.test:4101/d1/",
+        "http://gym.test:4101/s1/private/",
+        "http://gym.test:4101/s1/missing",
+        "http://gym.test:4101/s1/error"
+      ],
+      "markdown": "Gym Static Site: a static page of the CrawlerGym s1 site.\n\n*   [About](http://gym.test:4101/s1/about/)\n    \n*   [Contact](http://gym.test:4101/s1/contact/)\n    \n*   [Team](http://gym.test:4101/s1/team/)\n    \n*   [Careers](http://gym.test:4101/s1/careers/)\n    \n*   [Pricing](http://gym.test:4101/s1/pricing/)\n    \n*   [Blog](http://gym.test:4101/s1/blog/)\n    \n*   [Docs](http://gym.test:4101/s1/docs/)\n    \n*   [Products](http://gym.test:4101/s1/products/)\n    \n*   [About (newsletter)](http://gym.test:4101/s1/about?utm_source=newsletter)\n    \n*   [Blog (no slash)](http://gym.test:4101/s1/blog)\n    \n*   [Docs (campaign)](http://gym.test:4101/s1/docs/?utm_medium=email&utm_campaign=spring)\n    \n*   [Partner](https://external.example/partner)\n    \n*   [Example](https://www.example.org/)\n    \n*   [Single page app](http://gym.test:4101/d1/)\n    \n*   [Private area](http://gym.test:4101/s1/private/)\n    \n*   [Missing page](http://gym.test:4101/s1/missing)\n    \n*   [Broken page](http://gym.test:4101/s1/error)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812d-af52-740b-bd74-609d51591326",
+        "sourceURL": "http://gym.test:4101/s1/",
+        "statusCode": 200,
+        "title": "Gym Static Site",
+        "url": "http://gym.test:4101/s1/"
+      },
+      "rawHtmlBytes": 1098,
+      "rawHtmlSha256": "e32183d2b1b12a4dad11086b89309841db056934ec7d34abe9fd03e34bb1b7cd"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Archive 1: a static page of the CrawlerGym s1 site.\n\n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812d-b19f-7728-bf5b-02d41ee4b803",
+        "sourceURL": "http://gym.test:4101/s1/archive/y1/",
+        "statusCode": 200,
+        "title": "Archive 1",
+        "url": "http://gym.test:4101/s1/archive/y1/"
+      },
+      "rawHtmlBytes": 263,
+      "rawHtmlSha256": "da1cd2dc2be86c0835c0b15dad9226e836d5e9da23ef024e5426a9dcff8818d2"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Archive 2: a static page of the CrawlerGym s1 site.\n\n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812d-b19f-7728-bf5b-060561ee88bd",
+        "sourceURL": "http://gym.test:4101/s1/archive/y2/",
+        "statusCode": 200,
+        "title": "Archive 2",
+        "url": "http://gym.test:4101/s1/archive/y2/"
+      },
+      "rawHtmlBytes": 263,
+      "rawHtmlSha256": "cb8f0d8678fceb55610d8fc393f37639b5074b547e5b8c446b54d19f5c1fd064"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Archive 3: a static page of the CrawlerGym s1 site.\n\n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812d-b19f-7728-bf5b-096b1fb78d4e",
+        "sourceURL": "http://gym.test:4101/s1/archive/y3/",
+        "statusCode": 200,
+        "title": "Archive 3",
+        "url": "http://gym.test:4101/s1/archive/y3/"
+      },
+      "rawHtmlBytes": 263,
+      "rawHtmlSha256": "1d10b5a5441395372895e692fe5225698d6c8583579a750ba7421a2b4f5ae6d9"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Archive 4: a static page of the CrawlerGym s1 site.\n\n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812d-b19f-7728-bf5b-0e72b48f8a3b",
+        "sourceURL": "http://gym.test:4101/s1/archive/y4/",
+        "statusCode": 200,
+        "title": "Archive 4",
+        "url": "http://gym.test:4101/s1/archive/y4/"
+      },
+      "rawHtmlBytes": 263,
+      "rawHtmlSha256": "3d2fd4678051cc6fd597818c0304ba1687df21faf43981fcdbe07c6ce012bc05"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/s1/"
+      ],
+      "markdown": "Archive 5: a static page of the CrawlerGym s1 site.\n\n*   [Home](http://gym.test:4101/s1/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812d-b19f-7728-bf5b-11c93ef1fd28",
+        "sourceURL": "http://gym.test:4101/s1/archive/y5/",
+        "statusCode": 200,
+        "title": "Archive 5",
+        "url": "http://gym.test:4101/s1/archive/y5/"
+      },
+      "rawHtmlBytes": 263,
+      "rawHtmlSha256": "f45314209c6fd27a02f57b06cb3aa2e9d4334078fb4ae0ae9d4ef3347ae10434"
+    }
+  ],
+  "duration": 3.639,
+  "errors": {
+    "errors": [],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T06:23:48.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 6
+}

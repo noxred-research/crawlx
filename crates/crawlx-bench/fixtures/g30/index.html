@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g30 storage-gated UI</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  nav { border: 1px solid #ccd; padding: 10px; margin: 0 0 12px; }
+  button, a { margin: 4px; }
+</style>
+</head>
+<body>
+<h1>Workspace</h1>
+<p>Role (localStorage): <strong id="role">anonymous</strong>; premium (IndexedDB): <strong id="premium">no</strong>. Last: <span id="out">none</span></p>
+<nav id="auth" aria-label="Sign in">
+  <button id="login-member" type="button">Sign in as member</button>
+  <button id="login-admin" type="button">Sign in as admin</button>
+  <button id="logout" type="button" hidden>Sign out</button>
+  <button id="enable-premium" type="button" hidden>Enable premium</button>
+</nav>
+<nav id="menu" aria-label="Menu"></nav>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  var MENUS = {
+    member: [['m-dashboard', 'Dashboard'], ['m-invoices', 'My invoices'], ['m-profile', 'Profile']],
+    admin: [['a-users', 'Users'], ['a-audit', 'Audit log'], ['a-settings', 'Site settings'], ['a-billing', 'Billing']],
+    premium: [['p-export', 'Export workspace'], ['p-api', 'API keys']]
+  };
+
+  // --- IndexedDB flag: `premium` lives in the `flags` store of database `g30` ---
+  function withDb(fn) {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open('g30', 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore('flags'); };
+      req.onsuccess = function () { resolve(fn(req.result)); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+  function readPremium() {
+    return withDb(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction('flags', 'readonly');
+        var get = tx.objectStore('flags').get('premium');
+        get.onsuccess = function () { resolve(get.result === true); };
+        get.onerror = function () { resolve(false); };
+      });
+    }).catch(function () { return false; });
+  }
+  function writePremium(v) {
+    return withDb(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction('flags', 'readwrite');
+        tx.objectStore('flags').put(v, 'premium');
+        tx.oncomplete = function () { resolve(); };
+      });
+    });
+  }
+
+  function role() { return localStorage.getItem('g30_role') || 'anonymous'; }
+
+  function render() {
+    var r = role();
+    $('role').textContent = r;
+    $('login-member').hidden = r !== 'anonymous';
+    $('login-admin').hidden = r !== 'anonymous';
+    $('logout').hidden = r === 'anonymous';
+    readPremium().then(function (premium) {
+      $('premium').textContent = premium ? 'yes' : 'no';
+      $('enable-premium').hidden = r === 'anonymous' || premium;
+      var menu = $('menu');
+      menu.textContent = '';
+      var items = [];
+      if (r === 'member' || r === 'admin') items = items.concat(MENUS.member);
+      if (r === 'admin') items = items.concat(MENUS.admin);
+      if (premium && r !== 'anonymous') items = items.concat(MENUS.premium);
+      items.forEach(function (p) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.id = p[0];
+        b.textContent = p[1];
+        b.addEventListener('click', function (ev) { __gym.hit(p[0], ev); out.textContent = p[0]; });
+        menu.appendChild(b);
+      });
+      __gym.probe('menu-' + r + (premium ? '-premium' : ''), String(items.length));
+    });
+  }
+  $('login-member').addEventListener('click', function (ev) { __gym.hit('login-member', ev); localStorage.setItem('g30_role', 'member'); render(); });
+  $('login-admin').addEventListener('click', function (ev) { __gym.hit('login-admin', ev); localStorage.setItem('g30_role', 'admin'); render(); });
+  $('logout').addEventListener('click', function (ev) { __gym.hit('logout', ev); localStorage.removeItem('g30_role'); writePremium(false).then(render); });
+  $('enable-premium').addEventListener('click', function (ev) { __gym.hit('enable-premium', ev); writePremium(true).then(render); });
+  render();
+})();
+</script>
+</body>
+</html>

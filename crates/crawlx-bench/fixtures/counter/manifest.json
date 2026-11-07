@@ -1,0 +1,30 @@
+{
+  "id": "counter",
+  "title": "Non-idempotent POST counter (chaos drills)",
+  "version": 1,
+  "url_path": "/counter/",
+  "controls": [
+    {
+      "id": "increment",
+      "selector": "#increment",
+      "role": "button",
+      "name": "Increment",
+      "logical_id": "increment",
+      "effect": "POST /counter/api/increment"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /counter/api/increment",
+      "GET /counter/api/count"
+    ],
+    "action_contexts": [
+      {
+        "principal": "anonymous",
+        "element": "increment",
+        "resource": "counter",
+        "backend_effect": "increment:ok"
+      }
+    ]
+  }
+}

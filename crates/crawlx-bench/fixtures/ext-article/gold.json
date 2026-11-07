@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "author": "crawlx contributors",
+  "license": "MIT",
+  "provenance": "New authored fictional prose and HTML; no upstream webpage, model, dictionary or library source copied.",
+  "spanConvention": "Unicode scalar offsets in fixture HTML; selected output uses normalized UTF-8 byte ranges.",
+  "fixtures": [
+    {
+      "id": "main",
+      "file": "main.html",
+      "sha256": "8ec898425bde813fbe8d426aa9a2cda369e2f61593cd89fdd4b224111a63a288",
+      "mainSourceScalarSpans": [
+        {
+          "start": 204,
+          "end": 216,
+          "text": "River report"
+        },
+        {
+          "start": 224,
+          "end": 306,
+          "text": "The river has returned to its banks, and the town can reopen the old bridge today."
+        },
+        {
+          "start": 313,
+          "end": 401,
+          "text": "Workers will inspect the stone supports before the first bus crosses the river tomorrow."
+        }
+      ],
+      "commentSourceScalarSpans": [],
+      "goldMain": "River report\n\nThe river has returned to its banks, and the town can reopen the old bridge today.\n\nWorkers will inspect the stone supports before the first bus crosses the river tomorrow.",
+      "goldComments": ""
+    },
+    {
+      "id": "chrome",
+      "file": "chrome.html",
+      "sha256": "f237ff7733264100b82779e05b52ae2f62201d095bf3de1972ac62b09c5c8d18",
+      "mainSourceScalarSpans": [
+        {
+          "start": 125,
+          "end": 141,
+          "text": "Community garden"
+        },
+        {
+          "start": 246,
+          "end": 333,
+          "text": "The community garden opened on Monday, and neighbors planted beans beside the new path."
+        },
+        {
+          "start": 466,
+          "end": 553,
+          "text": "The volunteers will share tools and water, so each plot can grow throughout the summer."
+        }
+      ],
+      "commentSourceScalarSpans": [],
+      "goldMain": "Community garden\n\nThe community garden opened on Monday, and neighbors planted beans beside the new path.\n\nThe volunteers will share tools and water, so each plot can grow throughout the summer.",
+      "goldComments": ""
+    },
+    {
+      "id": "siblings",
+      "file": "siblings.html",
+      "sha256": "88656701510b0742b700be0e26308bcee3b43c3325aadbbbdc1ecc1d805a4ea5",
+      "mainSourceScalarSpans": [
+        {
+          "start": 100,
+          "end": 187,
+          "text": "The observatory has opened its new dome, and visitors can see the northern sky tonight."
+        },
+        {
+          "start": 194,
+          "end": 281,
+          "text": "A second room holds the old telescope, with notes about the first survey of the valley."
+        },
+        {
+          "start": 294,
+          "end": 379,
+          "text": "The final viewing starts at nine, and the guide will answer questions after the tour."
+        }
+      ],
+      "commentSourceScalarSpans": [],
+      "goldMain": "The observatory has opened its new dome, and visitors can see the northern sky tonight.\n\nA second room holds the old telescope, with notes about the first survey of the valley.\n\nThe final viewing starts at nine, and the guide will answer questions after the tour.",
+      "goldComments": ""
+    },
+    {
+      "id": "malformed",
+      "file": "malformed.html",
+      "sha256": "63e6a888dabd97b20475f90381c5c32be3680c574485ccaba89dd53d8790fcc2",
+      "mainSourceScalarSpans": [
+        {
+          "start": 88,
+          "end": 100,
+          "text": "Storm update"
+        },
+        {
+          "start": 108,
+          "end": 191,
+          "text": "The storm has moved beyond the coast, and crews are checking the roads before dawn."
+        },
+        {
+          "start": 194,
+          "end": 287,
+          "text": "The shelter will remain open tonight, with warm meals for everyone who needs a place to rest."
+        }
+      ],
+      "commentSourceScalarSpans": [],
+      "goldMain": "Storm update\n\nThe storm has moved beyond the coast, and crews are checking the roads before dawn.\n\nThe shelter will remain open tonight, with warm meals for everyone who needs a place to rest.",
+      "goldComments": ""
+    },
+    {
+      "id": "forum",
+      "file": "forum.html",
+      "sha256": "32bd2dbfcbd1b28142721f4427417e5db66cc554425b7d54b2d44e25b8d259d5",
+      "mainSourceScalarSpans": [
+        {
+          "start": 213,
+          "end": 230,
+          "text": "Repair discussion"
+        },
+        {
+          "start": 238,
+          "end": 330,
+          "text": "The pump has stopped after the rain, and I would like to know how to check the inlet safely."
+        },
+        {
+          "start": 363,
+          "end": 454,
+          "text": "The inlet has a removable cover, but first disconnect the power and read the service guide."
+        }
+      ],
+      "commentSourceScalarSpans": [],
+      "goldMain": "Repair discussion\n\nThe pump has stopped after the rain, and I would like to know how to check the inlet safely.\n\nThe inlet has a removable cover, but first disconnect the power and read the service guide.",
+      "goldComments": ""
+    },
+    {
+      "id": "comments",
+      "file": "comments.html",
+      "sha256": "14ecc69ff3767595227846b3cebfdda3ae2877a84119d3dd73b762aa279eb031",
+      "mainSourceScalarSpans": [
+        {
+          "start": 91,
+          "end": 104,
+          "text": "Library hours"
+        },
+        {
+          "start": 112,
+          "end": 206,
+          "text": "The library will open later on Thursday, and the reading room will stay available until eight."
+        }
+      ],
+      "commentSourceScalarSpans": [
+        {
+          "start": 246,
+          "end": 336,
+          "text": "I appreciate the later hours, because I can visit the reading room after work on Thursday."
+        }
+      ],
+      "goldMain": "Library hours\n\nThe library will open later on Thursday, and the reading room will stay available until eight.",
+      "goldComments": "I appreciate the later hours, because I can visit the reading room after work on Thursday."
+    },
+    {
+      "id": "metadata",
+      "file": "metadata.html",
+      "sha256": "6018f78f239edd3c34bf74332eba5c1e71027bcecf54c5ec8478eb6eb769a692",
+      "mainSourceScalarSpans": [
+        {
+          "start": 645,
+          "end": 742,
+          "text": "The harbor has reopened for local boats, and the repaired pier will welcome its first crew today."
+        }
+      ],
+      "commentSourceScalarSpans": [],
+      "goldMain": "The harbor has reopened for local boats, and the repaired pier will welcome its first crew today.",
+      "goldComments": ""
+    },
+    {
+      "id": "unicode",
+      "file": "unicode.html",
+      "sha256": "8f6dbe3c623f9cbb91da0125695ef2c33b6711c02146195e72c96e03e5c40a0c",
+      "mainSourceScalarSpans": [
+        {
+          "start": 128,
+          "end": 220,
+          "text": "Éclair zebra éclair zebra. “雨停了。” 山河恢复平静！ Dr. Vale recorded 3.14 units. The café stays open."
+        }
+      ],
+      "commentSourceScalarSpans": [],
+      "goldMain": "Éclair zebra éclair zebra. “雨停了。” 山河恢复平静！ Dr. Vale recorded 3.14 units. The café stays open.",
+      "goldComments": ""
+    }
+  ]
+}

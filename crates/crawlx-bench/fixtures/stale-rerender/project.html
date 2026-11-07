@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>stale-rerender project</title>
+{{GYM_JS}}
+</head>
+<body>
+<h1 id="title">Project</h1><a id="project-back" href="/stale-rerender/">Back to projects</a>
+<script>
+(function () {
+document.getElementById('title').textContent = 'Project ' + (new URLSearchParams(location.search).get('id') || '?');
+  document.getElementById('project-back').addEventListener('click', function (ev) { __gym.hit('project-back', ev); });
+})();
+</script>
+</body>
+</html>

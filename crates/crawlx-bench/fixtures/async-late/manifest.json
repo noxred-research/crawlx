@@ -1,0 +1,84 @@
+{
+  "id": "async-late",
+  "title": "async-late: delayed XHR, timer-driven request and WebSocket pushes that land after the triggering epoch",
+  "version": 1,
+  "url_path": "/async-late/",
+  "controls": [
+    {
+      "id": "fast",
+      "selector": "#fast",
+      "role": "button",
+      "name": "Fast request",
+      "logical_id": "fast",
+      "effect": "GET /async-late/api/fast"
+    },
+    {
+      "id": "slow",
+      "selector": "#slow",
+      "role": "button",
+      "name": "Slow request (server replies after 1.5 s)",
+      "logical_id": "slow",
+      "effect": "POST /async-late/api/slow"
+    },
+    {
+      "id": "timer",
+      "selector": "#timer",
+      "role": "button",
+      "name": "Timer request (fires 2 s later)",
+      "logical_id": "timer",
+      "effect": "GET /async-late/api/timer"
+    },
+    {
+      "id": "ws-ping",
+      "selector": "#ws-ping",
+      "role": "button",
+      "name": "Ping over the socket",
+      "logical_id": "ws-ping",
+      "effect": "WS /async-late/ws"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "GET /async-late/api/fast",
+      "POST /async-late/api/slow",
+      "GET /async-late/api/timer",
+      "GET /async-late/api/ws-ack",
+      "WS /async-late/ws"
+    ],
+    "traffic_origins": [
+      {
+        "path_prefix": "/async-late/api/fast",
+        "origin": "page",
+        "caused_by": "fast"
+      },
+      {
+        "path_prefix": "/async-late/api/slow",
+        "origin": "page",
+        "late": true,
+        "caused_by": "slow"
+      },
+      {
+        "path_prefix": "/async-late/api/timer",
+        "origin": "page",
+        "late": true,
+        "caused_by": "timer"
+      },
+      {
+        "path_prefix": "/async-late/ws",
+        "origin": "page",
+        "late": true
+      },
+      {
+        "path_prefix": "/async-late/api/ws-ack",
+        "origin": "page",
+        "late": true
+      }
+    ],
+    "target_recall_min": 1.0,
+    "volatile_regions": [
+      "#ws-state",
+      "#out",
+      "#log"
+    ]
+  }
+}

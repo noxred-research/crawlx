@@ -1,0 +1,144 @@
+{
+  "id": "g15",
+  "title": "Native range, ARIA slider and 2D slider with min/max effects (4 input partitions each)",
+  "version": 1,
+  "url_path": "/g15/",
+  "controls": [
+    {
+      "id": "volume",
+      "selector": "#volume",
+      "role": "slider",
+      "name": "Volume",
+      "logical_id": "volume",
+      "effect": "POST /g15/api/form/range-volume"
+    },
+    {
+      "id": "aria-slider",
+      "selector": "#aria-slider",
+      "role": "slider",
+      "name": "Temperature",
+      "logical_id": "aria-slider",
+      "effect": "POST /g15/api/form/range-aria-slider"
+    },
+    {
+      "id": "pad",
+      "selector": "#pad",
+      "role": "slider",
+      "name": "Pan",
+      "logical_id": "pad",
+      "effect": "POST /g15/api/form/range-pad"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g15/api/form/range-volume",
+      "POST /g15/api/form/range-aria-slider",
+      "POST /g15/api/form/range-pad"
+    ],
+    "action_contexts": [
+      {
+        "principal": "anonymous",
+        "element": "volume",
+        "action_kind": "set_range",
+        "input_class": "min",
+        "resource_context": "none",
+        "backend_effect": "range-volume:min"
+      },
+      {
+        "principal": "anonymous",
+        "element": "volume",
+        "action_kind": "set_range",
+        "input_class": "max",
+        "resource_context": "none",
+        "backend_effect": "range-volume:max"
+      },
+      {
+        "principal": "anonymous",
+        "element": "volume",
+        "action_kind": "set_range",
+        "input_class": "typical",
+        "resource_context": "none",
+        "backend_effect": "range-volume:typical"
+      },
+      {
+        "principal": "anonymous",
+        "element": "volume",
+        "action_kind": "set_range",
+        "input_class": "out_of_range",
+        "resource_context": "none",
+        "backend_effect": "range-volume:out_of_range"
+      },
+      {
+        "principal": "anonymous",
+        "element": "aria-slider",
+        "action_kind": "set_range",
+        "input_class": "min",
+        "resource_context": "none",
+        "backend_effect": "range-aria-slider:min"
+      },
+      {
+        "principal": "anonymous",
+        "element": "aria-slider",
+        "action_kind": "set_range",
+        "input_class": "max",
+        "resource_context": "none",
+        "backend_effect": "range-aria-slider:max"
+      },
+      {
+        "principal": "anonymous",
+        "element": "aria-slider",
+        "action_kind": "set_range",
+        "input_class": "typical",
+        "resource_context": "none",
+        "backend_effect": "range-aria-slider:typical"
+      },
+      {
+        "principal": "anonymous",
+        "element": "aria-slider",
+        "action_kind": "set_range",
+        "input_class": "out_of_range",
+        "resource_context": "none",
+        "backend_effect": "range-aria-slider:out_of_range"
+      },
+      {
+        "principal": "anonymous",
+        "element": "pad",
+        "action_kind": "set_range",
+        "input_class": "min",
+        "resource_context": "none",
+        "backend_effect": "range-pad:min"
+      },
+      {
+        "principal": "anonymous",
+        "element": "pad",
+        "action_kind": "set_range",
+        "input_class": "max",
+        "resource_context": "none",
+        "backend_effect": "range-pad:max"
+      },
+      {
+        "principal": "anonymous",
+        "element": "pad",
+        "action_kind": "set_range",
+        "input_class": "typical",
+        "resource_context": "none",
+        "backend_effect": "range-pad:typical"
+      },
+      {
+        "principal": "anonymous",
+        "element": "pad",
+        "action_kind": "set_range",
+        "input_class": "out_of_range",
+        "resource_context": "none",
+        "backend_effect": "range-pad:out_of_range"
+      }
+    ],
+    "target_recall_min": 1.0,
+    "volatile_regions": [
+      "#out",
+      "#volume-out",
+      "#temp-out",
+      "#pad-out"
+    ]
+  }
+}

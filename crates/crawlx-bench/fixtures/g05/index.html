@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g05 nested iframes</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  iframe { display: block; width: 95%; height: 220px; border: 2px solid #889; margin: 10px 0; }
+  #f1 { height: 520px; }
+  button { margin: 4px; }
+</style>
+</head>
+<body>
+<h1>Nested frames</h1>
+<p>Main frame. Last: <span id="out">none</span></p>
+<div id="main-actions">
+  <button id="m-1" type="button">Save</button>
+  <button id="m-2" type="button">Cancel</button>
+  <button id="m-3" type="button">Open</button>
+  <button id="m-4" type="button">Edit</button>
+  <button id="m-5" type="button">Delete</button>
+  <button id="m-6" type="button">Share</button>
+</div>
+<h2>f1: same-origin document (contains f1a srcdoc, which contains f1b srcdoc)</h2>
+<iframe id="f1" name="f1" src="/g05/frame1.html" title="Frame one"></iframe>
+<h2>f2: srcdoc frame</h2>
+<iframe id="f2" name="f2" title="Frame two"></iframe>
+<h2>f3: cross-origin document</h2>
+<iframe id="f3" name="f3" title="Frame three"></iframe>
+<h2>f4: same-origin document</h2>
+<iframe id="f4" name="f4" src="/g05/frame4.html" title="Frame four"></iframe>
+<script>
+(function () {
+  var out = document.getElementById('out');
+  for (var i = 1; i <= 6; i++) {
+    (function (id) {
+      document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); out.textContent = id; });
+    })('m-' + i);
+  }
+  // srcdoc frames share the top origin: their buttons report through top.__gym. `nest`
+  // (optional) is `[prefix, title]` of a srcdoc frame to embed one level deeper.
+  window.__g05srcdoc = function (prefix, title, nest) {
+    var verbs = ['Save', 'Cancel', 'Open', 'Edit', 'Delete'];
+    var html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>' + title + '</title>' +
+      '<style>iframe{display:block;width:95%;height:200px;border:2px solid #c66;margin:8px 0}</style></head><body>' +
+      '<p>' + title + '</p>';
+    verbs.forEach(function (v, i) {
+      html += '<button id="' + prefix + '-' + (i + 1) + '" type="button">' + v + '</button>';
+    });
+    if (nest) {
+      html += '<iframe id="' + nest[0] + '" name="' + nest[0] + '" title="' + nest[1] + '"></iframe>';
+    }
+    html += '<script>(function(){var b=document.querySelectorAll("button");for(var i=0;i<b.length;i++){' +
+      '(function(el){el.addEventListener("click",function(ev){top.__gym.hit(el.id,ev);});})(b[i]);}' +
+      (nest ? 'document.getElementById("' + nest[0] + '").srcdoc=top.__g05srcdoc("' + nest[0] + '","' + nest[1] + '");' : '') +
+      '})();<\/script></body></html>';
+    return html;
+  };
+  document.getElementById('f2').srcdoc = window.__g05srcdoc('f2', 'Frame two (srcdoc)');
+  var other = location.origin.indexOf('127.0.0.1') >= 0
+    ? location.origin.replace('127.0.0.1', 'localhost')
+    : location.origin.replace('localhost', '127.0.0.1');
+  document.getElementById('f3').src = other + '/g05/frame3.html';
+})();
+</script>
+</body>
+</html>

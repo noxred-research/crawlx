@@ -1,0 +1,364 @@
+{
+  "id": "hybrid-mix",
+  "title": "hybrid-mix: server-rendered docs (URL-addressable), a SPA with menu-gated routes and a dialog workflow whose receipt page is reachable only through interaction",
+  "version": 1,
+  "url_path": "/hybrid-mix/",
+  "controls": [
+    {
+      "id": "nav-docs",
+      "selector": "#nav-docs",
+      "role": "link",
+      "name": "Documentation",
+      "logical_id": "nav-docs"
+    },
+    {
+      "id": "nav-app",
+      "selector": "#nav-app",
+      "role": "link",
+      "name": "Open the app",
+      "logical_id": "nav-app"
+    },
+    {
+      "id": "nav-pricing",
+      "selector": "#nav-pricing",
+      "role": "link",
+      "name": "Pricing",
+      "logical_id": "nav-pricing"
+    },
+    {
+      "id": "docs-install",
+      "selector": "#docs-install",
+      "role": "link",
+      "name": "Install",
+      "logical_id": "docs-install",
+      "page": "/docs-index.html"
+    },
+    {
+      "id": "docs-configure",
+      "selector": "#docs-configure",
+      "role": "link",
+      "name": "Configure",
+      "logical_id": "docs-configure",
+      "page": "/docs-index.html"
+    },
+    {
+      "id": "docs-faq",
+      "selector": "#docs-faq",
+      "role": "link",
+      "name": "FAQ",
+      "logical_id": "docs-faq",
+      "page": "/docs-index.html"
+    },
+    {
+      "id": "docs-home",
+      "selector": "#docs-home",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "docs-home",
+      "page": "/docs-index.html"
+    },
+    {
+      "id": "install-next",
+      "selector": "#install-next",
+      "role": "link",
+      "name": "Next: configure",
+      "logical_id": "install-next",
+      "page": "/docs-install.html"
+    },
+    {
+      "id": "configure-next",
+      "selector": "#configure-next",
+      "role": "link",
+      "name": "Next: FAQ",
+      "logical_id": "configure-next",
+      "page": "/docs-configure.html"
+    },
+    {
+      "id": "faq-app",
+      "selector": "#faq-app",
+      "role": "link",
+      "name": "Try the app",
+      "logical_id": "faq-app",
+      "page": "/docs-faq.html"
+    },
+    {
+      "id": "pricing-app",
+      "selector": "#pricing-app",
+      "role": "link",
+      "name": "Change your plan in the app",
+      "logical_id": "pricing-app",
+      "page": "/pricing.html"
+    },
+    {
+      "id": "app-home",
+      "selector": "#app-home",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "app-home",
+      "page": "/app.html"
+    },
+    {
+      "id": "app-menu-btn",
+      "selector": "#app-menu-btn",
+      "role": "button",
+      "name": "Workspace menu",
+      "logical_id": "app-menu-btn",
+      "page": "/app.html"
+    },
+    {
+      "id": "app-back",
+      "selector": "#app-back",
+      "role": "link",
+      "name": "Back to site",
+      "logical_id": "app-back",
+      "page": "/app.html"
+    },
+    {
+      "id": "menu-reports",
+      "selector": "#menu-reports",
+      "role": "menuitem",
+      "name": "Reports",
+      "logical_id": "menu-reports",
+      "page": "/app.html",
+      "requires": [
+        "app-menu-btn"
+      ]
+    },
+    {
+      "id": "menu-billing",
+      "selector": "#menu-billing",
+      "role": "menuitem",
+      "name": "Billing",
+      "logical_id": "menu-billing",
+      "page": "/app.html",
+      "requires": [
+        "app-menu-btn"
+      ]
+    },
+    {
+      "id": "menu-members",
+      "selector": "#menu-members",
+      "role": "menuitem",
+      "name": "Members",
+      "logical_id": "menu-members",
+      "page": "/app.html",
+      "requires": [
+        "app-menu-btn"
+      ]
+    },
+    {
+      "id": "report-run",
+      "selector": "#report-run",
+      "role": "button",
+      "name": "Run report",
+      "logical_id": "report-run",
+      "page": "/app.html#/reports",
+      "requires": [
+        "menu-reports"
+      ],
+      "effect": "GET /hybrid-mix/api/reports/run"
+    },
+    {
+      "id": "plan-change",
+      "selector": "#plan-change",
+      "role": "button",
+      "name": "Change plan",
+      "logical_id": "plan-change",
+      "page": "/app.html#/billing",
+      "requires": [
+        "menu-billing"
+      ]
+    },
+    {
+      "id": "plan-confirm",
+      "selector": "#plan-confirm",
+      "role": "button",
+      "name": "Confirm",
+      "logical_id": "plan-confirm",
+      "page": "/app.html#/billing",
+      "requires": [
+        "plan-change"
+      ],
+      "effect": "POST /hybrid-mix/api/plan"
+    },
+    {
+      "id": "plan-cancel",
+      "selector": "#plan-cancel",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "plan-cancel",
+      "page": "/app.html#/billing",
+      "requires": [
+        "plan-change"
+      ]
+    },
+    {
+      "id": "billing-receipt",
+      "selector": "#billing-receipt",
+      "role": "link",
+      "name": "View receipt",
+      "logical_id": "billing-receipt",
+      "page": "/app.html#/billing",
+      "requires": [
+        "plan-confirm"
+      ]
+    },
+    {
+      "id": "member-invite",
+      "selector": "#member-invite",
+      "role": "button",
+      "name": "Invite member",
+      "logical_id": "member-invite",
+      "page": "/app.html#/members",
+      "requires": [
+        "menu-members"
+      ]
+    },
+    {
+      "id": "receipt-home",
+      "selector": "#receipt-home",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "receipt-home",
+      "page": "/receipt.html",
+      "requires": [
+        "billing-receipt"
+      ]
+    }
+  ],
+  "expected": {
+    "operations": [
+      "GET /hybrid-mix/api/reports/run",
+      "POST /hybrid-mix/api/plan"
+    ],
+    "enablement": [
+      {
+        "requires": [
+          "app-menu-btn"
+        ],
+        "target": "menu-reports",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "app-menu-btn"
+        ],
+        "target": "menu-billing",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "app-menu-btn"
+        ],
+        "target": "menu-members",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-reports"
+        ],
+        "target": "report-run",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-billing"
+        ],
+        "target": "plan-change",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "plan-change"
+        ],
+        "target": "plan-confirm",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "plan-change"
+        ],
+        "target": "plan-cancel",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "plan-confirm"
+        ],
+        "target": "billing-receipt",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "menu-members"
+        ],
+        "target": "member-invite",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "billing-receipt"
+        ],
+        "target": "receipt-home",
+        "kind": "simple"
+      }
+    ],
+    "state_classes": [
+      {
+        "page": "/",
+        "class": "home"
+      },
+      {
+        "page": "/docs-index.html",
+        "class": "docs-index"
+      },
+      {
+        "page": "/docs-install.html",
+        "class": "docs-install"
+      },
+      {
+        "page": "/docs-configure.html",
+        "class": "docs-configure"
+      },
+      {
+        "page": "/docs-faq.html",
+        "class": "docs-faq"
+      },
+      {
+        "page": "/pricing.html",
+        "class": "pricing"
+      },
+      {
+        "page": "/app.html#/home",
+        "class": "app-home"
+      },
+      {
+        "page": "/app.html#/reports",
+        "class": "app-reports"
+      },
+      {
+        "page": "/app.html#/billing",
+        "class": "app-billing"
+      },
+      {
+        "page": "/app.html#/members",
+        "class": "app-members"
+      },
+      {
+        "page": "/receipt.html",
+        "class": "receipt"
+      }
+    ],
+    "target_recall_min": 0.95,
+    "url_addressable_pages": [
+      "/",
+      "/docs-index.html",
+      "/docs-install.html",
+      "/docs-configure.html",
+      "/docs-faq.html",
+      "/pricing.html",
+      "/app.html"
+    ],
+    "trailing_slash": "keep"
+  }
+}

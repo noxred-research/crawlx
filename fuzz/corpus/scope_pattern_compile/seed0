@@ -1,0 +1,5 @@
+/docs/.*
+/blog/[0-9]+/.*
+
+
+/docs/private/.*

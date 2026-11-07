@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g01 React-style event delegation</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(5, 150px); gap: 10px; margin: 12px 0; }
+  button, .btn { padding: 8px 10px; border: 1px solid #667; border-radius: 4px; background: #eef; font: inherit; text-align: center; }
+  .btn { cursor: pointer; background: #efe; user-select: none; }
+</style>
+</head>
+<body>
+<main id="root">
+  <h1>Delegated actions</h1>
+  <p>Total clicks: <span id="counter">0</span> &middot; last: <span id="last">none</span></p>
+  <section aria-label="Button actions">
+    <h2>Buttons</h2>
+    <div class="grid">
+      <button type="button" id="c01" data-gym="c01">Alpha</button>
+      <button type="button" id="c02" data-gym="c02">Bravo</button>
+      <button type="button" id="c03" data-gym="c03">Charlie</button>
+      <button type="button" id="c04" data-gym="c04">Delta</button>
+      <button type="button" id="c05" data-gym="c05">Echo</button>
+      <button type="button" id="c06" data-gym="c06">Foxtrot</button>
+      <button type="button" id="c07" data-gym="c07">Golf</button>
+      <button type="button" id="c08" data-gym="c08">Hotel</button>
+      <button type="button" id="c09" data-gym="c09">India</button>
+      <button type="button" id="c10" data-gym="c10">Juliet</button>
+      <button type="button" id="c11" data-gym="c11">Kilo</button>
+      <button type="button" id="c12" data-gym="c12">Lima</button>
+      <button type="button" id="c13" data-gym="c13">Mike</button>
+      <button type="button" id="c14" data-gym="c14">November</button>
+      <button type="button" id="c15" data-gym="c15">Oscar</button>
+      <button type="button" id="c16" data-gym="c16">Papa</button>
+      <button type="button" id="c17" data-gym="c17">Quebec</button>
+      <button type="button" id="c18" data-gym="c18">Romeo</button>
+      <button type="button" id="c19" data-gym="c19">Sierra</button>
+      <button type="button" id="c20" data-gym="c20">Tango</button>
+    </div>
+  </section>
+  <section aria-label="Div actions">
+    <h2>Panels</h2>
+    <div class="grid">
+      <div class="btn" id="c21" data-gym="c21">Uniform</div>
+      <div class="btn" id="c22" data-gym="c22">Victor</div>
+      <div class="btn" id="c23" data-gym="c23">Whiskey</div>
+      <div class="btn" id="c24" data-gym="c24">Xray</div>
+      <div class="btn" id="c25" data-gym="c25">Yankee</div>
+      <div class="btn" id="c26" data-gym="c26">Zulu</div>
+      <div class="btn" id="c27" data-gym="c27">Amber</div>
+      <div class="btn" id="c28" data-gym="c28">Basil</div>
+      <div class="btn" id="c29" data-gym="c29">Cedar</div>
+      <div class="btn" id="c30" data-gym="c30">Dune</div>
+      <div class="btn" id="c31" data-gym="c31">Ember</div>
+      <div class="btn" id="c32" data-gym="c32">Fjord</div>
+      <div class="btn" id="c33" data-gym="c33">Garnet</div>
+      <div class="btn" id="c34" data-gym="c34">Harbor</div>
+      <div class="btn" id="c35" data-gym="c35">Iris</div>
+      <div class="btn" id="c36" data-gym="c36">Jasper</div>
+      <div class="btn" id="c37" data-gym="c37">Koala</div>
+      <div class="btn" id="c38" data-gym="c38">Lotus</div>
+      <div class="btn" id="c39" data-gym="c39">Maple</div>
+      <div class="btn" id="c40" data-gym="c40">Nectar</div>
+    </div>
+  </section>
+</main>
+<script>
+(function () {
+  var count = 0;
+  document.getElementById('root').addEventListener('click', function (ev) {
+    var el = ev.target.closest('[data-gym]');
+    if (!el) return;
+    __gym.hit(el.getAttribute('data-gym'), ev);
+    count += 1;
+    document.getElementById('counter').textContent = String(count);
+    document.getElementById('last').textContent = el.textContent;
+  });
+})();
+</script>
+</body>
+</html>

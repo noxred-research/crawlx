@@ -1,0 +1,43 @@
+# crawlx-api image: the `crawlx` binary on distroless/cc, non-root, no
+# package manager in the runtime layer. The same image runs `crawlx migrate` as a Job and
+# `crawlx admin ...` from an operator shell.
+#
+#   docker build -f docker/Dockerfile.api -t crawlx-api:dev .
+#
+# The toolchain tag mirrors rust-toolchain.toml; bump both together.
+ARG RUST_VERSION=1.97.1
+ARG BASE_IMAGE=gcr.io/distroless/cc-debian12:nonroot
+
+FROM rust:${RUST_VERSION}-slim-bookworm AS builder
+# Empty by default. `onnx` enables operator-installed language bundles; no runtime is downloaded.
+ARG CRAWLX_CARGO_FEATURES=""
+# BoringSSL's opt-in ClientHello transport builds bundled native sources and bindings.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential cmake clang libclang-dev git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+# Copy the locked dependency graph, vendored patch and compile-time inputs.
+# Base images, the toolchain and system packages are separate release inputs.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml clippy.toml rustfmt.toml ./
+COPY crates ./crates
+COPY vendor ./vendor
+COPY chromium-pin.toml cdp-surface.toml ./
+# crawlx-bench (a dependency of crawlx-cli) compiles bench/seeds.toml in with `include_str!`
+COPY bench/seeds.toml ./bench/seeds.toml
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --locked --release -p crawlx-cli --bin crawlx --features "${CRAWLX_CARGO_FEATURES}" \
+    && install -D -m 0755 target/release/crawlx /out/usr/local/bin/crawlx
+
+FROM ${BASE_IMAGE}
+LABEL org.opencontainers.image.title="crawlx-api" \
+      org.opencontainers.image.description="crawlx REST/SSE API, migrator and admin CLI" \
+      org.opencontainers.image.source="https://github.com/noxred-research/crawlx"
+COPY --from=builder /out/usr/local/bin/crawlx /usr/local/bin/crawlx
+# distroless `nonroot` is uid 65532; stated explicitly so `docker inspect` shows a numeric
+# non-root user even if the base tag changes.
+USER 65532:65532
+ENV CRAWLX_ENVIRONMENT=prod
+EXPOSE 8080 9464
+ENTRYPOINT ["/usr/local/bin/crawlx"]
+CMD ["serve", "--bind", "0.0.0.0:8080"]

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>G31 closed shadow roots</title>
+{{GYM_JS}}
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; color: #222; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; }
+  gym-card, gym-nest { display: block; min-width: 140px; min-height: 60px; padding: 8px; border: 1px solid #ccd; background: #fff; }
+</style>
+</head>
+<body>
+<h1>Closed shadow roots</h1>
+<div class="row">
+  <gym-card id="h1" data-control="c1" data-label="Alpha"></gym-card>
+  <gym-card id="h2" data-control="c2" data-label="Bravo"></gym-card>
+  <gym-nest id="h3" data-control="c3" data-label="Charlie"></gym-nest>
+  <gym-card id="h4" data-control="c4" data-label="Delta"></gym-card>
+  <gym-card id="h5" data-control="c5" data-label="Echo"></gym-card>
+  <gym-card id="h6" data-control="c6" data-label="Foxtrot" data-stealth-only="1"></gym-card>
+</div>
+<script>
+  (function () {
+    // Probe first: the server ledger records what the page saw before any card renders.
+    __gym.probe('webdriver', String(navigator.webdriver));
+
+    // Closed roots are reachable only through this private map.
+    var roots = new WeakMap();
+
+    function closedRoot(host) {
+      var root = host.attachShadow({ mode: 'closed' });
+      roots.set(host, root);
+      return root;
+    }
+
+    class GymCard extends HTMLElement {
+      connectedCallback() {
+        if (roots.has(this)) return;
+        if (this.hasAttribute('data-stealth-only') && navigator.webdriver) return;
+        var root = closedRoot(this);
+        var control = this.getAttribute('data-control');
+        var btn = document.createElement('button');
+        btn.id = control;
+        btn.type = 'button';
+        btn.textContent = this.getAttribute('data-label');
+        btn.addEventListener('click', function (ev) { __gym.hit(control, ev); });
+        root.appendChild(btn);
+      }
+    }
+
+    // A closed root whose only child is a card holding its own closed root.
+    class GymNest extends HTMLElement {
+      connectedCallback() {
+        if (roots.has(this)) return;
+        var root = closedRoot(this);
+        var inner = document.createElement('gym-card');
+        inner.setAttribute('data-control', this.getAttribute('data-control'));
+        inner.setAttribute('data-label', this.getAttribute('data-label'));
+        root.appendChild(inner);
+      }
+    }
+
+    customElements.define('gym-card', GymCard);
+    customElements.define('gym-nest', GymNest);
+  })();
+</script>
+</body>
+</html>

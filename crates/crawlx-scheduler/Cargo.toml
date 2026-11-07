@@ -1,0 +1,47 @@
+[package]
+name = "crawlx-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: leases, retries, checkpoints, round-robin turns, reaper"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-storage = { path = "../crawlx-storage" }
+crawlx-telemetry = { path = "../crawlx-telemetry" }
+async-trait.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+croner.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+rand.workspace = true
+# `loom` feature only: the turn-barrier model in `tests/loom_turns.rs`
+loom = { workspace = true, optional = true }
+
+[features]
+loom = ["dep:loom"]
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "lease_memory"
+harness = false
+
+[[bench]]
+name = "lease_pg"
+harness = false
+
+[lints]
+workspace = true

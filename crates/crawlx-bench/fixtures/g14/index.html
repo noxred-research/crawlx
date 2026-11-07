@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g14 drag and drop</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  .board { display: flex; gap: 16px; }
+  .col { width: 200px; min-height: 220px; border: 2px dashed #889; padding: 8px; }
+  .col h2 { font-size: 15px; margin: 0 0 8px; }
+  .card { border: 1px solid #556; background: #eef; padding: 8px; margin: 0 0 8px; cursor: grab; touch-action: none; user-select: none; }
+  .card.dragging { opacity: 0.6; position: fixed; pointer-events: none; width: 180px; z-index: 10; }
+  #sortable { list-style: none; padding: 0; width: 240px; }
+  #sortable li { border: 1px solid #686; background: #efe; padding: 8px; margin: 0 0 6px; cursor: grab; touch-action: none; user-select: none; }
+  #sortable li.dragging { opacity: 0.6; }
+  #trash { width: 240px; height: 80px; border: 2px dashed #a44; display: flex; align-items: center; justify-content: center; color: #a44; margin-top: 12px; }
+  #trash.over { background: #fdd; }
+  .native { cursor: grab; }
+</style>
+</head>
+<body>
+<h1>Drag and drop</h1>
+<p>Last: <span id="out">none</span></p>
+
+<h2>1. Kanban (pointer events)</h2>
+<div class="board" id="board">
+  <div class="col" id="col-todo" data-col="todo"><h2>To do</h2>
+    <div class="card" id="card-1" data-card="1">Write spec</div>
+    <div class="card" id="card-2" data-card="2">Review design</div>
+  </div>
+  <div class="col" id="col-doing" data-col="doing"><h2>Doing</h2>
+    <div class="card" id="card-3" data-card="3">Build fixture</div>
+  </div>
+  <div class="col" id="col-done" data-col="done"><h2>Done</h2></div>
+</div>
+
+<h2>2. Sortable list (pointer events)</h2>
+<ul id="sortable">
+  <li id="sort-1" data-item="1">First</li>
+  <li id="sort-2" data-item="2">Second</li>
+  <li id="sort-3" data-item="3">Third</li>
+  <li id="sort-4" data-item="4">Fourth</li>
+</ul>
+
+<h2>3. Native HTML5 drag to the trash zone</h2>
+<div id="native-1" class="card native" draggable="true">Draft note</div>
+<div id="native-2" class="card native" draggable="true">Old invoice</div>
+<div id="trash">Drop here to archive</div>
+
+<script>
+(function () {
+  var out = document.getElementById('out');
+  function record(behavior, id, from, to, ev) {
+    __gym.hit(id, ev);
+    __gym.form('drag', { behavior: behavior, item: id, from: from, to: to, trusted: ev && ev.isTrusted ? '1' : '0' });
+    out.textContent = behavior + ':' + id + ':' + from + '>' + to;
+  }
+
+  // --- kanban: pointerdown on a card, pointerup over a column moves the card ---
+  var drag = null;
+  document.querySelectorAll('.card:not(.native)').forEach(function (card) {
+    card.addEventListener('pointerdown', function (ev) {
+      drag = { el: card, from: card.parentNode.dataset.col, ev: ev, moved: false };
+      card.setPointerCapture(ev.pointerId);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('pointermove', function (ev) {
+      if (!drag || drag.el !== card) return;
+      drag.moved = true;
+      card.style.left = (ev.clientX - 90) + 'px';
+      card.style.top = (ev.clientY - 16) + 'px';
+    });
+    card.addEventListener('pointerup', function (ev) {
+      if (!drag || drag.el !== card) return;
+      card.classList.remove('dragging');
+      card.style.left = card.style.top = '';
+      var target = document.elementFromPoint(ev.clientX, ev.clientY);
+      var col = target && target.closest ? target.closest('.col') : null;
+      if (col && col.dataset.col !== drag.from) {
+        col.appendChild(card);
+        record('kanban', card.id, drag.from, col.dataset.col, ev);
+      }
+      drag = null;
+    });
+  });
+
+  // --- sortable: pointer drag reorders by swapping with the item under the pointer ---
+  var sorting = null;
+  document.querySelectorAll('#sortable li').forEach(function (li) {
+    li.addEventListener('pointerdown', function (ev) {
+      sorting = { el: li, from: Array.prototype.indexOf.call(li.parentNode.children, li) };
+      li.setPointerCapture(ev.pointerId);
+      li.classList.add('dragging');
+    });
+    li.addEventListener('pointerup', function (ev) {
+      if (!sorting || sorting.el !== li) return;
+      li.classList.remove('dragging');
+      var target = document.elementFromPoint(ev.clientX, ev.clientY);
+      var over = target && target.closest ? target.closest('#sortable li') : null;
+      if (over && over !== li) {
+        var list = li.parentNode;
+        var to = Array.prototype.indexOf.call(list.children, over);
+        if (to > sorting.from) list.insertBefore(li, over.nextSibling); else list.insertBefore(li, over);
+        record('sortable', li.id, String(sorting.from), String(to), ev);
+      }
+      sorting = null;
+    });
+  });
+
+  // --- native drag: HTML5 DnD into the trash zone ---
+  var trash = document.getElementById('trash');
+  document.querySelectorAll('.native').forEach(function (n) {
+    n.addEventListener('dragstart', function (ev) {
+      ev.dataTransfer.setData('text/plain', n.id);
+      ev.dataTransfer.effectAllowed = 'move';
+    });
+  });
+  trash.addEventListener('dragover', function (ev) { ev.preventDefault(); trash.classList.add('over'); });
+  trash.addEventListener('dragleave', function () { trash.classList.remove('over'); });
+  trash.addEventListener('drop', function (ev) {
+    ev.preventDefault();
+    trash.classList.remove('over');
+    var id = ev.dataTransfer.getData('text/plain');
+    var el = document.getElementById(id);
+    if (el) {
+      el.remove();
+      record('native', id, 'page', 'trash', ev);
+    }
+  });
+})();
+</script>
+</body>
+</html>

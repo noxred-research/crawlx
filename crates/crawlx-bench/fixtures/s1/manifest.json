@@ -1,0 +1,28 @@
+{
+  "id": "s1",
+  "title": "Static site: link graph, duplicates, robots, sitemap, 404 and 500",
+  "version": 1,
+  "url_path": "/s1/",
+  "controls": [],
+  "expected": {
+    "trailing_slash": "strip",
+    "url_counters": {
+      "discovered": 90,
+      "admitted": 30,
+      "deduplicated": 55,
+      "policy_blocked": 3,
+      "robots_blocked": 2,
+      "attempted": 30,
+      "succeeded": 28,
+      "failed": 2,
+      "abandoned": 0,
+      "unreachable": 0,
+      "unknown_outcome": 0
+    },
+    "operations": [
+      "GET /robots.txt",
+      "GET /s1/sitemap.xml"
+    ],
+    "unauthorized_actions": 0
+  }
+}

@@ -1,0 +1,138 @@
+[package]
+name = "crawlx-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: CrawlerGym fixtures, replay harness, scorecards"
+
+[lib]
+name = "crawlx_bench"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Serving and in-process evaluation of model bundles (`decision-serve`, `decision-eval`): links the
+# ONNX Runtime binding of `crawlx-model` (load-dynamic; `ORT_DYLIB_PATH` names the library).
+onnx = ["crawlx-model/onnx"]
+# Opt-in runtime proof and real tokio-console transport.
+runtime-diagnostics = ["crawlx-worker/runtime-diagnostics", "dep:console-subscriber"]
+
+[[bin]]
+name = "gym-server"
+path = "src/bin/gym-server.rs"
+
+[[bin]]
+name = "crawlx-differential"
+path = "src/bin/crawlx-differential.rs"
+
+[[bin]]
+name = "gate"
+path = "src/bin/gate.rs"
+
+[[bin]]
+name = "crawl-maze-score"
+path = "src/bin/crawl-maze-score.rs"
+
+[[bin]]
+name = "g1-report"
+path = "src/bin/g1-report.rs"
+
+[[bin]]
+name = "chaos-report"
+path = "src/bin/chaos-report.rs"
+
+[[bin]]
+name = "pilot"
+path = "src/bin/pilot.rs"
+
+[[bin]]
+name = "soak"
+path = "src/bin/soak.rs"
+
+[[bin]]
+name = "load"
+path = "src/bin/load.rs"
+
+[[bin]]
+name = "crawl-bench"
+path = "src/bin/crawl-bench.rs"
+
+[[bin]]
+name = "decision-dataset"
+path = "src/bin/decision-dataset.rs"
+
+[[bin]]
+name = "decision-serve"
+path = "src/bin/decision-serve.rs"
+required-features = ["onnx"]
+
+[[bin]]
+name = "decision-eval"
+path = "src/bin/decision-eval.rs"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-worker = { path = "../crawlx-worker" }
+crawlx-storage = { path = "../crawlx-storage" }
+crawlx-browser = { path = "../crawlx-browser" }
+crawlx-observe = { path = "../crawlx-observe" }
+crawlx-elements = { path = "../crawlx-elements" }
+crawlx-state = { path = "../crawlx-state" }
+crawlx-graph = { path = "../crawlx-graph" }
+crawlx-strategies = { path = "../crawlx-strategies" }
+crawlx-safety = { path = "../crawlx-safety" }
+crawlx-url = { path = "../crawlx-url" }
+crawlx-policy = { path = "../crawlx-policy" }
+crawlx-fetch = { path = "../crawlx-fetch" }
+crawlx-extract = { path = "../crawlx-extract" }
+crawlx-forms = { path = "../crawlx-forms" }
+crawlx-telemetry = { path = "../crawlx-telemetry" }
+crawlx-model = { path = "../crawlx-model" }
+async-trait.workspace = true
+console-subscriber = { version = "0.5", optional = true }
+futures.workspace = true
+ipnet.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+parking_lot.workspace = true
+mimalloc.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+toml.workspace = true
+serde.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+# tests/canary.rs: webhook sender over the in-memory API
+# store, the in-process fake S3, OTLP export into a stub collector, log capture.
+# tests/observability.rs: decodes the stub collector's OTLP bodies.
+crawlx-api = { path = "../crawlx-api" }
+crawlx-scheduler = { path = "../crawlx-scheduler" }
+crawlx-storage = { path = "../crawlx-storage", features = ["fake-s3"] }
+crawlx-telemetry = { path = "../crawlx-telemetry", features = ["otlp"] }
+base64.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+wiremock.workspace = true
+
+[lints]
+workspace = true

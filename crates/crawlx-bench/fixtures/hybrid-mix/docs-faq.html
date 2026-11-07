@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hybrid-mix faq</title>
+{{GYM_JS}}
+</head>
+<body>
+<h1>FAQ</h1><p>Server-rendered page.</p><a id="faq-app" href="/hybrid-mix/app.html">Try the app</a>
+<script>
+(function () {
+['faq-app'].forEach(function (id) { document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); }); });
+})();
+</script>
+</body>
+</html>

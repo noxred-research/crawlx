@@ -1,0 +1,79 @@
+[package]
+name = "crawlx-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: lease loop, browser pool, Session Actors, exploration drivers"
+
+[features]
+# Env-driven failpoints in the per-action protocol (crash drills); never on in release builds.
+chaos = ["crawlx-storage/chaos"]
+# Explicit diagnostics builds require RUSTFLAGS="--cfg tokio_unstable".
+runtime-diagnostics = ["dep:tokio-metrics", "tokio/tracing"]
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-scheduler = { path = "../crawlx-scheduler" }
+crawlx-storage = { path = "../crawlx-storage" }
+crawlx-telemetry = { path = "../crawlx-telemetry" }
+crawlx-strategies = { path = "../crawlx-strategies" }
+crawlx-browser = { path = "../crawlx-browser" }
+crawlx-observe = { path = "../crawlx-observe" }
+crawlx-fetch = { path = "../crawlx-fetch" }
+crawlx-extract = { path = "../crawlx-extract" }
+crawlx-safety = { path = "../crawlx-safety" }
+crawlx-policy = { path = "../crawlx-policy" }
+crawlx-state = { path = "../crawlx-state" }
+crawlx-elements = { path = "../crawlx-elements" }
+crawlx-graph = { path = "../crawlx-graph" }
+crawlx-url = { path = "../crawlx-url" }
+crawlx-forms = { path = "../crawlx-forms" }
+crawlx-model = { path = "../crawlx-model" }
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-secretsmanager.workspace = true
+aws-smithy-http-client.workspace = true
+base32.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+futures.workspace = true
+http.workspace = true
+hmac.workspace = true
+ipnet.workspace = true
+image.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+rustix.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-metrics = { version = "0.5.2", optional = true }
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+proptest.workspace = true
+rand.workspace = true
+wiremock.workspace = true
+sqlx.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,180 @@
+{
+  "id": "g29",
+  "title": "SSRF browser lab",
+  "version": 1,
+  "url_path": "/g29/",
+  "controls": [],
+  "expected": {
+    "denied_destinations": [
+      {
+        "id": "d01",
+        "kind": "fetch",
+        "url": "http://169.254.169.254/latest/meta-data/",
+        "host": "169.254.169.254",
+        "port": 80
+      },
+      {
+        "id": "d02",
+        "kind": "img",
+        "url": "http://169.254.169.254/latest/meta-data/iam/x.png",
+        "host": "169.254.169.254",
+        "port": 80
+      },
+      {
+        "id": "d03",
+        "kind": "iframe",
+        "url": "http://169.254.169.254/latest/user-data",
+        "host": "169.254.169.254",
+        "port": 80
+      },
+      {
+        "id": "d04",
+        "kind": "websocket",
+        "url": "ws://169.254.169.254/socket",
+        "host": "169.254.169.254",
+        "port": 80
+      },
+      {
+        "id": "d05",
+        "kind": "fetch",
+        "url": "http://[fd00:ec2::254]/latest/meta-data/",
+        "host": "fd00:ec2::254",
+        "port": 80
+      },
+      {
+        "id": "d06",
+        "kind": "img",
+        "url": "http://[fd00:ec2::254]/icon.png",
+        "host": "fd00:ec2::254",
+        "port": 80
+      },
+      {
+        "id": "d07",
+        "kind": "fetch",
+        "url": "http://10.0.0.1/",
+        "host": "10.0.0.1",
+        "port": 80
+      },
+      {
+        "id": "d08",
+        "kind": "img",
+        "url": "http://10.0.0.1/x.png",
+        "host": "10.0.0.1",
+        "port": 80
+      },
+      {
+        "id": "d09",
+        "kind": "fetch",
+        "url": "http://172.16.0.1/",
+        "host": "172.16.0.1",
+        "port": 80
+      },
+      {
+        "id": "d10",
+        "kind": "img",
+        "url": "http://172.16.0.1/x.png",
+        "host": "172.16.0.1",
+        "port": 80
+      },
+      {
+        "id": "d11",
+        "kind": "fetch",
+        "url": "http://192.168.0.1/",
+        "host": "192.168.0.1",
+        "port": 80
+      },
+      {
+        "id": "d12",
+        "kind": "img",
+        "url": "http://192.168.0.1/x.png",
+        "host": "192.168.0.1",
+        "port": 80
+      },
+      {
+        "id": "d13",
+        "kind": "fetch",
+        "url": "http://100.64.0.1/",
+        "host": "100.64.0.1",
+        "port": 80
+      },
+      {
+        "id": "d14",
+        "kind": "img",
+        "url": "http://100.64.0.1/x.png",
+        "host": "100.64.0.1",
+        "port": 80
+      },
+      {
+        "id": "d15",
+        "kind": "fetch",
+        "url": "http://198.18.0.1/",
+        "host": "198.18.0.1",
+        "port": 80
+      },
+      {
+        "id": "d16",
+        "kind": "websocket",
+        "url": "ws://100.100.100.200/",
+        "host": "100.100.100.200",
+        "port": 80
+      },
+      {
+        "id": "d17",
+        "kind": "fetch",
+        "url": "http://metadata.google.internal/computeMetadata/v1/",
+        "host": "metadata.google.internal",
+        "port": 80
+      },
+      {
+        "id": "d18",
+        "kind": "img",
+        "url": "http://metadata.google.internal/favicon.ico",
+        "host": "metadata.google.internal",
+        "port": 80
+      },
+      {
+        "id": "d19",
+        "kind": "fetch",
+        "url": "http://rebind.gym.test/",
+        "host": "rebind.gym.test",
+        "port": 80
+      },
+      {
+        "id": "d20",
+        "kind": "img",
+        "url": "http://rebind.gym.test/x.png",
+        "host": "rebind.gym.test",
+        "port": 80
+      },
+      {
+        "id": "d21",
+        "kind": "redirect",
+        "url": "http://169.254.169.254/latest/",
+        "host": "169.254.169.254",
+        "port": 80
+      },
+      {
+        "id": "d22",
+        "kind": "redirect",
+        "url": "http://10.0.0.2/",
+        "host": "10.0.0.2",
+        "port": 80
+      },
+      {
+        "id": "d23",
+        "kind": "fetch",
+        "url": "http://[::ffff:169.254.169.254]/",
+        "host": "::ffff:a9fe:a9fe",
+        "port": 80
+      },
+      {
+        "id": "d24",
+        "kind": "img",
+        "url": "http://0xa9fea9fe/",
+        "host": "169.254.169.254",
+        "port": 80
+      }
+    ],
+    "unauthorized_actions": 0
+  }
+}

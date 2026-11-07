@@ -1,0 +1,553 @@
+# crawlx production Compose stack (`prod`-shaped single host).
+#
+#   docker/init-compose.sh                       # first start: secrets + docker/.env (once)
+#   docker compose -f docker/docker-compose.yml up -d --build --wait
+#   docker compose -f docker/docker-compose.yml --profile ops run --rm admin status
+#
+# Services: `postgres` (system of record), `migrate` (one-shot `crawlx migrate`), `api`
+# (`crawlx serve`), `worker` (`crawlx worker` + the pinned Chromium, under the Chromium seccomp
+# profile), `minio` + `minio-init` (S3-compatible object store, bucket created once), `gym`
+# (CrawlerGym fixture server, profile `smoke`: staging/CI only, never part of a plain `up`) and
+# `admin` (profile `ops`: `crawlx admin ...` against PostgreSQL and the object store).
+#
+# What the binaries actually consume, and nothing else is set here:
+#   * `CRAWLX_DATABASE_URL_FILE`, `CRAWLX_WEBHOOK_SECRET_FILE` (crawlx-cli `config_check.rs`):
+#     `CRAWLX_API_DATABASE_URL_FILE` names the separate non-owner request role;
+#     the secrets are files under /run/secrets, never environment values or flags;
+#   * `CRAWLX_ENVIRONMENT`, `CRAWLX_LOG`, `TMPDIR`; `CRAWLX_CHROMIUM_PATH` comes from the image;
+#   * `CRAWLX_S3_*` and `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for `crawlx admin --s3-bucket`:
+#     `crawlx serve` and `crawlx worker` use the filesystem artifact store (`--artifacts-dir`),
+#     so they share the `artifacts` volume; the S3 backend is consumed by the admin commands only
+#     (verify-artifacts, sweep-retention), which is why only `admin` carries the S3 settings.
+#   * Artifact custody (every PostgreSQL-backed worker and API process needs it):
+#     `CRAWLX_ARTIFACT_KEY_FILE` (api + worker, the same 64-hex key file) is the artifact key
+#     provider; `CRAWLX_SECRET_REDIS_URL_FILE` (worker only) names the URL of `secret-custody`, a
+#     dedicated volatile Valkey (no RDB/AOF, noeviction, no published port) holding the run-wide
+#     secret registry. The API refuses to write encrypted data and needs no Redis URL. The key
+#     provider is exactly one of the key file or `CRAWLX_ARTIFACT_KMS_KEY_ID`; this stack uses the
+#     key file, so no KMS pass-through is offered (setting both is a startup error). To use AWS KMS
+#     instead, remove `CRAWLX_ARTIFACT_KEY_FILE` and the `artifact_key` secret from `api` and `worker`
+#     (and from `secrets:` below) and set `CRAWLX_ARTIFACT_KMS_KEY_ID: <key id or ARN>` on both.
+#     Never replace the key file, or retire a KMS key, while sealed artifacts exist.
+#
+# Compose variables (all optional; `docker/init-compose.sh` writes docker/.env):
+#   CRAWLX_REGISTRY, CRAWLX_TAG, CRAWLX_CHROMIUM_VERSION  image names (worker tag is
+#                                  <tag>-chromium<version>; helm values.yaml)
+#   CRAWLX_SECRETS_DIR            directory of the secret files (default ./secrets, next to this file)
+#   CRAWLX_GATES_HOST_DIR         host directory mounted read-only as the worker's gates dir (default ./gates)
+#   CRAWLX_API_BIND, CRAWLX_API_PORT   host side of the published API port (default 127.0.0.1:8080)
+#   CRAWLX_API_KEY_SPEC           bootstrap key `tenant=cx_live_<26 base32>` for `crawlx serve --api-key`
+#                                  (the only key provisioning the binary offers); empty = api refuses to start
+#   CRAWLX_S3_BUCKET, CRAWLX_S3_ACCESS_KEY, CRAWLX_S3_SECRET_KEY   object store for `admin`
+#   CRAWLX_LOG                    log filter (RUST_LOG syntax), default info
+#
+# Optional capabilities are separate overlays, never default secret-file requirements:
+# compose.identity.yml, compose.profiles.yml, compose.protocol.yml, compose.delivery.yml.
+# compose.article-language.yml adds an explicitly installed language bundle and native runtime.
+# See docs/ops/README.md for operator provisioning, validation and rotation procedures.
+name: crawlx
+
+x-api-build: &api-build
+  context: ..
+  dockerfile: docker/Dockerfile.api
+
+x-worker-build: &worker-build
+  context: ..
+  dockerfile: docker/Dockerfile.worker
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crawlx
+      POSTGRES_DB: crawlx
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    # synchronous_commit stays on: the intent journal and `actions` live here
+    command: ["postgres", "-c", "synchronous_commit=on"]
+    secrets:
+      - postgres_password
+    volumes:
+      # postgres:18 keeps PGDATA below /var/lib/postgresql/<major>
+      - pgdata:/var/lib/postgresql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crawlx -d crawlx"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging: *logging
+
+  migrate:
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.1.0}
+    build: *api-build
+    # `crawlx migrate` before api and worker; the DDL role's DSN, not the app role's
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      CRAWLX_ENVIRONMENT: prod
+      CRAWLX_DATABASE_URL_FILE: /run/secrets/database_url_migrate
+    secrets:
+      - database_url_migrate
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *logging
+
+  api-role-init:
+    image: postgres:18
+    restart: "no"
+    user: "999:999"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        printf 'postgres:5432:crawlx:crawlx:%s\n' "$$(cat /run/secrets/postgres_password)" > /tmp/pgpass
+        export PGPASSFILE=/tmp/pgpass
+        exec psql --host=postgres --username=crawlx --dbname=crawlx --file=/etc/crawlx/provision-api-role.sql
+    secrets:
+      - postgres_password
+      - postgres_api_password
+    volumes:
+      - ./provision-api-role.sql:/etc/crawlx/provision-api-role.sql:ro
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=1m,mode=1777
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks: [backend]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  artifacts-init:
+    # The filesystem artifact store is one directory shared by `api` and every `worker`
+    # (with the filesystem store they MUST share one --artifacts-dir). A new named
+    # volume is root-owned and the two images ship different uids, so this one-shot gives the
+    # directory to uid 10001 (the worker's own uid, which `api` also runs as below).
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.1.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
+    build: *worker-build
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/bash", "-ceu"]
+    command:
+      - mkdir -p /var/lib/crawlx/artifacts && chown 10001:10001 /var/lib/crawlx/artifacts && chmod 0770 /var/lib/crawlx/artifacts
+    volumes:
+      - artifacts:/var/lib/crawlx/artifacts
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+
+  api:
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.1.0}
+    build: *api-build
+    restart: unless-stopped
+    # Binds the container's own interface (the image default); the host side below is loopback
+    # unless CRAWLX_API_BIND says otherwise. /metrics stays loopback-only inside the container
+    #: the worker-style probe reads it, nothing outside can.
+    command:
+      - serve
+      - --bind=0.0.0.0:8080
+      - --metrics-bind=127.0.0.1:9464
+      - --artifacts-dir=/var/lib/crawlx/artifacts
+      - --api-key=${CRAWLX_API_KEY_SPEC:-}
+    # `crawlx serve` stops on SIGINT only (tokio ctrl_c); SIGTERM would be ignored by PID 1
+    stop_signal: SIGINT
+    stop_grace_period: 30s
+    # same uid as the worker so both can write the shared artifacts volume
+    user: "10001:10001"
+    environment:
+      CRAWLX_ENVIRONMENT: prod
+      CRAWLX_LOG: ${CRAWLX_LOG:-info}
+      CRAWLX_DATABASE_URL_FILE: /run/secrets/database_url
+      CRAWLX_API_DATABASE_URL_FILE: /run/secrets/database_url_api
+      CRAWLX_WEBHOOK_SECRET_FILE: /run/secrets/webhook_signing_key
+      # HTML parse admission budget: 512 MiB ceiling inside the 2G limit below
+      CRAWLX_PARSE_MEMORY_BYTES: "536870912"
+      # artifact key provider: decrypts for reads, never writes encrypted data
+      CRAWLX_ARTIFACT_KEY_FILE: /run/secrets/artifact_key
+    secrets:
+      - database_url
+      - database_url_api
+      - webhook_signing_key
+      - artifact_key
+    volumes:
+      - artifacts:/var/lib/crawlx/artifacts
+    ports:
+      - "${CRAWLX_API_BIND:-127.0.0.1}:${CRAWLX_API_PORT:-8080}:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+      - frontend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      api-role-init:
+        condition: service_completed_successfully
+      artifacts-init:
+        condition: service_completed_successfully
+      # not consumed by `serve` itself (it uses the filesystem store), but this keeps the one-shot
+      # in the dependency graph: `up --wait` rejects a requested one-shot that exited, and the
+      # bucket must exist before `admin --s3-bucket` or a later switch to the S3 store needs it
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # the distroless image has no shell or curl: the probe is a subcommand of the one binary
+      test:
+        - CMD
+        - /usr/local/bin/crawlx
+        - healthcheck
+        - --url=http://127.0.0.1:8080/v0/health/readiness
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2G # 512 MiB parse budget + the 1G the process needed before
+        reservations:
+          memory: 512M
+    logging: *logging
+
+  worker:
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.1.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
+    build: *worker-build
+    restart: unless-stopped
+    command:
+      - worker
+      - --max-sessions=4
+      - --contexts-per-browser=4
+      - --artifacts-dir=/var/lib/crawlx/artifacts
+      - --metrics-bind=127.0.0.1:9464
+    # SIGTERM drains: no new leases, sessions hand over at the next action boundary
+    stop_grace_period: 120s
+    environment:
+      CRAWLX_ENVIRONMENT: prod
+      CRAWLX_LOG: ${CRAWLX_LOG:-info}
+      CRAWLX_DATABASE_URL_FILE: /run/secrets/database_url
+      # Optional host pass-through; unset omits it. AWS credentials use the SDK provider chain.
+      CRAWLX_CHECKPOINT_KMS_KEY_ID:
+      # Artifact custody: the key file (see the header for the KMS alternative) and the
+      # URL of the volatile secret registry; both are required, the worker refuses to start without them
+      CRAWLX_ARTIFACT_KEY_FILE: /run/secrets/artifact_key
+      CRAWLX_SECRET_REDIS_URL_FILE: /run/secrets/secret_custody_redis_url
+      # milestone gate files (gates/README.md): `g1.passed` of the shipped build unlocks the
+      # state_novelty/enablement strategies of dynamic crawls; place it in docker/gates
+      CRAWLX_GATES_DIR: /etc/crawlx/gates
+      TMPDIR: /tmp/crawlx
+      # HTML parse admission budget: input bytes x 500 per parse, refused when full.
+      # 4 GiB + 256 MiB article output + 1.5 GiB tmpfs/shm leaves ~6 GiB of the 12G limit for Chromium.
+      CRAWLX_PARSE_MEMORY_BYTES: "4294967296"
+      # Dockerfile.worker sets HOME=/nonexistent; Chromium (crashpad) aborts at start unless its
+      # config directory is writable (checked: exit 133 `--database is required`), and the root is read-only
+      HOME: /tmp/crawlx/home
+    secrets:
+      - database_url
+      - artifact_key
+      - secret_custody_redis_url
+    volumes:
+      - artifacts:/var/lib/crawlx/artifacts
+      - ${CRAWLX_GATES_HOST_DIR:-./gates}:/etc/crawlx/gates:ro
+    # Worker posture: read-only root, no capabilities, no privilege escalation, the
+    # crawlx-chromium seccomp profile (user namespaces for Chromium's own sandbox, nothing wider;
+    # `--no-sandbox` is never passed), Chromium profiles on tmpfs, a *sized* /dev/shm and the 4096 pid cap
+    security_opt:
+      - seccomp=./seccomp/crawlx-chromium.json
+      - no-new-privileges:true
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp/crawlx:size=512m,mode=0700,uid=10001,gid=10001
+    shm_size: 1gb
+    networks:
+      - backend
+      - frontend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      artifacts-init:
+        condition: service_completed_successfully
+      secret-custody:
+        condition: service_healthy
+    healthcheck:
+      # the worker's loopback metrics listener answers while the process is up
+      test:
+        - CMD
+        - /usr/local/bin/crawlx
+        - healthcheck
+        - --url=http://127.0.0.1:9464/metrics
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 12G # 4 GiB parse budget + 256 MiB article output + 1.5 GiB tmpfs/shm + Chromium
+          pids: 4096
+        reservations:
+          memory: 8G
+    logging: *logging
+
+  secret-custody:
+    # Dedicated volatile secret registry: a persistence-disabled Valkey (no RDB, no AOF,
+    # no replicas, positive maxmemory, noeviction), separate from any ZDR delivery Redis, reachable
+    # on the internal `backend` network only and never published. Its data lives in memory alone: a
+    # restart loses every run's secret authority, after which durable content writes of those runs
+    # fail closed until the run ends. The ACL file is generated into a private tmpfs from the mounted
+    # password secret; the password never appears in an argument or an environment variable.
+    image: valkey/valkey:8.1.3-alpine
+    restart: unless-stopped
+    user: "10001:10001"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        printf 'user default on >%s ~crawlx:secrets:* &* -@all +@read +@write +@keyspace +@scripting +@connection +time +info +config|get\n' "$$(cat /run/secrets/secret_custody_redis_password)" > /tmp/users.acl
+        exec valkey-server --bind 0.0.0.0 --protected-mode yes --save "" --appendonly no --maxmemory 256mb --maxmemory-policy noeviction --dir /tmp --aclfile /tmp/users.acl
+    secrets:
+      - secret_custody_redis_password
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m,uid=10001,gid=10001,mode=0700
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/secret_custody_redis_password)\" valkey-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *logging
+
+  minio:
+    # Same pinned image as the CI integration job (`bitnamilegacy/minio`: the upstream
+    # `minio/minio` images are no longer published). S3 API on :9000, console on :9001, neither published.
+    image: bitnamilegacy/minio:2025.7.23
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    volumes:
+      - miniodata:/bitnami/minio/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *logging
+
+  minio-init:
+    # one-shot: create the artifact bucket (versioning on) once MinIO answers. The
+    # bitnami entrypoint runs a throwaway MinIO for its setup, stops it and starts the real one, and
+    # /minio/health/live already answers during the first: the alias is retried across that restart.
+    image: bitnamilegacy/minio:2025.7.23
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ceu"]
+    command:
+      - |
+        tries=0
+        until mc alias set local http://minio:9000 "$$(cat /run/secrets/minio_root_user)" "$$(cat /run/secrets/minio_root_password)"; do
+          tries=$$((tries + 1))
+          [ "$$tries" -lt 30 ] || { echo "minio did not accept the root credentials" >&2; exit 1; }
+          sleep 1
+        done
+        mc mb --ignore-existing "local/$${BUCKET}"
+        mc version enable "local/$${BUCKET}"
+    environment:
+      BUCKET: ${CRAWLX_S3_BUCKET:-crawlx-artifacts}
+      MC_CONFIG_DIR: /tmp/mc
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    tmpfs:
+      - /tmp/mc:size=8m,mode=0700,uid=1001,gid=0
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    depends_on:
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *logging
+
+  admin:
+    # `docker compose --profile ops run --rm admin <subcommand> [flags]` runs `crawlx admin <subcommand>`;
+    # with no arguments it prints the status. Examples: `verify-artifacts --s3-bucket crawlx-artifacts`,
+    # `sweep-retention --artifacts-dir /var/lib/crawlx/artifacts`, `workers`, `drain --admission`.
+    profiles: [ops]
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-api:${CRAWLX_TAG:-v0.1.0}
+    build: *api-build
+    restart: "no"
+    entrypoint: ["/usr/local/bin/crawlx", "admin"]
+    command: ["status"]
+    user: "10001:10001"
+    environment:
+      CRAWLX_ENVIRONMENT: prod
+      CRAWLX_DATABASE_URL_FILE: /run/secrets/database_url
+      CRAWLX_S3_ENDPOINT: http://minio:9000
+      CRAWLX_S3_BUCKET: ${CRAWLX_S3_BUCKET:-crawlx-artifacts}
+      CRAWLX_S3_REGION: us-east-1
+      CRAWLX_S3_PATH_STYLE: "1"
+      # `S3Blobs::new` reads these two from the environment only (no `*_FILE` form)
+      AWS_ACCESS_KEY_ID: ${CRAWLX_S3_ACCESS_KEY:-}
+      AWS_SECRET_ACCESS_KEY: ${CRAWLX_S3_SECRET_KEY:-}
+    secrets:
+      - database_url
+    volumes:
+      - artifacts:/var/lib/crawlx/artifacts
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  gym:
+    # CrawlerGym fixture server for staging/CI only (never in production). Part of
+    # the stack only with `--profile smoke`; ci/compose-smoke.sh crawls it through the API.
+    profiles: [smoke]
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-gym:${CRAWLX_TAG:-v0.1.0}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gym
+      args:
+        # the `debug` flavour of the same distroless base adds /busybox/wget for the healthcheck
+        BASE_IMAGE: gcr.io/distroless/cc-debian12:debug-nonroot
+    restart: "no"
+    # gym-server stops on SIGINT only (tokio ctrl_c)
+    stop_signal: SIGINT
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *logging
+
+networks:
+  # PostgreSQL and MinIO live here and nowhere else: no route out, none in from the host
+  backend:
+    internal: true
+  # what `api` publishes through and what `worker` reaches targets over
+  frontend: {}
+
+volumes:
+  pgdata: {}
+  miniodata: {}
+  artifacts: {}
+
+secrets:
+  postgres_password:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/postgres_password
+  postgres_api_password:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/postgres_api_password
+  database_url_api:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/database_url_api
+  database_url:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/database_url
+  database_url_migrate:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/database_url_migrate
+  webhook_signing_key:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/webhook_signing_key
+  minio_root_user:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/minio_root_user
+  minio_root_password:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/minio_root_password
+  secret_custody_redis_password:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/secret_custody_redis_password
+  secret_custody_redis_url:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/secret_custody_redis_url
+  artifact_key:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/artifact_key

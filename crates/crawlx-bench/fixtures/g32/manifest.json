@@ -1,0 +1,562 @@
+{
+  "id": "g32",
+  "title": "Security crawl-maze: every way a document can reference a resource",
+  "version": 1,
+  "url_path": "/g32/",
+  "controls": [],
+  "expected": {
+    "operations": [
+      "GET /robots.txt",
+      "GET /g32/sitemap.xml"
+    ],
+    "unauthorized_actions": 0,
+    "crawl_maze": [
+      {
+        "path": "/css/font-face.found",
+        "category": "css",
+        "plane": "static",
+        "page": "css/font-face.css"
+      },
+      {
+        "path": "/headers/content-location.found",
+        "category": "headers",
+        "plane": "static",
+        "page": "headers/content-location.html"
+      },
+      {
+        "path": "/headers/link.found",
+        "category": "headers",
+        "plane": "static",
+        "page": "headers/link.html"
+      },
+      {
+        "path": "/headers/location.found",
+        "category": "headers",
+        "plane": "static",
+        "page": "headers/location.html"
+      },
+      {
+        "path": "/headers/refresh.found",
+        "category": "headers",
+        "plane": "static",
+        "page": "headers/refresh.html"
+      },
+      {
+        "path": "/html/doctype.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/doctype.html"
+      },
+      {
+        "path": "/html/manifest.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/manifest.html"
+      },
+      {
+        "path": "/html/body/background.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/background.html"
+      },
+      {
+        "path": "/html/body/a/href.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/a/href.html"
+      },
+      {
+        "path": "/html/body/a/ping.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/a/ping.html"
+      },
+      {
+        "path": "/html/body/audio/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/audio/src.html"
+      },
+      {
+        "path": "/html/body/audio/source/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/audio/source/src.html"
+      },
+      {
+        "path": "/html/body/audio/source/srcset1x.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/audio/source/srcset.html"
+      },
+      {
+        "path": "/html/body/audio/source/srcset2x.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/audio/source/srcset.html"
+      },
+      {
+        "path": "/html/body/applet/archive.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/applet/archive.html"
+      },
+      {
+        "path": "/html/body/applet/codebase.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/applet/codebase.html"
+      },
+      {
+        "path": "/html/body/blockquote/cite.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/blockquote/cite.html"
+      },
+      {
+        "path": "/html/body/embed/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/embed/src.html"
+      },
+      {
+        "path": "/html/body/form/action-get.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/form/action-get.html"
+      },
+      {
+        "path": "/html/body/form/action-post.found",
+        "category": "html",
+        "plane": "browser",
+        "page": "html/body/form/action-post.html"
+      },
+      {
+        "path": "/html/body/form/button/formaction.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/form/button/formaction.html"
+      },
+      {
+        "path": "/html/body/frameset/frame/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/frameset/frame/src.html"
+      },
+      {
+        "path": "/html/body/iframe/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/iframe/src.html"
+      },
+      {
+        "path": "/html/body/iframe/srcdoc.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/iframe/srcdoc.html"
+      },
+      {
+        "path": "/html/body/img/dynsrc.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/img/dynsrc.html"
+      },
+      {
+        "path": "/html/body/img/lowsrc.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/img/lowsrc.html"
+      },
+      {
+        "path": "/html/body/img/longdesc.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/img/longdesc.html"
+      },
+      {
+        "path": "/html/body/img/src-data.found",
+        "category": "html",
+        "plane": "deferred",
+        "page": "html/body/img/src-data.html"
+      },
+      {
+        "path": "/html/body/img/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/img/src.html"
+      },
+      {
+        "path": "/html/body/img/srcset1x.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/img/srcset.html"
+      },
+      {
+        "path": "/html/body/img/srcset2x.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/img/srcset.html"
+      },
+      {
+        "path": "/html/body/input/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/input/src.html"
+      },
+      {
+        "path": "/html/body/isindex/action.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/isindex/action.html"
+      },
+      {
+        "path": "/html/body/map/area/ping.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/map/area/ping.html"
+      },
+      {
+        "path": "/html/body/object/data.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/object/data.html"
+      },
+      {
+        "path": "/html/body/object/codebase.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/object/codebase.html"
+      },
+      {
+        "path": "/html/body/object/param/value.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/object/param/value.html"
+      },
+      {
+        "path": "/html/body/script/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/script/src.html"
+      },
+      {
+        "path": "/html/body/svg/image/xlink.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/svg/image/xlink.html"
+      },
+      {
+        "path": "/html/body/svg/script/xlink.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/svg/script/xlink.html"
+      },
+      {
+        "path": "/html/body/table/background.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/table/background.html"
+      },
+      {
+        "path": "/html/body/table/td/background.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/table/td/background.html"
+      },
+      {
+        "path": "/html/body/video/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/video/src.html"
+      },
+      {
+        "path": "/html/body/video/track/src.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/video/track/src.html"
+      },
+      {
+        "path": "/html/body/video/poster.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/body/video/poster.html"
+      },
+      {
+        "path": "/html/head/profile.found",
+        "category": "html",
+        "plane": "deferred",
+        "page": "html/head/profile.html"
+      },
+      {
+        "path": "/html/head/base/href.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/head/base/href.html"
+      },
+      {
+        "path": "/html/head/comment-conditional.found",
+        "category": "html",
+        "plane": "deferred",
+        "page": "html/head/comment-conditional.html"
+      },
+      {
+        "path": "/html/head/import/implementation.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/head/import/implementation.html"
+      },
+      {
+        "path": "/html/head/link/href.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/head/link/href.html"
+      },
+      {
+        "path": "/html/head/meta/content-csp.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/head/meta/content-csp.html"
+      },
+      {
+        "path": "/html/head/meta/content-pinned-websites.found",
+        "category": "html",
+        "plane": "deferred",
+        "page": "html/head/meta/content-pinned-websites.html"
+      },
+      {
+        "path": "/html/head/meta/content-reading-view.found",
+        "category": "html",
+        "plane": "deferred",
+        "page": "html/head/meta/content-reading-view.html"
+      },
+      {
+        "path": "/html/head/meta/content-redirect.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/head/meta/content-redirect.html"
+      },
+      {
+        "path": "/html/misc/url/full-url.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/url/full-url.html"
+      },
+      {
+        "path": "/html/misc/url/path-relative-url.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/url/path-relative-url.html"
+      },
+      {
+        "path": "/html/misc/url/protocol-relative-url.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/url/protocol-relative-url.html"
+      },
+      {
+        "path": "/html/misc/url/root-relative-url.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/url/root-relative-url.html"
+      },
+      {
+        "path": "/html/misc/string/dot-dot-slash-prefix.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/string/dot-dot-slash-prefix.html"
+      },
+      {
+        "path": "/html/misc/string/dot-slash-prefix.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/string/dot-slash-prefix.html"
+      },
+      {
+        "path": "/html/misc/string/url-string.found",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/string/url-string.html"
+      },
+      {
+        "path": "/html/misc/string/string-known-extension.pdf",
+        "category": "html",
+        "plane": "static",
+        "page": "html/misc/string/string-known-extension.html"
+      },
+      {
+        "path": "/javascript/misc/automatic-post.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/misc/automatic-post.html"
+      },
+      {
+        "path": "/javascript/misc/comment.found",
+        "category": "javascript",
+        "plane": "static",
+        "page": "javascript/misc/comment.js"
+      },
+      {
+        "path": "/javascript/misc/string-variable.found",
+        "category": "javascript",
+        "plane": "static",
+        "page": "javascript/misc/string-variable.js"
+      },
+      {
+        "path": "/javascript/misc/string-concat-variable.found",
+        "category": "javascript",
+        "plane": "static",
+        "page": "javascript/misc/string-concat-variable.js"
+      },
+      {
+        "path": "/javascript/frameworks/angular/event-handler.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/frameworks/angular/event-handler.html"
+      },
+      {
+        "path": "/javascript/frameworks/angular/router-outlet.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/frameworks/angular/router-outlet.html"
+      },
+      {
+        "path": "/javascript/frameworks/angularjs/ng-href.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/frameworks/angularjs/ng-href.html"
+      },
+      {
+        "path": "/javascript/frameworks/polymer/event-handler.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/frameworks/polymer/event-handler.html"
+      },
+      {
+        "path": "/javascript/frameworks/polymer/polymer-router.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/frameworks/polymer/polymer-router.html"
+      },
+      {
+        "path": "/javascript/frameworks/react/route-path.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/frameworks/react/route-path.html"
+      },
+      {
+        "path": "/javascript/frameworks/react/index.html/search.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/frameworks/react/search.html"
+      },
+      {
+        "path": "/javascript/interactive/js-delete.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/js-delete.html"
+      },
+      {
+        "path": "/javascript/interactive/js-post.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/js-post.html"
+      },
+      {
+        "path": "/javascript/interactive/js-post-event-listener.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/js-post-event-listener.html"
+      },
+      {
+        "path": "/javascript/interactive/js-put.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/js-put.html"
+      },
+      {
+        "path": "/javascript/interactive/listener-and-event-attribute-first.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/listener-and-event-attribute.html"
+      },
+      {
+        "path": "/javascript/interactive/listener-and-event-attribute-second.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/listener-and-event-attribute.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-event-attribute.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-event-attribute.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-event-listener-div-dom.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-event-listener-div-dom.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-event-listener-div.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-event-listener-div.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-event-listener-dom.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-event-listener-dom.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-event-listener.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-event-listener.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-redefine-event-attribute.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-redefine-event-attribute.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-remove-button.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-remove-button.html"
+      },
+      {
+        "path": "/javascript/interactive/multi-step-request-remove-event-listener.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/multi-step-request-remove-event-listener.html"
+      },
+      {
+        "path": "/javascript/interactive/two-listeners-first.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/two-listeners.html"
+      },
+      {
+        "path": "/javascript/interactive/two-listeners-second.found",
+        "category": "javascript",
+        "plane": "browser",
+        "page": "javascript/interactive/two-listeners.html"
+      },
+      {
+        "path": "/misc/known-files/robots.txt.found",
+        "category": "misc",
+        "plane": "static",
+        "page": "misc/known-files/robots.txt.html"
+      },
+      {
+        "path": "/misc/known-files/sitemap.xml.found",
+        "category": "misc",
+        "plane": "static",
+        "page": "misc/known-files/sitemap.xml.html"
+      }
+    ]
+  }
+}

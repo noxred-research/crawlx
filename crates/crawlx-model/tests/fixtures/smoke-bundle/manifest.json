@@ -1,0 +1,29 @@
+{
+  "model_id": "crawlx-smoke",
+  "version": "smoke-1",
+  "opset": 18,
+  "checkpoint_digest": "",
+  "max_seq_len": 16,
+  "max_options": 4,
+  "max_alternative_tokens": 6,
+  "inputs": {
+    "input_ids": "input_ids",
+    "attention_mask": "attention_mask"
+  },
+  "output": "logits",
+  "option_markers": {
+    "scheme": "numbered-v1",
+    "cls": "[CLS]",
+    "sep": "[SEP]",
+    "pad": "[PAD]",
+    "unk": "[UNK]",
+    "option_prefix": "[OPT_",
+    "option_suffix": "]"
+  },
+  "row_signals": ["tried"],
+  "files": {
+    "calibration.json": "c0fc3d2dce92c4e4b5cd3c321d4362627d441b59b82fb507019b9e792e685b9b",
+    "model.onnx": "44e49c53585fe7c281d6b9a15c4a2a8bf6c4e7f410d7e7e31045e5d6e8bb6f23",
+    "tokenizer.json": "b5365477cc28835f5a16a819b67cb611f735e00f2e197871fccb8b79a44dbc0e"
+  }
+}

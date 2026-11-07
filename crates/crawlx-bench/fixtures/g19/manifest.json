@@ -1,0 +1,25 @@
+{
+  "id": "g19",
+  "title": "Timer-revealed controls (false enablement; catalog G10)",
+  "version": 1,
+  "url_path": "/g19/",
+  "controls": [
+    {"id": "trigger", "selector": "#trigger", "role": "button", "name": "Trigger", "logical_id": "trigger"},
+    {"id": "t1", "selector": "#t1", "role": "button", "name": "Timer one", "logical_id": "t1", "reveal_after_ms": 1000},
+    {"id": "t2", "selector": "#t2", "role": "button", "name": "Timer two", "logical_id": "t2", "reveal_after_ms": 3000},
+    {"id": "t3", "selector": "#t3", "role": "button", "name": "Timer three", "logical_id": "t3", "reveal_after_ms": 7000},
+    {"id": "t4", "selector": "#t4", "role": "button", "name": "Timer four", "logical_id": "t4", "reveal_after_ms": 1000},
+    {"id": "t5", "selector": "#t5", "role": "button", "name": "Timer five", "logical_id": "t5", "reveal_after_ms": 3000}
+  ],
+  "expected": {
+    "enablement": [
+      {"requires": ["trigger"], "target": "t1", "kind": "spurious"},
+      {"requires": ["trigger"], "target": "t2", "kind": "spurious"},
+      {"requires": ["trigger"], "target": "t4", "kind": "spurious"},
+      {"requires": ["trigger"], "target": "t5", "kind": "spurious"}
+    ],
+    "operations": [],
+    "target_recall_min": 1.0,
+    "target_precision_min": 1.0
+  }
+}

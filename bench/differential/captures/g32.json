@@ -1,0 +1,1903 @@
+{
+  "completed": 103,
+  "completedAt": "2026-10-28T06:26:11.274Z",
+  "crawlxSample": {
+    "family": "g32",
+    "job": "01a1812f-f372-724f-850c-1befea373e4f",
+    "provenance": "black_box_run",
+    "request": {
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/g32/",
+    "statusPages": 2,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T06:26:05.810Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [
+        "http://gym.test:4101/g32/css/",
+        "http://gym.test:4101/g32/headers/",
+        "http://gym.test:4101/g32/html/",
+        "http://gym.test:4101/g32/javascript/",
+        "http://gym.test:4101/g32/misc/"
+      ],
+      "markdown": "Security crawl-maze reproduction\n================================\n\nOne page per linking construct; every expected endpoint lives under `/g32/test/` and answers 200. Categories:\n\n*   [css](http://gym.test:4101/g32/css/)\n     \u2014 font-face source in a stylesheet\n*   [headers](http://gym.test:4101/g32/headers/)\n     \u2014 Content-Location, Link, Location, Refresh\n*   [html](http://gym.test:4101/g32/html/)\n     \u2014 doctype, manifest, body and head constructs, inline URL strings\n*   [javascript](http://gym.test:4101/g32/javascript/)\n     \u2014 script strings and comments, framework-style bindings, click-driven requests\n*   [misc](http://gym.test:4101/g32/misc/)\n     \u2014 robots.txt and sitemap.xml known files",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f461-76e8-9aa5-68161c954643",
+        "sourceURL": "http://gym.test:4101/g32/",
+        "statusCode": 200,
+        "title": "G32 crawl-maze",
+        "url": "http://gym.test:4101/g32/"
+      },
+      "rawHtmlBytes": 4985,
+      "rawHtmlSha256": "8db5ddbfc8ca482b8dccac2d20492ee0c2f88810be73cc784e15a51eee5c2935"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/css/font-face.html"
+      ],
+      "markdown": "css cases\n=========\n\n*   [css/font-face.html](http://gym.test:4101/g32/css/font-face.html)\n     \u2014 font-face source in a linked stylesheet",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f55d-736c-a71c-1c8dbc2b0064",
+        "sourceURL": "http://gym.test:4101/g32/css/",
+        "statusCode": 200,
+        "title": "crawl-maze: css cases",
+        "url": "http://gym.test:4101/g32/css/"
+      },
+      "rawHtmlBytes": 264,
+      "rawHtmlSha256": "b304bbed1555aeb4003af01ec811641637eff43bef05f7f90414124705d2971c"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/headers/content-location.html",
+        "http://gym.test:4101/g32/headers/link.html",
+        "http://gym.test:4101/g32/headers/location.html",
+        "http://gym.test:4101/g32/headers/refresh.html"
+      ],
+      "markdown": "headers cases\n=============\n\n*   [headers/content-location.html](http://gym.test:4101/g32/headers/content-location.html)\n     \u2014 Content-Location header\n*   [headers/link.html](http://gym.test:4101/g32/headers/link.html)\n     \u2014 Link header\n*   [headers/location.html](http://gym.test:4101/g32/headers/location.html)\n     \u2014 Location header (301)\n*   [headers/refresh.html](http://gym.test:4101/g32/headers/refresh.html)\n     \u2014 Refresh header",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f56b-7755-bf87-86e36a7089d8",
+        "sourceURL": "http://gym.test:4101/g32/headers/",
+        "statusCode": 200,
+        "title": "crawl-maze: headers cases",
+        "url": "http://gym.test:4101/g32/headers/"
+      },
+      "rawHtmlBytes": 545,
+      "rawHtmlSha256": "716166ac41595e34895e3f8f086a2a7620464036a46cd0f50e608a0c48fa09b1"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/misc/known-files/robots.txt.html",
+        "http://gym.test:4101/g32/misc/known-files/sitemap.xml.html"
+      ],
+      "markdown": "misc cases\n==========\n\n*   [misc/known-files/robots.txt.html](http://gym.test:4101/g32/misc/known-files/robots.txt.html)\n     \u2014 robots.txt Allow path\n*   [misc/known-files/sitemap.xml.html](http://gym.test:4101/g32/misc/known-files/sitemap.xml.html)\n     \u2014 sitemap.xml entry",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f588-7429-8f8b-0488aea9166e",
+        "sourceURL": "http://gym.test:4101/g32/misc/",
+        "statusCode": 200,
+        "title": "crawl-maze: misc cases",
+        "url": "http://gym.test:4101/g32/misc/"
+      },
+      "rawHtmlBytes": 394,
+      "rawHtmlSha256": "615b7501ad28f85a4867cc347506765ffa743c932449c991b2f11c521bf86de1"
+    },
+    {
+      "links": [],
+      "markdown": "css font-face\n=============\n\nThe linked stylesheet declares a font face whose source must be found.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f6b7-7445-82b5-2e16bc3a1bff",
+        "sourceURL": "http://gym.test:4101/g32/css/font-face.html",
+        "statusCode": 200,
+        "title": "crawl-maze: css font-face",
+        "url": "http://gym.test:4101/g32/css/font-face.html"
+      },
+      "rawHtmlBytes": 295,
+      "rawHtmlSha256": "b296a3ebe93e05aa209413b7d4f6b8ef0219d99be612d6a91a412c8ea190f0a9"
+    },
+    {
+      "links": [],
+      "markdown": "headers Content-Location\n========================\n\nThe response carries a `Content-Location` header.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f6c0-70b9-99d9-c7bc11c031d3",
+        "sourceURL": "http://gym.test:4101/g32/headers/content-location.html",
+        "statusCode": 201,
+        "title": "crawl-maze: headers Content-Location",
+        "url": "http://gym.test:4101/g32/headers/content-location.html"
+      },
+      "rawHtmlBytes": 241,
+      "rawHtmlSha256": "4e1a4b696744ecfcee8b1e129e30f3d91805799c6a21a0f80428d5d69bd6f36a"
+    },
+    {
+      "links": [],
+      "markdown": "headers Link\n============\n\nThe response carries a `Link` header with `rel=preload`.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f6d4-726c-b7cf-3271b794c315",
+        "sourceURL": "http://gym.test:4101/g32/headers/link.html",
+        "statusCode": 200,
+        "title": "crawl-maze: headers Link",
+        "url": "http://gym.test:4101/g32/headers/link.html"
+      },
+      "rawHtmlBytes": 235,
+      "rawHtmlSha256": "e331bcf397cf38371afffdab95b9f3d95acabdca5688df0efd8194069f174487"
+    },
+    {
+      "links": [],
+      "markdown": "found /headers/location.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f6dc-7108-b766-0d61a71b635f",
+        "sourceURL": "http://gym.test:4101/g32/headers/location.html",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/headers/location.found"
+      },
+      "rawHtmlBytes": 30,
+      "rawHtmlSha256": "c999d93667c255d21c1f67e77fca3174ba1f270ab9634ec8ab820f9a74013ad1"
+    },
+    {
+      "links": [],
+      "markdown": "headers Refresh\n===============\n\nThe response carries a `Refresh` header with a long delay.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f6e6-720c-8958-780351067fb5",
+        "sourceURL": "http://gym.test:4101/g32/headers/refresh.html",
+        "statusCode": 200,
+        "title": "crawl-maze: headers Refresh",
+        "url": "http://gym.test:4101/g32/headers/refresh.html"
+      },
+      "rawHtmlBytes": 232,
+      "rawHtmlSha256": "66ca47bcf7a785db28a70f0e78c9719a489f385d2e6bf5b3919e51d5b00da41e"
+    },
+    {
+      "links": [],
+      "markdown": "html doctype\n============\n\nThe doctype names a system identifier.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f6fd-7128-8a83-8c82216fcf5a",
+        "sourceURL": "http://gym.test:4101/g32/html/doctype.html",
+        "statusCode": 200,
+        "title": "crawl-maze: html doctype",
+        "url": "http://gym.test:4101/g32/html/doctype.html"
+      },
+      "rawHtmlBytes": 231,
+      "rawHtmlSha256": "83eab77665fefe1c2eaf0c3222d37e4b781d3b92689795d80264c8e10050ba63"
+    },
+    {
+      "links": [],
+      "markdown": "html manifest\n=============\n\nThe html element names an application-cache manifest.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f709-7239-b9fd-9ec42538fb50",
+        "sourceURL": "http://gym.test:4101/g32/html/manifest.html",
+        "statusCode": 200,
+        "title": "crawl-maze: html manifest",
+        "url": "http://gym.test:4101/g32/html/manifest.html"
+      },
+      "rawHtmlBytes": 251,
+      "rawHtmlSha256": "4ce0f2ef6ce7b68287773fe0a8c6a3ff529008f8013bb76bcf2027964f9d5ab5"
+    },
+    {
+      "links": [],
+      "markdown": "body background\n===============\n\nThe body element names a background image.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f716-74a8-8650-c42991804be9",
+        "sourceURL": "http://gym.test:4101/g32/html/body/background.html",
+        "statusCode": 200,
+        "title": "crawl-maze: body background",
+        "url": "http://gym.test:4101/g32/html/body/background.html"
+      },
+      "rawHtmlBytes": 253,
+      "rawHtmlSha256": "317cedb9b5f9d477cb1dcabed1b0ecaf41afc3508616ffaf61a6f8f363fd17dd"
+    },
+    {
+      "links": [],
+      "markdown": "javascript automatic POST\n=========================\n\nA POST request is sent shortly after the page opens.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f717-76d8-baa8-9282949466a2",
+        "sourceURL": "http://gym.test:4101/g32/javascript/misc/automatic-post.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript automatic POST",
+        "url": "http://gym.test:4101/g32/javascript/misc/automatic-post.html"
+      },
+      "rawHtmlBytes": 361,
+      "rawHtmlSha256": "b88264d306c2b16d91aa323bdd00a31c400d06fe6187e9fba78c1a2a0cbd3205"
+    },
+    {
+      "links": [],
+      "markdown": "misc known file robots.txt\n==========================\n\nThe origin's `/robots.txt` lists an `Allow:` path that only a crawler reading robots can find.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f714-72c0-a9d5-a2d51dc590cf",
+        "sourceURL": "http://gym.test:4101/g32/misc/known-files/robots.txt.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc known file robots.txt",
+        "url": "http://gym.test:4101/g32/misc/known-files/robots.txt.html"
+      },
+      "rawHtmlBytes": 301,
+      "rawHtmlSha256": "ad91f4ba053c4094e7f8c9eb36ff7c357430ae0fd44c327a9eaf25ddf3fbb4d4"
+    },
+    {
+      "links": [],
+      "markdown": "javascript comment\n==================\n\nThe external script mentions a URL in a comment.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f728-7748-814c-ef932e0deb51",
+        "sourceURL": "http://gym.test:4101/g32/javascript/misc/comment.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript comment",
+        "url": "http://gym.test:4101/g32/javascript/misc/comment.html"
+      },
+      "rawHtmlBytes": 272,
+      "rawHtmlSha256": "8071a4fde7debc9f98c00762e755ea276826f5c3e5f08befba82b18b9d28703f"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/test/html/body/a/href.found"
+      ],
+      "markdown": "a href\n======\n\n[a plain link](http://gym.test:4101/g32/test/html/body/a/href.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f720-754c-843e-16f0444ce785",
+        "sourceURL": "http://gym.test:4101/g32/html/body/a/href.html",
+        "statusCode": 200,
+        "title": "crawl-maze: a href",
+        "url": "http://gym.test:4101/g32/html/body/a/href.html"
+      },
+      "rawHtmlBytes": 204,
+      "rawHtmlSha256": "18d53abce0b5eee796ca94b2e0359685f2cdd3078e50d281dd0576c9cf0740cd"
+    },
+    {
+      "links": [],
+      "markdown": "misc known file sitemap.xml\n===========================\n\nThe origin's `/robots.txt` names `/g32/sitemap.xml`, which lists a page nothing links to.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f728-76fd-b67f-9aaf7669211c",
+        "sourceURL": "http://gym.test:4101/g32/misc/known-files/sitemap.xml.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc known file sitemap.xml",
+        "url": "http://gym.test:4101/g32/misc/known-files/sitemap.xml.html"
+      },
+      "rawHtmlBytes": 298,
+      "rawHtmlSha256": "34c4706904a73bca546a0dcc85e99248183d8559e2597c4a72f40b842b0581d3"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/html/body/a/ping.html#"
+      ],
+      "markdown": "a ping\n======\n\n[a link whose ping attribute names an auditing URL](http://gym.test:4101/g32/html/body/a/ping.html#)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f732-7449-8e1e-ce8492a13dc0",
+        "sourceURL": "http://gym.test:4101/g32/html/body/a/ping.html",
+        "statusCode": 200,
+        "title": "crawl-maze: a ping",
+        "url": "http://gym.test:4101/g32/html/body/a/ping.html"
+      },
+      "rawHtmlBytes": 250,
+      "rawHtmlSha256": "5834aa334c6a46465d62df7a94950a8155f5366dbd7728cf4dc5f3b751ad32bb"
+    },
+    {
+      "links": [],
+      "markdown": "javascript string variable\n==========================\n\nThe external script stores a URL in a variable and never uses it.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f73a-72af-a1f9-da62624b82d5",
+        "sourceURL": "http://gym.test:4101/g32/javascript/misc/string-variable.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript string variable",
+        "url": "http://gym.test:4101/g32/javascript/misc/string-variable.html"
+      },
+      "rawHtmlBytes": 313,
+      "rawHtmlSha256": "5323d4432be4e80a1528d506e604ecb88a4c825ba0940a0ec17e02fffbe170de"
+    },
+    {
+      "links": [],
+      "markdown": "audio src\n=========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f742-72ae-a8f0-1b60646b6b24",
+        "sourceURL": "http://gym.test:4101/g32/html/body/audio/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: audio src",
+        "url": "http://gym.test:4101/g32/html/body/audio/src.html"
+      },
+      "rawHtmlBytes": 213,
+      "rawHtmlSha256": "49bf60ff446c06f11bc50cb622e2093634d2782d5f85d54650f05764e3260b20"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/javascript/misc/automatic-post.html",
+        "http://gym.test:4101/g32/javascript/misc/comment.html",
+        "http://gym.test:4101/g32/javascript/misc/string-variable.html",
+        "http://gym.test:4101/g32/javascript/misc/string-concat-variable.html",
+        "http://gym.test:4101/g32/javascript/frameworks/angular/event-handler.html",
+        "http://gym.test:4101/g32/javascript/frameworks/angular/router-outlet.html",
+        "http://gym.test:4101/g32/javascript/frameworks/angularjs/ng-href.html",
+        "http://gym.test:4101/g32/javascript/frameworks/polymer/event-handler.html",
+        "http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html",
+        "http://gym.test:4101/g32/javascript/frameworks/react/route-path.html",
+        "http://gym.test:4101/g32/javascript/frameworks/react/search.html",
+        "http://gym.test:4101/g32/javascript/interactive/js-delete.html",
+        "http://gym.test:4101/g32/javascript/interactive/js-post.html",
+        "http://gym.test:4101/g32/javascript/interactive/js-post-event-listener.html",
+        "http://gym.test:4101/g32/javascript/interactive/js-put.html",
+        "http://gym.test:4101/g32/javascript/interactive/listener-and-event-attribute.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-attribute.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div-dom.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-dom.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-redefine-event-attribute.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-button.html",
+        "http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-event-listener.html",
+        "http://gym.test:4101/g32/javascript/interactive/two-listeners.html"
+      ],
+      "markdown": "javascript cases\n================\n\n*   [javascript/misc/automatic-post.html](http://gym.test:4101/g32/javascript/misc/automatic-post.html)\n     \u2014 automatic POST after load\n*   [javascript/misc/comment.html](http://gym.test:4101/g32/javascript/misc/comment.html)\n     \u2014 URL in a script comment\n*   [javascript/misc/string-variable.html](http://gym.test:4101/g32/javascript/misc/string-variable.html)\n     \u2014 URL in a string variable\n*   [javascript/misc/string-concat-variable.html](http://gym.test:4101/g32/javascript/misc/string-concat-variable.html)\n     \u2014 URL built by string concatenation\n*   [javascript/frameworks/angular/event-handler.html](http://gym.test:4101/g32/javascript/frameworks/angular/event-handler.html)\n     \u2014 framework event binding\n*   [javascript/frameworks/angular/router-outlet.html](http://gym.test:4101/g32/javascript/frameworks/angular/router-outlet.html)\n     \u2014 framework router outlet\n*   [javascript/frameworks/angularjs/ng-href.html](http://gym.test:4101/g32/javascript/frameworks/angularjs/ng-href.html)\n     \u2014 framework computed href\n*   [javascript/frameworks/polymer/event-handler.html](http://gym.test:4101/g32/javascript/frameworks/polymer/event-handler.html)\n     \u2014 custom element handler in a shadow root\n*   [javascript/frameworks/polymer/polymer-router.html](http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html)\n     \u2014 hash router\n*   [javascript/frameworks/react/route-path.html](http://gym.test:4101/g32/javascript/frameworks/react/route-path.html)\n     \u2014 client-side route path\n*   [javascript/frameworks/react/search.html](http://gym.test:4101/g32/javascript/frameworks/react/search.html)\n     \u2014 controlled search form\n*   [javascript/interactive/js-delete.html](http://gym.test:4101/g32/javascript/interactive/js-delete.html)\n     \u2014 DELETE on click\n*   [javascript/interactive/js-post.html](http://gym.test:4101/g32/javascript/interactive/js-post.html)\n     \u2014 POST on click (event attribute)\n*   [javascript/interactive/js-post-event-listener.html](http://gym.test:4101/g32/javascript/interactive/js-post-event-listener.html)\n     \u2014 POST on click (event listener)\n*   [javascript/interactive/js-put.html](http://gym.test:4101/g32/javascript/interactive/js-put.html)\n     \u2014 PUT on click\n*   [javascript/interactive/listener-and-event-attribute.html](http://gym.test:4101/g32/javascript/interactive/listener-and-event-attribute.html)\n     \u2014 listener and event attribute on one button\n*   [javascript/interactive/multi-step-request-event-attribute.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-attribute.html)\n     \u2014 multi-step: created button with onclick\n*   [javascript/interactive/multi-step-request-event-listener-div-dom.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div-dom.html)\n     \u2014 multi-step: created div, listener before insertion\n*   [javascript/interactive/multi-step-request-event-listener-div.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div.html)\n     \u2014 multi-step: created div, listener after insertion\n*   [javascript/interactive/multi-step-request-event-listener-dom.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-dom.html)\n     \u2014 multi-step: created button, listener before insertion\n*   [javascript/interactive/multi-step-request-event-listener.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener.html)\n     \u2014 multi-step: created button, listener after insertion\n*   [javascript/interactive/multi-step-request-redefine-event-attribute.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-redefine-event-attribute.html)\n     \u2014 multi-step: redefined onclick\n*   [javascript/interactive/multi-step-request-remove-button.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-button.html)\n     \u2014 multi-step: button replaced\n*   [javascript/interactive/multi-step-request-remove-event-listener.html](http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-event-listener.html)\n     \u2014 multi-step: listener swapped\n*   [javascript/interactive/two-listeners.html](http://gym.test:4101/g32/javascript/interactive/two-listeners.html)\n     \u2014 two listeners on one button",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f582-71d8-ade9-fca13c17d5a8",
+        "sourceURL": "http://gym.test:4101/g32/javascript/",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript cases",
+        "url": "http://gym.test:4101/g32/javascript/"
+      },
+      "rawHtmlBytes": 4265,
+      "rawHtmlSha256": "2fd2d04fd0aac43ef3d87a7bdeb28d83cbde4c2f455cded9ac1b0f49bb71fd95"
+    },
+    {
+      "links": [],
+      "markdown": "javascript concatenated string variable\n=======================================\n\nThe external script builds a URL from two string variables and never uses it.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f74d-77fd-90c4-b81196237c92",
+        "sourceURL": "http://gym.test:4101/g32/javascript/misc/string-concat-variable.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript concatenated string variable",
+        "url": "http://gym.test:4101/g32/javascript/misc/string-concat-variable.html"
+      },
+      "rawHtmlBytes": 358,
+      "rawHtmlSha256": "51b01b5cdab322d3b44faedc3123f3f26d8244501dcf0de1f0d0b0eaf3562af1"
+    },
+    {
+      "links": [],
+      "markdown": "audio source src\n================",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f756-753f-9ac9-9d9e62934047",
+        "sourceURL": "http://gym.test:4101/g32/html/body/audio/source/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: audio source src",
+        "url": "http://gym.test:4101/g32/html/body/audio/source/src.html"
+      },
+      "rawHtmlBytes": 259,
+      "rawHtmlSha256": "77e6fb01afb0125435197fd394cb0461d23c92c583ee315640935c21481c9f97"
+    },
+    {
+      "links": [],
+      "markdown": "framework event binding (Angular-style)\n=======================================\n\nA template event binding (`(click)`) is wired by the framework at bootstrap, not by an attribute or a visible listener.\n\nLoad component",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f75f-70d2-899e-56378f0d0bb4",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/angular/event-handler.html",
+        "statusCode": 200,
+        "title": "crawl-maze: framework event binding (Angular-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/angular/event-handler.html"
+      },
+      "rawHtmlBytes": 732,
+      "rawHtmlSha256": "f4c4f73c83b5b197da4d393929189b574da7aec1af1cf559e5864f77eae99603"
+    },
+    {
+      "links": [],
+      "markdown": "audio source srcset\n===================",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f768-73cc-aa59-f12700b5b21a",
+        "sourceURL": "http://gym.test:4101/g32/html/body/audio/source/srcset.html",
+        "statusCode": 200,
+        "title": "crawl-maze: audio source srcset",
+        "url": "http://gym.test:4101/g32/html/body/audio/source/srcset.html"
+      },
+      "rawHtmlBytes": 311,
+      "rawHtmlSha256": "160800c2d71f3e609de2ada4f7f365366d77c0f596cdadbe5aad354eadd527cf"
+    },
+    {
+      "links": [],
+      "markdown": "applet archive\n==============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f77e-71ea-8e1e-0a5e85050db9",
+        "sourceURL": "http://gym.test:4101/g32/html/body/applet/archive.html",
+        "statusCode": 200,
+        "title": "crawl-maze: applet archive",
+        "url": "http://gym.test:4101/g32/html/body/applet/archive.html"
+      },
+      "rawHtmlBytes": 263,
+      "rawHtmlSha256": "2b0c243eb4c55adc9153b829569fd515906f35459f68f07758a81b539fe75981"
+    },
+    {
+      "links": [],
+      "markdown": "framework router outlet (Angular-style)\n=======================================\n\nA router link pushes a client-side route and the outlet loads the route's view.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f773-7628-9e83-61a1a5b570a3",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/angular/router-outlet.html",
+        "statusCode": 200,
+        "title": "crawl-maze: framework router outlet (Angular-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/angular/router-outlet.html"
+      },
+      "rawHtmlBytes": 755,
+      "rawHtmlSha256": "cc14335c75ab216e5a46fb83bb269cb5515f6c3e9964461b3455ee810c9387c2"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/test/javascript/frameworks/angularjs/ng-href.found"
+      ],
+      "markdown": "framework computed href (AngularJS ng-href)\n===========================================\n\nThe link's `href` is bound from a model value after the page runs; the markup carries only the binding.\n\n[Detail (bound)](http://gym.test:4101/g32/test/javascript/frameworks/angularjs/ng-href.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f7a6-752b-962b-5bce8f6bf495",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/angularjs/ng-href.html",
+        "statusCode": 200,
+        "title": "crawl-maze: framework computed href (AngularJS ng-href)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/angularjs/ng-href.html"
+      },
+      "rawHtmlBytes": 722,
+      "rawHtmlSha256": "87e4aad2e3096ba3ab469910866747452642c4a4835c84d3139a32ff735003e6"
+    },
+    {
+      "links": [],
+      "markdown": "applet codebase\n===============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f7ae-71fd-8257-d1e19c5e8016",
+        "sourceURL": "http://gym.test:4101/g32/html/body/applet/codebase.html",
+        "statusCode": 200,
+        "title": "crawl-maze: applet codebase",
+        "url": "http://gym.test:4101/g32/html/body/applet/codebase.html"
+      },
+      "rawHtmlBytes": 267,
+      "rawHtmlSha256": "33603433886abcd2da31246284c9476cdb47f3b4a78ce9c595caf045a8ce6cdb"
+    },
+    {
+      "links": [],
+      "markdown": "framework custom element handler (Polymer-style)\n================================================\n\nA custom element with a shadow root handles clicks inside its template.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f7bb-737e-aa35-2b2731ec9cd9",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/polymer/event-handler.html",
+        "statusCode": 200,
+        "title": "crawl-maze: framework custom element handler (Polymer-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/polymer/event-handler.html"
+      },
+      "rawHtmlBytes": 710,
+      "rawHtmlSha256": "e36cacb6af406cad1142d7078d632612331e632a38c66d84b7f290d10349a5bb"
+    },
+    {
+      "links": [],
+      "markdown": "blockquote cite\n===============\n\n> A quotation whose source is cited.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f7e1-745d-b6ab-e53066e8e5e4",
+        "sourceURL": "http://gym.test:4101/g32/html/body/blockquote/cite.html",
+        "statusCode": 200,
+        "title": "crawl-maze: blockquote cite",
+        "url": "http://gym.test:4101/g32/html/body/blockquote/cite.html"
+      },
+      "rawHtmlBytes": 264,
+      "rawHtmlSha256": "dc5f3bd6b5803a813e96581fb32b0b95018e83fd1465619cd94aff7023325dbc"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html#/items"
+      ],
+      "markdown": "framework hash router (Polymer-style)\n=====================================\n\nA hash route change loads the route's data.\n\n[Items route](http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html#/items)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f7ea-7635-9300-97eca3714d31",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html",
+        "statusCode": 200,
+        "title": "crawl-maze: framework hash router (Polymer-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html"
+      },
+      "rawHtmlBytes": 568,
+      "rawHtmlSha256": "74bb40ca4aa48dd8899c5ec49c3686865e9bdbc3440259f19be9d2d0f079d69b"
+    },
+    {
+      "links": [],
+      "markdown": "embed src\n=========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f812-728a-a777-9429fff266e7",
+        "sourceURL": "http://gym.test:4101/g32/html/body/embed/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: embed src",
+        "url": "http://gym.test:4101/g32/html/body/embed/src.html"
+      },
+      "rawHtmlBytes": 242,
+      "rawHtmlSha256": "65ac460449ad3a51a60c66e45855e8d748e74bc3908fb9a462f27822c5b6cbfb"
+    },
+    {
+      "links": [],
+      "markdown": "form action (GET)\n=================\n\nQuery  Search",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f827-7547-8927-4f0b6bced1ad",
+        "sourceURL": "http://gym.test:4101/g32/html/body/form/action-get.html",
+        "statusCode": 200,
+        "title": "crawl-maze: form action (GET)",
+        "url": "http://gym.test:4101/g32/html/body/form/action-get.html"
+      },
+      "rawHtmlBytes": 337,
+      "rawHtmlSha256": "982aebe04a4042db218a276e401aa8794d7eebde38799de163e59f21ba32ce53"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/javascript/frameworks/react/route-path.html?route=profile"
+      ],
+      "markdown": "framework route path (React Router-style)\n=========================================\n\nA client-side route whose component fetches its data when matched.\n\n[Profile route](http://gym.test:4101/g32/javascript/frameworks/react/route-path.html?route=profile)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f81d-707b-9a1a-6d14566578bb",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/react/route-path.html",
+        "statusCode": 200,
+        "title": "crawl-maze: framework route path (React Router-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/react/route-path.html"
+      },
+      "rawHtmlBytes": 724,
+      "rawHtmlSha256": "05823158914df01cc869b59bf55241c63eeec69fb62518827b40135e31413070"
+    },
+    {
+      "links": [],
+      "markdown": "framework controlled search form (React-style)\n==============================================\n\nA controlled form whose submit handler queries an API instead of navigating.\n\nSearch  Go",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f830-70ea-9544-f6f0ac7c7e5e",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/react/search.html",
+        "statusCode": 200,
+        "title": "crawl-maze: framework controlled search form (React-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/react/search.html"
+      },
+      "rawHtmlBytes": 793,
+      "rawHtmlSha256": "ca6bc1bcc3b80e0ac362c5bbf156d97f79a546ea17edd619a18572e61a9d1104"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/html/doctype.html",
+        "http://gym.test:4101/g32/html/manifest.html",
+        "http://gym.test:4101/g32/html/body/background.html",
+        "http://gym.test:4101/g32/html/body/a/href.html",
+        "http://gym.test:4101/g32/html/body/a/ping.html",
+        "http://gym.test:4101/g32/html/body/audio/src.html",
+        "http://gym.test:4101/g32/html/body/audio/source/src.html",
+        "http://gym.test:4101/g32/html/body/audio/source/srcset.html",
+        "http://gym.test:4101/g32/html/body/applet/archive.html",
+        "http://gym.test:4101/g32/html/body/applet/codebase.html",
+        "http://gym.test:4101/g32/html/body/blockquote/cite.html",
+        "http://gym.test:4101/g32/html/body/embed/src.html",
+        "http://gym.test:4101/g32/html/body/form/action-get.html",
+        "http://gym.test:4101/g32/html/body/form/action-post.html",
+        "http://gym.test:4101/g32/html/body/form/button/formaction.html",
+        "http://gym.test:4101/g32/html/body/frameset/frame/src.html",
+        "http://gym.test:4101/g32/html/body/iframe/src.html",
+        "http://gym.test:4101/g32/html/body/iframe/srcdoc.html",
+        "http://gym.test:4101/g32/html/body/img/dynsrc.html",
+        "http://gym.test:4101/g32/html/body/img/lowsrc.html",
+        "http://gym.test:4101/g32/html/body/img/longdesc.html",
+        "http://gym.test:4101/g32/html/body/img/src-data.html",
+        "http://gym.test:4101/g32/html/body/img/src.html",
+        "http://gym.test:4101/g32/html/body/img/srcset.html",
+        "http://gym.test:4101/g32/html/body/input/src.html",
+        "http://gym.test:4101/g32/html/body/isindex/action.html",
+        "http://gym.test:4101/g32/html/body/map/area/ping.html",
+        "http://gym.test:4101/g32/html/body/object/data.html",
+        "http://gym.test:4101/g32/html/body/object/codebase.html",
+        "http://gym.test:4101/g32/html/body/object/param/value.html",
+        "http://gym.test:4101/g32/html/body/script/src.html",
+        "http://gym.test:4101/g32/html/body/svg/image/xlink.html",
+        "http://gym.test:4101/g32/html/body/svg/script/xlink.html",
+        "http://gym.test:4101/g32/html/body/table/background.html",
+        "http://gym.test:4101/g32/html/body/table/td/background.html",
+        "http://gym.test:4101/g32/html/body/video/src.html",
+        "http://gym.test:4101/g32/html/body/video/track/src.html",
+        "http://gym.test:4101/g32/html/body/video/poster.html",
+        "http://gym.test:4101/g32/html/head/profile.html",
+        "http://gym.test:4101/g32/html/head/base/href.html",
+        "http://gym.test:4101/g32/html/head/comment-conditional.html",
+        "http://gym.test:4101/g32/html/head/import/implementation.html",
+        "http://gym.test:4101/g32/html/head/link/href.html",
+        "http://gym.test:4101/g32/html/head/meta/content-csp.html",
+        "http://gym.test:4101/g32/html/head/meta/content-pinned-websites.html",
+        "http://gym.test:4101/g32/html/head/meta/content-reading-view.html",
+        "http://gym.test:4101/g32/html/head/meta/content-redirect.html",
+        "http://gym.test:4101/g32/html/misc/url/full-url.html",
+        "http://gym.test:4101/g32/html/misc/url/path-relative-url.html",
+        "http://gym.test:4101/g32/html/misc/url/protocol-relative-url.html",
+        "http://gym.test:4101/g32/html/misc/url/root-relative-url.html",
+        "http://gym.test:4101/g32/html/misc/string/dot-dot-slash-prefix.html",
+        "http://gym.test:4101/g32/html/misc/string/dot-slash-prefix.html",
+        "http://gym.test:4101/g32/html/misc/string/url-string.html",
+        "http://gym.test:4101/g32/html/misc/string/string-known-extension.html"
+      ],
+      "markdown": "html cases\n==========\n\n*   [html/doctype.html](http://gym.test:4101/g32/html/doctype.html)\n     \u2014 doctype system identifier\n*   [html/manifest.html](http://gym.test:4101/g32/html/manifest.html)\n     \u2014 html manifest\n*   [html/body/background.html](http://gym.test:4101/g32/html/body/background.html)\n     \u2014 body background\n*   [html/body/a/href.html](http://gym.test:4101/g32/html/body/a/href.html)\n     \u2014 a href\n*   [html/body/a/ping.html](http://gym.test:4101/g32/html/body/a/ping.html)\n     \u2014 a ping\n*   [html/body/audio/src.html](http://gym.test:4101/g32/html/body/audio/src.html)\n     \u2014 audio src\n*   [html/body/audio/source/src.html](http://gym.test:4101/g32/html/body/audio/source/src.html)\n     \u2014 audio source src\n*   [html/body/audio/source/srcset.html](http://gym.test:4101/g32/html/body/audio/source/srcset.html)\n     \u2014 audio source srcset\n*   [html/body/applet/archive.html](http://gym.test:4101/g32/html/body/applet/archive.html)\n     \u2014 applet archive\n*   [html/body/applet/codebase.html](http://gym.test:4101/g32/html/body/applet/codebase.html)\n     \u2014 applet codebase\n*   [html/body/blockquote/cite.html](http://gym.test:4101/g32/html/body/blockquote/cite.html)\n     \u2014 blockquote cite\n*   [html/body/embed/src.html](http://gym.test:4101/g32/html/body/embed/src.html)\n     \u2014 embed src\n*   [html/body/form/action-get.html](http://gym.test:4101/g32/html/body/form/action-get.html)\n     \u2014 form action GET\n*   [html/body/form/action-post.html](http://gym.test:4101/g32/html/body/form/action-post.html)\n     \u2014 form action POST\n*   [html/body/form/button/formaction.html](http://gym.test:4101/g32/html/body/form/button/formaction.html)\n     \u2014 button formaction\n*   [html/body/frameset/frame/src.html](http://gym.test:4101/g32/html/body/frameset/frame/src.html)\n     \u2014 frameset frame src\n*   [html/body/iframe/src.html](http://gym.test:4101/g32/html/body/iframe/src.html)\n     \u2014 iframe src\n*   [html/body/iframe/srcdoc.html](http://gym.test:4101/g32/html/body/iframe/srcdoc.html)\n     \u2014 iframe srcdoc\n*   [html/body/img/dynsrc.html](http://gym.test:4101/g32/html/body/img/dynsrc.html)\n     \u2014 img dynsrc\n*   [html/body/img/lowsrc.html](http://gym.test:4101/g32/html/body/img/lowsrc.html)\n     \u2014 img lowsrc\n*   [html/body/img/longdesc.html](http://gym.test:4101/g32/html/body/img/longdesc.html)\n     \u2014 img longdesc\n*   [html/body/img/src-data.html](http://gym.test:4101/g32/html/body/img/src-data.html)\n     \u2014 img src data: URI with an inner image\n*   [html/body/img/src.html](http://gym.test:4101/g32/html/body/img/src.html)\n     \u2014 img src\n*   [html/body/img/srcset.html](http://gym.test:4101/g32/html/body/img/srcset.html)\n     \u2014 img srcset\n*   [html/body/input/src.html](http://gym.test:4101/g32/html/body/input/src.html)\n     \u2014 input type=image src\n*   [html/body/isindex/action.html](http://gym.test:4101/g32/html/body/isindex/action.html)\n     \u2014 isindex action\n*   [html/body/map/area/ping.html](http://gym.test:4101/g32/html/body/map/area/ping.html)\n     \u2014 map area ping\n*   [html/body/object/data.html](http://gym.test:4101/g32/html/body/object/data.html)\n     \u2014 object data\n*   [html/body/object/codebase.html](http://gym.test:4101/g32/html/body/object/codebase.html)\n     \u2014 object codebase\n*   [html/body/object/param/value.html](http://gym.test:4101/g32/html/body/object/param/value.html)\n     \u2014 object param value\n*   [html/body/script/src.html](http://gym.test:4101/g32/html/body/script/src.html)\n     \u2014 script src\n*   [html/body/svg/image/xlink.html](http://gym.test:4101/g32/html/body/svg/image/xlink.html)\n     \u2014 svg image xlink:href\n*   [html/body/svg/script/xlink.html](http://gym.test:4101/g32/html/body/svg/script/xlink.html)\n     \u2014 svg script xlink:href\n*   [html/body/table/background.html](http://gym.test:4101/g32/html/body/table/background.html)\n     \u2014 table background\n*   [html/body/table/td/background.html](http://gym.test:4101/g32/html/body/table/td/background.html)\n     \u2014 td background\n*   [html/body/video/src.html](http://gym.test:4101/g32/html/body/video/src.html)\n     \u2014 video src\n*   [html/body/video/track/src.html](http://gym.test:4101/g32/html/body/video/track/src.html)\n     \u2014 video track src\n*   [html/body/video/poster.html](http://gym.test:4101/g32/html/body/video/poster.html)\n     \u2014 video poster\n*   [html/head/profile.html](http://gym.test:4101/g32/html/head/profile.html)\n     \u2014 head profile\n*   [html/head/base/href.html](http://gym.test:4101/g32/html/head/base/href.html)\n     \u2014 base href with a relative link\n*   [html/head/comment-conditional.html](http://gym.test:4101/g32/html/head/comment-conditional.html)\n     \u2014 conditional comment\n*   [html/head/import/implementation.html](http://gym.test:4101/g32/html/head/import/implementation.html)\n     \u2014 import implementation\n*   [html/head/link/href.html](http://gym.test:4101/g32/html/head/link/href.html)\n     \u2014 link href\n*   [html/head/meta/content-csp.html](http://gym.test:4101/g32/html/head/meta/content-csp.html)\n     \u2014 meta Content-Security-Policy report-uri\n*   [html/head/meta/content-pinned-websites.html](http://gym.test:4101/g32/html/head/meta/content-pinned-websites.html)\n     \u2014 meta msapplication-config\n*   [html/head/meta/content-reading-view.html](http://gym.test:4101/g32/html/head/meta/content-reading-view.html)\n     \u2014 meta reading view\n*   [html/head/meta/content-redirect.html](http://gym.test:4101/g32/html/head/meta/content-redirect.html)\n     \u2014 meta refresh\n*   [html/misc/url/full-url.html](http://gym.test:4101/g32/html/misc/url/full-url.html)\n     \u2014 full URL\n*   [html/misc/url/path-relative-url.html](http://gym.test:4101/g32/html/misc/url/path-relative-url.html)\n     \u2014 path-relative URL\n*   [html/misc/url/protocol-relative-url.html](http://gym.test:4101/g32/html/misc/url/protocol-relative-url.html)\n     \u2014 protocol-relative URL\n*   [html/misc/url/root-relative-url.html](http://gym.test:4101/g32/html/misc/url/root-relative-url.html)\n     \u2014 root-relative URL\n*   [html/misc/string/dot-dot-slash-prefix.html](http://gym.test:4101/g32/html/misc/string/dot-dot-slash-prefix.html)\n     \u2014 inline string with ../ prefix\n*   [html/misc/string/dot-slash-prefix.html](http://gym.test:4101/g32/html/misc/string/dot-slash-prefix.html)\n     \u2014 inline string with ./ prefix\n*   [html/misc/string/url-string.html](http://gym.test:4101/g32/html/misc/string/url-string.html)\n     \u2014 inline absolute URL string\n*   [html/misc/string/string-known-extension.html](http://gym.test:4101/g32/html/misc/string/string-known-extension.html)\n     \u2014 inline string with a known extension",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f575-77dc-b97c-e9b38c0c4fb7",
+        "sourceURL": "http://gym.test:4101/g32/html/",
+        "statusCode": 200,
+        "title": "crawl-maze: html cases",
+        "url": "http://gym.test:4101/g32/html/"
+      },
+      "rawHtmlBytes": 6243,
+      "rawHtmlSha256": "bc9d0bbc5b5892b2b1254919b96e36700635ff6452ed613bb15ea66417c0bf72"
+    },
+    {
+      "links": [],
+      "markdown": "form action (POST)\n==================\n\nName  Send",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f83b-72ff-9f7d-4cbd1646c151",
+        "sourceURL": "http://gym.test:4101/g32/html/body/form/action-post.html",
+        "statusCode": 200,
+        "title": "crawl-maze: form action (POST)",
+        "url": "http://gym.test:4101/g32/html/body/form/action-post.html"
+      },
+      "rawHtmlBytes": 341,
+      "rawHtmlSha256": "9fe564eb586fcee319bede89bf461f520764fafca6912d0e9327f8aef832c3a1"
+    },
+    {
+      "links": [],
+      "markdown": "javascript DELETE on click\n==========================\n\nClicking the button sends a DELETE request.\n\nDelete item",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f846-75fb-a1f7-6354f4cb7940",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/js-delete.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript DELETE on click",
+        "url": "http://gym.test:4101/g32/javascript/interactive/js-delete.html"
+      },
+      "rawHtmlBytes": 451,
+      "rawHtmlSha256": "a5482abdcc70ca9546b9581809b185a013fa727c461d8ddf8f21481c3eec301f"
+    },
+    {
+      "links": [],
+      "markdown": "form button formaction\n======================\n\nSubmit elsewhere",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f84e-7292-bc63-b74c57c581f0",
+        "sourceURL": "http://gym.test:4101/g32/html/body/form/button/formaction.html",
+        "statusCode": 200,
+        "title": "crawl-maze: form button formaction",
+        "url": "http://gym.test:4101/g32/html/body/form/button/formaction.html"
+      },
+      "rawHtmlBytes": 342,
+      "rawHtmlSha256": "c7669f0ebdc04a8c89c5cfb9ccae734006f26c8570e179f63c633e23d7ea5f2e"
+    },
+    {
+      "links": [],
+      "markdown": "javascript POST on click (event attribute)\n==========================================\n\nClicking the button sends a POST request from an `onclick` attribute.\n\nPost item",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f857-7366-b5ab-4684c7cba7e5",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/js-post.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript POST on click (event attribute)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/js-post.html"
+      },
+      "rawHtmlBytes": 422,
+      "rawHtmlSha256": "800d25c4224b73607a705937541ee5777d929f498433840c9454a818764bc680"
+    },
+    {
+      "links": [],
+      "markdown": "javascript POST on click (event listener)\n=========================================\n\nClicking the button sends a POST request from a listener added with `addEventListener`.\n\nPost item",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f869-719c-bba8-091626d38b65",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/js-post-event-listener.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript POST on click (event listener)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/js-post-event-listener.html"
+      },
+      "rawHtmlBytes": 545,
+      "rawHtmlSha256": "9cd983f7e84e5c1777e2093e7161346d047dab4b668df6d5a18e95b00b3bad58"
+    },
+    {
+      "links": [],
+      "markdown": "javascript PUT on click\n=======================\n\nClicking the button sends a PUT request.\n\nPut item",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f87c-7149-ad77-3d91a44b8545",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/js-put.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript PUT on click",
+        "url": "http://gym.test:4101/g32/javascript/interactive/js-put.html"
+      },
+      "rawHtmlBytes": 433,
+      "rawHtmlSha256": "c1926c9ac95bac83353d6d72cf543d783dfa3dedc7ea5eb8c820d0ab0a1c22d7"
+    },
+    {
+      "links": [],
+      "markdown": "iframe src\n==========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f873-76ad-9ccc-03e81562bdb7",
+        "sourceURL": "http://gym.test:4101/g32/html/body/iframe/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: iframe src",
+        "url": "http://gym.test:4101/g32/html/body/iframe/src.html"
+      },
+      "rawHtmlBytes": 242,
+      "rawHtmlSha256": "4cb890bbea47b233b904e21161ea3702aaa39bbbfa0c846b2ac09cc0017cf619"
+    },
+    {
+      "links": [],
+      "markdown": "javascript listener and event attribute on one button\n=====================================================\n\nOne button fires two requests: one from its `onclick` attribute, one from a listener.\n\nFire both",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f88d-746e-94b7-52207d738531",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/listener-and-event-attribute.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript listener and event attribute on one button",
+        "url": "http://gym.test:4101/g32/javascript/interactive/listener-and-event-attribute.html"
+      },
+      "rawHtmlBytes": 672,
+      "rawHtmlSha256": "658f9eaab4d221cbfd248c438bdb600f07a8088d468fe4744a74a5a91c141628"
+    },
+    {
+      "links": [],
+      "markdown": "img dynsrc\n==========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f897-7427-9d32-efb06dc53baa",
+        "sourceURL": "http://gym.test:4101/g32/html/body/img/dynsrc.html",
+        "statusCode": 200,
+        "title": "crawl-maze: img dynsrc",
+        "url": "http://gym.test:4101/g32/html/body/img/dynsrc.html"
+      },
+      "rawHtmlBytes": 218,
+      "rawHtmlSha256": "a8d6665251f0f70f7c980c5773e7a08b236506c9b53e5b21e7bef5b6271d2e5d"
+    },
+    {
+      "links": [],
+      "markdown": "iframe srcdoc\n=============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f884-7625-ad03-b1418b54ef49",
+        "sourceURL": "http://gym.test:4101/g32/html/body/iframe/srcdoc.html",
+        "statusCode": 200,
+        "title": "crawl-maze: iframe srcdoc",
+        "url": "http://gym.test:4101/g32/html/body/iframe/srcdoc.html"
+      },
+      "rawHtmlBytes": 341,
+      "rawHtmlSha256": "f38efd90901d43bbb2b9ea9327f9f00d8e4e44632c98fbe2c102d24fb504a64b"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (event attribute)\n===============================================\n\nThe first click creates a second button whose `onclick` attribute sends the request.\n\nShow secret button",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8a0-726d-b395-06409a052539",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-attribute.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (event attribute)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-attribute.html"
+      },
+      "rawHtmlBytes": 833,
+      "rawHtmlSha256": "ecb14726d5efcb129dd7cce5d1c8e78d1cf4b18e0f619ec54a9fbe88ccb08e11"
+    },
+    {
+      "links": [],
+      "markdown": "img lowsrc\n==========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8a9-725e-9e3c-3e5ca1f36ffb",
+        "sourceURL": "http://gym.test:4101/g32/html/body/img/lowsrc.html",
+        "statusCode": 200,
+        "title": "crawl-maze: img lowsrc",
+        "url": "http://gym.test:4101/g32/html/body/img/lowsrc.html"
+      },
+      "rawHtmlBytes": 225,
+      "rawHtmlSha256": "5111dbfbf9eaf44f0c8d2e1e96e1b852896b706e71c39b9a0e6a9a29a9dd635d"
+    },
+    {
+      "links": [],
+      "markdown": "img longdesc\n============\n\n![long description](<Base64-Image-Removed>)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8bb-771a-a385-f29647f1d44a",
+        "sourceURL": "http://gym.test:4101/g32/html/body/img/longdesc.html",
+        "statusCode": 200,
+        "title": "crawl-maze: img longdesc",
+        "url": "http://gym.test:4101/g32/html/body/img/longdesc.html"
+      },
+      "rawHtmlBytes": 309,
+      "rawHtmlSha256": "3f92a8d3dccbc7a6a7c3f9e77101d68e497737cdad2b5d96e0e188d0d9db05dc"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (div, listener before DOM insertion)\n==================================================================\n\nThe first click creates a second control; a listener on it sends the request.\n\nShow secret control",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8b3-71f3-8b46-e9f24607b62f",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div-dom.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (div, listener before DOM insertion)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div-dom.html"
+      },
+      "rawHtmlBytes": 913,
+      "rawHtmlSha256": "cde888b507128636e52d380a41c7fe794ffc450b97c34aa698117c89e09532a2"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (div, listener after DOM insertion)\n=================================================================\n\nThe first click creates a second control; a listener on it sends the request.\n\nShow secret control",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8c5-7441-9d8e-ecab93f8bea0",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (div, listener after DOM insertion)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-div.html"
+      },
+      "rawHtmlBytes": 938,
+      "rawHtmlSha256": "52adbe4a08ba81e604764471c1a66137c6b948f817a4c38a90a3d452316ffc2a"
+    },
+    {
+      "links": [],
+      "markdown": "img src (data: SVG with an inner image)\n=======================================\n\n![data image](data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><image xlink:href='/g32/test/html/body/img/src-data.found'/></svg>)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8ce-76a3-8c2e-d3995e87931f",
+        "sourceURL": "http://gym.test:4101/g32/html/body/img/src-data.html",
+        "statusCode": 200,
+        "title": "crawl-maze: img src (data: SVG with an inner image)",
+        "url": "http://gym.test:4101/g32/html/body/img/src-data.html"
+      },
+      "rawHtmlBytes": 419,
+      "rawHtmlSha256": "0c64c24859f8a5e1ad861928870ec50b2a5c58a438a37080ec6195acc8049887"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (button, listener after DOM insertion)\n====================================================================\n\nThe first click creates a second control; a listener on it sends the request.\n\nShow secret control",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8ef-73fd-9a05-1051fdea9c32",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (button, listener after DOM insertion)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener.html"
+      },
+      "rawHtmlBytes": 928,
+      "rawHtmlSha256": "0e7bcbb06e441aa5a42254ccbda8dbfc85e6340921f11eea75cab7c9ebdf74c0"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (button, listener before DOM insertion)\n=====================================================================\n\nThe first click creates a second control; a listener on it sends the request.\n\nShow secret control",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8d9-7577-9177-2d4964d79d20",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-dom.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (button, listener before DOM insertion)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-event-listener-dom.html"
+      },
+      "rawHtmlBytes": 903,
+      "rawHtmlSha256": "75836c04f2fe53b5d8d812ebad03e71980e6cea051c1c633862551e07ca60177"
+    },
+    {
+      "links": [],
+      "markdown": "img src\n=======\n\n![image](http://gym.test:4101/g32/test/html/body/img/src.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f8e5-731f-8e46-17dff59b254a",
+        "sourceURL": "http://gym.test:4101/g32/html/body/img/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: img src",
+        "url": "http://gym.test:4101/g32/html/body/img/src.html"
+      },
+      "rawHtmlBytes": 197,
+      "rawHtmlSha256": "0097733bf669544efb5b0f7f9f0107361f1f914b767f66d14c301c0954ab9d89"
+    },
+    {
+      "links": [],
+      "markdown": "img srcset\n==========\n\n![responsive image](http://gym.test:4101/g32/test/html/body/img/srcset2x.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f918-716f-98b4-4e36ae7ea827",
+        "sourceURL": "http://gym.test:4101/g32/html/body/img/srcset.html",
+        "statusCode": 200,
+        "title": "crawl-maze: img srcset",
+        "url": "http://gym.test:4101/g32/html/body/img/srcset.html"
+      },
+      "rawHtmlBytes": 268,
+      "rawHtmlSha256": "43ed26ba15646a78fc7ead8f5f90aa8146a6c252cf0cd3c3557949ca8adbb1eb"
+    },
+    {
+      "links": [],
+      "markdown": "found /html/body/a/href.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f93f-7779-aad3-fc26ad15a7c8",
+        "sourceURL": "http://gym.test:4101/g32/test/html/body/a/href.found",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/html/body/a/href.found"
+      },
+      "rawHtmlBytes": 30,
+      "rawHtmlSha256": "8929bec501c999fef55f5310e3bf9c19f7cf128befa6a2e5afb7924a11745bd7"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (redefined event attribute)\n=========================================================\n\nThe first click replaces the button's `onclick`; the second click sends the request.\n\nArm button",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f940-749a-abcd-42b9ff4172e8",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-redefine-event-attribute.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (redefined event attribute)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-redefine-event-attribute.html"
+      },
+      "rawHtmlBytes": 573,
+      "rawHtmlSha256": "3b161e0d3f937a82f6eb7489cea69b11848af91f7e605da93e935d3e305971b5"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (button replaced)\n===============================================\n\nThe first click removes the button and inserts a different one that sends the request.\n\nReplace me",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f973-71bd-8ef0-3da726aa71c9",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-button.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (button replaced)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-button.html"
+      },
+      "rawHtmlBytes": 822,
+      "rawHtmlSha256": "43b6233f3e10240e9bd77455c7c8051d5675a5e594d3468629a76709bcb9e417"
+    },
+    {
+      "links": [],
+      "markdown": "input image src\n===============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f94b-7123-a59d-6ea35e61b488",
+        "sourceURL": "http://gym.test:4101/g32/html/body/input/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: input image src",
+        "url": "http://gym.test:4101/g32/html/body/input/src.html"
+      },
+      "rawHtmlBytes": 281,
+      "rawHtmlSha256": "73e787a01c92edbfea4dea8a3dc6cbdbdaf26c8e27e1e9982b3357b83873079d"
+    },
+    {
+      "links": [],
+      "markdown": "isindex action\n==============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f99a-76bf-87fc-ce8926542139",
+        "sourceURL": "http://gym.test:4101/g32/html/body/isindex/action.html",
+        "statusCode": 200,
+        "title": "crawl-maze: isindex action",
+        "url": "http://gym.test:4101/g32/html/body/isindex/action.html"
+      },
+      "rawHtmlBytes": 248,
+      "rawHtmlSha256": "b2ace6c010fcc09ebabfe52391eab0c3990d9980a1166e9c2c4371ef296ed91e"
+    },
+    {
+      "links": [],
+      "markdown": "javascript multi-step request (listener swapped)\n================================================\n\nThe first click removes the arming listener and installs the one that sends the request.\n\nArm",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f9c2-7346-a1cb-9cbd6916b43b",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-event-listener.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript multi-step request (listener swapped)",
+        "url": "http://gym.test:4101/g32/javascript/interactive/multi-step-request-remove-event-listener.html"
+      },
+      "rawHtmlBytes": 694,
+      "rawHtmlSha256": "a28209722cd1d4d98dde8767ebf991c607621d34cfbacddd886e57309aa39d70"
+    },
+    {
+      "links": [],
+      "markdown": "javascript two listeners on one button\n======================================\n\nOne click fires two POST requests from two listeners on the same button.\n\nFire both",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f9f2-7243-a782-8cbdda50286b",
+        "sourceURL": "http://gym.test:4101/g32/javascript/interactive/two-listeners.html",
+        "statusCode": 200,
+        "title": "crawl-maze: javascript two listeners on one button",
+        "url": "http://gym.test:4101/g32/javascript/interactive/two-listeners.html"
+      },
+      "rawHtmlBytes": 690,
+      "rawHtmlSha256": "9e1516a903bb88c4617d156a63e95c168a6a109c439c49f7df6e880ca37202f8"
+    },
+    {
+      "links": [],
+      "markdown": "map area ping\n=============\n\n![map](<Base64-Image-Removed>)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f9cb-74fc-8e57-715a68b8a68e",
+        "sourceURL": "http://gym.test:4101/g32/html/body/map/area/ping.html",
+        "statusCode": 200,
+        "title": "crawl-maze: map area ping",
+        "url": "http://gym.test:4101/g32/html/body/map/area/ping.html"
+      },
+      "rawHtmlBytes": 414,
+      "rawHtmlSha256": "9ba35018dfaffa30e2620851db3837f142786052be96319ea02883c50459bb30"
+    },
+    {
+      "links": [],
+      "markdown": "object data\n===========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fa1a-7078-a6ad-2baf16c13152",
+        "sourceURL": "http://gym.test:4101/g32/html/body/object/data.html",
+        "statusCode": 200,
+        "title": "crawl-maze: object data",
+        "url": "http://gym.test:4101/g32/html/body/object/data.html"
+      },
+      "rawHtmlBytes": 259,
+      "rawHtmlSha256": "bff0e28e488df02bd058acc6bb9d2d96b2f82fac8f29a10f10e9016c2798a669"
+    },
+    {
+      "links": [],
+      "markdown": "object codebase\n===============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fa4c-771d-bcc5-7edf03795322",
+        "sourceURL": "http://gym.test:4101/g32/html/body/object/codebase.html",
+        "statusCode": 200,
+        "title": "crawl-maze: object codebase",
+        "url": "http://gym.test:4101/g32/html/body/object/codebase.html"
+      },
+      "rawHtmlBytes": 270,
+      "rawHtmlSha256": "a7f9f25499ea6d94f085865b3853c06a44df9c41cbcc3fa0738bdedb787df763"
+    },
+    {
+      "links": [],
+      "markdown": "object param value\n==================",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fa9c-7148-a7f1-861ad0cc5635",
+        "sourceURL": "http://gym.test:4101/g32/html/body/object/param/value.html",
+        "statusCode": 200,
+        "title": "crawl-maze: object param value",
+        "url": "http://gym.test:4101/g32/html/body/object/param/value.html"
+      },
+      "rawHtmlBytes": 301,
+      "rawHtmlSha256": "ef84816bc96c2dd8bf9c4cbc4be41812b4bd76e86ae3c644cf2f3fef11deca6d"
+    },
+    {
+      "links": [],
+      "markdown": "framework router outlet (Angular-style)\n=======================================\n\nA router link pushes a client-side route and the outlet loads the route's view.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fafd-73dc-8032-44c13291c753",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/angular/router-outlet.html#/detail",
+        "statusCode": 200,
+        "title": "crawl-maze: framework router outlet (Angular-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/angular/router-outlet.html#/detail"
+      },
+      "rawHtmlBytes": 755,
+      "rawHtmlSha256": "cc14335c75ab216e5a46fb83bb269cb5515f6c3e9964461b3455ee810c9387c2"
+    },
+    {
+      "links": [],
+      "markdown": "script src\n==========\n\nThe head loads an external script.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-facf-7711-838b-cd4d982458d5",
+        "sourceURL": "http://gym.test:4101/g32/html/body/script/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: script src",
+        "url": "http://gym.test:4101/g32/html/body/script/src.html"
+      },
+      "rawHtmlBytes": 247,
+      "rawHtmlSha256": "5a76f38af956696c69e03f24f7b42a92074e9f44d3536cf21deb53391bc63c20"
+    },
+    {
+      "links": [],
+      "markdown": "svg image xlink:href\n====================",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb1f-75c7-ba73-84130032c77b",
+        "sourceURL": "http://gym.test:4101/g32/html/body/svg/image/xlink.html",
+        "statusCode": 200,
+        "title": "crawl-maze: svg image xlink:href",
+        "url": "http://gym.test:4101/g32/html/body/svg/image/xlink.html"
+      },
+      "rawHtmlBytes": 371,
+      "rawHtmlSha256": "e81d96fbef1678bcb81248fcd1ae5fe9b4fd8e7ed365611b5ed103a92f203c20"
+    },
+    {
+      "links": [],
+      "markdown": "found /javascript/frameworks/angularjs/ng-href.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb44-76ad-9a00-1dfa4986f554",
+        "sourceURL": "http://gym.test:4101/g32/test/javascript/frameworks/angularjs/ng-href.found",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/javascript/frameworks/angularjs/ng-href.found"
+      },
+      "rawHtmlBytes": 53,
+      "rawHtmlSha256": "b5233ff1a8b7ccd3eb65b1ab0a07f95cd6637924144f1345bd16c7fe7df81fe5"
+    },
+    {
+      "links": [],
+      "markdown": "svg script xlink:href\n=====================",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb51-7611-811c-73ea0d386986",
+        "sourceURL": "http://gym.test:4101/g32/html/body/svg/script/xlink.html",
+        "statusCode": 200,
+        "title": "crawl-maze: svg script xlink:href",
+        "url": "http://gym.test:4101/g32/html/body/svg/script/xlink.html"
+      },
+      "rawHtmlBytes": 353,
+      "rawHtmlSha256": "bcf9b41648a5a6ee35c758110b6d19d0731b46fd199be8ecb3a1ee1313584d86"
+    },
+    {
+      "links": [],
+      "markdown": "table background\n================\n\ncell",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb65-7008-b418-7ed8c4724e58",
+        "sourceURL": "http://gym.test:4101/g32/html/body/table/background.html",
+        "statusCode": 200,
+        "title": "crawl-maze: table background",
+        "url": "http://gym.test:4101/g32/html/body/table/background.html"
+      },
+      "rawHtmlBytes": 266,
+      "rawHtmlSha256": "75f83be6887b7503fd930373583f7f63cbaf73387687b3f5f90fa0c19a0a52a7"
+    },
+    {
+      "links": [],
+      "markdown": "table td background\n===================\n\ncell",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb70-738d-9fd0-5a7c00742e65",
+        "sourceURL": "http://gym.test:4101/g32/html/body/table/td/background.html",
+        "statusCode": 200,
+        "title": "crawl-maze: table td background",
+        "url": "http://gym.test:4101/g32/html/body/table/td/background.html"
+      },
+      "rawHtmlBytes": 275,
+      "rawHtmlSha256": "ebb40420bdb8ac7e754cec1de1cc2775ad4801908835ac46c8ec9fff17992f08"
+    },
+    {
+      "links": [],
+      "markdown": "video src\n=========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb84-74a8-b2e8-380ecd45d130",
+        "sourceURL": "http://gym.test:4101/g32/html/body/video/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: video src",
+        "url": "http://gym.test:4101/g32/html/body/video/src.html"
+      },
+      "rawHtmlBytes": 213,
+      "rawHtmlSha256": "fc3b1470842effdf26795e16e272b06a00c63da2edf4309c3bc9ccbdeffd17d5"
+    },
+    {
+      "links": [],
+      "markdown": "video track src\n===============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb8d-73ea-a01a-12fada28c919",
+        "sourceURL": "http://gym.test:4101/g32/html/body/video/track/src.html",
+        "statusCode": 200,
+        "title": "crawl-maze: video track src",
+        "url": "http://gym.test:4101/g32/html/body/video/track/src.html"
+      },
+      "rawHtmlBytes": 268,
+      "rawHtmlSha256": "575abf9c5a52df961f79e4f23e5ef8ab3ce4eee8c526eab960ce92e0e649fcc6"
+    },
+    {
+      "links": [],
+      "markdown": "video poster\n============",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fb97-77e5-ba9e-878ed78c2f70",
+        "sourceURL": "http://gym.test:4101/g32/html/body/video/poster.html",
+        "statusCode": 200,
+        "title": "crawl-maze: video poster",
+        "url": "http://gym.test:4101/g32/html/body/video/poster.html"
+      },
+      "rawHtmlBytes": 225,
+      "rawHtmlSha256": "63158bb7d958069416ff4cf5125785f0039abb4a7629d39f9666542538ec8e9b"
+    },
+    {
+      "links": [],
+      "markdown": "head profile\n============\n\nThe head element names a metadata profile (HTML 4).",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fba1-76ff-8711-6665e57c6077",
+        "sourceURL": "http://gym.test:4101/g32/html/head/profile.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head profile",
+        "url": "http://gym.test:4101/g32/html/head/profile.html"
+      },
+      "rawHtmlBytes": 250,
+      "rawHtmlSha256": "04c2a696dcaa7dc70ebc41b45650d143f245aaa0bc37c4f87ea82e4507326dcf"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/test/html/head/base/href.found"
+      ],
+      "markdown": "head base href\n==============\n\n[a link relative to the document base](http://gym.test:4101/g32/test/html/head/base/href.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbab-7374-a062-ffd02788235f",
+        "sourceURL": "http://gym.test:4101/g32/html/head/base/href.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head base href",
+        "url": "http://gym.test:4101/g32/html/head/base/href.html"
+      },
+      "rawHtmlBytes": 261,
+      "rawHtmlSha256": "4dc8774c4dfe36eb7cd17ab76723dcd60a70918fce09086db34c11821ca6b418"
+    },
+    {
+      "links": [],
+      "markdown": "head conditional comment\n========================\n\nA stylesheet inside a conditional comment that only old Internet Explorer evaluated.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbbe-734b-8cd0-d679e9f73bc9",
+        "sourceURL": "http://gym.test:4101/g32/html/head/comment-conditional.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head conditional comment",
+        "url": "http://gym.test:4101/g32/html/head/comment-conditional.html"
+      },
+      "rawHtmlBytes": 367,
+      "rawHtmlSha256": "6e101ef8b364de613d6dfdb0e378bf6dfeb0f2cb31d8c27319b278d2076a309e"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html#/items"
+      ],
+      "markdown": "framework hash router (Polymer-style)\n=====================================\n\nA hash route change loads the route's data.\n\n[Items route](http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html#/items)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbb1-73d6-8a43-6ed7bd888554",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html#/items",
+        "statusCode": 200,
+        "title": "crawl-maze: framework hash router (Polymer-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/polymer/polymer-router.html#/items"
+      },
+      "rawHtmlBytes": 568,
+      "rawHtmlSha256": "74bb40ca4aa48dd8899c5ec49c3686865e9bdbc3440259f19be9d2d0f079d69b"
+    },
+    {
+      "links": [],
+      "markdown": "head import implementation\n==========================\n\nAn HTML Components (HTC) import element.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbd1-72dc-9f99-9e3d73f5f114",
+        "sourceURL": "http://gym.test:4101/g32/html/head/import/implementation.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head import implementation",
+        "url": "http://gym.test:4101/g32/html/head/import/implementation.html"
+      },
+      "rawHtmlBytes": 307,
+      "rawHtmlSha256": "abd9475f5f97ee5aabf4199f9d99c1419e1b0d807c72a483be03df078f372d5d"
+    },
+    {
+      "links": [],
+      "markdown": "head meta Content-Security-Policy\n=================================\n\nA CSP meta element whose `report-uri` names a reporting endpoint.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbe4-72f4-8923-3c8f773049fb",
+        "sourceURL": "http://gym.test:4101/g32/html/head/meta/content-csp.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head meta Content-Security-Policy",
+        "url": "http://gym.test:4101/g32/html/head/meta/content-csp.html"
+      },
+      "rawHtmlBytes": 425,
+      "rawHtmlSha256": "ede53afbf5debadbd35f370b658495a07c49546131711ada80d86a9313abb3c8"
+    },
+    {
+      "links": [],
+      "markdown": "head link href\n==============\n\nThe head links a stylesheet.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbda-7051-9831-952385b00dda",
+        "sourceURL": "http://gym.test:4101/g32/html/head/link/href.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head link href",
+        "url": "http://gym.test:4101/g32/html/head/link/href.html"
+      },
+      "rawHtmlBytes": 255,
+      "rawHtmlSha256": "64d8e174061320880bcf05194e28ced8acab5183db059c577878deac5863f69e"
+    },
+    {
+      "links": [],
+      "markdown": "head meta msapplication-config\n==============================\n\nA pinned-sites browser configuration file.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "msapplication-config": "/g32/test/html/head/meta/content-pinned-websites.found",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbec-71ce-8552-39d8f2b58e0b",
+        "sourceURL": "http://gym.test:4101/g32/html/head/meta/content-pinned-websites.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head meta msapplication-config",
+        "url": "http://gym.test:4101/g32/html/head/meta/content-pinned-websites.html"
+      },
+      "rawHtmlBytes": 334,
+      "rawHtmlSha256": "30e77da30a663484fb5e9caf145e2a0932305310f5de3e51778aaf4d1bf76b4c"
+    },
+    {
+      "links": [],
+      "markdown": "head meta reading view\n======================\n\nA reading-view resource named by a meta element.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "reading-view": "/g32/test/html/head/meta/content-reading-view.found",
+        "scrapeId": "01a1812f-fbf6-778a-8530-e23d13eb0e54",
+        "sourceURL": "http://gym.test:4101/g32/html/head/meta/content-reading-view.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head meta reading view",
+        "url": "http://gym.test:4101/g32/html/head/meta/content-reading-view.html"
+      },
+      "rawHtmlBytes": 313,
+      "rawHtmlSha256": "75b4ab84b04289d34c3bbb11164eec14e90c0cf5e46ac5472da4f32473fabb05"
+    },
+    {
+      "links": [],
+      "markdown": "head meta refresh\n=================\n\nA meta refresh with a long delay.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fbff-73ce-a4d8-791966ce01cc",
+        "sourceURL": "http://gym.test:4101/g32/html/head/meta/content-redirect.html",
+        "statusCode": 200,
+        "title": "crawl-maze: head meta refresh",
+        "url": "http://gym.test:4101/g32/html/head/meta/content-redirect.html"
+      },
+      "rawHtmlBytes": 294,
+      "rawHtmlSha256": "0bfecf8f6a63822f211181a0a9ea68d88203d4a76f49724e57635a234cf46c67"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/test/html/misc/url/full-url.found"
+      ],
+      "markdown": "misc full URL\n=============\n\n[an absolute link including scheme and host](http://gym.test:4101/g32/test/html/misc/url/full-url.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc0a-7053-a5b9-6f991dae1109",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/url/full-url.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc full URL",
+        "url": "http://gym.test:4101/g32/html/misc/url/full-url.html"
+      },
+      "rawHtmlBytes": 274,
+      "rawHtmlSha256": "a282a2998922f8f515203505d318ce80b1aeea35fdd850dd4f0afba76f3eee43"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/javascript/frameworks/react/route-path.html?route=profile"
+      ],
+      "markdown": "framework route path (React Router-style)\n=========================================\n\nA client-side route whose component fetches its data when matched.\n\n[Profile route](http://gym.test:4101/g32/javascript/frameworks/react/route-path.html?route=profile)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc17-7349-b377-31d129a99922",
+        "sourceURL": "http://gym.test:4101/g32/javascript/frameworks/react/route-path.html?route=profile",
+        "statusCode": 200,
+        "title": "crawl-maze: framework route path (React Router-style)",
+        "url": "http://gym.test:4101/g32/javascript/frameworks/react/route-path.html?route=profile"
+      },
+      "rawHtmlBytes": 724,
+      "rawHtmlSha256": "05823158914df01cc869b59bf55241c63eeec69fb62518827b40135e31413070"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/test/html/misc/url/path-relative-url.found"
+      ],
+      "markdown": "misc path-relative URL\n======================\n\n[a link relative to this page's directory](http://gym.test:4101/g32/test/html/misc/url/path-relative-url.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc14-769c-b404-a64d31c224ee",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/url/path-relative-url.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc path-relative URL",
+        "url": "http://gym.test:4101/g32/html/misc/url/path-relative-url.html"
+      },
+      "rawHtmlBytes": 283,
+      "rawHtmlSha256": "99e669475d55e05dffea31b1cc3c6888be2fe0ca52a70cb80eaf1e89c01ef0a9"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/test/html/misc/url/protocol-relative-url.found"
+      ],
+      "markdown": "misc protocol-relative URL\n==========================\n\n[a link without a scheme](http://gym.test:4101/g32/test/html/misc/url/protocol-relative-url.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc1f-755b-ac9a-09fc276f3c2c",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/url/protocol-relative-url.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc protocol-relative URL",
+        "url": "http://gym.test:4101/g32/html/misc/url/protocol-relative-url.html"
+      },
+      "rawHtmlBytes": 289,
+      "rawHtmlSha256": "7de66038d552aa2a6329d43a1c302ee99142976732255cb33233d5abc74f5bc8"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g32/test/html/misc/url/root-relative-url.found"
+      ],
+      "markdown": "misc root-relative URL\n======================\n\n[a link relative to the origin root](http://gym.test:4101/g32/test/html/misc/url/root-relative-url.found)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc31-74e0-9b0d-4d6b343c29e8",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/url/root-relative-url.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc root-relative URL",
+        "url": "http://gym.test:4101/g32/html/misc/url/root-relative-url.html"
+      },
+      "rawHtmlBytes": 273,
+      "rawHtmlSha256": "1e9f5c3251dff25d7b677f43f112de48a364733d158b02bd742f8c6ad7e721bd"
+    },
+    {
+      "links": [],
+      "markdown": "misc inline string with ../ prefix\n==================================\n\nAn inline string, not a link: ../../../test/html/misc/string/dot-dot-slash-prefix.found",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc45-7378-b93e-a39eb38f172c",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/string/dot-dot-slash-prefix.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc inline string with ../ prefix",
+        "url": "http://gym.test:4101/g32/html/misc/string/dot-dot-slash-prefix.html"
+      },
+      "rawHtmlBytes": 288,
+      "rawHtmlSha256": "6d916b5be1b010e50331e52001001c71df82ea3360ed87bf3040ffecc703ce63"
+    },
+    {
+      "links": [],
+      "markdown": "misc inline string with ./ prefix\n=================================\n\nAn inline string, not a link: ./../../../test/html/misc/string/dot-slash-prefix.found",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc4f-753e-bb88-71a5c1023c19",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/string/dot-slash-prefix.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc inline string with ./ prefix",
+        "url": "http://gym.test:4101/g32/html/misc/string/dot-slash-prefix.html"
+      },
+      "rawHtmlBytes": 284,
+      "rawHtmlSha256": "35f201da8e17835d2dc839d939666b5a14c2d965e4e0bd99868d26411fa1831a"
+    },
+    {
+      "links": [],
+      "markdown": "misc inline URL string\n======================\n\nAn inline absolute URL, not a link: http://gym.test:4101/g32/test/html/misc/string/url-string.found",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc58-716d-a882-754db27c09c2",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/string/url-string.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc inline URL string",
+        "url": "http://gym.test:4101/g32/html/misc/string/url-string.html"
+      },
+      "rawHtmlBytes": 276,
+      "rawHtmlSha256": "89e341d27ac07dc014a1b735e20140ce29ea060ba1fe6ddfb31842ed7e68663e"
+    },
+    {
+      "links": [],
+      "markdown": "misc inline string with a known extension\n=========================================\n\nAn inline string with a document extension, not a link: /g32/test/html/misc/string/string-known-extension.pdf",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-fc62-72ac-8c09-3dddb96e81c1",
+        "sourceURL": "http://gym.test:4101/g32/html/misc/string/string-known-extension.html",
+        "statusCode": 200,
+        "title": "crawl-maze: misc inline string with a known extension",
+        "url": "http://gym.test:4101/g32/html/misc/string/string-known-extension.html"
+      },
+      "rawHtmlBytes": 324,
+      "rawHtmlSha256": "b7eda915cf086af5de166a687a6f41937165e40c2a0691a237162d4761af90cf"
+    },
+    {
+      "links": [],
+      "markdown": "found /html/misc/url/protocol-relative-url.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a18130-0511-7218-93da-ce3106c44cde",
+        "sourceURL": "http://gym.test:4101/g32/test/html/misc/url/protocol-relative-url.found",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/html/misc/url/protocol-relative-url.found"
+      },
+      "rawHtmlBytes": 49,
+      "rawHtmlSha256": "4105d6b9a427da89df48ec6734f575b7c1db2af6dfaa6a1ca4f9c756bf2bd253"
+    },
+    {
+      "links": [],
+      "markdown": "found /html/misc/url/full-url.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a18130-050b-7338-ab83-665c9cb302d0",
+        "sourceURL": "http://gym.test:4101/g32/test/html/misc/url/full-url.found",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/html/misc/url/full-url.found"
+      },
+      "rawHtmlBytes": 36,
+      "rawHtmlSha256": "181f2bb505bd31e793cbe69669afff101c0ab6874a17bda939afa2f209b7c776"
+    },
+    {
+      "links": [],
+      "markdown": "found /html/misc/url/path-relative-url.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a18130-0511-76ee-b45f-cdf08e495bc7",
+        "sourceURL": "http://gym.test:4101/g32/test/html/misc/url/path-relative-url.found",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/html/misc/url/path-relative-url.found"
+      },
+      "rawHtmlBytes": 45,
+      "rawHtmlSha256": "f211e0cbc5773b54c2d8832f4dcff1c25e196dee0464ec796e430b6f3bd8b245"
+    },
+    {
+      "links": [],
+      "markdown": "found /html/misc/url/root-relative-url.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a18130-0526-76de-81f3-c1c41552f12f",
+        "sourceURL": "http://gym.test:4101/g32/test/html/misc/url/root-relative-url.found",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/html/misc/url/root-relative-url.found"
+      },
+      "rawHtmlBytes": 45,
+      "rawHtmlSha256": "3bee3c36b68db63d9d5f503d020682baed145b644a4e48cc19c72c7598dbca86"
+    },
+    {
+      "links": [],
+      "markdown": "not found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "error": "Not Found",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18130-0385-74ba-927e-1aa870bc4baa",
+        "sourceURL": "http://gym.test:4101/g32/html/head/base/href.found",
+        "statusCode": 404,
+        "url": "http://gym.test:4101/g32/html/head/base/href.found"
+      },
+      "rawHtmlBytes": 10,
+      "rawHtmlSha256": "709009e02c8e364113b28205aadde30cce270d709073f28153c85fdc5036c96d"
+    },
+    {
+      "links": [],
+      "markdown": "found /misc/known-files/sitemap.xml.found\n",
+      "metadata": {
+        "contentType": "text/plain; charset=utf-8",
+        "creditsUsed": 1,
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-f5c2-741b-9dba-c0cb187c0f23",
+        "sourceURL": "http://gym.test:4101/g32/test/misc/known-files/sitemap.xml.found",
+        "statusCode": 200,
+        "url": "http://gym.test:4101/g32/test/misc/known-files/sitemap.xml.found"
+      },
+      "rawHtmlBytes": 42,
+      "rawHtmlSha256": "6505add4f520e121bde6bbe988baa23f64f453b3288c988899a14a34445bdb85"
+    }
+  ],
+  "duration": 5.464,
+  "errors": {
+    "errors": [
+      {
+        "code": "SCRAPE_ALL_ENGINES_FAILED",
+        "error": "All scraping engines failed to retrieve content from this URL. Engines tried: [playwright, fetch]. This usually happens when: (1) The URL is invalid or the page doesn't exist (404), (2) The website is blocking automated access, (3) The website is down or unreachable, (4) The page requires authentication. Double check the URL is correct and accessible in a browser. Check your server logs for more detailed error information from each engine.",
+        "id": "01a1812f-f860-7052-8e8b-dc2f33094d7b",
+        "timestamp": "2026-10-28T06:26:08.733Z",
+        "url": "http://gym.test:4101/g32/html/body/frameset/frame/src.html"
+      }
+    ],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T06:26:19.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 103
+}

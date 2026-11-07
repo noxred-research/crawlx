@@ -1,0 +1,192 @@
+Subject: [PATCH] Keep CfT model bootstrap explicit and suppress periodic update traffic
+
+Base: Chromium 155.0.8059.84
+Source base: https://raw.githubusercontent.com/chromium/chromium/155.0.8059.84/
+Each input below is the source-base URL followed by its path.
+Original inputs:
+  chrome/browser/chrome_browser_main.cc
+    sha256 a4e11a49034ef40ceeab817ac38204a801426008cdf028534c1ee8770998dca7
+  chrome/browser/browser_process_impl.cc
+    sha256 80318c9fee1b95eb1ab00abe646b0b8982de9ac287e630d9feae36b4f1d914b0
+  components/component_updater/timer_update_scheduler.h
+    sha256 ffcb905a309922300ea37d87ebd72c72ee6e6acaa739b6f68c141cdc426761b3
+  components/component_updater/timer_update_scheduler.cc
+    sha256 9d9a6d7a1f214429c2780f8faba4bbec92ac9722dbd231d40e480b46b86718a1
+  components/component_updater/timer_unittest.cc
+    sha256 83fd7acadec87dae76c5b8f446e4c02a4f385a3d2f1e1b501c9154baebce19f3
+
+With --disable-background-networking, avoid CfT Optimization Guide startup when
+the configured required-component list is empty. Without that switch, preserve
+eager bootstrap. Keep nonempty-list provisioning and required-component waits;
+model service entrypoints can still create the global state on demand.
+
+Honor --disable-background-networking at the periodic scheduler, not at component
+registration. Registration also loads preinstalled CRLSet, PKI and Safe Browsing
+data. Keep those registration and ComponentReady paths unchanged. Required
+components and explicit on-demand updates bypass this scheduler and retain their
+existing foreground UpdateClient::Update path. The existing
+--disable-component-update registration behavior is unchanged.
+
+Timer scheduler regression covers both enabled and disabled periodic checks and
+Stop() with mock time. Tests/build/applicability checks were not run here.
+
+Source trace (paths relative to source base):
+- chrome/browser/chrome_for_testing/prefs.cc:25-33 registers the empty list.
+- chrome/browser/chrome_for_testing/config.cc:249-268 reads the list without
+  allocation and supplies the updater's required components.
+- chrome/browser/component_updater/chrome_component_updater_configurator.cc:
+  325-328 forwards required components to the update service.
+- chrome/browser/optimization_guide/model_execution/
+  optimization_guide_global_state.cc:108-113 constructs ManifestBrokerState.
+- components/optimization_guide/core/model_execution/manifest_broker/
+  manifest_broker_state.cc:55-78 constructs ManifestMonitor, whose
+  manifest_monitor.cc:72-74 subscribes to the installer delegate.
+- chrome/browser/component_updater/
+  optimization_guide_on_device_model_installer.cc:278-285,366-389 registers the
+  manifest and requests a foreground on-demand update, independently of the
+  ordinary RegisterComponentsForUpdate call.
+- components/component_updater/component_updater_service.cc:175-188,232-245,
+  380-433,436-468 separates periodic scheduling from required-component and
+  explicit on-demand UpdateClient::Update calls.
+- components/component_updater/component_installer.cc:510-522,594-626 loads
+  preinstalled data and calls ComponentReady independently of periodic updates.
+- chrome/browser/optimization_guide/optimization_guide_keyed_service.h:332-338
+  lazily creates global state; the corresponding .cc:241-260,513-520 retains
+  BindModelBroker/CreateModelBrokerClient/StartSession demand entrypoints.
+
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -2116,7 +2116,12 @@
+ #endif
+ 
+ #if BUILDFLAG(CHROME_FOR_TESTING)
+-  if (g_browser_process->component_updater()) {
++  // An empty requirement list must not trigger automatic background downloads.
++  // Keep default startup and explicit model/component demand available.
++  if ((!base::CommandLine::ForCurrentProcess()->HasSwitch(
++           switches::kDisableBackgroundNetworking) ||
++       !chrome_for_testing::GetRequiredComponentsList().empty()) &&
++      g_browser_process->component_updater()) {
+     // Initialize OptimizationGuideGlobalState early so that ManifestMonitor is
+     // available to parse the Optimization Guide manifest and register any
+     // required on-device model components during startup blocking.
+diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
+--- a/chrome/browser/browser_process_impl.cc
++++ b/chrome/browser/browser_process_impl.cc
+@@ -97,6 +97,7 @@
+ #include "chrome/common/chrome_constants.h"
+ #include "chrome/common/chrome_features.h"
+ #include "chrome/common/chrome_paths.h"
++#include "chrome/common/chrome_switches.h"
+ #include "chrome/common/pref_names.h"
+ #include "chrome/common/url_constants.h"
+ #include "chrome/grit/branded_strings.h"
+@@ -1487,8 +1488,12 @@
+     return nullptr;
+   }
+ 
++  // Keep component registration and on-demand updates available, including
++  // installed security data, while suppressing automatic network checks.
+   std::unique_ptr<component_updater::UpdateScheduler> scheduler =
+-      std::make_unique<component_updater::TimerUpdateScheduler>();
++      std::make_unique<component_updater::TimerUpdateScheduler>(
++          /*enabled=*/!base::CommandLine::ForCurrentProcess()->HasSwitch(
++              switches::kDisableBackgroundNetworking));
+ 
+   std::string brand;
+   google_brand::GetBrand(&brand);
+diff --git a/components/component_updater/timer_update_scheduler.h b/components/component_updater/timer_update_scheduler.h
+--- a/components/component_updater/timer_update_scheduler.h
++++ b/components/component_updater/timer_update_scheduler.h
+@@ -14,7 +14,8 @@
+ // Scheduler that uses base::Timer to schedule updates.
+ class TimerUpdateScheduler : public UpdateScheduler {
+  public:
+-  TimerUpdateScheduler();
++  // If disabled, Schedule() does not start periodic update checks.
++  explicit TimerUpdateScheduler(bool enabled = true);
+ 
+   TimerUpdateScheduler(const TimerUpdateScheduler&) = delete;
+   TimerUpdateScheduler& operator=(const TimerUpdateScheduler&) = delete;
+@@ -29,6 +30,7 @@
+   void Stop() override;
+ 
+  private:
++  const bool enabled_;
+   Timer timer_;
+   base::RepeatingClosure user_task_;
+ };
+diff --git a/components/component_updater/timer_update_scheduler.cc b/components/component_updater/timer_update_scheduler.cc
+--- a/components/component_updater/timer_update_scheduler.cc
++++ b/components/component_updater/timer_update_scheduler.cc
+@@ -9,13 +9,17 @@
+ 
+ namespace component_updater {
+ 
+-TimerUpdateScheduler::TimerUpdateScheduler() = default;
++TimerUpdateScheduler::TimerUpdateScheduler(bool enabled) : enabled_(enabled) {}
+ TimerUpdateScheduler::~TimerUpdateScheduler() = default;
+ 
+ void TimerUpdateScheduler::Schedule(base::TimeDelta initial_delay,
+                                     base::TimeDelta delay,
+                                     const UserTask& user_task,
+                                     const OnStopTaskCallback& on_stop) {
++  if (!enabled_) {
++    return;
++  }
++
+   timer_.Start(
+       initial_delay, delay,
+       base::BindRepeating(
+diff --git a/components/component_updater/timer_unittest.cc b/components/component_updater/timer_unittest.cc
+--- a/components/component_updater/timer_unittest.cc
++++ b/components/component_updater/timer_unittest.cc
+@@ -7,9 +7,11 @@
+ #include <utility>
+ 
+ #include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
+ #include "base/run_loop.h"
+ #include "base/test/task_environment.h"
+ #include "base/time/time.h"
++#include "components/component_updater/timer_update_scheduler.h"
+ #include "testing/gtest/include/gtest/gtest.h"
+ 
+ namespace component_updater {
+@@ -58,4 +60,35 @@
+   EXPECT_EQ(3, timer_client_fake.count());
+ }
+ 
++class ComponentUpdaterTimerSchedulerTest : public testing::TestWithParam<bool> {
++ protected:
++  base::test::TaskEnvironment environment_{
++      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
++};
++
++TEST_P(ComponentUpdaterTimerSchedulerTest, AutomaticUpdates) {
++  TimerUpdateScheduler scheduler(/*enabled=*/GetParam());
++  int count = 0;
++  scheduler.Schedule(
++      base::Seconds(1), base::Seconds(2),
++      base::BindRepeating(
++          [](int* count, UpdateScheduler::OnFinishedCallback on_finished) {
++            ++*count;
++            std::move(on_finished).Run();
++          },
++          &count),
++      base::DoNothing());
++
++  environment_.FastForwardBy(base::Seconds(5));
++  EXPECT_EQ(GetParam() ? 3 : 0, count);
++
++  scheduler.Stop();
++  environment_.FastForwardBy(base::Seconds(5));
++  EXPECT_EQ(GetParam() ? 3 : 0, count);
++}
++
++INSTANTIATE_TEST_SUITE_P(All,
++                         ComponentUpdaterTimerSchedulerTest,
++                         testing::Bool());
++
+ }  // namespace component_updater

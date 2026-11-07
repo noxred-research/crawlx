@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g26 News</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; max-width: 640px; }
+  label { display: block; margin: 8px 0; }
+  input { display: block; padding: 4px 6px; margin-top: 2px; width: 260px; }
+  .actions { display: flex; gap: 8px; margin: 12px 0; }
+</style>
+</head>
+<body>
+<a id="home" href="/g26/">Home</a>
+<h1>News</h1>
+<section aria-label="Latest">
+  <h2>Latest</h2>
+  <p>Clock: <span id="clock"></span></p>
+  <p>Last updated: <span id="updated"></span></p>
+  <p>Headline: the weather remains unremarkable.</p>
+  <div class="actions">
+    <button type="button" id="refresh">Refresh</button>
+  </div>
+</section>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  var rng = __gym.rngFor('news-b');
+  var secs = Math.floor(rng() * 86400);
+  var updates = Math.floor(rng() * 1000);
+  function clock() {
+    var s = secs % 86400;
+    $('clock').textContent = pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s / 60) % 60) + ':' + pad(s % 60);
+    $('updated').textContent = 'revision ' + updates + ' at ' + $('clock').textContent;
+  }
+  clock();
+  setInterval(function () { secs += 1; if (secs % 5 === 0) updates += 1; clock(); }, 1000);
+  $('home').addEventListener('click', function (ev) { __gym.hit('home-news-b', ev); });
+  $('refresh').addEventListener('click', function (ev) {
+    __gym.hit('news-b-refresh', ev);
+    __gym.api('POST', 'news/refresh');
+    updates += 1;
+    clock();
+  });
+})();
+</script>
+</body>
+</html>

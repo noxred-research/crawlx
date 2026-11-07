@@ -1,0 +1,463 @@
+{
+  "wireSample": {
+    "provenance": "black_box_run",
+    "system": "firecrawl",
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5",
+    "apiRoot": "http://127.0.0.1:3102",
+    "origin": "http://gym.test:4101"
+  },
+  "family": "wire-cancel",
+  "scenarios": [
+    {
+      "id": "cancel-mid-crawl",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 500,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/slow/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1827b-266a-763c-9de6-b60eebe3a5ca",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca"
+          },
+          "elapsed_ms": 54
+        },
+        {
+          "step": "trigger",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "createdAt": "2026-10-28T12:27:51.276Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/2",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/3",
+                "statusCode": 200
+              }
+            ],
+            "duration": 2.488,
+            "expiresAt": "2026-10-29T12:27:53.000Z",
+            "next": "http://127.0.0.1:3102/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca?skip=4",
+            "status": "scraping",
+            "success": true,
+            "total": 41
+          },
+          "elapsed_ms": 8
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 4
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:27:53.759Z",
+            "createdAt": "2026-10-28T12:27:51.276Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/2",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/3",
+                "statusCode": 200
+              }
+            ],
+            "duration": 2.483,
+            "expiresAt": "2026-10-29T12:27:53.000Z",
+            "status": "cancelled",
+            "success": true,
+            "total": 41
+          },
+          "elapsed_ms": 4
+        },
+        {
+          "step": "after:cancel-again",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 3
+        },
+        {
+          "step": "after:status",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca",
+          "status": 200,
+          "response": {
+            "completed": 6,
+            "completedAt": "2026-10-28T12:27:53.759Z",
+            "createdAt": "2026-10-28T12:27:51.276Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/2",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/3",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/4",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/5",
+                "statusCode": 200
+              }
+            ],
+            "duration": 2.483,
+            "expiresAt": "2026-10-29T12:27:53.000Z",
+            "status": "cancelled",
+            "success": true,
+            "total": 41
+          },
+          "elapsed_ms": 4
+        },
+        {
+          "step": "after:errors",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-266a-763c-9de6-b60eebe3a5ca/errors",
+          "status": 200,
+          "response": {
+            "errors": [],
+            "robotsBlocked": []
+          },
+          "elapsed_ms": 3
+        }
+      ],
+      "notes": {
+        "quiet_requests": 0
+      }
+    },
+    {
+      "id": "cancel-finished",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 20,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1827b-4d8d-7020-be4a-6204850e6537",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1827b-4d8d-7020-be4a-6204850e6537"
+          },
+          "elapsed_ms": 15
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-4d8d-7020-be4a-6204850e6537",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:28:03.113Z",
+            "createdAt": "2026-10-28T12:28:01.293Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.82,
+            "expiresAt": "2026-10-29T12:28:16.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 7
+        },
+        {
+          "step": "after:cancel",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1827b-4d8d-7020-be4a-6204850e6537",
+          "status": 409,
+          "response": {
+            "error": "Crawl is already completed"
+          },
+          "elapsed_ms": 1
+        },
+        {
+          "step": "after:status",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-4d8d-7020-be4a-6204850e6537",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:28:03.113Z",
+            "createdAt": "2026-10-28T12:28:01.293Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.82,
+            "expiresAt": "2026-10-29T12:28:16.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "cancel-immediately",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 500,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/slow/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1827b-8a2e-711e-89f7-3d0b3258f94e",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1827b-8a2e-711e-89f7-3d0b3258f94e"
+          },
+          "elapsed_ms": 12
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a1827b-8a2e-711e-89f7-3d0b3258f94e",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 2
+        },
+        {
+          "step": "after:status",
+          "method": "GET",
+          "path": "/v2/crawl/01a1827b-8a2e-711e-89f7-3d0b3258f94e",
+          "status": 200,
+          "response": {
+            "completed": 0,
+            "completedAt": "2026-10-28T12:28:16.815Z",
+            "createdAt": "2026-10-28T12:28:16.815Z",
+            "creditsUsed": -1,
+            "data": [],
+            "duration": 0,
+            "expiresAt": "2026-10-29T12:28:16.000Z",
+            "status": "cancelled",
+            "success": true,
+            "total": 0,
+            "warning": "Only 0 result(s) found. For broader coverage, try crawling with crawlEntireDomain=true or start from a higher-level path like gym.test"
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {
+        "quiet_requests": 0
+      }
+    }
+  ],
+  "accessLog": {
+    "entries": [
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "127.0.0.1:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/1",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/2",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/3",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/4",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/5",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/6",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/7",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/8",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/a",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/b",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/c",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      }
+    ]
+  }
+}

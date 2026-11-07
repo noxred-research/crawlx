@@ -1,0 +1,727 @@
+{
+  "id": "g06",
+  "title": "Repeated cards with rerenders",
+  "version": 1,
+  "url_path": "/g06/",
+  "controls": [
+    {
+      "id": "rerender",
+      "selector": "#rerender",
+      "role": "button",
+      "name": "Rerender",
+      "logical_id": "rerender"
+    },
+    {
+      "id": "like-1",
+      "selector": "#like-1",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-2",
+      "selector": "#like-2",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-3",
+      "selector": "#like-3",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-4",
+      "selector": "#like-4",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-5",
+      "selector": "#like-5",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-6",
+      "selector": "#like-6",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-7",
+      "selector": "#like-7",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-8",
+      "selector": "#like-8",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-9",
+      "selector": "#like-9",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-10",
+      "selector": "#like-10",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-11",
+      "selector": "#like-11",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-12",
+      "selector": "#like-12",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-13",
+      "selector": "#like-13",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-14",
+      "selector": "#like-14",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-15",
+      "selector": "#like-15",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-16",
+      "selector": "#like-16",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-17",
+      "selector": "#like-17",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-18",
+      "selector": "#like-18",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-19",
+      "selector": "#like-19",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-20",
+      "selector": "#like-20",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-21",
+      "selector": "#like-21",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-22",
+      "selector": "#like-22",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-23",
+      "selector": "#like-23",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-24",
+      "selector": "#like-24",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-25",
+      "selector": "#like-25",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-26",
+      "selector": "#like-26",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-27",
+      "selector": "#like-27",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-28",
+      "selector": "#like-28",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-29",
+      "selector": "#like-29",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-30",
+      "selector": "#like-30",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-31",
+      "selector": "#like-31",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-32",
+      "selector": "#like-32",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-33",
+      "selector": "#like-33",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-34",
+      "selector": "#like-34",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-35",
+      "selector": "#like-35",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-36",
+      "selector": "#like-36",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-37",
+      "selector": "#like-37",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-38",
+      "selector": "#like-38",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-39",
+      "selector": "#like-39",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-40",
+      "selector": "#like-40",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-41",
+      "selector": "#like-41",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-42",
+      "selector": "#like-42",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-43",
+      "selector": "#like-43",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-44",
+      "selector": "#like-44",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-45",
+      "selector": "#like-45",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-46",
+      "selector": "#like-46",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-47",
+      "selector": "#like-47",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-48",
+      "selector": "#like-48",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-49",
+      "selector": "#like-49",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "like-50",
+      "selector": "#like-50",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "like"
+    },
+    {
+      "id": "open-1",
+      "selector": "#open-1",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-2",
+      "selector": "#open-2",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-3",
+      "selector": "#open-3",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-4",
+      "selector": "#open-4",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-5",
+      "selector": "#open-5",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-6",
+      "selector": "#open-6",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-7",
+      "selector": "#open-7",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-8",
+      "selector": "#open-8",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-9",
+      "selector": "#open-9",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-10",
+      "selector": "#open-10",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-11",
+      "selector": "#open-11",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-12",
+      "selector": "#open-12",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-13",
+      "selector": "#open-13",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-14",
+      "selector": "#open-14",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-15",
+      "selector": "#open-15",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-16",
+      "selector": "#open-16",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-17",
+      "selector": "#open-17",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-18",
+      "selector": "#open-18",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-19",
+      "selector": "#open-19",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-20",
+      "selector": "#open-20",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-21",
+      "selector": "#open-21",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-22",
+      "selector": "#open-22",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-23",
+      "selector": "#open-23",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-24",
+      "selector": "#open-24",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-25",
+      "selector": "#open-25",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-26",
+      "selector": "#open-26",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-27",
+      "selector": "#open-27",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-28",
+      "selector": "#open-28",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-29",
+      "selector": "#open-29",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-30",
+      "selector": "#open-30",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-31",
+      "selector": "#open-31",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-32",
+      "selector": "#open-32",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-33",
+      "selector": "#open-33",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-34",
+      "selector": "#open-34",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-35",
+      "selector": "#open-35",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-36",
+      "selector": "#open-36",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-37",
+      "selector": "#open-37",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-38",
+      "selector": "#open-38",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-39",
+      "selector": "#open-39",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-40",
+      "selector": "#open-40",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-41",
+      "selector": "#open-41",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-42",
+      "selector": "#open-42",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-43",
+      "selector": "#open-43",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-44",
+      "selector": "#open-44",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-45",
+      "selector": "#open-45",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-46",
+      "selector": "#open-46",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-47",
+      "selector": "#open-47",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-48",
+      "selector": "#open-48",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-49",
+      "selector": "#open-49",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "open-50",
+      "selector": "#open-50",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open"
+    },
+    {
+      "id": "item-back",
+      "selector": "#item-back",
+      "role": "link",
+      "name": "Back",
+      "logical_id": "item-back",
+      "page": "/item?id=1"
+    }
+  ],
+  "expected": {
+    "collision_rate_max": 0.005,
+    "split_rate_max": 0.02
+  }
+}

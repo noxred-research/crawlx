@@ -1,0 +1,207 @@
+name: release
+
+# Source-release workflow: runs on a `vX.Y.Z` tag, re-verifies the tagged tree, then builds a
+# deterministic source archive plus SHA256SUMS and creates a *draft* GitHub release. A person
+# publishes the draft after review. No binaries, container images or crates.io packages are
+# built or pushed by this workflow.
+#
+# Every action is pinned to the same commit SHA used in ci.yml.
+#
+# Workflow gate. Only code owners (the `*` rule of .github/CODEOWNERS on the default
+# branch) can run this workflow: the first job, `authorize`, checks the actor and the
+# triggering actor, and every other job needs it. The privileged fork-PR trigger and
+# `workflow_run` are deliberately not used.
+#
+# This gate is defense in depth. The authoritative controls are repository settings that the
+# maintainers apply: a tag ruleset that restricts who can create `v*` tags, and a branch
+# ruleset that requires code-owner review.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Workflow gate (see the header comment). Every other job depends on this one.
+  authorize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      ok: ${{ steps.gate.outputs.ok }}
+    steps:
+      - name: Only code owners' events run workflows
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          deny() {
+            echo "::notice title=workflow gate::not run: $1"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          case "$EVENT_NAME" in
+            push) ;;
+            *) deny "event ${EVENT_NAME} is not allowed" ;;
+          esac
+          # CODEOWNERS comes from the default branch through the API, never from the checkout
+          # of the event under test, so a change to the file cannot authorize itself.
+          branch="${DEFAULT_BRANCH:-$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)}"
+          codeowners=$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/CODEOWNERS?ref=${branch}" --jq .content | base64 -d)
+          # Users owning the `*` rule (the last `*` line wins, as in GitHub). Team owners
+          # (@org/team) cannot be resolved with the workflow token and are ignored.
+          owners=$(printf '%s\n' "$codeowners" | awk '
+            $1 == "*" {
+              o = ""
+              for (i = 2; i <= NF; i++) {
+                if ($i ~ /^#/) break
+                if ($i ~ /^@[A-Za-z0-9-]+$/) o = o tolower(substr($i, 2)) "\n"
+              }
+            }
+            END { printf "%s", o }')
+          [ -n "$owners" ] || deny "no user owner for the * rule in CODEOWNERS on ${branch}"
+          is_owner() {
+            [ -n "$1" ] && printf '%s\n' "$owners" | grep -qxF -- "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+          }
+          is_owner "$ACTOR" || deny "actor is not a code owner"
+          is_owner "$TRIGGERING_ACTOR" || deny "triggering actor is not a code owner"
+          if [ "$EVENT_NAME" = pull_request ]; then
+            is_owner "$PR_AUTHOR" || deny "pull request author is not a code owner"
+            [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ] || deny "pull request comes from a fork"
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+  verify:
+    runs-on: ubuntu-latest
+    needs: authorize
+    if: needs.authorize.outputs.ok == 'true'
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: crawlx
+          POSTGRES_PASSWORD: crawlx
+          POSTGRES_DB: crawlx_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U crawlx" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
+      CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
+    steps:
+      - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
+        # A step, not a `services:` container: services cannot pass server arguments.
+        run: |
+          docker run -d --name secret-custody -p 6390:6379 valkey/valkey:8.1.3-alpine valkey-server --save '' --appendonly no --maxmemory 256mb --maxmemory-policy noeviction
+          for _ in $(seq 30); do
+            docker exec secret-custody valkey-cli ping | grep -q PONG && exit 0
+            sleep 1
+          done
+          docker logs secret-custody
+          exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - name: Tag must match the workspace version and have a changelog section
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')
+          if [ "$GITHUB_REF_NAME" != "v${version}" ]; then
+            echo "::error title=version mismatch::tag $GITHUB_REF_NAME does not match workspace version v${version} in Cargo.toml"
+            exit 1
+          fi
+          if ! grep -qF "## [${version}]" CHANGELOG.md; then
+            echo "::error title=changelog::CHANGELOG.md has no '## [${version}]' section"
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: ci/lint-deps.sh
+      - name: Workspace tests (PostgreSQL service; Chromium-gated tests skip here)
+        run: cargo test --workspace --locked
+      # The Chromium-gated suites run against the pinned build exactly as ci.yml's `browser` job
+      # does (the pin is sha256-verified by ci/fetch-chromium.sh).
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/chromium
+          key: chromium-${{ hashFiles('chromium-pin.toml') }}
+      - name: Chrome for Testing runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
+      - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
+        run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
+      - name: Browser suites on the pinned Chromium
+        run: |
+          cargo test -p crawlx-bench --locked -- browser_ --test-threads 1
+          cargo test -p crawlx-browser --locked --test cdp_surface
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [authorize, verify]
+    if: needs.authorize.outputs.ok == 'true'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - name: Build the source archive and checksums
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')
+          mkdir -p dist
+          # git archive output depends only on the tagged tree: entries take the commit time,
+          # and git's built-in gzip writes no file name or timestamp.
+          git archive --format=tar.gz --prefix="crawlx-${version}/" \
+            -o "dist/crawlx-${version}-source.tar.gz" "$GITHUB_SHA"
+          (cd dist && sha256sum "crawlx-${version}-source.tar.gz" > SHA256SUMS && sha256sum --check SHA256SUMS)
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+      - name: Extract the release notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { exit }
+            on { print }
+          ' CHANGELOG.md > dist/RELEASE_NOTES.md
+          if ! grep -q '[^[:space:]]' dist/RELEASE_NOTES.md; then
+            echo "::error title=changelog::empty release notes for ${VERSION}"
+            exit 1
+          fi
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/crawlx-${VERSION}-source.tar.gz" dist/SHA256SUMS \
+            --verify-tag \
+            --draft \
+            --title "crawlx ${VERSION}" \
+            --notes-file dist/RELEASE_NOTES.md

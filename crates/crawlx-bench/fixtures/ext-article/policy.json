@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "algorithm": "article_ensemble_v1",
+  "comments": "separate",
+  "referenceDate": "2026-11-04",
+  "locale": "en-GB",
+  "minMainChars": 40,
+  "requiredMetadata": [
+    "title"
+  ]
+}

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g02 ARIA widgets</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  section { margin: 0 0 24px; }
+  [role=tablist] { display: flex; gap: 4px; border-bottom: 1px solid #889; }
+  [role=tab] { padding: 6px 12px; cursor: pointer; border: 1px solid transparent; }
+  [role=tab][aria-selected=true] { border-color: #889; background: #eef; }
+  [role=tabpanel] { padding: 10px; border: 1px solid #889; border-top: 0; }
+  .wrap { position: relative; display: inline-block; }
+  [role=menu], [role=listbox] { position: absolute; top: 100%; left: 0; min-width: 200px; background: #fff; border: 1px solid #889; z-index: 5; margin: 0; padding: 0; list-style: none; }
+  [role=listbox].static { position: static; }
+  [hidden] { display: none !important; }
+  [role=menuitem], [role=option], [role=treeitem] > .row { padding: 5px 10px; cursor: pointer; }
+  [role=option][aria-selected=true], [role=treeitem][aria-selected=true] > .row { background: #dde; }
+  [role=combobox] { min-width: 200px; padding: 6px 10px; border: 1px solid #889; background: #fff; cursor: pointer; }
+  [role=tree], [role=group] { list-style: none; padding-left: 16px; margin: 0; }
+  [role=toolbar] { display: flex; gap: 6px; flex-wrap: wrap; }
+  [role=toolbar] [role=button] { padding: 6px 10px; border: 1px solid #889; border-radius: 4px; cursor: pointer; background: #f4f4f8; }
+  [role=dialog] { position: fixed; inset: 20% 30%; background: #fff; border: 2px solid #335; padding: 16px; z-index: 10; }
+  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 9; }
+</style>
+</head>
+<body>
+<h1>ARIA widgets</h1>
+<p>Render <span id="renders">0</span>. Last action: <span id="out">none</span></p>
+<div id="root"></div>
+<script>
+(function () {
+  var render = 0;
+  var root = document.getElementById('root');
+  var out = document.getElementById('out');
+  var state = { tab: 'tab-1', menuOpen: false, cbOpen: false, dialogOpen: false, expanded: {} };
+
+  function say(id) { out.textContent = id; }
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  // Non-semantic attributes change on every render (identity must ignore them).
+  function volatile(e, rng) {
+    e.setAttribute('data-render', String(render));
+    e.className = (e.className ? e.className + ' ' : '') + 'r' + Math.floor(rng() * 1e6);
+    return e;
+  }
+  function bind(e, id, evName) {
+    e.addEventListener(evName || 'click', function (ev) { __gym.hit(id, ev); say(id); });
+    return e;
+  }
+
+  var TABS = ['Overview', 'Details', 'Reviews', 'History', 'Files', 'Settings'];
+  var MENU = ['New', 'Open', 'Save', 'Save as', 'Export', 'Print', 'Share', 'Close'];
+  var CB = ['Apple', 'Banana', 'Cherry', 'Damson', 'Elder', 'Fig', 'Grape', 'Honeydew'];
+  var LB = ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Indigo', 'Violet', 'Black', 'White', 'Gray'];
+  var TREE = [['Projects', ['Alpha', 'Beta', 'Gamma']], ['Teams', ['Core', 'Infra', 'Design']], ['Archive', ['2024', '2025', '2026']]];
+  var TOOLBAR = ['Bold', 'Italic', 'Underline', 'Link', 'Image', 'Code', 'Quote', 'List', 'Undo', 'Rerender'];
+
+  function draw() {
+    var rng = __gym.rngFor('render-' + render);
+    root.textContent = '';
+
+    // --- tabs (6) ---
+    var sec = el('section', { 'aria-labelledby': 'h-tabs' });
+    sec.appendChild(el('h2', { id: 'h-tabs' }, 'Tabs'));
+    var tl = el('div', { role: 'tablist', 'aria-label': 'Sections' });
+    TABS.forEach(function (name, i) {
+      var id = 'tab-' + (i + 1);
+      var t = volatile(el('div', { role: 'tab', id: id, tabindex: state.tab === id ? '0' : '-1', 'aria-selected': state.tab === id ? 'true' : 'false', 'aria-controls': 'panel-' + (i + 1) }, name), rng);
+      t.addEventListener('click', function (ev) { __gym.hit(id, ev); state.tab = id; say(id); draw(); });
+      tl.appendChild(t);
+    });
+    sec.appendChild(tl);
+    TABS.forEach(function (name, i) {
+      var p = el('div', { role: 'tabpanel', id: 'panel-' + (i + 1), 'aria-labelledby': 'tab-' + (i + 1) }, name + ' panel content.');
+      if (state.tab !== 'tab-' + (i + 1)) p.hidden = true;
+      sec.appendChild(p);
+    });
+    root.appendChild(sec);
+
+    // --- menu button + 8 items (9) ---
+    sec = el('section', { 'aria-labelledby': 'h-menu' });
+    sec.appendChild(el('h2', { id: 'h-menu' }, 'Menu'));
+    var wrap = el('div', { class: 'wrap' });
+    var mb = volatile(el('div', { role: 'button', id: 'menu-btn', tabindex: '0', 'aria-haspopup': 'menu', 'aria-expanded': state.menuOpen ? 'true' : 'false', 'aria-controls': 'menu' }, 'Actions'), rng);
+    mb.addEventListener('click', function (ev) { __gym.hit('menu-btn', ev); state.menuOpen = !state.menuOpen; say('menu-btn'); draw(); });
+    wrap.appendChild(mb);
+    var menu = el('ul', { role: 'menu', id: 'menu', 'aria-label': 'Actions' });
+    if (!state.menuOpen) menu.hidden = true;
+    MENU.forEach(function (name, i) {
+      var id = 'menu-' + (i + 1);
+      var li = volatile(el('li', { role: 'menuitem', id: id, tabindex: '-1' }, name), rng);
+      li.addEventListener('click', function (ev) { __gym.hit(id, ev); say(id); state.menuOpen = false; draw(); });
+      menu.appendChild(li);
+    });
+    wrap.appendChild(menu);
+    sec.appendChild(wrap);
+    root.appendChild(sec);
+
+    // --- combobox + 8 options (9) ---
+    sec = el('section', { 'aria-labelledby': 'h-cb' });
+    sec.appendChild(el('h2', { id: 'h-cb' }, 'Combobox'));
+    wrap = el('div', { class: 'wrap' });
+    var cb = volatile(el('div', { role: 'combobox', id: 'cb', tabindex: '0', 'aria-haspopup': 'listbox', 'aria-expanded': state.cbOpen ? 'true' : 'false', 'aria-controls': 'cb-list', 'aria-label': 'Fruit' }, state.fruit || 'Choose a fruit'), rng);
+    cb.addEventListener('click', function (ev) { __gym.hit('cb', ev); state.cbOpen = !state.cbOpen; say('cb'); draw(); });
+    wrap.appendChild(cb);
+    var list = el('ul', { role: 'listbox', id: 'cb-list', 'aria-label': 'Fruit options' });
+    if (!state.cbOpen) list.hidden = true;
+    CB.forEach(function (name, i) {
+      var id = 'cb-opt-' + (i + 1);
+      var li = volatile(el('li', { role: 'option', id: id, 'aria-selected': state.fruit === name ? 'true' : 'false' }, name), rng);
+      li.addEventListener('click', function (ev) { __gym.hit(id, ev); state.fruit = name; state.cbOpen = false; say(id); draw(); });
+      list.appendChild(li);
+    });
+    wrap.appendChild(list);
+    sec.appendChild(wrap);
+    root.appendChild(sec);
+
+    // --- static listbox, 10 options (10) ---
+    sec = el('section', { 'aria-labelledby': 'h-lb' });
+    sec.appendChild(el('h2', { id: 'h-lb' }, 'Listbox'));
+    var lb = el('ul', { role: 'listbox', id: 'lb', class: 'static', 'aria-label': 'Colors', tabindex: '0' });
+    LB.forEach(function (name, i) {
+      var id = 'lb-opt-' + (i + 1);
+      var li = volatile(el('li', { role: 'option', id: id, 'aria-selected': state.color === name ? 'true' : 'false' }, name), rng);
+      li.addEventListener('click', function (ev) { __gym.hit(id, ev); state.color = name; say(id); draw(); });
+      lb.appendChild(li);
+    });
+    sec.appendChild(lb);
+    root.appendChild(sec);
+
+    // --- tree: 3 groups + 9 leaves (12) ---
+    sec = el('section', { 'aria-labelledby': 'h-tree' });
+    sec.appendChild(el('h2', { id: 'h-tree' }, 'Tree'));
+    var tree = el('ul', { role: 'tree', id: 'tree', 'aria-label': 'Navigation' });
+    TREE.forEach(function (node, gi) {
+      var gid = 'tree-' + (gi + 1);
+      var open = !!state.expanded[gid];
+      var li = volatile(el('li', { role: 'treeitem', id: gid, 'aria-expanded': open ? 'true' : 'false', tabindex: gi === 0 ? '0' : '-1' }), rng);
+      var row = el('div', { class: 'row' }, node[0]);
+      row.addEventListener('click', function (ev) { __gym.hit(gid, ev); state.expanded[gid] = !open; say(gid); draw(); });
+      li.appendChild(row);
+      var group = el('ul', { role: 'group' });
+      if (!open) group.hidden = true;
+      node[1].forEach(function (leaf, li2) {
+        var lid = gid + '-' + (li2 + 1);
+        var leafEl = volatile(el('li', { role: 'treeitem', id: lid, tabindex: '-1' }), rng);
+        var r2 = el('div', { class: 'row' }, leaf);
+        r2.addEventListener('click', function (ev) { ev.stopPropagation(); __gym.hit(lid, ev); say(lid); });
+        leafEl.appendChild(r2);
+        group.appendChild(leafEl);
+      });
+      li.appendChild(group);
+      tree.appendChild(li);
+    });
+    sec.appendChild(tree);
+    root.appendChild(sec);
+
+    // --- dialog: opener + 3 inside (4) ---
+    sec = el('section', { 'aria-labelledby': 'h-dlg' });
+    sec.appendChild(el('h2', { id: 'h-dlg' }, 'Dialog'));
+    var opener = volatile(el('div', { role: 'button', id: 'dlg-open', tabindex: '0', 'aria-haspopup': 'dialog' }, 'Open dialog'), rng);
+    opener.addEventListener('click', function (ev) { __gym.hit('dlg-open', ev); state.dialogOpen = true; say('dlg-open'); draw(); });
+    sec.appendChild(opener);
+    if (state.dialogOpen) {
+      sec.appendChild(el('div', { class: 'backdrop' }));
+      var dlg = el('div', { role: 'dialog', id: 'dlg', 'aria-modal': 'true', 'aria-labelledby': 'dlg-title' });
+      dlg.appendChild(el('h3', { id: 'dlg-title' }, 'Confirm'));
+      [['dlg-confirm', 'Confirm'], ['dlg-cancel', 'Cancel'], ['dlg-help', 'Help']].forEach(function (p) {
+        var b = volatile(el('div', { role: 'button', id: p[0], tabindex: '0' }, p[1]), rng);
+        b.addEventListener('click', function (ev) { __gym.hit(p[0], ev); say(p[0]); if (p[0] !== 'dlg-help') { state.dialogOpen = false; draw(); } });
+        dlg.appendChild(b);
+      });
+      sec.appendChild(dlg);
+    }
+    root.appendChild(sec);
+
+    // --- toolbar, 10 buttons (10), the last one rerenders ---
+    sec = el('section', { 'aria-labelledby': 'h-tb' });
+    sec.appendChild(el('h2', { id: 'h-tb' }, 'Toolbar'));
+    var tb = el('div', { role: 'toolbar', id: 'toolbar', 'aria-label': 'Formatting' });
+    __gym.shuffle(TOOLBAR.map(function (n, i) { return [n, i]; }), rng).forEach(function (p) {
+      var id = 'tb-' + (p[1] + 1);
+      var b = volatile(el('div', { role: 'button', id: id, tabindex: '0' }, p[0]), rng);
+      b.addEventListener('click', function (ev) {
+        __gym.hit(id, ev);
+        say(id);
+        if (p[0] === 'Rerender') { render += 1; draw(); }
+      });
+      tb.appendChild(b);
+    });
+    sec.appendChild(tb);
+    root.appendChild(sec);
+
+    document.getElementById('renders').textContent = String(render);
+  }
+  window.__g02 = { rerender: function () { render += 1; draw(); } };
+  draw();
+})();
+</script>
+</body>
+</html>

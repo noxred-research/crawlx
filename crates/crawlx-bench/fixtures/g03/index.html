@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g03 Custom ARIA widgets</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  section { margin: 0 0 28px; }
+  [role=tablist] { display: flex; gap: 4px; border-bottom: 1px solid #889; }
+  [role=tab] { padding: 8px 14px; cursor: pointer; border: 1px solid transparent; }
+  [role=tab][aria-selected=true] { border-color: #889; border-bottom-color: #fff; background: #eef; }
+  [role=tabpanel] { padding: 12px; border: 1px solid #889; border-top: 0; }
+  .menu-wrap, .cb-wrap { position: relative; display: inline-block; }
+  [role=menu], [role=listbox] { position: absolute; top: 100%; left: 0; min-width: 180px; background: #fff; border: 1px solid #889; z-index: 5; }
+  [hidden] { display: none !important; }
+  [role=menuitem], [role=option] { padding: 6px 12px; cursor: pointer; }
+  [role=menuitem]:hover, [role=option]:hover, [role=option][aria-selected=true] { background: #dde; }
+  [role=combobox] { min-width: 180px; padding: 6px 10px; border: 1px solid #889; cursor: pointer; background: #fff; }
+</style>
+</head>
+<body>
+<h1>Custom widgets</h1>
+
+<section aria-labelledby="h-tabs">
+  <h2 id="h-tabs">Tabs</h2>
+  <div role="tablist" aria-label="Sections">
+      <div role="tab" id="t1" tabindex="0" aria-selected="true" aria-controls="panel-t1">Overview</div>
+      <div role="tab" id="t2" tabindex="-1" aria-selected="false" aria-controls="panel-t2">Details</div>
+      <div role="tab" id="t3" tabindex="-1" aria-selected="false" aria-controls="panel-t3">Reviews</div>
+      <div role="tab" id="t4" tabindex="-1" aria-selected="false" aria-controls="panel-t4">History</div>
+  </div>
+    <div role="tabpanel" id="panel-t1" aria-labelledby="t1"><p>Overview panel content.</p></div>
+    <div role="tabpanel" id="panel-t2" aria-labelledby="t2" hidden><p>Details panel content.</p></div>
+    <div role="tabpanel" id="panel-t3" aria-labelledby="t3" hidden><p>Reviews panel content.</p></div>
+    <div role="tabpanel" id="panel-t4" aria-labelledby="t4" hidden><p>History panel content.</p></div>
+</section>
+
+<section aria-labelledby="h-menu">
+  <h2 id="h-menu">Menu</h2>
+  <div class="menu-wrap">
+    <button type="button" id="m0" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-list">Actions</button>
+    <div role="menu" id="menu-list" aria-labelledby="m0" hidden>
+      <div role="menuitem" id="m1" tabindex="-1">Rename</div>
+      <div role="menuitem" id="m2" tabindex="-1">Duplicate</div>
+      <div role="menuitem" id="m3" tabindex="-1">Archive</div>
+      <div role="menuitem" id="m4" tabindex="-1">Share</div>
+    </div>
+  </div>
+  <p>Last menu action: <span id="menu-out">none</span></p>
+</section>
+
+<section aria-labelledby="h-cb">
+  <h2 id="h-cb">Combobox</h2>
+  <div class="cb-wrap">
+    <div role="combobox" id="cb0" tabindex="0" aria-label="Fruit" aria-haspopup="listbox" aria-expanded="false" aria-controls="cb-list"><span id="cb-val">Choose a fruit</span></div>
+    <div role="listbox" id="cb-list" aria-label="Fruit options" hidden>
+      <div role="option" id="o1" aria-selected="false">Apple</div>
+      <div role="option" id="o2" aria-selected="false">Banana</div>
+      <div role="option" id="o3" aria-selected="false">Cherry</div>
+      <div role="option" id="o4" aria-selected="false">Damson</div>
+      <div role="option" id="o5" aria-selected="false">Elderberry</div>
+    </div>
+  </div>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+
+  // Tabs
+  var tabs = [1, 2, 3, 4].map(function (i) { return $('t' + i); });
+  function selectTab(idx, focus) {
+    tabs.forEach(function (t, i) {
+      var on = i === idx;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      $('panel-' + t.id).hidden = !on;
+    });
+    if (focus) tabs[idx].focus();
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function (ev) { __gym.hit(t.id, ev); selectTab(i, false); });
+    t.addEventListener('keydown', function (ev) {
+      var n = tabs.length;
+      if (ev.key === 'ArrowRight') { ev.preventDefault(); selectTab((i + 1) % n, true); }
+      else if (ev.key === 'ArrowLeft') { ev.preventDefault(); selectTab((i + n - 1) % n, true); }
+    });
+  });
+
+  // Menu
+  var m0 = $('m0'), menu = $('menu-list');
+  function setMenu(open) {
+    menu.hidden = !open;
+    m0.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  m0.addEventListener('click', function (ev) {
+    __gym.hit('m0', ev);
+    setMenu(menu.hidden);
+  });
+  [1, 2, 3, 4].forEach(function (i) {
+    var it = $('m' + i);
+    it.addEventListener('click', function (ev) {
+      __gym.hit(it.id, ev);
+      $('menu-out').textContent = it.textContent;
+      setMenu(false);
+      m0.focus();
+    });
+  });
+
+  // Combobox
+  var cb = $('cb0'), list = $('cb-list');
+  function setCb(open) {
+    list.hidden = !open;
+    cb.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  cb.addEventListener('click', function (ev) {
+    __gym.hit('cb0', ev);
+    setCb(list.hidden);
+  });
+  cb.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'ArrowDown') { ev.preventDefault(); setCb(true); }
+    else if (ev.key === 'Escape') { setCb(false); }
+  });
+  [1, 2, 3, 4, 5].forEach(function (i) {
+    var o = $('o' + i);
+    o.addEventListener('click', function (ev) {
+      __gym.hit(o.id, ev);
+      [1, 2, 3, 4, 5].forEach(function (j) { $('o' + j).setAttribute('aria-selected', j === i ? 'true' : 'false'); });
+      $('cb-val').textContent = o.textContent;
+      setCb(false);
+      cb.focus();
+    });
+  });
+})();
+</script>
+</body>
+</html>

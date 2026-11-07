@@ -1,0 +1,121 @@
+{{- if .Values.networkPolicy.enabled }}
+# Defense in depth behind the egress proxy's EgressPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-worker-egress
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-worker, release: {{ .Release.Name }}, crawlx.dev/egress: allowed }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.deniedCidrsV4 | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
+    - to:
+        - ipBlock:
+            cidr: ::/0
+            except:
+              {{- toYaml .Values.networkPolicy.deniedCidrsV6 | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.postgresSelector }} }
+      ports: [{ protocol: TCP, port: 5432 }]
+    {{- if .Values.zdr.enabled }}
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-zdr, release: {{ .Release.Name }} } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    {{- end }}
+    - to:
+        {{- if .Values.artifactCustody.secretRedis.managed.enabled }}
+        - podSelector: { matchLabels: { app: crawlx-secret-registry, release: {{ .Release.Name }} } }
+        {{- else }}
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.secretRedisSelector }} }
+        {{- end }}
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.modelSelector }} }
+      ports: [{ protocol: TCP, port: 8500 }]
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.objectStoreSelector }} }
+      ports: [{ protocol: TCP, port: 9000 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }} } }
+      ports: [{ protocol: TCP, port: 4317 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-api
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-api, release: {{ .Release.Name }} }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.api.ingressNamespace }} } }
+      ports: [{ protocol: TCP, port: {{ (splitList ":" .Values.config.api.listen) | last }} }]
+  egress:
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.postgresSelector }} }
+      ports: [{ protocol: TCP, port: 5432 }]
+    {{- if .Values.zdr.enabled }}
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-zdr, release: {{ .Release.Name }} } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    {{- end }}
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.objectStoreSelector }} }
+      ports: [{ protocol: TCP, port: 9000 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }} } }
+      ports: [{ protocol: TCP, port: 4317 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.deniedCidrsV4 | nindent 14 }}
+      ports: [{ protocol: TCP, port: 443 }]
+---
+# RB-11 level 3: `kubectl label pods -l app=crawlx-worker crawlx.dev/egress=denied --overwrite`
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-worker-deny-all-egress
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-worker, release: {{ .Release.Name }}, crawlx.dev/egress: denied }
+  policyTypes: [Egress]
+  egress: []
+{{- end }}

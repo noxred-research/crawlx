@@ -1,0 +1,55 @@
+[package]
+name = "crawlx-fetch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: HTTP fetch plane and loopback egress proxy"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-policy = { path = "../crawlx-policy" }
+crawlx-url = { path = "../crawlx-url" }
+crawlx-telemetry = { path = "../crawlx-telemetry" }
+async-trait.workspace = true
+# Safe curve identifiers for wreq's synthetic ClientHello configuration (Apache-2.0, MSRV 1.80).
+boring2 = { version = "=4.15.15", default-features = false }
+base64.workspace = true
+bytes.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+hickory-resolver.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+ipnet.workspace = true
+parking_lot.workspace = true
+percent-encoding = "2"
+rand.workspace = true
+rand_chacha.workspace = true
+reqwest.workspace = true
+regex.workspace = true
+rustix = { version = "1.1.5", features = ["fs"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+# TLS to an `https://` upstream proxy (`upstream`); the Mozilla roots validate it
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-util.workspace = true
+tracing.workspace = true
+url.workspace = true
+webpki-roots = "1"
+wreq.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
+tracing-subscriber.workspace = true
+wiremock.workspace = true
+
+[lints]
+workspace = true

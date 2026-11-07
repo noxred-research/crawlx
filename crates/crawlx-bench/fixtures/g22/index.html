@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g22 one button, many behaviors</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  nav, fieldset { border: 1px solid #ccd; padding: 10px; margin: 0 0 12px; }
+  button { margin: 2px 4px; }
+  #delete { font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Items</h1>
+<p>Signed in as <strong id="who">anonymous</strong>. Last: <span id="out">none</span></p>
+<nav aria-label="Principals">
+  <button id="login-alice" type="button">Sign in as Alice</button>
+  <button id="login-bob" type="button">Sign in as Bob</button>
+  <button id="login-admin" type="button">Sign in as Admin</button>
+</nav>
+<fieldset>
+  <legend>Selected item</legend>
+  <label><input id="pick-1" type="radio" name="item" value="1" checked> Item 1 (owner alice) <span id="state-1"></span></label>
+  <label><input id="pick-2" type="radio" name="item" value="2"> Item 2 (owner bob) <span id="state-2"></span></label>
+</fieldset>
+<button id="archive" type="button">Toggle archive</button>
+<!-- The Delete button never changes: same id, label, role and position. Its backend effect
+     depends on who is signed in, who owns the selected item and whether it is archived. -->
+<button id="delete" type="button">Delete</button>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  function selected() { return document.querySelector('input[name=item]:checked').value; }
+  function refresh() {
+    return __gym.api('GET', 'items').then(function (j) {
+      $('who').textContent = j.user || 'anonymous';
+      (j.items || []).forEach(function (it) {
+        $('state-' + it.id).textContent = it.archived ? '[archived]' : '[active]';
+      });
+    });
+  }
+  ['alice', 'bob', 'admin'].forEach(function (u) {
+    $('login-' + u).addEventListener('click', function (ev) {
+      __gym.hit('login-' + u, ev);
+      fetch('/g22/api/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'user=' + u + '&password=gym-pass'
+      }).then(refresh);
+    });
+  });
+  ['pick-1', 'pick-2'].forEach(function (id) { $(id).addEventListener('change', function (ev) { __gym.hit(id, ev); }); });
+  $('archive').addEventListener('click', function (ev) {
+    __gym.hit('archive', ev);
+    __gym.api('POST', 'items/' + selected() + '/archive').then(function (r) { out.textContent = 'archive:' + (r.ok ? r.archived : 'denied'); refresh(); });
+  });
+  $('delete').addEventListener('click', function (ev) {
+    __gym.hit('delete', ev);
+    __gym.api('DELETE', 'items/' + selected()).then(function (r) {
+      out.textContent = 'delete:' + r.behavior + ':' + r.state;
+      refresh();
+    });
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>

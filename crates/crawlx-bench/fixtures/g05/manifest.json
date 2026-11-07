@@ -1,0 +1,319 @@
+{
+  "id": "g05",
+  "title": "Same-origin, cross-origin and srcdoc frames to depth 3 (36 targets across 7 frames)",
+  "version": 1,
+  "url_path": "/g05/",
+  "controls": [
+    {
+      "id": "m-1",
+      "selector": "#m-1",
+      "role": "button",
+      "name": "Save",
+      "logical_id": "m-1",
+      "frame": "main"
+    },
+    {
+      "id": "m-2",
+      "selector": "#m-2",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "m-2",
+      "frame": "main"
+    },
+    {
+      "id": "m-3",
+      "selector": "#m-3",
+      "role": "button",
+      "name": "Open",
+      "logical_id": "m-3",
+      "frame": "main"
+    },
+    {
+      "id": "m-4",
+      "selector": "#m-4",
+      "role": "button",
+      "name": "Edit",
+      "logical_id": "m-4",
+      "frame": "main"
+    },
+    {
+      "id": "m-5",
+      "selector": "#m-5",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "m-5",
+      "frame": "main"
+    },
+    {
+      "id": "m-6",
+      "selector": "#m-6",
+      "role": "button",
+      "name": "Share",
+      "logical_id": "m-6",
+      "frame": "main"
+    },
+    {
+      "id": "f1-1",
+      "selector": "#f1-1",
+      "role": "button",
+      "name": "Save",
+      "logical_id": "f1-1",
+      "frame": "main/f1"
+    },
+    {
+      "id": "f1-2",
+      "selector": "#f1-2",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "f1-2",
+      "frame": "main/f1"
+    },
+    {
+      "id": "f1-3",
+      "selector": "#f1-3",
+      "role": "button",
+      "name": "Open",
+      "logical_id": "f1-3",
+      "frame": "main/f1"
+    },
+    {
+      "id": "f1-4",
+      "selector": "#f1-4",
+      "role": "button",
+      "name": "Edit",
+      "logical_id": "f1-4",
+      "frame": "main/f1"
+    },
+    {
+      "id": "f1-5",
+      "selector": "#f1-5",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "f1-5",
+      "frame": "main/f1"
+    },
+    {
+      "id": "f1a-1",
+      "selector": "#f1a-1",
+      "role": "button",
+      "name": "Save",
+      "logical_id": "f1a-1",
+      "frame": "main/f1/f1a"
+    },
+    {
+      "id": "f1a-2",
+      "selector": "#f1a-2",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "f1a-2",
+      "frame": "main/f1/f1a"
+    },
+    {
+      "id": "f1a-3",
+      "selector": "#f1a-3",
+      "role": "button",
+      "name": "Open",
+      "logical_id": "f1a-3",
+      "frame": "main/f1/f1a"
+    },
+    {
+      "id": "f1a-4",
+      "selector": "#f1a-4",
+      "role": "button",
+      "name": "Edit",
+      "logical_id": "f1a-4",
+      "frame": "main/f1/f1a"
+    },
+    {
+      "id": "f1a-5",
+      "selector": "#f1a-5",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "f1a-5",
+      "frame": "main/f1/f1a"
+    },
+    {
+      "id": "f1b-1",
+      "selector": "#f1b-1",
+      "role": "button",
+      "name": "Save",
+      "logical_id": "f1b-1",
+      "frame": "main/f1/f1a/f1b"
+    },
+    {
+      "id": "f1b-2",
+      "selector": "#f1b-2",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "f1b-2",
+      "frame": "main/f1/f1a/f1b"
+    },
+    {
+      "id": "f1b-3",
+      "selector": "#f1b-3",
+      "role": "button",
+      "name": "Open",
+      "logical_id": "f1b-3",
+      "frame": "main/f1/f1a/f1b"
+    },
+    {
+      "id": "f1b-4",
+      "selector": "#f1b-4",
+      "role": "button",
+      "name": "Edit",
+      "logical_id": "f1b-4",
+      "frame": "main/f1/f1a/f1b"
+    },
+    {
+      "id": "f1b-5",
+      "selector": "#f1b-5",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "f1b-5",
+      "frame": "main/f1/f1a/f1b"
+    },
+    {
+      "id": "f2-1",
+      "selector": "#f2-1",
+      "role": "button",
+      "name": "Save",
+      "logical_id": "f2-1",
+      "frame": "main/f2"
+    },
+    {
+      "id": "f2-2",
+      "selector": "#f2-2",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "f2-2",
+      "frame": "main/f2"
+    },
+    {
+      "id": "f2-3",
+      "selector": "#f2-3",
+      "role": "button",
+      "name": "Open",
+      "logical_id": "f2-3",
+      "frame": "main/f2"
+    },
+    {
+      "id": "f2-4",
+      "selector": "#f2-4",
+      "role": "button",
+      "name": "Edit",
+      "logical_id": "f2-4",
+      "frame": "main/f2"
+    },
+    {
+      "id": "f2-5",
+      "selector": "#f2-5",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "f2-5",
+      "frame": "main/f2"
+    },
+    {
+      "id": "f3-1",
+      "selector": "#f3-1",
+      "role": "button",
+      "name": "Save",
+      "logical_id": "f3-1",
+      "frame": "main/f3",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "f3-2",
+      "selector": "#f3-2",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "f3-2",
+      "frame": "main/f3",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "f3-3",
+      "selector": "#f3-3",
+      "role": "button",
+      "name": "Open",
+      "logical_id": "f3-3",
+      "frame": "main/f3",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "f3-4",
+      "selector": "#f3-4",
+      "role": "button",
+      "name": "Edit",
+      "logical_id": "f3-4",
+      "frame": "main/f3",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "f3-5",
+      "selector": "#f3-5",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "f3-5",
+      "frame": "main/f3",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "f4-1",
+      "selector": "#f4-1",
+      "role": "button",
+      "name": "Save",
+      "logical_id": "f4-1",
+      "frame": "main/f4"
+    },
+    {
+      "id": "f4-2",
+      "selector": "#f4-2",
+      "role": "button",
+      "name": "Cancel",
+      "logical_id": "f4-2",
+      "frame": "main/f4"
+    },
+    {
+      "id": "f4-3",
+      "selector": "#f4-3",
+      "role": "button",
+      "name": "Open",
+      "logical_id": "f4-3",
+      "frame": "main/f4"
+    },
+    {
+      "id": "f4-4",
+      "selector": "#f4-4",
+      "role": "button",
+      "name": "Edit",
+      "logical_id": "f4-4",
+      "frame": "main/f4"
+    },
+    {
+      "id": "f4-5",
+      "selector": "#f4-5",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "f4-5",
+      "frame": "main/f4"
+    }
+  ],
+  "expected": {
+    "operations": [],
+    "target_recall_min": 0.95,
+    "collision_rate_max": 0.0,
+    "volatile_regions": [
+      "#out"
+    ]
+  }
+}

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>G29 SSRF browser lab</title>
+{{GYM_JS}}
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; color: #222; }
+  li { font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>SSRF browser lab</h1>
+<p>Fires 24 probes at destinations an egress proxy must deny. Nothing here is interactive.</p>
+<ol id="probes"></ol>
+<script>
+  (function () {
+    var PROBES = [
+      {"id": "d01", "kind": "fetch", "url": "http://169.254.169.254/latest/meta-data/"},
+      {"id": "d02", "kind": "img", "url": "http://169.254.169.254/latest/meta-data/iam/x.png"},
+      {"id": "d03", "kind": "iframe", "url": "http://169.254.169.254/latest/user-data"},
+      {"id": "d04", "kind": "websocket", "url": "ws://169.254.169.254/socket"},
+      {"id": "d05", "kind": "fetch", "url": "http://[fd00:ec2::254]/latest/meta-data/"},
+      {"id": "d06", "kind": "img", "url": "http://[fd00:ec2::254]/icon.png"},
+      {"id": "d07", "kind": "fetch", "url": "http://10.0.0.1/"},
+      {"id": "d08", "kind": "img", "url": "http://10.0.0.1/x.png"},
+      {"id": "d09", "kind": "fetch", "url": "http://172.16.0.1/"},
+      {"id": "d10", "kind": "img", "url": "http://172.16.0.1/x.png"},
+      {"id": "d11", "kind": "fetch", "url": "http://192.168.0.1/"},
+      {"id": "d12", "kind": "img", "url": "http://192.168.0.1/x.png"},
+      {"id": "d13", "kind": "fetch", "url": "http://100.64.0.1/"},
+      {"id": "d14", "kind": "img", "url": "http://100.64.0.1/x.png"},
+      {"id": "d15", "kind": "fetch", "url": "http://198.18.0.1/"},
+      {"id": "d16", "kind": "websocket", "url": "ws://100.100.100.200/"},
+      {"id": "d17", "kind": "fetch", "url": "http://metadata.google.internal/computeMetadata/v1/"},
+      {"id": "d18", "kind": "img", "url": "http://metadata.google.internal/favicon.ico"},
+      {"id": "d19", "kind": "fetch", "url": "http://rebind.gym.test/"},
+      {"id": "d20", "kind": "img", "url": "http://rebind.gym.test/x.png"},
+      {"id": "d21", "kind": "redirect", "url": "http://169.254.169.254/latest/", "via": "fetch"},
+      {"id": "d22", "kind": "redirect", "url": "http://10.0.0.2/", "via": "iframe"},
+      {"id": "d23", "kind": "fetch", "url": "http://[::ffff:169.254.169.254]/"},
+      {"id": "d24", "kind": "img", "url": "http://0xa9fea9fe/"}
+    ];
+    var REDIRECT = '/{{FIXTURE}}/redirect?to=';
+    var keep = [];
+
+    function launch(p) {
+      var url = p.url;
+      var kind = p.via || p.kind;
+      if (p.kind === 'redirect') url = REDIRECT + encodeURIComponent(p.url);
+      if (kind === 'fetch') {
+        try { fetch(url, { mode: 'no-cors' }).catch(function () {}); } catch (e) {}
+      } else if (kind === 'img') {
+        var img = new Image();
+        img.onerror = function () {};
+        img.src = url;
+        keep.push(img);
+      } else if (kind === 'iframe') {
+        var f = document.createElement('iframe');
+        f.hidden = true;
+        f.setAttribute('aria-hidden', 'true');
+        f.src = url;
+        document.body.appendChild(f);
+        setTimeout(function () { f.remove(); }, 500);
+      } else if (kind === 'websocket') {
+        try {
+          var ws = new WebSocket(url);
+          ws.onerror = function () {};
+          ws.onclose = function () {};
+          setTimeout(function () { try { ws.close(); } catch (e) {} }, 500);
+        } catch (e) {}
+      }
+    }
+
+    function step(i) {
+      var p = PROBES[i];
+      var li = document.createElement('li');
+      li.setAttribute('data-probe', p.id);
+      li.textContent = p.id + ' ' + p.kind + ' ' + p.url;
+      document.getElementById('probes').appendChild(li);
+      launch(p);
+      if (i + 1 < PROBES.length) {
+        setTimeout(function () { step(i + 1); }, 30);
+      } else {
+        window.__gymDone = true;
+      }
+    }
+
+    window.addEventListener('load', function () { step(0); });
+  })();
+</script>
+</body>
+</html>

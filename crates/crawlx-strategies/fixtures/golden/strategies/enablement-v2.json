@@ -1,0 +1,59 @@
+{
+  "strategy": "enablement",
+  "version": 2,
+  "context": {
+    "candidates": 48,
+    "keyed_actions": 70,
+    "hidden_targets": 2,
+    "seed": 42
+  },
+  "rounds": [
+    {
+      "phase": "greedy",
+      "proposals": []
+    },
+    {
+      "phase": "state_recovery",
+      "proposals": []
+    },
+    {
+      "phase": "enablement_recovery",
+      "proposals": [
+        {
+          "key_id": "878ae4129f451208b841732cb3af79c6",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "c0706827227549234cd350cc09c65947a4ffa37b8db04cdb8b4333c29fa33fa5",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 12,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "enablement",
+          "strategy_version": 2,
+          "confidence_micros": 800000,
+          "expected": {
+            "reveals": [
+              "3eab558375158bba93aadcfd44cacaab69b8cdc5744a42544bf540e8da9cbd92"
+            ],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click button [c07068272275]"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2488 @@
+{
+  "wireSample": {
+    "provenance": "black_box_run",
+    "system": "firecrawl",
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5",
+    "apiRoot": "http://127.0.0.1:3102",
+    "origin": "http://gym.test:4101"
+  },
+  "family": "wire-webhook",
+  "scenarios": [
+    {
+      "id": "basic",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 10,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "headers": {
+                "X-Differential-Run": "basic"
+              },
+              "metadata": {
+                "n": "1",
+                "run": "wh-basic"
+              },
+              "url": "http://gym.test:36961/hook/basic"
+            }
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828e-edfb-776a-9dfb-cdc2b2bb0000",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828e-edfb-776a-9dfb-cdc2b2bb0000"
+          },
+          "elapsed_ms": 27
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a1828e-edfb-776a-9dfb-cdc2b2bb0000",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:49:29.064Z",
+            "createdAt": "2026-10-28T12:49:27.548Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.516,
+            "expiresAt": "2026-10-29T12:49:32.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 8
+        }
+      ],
+      "notes": {
+        "sink_events": [
+          {
+            "at_ms": 303,
+            "body": {
+              "data": [],
+              "id": "01a1828e-edfb-776a-9dfb-cdc2b2bb0000",
+              "metadata": {
+                "n": "1",
+                "run": "wh-basic"
+              },
+              "success": true,
+              "type": "crawl.started",
+              "webhookId": "8e8e0d6f-0c76-4c33-807a-0839b3d1d663"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici",
+              "x-differential-run": "basic"
+            },
+            "label": "basic",
+            "method": "POST",
+            "replied": 200,
+            "seq": 1
+          },
+          {
+            "at_ms": 512,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: index is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [A](http://gym.test:4101/d2/tiny/a)\n    \n*   [B](http://gym.test:4101/d2/tiny/b)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828e-ef1a-708b-894d-a753c3e81996",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/",
+                    "statusCode": 200,
+                    "title": "d2 tiny: index",
+                    "url": "http://gym.test:4101/d2/tiny/"
+                  }
+                }
+              ],
+              "id": "01a1828e-edfb-776a-9dfb-cdc2b2bb0000",
+              "metadata": {
+                "n": "1",
+                "run": "wh-basic"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "0e28f5f2-1a97-493b-a870-d5fb94e5949e"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici",
+              "x-differential-run": "basic"
+            },
+            "label": "basic",
+            "method": "POST",
+            "replied": 200,
+            "seq": 2
+          },
+          {
+            "at_ms": 901,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: a is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [C](http://gym.test:4101/d2/tiny/c)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828e-efe4-74ff-81f8-79d49c8bbdc6",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                    "statusCode": 200,
+                    "title": "d2 tiny: a",
+                    "url": "http://gym.test:4101/d2/tiny/a"
+                  }
+                }
+              ],
+              "id": "01a1828e-edfb-776a-9dfb-cdc2b2bb0000",
+              "metadata": {
+                "n": "1",
+                "run": "wh-basic"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "1eaec02d-5d26-44f8-a4d7-8e4c1aee22c2"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici",
+              "x-differential-run": "basic"
+            },
+            "label": "basic",
+            "method": "POST",
+            "replied": 200,
+            "seq": 3
+          },
+          {
+            "at_ms": 984,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: b is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/tiny/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828e-eff0-73e2-ad62-e74118319116",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                    "statusCode": 200,
+                    "title": "d2 tiny: b",
+                    "url": "http://gym.test:4101/d2/tiny/b"
+                  }
+                }
+              ],
+              "id": "01a1828e-edfb-776a-9dfb-cdc2b2bb0000",
+              "metadata": {
+                "n": "1",
+                "run": "wh-basic"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "a2ee9266-0a91-4a7a-a7c8-5256b39c9848"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici",
+              "x-differential-run": "basic"
+            },
+            "label": "basic",
+            "method": "POST",
+            "replied": 200,
+            "seq": 4
+          },
+          {
+            "at_ms": 1521,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: c is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/tiny/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828e-f178-710a-8b26-e104250dc37d",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                    "statusCode": 200,
+                    "title": "d2 tiny: c",
+                    "url": "http://gym.test:4101/d2/tiny/c"
+                  }
+                }
+              ],
+              "id": "01a1828e-edfb-776a-9dfb-cdc2b2bb0000",
+              "metadata": {
+                "n": "1",
+                "run": "wh-basic"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "51e670d2-376a-44ae-bf14-931d9b0eedc7"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici",
+              "x-differential-run": "basic"
+            },
+            "label": "basic",
+            "method": "POST",
+            "replied": 200,
+            "seq": 5
+          }
+        ]
+      }
+    },
+    {
+      "id": "events-page-only",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 10,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "events": [
+                "page"
+              ],
+              "metadata": {
+                "run": "wh-page"
+              },
+              "url": "http://gym.test:36961/hook/page-only"
+            }
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828f-1677-717d-b471-3c976f3b86b3",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828f-1677-717d-b471-3c976f3b86b3"
+          },
+          "elapsed_ms": 24
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a1828f-1677-717d-b471-3c976f3b86b3",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:49:39.791Z",
+            "createdAt": "2026-10-28T12:49:37.912Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.879,
+            "expiresAt": "2026-10-29T12:49:48.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 8
+        }
+      ],
+      "notes": {
+        "sink_events": [
+          {
+            "at_ms": 11189,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: index is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [A](http://gym.test:4101/d2/tiny/a)\n    \n*   [B](http://gym.test:4101/d2/tiny/b)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-1722-7248-b597-8873f4be9576",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/",
+                    "statusCode": 200,
+                    "title": "d2 tiny: index",
+                    "url": "http://gym.test:4101/d2/tiny/"
+                  }
+                }
+              ],
+              "id": "01a1828f-1677-717d-b471-3c976f3b86b3",
+              "metadata": {
+                "run": "wh-page"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "c7e8dbc3-0d46-486a-8ee7-0dbf28505d7b"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "page-only",
+            "method": "POST",
+            "replied": 200,
+            "seq": 6
+          },
+          {
+            "at_ms": 11743,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: b is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/tiny/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-19a5-754c-a0a2-c0ac3d01c7d8",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                    "statusCode": 200,
+                    "title": "d2 tiny: b",
+                    "url": "http://gym.test:4101/d2/tiny/b"
+                  }
+                }
+              ],
+              "id": "01a1828f-1677-717d-b471-3c976f3b86b3",
+              "metadata": {
+                "run": "wh-page"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "54c17742-7c2c-4ec4-8762-df99f49bea52"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "page-only",
+            "method": "POST",
+            "replied": 200,
+            "seq": 7
+          },
+          {
+            "at_ms": 11759,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: a is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [C](http://gym.test:4101/d2/tiny/c)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-19a2-729f-ac10-ab495fdec957",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                    "statusCode": 200,
+                    "title": "d2 tiny: a",
+                    "url": "http://gym.test:4101/d2/tiny/a"
+                  }
+                }
+              ],
+              "id": "01a1828f-1677-717d-b471-3c976f3b86b3",
+              "metadata": {
+                "run": "wh-page"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "2276a3e1-c5cd-48a9-98fa-75c1e7c09e1f"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "page-only",
+            "method": "POST",
+            "replied": 200,
+            "seq": 8
+          },
+          {
+            "at_ms": 12251,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: c is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/tiny/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-1bd0-76da-babc-a65e2d8239be",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                    "statusCode": 200,
+                    "title": "d2 tiny: c",
+                    "url": "http://gym.test:4101/d2/tiny/c"
+                  }
+                }
+              ],
+              "id": "01a1828f-1677-717d-b471-3c976f3b86b3",
+              "metadata": {
+                "run": "wh-page"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "291b3968-b8ee-4c08-94a3-335c5bad42f9"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "page-only",
+            "method": "POST",
+            "replied": 200,
+            "seq": 9
+          }
+        ]
+      }
+    },
+    {
+      "id": "events-completed-only",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 10,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "events": [
+                "completed"
+              ],
+              "url": "http://gym.test:36961/hook/completed-only"
+            }
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828f-524e-739c-bdb3-5a6780ac1ce8",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828f-524e-739c-bdb3-5a6780ac1ce8"
+          },
+          "elapsed_ms": 14
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a1828f-524e-739c-bdb3-5a6780ac1ce8",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:49:55.003Z",
+            "createdAt": "2026-10-28T12:49:53.230Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.773,
+            "expiresAt": "2026-10-29T12:50:03.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 7
+        }
+      ],
+      "notes": {
+        "sink_events": []
+      }
+    },
+    {
+      "id": "retry-after-failure",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 10,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/tiny/",
+            "webhook": {
+              "metadata": {
+                "run": "wh-retry"
+              },
+              "url": "http://gym.test:36961/hook/retry"
+            }
+          },
+          "status": 200,
+          "response": {
+            "id": "01a1828f-8c4e-70cf-8194-82f4238d7374",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a1828f-8c4e-70cf-8194-82f4238d7374"
+          },
+          "elapsed_ms": 20
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a1828f-8c4e-70cf-8194-82f4238d7374",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:50:09.718Z",
+            "createdAt": "2026-10-28T12:50:08.078Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.64,
+            "expiresAt": "2026-10-29T12:50:17.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 10
+        }
+      ],
+      "notes": {
+        "sink_events": [
+          {
+            "at_ms": 40616,
+            "body": {
+              "data": [],
+              "id": "01a1828f-8c4e-70cf-8194-82f4238d7374",
+              "metadata": {
+                "run": "wh-retry"
+              },
+              "success": true,
+              "type": "crawl.started",
+              "webhookId": "e460732c-2cf6-45d4-818e-2ea2d1fbe085"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "retry",
+            "method": "POST",
+            "replied": 500,
+            "seq": 11
+          },
+          {
+            "at_ms": 41145,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: index is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [A](http://gym.test:4101/d2/tiny/a)\n    \n*   [B](http://gym.test:4101/d2/tiny/b)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-8c94-77a4-8958-a671dba91fa9",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/",
+                    "statusCode": 200,
+                    "title": "d2 tiny: index",
+                    "url": "http://gym.test:4101/d2/tiny/"
+                  }
+                }
+              ],
+              "id": "01a1828f-8c4e-70cf-8194-82f4238d7374",
+              "metadata": {
+                "run": "wh-retry"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "ed9d8eb8-cfc2-4c38-9c0c-e5acf87797cc"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "retry",
+            "method": "POST",
+            "replied": 500,
+            "seq": 12
+          },
+          {
+            "at_ms": 41663,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: b is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/tiny/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-8ea7-756b-9da4-1c15ebc93b45",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                    "statusCode": 200,
+                    "title": "d2 tiny: b",
+                    "url": "http://gym.test:4101/d2/tiny/b"
+                  }
+                }
+              ],
+              "id": "01a1828f-8c4e-70cf-8194-82f4238d7374",
+              "metadata": {
+                "run": "wh-retry"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "b9289c7c-91a8-48a3-b89f-387209df9055"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "retry",
+            "method": "POST",
+            "replied": 200,
+            "seq": 13
+          },
+          {
+            "at_ms": 41673,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: a is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [C](http://gym.test:4101/d2/tiny/c)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-8e97-77b2-8eda-a6572bc0d79c",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                    "statusCode": 200,
+                    "title": "d2 tiny: a",
+                    "url": "http://gym.test:4101/d2/tiny/a"
+                  }
+                }
+              ],
+              "id": "01a1828f-8c4e-70cf-8194-82f4238d7374",
+              "metadata": {
+                "run": "wh-retry"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "2fec581d-33da-41d7-bd01-2d8137de04d3"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "retry",
+            "method": "POST",
+            "replied": 200,
+            "seq": 14
+          },
+          {
+            "at_ms": 42175,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 tiny: c is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/tiny/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a1828f-90b5-7468-b5be-0b67f9123c6b",
+                    "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                    "statusCode": 200,
+                    "title": "d2 tiny: c",
+                    "url": "http://gym.test:4101/d2/tiny/c"
+                  }
+                }
+              ],
+              "id": "01a1828f-8c4e-70cf-8194-82f4238d7374",
+              "metadata": {
+                "run": "wh-retry"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "01754c89-ef42-4b1d-acfe-3ae54b240c1d"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "retry",
+            "method": "POST",
+            "replied": 200,
+            "seq": 15
+          },
+          {
+            "at_ms": 84958,
+            "body": {
+              "data": [],
+              "id": "01a1828f-8c4e-70cf-8194-82f4238d7374",
+              "metadata": {
+                "run": "wh-retry"
+              },
+              "success": true,
+              "type": "crawl.completed",
+              "webhookId": "20d870e8-5652-417c-baf8-b06a7b450d6b"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "retry",
+            "method": "POST",
+            "replied": 200,
+            "seq": 17
+          }
+        ]
+      }
+    },
+    {
+      "id": "cancelled-crawl",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 500,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/slow/",
+            "webhook": {
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "url": "http://gym.test:36961/hook/cancelled"
+            }
+          },
+          "status": 200,
+          "response": {
+            "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a18290-62ae-7285-bfd9-b6b837b4bdee"
+          },
+          "elapsed_ms": 30
+        },
+        {
+          "step": "trigger",
+          "method": "GET",
+          "path": "/v2/crawl/01a18290-62ae-7285-bfd9-b6b837b4bdee",
+          "status": 200,
+          "response": {
+            "completed": 2,
+            "createdAt": "2026-10-28T12:51:02.958Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.26,
+            "expiresAt": "2026-10-29T12:51:04.000Z",
+            "next": "http://127.0.0.1:3102/v2/crawl/01a18290-62ae-7285-bfd9-b6b837b4bdee?skip=2",
+            "status": "scraping",
+            "success": true,
+            "total": 41
+          },
+          "elapsed_ms": 6
+        },
+        {
+          "step": "settle",
+          "method": "DELETE",
+          "path": "/v2/crawl/01a18290-62ae-7285-bfd9-b6b837b4bdee",
+          "status": 200,
+          "response": {
+            "status": "cancelled"
+          },
+          "elapsed_ms": 4
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a18290-62ae-7285-bfd9-b6b837b4bdee",
+          "status": 200,
+          "response": {
+            "completed": 2,
+            "completedAt": "2026-10-28T12:51:04.150Z",
+            "createdAt": "2026-10-28T12:51:02.958Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.192,
+            "expiresAt": "2026-10-29T12:51:04.000Z",
+            "status": "cancelled",
+            "success": true,
+            "total": 41
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {
+        "sink_events": [
+          {
+            "at_ms": 95676,
+            "body": {
+              "data": [],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.started",
+              "webhookId": "76364174-db0c-4d39-899c-9439de714a75"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 18
+          },
+          {
+            "at_ms": 96025,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 slow: index is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Page 1](http://gym.test:4101/d2/slow/p/1)\n    \n*   [Page 2](http://gym.test:4101/d2/slow/p/2)\n    \n*   [Page 3](http://gym.test:4101/d2/slow/p/3)\n    \n*   [Page 4](http://gym.test:4101/d2/slow/p/4)\n    \n*   [Page 5](http://gym.test:4101/d2/slow/p/5)\n    \n*   [Page 6](http://gym.test:4101/d2/slow/p/6)\n    \n*   [Page 7](http://gym.test:4101/d2/slow/p/7)\n    \n*   [Page 8](http://gym.test:4101/d2/slow/p/8)\n    \n*   [Page 9](http://gym.test:4101/d2/slow/p/9)\n    \n*   [Page 10](http://gym.test:4101/d2/slow/p/10)\n    \n*   [Page 11](http://gym.test:4101/d2/slow/p/11)\n    \n*   [Page 12](http://gym.test:4101/d2/slow/p/12)\n    \n*   [Page 13](http://gym.test:4101/d2/slow/p/13)\n    \n*   [Page 14](http://gym.test:4101/d2/slow/p/14)\n    \n*   [Page 15](http://gym.test:4101/d2/slow/p/15)\n    \n*   [Page 16](http://gym.test:4101/d2/slow/p/16)\n    \n*   [Page 17](http://gym.test:4101/d2/slow/p/17)\n    \n*   [Page 18](http://gym.test:4101/d2/slow/p/18)\n    \n*   [Page 19](http://gym.test:4101/d2/slow/p/19)\n    \n*   [Page 20](http://gym.test:4101/d2/slow/p/20)\n    \n*   [Page 21](http://gym.test:4101/d2/slow/p/21)\n    \n*   [Page 22](http://gym.test:4101/d2/slow/p/22)\n    \n*   [Page 23](http://gym.test:4101/d2/slow/p/23)\n    \n*   [Page 24](http://gym.test:4101/d2/slow/p/24)\n    \n*   [Page 25](http://gym.test:4101/d2/slow/p/25)\n    \n*   [Page 26](http://gym.test:4101/d2/slow/p/26)\n    \n*   [Page 27](http://gym.test:4101/d2/slow/p/27)\n    \n*   [Page 28](http://gym.test:4101/d2/slow/p/28)\n    \n*   [Page 29](http://gym.test:4101/d2/slow/p/29)\n    \n*   [Page 30](http://gym.test:4101/d2/slow/p/30)\n    \n*   [Page 31](http://gym.test:4101/d2/slow/p/31)\n    \n*   [Page 32](http://gym.test:4101/d2/slow/p/32)\n    \n*   [Page 33](http://gym.test:4101/d2/slow/p/33)\n    \n*   [Page 34](http://gym.test:4101/d2/slow/p/34)\n    \n*   [Page 35](http://gym.test:4101/d2/slow/p/35)\n    \n*   [Page 36](http://gym.test:4101/d2/slow/p/36)\n    \n*   [Page 37](http://gym.test:4101/d2/slow/p/37)\n    \n*   [Page 38](http://gym.test:4101/d2/slow/p/38)\n    \n*   [Page 39](http://gym.test:4101/d2/slow/p/39)\n    \n*   [Page 40](http://gym.test:4101/d2/slow/p/40)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a18290-63a3-771f-9e14-2826d20631ea",
+                    "sourceURL": "http://gym.test:4101/d2/slow/",
+                    "statusCode": 200,
+                    "title": "d2 slow: index",
+                    "url": "http://gym.test:4101/d2/slow/"
+                  }
+                }
+              ],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "a37e3b70-5360-4872-98fd-a26e89db1f32"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 19
+          },
+          {
+            "at_ms": 96609,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 slow: page 1 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/slow/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a18290-6452-76e5-ac24-2bf6e516054c",
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/1",
+                    "statusCode": 200,
+                    "title": "d2 slow: page 1",
+                    "url": "http://gym.test:4101/d2/slow/p/1"
+                  }
+                }
+              ],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "85d61cf0-1585-4c4a-ba94-2e68f19d92cc"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 20
+          },
+          {
+            "at_ms": 96761,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 slow: page 2 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/slow/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a18290-645f-731f-9d03-debcbfca8c57",
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/2",
+                    "statusCode": 200,
+                    "title": "d2 slow: page 2",
+                    "url": "http://gym.test:4101/d2/slow/p/2"
+                  }
+                }
+              ],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "05dc85c1-4036-4121-9f7b-403327a037ef"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 21
+          },
+          {
+            "at_ms": 96778,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 slow: page 4 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/slow/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a18290-646c-75cd-9852-82fdca744572",
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/4",
+                    "statusCode": 200,
+                    "title": "d2 slow: page 4",
+                    "url": "http://gym.test:4101/d2/slow/p/4"
+                  }
+                }
+              ],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "8e6d0b66-7bcb-4065-b54f-cfb364578356"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 22
+          },
+          {
+            "at_ms": 96782,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/7"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "9467ab8e-3973-471b-af1c-bf3772ee2410"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 23
+          },
+          {
+            "at_ms": 96783,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 slow: page 3 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/slow/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a18290-6466-7658-a932-c937b5d2bf35",
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/3",
+                    "statusCode": 200,
+                    "title": "d2 slow: page 3",
+                    "url": "http://gym.test:4101/d2/slow/p/3"
+                  }
+                }
+              ],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "d9ba323b-4726-40ca-9629-7a9d0d48672b"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 24
+          },
+          {
+            "at_ms": 96797,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/9"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "e3731148-bfc7-4b0e-9182-8621d83ef1df"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 25
+          },
+          {
+            "at_ms": 96797,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/8"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "e4997412-827d-497b-9b44-fdf890b11b0a"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 26
+          },
+          {
+            "at_ms": 96807,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/10"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "ee7b401c-f41a-4055-adc5-6686c3bf8239"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 27
+          },
+          {
+            "at_ms": 96812,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/11"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "554bb9ef-a4c7-417b-88fb-d502e2205589"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 28
+          },
+          {
+            "at_ms": 96818,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/12"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "8a8a555c-95e3-490e-938e-3d8b2c85cb94"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 29
+          },
+          {
+            "at_ms": 96818,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/13"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "6b6634b5-99e0-4102-b036-9f4b5fa8cef4"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 30
+          },
+          {
+            "at_ms": 96822,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/14"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "2794d37d-d3f8-4eb7-a7d7-438f80fea775"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 31
+          },
+          {
+            "at_ms": 96827,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/15"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "19dc04ab-7dc0-4a3d-9391-7c382dde54f8"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 32
+          },
+          {
+            "at_ms": 96831,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/16"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "1e913d75-a6b1-4f54-a0ff-8be61f8adbb6"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 33
+          },
+          {
+            "at_ms": 96832,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/17"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "8ad7cdf4-7335-4c36-9964-be9b536d7947"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 34
+          },
+          {
+            "at_ms": 96844,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/18"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "9d68468b-e4a4-4812-bc3b-08d41f7458eb"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 35
+          },
+          {
+            "at_ms": 96850,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/19"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "7d365bc7-018e-4be6-ba6f-04b8673570dc"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 36
+          },
+          {
+            "at_ms": 96852,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/20"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "520fc4cf-303b-4bd5-8d2d-8ad083a7e083"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 37
+          },
+          {
+            "at_ms": 96853,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/21"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "8e32e24d-93f5-4c51-9e24-e19f50bd7dc5"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 38
+          },
+          {
+            "at_ms": 96858,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/22"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "af88cf67-3dc2-435b-a38d-2a5ad064bc44"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 39
+          },
+          {
+            "at_ms": 96867,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/23"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "a988a00f-e94f-4f44-9590-852b82c65943"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 40
+          },
+          {
+            "at_ms": 96870,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/24"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "8b109316-2883-4d8c-a249-574471c9cb20"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 41
+          },
+          {
+            "at_ms": 96871,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/25"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "cfe6b050-4f10-4cc5-827f-5ad4f1aee7be"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 42
+          },
+          {
+            "at_ms": 96876,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/26"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "ec6b2c3b-00bd-44ed-a77b-d8a29850bd48"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 43
+          },
+          {
+            "at_ms": 96882,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 slow: page 5 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/slow/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a18290-6472-7328-80aa-e1fc87e8f0c2",
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/5",
+                    "statusCode": 200,
+                    "title": "d2 slow: page 5",
+                    "url": "http://gym.test:4101/d2/slow/p/5"
+                  }
+                }
+              ],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "317c5297-ad2f-4a3e-8be1-8f92241fddd8"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 44
+          },
+          {
+            "at_ms": 96885,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/27"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "5ca5408c-c9db-4415-8db0-f826b443356e"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 45
+          },
+          {
+            "at_ms": 96887,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/29"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "d013d525-34ea-4342-9f5f-1d9403f42f04"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 46
+          },
+          {
+            "at_ms": 96887,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/28"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "cb6acd7a-5393-474c-9d6a-f0654875c07e"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 47
+          },
+          {
+            "at_ms": 96899,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/30"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "9bd164ea-af3c-48cc-a94f-c2f38f874296"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 48
+          },
+          {
+            "at_ms": 96899,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/31"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "cfc8504b-3134-4b32-8bf7-9fb736a98337"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 49
+          },
+          {
+            "at_ms": 96903,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/32"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "beb1bcbc-448b-4508-b539-c2d636d868a4"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 50
+          },
+          {
+            "at_ms": 96903,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/33"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "b664de29-a0f0-4edb-abe8-349b98ee1a0b"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 51
+          },
+          {
+            "at_ms": 96911,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/34"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "599e9895-d477-43cd-a34c-aa8b5496b768"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 52
+          },
+          {
+            "at_ms": 96913,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/35"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "af3f6d92-ac1b-45eb-993e-64702ce194f7"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 53
+          },
+          {
+            "at_ms": 96917,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/36"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "ebbc0e86-e582-42cd-b37c-736cad37f86d"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 54
+          },
+          {
+            "at_ms": 96919,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/37"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "f4b7ad65-47cb-4a44-b498-9babdf644f2d"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 55
+          },
+          {
+            "at_ms": 96923,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/38"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "e8cd3f35-bd80-4320-ac97-d54c59d126ef"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 56
+          },
+          {
+            "at_ms": 96926,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/39"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "337cdfa9-93a4-4da7-9bd2-487a52d57450"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 57
+          },
+          {
+            "at_ms": 96931,
+            "body": {
+              "data": [
+                {
+                  "metadata": {
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/40"
+                  }
+                }
+              ],
+              "error": "This scrape was not completed because the parent crawl or batch scrape was cancelled. This happens when you call the cancel endpoint on a crawl or batch scrape, or when the operation is stopped for another reason. Any URLs that were already scraped before cancellation are still available in the results.",
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": false,
+              "type": "crawl.page",
+              "webhookId": "fd4e3303-3c40-40da-943f-faf29797249e"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 58
+          },
+          {
+            "at_ms": 97193,
+            "body": {
+              "data": [
+                {
+                  "markdown": "d2 slow: page 6 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/slow/)",
+                  "metadata": {
+                    "contentType": "text/html; charset=utf-8",
+                    "creditsUsed": 1,
+                    "language": "en",
+                    "proxyUsed": "basic",
+                    "scrapeId": "01a18290-6479-71fb-a855-4c9e3d6d3bfc",
+                    "sourceURL": "http://gym.test:4101/d2/slow/p/6",
+                    "statusCode": 200,
+                    "title": "d2 slow: page 6",
+                    "url": "http://gym.test:4101/d2/slow/p/6"
+                  }
+                }
+              ],
+              "id": "01a18290-62ae-7285-bfd9-b6b837b4bdee",
+              "metadata": {
+                "run": "wh-cancel"
+              },
+              "success": true,
+              "type": "crawl.page",
+              "webhookId": "7299f60e-e820-4b5d-98c0-e992338dba5d"
+            },
+            "headers": {
+              "accept": "*/*",
+              "accept-language": "*",
+              "content-type": "application/json",
+              "sec-fetch-mode": "cors",
+              "user-agent": "undici"
+            },
+            "label": "cancelled",
+            "method": "POST",
+            "replied": 200,
+            "seq": 59
+          }
+        ]
+      }
+    }
+  ],
+  "accessLog": {
+    "entries": [
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "127.0.0.1:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/a",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/b",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/c",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/a",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/b",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/c",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/a",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/b",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/c",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/a",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/b",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/c",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/1",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/2",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/3",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/4",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/5",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/slow/p/6",
+        "host": "gym.test:4101"
+      }
+    ]
+  }
+}

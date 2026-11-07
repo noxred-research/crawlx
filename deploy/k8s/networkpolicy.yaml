@@ -1,0 +1,144 @@
+# Network posture: defense in depth behind the egress proxy's
+# EgressPolicy. Workers may reach the public internet but never RFC 1918, link-local, CGNAT,
+# loopback ranges or the IPv6 private/link-local ranges; PostgreSQL, the model server, DNS and
+# the object store are allowed by explicit rules. The API never reaches crawl targets.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crawlx-default-deny
+  namespace: crawlx
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crawlx-worker-egress
+  namespace: crawlx
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-worker, crawlx.dev/egress: allowed }
+  policyTypes: [Egress]
+  egress:
+    # Crawl targets: everything except private, link-local, CGNAT and loopback space.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
+    - to:
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7       # unique local (fd00::/8 included)
+              - fe80::/10      # link-local
+              - ::1/128
+              - fd00:ec2::254/128
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8443 }
+    # In-cluster dependencies.
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-postgres } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-zdr } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    # Secret registry (artifact custody); worker only, the API never connects to it.
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-secret-registry } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-model } }
+      ports: [{ protocol: TCP, port: 8500 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+          podSelector: { matchLabels: { app: otel-collector } }
+      ports: [{ protocol: TCP, port: 4317 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Object store: replace with the provider's endpoint CIDR (MinIO in-cluster shown).
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-minio } }
+      ports: [{ protocol: TCP, port: 9000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crawlx-api-egress
+  namespace: crawlx
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-api }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-postgres } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-zdr } }
+      ports: [{ protocol: TCP, port: 6379 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+          podSelector: { matchLabels: { app: otel-collector } }
+      ports: [{ protocol: TCP, port: 4317 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-minio } }
+      ports: [{ protocol: TCP, port: 9000 }]
+    # Signed webhooks to customer endpoints: public HTTPS only, never private space.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8]
+      ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crawlx-api-ingress
+  namespace: crawlx
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress } }
+      ports: [{ protocol: TCP, port: 8080 }]
+---
+# RB-11 level 3: relabel worker pods to crawlx.dev/egress=denied and this
+# policy (which allows nothing) becomes the only one selecting them: all target traffic stops
+# regardless of software state.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crawlx-worker-deny-all-egress
+  namespace: crawlx
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-worker, crawlx.dev/egress: denied }
+  policyTypes: [Egress]
+  egress: []

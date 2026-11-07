@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Parsing Pipelines</title>
+<style>.x { color: red }</style>
+<script>window.tracking = "should never appear";</script>
+</head>
+<body>
+<main>
+<article>
+<h1>Parsing <em>Pipelines</em></h1>
+<p>A pipeline turns <strong>bytes</strong> into <code>tokens</code>, then trees. See the <a href="/docs/guide">guide</a> or
+the <a href="https://example.org/spec?a=1&amp;b=2">spec</a>.</p>
+<h2>Steps</h2>
+<ul>
+  <li>Decode
+    <ul>
+      <li>UTF-8</li>
+      <li>Latin-1</li>
+    </ul>
+  </li>
+  <li>Tokenize</li>
+  <li>Build tree</li>
+</ul>
+<ol start="3">
+  <li>Third</li>
+  <li>Fourth
+    <ol>
+      <li>Nested one</li>
+    </ol>
+  </li>
+</ol>
+<h2>Example</h2>
+<pre><code class="language-rust">fn main() {
+    println!("hello");
+
+    let x = 1 &lt; 2;
+}
+</code></pre>
+<blockquote><p>Premature optimization is the root of all evil.</p><p>— Knuth</p></blockquote>
+<table>
+  <caption>Throughput</caption>
+  <thead><tr><th>Stage</th><th align="right">MB/s</th></tr></thead>
+  <tbody>
+    <tr><td>decode</td><td>900</td></tr>
+    <tr><td colspan="2">pipe | char</td></tr>
+  </tbody>
+</table>
+<hr>
+<dl><dt>Token</dt><dd>A lexical unit.</dd><dt>Tree</dt><dd>A DOM.</dd></dl>
+<p>Line one<br>line two and a snake_case_name with 2 * 3 and a_b.</p>
+<p><img src="/img/diagram.png" alt="Pipeline diagram"></p>
+<p><a href="javascript:void(0)">dead link</a> and <del>removed</del>.</p>
+</article>
+</main>
+</body>
+</html>

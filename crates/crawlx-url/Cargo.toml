@@ -1,0 +1,36 @@
+[package]
+name = "crawlx-url"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: canonicalization, query-parameter classification, sitemaps, link discovery, URL frontier"
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+chrono.workspace = true
+ego-tree.workspace = true
+parking_lot.workspace = true
+quick-xml.workspace = true
+regex.workspace = true
+scraper.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "canonicalize"
+harness = false
+
+[[bench]]
+name = "sitemap_frontier"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+[Unit]
+Description=Expire crawlx shared ephemeral delivery content
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/crawlx/zdr.env
+ExecStart=/usr/local/bin/crawlx admin sweep-delivery

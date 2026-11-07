@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>G32 crawl-maze</title>
+{{GYM_JS}}
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; color: #222; }
+  li { font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Security crawl-maze reproduction</h1>
+<p>One page per linking construct; every expected endpoint lives under <code>/g32/test/</code> and answers 200. Categories:</p>
+<ul>
+  <li><a href="/g32/css/">css</a> — font-face source in a stylesheet</li>
+  <li><a href="/g32/headers/">headers</a> — Content-Location, Link, Location, Refresh</li>
+  <li><a href="/g32/html/">html</a> — doctype, manifest, body and head constructs, inline URL strings</li>
+  <li><a href="/g32/javascript/">javascript</a> — script strings and comments, framework-style bindings, click-driven requests</li>
+  <li><a href="/g32/misc/">misc</a> — robots.txt and sitemap.xml known files</li>
+</ul>
+</body>
+</html>

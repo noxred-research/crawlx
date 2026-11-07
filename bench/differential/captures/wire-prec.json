@@ -1,0 +1,289 @@
+{
+  "wireSample": {
+    "provenance": "black_box_run",
+    "system": "firecrawl",
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5",
+    "apiRoot": "http://127.0.0.1:3102",
+    "origin": "http://gym.test:4101"
+  },
+  "family": "wire-prec",
+  "scenarios": [
+    {
+      "id": "prompt-only",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "prompt": "crawl only pages a and b",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "error": "Failed to process natural language prompt. Please try rephrasing or use explicit crawler options.",
+            "success": false
+          },
+          "elapsed_ms": 36
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "prompt-explicit-include",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "includePaths": [
+              "^/d2/tiny/a"
+            ],
+            "prompt": "crawl only the page c",
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "error": "Failed to process natural language prompt. Please try rephrasing or use explicit crawler options.",
+            "success": false
+          },
+          "elapsed_ms": 13
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "canonical-over-alias",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "maxDepth": 3,
+            "maxDiscoveryDepth": 1,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "unrecognized_keys",
+                "keys": [
+                  "maxDepth"
+                ],
+                "message": "Unrecognized key: \"maxDepth\"",
+                "path": []
+              }
+            ],
+            "error": "Unrecognized key in body -- please review the v2 API documentation for request body changes",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "explicit-over-default",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 2,
+            "url": "http://gym.test:4101/d2/tiny/"
+          },
+          "status": 200,
+          "response": {
+            "id": "01a18277-a724-722c-b0f0-6cf6d6208457",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a18277-a724-722c-b0f0-6cf6d6208457"
+          },
+          "elapsed_ms": 10
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a18277-a724-722c-b0f0-6cf6d6208457",
+          "status": 200,
+          "response": {
+            "completed": 2,
+            "completedAt": "2026-10-28T12:24:03.680Z",
+            "createdAt": "2026-10-28T12:24:02.084Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.596,
+            "expiresAt": "2026-10-29T12:24:16.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 2
+          },
+          "elapsed_ms": 5
+        }
+      ],
+      "notes": {}
+    }
+  ],
+  "accessLog": {
+    "entries": [
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "127.0.0.1:4101"
+      },
+      {
+        "method": "HEAD",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "HEAD",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/a",
+        "host": "gym.test:4101"
+      }
+    ]
+  }
+}

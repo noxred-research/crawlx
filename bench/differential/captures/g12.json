@@ -1,0 +1,282 @@
+{
+  "completed": 13,
+  "completedAt": "2026-10-28T06:24:53.727Z",
+  "crawlxSample": {
+    "family": "g12",
+    "job": "01a1812e-d261-73e8-86a8-4f4940450e13",
+    "provenance": "black_box_run",
+    "request": {
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/g12/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T06:24:51.809Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [],
+      "markdown": "Invoices\n========",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d3ca-76ed-bc0b-bbb6d550d6e7",
+        "sourceURL": "http://gym.test:4101/g12/",
+        "statusCode": 200,
+        "title": "g12 Invoices",
+        "url": "http://gym.test:4101/g12/"
+      },
+      "rawHtmlBytes": 5765,
+      "rawHtmlSha256": "90538fc6427e54cd4cf0823e464600792da7dc510438e10289bb4c35c4711c21"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #3\n==========\n\nCustomer\n\nStark Industries\n\nAmount\n\n$4325.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d627-7558-ae3b-2eeedad790e6",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=3",
+        "statusCode": 200,
+        "title": "Invoice #3",
+        "url": "http://gym.test:4101/g12/invoice?id=3"
+      },
+      "rawHtmlBytes": 5700,
+      "rawHtmlSha256": "ebdb6a794f2028a13e51ca0cadf50129063dbb716bd8b4fd1ff2c97d5daeaca8"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #1\n==========\n\nCustomer\n\nHooli\n\nAmount\n\n$8092.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d619-7318-a679-0053db4c8169",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=1",
+        "statusCode": 200,
+        "title": "Invoice #1",
+        "url": "http://gym.test:4101/g12/invoice?id=1"
+      },
+      "rawHtmlBytes": 5689,
+      "rawHtmlSha256": "1629320e91f2a6b273cd944529714372bdb279b82ec3a041420ace30795d5443"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #2\n==========\n\nCustomer\n\nStark Industries\n\nAmount\n\n$204.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d620-7008-8eca-d4ee674d13c3",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=2",
+        "statusCode": 200,
+        "title": "Invoice #2",
+        "url": "http://gym.test:4101/g12/invoice?id=2"
+      },
+      "rawHtmlBytes": 5699,
+      "rawHtmlSha256": "3a1122e9555a53508a89348f0e833f99419fb2a169e8b71f3d5ca4b054ba85e9"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #4\n==========\n\nCustomer\n\nGlobex\n\nAmount\n\n$8988.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d62f-70bf-be9d-0d93162762fe",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=4",
+        "statusCode": 200,
+        "title": "Invoice #4",
+        "url": "http://gym.test:4101/g12/invoice?id=4"
+      },
+      "rawHtmlBytes": 5690,
+      "rawHtmlSha256": "08510a9754b6e86921ca13c3fbb1a4c66a423924a73bea94e57580c5b532cf13"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #5\n==========\n\nCustomer\n\nAcme Corp\n\nAmount\n\n$444.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d636-768c-bdae-7dd7ba3ba89e",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=5",
+        "statusCode": 200,
+        "title": "Invoice #5",
+        "url": "http://gym.test:4101/g12/invoice?id=5"
+      },
+      "rawHtmlBytes": 5692,
+      "rawHtmlSha256": "b438a8d2412da01bd8e5e1352c0c990fe18af0b9bdae0e0dca3bbb9153981b70"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #1\n==========\n\nCustomer\n\nHooli\n\nAmount\n\n$8092.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d63e-70fb-8cee-939c9255fe22",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=1&utm_source=news",
+        "statusCode": 200,
+        "title": "Invoice #1",
+        "url": "http://gym.test:4101/g12/invoice?id=1&utm_source=news"
+      },
+      "rawHtmlBytes": 5689,
+      "rawHtmlSha256": "1629320e91f2a6b273cd944529714372bdb279b82ec3a041420ace30795d5443"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #2\n==========\n\nCustomer\n\nStark Industries\n\nAmount\n\n$204.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d645-740f-af11-8357b80ac5a8",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=2&utm_campaign=x&gclid=abc",
+        "statusCode": 200,
+        "title": "Invoice #2",
+        "url": "http://gym.test:4101/g12/invoice?id=2&utm_campaign=x&gclid=abc"
+      },
+      "rawHtmlBytes": 5699,
+      "rawHtmlSha256": "3a1122e9555a53508a89348f0e833f99419fb2a169e8b71f3d5ca4b054ba85e9"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #1\n==========\n\nCustomer\n\nHooli\n\nAmount\n\n$8092.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d655-74eb-b25f-8ef264325f91",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=1&sort=asc",
+        "statusCode": 200,
+        "title": "Invoice #1",
+        "url": "http://gym.test:4101/g12/invoice?id=1&sort=asc"
+      },
+      "rawHtmlBytes": 5689,
+      "rawHtmlSha256": "1629320e91f2a6b273cd944529714372bdb279b82ec3a041420ace30795d5443"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #3\n==========\n\nCustomer\n\nStark Industries\n\nAmount\n\n$4325.00\n\nStatus\n\nopen\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d64d-718e-857b-213316eed82b",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=3&sessionid=abc123",
+        "statusCode": 200,
+        "title": "Invoice #3",
+        "url": "http://gym.test:4101/g12/invoice?id=3&sessionid=abc123"
+      },
+      "rawHtmlBytes": 5700,
+      "rawHtmlSha256": "ebdb6a794f2028a13e51ca0cadf50129063dbb716bd8b4fd1ff2c97d5daeaca8"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice list, page 2\n====================\n\nSorted ascending\n\n*   Invoice #6\n*   Invoice #7\n*   Invoice #8\n*   Invoice #9\n*   Invoice #10\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d65c-72bd-8403-abcd46268d11",
+        "sourceURL": "http://gym.test:4101/g12/list?page=2",
+        "statusCode": 200,
+        "title": "g12 Invoice list",
+        "url": "http://gym.test:4101/g12/list?page=2"
+      },
+      "rawHtmlBytes": 5225,
+      "rawHtmlSha256": "0fb444c42e4708b22126a808a31ca2f74b1f0b8a09adadd433dacfc54dc7acfa"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice list, page 3\n====================\n\nSorted descending\n\n*   Invoice #15\n*   Invoice #14\n*   Invoice #13\n*   Invoice #12\n*   Invoice #11\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d663-74aa-a9fe-adc4f5451e80",
+        "sourceURL": "http://gym.test:4101/g12/list?page=3&sort=desc",
+        "statusCode": 200,
+        "title": "g12 Invoice list",
+        "url": "http://gym.test:4101/g12/list?page=3&sort=desc"
+      },
+      "rawHtmlBytes": 5230,
+      "rawHtmlSha256": "c6ae965379c27e2f96edd1b683fcdcc9488b81bfc2c747d177cc76b6a49be4b8"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/g12/"
+      ],
+      "markdown": "Invoice #1\n==========\n\nCustomer\n\nHooli\n\nAmount\n\n$8092.00\n\nStatus\n\ndeleted\n\nMark paid\n\n[Back to index](http://gym.test:4101/g12/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812e-d672-7086-a94f-2c14014cf1b9",
+        "sourceURL": "http://gym.test:4101/g12/invoice?id=1&action=delete",
+        "statusCode": 200,
+        "title": "Invoice #1",
+        "url": "http://gym.test:4101/g12/invoice?id=1&action=delete"
+      },
+      "rawHtmlBytes": 5692,
+      "rawHtmlSha256": "75649d1e6bea58ebf37d520c2bc7545edce723c2960bede853728330f17736cf"
+    }
+  ],
+  "duration": 1.918,
+  "errors": {
+    "errors": [],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T06:25:03.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 13
+}

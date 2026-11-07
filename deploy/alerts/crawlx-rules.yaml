@@ -1,0 +1,272 @@
+# crawlx Prometheus alert rules: the SLO alerts and the supporting alerts.
+# Metric names are the catalog names of crawlx-telemetry rendered by the Prometheus
+# exporter (`.` -> `_`, `_total` on counters, `_seconds` on durations). Thresholds are the
+# plan's; every rule carries `slo` (or `runbook`) and `severity` (page | ticket).
+# Validate: promtool check rules deploy/alerts/crawlx-rules.yaml
+# (crates/crawlx-cli/tests/deploy_assets.rs parses this file and checks every metric name
+# against the catalog.)
+groups:
+  - name: crawlx-slo-api-availability
+    rules:
+      # 99.9 % monthly; multi-window burn rates
+      - alert: CrawlxApiAvailabilityFastBurn
+        expr: |
+          (sum(rate(crawlx_api_requests_total{outcome="error"}[1h]))
+             / sum(rate(crawlx_api_requests_total{outcome=~"ok|error"}[1h])) > 14.4 * 0.001)
+          and
+          (sum(rate(crawlx_api_requests_total{outcome="error"}[5m]))
+             / sum(rate(crawlx_api_requests_total{outcome=~"ok|error"}[5m])) > 14.4 * 0.001)
+        for: 2m
+        labels: { severity: page, slo: api_availability }
+        annotations:
+          summary: "API error budget burning at >= 14.4x (1h and 5m windows)"
+          runbook: docs/ops/runbooks.md#1-crawlxapiavailabilityfastburn
+      - alert: CrawlxApiAvailabilitySlowBurn
+        expr: |
+          (sum(rate(crawlx_api_requests_total{outcome="error"}[6h]))
+             / sum(rate(crawlx_api_requests_total{outcome=~"ok|error"}[6h])) > 6 * 0.001)
+          and
+          (sum(rate(crawlx_api_requests_total{outcome="error"}[30m]))
+             / sum(rate(crawlx_api_requests_total{outcome=~"ok|error"}[30m])) > 6 * 0.001)
+        for: 5m
+        labels: { severity: page, slo: api_availability }
+        annotations:
+          summary: "API error budget burning at >= 6x (6h and 30m windows)"
+      - alert: CrawlxApiAvailabilityBudgetTicket
+        expr: |
+          sum(rate(crawlx_api_requests_total{outcome="error"}[3d]))
+            / sum(rate(crawlx_api_requests_total{outcome=~"ok|error"}[3d])) > 1 * 0.001
+        for: 1h
+        labels: { severity: ticket, slo: api_availability }
+        annotations:
+          summary: "API error rate above budget over 3 days"
+      - alert: CrawlxApiBlackboxProbeFailing
+        # blackbox_exporter probe of GET /v1/crawls/{probe_id} every 30 s; 3 consecutive failures
+        expr: max_over_time(probe_success{job="crawlx-api-probe"}[90s]) == 0
+        for: 0m
+        labels: { severity: page, slo: api_availability }
+        annotations:
+          summary: "External probe of the API failed 3 consecutive times"
+
+  - name: crawlx-slo-job-durability
+    rules:
+      # 99.99 %, but any confirmed missing row pages immediately
+      - alert: CrawlxAcceptedJobMissing
+        expr: increase(crawlx_jobs_durability_audit_missing_total[5m]) > 0
+        for: 0m
+        labels: { severity: page, slo: job_durability, sev: "1" }
+        annotations:
+          summary: "An accepted crawl job is missing from crawl_runs (metadata corruption)"
+          runbook: docs/ops/runbooks.md#rb-07, docs/ops/runbooks.md#rb-12
+      - alert: CrawlxDurabilityAuditStale
+        expr: increase(crawlx_jobs_durability_audit_checked_total[15m]) == 0 and sum(crawlx_crawls_active) > 0
+        for: 15m
+        labels: { severity: ticket, slo: job_durability }
+        annotations:
+          summary: "The durability auditor has not completed a pass in 15 minutes"
+
+  - name: crawlx-slo-webhook-delivery
+    rules:
+      # 99.9 % terminal delivery within the 24 h retry window
+      - alert: CrawlxWebhookBacklog
+        expr: |
+          max(crawlx_webhook_oldest_pending_age_seconds) > 900
+          and
+          (sum(rate(crawlx_webhook_deliveries_total{outcome="retry"}[15m]))
+             / sum(rate(crawlx_webhook_deliveries_total[15m])) > 0.05)
+        for: 15m
+        labels: { severity: ticket, slo: webhook_delivery }
+        annotations:
+          summary: "Oldest pending webhook older than 15 min with retry rate > 5 %"
+          runbook: docs/ops/runbooks.md#rb-09
+      - alert: CrawlxWebhookGlobalFailure
+        expr: |
+          (sum(rate(crawlx_webhook_deliveries_total{outcome="delivered"}[15m]))
+             / sum(rate(crawlx_webhook_deliveries_total{outcome=~"delivered|exhausted"}[15m])) < 0.5)
+          and sum(increase(crawlx_webhook_deliveries_total[15m])) >= 20
+        for: 15m
+        labels: { severity: page, slo: webhook_delivery }
+        annotations:
+          summary: "Global webhook delivered ratio below 50 % over 15 min (>= 20 attempts)"
+          runbook: docs/ops/runbooks.md#rb-09
+      - alert: CrawlxWebhookSliBreach
+        expr: |
+          sum(increase(crawlx_webhook_deliveries_total{event="terminal",outcome="delivered"}[7d]))
+            / sum(increase(crawlx_webhook_deliveries_total{event="terminal",outcome=~"delivered|exhausted"}[7d])) < 0.999
+        for: 1h
+        labels: { severity: ticket, slo: webhook_delivery }
+        annotations:
+          summary: "7-day terminal webhook delivery SLI below 99.9 %"
+
+  - name: crawlx-slo-stale-lease-reconciliation
+    rules:
+      # 99.9 % within 2 minutes
+      - alert: CrawlxStaleLeasesUnreconciled
+        expr: max(crawlx_lease_stale_unreconciled) > 0
+        for: 5m
+        labels: { severity: page, slo: stale_lease_reconciliation }
+        annotations:
+          summary: "Expired leases not reconciled for 5 minutes"
+          runbook: docs/ops/runbooks.md#rb-04, docs/ops/runbooks.md#rb-02
+      - alert: CrawlxLeaseReconcileSlow
+        expr: histogram_quantile(0.999, sum(rate(crawlx_lease_reconcile_duration_seconds_bucket[30m])) by (le)) > 120
+        for: 30m
+        labels: { severity: ticket, slo: stale_lease_reconciliation }
+        annotations:
+          summary: "p99.9 of stale-lease reconciliation above 120 s"
+      - alert: CrawlxLeaseStorm
+        expr: sum(rate(crawlx_lease_expired_total[1m])) * 60 > 10
+        for: 2m
+        labels: { severity: page, slo: stale_lease_reconciliation }
+        annotations:
+          summary: "More than 10 lease expiries per minute"
+          runbook: docs/ops/runbooks.md#rb-04
+
+  - name: crawlx-slo-safety-hard-deny
+    rules:
+      # 100 %: any increment pages
+      - alert: CrawlxSafetyInvariantViolation
+        expr: increase(crawlx_safety_invariant_violations_total[5m]) > 0
+        for: 0m
+        labels: { severity: page, slo: safety_hard_deny, sev: "1" }
+        annotations:
+          summary: "A hard-deny safety invariant was violated"
+          runbook: docs/ops/runbooks.md#rb-12
+      - alert: CrawlxSafetyBypassDetected
+        expr: increase(crawlx_safety_verdicts_total{verdict="bypass_detected"}[5m]) > 0
+        for: 0m
+        labels: { severity: page, slo: safety_hard_deny, sev: "1" }
+        annotations:
+          summary: "The safety kernel reported a bypass"
+          runbook: docs/ops/runbooks.md#rb-12
+
+  - name: crawlx-slo-zdr-retention
+    rules:
+      # 100 %
+      - alert: CrawlxZdrViolation
+        expr: increase(crawlx_zdr_violations_total[5m]) > 0 or max(crawlx_retention_overdue_artifacts{kind="zdr"}) > 0
+        for: 0m
+        labels: { severity: page, slo: zdr_retention, sev: "1" }
+        annotations:
+          summary: "ZDR content retained or ZDR delivery buffer past its TTL"
+          runbook: docs/ops/runbooks.md#rb-08
+      - alert: CrawlxRetentionOverdue
+        expr: max(crawlx_retention_overdue_artifacts{kind=~"standard|extended"}) > 0
+        for: 1h
+        labels: { severity: ticket, slo: zdr_retention }
+        annotations:
+          summary: "standard/extended artifacts overdue for 1 hour"
+          runbook: docs/ops/runbooks.md#rb-08
+      - alert: CrawlxRetentionOverdueDay
+        # the catalog has no per-artifact age; a kind overdue for a full day pages regardless
+        expr: max(crawlx_retention_overdue_artifacts) > 0
+        for: 24h
+        labels: { severity: page, slo: zdr_retention }
+        annotations:
+          summary: "Artifacts overdue for more than 24 hours"
+      - alert: CrawlxRetentionSweepFailing
+        expr: increase(crawlx_retention_sweep_failures_total[15m]) > 0
+        for: 0m
+        labels: { severity: ticket, runbook: RB-08 }
+        annotations:
+          summary: "The retention sweeper is failing"
+
+  - name: crawlx-supporting
+    rules:
+      # supporting alerts
+      - alert: CrawlxJournalHalt
+        expr: increase(crawlx_journal_halts_total[5m]) > 0
+        for: 0m
+        labels: { severity: page, runbook: RB-07 }
+        annotations:
+          summary: "Intent journal halted a session (storage unavailable)"
+      - alert: CrawlxUnknownOutcomesGrowing
+        expr: |
+          max(crawlx_interactions_unknown_unreconciled) > 0
+          or
+          sum(increase(crawlx_interactions_unknown_outcome_total[1h]))
+            > 3 * quantile_over_time(0.5, sum(increase(crawlx_interactions_unknown_outcome_total[1h]))[7d:1h])
+        for: 10m
+        labels: { severity: page, runbook: RB-02 }
+        annotations:
+          summary: "Unknown action outcomes are not being reconciled or are growing"
+      - alert: CrawlxBrowserCrashLoop
+        expr: sum by (instance) (rate(crawlx_browser_crashes_total[10m])) * 60 > 0.2
+        for: 10m
+        labels: { severity: ticket, runbook: RB-03 }
+        annotations:
+          summary: "Browser crash rate above 0.2/min on a worker"
+      - alert: CrawlxBrowserCrashLoopWide
+        expr: count(sum by (instance) (rate(crawlx_browser_crashes_total[10m])) * 60 > 0.2) / count(up{job="crawlx-worker"}) > 0.25
+        for: 10m
+        labels: { severity: page, runbook: RB-03 }
+        annotations:
+          summary: "More than 25 % of workers are crash-looping"
+      - alert: CrawlxModelBreakerOpen
+        expr: max by (provider) (crawlx_model_breaker_state) != 0
+        for: 5m
+        labels: { severity: ticket, runbook: RB-05 }
+        annotations:
+          summary: "System-1 breaker open for provider {{ $labels.provider }}"
+      - alert: CrawlxObjectStoreErrors
+        expr: |
+          sum(rate(crawlx_objectstore_requests_total{outcome="error"}[5m]))
+            / sum(rate(crawlx_objectstore_requests_total[5m])) > 0.05
+          or max(crawlx_objectstore_spool_bytes) > 0.5 * 2147483648
+        for: 5m
+        labels: { severity: page, runbook: RB-06 }
+        annotations:
+          summary: "Object-store error ratio above 5 % or spool above 50 % of spool_max_bytes"
+      - alert: CrawlxMetadataApiLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(crawlx_api_request_duration_seconds_bucket[15m])) by (le)) > 0.150
+          and sum(rate(crawlx_api_requests_total[15m])) >= 100
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Metadata API p95 above 150 ms at >= 100 RPS"
+      - alert: CrawlxSchedulerLatency
+        expr: histogram_quantile(0.95, sum(rate(crawlx_scheduler_op_duration_seconds_bucket[15m])) by (le)) > 0.005
+        for: 15m
+        labels: { severity: ticket, runbook: RB-07 }
+        annotations:
+          summary: "Scheduler op p95 above 5 ms"
+      - alert: CrawlxCheckpointLatency
+        # checkpoint duration is a span; the span-metrics connector exports it as this histogram
+        expr: histogram_quantile(0.95, sum(rate(traces_span_metrics_duration_seconds_bucket{span_name="checkpoint"}[30m])) by (le)) > 2
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Checkpoint p95 above 2 s"
+      - alert: CrawlxSettleTimeoutRate
+        expr: sum(rate(crawlx_settle_timeouts_total[30m])) / sum(rate(crawlx_interactions_executed_total[30m])) > 0.05
+        for: 30m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Settle timeout rate above 5 %"
+      - alert: CrawlxPolitenessViolation
+        expr: increase(crawlx_fetch_politeness_violations_total[5m]) > 0
+        for: 0m
+        labels: { severity: ticket, runbook: RB-10 }
+        annotations:
+          summary: "Per-origin politeness violated"
+      - alert: CrawlxSsrfDenialSpike
+        expr: sum(rate(crawlx_egress_denials_total[15m])) > 10 * avg_over_time(sum(rate(crawlx_egress_denials_total[15m]))[7d:15m])
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Egress denials above 10x the 7-day baseline; inspect for abuse"
+      - alert: CrawlxReplicationLag
+        expr: max(pg_replication_lag_seconds) > 30
+        for: 5m
+        labels: { severity: ticket, runbook: RB-07 }
+        annotations:
+          summary: "PostgreSQL replica lag above 30 s"
+      - alert: CrawlxQueueStall
+        expr: |
+          sum(crawlx_crawls_active) > 0 and sum(crawlx_frontier_depth) > 0
+          and (sum(rate(crawlx_interactions_executed_total[10m])) + sum(rate(crawlx_urls_succeeded_total[10m]))) == 0
+        for: 10m
+        labels: { severity: page, runbook: RB-01, sev: "2" }
+        annotations:
+          summary: "Crawls active, frontier non-empty, no progress for 10 minutes"

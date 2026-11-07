@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g16 file upload</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  form { border: 1px solid #ccd; padding: 12px; margin: 0 0 16px; }
+  #dropzone { border: 2px dashed #889; padding: 30px; text-align: center; color: #556; }
+  #dropzone.over { background: #eef; }
+  .result { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Uploads</h1>
+<p>Only the fixture files <code>fixture_small.png</code>, <code>fixture.pdf</code> and the deliberately oversized <code>oversized.bin</code> may be uploaded; the server rejects anything above 4096 bytes and wrong types.</p>
+
+<form id="image-form" aria-label="Image upload" action="/g16/api/upload/image" method="post" enctype="multipart/form-data">
+  <h2>1. Image upload (PNG only)</h2>
+  <label for="image-file">Image file</label>
+  <input id="image-file" name="file" type="file" accept="image/png">
+  <button id="image-submit" type="submit">Upload image</button>
+  <p class="result" id="image-result" aria-live="polite"></p>
+</form>
+
+<form id="pdf-form" aria-label="PDF upload" action="/g16/api/upload/pdf" method="post" enctype="multipart/form-data">
+  <h2>2. PDF upload</h2>
+  <label for="pdf-file">PDF file</label>
+  <input id="pdf-file" name="file" type="file" accept="application/pdf">
+  <button id="pdf-submit" type="submit">Upload PDF</button>
+  <p class="result" id="pdf-result" aria-live="polite"></p>
+</form>
+
+<form id="oversize-form" aria-label="Oversize upload" action="/g16/api/upload/oversize" method="post" enctype="multipart/form-data">
+  <h2>3. Oversize rejection (limit 4096 bytes)</h2>
+  <label for="oversize-file">Any file</label>
+  <input id="oversize-file" name="file" type="file">
+  <button id="oversize-submit" type="submit">Upload anyway</button>
+  <p class="result" id="oversize-result" aria-live="polite"></p>
+</form>
+
+<section aria-labelledby="h-drop">
+  <h2 id="h-drop">4. Drop zone</h2>
+  <div id="dropzone" tabindex="0" role="button" aria-label="Drop files here">Drop files here (or press Enter to pick)</div>
+  <input id="drop-file" name="file" type="file" multiple hidden>
+  <p class="result" id="drop-result" aria-live="polite"></p>
+</section>
+
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var LIMIT = 4096;
+
+  function send(ctx, files, resultEl, ev) {
+    if (!files || !files.length) { resultEl.textContent = 'No file chosen'; return; }
+    var fd = new FormData();
+    var names = [];
+    Array.prototype.forEach.call(files, function (f) {
+      names.push(f.name + ' (' + f.size + ' B)');
+      // client-side oversize check mirrors the server rule
+      if (f.size > LIMIT) __gym.probe('client-oversize-' + ctx, f.name);
+      fd.append('file', f, f.name);
+    });
+    fetch('/g16/api/upload/' + ctx, { method: 'POST', body: fd }).then(function (r) {
+      return r.json().catch(function () { return { ok: r.ok }; });
+    }).then(function (j) {
+      resultEl.textContent = (j.ok ? 'Accepted: ' : 'Rejected: ') + names.join(', ') +
+        (j.rejected && j.rejected.length ? ' [' + j.rejected.map(function (x) { return x.reason; }).join(',') + ']' : '');
+    });
+  }
+
+  [['image', 'image-form', 'image-file', 'image-submit', 'image-result'],
+   ['pdf', 'pdf-form', 'pdf-file', 'pdf-submit', 'pdf-result'],
+   ['oversize', 'oversize-form', 'oversize-file', 'oversize-submit', 'oversize-result']].forEach(function (p) {
+    var ctx = p[0];
+    $(p[2]).addEventListener('change', function (ev) { __gym.hit(p[2], ev); });
+    $(p[3]).addEventListener('click', function (ev) { __gym.hit(p[3], ev); });
+    $(p[1]).addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      send(ctx, $(p[2]).files, $(p[4]), ev);
+    });
+  });
+
+  var dz = $('dropzone');
+  var picker = $('drop-file');
+  dz.addEventListener('click', function (ev) { __gym.hit('dropzone', ev); picker.click(); });
+  dz.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); __gym.hit('dropzone', ev); picker.click(); } });
+  picker.addEventListener('change', function (ev) { send('dropzone', picker.files, $('drop-result'), ev); });
+  dz.addEventListener('dragover', function (ev) { ev.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', function () { dz.classList.remove('over'); });
+  dz.addEventListener('drop', function (ev) {
+    ev.preventDefault();
+    dz.classList.remove('over');
+    __gym.hit('dropzone', ev);
+    send('dropzone', ev.dataTransfer.files, $('drop-result'), ev);
+  });
+})();
+</script>
+</body>
+</html>

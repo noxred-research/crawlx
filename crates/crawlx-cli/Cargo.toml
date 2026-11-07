@@ -1,0 +1,82 @@
+[package]
+name = "crawlx-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: the crawlx binary"
+
+[lib]
+name = "crawlx_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "crawlx"
+path = "src/main.rs"
+
+[features]
+# Forwards the worker's env-driven failpoints into the `crawlx` binary for the chaos suite.
+chaos = ["crawlx-worker/chaos"]
+# OTLP export of traces and metrics; forwards to crawlx-telemetry.
+otlp = ["crawlx-telemetry/otlp"]
+# Explicit local ONNX execution; requires an operator-installed runtime and verified bundle.
+onnx = ["crawlx-model/onnx"]
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+crawlx-api = { path = "../crawlx-api" }
+crawlx-worker = { path = "../crawlx-worker" }
+crawlx-bench = { path = "../crawlx-bench" }
+crawlx-storage = { path = "../crawlx-storage" }
+crawlx-telemetry = { path = "../crawlx-telemetry" }
+crawlx-scheduler = { path = "../crawlx-scheduler" }
+crawlx-policy = { path = "../crawlx-policy" }
+crawlx-url = { path = "../crawlx-url" }
+crawlx-model = { path = "../crawlx-model" }
+crawlx-browser = { path = "../crawlx-browser" }
+crawlx-extract = { path = "../crawlx-extract" }
+# the deployment lists feed (`egress_feed.rs`); `tests/sdk_python.rs` also uses its fixture host resolver
+crawlx-fetch = { path = "../crawlx-fetch" }
+# `--pprof-bind`: the debug listener of `serve`/`worker` (`src/pprof.rs`).
+axum.workspace = true
+pprof.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+clap.workspace = true
+flate2.workspace = true
+hex.workspace = true
+mimalloc.workspace = true
+quick-xml.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+# `multipart` is the one feature the workspace reqwest lacks: `crawlx mcp` uploads files to `/parse`.
+reqwest = { workspace = true, features = ["multipart"] }
+thiserror.workspace = true
+tempfile.workspace = true
+# `io-std`: `crawlx mcp` speaks JSON-RPC over stdin/stdout.
+tokio = { workspace = true, features = ["io-std"] }
+toml.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+zip.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+crawlx-storage = { path = "../crawlx-storage", features = ["fake-kms"] }
+crawlx-strategies = { path = "../crawlx-strategies" }
+tower = { workspace = true, features = ["util"] }
+sqlx.workspace = true
+rustix.workspace = true
+wiremock.workspace = true
+
+[lints]
+workspace = true

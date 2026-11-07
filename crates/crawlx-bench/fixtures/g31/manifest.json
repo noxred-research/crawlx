@@ -1,0 +1,84 @@
+{
+  "id": "g31",
+  "title": "Closed shadow roots and webdriver probe",
+  "version": 1,
+  "url_path": "/g31/",
+  "controls": [
+    {
+      "id": "c1",
+      "selector": "#c1",
+      "role": "button",
+      "name": "Alpha",
+      "expected": "actionable",
+      "mechanism": "ax",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c2",
+      "selector": "#c2",
+      "role": "button",
+      "name": "Bravo",
+      "expected": "actionable",
+      "mechanism": "ax",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c3",
+      "selector": "#c3",
+      "role": "button",
+      "name": "Charlie",
+      "expected": "actionable",
+      "mechanism": "ax",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c4",
+      "selector": "#c4",
+      "role": "button",
+      "name": "Delta",
+      "expected": "actionable",
+      "mechanism": "ax",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c5",
+      "selector": "#c5",
+      "role": "button",
+      "name": "Echo",
+      "expected": "actionable",
+      "mechanism": "ax",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c6",
+      "selector": "#c6",
+      "role": "button",
+      "name": "Foxtrot",
+      "expected": "actionable",
+      "mechanism": "ax",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      },
+      "stealth_only": true
+    }
+  ],
+  "expected": {
+    "target_recall_min": 1.0
+  }
+}

@@ -1,0 +1,1038 @@
+//! Fenced encrypted profile import/export/inspect/delete.
+//! Native bundles are authenticated file maps, never executable tar archives.
+//! Database ciphertext is separate from general artifact exports. Plaintext only lives
+//! in the caller's bounded memory or an explicitly leased temporary browser directory.
+
+use crate::codec::{from_json, get, to_json};
+use crate::error::db;
+use crate::leases::SessionLease;
+use crate::session_binding::lock_lease;
+use crate::Pg;
+use crawlx_core::hash::Digest;
+use crawlx_core::{PrincipalId, StoreError, TenantId, Timestamp};
+use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
+use ring::rand::{SecureRandom, SystemRandom};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
+use std::path::{Component, Path};
+
+/// Hard plaintext byte bound; callers may narrow it, never widen it.
+pub const MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum encrypted wire representation.
+pub const MAX_BUNDLE_BYTES: usize = 32 * 1024 * 1024;
+/// Maximum files or directories in a bundle.
+pub const MAX_PROFILE_FILES: usize = 4096;
+/// Plaintext runtime copies live only on this checked Linux tmpfs mount.
+pub const PROFILE_RUNTIME_ROOT: &str = "/dev/shm";
+const RUNTIME_PREFIX: &str = "crawlx-profile-lease-";
+const RUNTIME_MANIFEST: &str = ".crawlx-profile-lease.json";
+
+/// Secret-free crash-reaping descriptor, written before any decrypted profile bytes.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ProfileRuntimeLease {
+    /// Database/schema/server identity; one cluster cannot reap another cluster's copies.
+    pub authority: Digest,
+    /// Tenant whose existing session lease owns this temporary directory.
+    pub tenant: TenantId,
+    /// Owning role slot.
+    pub session: crawlx_core::SessionId,
+    /// Existing session fence, never a new lock.
+    pub fence: i64,
+}
+
+impl ProfileRuntimeLease {
+    /// Describe a copy owned by the existing scheduler lease.
+    #[must_use]
+    pub fn new(authority: Digest, tenant: TenantId, lease: &SessionLease) -> Self {
+        Self {
+            authority,
+            tenant,
+            session: lease.session.id,
+            fence: lease.fencing_token,
+        }
+    }
+}
+
+/// Retention-approved immutable profile namespace and compatibility descriptor.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[non_exhaustive]
+pub struct ProfileScopeV1 {
+    /// Owning tenant.
+    pub tenant: TenantId,
+    /// Exact role; same profile name under another role is a distinct namespace.
+    pub principal: PrincipalId,
+    /// Validated public profile name.
+    pub name: String,
+    /// Canonical origins this profile may access.
+    pub allowed_origins: BTreeSet<String>,
+    /// Actual browser-family/build digest.
+    pub backend_build: Digest,
+    /// Stable authorized egress identity digest.
+    pub egress: Digest,
+}
+
+impl ProfileScopeV1 {
+    /// Construct and validate the exact retained-profile namespace.
+    ///
+    /// # Errors
+    /// Rejects invalid names, origins and bounded-scope violations.
+    pub fn new(
+        tenant: TenantId,
+        principal: PrincipalId,
+        name: String,
+        allowed_origins: BTreeSet<String>,
+        backend_build: Digest,
+        egress: Digest,
+    ) -> Result<Self, StoreError> {
+        let scope = Self {
+            tenant,
+            principal,
+            name,
+            allowed_origins,
+            backend_build,
+            egress,
+        };
+        scope.validate()?;
+        Ok(scope)
+    }
+
+    /// Validate canonical origins and bounded public identifiers.
+    ///
+    /// # Errors
+    /// Rejects ambiguous origins, credentials, unsafe names and excessive origin sets.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        if self.name.is_empty()
+            || self.name.len() > 128
+            || !self
+                .name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            || self.principal.0.is_empty()
+            || self.principal.0.len() > 128
+            || self.allowed_origins.is_empty()
+            || self.allowed_origins.len() > 64
+        {
+            return Err(invalid("invalid profile scope"));
+        }
+        for origin in &self.allowed_origins {
+            let parsed = url::Url::parse(origin).map_err(|_| invalid("invalid profile origin"))?;
+            if !matches!(parsed.scheme(), "http" | "https")
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.origin().ascii_serialization() != *origin
+            {
+                return Err(invalid("profile origins must be canonical HTTP origins"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Plaintext file map. Debug deliberately never includes file content or paths.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileFiles {
+    files: BTreeMap<String, Vec<u8>>,
+}
+
+impl std::fmt::Debug for ProfileFiles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProfileFiles")
+            .field("files", &self.files.len())
+            .finish_non_exhaustive()
+    }
+}
+
+fn invalid(message: &str) -> StoreError {
+    StoreError::Conflict(message.to_owned())
+}
+
+fn validate_file(path: &str, executable_approved: bool) -> Result<(), StoreError> {
+    if path.is_empty()
+        || path.len() > 1024
+        || path.contains(['\\', ':'])
+        || path.chars().any(char::is_control)
+        || path.split('/').count() > 16
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+        || Path::new(path)
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(invalid("profile path traversal denied"));
+    }
+    if path
+        .split('/')
+        .any(|part| part.starts_with("Singleton") || part == "DevToolsActivePort" || part == RUNTIME_MANIFEST)
+    {
+        return Err(invalid("profile process files forbidden"));
+    }
+    // Preferences can enable extensions, proxy changes or startup commands. Importing them
+    // requires explicit operator approval, not a filename-based trust assumption.
+    if !executable_approved
+        && path.split('/').any(|part| {
+            matches!(
+                part,
+                "Extensions" | "Preferences" | "Secure Preferences" | "Local State"
+            )
+        })
+    {
+        return Err(invalid(
+            "profile executable preferences require operator approval",
+        ));
+    }
+    Ok(())
+}
+
+impl ProfileFiles {
+    /// Validate an in-memory file map before encryption or browser use.
+    ///
+    /// # Errors
+    /// Rejects traversal, special process files, executable preferences without approval,
+    /// prefix collisions, excessive files, depth and total bytes.
+    pub fn new(files: BTreeMap<String, Vec<u8>>, executable_approved: bool) -> Result<Self, StoreError> {
+        if files.len() > MAX_PROFILE_FILES {
+            return Err(invalid("profile file count exceeded"));
+        }
+        let mut bytes = 0usize;
+        for (path, content) in &files {
+            validate_file(path, executable_approved)?;
+            bytes = bytes
+                .checked_add(content.len())
+                .ok_or_else(|| invalid("profile byte limit exceeded"))?;
+            if bytes > MAX_PROFILE_BYTES {
+                return Err(invalid("profile byte limit exceeded"));
+            }
+            let mut prefix = path.as_str();
+            while let Some((parent, _)) = prefix.rsplit_once('/') {
+                if files.contains_key(parent) {
+                    return Err(invalid("profile file/directory collision"));
+                }
+                prefix = parent;
+            }
+        }
+        Ok(Self { files })
+    }
+
+    /// Read a bounded operator-selected directory without symlinks, hardlinks or special files.
+    /// Call from blocking admission, never from an async runtime thread.
+    ///
+    /// # Errors
+    /// Returns validation/I/O errors, including mutable/symlink sources and size overflow.
+    #[cfg(target_os = "linux")]
+    pub fn read_directory(root: &Path, executable_approved: bool) -> Result<Self, StoreError> {
+        use rustix::fs::{open, openat2, Mode, OFlags, ResolveFlags};
+        use std::os::fd::AsRawFd as _;
+        use std::os::unix::fs::MetadataExt as _;
+        fn visit(
+            root: &std::fs::File,
+            directory: std::fs::File,
+            relative: &Path,
+            out: &mut BTreeMap<String, Vec<u8>>,
+            bytes: &mut usize,
+            seen: &mut usize,
+            depth: u8,
+        ) -> Result<(), StoreError> {
+            if depth > 16 {
+                return Err(invalid("profile directory depth exceeded"));
+            }
+            // Enumerate the opened directory, never a raceable pathname. openat2 below
+            // independently anchors each child to the same original root descriptor.
+            let listing =
+                std::fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd())).map_err(io)?;
+            let remaining_entries = MAX_PROFILE_FILES.saturating_sub(*seen);
+            let mut entries = listing
+                .take(remaining_entries.saturating_add(1))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(io)?;
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                *seen = seen
+                    .checked_add(1)
+                    .ok_or_else(|| invalid("profile entry count exceeded"))?;
+                if *seen > MAX_PROFILE_FILES {
+                    return Err(invalid("profile entry count exceeded"));
+                }
+                let basename = entry.file_name();
+                if basename.to_str().is_some_and(|name| {
+                    name.starts_with("Singleton") || name == "DevToolsActivePort" || name == RUNTIME_MANIFEST
+                }) {
+                    continue; // Runtime process handles are never profile content.
+                }
+                let path = relative.join(basename);
+                let fd = openat2(
+                    root,
+                    &path,
+                    OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+                    Mode::empty(),
+                    ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+                )
+                .map_err(|_| invalid("profile path is inaccessible, symlinked or outside its root"))?;
+                let file = std::fs::File::from(fd);
+                let metadata = file.metadata().map_err(io)?;
+                if metadata.is_dir() {
+                    visit(root, file, &path, out, bytes, seen, depth.saturating_add(1))?;
+                } else if metadata.is_file() {
+                    if metadata.nlink() != 1 {
+                        return Err(invalid("profile hardlink denied"));
+                    }
+                    let remaining = MAX_PROFILE_BYTES
+                        .checked_sub(*bytes)
+                        .ok_or_else(|| invalid("profile bytes exceeded"))?;
+                    let mut content = Vec::new();
+                    file.take(
+                        u64::try_from(remaining)
+                            .map_err(|_| invalid("profile bytes exceeded"))?
+                            .saturating_add(1),
+                    )
+                    .read_to_end(&mut content)
+                    .map_err(io)?;
+                    *bytes = bytes
+                        .checked_add(content.len())
+                        .ok_or_else(|| invalid("profile bytes exceeded"))?;
+                    if *bytes > MAX_PROFILE_BYTES {
+                        return Err(invalid("profile bytes exceeded"));
+                    }
+                    let name = path
+                        .to_str()
+                        .ok_or_else(|| invalid("non-UTF8 profile filename"))?
+                        .to_owned();
+                    out.insert(name, content);
+                } else {
+                    return Err(invalid("profile special file denied"));
+                }
+            }
+            Ok(())
+        }
+        let fd = open(
+            root,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| invalid("profile root must be an accessible nonsymlink directory"))?;
+        let root = std::fs::File::from(fd);
+        let mut files = BTreeMap::new();
+        visit(
+            &root,
+            root.try_clone().map_err(io)?,
+            Path::new(""),
+            &mut files,
+            &mut 0,
+            &mut 0,
+            0,
+        )?;
+        Self::new(files, executable_approved)
+    }
+
+    /// Reject disk profile materialization where the required beneath/no-symlink open is absent.
+    ///
+    /// # Errors
+    /// Always returns unsupported on non-Linux platforms; never follows unchecked paths.
+    #[cfg(not(target_os = "linux"))]
+    pub fn read_directory(_root: &Path, _executable_approved: bool) -> Result<Self, StoreError> {
+        Err(invalid("profile directory import requires Linux openat2"))
+    }
+
+    /// Materialize in a private temporary directory, deleted on cancellation/drop.
+    ///
+    /// # Errors
+    /// Returns validation or local filesystem errors; never overwrites an existing profile.
+    pub fn materialize(
+        &self,
+        root: &Path,
+        lease: &ProfileRuntimeLease,
+        executable_approved: bool,
+    ) -> Result<tempfile::TempDir, StoreError> {
+        let dir = tempfile::Builder::new()
+            .prefix(RUNTIME_PREFIX)
+            .tempdir_in(root)
+            .map_err(io)?;
+        // Publishing this descriptor before secrets makes even a mid-copy crash reapable.
+        let descriptor =
+            serde_json::to_vec(lease).map_err(|error| StoreError::Serialization(error.to_string()))?;
+        std::fs::write(dir.path().join(RUNTIME_MANIFEST), descriptor).map_err(io)?;
+        for (path, bytes) in &self.files {
+            validate_file(path, executable_approved)?;
+            let destination = dir.path().join(path);
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent).map_err(io)?;
+            }
+            std::fs::write(destination, bytes).map_err(io)?;
+        }
+        Ok(dir)
+    }
+}
+
+fn io(error: std::io::Error) -> StoreError {
+    StoreError::Backend(format!("profile filesystem operation failed: {}", error.kind()))
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Payload {
+    version: u8,
+    scope: ProfileScopeV1,
+    generation: u64,
+    expires_at: Timestamp,
+    files: ProfileFiles,
+}
+
+/// AEAD profile key. Never serializable or printable; supply from an approved SecretResolver.
+pub struct ProfileCipher {
+    key: LessSafeKey,
+}
+
+impl ProfileCipher {
+    /// Create an AES-256-GCM key from exactly 32 secret bytes.
+    ///
+    /// # Errors
+    /// Rejects invalid key lengths. Key material is never included in an error.
+    pub fn new(key: &[u8]) -> Result<Self, StoreError> {
+        Ok(Self {
+            key: LessSafeKey::new(
+                UnboundKey::new(&AES_256_GCM, key)
+                    .map_err(|_| invalid("profile encryption key must be 32 bytes"))?,
+            ),
+        })
+    }
+
+    /// Encrypt an approved native profile bundle. Expiry and compatibility are authenticated.
+    ///
+    /// # Errors
+    /// Rejects invalid scope, sizes, encryption failures or expired/nonpositive generations.
+    pub fn seal(
+        &self,
+        scope: &ProfileScopeV1,
+        generation: u64,
+        expires_at: Timestamp,
+        files: ProfileFiles,
+    ) -> Result<Vec<u8>, StoreError> {
+        scope.validate()?;
+        if generation == 0 {
+            return Err(invalid("profile generation must be positive"));
+        }
+        let mut nonce = [0u8; 12];
+        // Cryptographic nonces deliberately use OS entropy, never the deterministic crawl RNG.
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| invalid("profile encryption entropy unavailable"))?;
+        let mut plaintext = serde_json::to_vec(&Payload {
+            version: 1,
+            scope: scope.clone(),
+            generation,
+            expires_at,
+            files,
+        })
+        .map_err(|_| invalid("profile bundle encoding failed"))?;
+        if plaintext.len() > MAX_BUNDLE_BYTES - 64 {
+            return Err(invalid("profile bundle bytes exceeded"));
+        }
+        self.key
+            .seal_in_place_append_tag(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::from(b"crawlx/profile-bundle/v1"),
+                &mut plaintext,
+            )
+            .map_err(|_| invalid("profile encryption failed"))?;
+        let mut bundle = Vec::with_capacity(16 + plaintext.len());
+        bundle.extend_from_slice(b"CXP1");
+        bundle.extend_from_slice(&nonce);
+        bundle.extend_from_slice(&plaintext);
+        Ok(bundle)
+    }
+
+    fn open(
+        &self,
+        bytes: &[u8],
+        scope: &ProfileScopeV1,
+        now: Timestamp,
+        executable_approved: bool,
+    ) -> Result<Payload, StoreError> {
+        scope.validate()?;
+        if bytes.len() < 32 || bytes.len() > MAX_BUNDLE_BYTES || &bytes[..4] != b"CXP1" {
+            return Err(invalid("invalid encrypted profile bundle"));
+        }
+        let nonce: [u8; 12] = bytes[4..16]
+            .try_into()
+            .map_err(|_| invalid("invalid profile nonce"))?;
+        let mut ciphertext = bytes[16..].to_vec();
+        let plaintext = self
+            .key
+            .open_in_place(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::from(b"crawlx/profile-bundle/v1"),
+                &mut ciphertext,
+            )
+            .map_err(|_| invalid("profile authentication failed"))?;
+        let payload: Payload =
+            serde_json::from_slice(plaintext).map_err(|_| invalid("invalid native profile payload"))?;
+        if payload.version != 1
+            || payload.scope != *scope
+            || payload.generation == 0
+            || payload.expires_at <= now
+        {
+            return Err(invalid("profile compatibility, generation or expiry conflict"));
+        }
+        let files = ProfileFiles::new(payload.files.files, executable_approved)?;
+        Ok(Payload { files, ..payload })
+    }
+}
+
+/// Secret-free result of inspect/import. File names and cookies are not disclosed.
+#[derive(Clone, Serialize, Debug)]
+#[non_exhaustive]
+pub struct ProfileInspection {
+    /// Exact compatibility scope.
+    pub scope: ProfileScopeV1,
+    /// Explicit generation.
+    pub generation: u64,
+    /// Encrypted bundle digest; pins import/export bytes, not secret content.
+    pub digest: Digest,
+    /// Secret expiry, never implicitly extended.
+    pub expires_at: Timestamp,
+    /// Validated file count.
+    pub files: usize,
+}
+
+/// Fenced encrypted profile service. Existing lease owner and database tenant policies authenticate operations.
+pub struct BrowserProfileRepo<'a> {
+    pg: &'a Pg,
+    cipher: &'a ProfileCipher,
+}
+
+async fn audit_profile(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lease: &SessionLease,
+    scope: &ProfileScopeV1,
+    event: &str,
+    generation: u64,
+) -> Result<(), StoreError> {
+    crate::retention::append_audit_on(
+        tx,
+        Some(scope.tenant.0),
+        Some(lease.session.run.0),
+        &lease.worker.to_string(),
+        event,
+        serde_json::json!({
+            "profile": Digest::of("crawlx/profile-audit-name/v1", scope.name.as_bytes()),
+            "generation": generation, "leaseFence": lease.fencing_token,
+        }),
+    )
+    .await
+}
+
+impl<'a> BrowserProfileRepo<'a> {
+    /// Compose with the existing PostgreSQL repository and an operator-provided secret key.
+    #[must_use]
+    pub fn new(pg: &'a Pg, cipher: &'a ProfileCipher) -> Self {
+        Self { pg, cipher }
+    }
+
+    /// Import digest-pinned ciphertext only after explicit retained-profile approval.
+    /// Expected generation zero creates a profile; otherwise the next generation must equal old + 1.
+    ///
+    /// # Errors
+    /// Rejects ZDR, stale lease, principal crossover, unsafe files, expiry, unresolved writes
+    /// by either owner and generation conflicts.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "digest pin, expected generation and two independent operator approvals must remain explicit security inputs"
+    )]
+    pub async fn import(
+        &self,
+        lease: &SessionLease,
+        scope: &ProfileScopeV1,
+        bytes: &[u8],
+        pinned: Digest,
+        expected_generation: u64,
+        retained_profile_approved: bool,
+        executable_approved: bool,
+    ) -> Result<ProfileInspection, StoreError> {
+        if !retained_profile_approved || Digest::of("crawlx/profile-bundle/v1", bytes) != pinned {
+            return Err(invalid("profile retention approval or digest pin missing"));
+        }
+        if scope.principal != lease.session.role {
+            return Err(invalid("profile principal conflict"));
+        }
+        let mut tx = self.pg.pool.begin().await.map_err(db)?;
+        let now = lock_lease(&mut tx, lease, scope.tenant).await?;
+        let row =
+            sqlx::query("SELECT retention_mode::text AS mode, expires_at FROM crawl_runs WHERE run_id=$1")
+                .bind(lease.session.run.0)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        let mode: String = get(&row, "mode")?;
+        let run_expiry: Option<Timestamp> = get(&row, "expires_at")?;
+        if mode == "zdr" {
+            return Err(invalid("retention_denied: durable profiles forbidden under zdr"));
+        }
+        let payload = self.cipher.open(bytes, scope, now, executable_approved)?;
+        if run_expiry.is_none_or(|expiry| payload.expires_at > expiry) {
+            return Err(invalid("profile expiry exceeds owning run retention"));
+        }
+        if expected_generation.checked_add(1) != Some(payload.generation) {
+            return Err(invalid("profile generation conflict"));
+        }
+        let existing = sqlx::query("SELECT generation, scope, session_id, lease_fence FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 FOR UPDATE")
+            .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).fetch_optional(&mut *tx).await.map_err(db)?;
+        if let Some(existing) = existing {
+            let generation: i64 = get(&existing, "generation")?;
+            let stored_scope: ProfileScopeV1 = from_json(get(&existing, "scope")?)?;
+            if u64::try_from(generation).ok() != Some(expected_generation) || stored_scope != *scope {
+                return Err(invalid("profile generation conflict"));
+            }
+            let session: uuid::Uuid = get(&existing, "session_id")?;
+            let fence: i64 = get(&existing, "lease_fence")?;
+            // Keep the profile row locked while checking both journals. Do not lock the
+            // prior session here: acquisition already locks the incoming session first.
+            let uncertain: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM actions a JOIN crawl_runs r ON r.run_id=a.run_id \
+                 WHERE r.tenant_id=$1 AND a.session_id IN ($2,$3) AND a.status IN ('intended','unknown'))",
+            )
+            .bind(scope.tenant.0)
+            .bind(session)
+            .bind(lease.session.id.0)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+            if uncertain {
+                return Err(invalid("profile generation conflict: unresolved write"));
+            }
+            if session != lease.session.id.0 || fence != lease.fencing_token {
+                let busy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM crawl_sessions WHERE session_id=$1 AND fencing_token=$2 AND lease_expires_at>clock_timestamp())")
+                    .bind(session).bind(fence).fetch_one(&mut *tx).await.map_err(db)?;
+                if busy {
+                    return Err(invalid("profile lease conflict"));
+                }
+            }
+        } else if expected_generation != 0 {
+            return Err(invalid("profile generation conflict"));
+        }
+        let generation =
+            i64::try_from(payload.generation).map_err(|_| invalid("profile generation exhausted"))?;
+        // The PK serializes concurrent creates even when there was no row to lock.
+        let result = sqlx::query("INSERT INTO browser_profiles(tenant_id,principal,name,generation,scope,encrypted_bundle,digest,expires_at,owner_run,session_id,lease_fence) \
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(tenant_id,principal,name) DO UPDATE \
+            SET generation=EXCLUDED.generation,scope=EXCLUDED.scope,encrypted_bundle=EXCLUDED.encrypted_bundle,digest=EXCLUDED.digest, \
+            expires_at=EXCLUDED.expires_at,owner_run=EXCLUDED.owner_run,session_id=EXCLUDED.session_id,lease_fence=EXCLUDED.lease_fence \
+            WHERE browser_profiles.generation=$12")
+            .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).bind(generation).bind(to_json(scope)?)
+            .bind(bytes).bind(pinned.0.as_slice()).bind(payload.expires_at).bind(lease.session.run.0).bind(lease.session.id.0).bind(lease.fencing_token)
+            .bind(i64::try_from(expected_generation).map_err(|_| invalid("profile generation exhausted"))?)
+            .execute(&mut *tx).await.map_err(db)?;
+        if result.rows_affected() != 1 {
+            return Err(invalid("profile generation conflict"));
+        }
+        audit_profile(&mut tx, lease, scope, "profile.import", payload.generation).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(ProfileInspection {
+            scope: scope.clone(),
+            generation: payload.generation,
+            digest: pinned,
+            expires_at: payload.expires_at,
+            files: payload.files.files.len(),
+        })
+    }
+
+    /// Retrieve pinned ciphertext and validate it under the exact requested scope.
+    ///
+    /// # Errors
+    /// Rejects stale leases, incompatible scopes, expired artifacts and generation conflicts.
+    pub async fn export(
+        &self,
+        lease: &SessionLease,
+        scope: &ProfileScopeV1,
+        generation: u64,
+        executable_approved: bool,
+    ) -> Result<(ProfileInspection, Vec<u8>), StoreError> {
+        if scope.principal != lease.session.role {
+            return Err(invalid("profile principal conflict"));
+        }
+        let mut tx = self.pg.pool.begin().await.map_err(db)?;
+        let now = lock_lease(&mut tx, lease, scope.tenant).await?;
+        let row = sqlx::query("SELECT encrypted_bundle,digest,scope FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 AND generation=$4 AND expires_at>$5")
+            .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).bind(i64::try_from(generation).map_err(|_| invalid("profile generation exhausted"))?).bind(now)
+            .fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(|| invalid("profile unavailable"))?;
+        let bytes: Vec<u8> = get(&row, "encrypted_bundle")?;
+        let payload = self.cipher.open(&bytes, scope, now, executable_approved)?;
+        if payload.generation != generation {
+            return Err(invalid("profile generation conflict"));
+        }
+        let digest = Digest::of("crawlx/profile-bundle/v1", &bytes);
+        let stored_digest: Vec<u8> = get(&row, "digest")?;
+        if stored_digest.as_slice() != digest.0 {
+            return Err(invalid("profile digest mismatch"));
+        }
+        audit_profile(&mut tx, lease, scope, "profile.export", generation).await?;
+        tx.commit().await.map_err(db)?;
+        Ok((
+            ProfileInspection {
+                scope: scope.clone(),
+                generation,
+                digest,
+                expires_at: payload.expires_at,
+                files: payload.files.files.len(),
+            },
+            bytes,
+        ))
+    }
+
+    /// Attach the profile to an already-live session fence and decrypt into bounded memory.
+    /// A different live holder causes an explicit conflict; there is no shared-directory fallback.
+    ///
+    /// # Errors
+    /// Rejects stale leases, incompatible profiles, concurrent live holders and cross-session
+    /// transfers whose prior owner has unresolved writes. Same-session fenced recovery is allowed.
+    pub async fn acquire(
+        &self,
+        lease: &SessionLease,
+        scope: &ProfileScopeV1,
+        executable_approved: bool,
+    ) -> Result<Option<(ProfileInspection, ProfileFiles)>, StoreError> {
+        scope.validate()?;
+        if scope.principal != lease.session.role {
+            return Err(invalid("profile principal conflict"));
+        }
+        let mut tx = self.pg.pool.begin().await.map_err(db)?;
+        let now = lock_lease(&mut tx, lease, scope.tenant).await?;
+        let row = sqlx::query("SELECT encrypted_bundle,digest,scope,session_id,lease_fence FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 FOR UPDATE")
+            .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).fetch_optional(&mut *tx).await.map_err(db)?;
+        let Some(row) = row else {
+            tx.commit().await.map_err(db)?;
+            return Ok(None);
+        };
+        let session: uuid::Uuid = get(&row, "session_id")?;
+        let fence: i64 = get(&row, "lease_fence")?;
+        if session != lease.session.id.0 || fence != lease.fencing_token {
+            let busy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM crawl_sessions WHERE session_id=$1 AND fencing_token=$2 AND lease_expires_at>clock_timestamp())")
+                .bind(session).bind(fence).fetch_one(&mut *tx).await.map_err(db)?;
+            if busy {
+                return Err(invalid("profile lease conflict"));
+            }
+        }
+        if session != lease.session.id.0 {
+            // A recovering worker must restore its own profile before reconciliation.
+            // Cross-session transfer cannot detach that profile from an unresolved write.
+            // Read without prior-session/action locks to preserve lease/profile lock ordering.
+            let uncertain: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM actions a JOIN crawl_runs r ON r.run_id=a.run_id \
+                 WHERE r.tenant_id=$1 AND a.session_id=$2 AND a.status IN ('intended','unknown'))",
+            )
+            .bind(scope.tenant.0)
+            .bind(session)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+            if uncertain {
+                return Err(invalid("profile lease conflict: unresolved write"));
+            }
+        }
+        let bytes: Vec<u8> = get(&row, "encrypted_bundle")?;
+        let payload = self.cipher.open(&bytes, scope, now, executable_approved)?;
+        let digest = Digest::of("crawlx/profile-bundle/v1", &bytes);
+        let stored_digest: Vec<u8> = get(&row, "digest")?;
+        if stored_digest.as_slice() != digest.0 {
+            return Err(invalid("profile digest mismatch"));
+        }
+        sqlx::query("UPDATE browser_profiles SET session_id=$4,lease_fence=$5 WHERE tenant_id=$1 AND principal=$2 AND name=$3")
+            .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).bind(lease.session.id.0).bind(lease.fencing_token)
+            .execute(&mut *tx).await.map_err(db)?;
+        audit_profile(&mut tx, lease, scope, "profile.acquire", payload.generation).await?;
+        tx.commit().await.map_err(db)?;
+        let inspection = ProfileInspection {
+            scope: scope.clone(),
+            generation: payload.generation,
+            digest,
+            expires_at: payload.expires_at,
+            files: payload.files.files.len(),
+        };
+        Ok(Some((inspection, payload.files)))
+    }
+
+    /// Inspect validated metadata without exposing browser secrets or archive URLs.
+    ///
+    /// # Errors
+    /// Returns the same strict errors as export; never returns another principal's profile.
+    pub async fn inspect(
+        &self,
+        lease: &SessionLease,
+        scope: &ProfileScopeV1,
+        generation: u64,
+        executable_approved: bool,
+    ) -> Result<ProfileInspection, StoreError> {
+        Ok(self
+            .export(lease, scope, generation, executable_approved)
+            .await?
+            .0)
+    }
+
+    /// Delete actual ciphertext, not just mark a catalog row invisible.
+    ///
+    /// # Errors
+    /// Rejects stale session fences or a stale expected generation.
+    pub async fn delete(
+        &self,
+        lease: &SessionLease,
+        scope: &ProfileScopeV1,
+        generation: u64,
+    ) -> Result<(), StoreError> {
+        scope.validate()?;
+        if scope.principal != lease.session.role {
+            return Err(invalid("profile principal conflict"));
+        }
+        let mut tx = self.pg.pool.begin().await.map_err(db)?;
+        lock_lease(&mut tx, lease, scope.tenant).await?;
+        let result = sqlx::query("DELETE FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 AND generation=$4 AND scope=$5")
+            .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).bind(i64::try_from(generation).map_err(|_| invalid("profile generation exhausted"))?)
+            .bind(to_json(scope)?)
+            .execute(&mut *tx).await.map_err(db)?;
+        if result.rows_affected() != 1 {
+            return Err(invalid("profile generation conflict"));
+        }
+        audit_profile(&mut tx, lease, scope, "profile.delete", generation).await?;
+        tx.commit().await.map_err(db)?;
+        self.pg.reap_profile_directories().await?;
+        Ok(())
+    }
+}
+
+impl Pg {
+    /// Stable database authority for local temporary-profile crash records.
+    ///
+    /// # Errors
+    /// Returns database or canonical-serialization errors.
+    pub async fn profile_authority(&self) -> Result<Digest, StoreError> {
+        let identity: serde_json::Value = sqlx::query_scalar(
+            "SELECT jsonb_build_array(current_database(), current_schema(), inet_server_addr()::text, inet_server_port())")
+            .fetch_one(&self.pool).await.map_err(db)?;
+        Digest::of_value("crawlx/profile-database-authority/v1", &identity)
+            .map_err(|error| StoreError::Serialization(error.to_string()))
+    }
+
+    /// Remove expired/revoked/purged profile ciphertext, with no plaintext spool.
+    ///
+    /// # Errors
+    /// Returns database errors; a failed deletion remains retryable on the next sweep.
+    pub async fn reap_profiles(&self) -> Result<u64, StoreError> {
+        let result = sqlx::query("DELETE FROM browser_profiles p USING crawl_runs r WHERE p.owner_run=r.run_id AND \
+            (p.expires_at<=clock_timestamp() OR r.purge_requested_at IS NOT NULL OR r.cancel_requested_at IS NOT NULL \
+             OR r.status IN ('failed','cancelled') OR EXISTS(SELECT 1 FROM authorization_records a WHERE a.record_id=r.authorization_record_id \
+               AND (a.revoked_at IS NOT NULL OR a.valid_to<=clock_timestamp())))")
+            .execute(&self.pool).await.map_err(db)?;
+        Ok(result.rows_affected())
+    }
+
+    /// Reap this host's expired/crashed/revoked temporary copies using live database fences.
+    /// No process is signalled. An inaccessible external resource remains separately quarantined.
+    ///
+    /// # Errors
+    /// Returns filesystem/database errors, or an explicit bounded-directory admission error.
+    pub async fn reap_profile_directories(&self) -> Result<u64, StoreError> {
+        use tokio::io::AsyncReadExt as _;
+        let authority = self.profile_authority().await?;
+        let mut listing = match tokio::fs::read_dir(PROFILE_RUNTIME_ROOT).await {
+            Ok(listing) => listing,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(io(error)),
+        };
+        let mut seen = 0usize;
+        let mut erased = 0u64;
+        while let Some(entry) = listing.next_entry().await.map_err(io)? {
+            let name = entry.file_name();
+            if !name.to_str().is_some_and(|name| name.starts_with(RUNTIME_PREFIX)) {
+                continue;
+            }
+            seen = seen.saturating_add(1);
+            if seen > MAX_PROFILE_FILES {
+                return Err(invalid("profile crash-reaper directory count exceeded"));
+            }
+            let kind = entry.file_type().await.map_err(io)?;
+            if !kind.is_dir() || kind.is_symlink() {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt as _;
+                if entry.metadata().await.map_err(io)?.uid() != rustix::process::getuid().as_raw() {
+                    continue;
+                }
+            }
+            let path = entry.path();
+            let manifest = path.join(RUNTIME_MANIFEST);
+            let descriptor = match tokio::fs::symlink_metadata(&manifest).await {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    let file = tokio::fs::File::open(&manifest).await.map_err(io)?;
+                    let mut bytes = Vec::new();
+                    file.take(4097).read_to_end(&mut bytes).await.map_err(io)?;
+                    if bytes.len() > 4096 {
+                        return Err(invalid("profile runtime descriptor exceeds bound"));
+                    }
+                    Some(
+                        serde_json::from_slice::<ProfileRuntimeLease>(&bytes)
+                            .map_err(|_| invalid("invalid profile runtime descriptor"))?,
+                    )
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    // A crash before the descriptor cannot have written secrets. Give a
+                    // concurrent creator a minute before removing its empty allocation.
+                    let metadata = entry.metadata().await.map_err(io)?;
+                    if metadata.modified().map_err(io)?.elapsed().unwrap_or_default()
+                        < std::time::Duration::from_secs(60)
+                    {
+                        continue;
+                    }
+                    None
+                }
+                Ok(_) => {
+                    return Err(invalid(
+                        "profile runtime descriptor symlink or special file denied",
+                    ))
+                }
+                Err(error) => return Err(io(error)),
+            };
+            let live = if let Some(descriptor) = descriptor {
+                if descriptor.authority != authority {
+                    continue;
+                }
+                if crate::tenant::current().is_some_and(|tenant| tenant != descriptor.tenant) {
+                    continue;
+                }
+                sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM crawl_sessions s JOIN crawl_runs r USING(run_id) \
+                    JOIN browser_profiles p ON p.session_id=s.session_id AND p.lease_fence=s.fencing_token \
+                    WHERE s.session_id=$1 AND s.fencing_token=$2 AND r.tenant_id=$3 \
+                    AND s.lease_expires_at>clock_timestamp() AND p.expires_at>clock_timestamp() \
+                    AND s.status IN ('running','recovering') AND r.status IN ('queued','running') \
+                    AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
+                    AND NOT EXISTS(SELECT 1 FROM authorization_records a WHERE a.record_id=r.authorization_record_id \
+                      AND (a.revoked_at IS NOT NULL OR a.valid_to<=clock_timestamp())))")
+                    .bind(descriptor.session.0).bind(descriptor.fence).bind(descriptor.tenant.0)
+                    .fetch_one(&self.pool).await.map_err(db)?
+            } else {
+                false
+            };
+            if !live {
+                match tokio::fs::remove_dir_all(path).await {
+                    Ok(()) => erased = erased.saturating_add(1),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(io(error)),
+                }
+            }
+        }
+        Ok(erased)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    fn scope() -> ProfileScopeV1 {
+        ProfileScopeV1 {
+            tenant: TenantId::new(),
+            principal: PrincipalId("reader".into()),
+            name: "fixture".into(),
+            allowed_origins: BTreeSet::from(["https://example.test".into()]),
+            backend_build: Digest::of("build", b"1"),
+            egress: Digest::of("egress", b"approved"),
+        }
+    }
+    #[test]
+    fn encrypted_profile_rejects_wrong_principal_build_tampering_and_expiry() {
+        let cipher = ProfileCipher::new(&[7; 32]).unwrap();
+        let scope = scope();
+        let now = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+        let bytes = cipher
+            .seal(
+                &scope,
+                1,
+                now + chrono::Duration::seconds(10),
+                ProfileFiles::new(
+                    BTreeMap::from([("Default/Cookies".into(), b"secret-cookie-canary".to_vec())]),
+                    false,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(!bytes
+            .windows(b"secret-cookie-canary".len())
+            .any(|value| value == b"secret-cookie-canary"));
+        assert_eq!(
+            cipher.open(&bytes, &scope, now, false).unwrap().files.files["Default/Cookies"],
+            b"secret-cookie-canary"
+        );
+        let mut wrong = scope.clone();
+        wrong.principal = PrincipalId("admin".into());
+        assert!(cipher.open(&bytes, &wrong, now, false).is_err());
+        wrong = scope.clone();
+        wrong.backend_build = Digest::of("build", b"2");
+        assert!(cipher.open(&bytes, &wrong, now, false).is_err());
+        assert!(cipher
+            .open(&bytes, &scope, now + chrono::Duration::seconds(10), false)
+            .is_err());
+        let mut tampered = bytes;
+        tampered[20] ^= 1;
+        assert!(cipher.open(&tampered, &scope, now, false).is_err());
+    }
+    #[test]
+    fn native_bundle_denies_tar_escape_special_files_and_preferences() {
+        for path in [
+            "../Cookies",
+            "/tmp/Cookies",
+            "a/../../b",
+            "a\\Cookies",
+            "Default/../Cookies",
+            "SingletonLock",
+            "Default/Preferences",
+        ] {
+            assert!(
+                ProfileFiles::new(BTreeMap::from([(path.into(), vec![1])]), false).is_err(),
+                "{path}"
+            );
+        }
+        assert!(ProfileFiles::new(
+            BTreeMap::from([("Default".into(), vec![]), ("Default/Cookies".into(), vec![])]),
+            true
+        )
+        .is_err());
+        let cipher = ProfileCipher::new(&[1; 32]).unwrap();
+        assert!(cipher
+            .open(
+                b"not-an-encrypted-tar-profile-bundle",
+                &scope(),
+                chrono::Utc::now(),
+                false
+            )
+            .is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn profile_directory_reader_denies_symlink_and_hardlink_secret_escape() {
+        let source = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret"), b"unrelated-secret").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret"), source.path().join("Cookies")).unwrap();
+        assert!(ProfileFiles::read_directory(source.path(), false).is_err());
+        std::fs::remove_file(source.path().join("Cookies")).unwrap();
+        std::fs::hard_link(outside.path().join("secret"), source.path().join("Cookies")).unwrap();
+        assert!(ProfileFiles::read_directory(source.path(), false).is_err());
+    }
+
+    #[test]
+    fn profile_file_count_and_plaintext_byte_limits_are_enforced_before_encryption() {
+        let files = (0..=MAX_PROFILE_FILES)
+            .map(|index| (format!("file-{index}"), Vec::new()))
+            .collect();
+        assert!(ProfileFiles::new(files, false).is_err());
+        assert!(ProfileFiles::new(
+            BTreeMap::from([("Cookies".into(), vec![0; MAX_PROFILE_BYTES + 1])]),
+            false
+        )
+        .is_err());
+    }
+}

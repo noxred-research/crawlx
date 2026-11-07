@@ -1,0 +1,117 @@
+# CDN and edge hostnames for `scope.excludeHosts: ["cdn"]` (katana `-exclude cdn`).
+#
+# One suffix per line, lowercase, no leading dot, no wildcard. A host matches when it equals a
+# suffix or is a subdomain of it (`d111.cloudfront.net` matches `cloudfront.net`;
+# `notcloudfront.net` does not). Blank lines and lines starting with `#` are ignored.
+# Own list: delivery networks, public asset hosts and shared edge domains that serve other
+# people's content. Cloud storage and PaaS domains that host whole sites are left out.
+
+# Cloudflare
+cdnjs.cloudflare.com
+cloudflare.net
+cloudflarestream.com
+cloudflareinsights.com
+
+# Akamai
+akamai.net
+akamaiedge.net
+akamaihd.net
+akamaized.net
+akamaitechnologies.com
+akamaistream.net
+akamaiorigin.net
+edgekey.net
+edgesuite.net
+
+# Fastly
+fastly.net
+fastlylb.net
+
+# Amazon CloudFront
+cloudfront.net
+
+# Microsoft Azure CDN / Front Door
+azureedge.net
+azurefd.net
+msecnd.net
+aspnetcdn.com
+
+# Edgio / Verizon Edgecast / Limelight
+edgecastcdn.net
+systemcdn.net
+transactcdn.net
+edgio.net
+llnwd.net
+llnwi.net
+lldns.net
+
+# StackPath / Highwinds / MaxCDN
+stackpathcdn.com
+stackpathdns.com
+hwcdn.net
+netdna-cdn.com
+netdna-ssl.com
+bootstrapcdn.com
+
+# Bunny, KeyCDN, CDN77, CacheFly, CDNetworks and other independent CDNs
+b-cdn.net
+bunnycdn.com
+kxcdn.com
+cdn77.org
+cdn77-ssl.net
+cachefly.net
+cdnetworks.net
+gccdn.net
+rackcdn.com
+belugacdn.com
+sitescdn.net
+zencdn.net
+jwpcdn.com
+
+# Level 3 / Lumen
+footprint.net
+c3cdn.net
+
+# Imperva / Incapsula
+incapdns.net
+impervadns.net
+
+# Chinese CDNs
+alicdn.com
+qiniucdn.com
+qiniudn.com
+wscdns.com
+ccgslb.com
+bootcdn.cn
+
+# Public JavaScript, CSS and font hosts
+jsdelivr.net
+unpkg.com
+esm.sh
+cdn.skypack.dev
+code.jquery.com
+use.fontawesome.com
+use.typekit.net
+staticfile.org
+ajax.googleapis.com
+fonts.googleapis.com
+fonts.gstatic.com
+gstatic.com
+cdn.ampproject.org
+
+# Image and media delivery networks
+imgix.net
+cloudimg.io
+res.cloudinary.com
+cdn.shopify.com
+i0.wp.com
+i1.wp.com
+i2.wp.com
+googleusercontent.com
+ggpht.com
+ytimg.com
+fbcdn.net
+twimg.com
+licdn.com
+pinimg.com
+vimeocdn.com

@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "comment": "Wire-level differential families (VAL, PREC, CLAMP, PERSIST, CANCEL, RESUME/LEASE, WH, ZDR). Each scenario is one request against POST /v2/crawl (or the path/method given), settled as `settle` says, optionally followed by `after` requests; the same file drives the real Firecrawl (run.sh, `crawlx-differential wire capture`) and the crawlx compat facade (crates/crawlx-bench/tests/wire_facade.rs). `{seed}` expands to the gym origin the system under test reaches plus the family's `seed_path`, `{origin}` to the origin, `{sink}` to the webhook sink URL of the scenario's `webhook.label`. Ledger entries (kind `behavior`) match `<scenario>/<observation>`; observations are derived by crawlx_bench::differential::wire::compare::observe. `expect` is the verdict the committed capture pair must reach with the ledger.",
+  "families": [
+    {
+      "id": "wire-val",
+      "plan_families": ["VAL"],
+      "seed_path": "/d2/tiny/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "no-body", "description": "empty object", "body": {}},
+        {"id": "malformed-json", "description": "not JSON", "raw_body": "nonsense"},
+        {"id": "body-array", "description": "JSON array", "body": [1]},
+        {"id": "body-string", "description": "JSON string", "body": "x"},
+        {"id": "url-not-a-url", "body": {"url": "notaurl"}},
+        {"id": "url-ftp", "body": {"url": "ftp://gym.test/x"}},
+        {"id": "url-javascript", "body": {"url": "javascript:alert(1)"}},
+        {"id": "url-bare-host", "body": {"url": "gym.test"}},
+        {"id": "url-number", "body": {"url": 5}},
+        {"id": "url-empty", "body": {"url": ""}},
+        {"id": "url-credentials", "body": {"url": "http://user:secret@gym.test/d2/tiny/"}},
+        {"id": "url-loopback", "description": "SSRF family: Firecrawl behavior recorded, not required to match", "body": {"url": "http://127.0.0.1/"}},
+        {"id": "url-metadata-address", "description": "SSRF family: link-local metadata address", "body": {"url": "http://169.254.169.254/latest/meta-data/"}},
+        {"id": "unknown-key", "body": {"url": "{seed}", "bogusKey": 1}},
+        {"id": "valid-minimal", "body": {"url": "{seed}"}},
+        {"id": "limit-negative", "body": {"url": "{seed}", "limit": -1}},
+        {"id": "limit-zero", "body": {"url": "{seed}", "limit": 0}},
+        {"id": "limit-fractional", "body": {"url": "{seed}", "limit": 1.5}},
+        {"id": "limit-string", "body": {"url": "{seed}", "limit": "10"}},
+        {"id": "limit-null", "body": {"url": "{seed}", "limit": null}},
+        {"id": "max-depth-negative", "body": {"url": "{seed}", "maxDiscoveryDepth": -3}},
+        {"id": "max-depth-fractional", "body": {"url": "{seed}", "maxDiscoveryDepth": 1.5}},
+        {"id": "max-depth-string", "body": {"url": "{seed}", "maxDiscoveryDepth": "2"}},
+        {"id": "max-concurrency-zero", "body": {"url": "{seed}", "maxConcurrency": 0}},
+        {"id": "max-concurrency-negative", "body": {"url": "{seed}", "maxConcurrency": -2}},
+        {"id": "max-concurrency-string", "body": {"url": "{seed}", "maxConcurrency": "2"}},
+        {"id": "delay-negative", "body": {"url": "{seed}", "delay": -1}},
+        {"id": "delay-zero", "body": {"url": "{seed}", "delay": 0}},
+        {"id": "delay-string", "body": {"url": "{seed}", "delay": "1"}},
+        {"id": "sitemap-bogus", "body": {"url": "{seed}", "sitemap": "bogus"}},
+        {"id": "sitemap-only", "body": {"url": "{seed}", "sitemap": "only"}},
+        {"id": "sitemap-null", "body": {"url": "{seed}", "sitemap": null}},
+        {"id": "include-paths-bad-regex", "body": {"url": "{seed}", "includePaths": ["("]}},
+        {"id": "include-paths-not-array", "body": {"url": "{seed}", "includePaths": "a"}},
+        {"id": "include-paths-number", "body": {"url": "{seed}", "includePaths": [1]}},
+        {"id": "exclude-paths-bad-regex", "body": {"url": "{seed}", "excludePaths": ["[a-"]}},
+        {"id": "include-and-exclude-same", "body": {"url": "{seed}", "includePaths": ["a"], "excludePaths": ["a"]}},
+        {"id": "regex-on-full-url", "body": {"url": "{seed}", "regexOnFullURL": true, "includePaths": ["^http"]}},
+        {"id": "crawl-entire-domain-string", "body": {"url": "{seed}", "crawlEntireDomain": "yes"}},
+        {"id": "allow-external-links-string", "body": {"url": "{seed}", "allowExternalLinks": "true"}},
+        {"id": "allow-subdomains-number", "body": {"url": "{seed}", "allowSubdomains": 1}},
+        {"id": "ignore-query-string", "body": {"url": "{seed}", "ignoreQueryParameters": "true"}},
+        {"id": "deduplicate-string", "body": {"url": "{seed}", "deduplicateSimilarURLs": "false"}},
+        {"id": "ignore-robots-txt", "description": "an entitlement on the real service", "body": {"url": "{seed}", "ignoreRobotsTxt": true}},
+        {"id": "allow-backward-links-v1", "description": "v1 alias of crawlEntireDomain", "body": {"url": "{seed}", "allowBackwardLinks": true}},
+        {"id": "max-depth-v1", "description": "v1 option", "body": {"url": "{seed}", "maxDepth": 2}},
+        {"id": "ignore-sitemap-v1", "description": "v1 option", "body": {"url": "{seed}", "ignoreSitemap": true}},
+        {"id": "webhook-string", "description": "string shorthand of the webhook object", "body": {"url": "{seed}", "webhook": "https://hooks.example.test/x"}},
+        {"id": "webhook-nondefault-port", "description": "SSRF family: webhook destination on a port other than 80/443", "body": {"url": "{seed}", "webhook": {"url": "http://gym.test:9/hook"}}},
+        {"id": "webhook-bad-url", "body": {"url": "{seed}", "webhook": {"url": "notaurl"}}},
+        {"id": "webhook-unknown-event", "body": {"url": "{seed}", "webhook": {"url": "https://hooks.example.test/x", "events": ["bogus"]}}},
+        {"id": "webhook-metadata-array", "body": {"url": "{seed}", "webhook": {"url": "https://hooks.example.test/x", "metadata": [1, 2]}}},
+        {"id": "scrape-options-bad-format", "body": {"url": "{seed}", "scrapeOptions": {"formats": ["nonsense"]}}},
+        {"id": "scrape-options-not-object", "body": {"url": "{seed}", "scrapeOptions": 3}},
+        {"id": "scrape-options-timeout-negative", "body": {"url": "{seed}", "scrapeOptions": {"timeout": -1}}},
+        {"id": "scrape-options-wait-for-huge", "body": {"url": "{seed}", "scrapeOptions": {"waitFor": 100000000}}},
+        {"id": "crawler-options-v1-shape", "description": "v1 `crawlerOptions`/`pageOptions` envelope", "body": {"url": "{seed}", "crawlerOptions": {"limit": 5}}},
+        {"id": "status-unknown-id", "method": "GET", "path": "/v2/crawl/00000000-0000-4000-8000-000000000000", "settle": {"mode": "none"}},
+        {"id": "status-malformed-id", "method": "GET", "path": "/v2/crawl/not-a-uuid", "settle": {"mode": "none"}},
+        {"id": "errors-unknown-id", "method": "GET", "path": "/v2/crawl/00000000-0000-4000-8000-000000000000/errors", "settle": {"mode": "none"}},
+        {"id": "cancel-unknown-id", "method": "DELETE", "path": "/v2/crawl/00000000-0000-4000-8000-000000000000", "settle": {"mode": "none"}}
+      ]
+    },
+    {
+      "id": "wire-prec",
+      "plan_families": ["PREC"],
+      "seed_path": "/d2/tiny/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "prompt-only", "description": "a natural-language prompt needs an LLM provider", "body": {"url": "{seed}", "prompt": "crawl only pages a and b"}, "settle": {"mode": "terminal", "timeout_s": 60}},
+        {"id": "prompt-explicit-include", "description": "explicit includePaths next to a prompt (explicit wins over generated)", "body": {"url": "{seed}", "prompt": "crawl only the page c", "includePaths": ["^/d2/tiny/a"]}, "settle": {"mode": "terminal", "timeout_s": 60}},
+        {"id": "canonical-over-alias", "description": "v2 option and its v1 alias together", "body": {"url": "{seed}", "maxDiscoveryDepth": 1, "maxDepth": 3}, "settle": {"mode": "terminal", "timeout_s": 60}},
+        {"id": "explicit-over-default", "description": "explicit limit below the site size", "body": {"url": "{seed}", "limit": 2}, "settle": {"mode": "terminal", "timeout_s": 60}}
+      ]
+    },
+    {
+      "id": "wire-clamp",
+      "plan_families": ["CLAMP"],
+      "seed_path": "/d2/tiny/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "limit-1", "body": {"url": "{seed}", "limit": 1}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "limit-huge", "body": {"url": "{seed}", "limit": 1000000000}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "limit-int32-max", "body": {"url": "{seed}", "limit": 2147483647}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "limit-beyond-int32", "body": {"url": "{seed}", "limit": 99999999999}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "limit-zero", "body": {"url": "{seed}", "limit": 0}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "limit-negative", "body": {"url": "{seed}", "limit": -1}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "max-depth-huge", "body": {"url": "{seed}", "maxDiscoveryDepth": 100000}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "max-depth-zero", "body": {"url": "{seed}", "maxDiscoveryDepth": 0}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "max-concurrency-huge", "body": {"url": "{seed}", "maxConcurrency": 100000}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "max-concurrency-zero", "body": {"url": "{seed}", "maxConcurrency": 0}, "settle": {"mode": "terminal", "timeout_s": 90}},
+        {"id": "delay-tiny", "body": {"url": "{seed}", "delay": 0.001}, "settle": {"mode": "terminal", "timeout_s": 90}}
+      ]
+    },
+    {
+      "id": "wire-persist",
+      "plan_families": ["PERSIST"],
+      "seed_path": "/d2/tiny/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "uninterrupted", "body": {"url": "{seed}", "limit": 20, "maxConcurrency": 1}, "settle": {"mode": "terminal", "timeout_s": 120}},
+        {"id": "kill-after-post", "description": "the API and its workers are restarted right after the POST returned; the crawl must still run to completion", "body": {"url": "{seed}", "limit": 20, "maxConcurrency": 1}, "hook": {"after_completed": 0, "timeout_s": 30, "then_timeout_s": 300}, "settle": {"mode": "terminal", "timeout_s": 300}}
+      ]
+    },
+    {
+      "id": "wire-cancel",
+      "plan_families": ["CANCEL"],
+      "seed_path": "/d2/slow/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "cancel-mid-crawl", "description": "cancel after 3 documents of a 41-page slow site; the crawl must go quiet and keep what it has", "body": {"url": "{seed}", "limit": 500, "maxConcurrency": 1}, "settle": {"mode": "cancel_after", "completed": 3, "timeout_s": 120}, "quiet_ms": 6000, "after": [
+          {"label": "cancel-again", "method": "DELETE", "path": "/v2/crawl/{id}"},
+          {"label": "status", "path": "/v2/crawl/{id}"},
+          {"label": "errors", "path": "/v2/crawl/{id}/errors"}
+        ]},
+        {"id": "cancel-finished", "description": "cancel after the crawl completed", "seed_path": "/d2/tiny/", "body": {"url": "{seed}", "limit": 20, "maxConcurrency": 1}, "settle": {"mode": "terminal", "timeout_s": 120}, "after": [
+          {"label": "cancel", "method": "DELETE", "path": "/v2/crawl/{id}"},
+          {"label": "status", "path": "/v2/crawl/{id}"}
+        ]},
+        {"id": "cancel-immediately", "description": "cancel right after the POST returned", "body": {"url": "{seed}", "limit": 500, "maxConcurrency": 1}, "settle": {"mode": "cancel"}, "quiet_ms": 5000, "after": [
+          {"label": "status", "path": "/v2/crawl/{id}"}
+        ]}
+      ]
+    },
+    {
+      "id": "wire-resume",
+      "plan_families": ["RESUME", "LEASE"],
+      "seed_path": "/d2/slow/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "restart-mid-crawl", "description": "the API and its workers are killed after 4 documents and started again; the crawl is re-leased and finishes with the pages of an uninterrupted run", "body": {"url": "{seed}", "limit": 500, "maxConcurrency": 1}, "hook": {"after_completed": 4, "timeout_s": 120, "then_timeout_s": 420}, "settle": {"mode": "terminal", "timeout_s": 420}}
+      ]
+    },
+    {
+      "id": "wire-webhook",
+      "plan_families": ["WH"],
+      "seed_path": "/d2/tiny/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "basic", "description": "started, page and completed events with custom headers and metadata", "body": {"url": "{seed}", "limit": 10, "maxConcurrency": 1, "webhook": {"url": "{sink}"}}, "webhook": {"label": "basic", "headers": {"X-Differential-Run": "basic"}, "metadata": {"run": "wh-basic", "n": "1"}}, "settle": {"mode": "terminal", "timeout_s": 120}, "sink_grace_ms": 5000},
+        {"id": "events-page-only", "description": "event filter", "body": {"url": "{seed}", "limit": 10, "maxConcurrency": 1, "webhook": {"url": "{sink}"}}, "webhook": {"label": "page-only", "events": ["page"], "metadata": {"run": "wh-page"}}, "settle": {"mode": "terminal", "timeout_s": 120}, "sink_grace_ms": 5000},
+        {"id": "events-completed-only", "description": "event filter", "body": {"url": "{seed}", "limit": 10, "maxConcurrency": 1, "webhook": {"url": "{sink}"}}, "webhook": {"label": "completed-only", "events": ["completed"]}, "settle": {"mode": "terminal", "timeout_s": 120}, "sink_grace_ms": 5000},
+        {"id": "retry-after-failure", "description": "the sink answers 500 to the first two deliveries; is the event delivered again", "body": {"url": "{seed}", "limit": 10, "maxConcurrency": 1, "webhook": {"url": "{sink}"}}, "webhook": {"label": "retry", "fail_first": 2, "fail_status": 500, "metadata": {"run": "wh-retry"}}, "settle": {"mode": "terminal", "timeout_s": 120}, "sink_grace_ms": 45000},
+        {"id": "cancelled-crawl", "description": "events of a crawl cancelled after 2 documents", "seed_path": "/d2/slow/", "body": {"url": "{seed}", "limit": 500, "maxConcurrency": 1, "webhook": {"url": "{sink}"}}, "webhook": {"label": "cancelled", "metadata": {"run": "wh-cancel"}}, "settle": {"mode": "cancel_after", "completed": 2, "timeout_s": 120}, "sink_grace_ms": 8000}
+      ]
+    },
+    {
+      "id": "wire-zdr",
+      "plan_families": ["ZDR"],
+      "seed_path": "/d2/tiny/",
+      "expect": "pass",
+      "scenarios": [
+        {"id": "zdr-true", "description": "zeroDataRetention on a crawl", "body": {"url": "{seed}", "limit": 10, "maxConcurrency": 1, "zeroDataRetention": true}, "settle": {"mode": "terminal", "timeout_s": 120}, "after": [
+          {"label": "status-again", "path": "/v2/crawl/{id}"},
+          {"label": "errors", "path": "/v2/crawl/{id}/errors"}
+        ]},
+        {"id": "zdr-false", "description": "the same crawl with the flag off", "body": {"url": "{seed}", "limit": 10, "maxConcurrency": 1, "zeroDataRetention": false}, "settle": {"mode": "terminal", "timeout_s": 120}, "after": [
+          {"label": "status-again", "path": "/v2/crawl/{id}"}
+        ]},
+        {"id": "zdr-string", "body": {"url": "{seed}", "zeroDataRetention": "true"}},
+        {"id": "zdr-scrape", "description": "zeroDataRetention on a scrape", "path": "/v2/scrape", "body": {"url": "{seed}", "zeroDataRetention": true}, "settle": {"mode": "none"}}
+      ]
+    }
+  ]
+}

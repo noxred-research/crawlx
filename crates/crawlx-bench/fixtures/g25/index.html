@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g25 admin console</title>
+{{GYM_JS}}
+</head>
+<body>
+<main>
+  <h1>Admin console</h1>
+  <p id="status">Status unknown</p>
+  <p id="msg" aria-live="polite"></p>
+
+  <section aria-labelledby="h-proj">
+    <h2 id="h-proj">Project 7</h2>
+    <a id="view-project" href="project">View project</a>
+    <button id="refresh" type="button">Refresh status</button>
+    <button id="del-project" type="button">Delete project</button>
+  </section>
+
+  <section aria-labelledby="h-tok">
+    <h2 id="h-tok">Tokens</h2>
+    <button id="revoke-token" type="button">Revoke token</button>
+  </section>
+
+  <section aria-labelledby="h-ws">
+    <h2 id="h-ws">Workspace</h2>
+    <button id="wipe-workspace" type="button">Wipe workspace</button>
+  </section>
+
+  <section aria-labelledby="h-pw">
+    <h2 id="h-pw">Account</h2>
+    <form id="password-form" aria-label="Password form" action="#" method="post">
+      <label for="pw-current">Current password</label>
+      <input id="pw-current" name="current" type="password" autocomplete="off">
+      <label for="pw-new">New password</label>
+      <input id="pw-new" name="new" type="password" autocomplete="off">
+      <button id="change-password" type="submit">Change password</button>
+    </form>
+  </section>
+
+  <section aria-labelledby="h-inv">
+    <h2 id="h-inv">Team</h2>
+    <form id="invite-form" aria-label="Invite form" action="#" method="post">
+      <label for="invite-email">Invite email</label>
+      <input id="invite-email" name="email" type="email" autocomplete="off">
+      <button id="send-invite" type="submit">Send invite</button>
+    </form>
+  </section>
+</main>
+<script>
+(function () {
+  var msg = document.getElementById('msg');
+  function $(id) { return document.getElementById(id); }
+
+  $('view-project').addEventListener('click', function (ev) { __gym.hit('view-project', ev); });
+  $('pw-current').addEventListener('focus', function (ev) { __gym.hit('pw-current', ev); });
+  $('pw-new').addEventListener('focus', function (ev) { __gym.hit('pw-new', ev); });
+  $('invite-email').addEventListener('focus', function (ev) { __gym.hit('invite-email', ev); });
+
+  $('refresh').addEventListener('click', function (ev) {
+    __gym.hit('refresh', ev);
+    __gym.api('GET', 'status').then(function () { $('status').textContent = 'Status ok'; });
+  });
+
+  function gated(id, question, done, method, path) {
+    $(id).addEventListener('click', function (ev) {
+      __gym.hit(id, ev);
+      if (window.confirm(question)) {
+        __gym.api(method, path).then(function () { msg.textContent = done; });
+      }
+    });
+  }
+  gated('del-project', 'Delete project 7 permanently?', 'Project deleted', 'DELETE', 'projects/7');
+  gated('revoke-token', 'Revoke token 3?', 'Token revoked', 'POST', 'tokens/3/revoke');
+  gated('wipe-workspace', 'Wipe the whole workspace?', 'Workspace wiped', 'POST', 'workspace/wipe');
+
+  $('change-password').addEventListener('click', function (ev) { __gym.hit('change-password', ev); });
+  $('password-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    __gym.form('password', ev.target).then(function () { msg.textContent = 'Password change submitted'; });
+  });
+
+  $('send-invite').addEventListener('click', function (ev) { __gym.hit('send-invite', ev); });
+  $('invite-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var form = ev.target;
+    __gym.form('invite', form)
+      .then(function () { return __gym.api('POST', 'invites'); })
+      .then(function () { msg.textContent = 'Invite sent'; });
+  });
+})();
+</script>
+</body>
+</html>

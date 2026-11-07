@@ -1,0 +1,19 @@
+# UNAVAILABLE: the worker refuses retained browser profiles while encrypted
+# artifact custody is enabled (always, in PostgreSQL mode) with `profile_unavailable: retained browser
+# profiles are unavailable while encrypted artifact custody is enabled`; this overlay would only
+# produce refused runs. Kept for reference until custody fences profiles; do not apply it.
+# Opt in with -f docker/compose.profiles.yml. Never combine with ZDR workloads.
+services:
+  worker:
+    environment:
+      CRAWLX_RETAINED_PROFILES_ENABLED: "true"
+      CRAWLX_PROFILE_KEY_REF: file:///run/secrets/profile_key
+      CRAWLX_PROFILE_MAX_TTL_SECONDS: ${CRAWLX_PROFILE_MAX_TTL_SECONDS:-3600}
+      CRAWLX_PROFILE_EXECUTABLE_PREFERENCES: ${CRAWLX_PROFILE_EXECUTABLE_PREFERENCES:-false}
+    secrets: [profile_key]
+    # Chromium plaintext exists only in worker-owned private directories within this tmpfs.
+    # The base deployment already sets shm_size=1gb; no persistent profile volume is added.
+    shm_size: 1gb
+secrets:
+  profile_key:
+    file: ${CRAWLX_PROFILE_KEY_FILE:?set CRAWLX_PROFILE_KEY_FILE to an operator-provisioned AES256 64hex file}

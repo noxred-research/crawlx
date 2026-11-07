@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g23 canvas control panel</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  canvas { border: 1px solid #889; display: block; }
+</style>
+</head>
+<body>
+<h1>Control panel</h1>
+<p>The ten controls below are painted on a canvas; there are no accessibility nodes for them. Last: <span id="out">none</span></p>
+<canvas id="panel" width="640" height="200"></canvas>
+<canvas id="gl" width="640" height="120"></canvas>
+<p><button id="reset-panel" type="button">Reset panel</button></p>
+<script>
+(function () {
+  var out = document.getElementById('out');
+  var canvas = document.getElementById('panel');
+  var ctx = canvas.getContext('2d');
+  var LABELS = ['Power', 'Mode', 'Fan', 'Heat', 'Cool', 'Timer', 'Lock', 'Eco', 'Swing', 'Light'];
+  var cells = LABELS.map(function (label, i) {
+    return { id: 'cv-' + (i + 1), label: label, x: 20 + (i % 5) * 120, y: 20 + Math.floor(i / 5) * 90, w: 100, h: 70, on: false };
+  });
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    cells.forEach(function (c) {
+      ctx.fillStyle = c.on ? '#8c8' : '#dde';
+      ctx.fillRect(c.x, c.y, c.w, c.h);
+      ctx.strokeStyle = '#335';
+      ctx.strokeRect(c.x, c.y, c.w, c.h);
+      ctx.fillStyle = '#113';
+      ctx.font = '16px system-ui, sans-serif';
+      ctx.fillText(c.label, c.x + 12, c.y + 42);
+    });
+  }
+  canvas.addEventListener('click', function (ev) {
+    var r = canvas.getBoundingClientRect();
+    var x = ev.clientX - r.left, y = ev.clientY - r.top;
+    for (var i = 0; i < cells.length; i++) {
+      var c = cells[i];
+      if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) {
+        c.on = !c.on;
+        __gym.hit(c.id, ev);
+        out.textContent = c.id;
+        draw();
+        return;
+      }
+    }
+    __gym.probe('blind-canvas-click', x.toFixed(0) + ',' + y.toFixed(0));
+  });
+  draw();
+
+  // A WebGL strip with no DOM children (same surface class as the 2D panel).
+  var glc = document.getElementById('gl');
+  var gl = glc.getContext('webgl') || glc.getContext('experimental-webgl');
+  if (gl) {
+    gl.clearColor(0.15, 0.2, 0.35, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    __gym.probe('webgl', 'available');
+  } else {
+    __gym.probe('webgl', 'unavailable');
+  }
+  glc.addEventListener('click', function (ev) { __gym.probe('blind-webgl-click', '1'); });
+
+  document.getElementById('reset-panel').addEventListener('click', function (ev) {
+    __gym.hit('reset-panel', ev);
+    cells.forEach(function (c) { c.on = false; });
+    draw();
+    out.textContent = 'reset';
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hybrid-mix receipt</title>
+{{GYM_JS}}
+</head>
+<body>
+<h1>Receipt</h1><p>Reachable only after the plan dialog was confirmed in the app.</p><a id="receipt-home" href="/hybrid-mix/">Home</a>
+<script>
+(function () {
+['receipt-home'].forEach(function (id) { document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); }); });
+})();
+</script>
+</body>
+</html>

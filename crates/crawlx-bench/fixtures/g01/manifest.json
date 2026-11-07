@@ -1,0 +1,331 @@
+{
+  "id": "g01",
+  "title": "React-style event delegation",
+  "version": 1,
+  "url_path": "/g01/",
+  "controls": [
+    {
+      "id": "c01",
+      "selector": "#c01",
+      "role": "button",
+      "name": "Alpha",
+      "mechanism": "ax",
+      "logical_id": "c01"
+    },
+    {
+      "id": "c02",
+      "selector": "#c02",
+      "role": "button",
+      "name": "Bravo",
+      "mechanism": "ax",
+      "logical_id": "c02"
+    },
+    {
+      "id": "c03",
+      "selector": "#c03",
+      "role": "button",
+      "name": "Charlie",
+      "mechanism": "ax",
+      "logical_id": "c03"
+    },
+    {
+      "id": "c04",
+      "selector": "#c04",
+      "role": "button",
+      "name": "Delta",
+      "mechanism": "ax",
+      "logical_id": "c04"
+    },
+    {
+      "id": "c05",
+      "selector": "#c05",
+      "role": "button",
+      "name": "Echo",
+      "mechanism": "ax",
+      "logical_id": "c05"
+    },
+    {
+      "id": "c06",
+      "selector": "#c06",
+      "role": "button",
+      "name": "Foxtrot",
+      "mechanism": "ax",
+      "logical_id": "c06"
+    },
+    {
+      "id": "c07",
+      "selector": "#c07",
+      "role": "button",
+      "name": "Golf",
+      "mechanism": "ax",
+      "logical_id": "c07"
+    },
+    {
+      "id": "c08",
+      "selector": "#c08",
+      "role": "button",
+      "name": "Hotel",
+      "mechanism": "ax",
+      "logical_id": "c08"
+    },
+    {
+      "id": "c09",
+      "selector": "#c09",
+      "role": "button",
+      "name": "India",
+      "mechanism": "ax",
+      "logical_id": "c09"
+    },
+    {
+      "id": "c10",
+      "selector": "#c10",
+      "role": "button",
+      "name": "Juliet",
+      "mechanism": "ax",
+      "logical_id": "c10"
+    },
+    {
+      "id": "c11",
+      "selector": "#c11",
+      "role": "button",
+      "name": "Kilo",
+      "mechanism": "ax",
+      "logical_id": "c11"
+    },
+    {
+      "id": "c12",
+      "selector": "#c12",
+      "role": "button",
+      "name": "Lima",
+      "mechanism": "ax",
+      "logical_id": "c12"
+    },
+    {
+      "id": "c13",
+      "selector": "#c13",
+      "role": "button",
+      "name": "Mike",
+      "mechanism": "ax",
+      "logical_id": "c13"
+    },
+    {
+      "id": "c14",
+      "selector": "#c14",
+      "role": "button",
+      "name": "November",
+      "mechanism": "ax",
+      "logical_id": "c14"
+    },
+    {
+      "id": "c15",
+      "selector": "#c15",
+      "role": "button",
+      "name": "Oscar",
+      "mechanism": "ax",
+      "logical_id": "c15"
+    },
+    {
+      "id": "c16",
+      "selector": "#c16",
+      "role": "button",
+      "name": "Papa",
+      "mechanism": "ax",
+      "logical_id": "c16"
+    },
+    {
+      "id": "c17",
+      "selector": "#c17",
+      "role": "button",
+      "name": "Quebec",
+      "mechanism": "ax",
+      "logical_id": "c17"
+    },
+    {
+      "id": "c18",
+      "selector": "#c18",
+      "role": "button",
+      "name": "Romeo",
+      "mechanism": "ax",
+      "logical_id": "c18"
+    },
+    {
+      "id": "c19",
+      "selector": "#c19",
+      "role": "button",
+      "name": "Sierra",
+      "mechanism": "ax",
+      "logical_id": "c19"
+    },
+    {
+      "id": "c20",
+      "selector": "#c20",
+      "role": "button",
+      "name": "Tango",
+      "mechanism": "ax",
+      "logical_id": "c20"
+    },
+    {
+      "id": "c21",
+      "selector": "#c21",
+      "role": "generic",
+      "name": "Uniform",
+      "mechanism": "cursor",
+      "logical_id": "c21"
+    },
+    {
+      "id": "c22",
+      "selector": "#c22",
+      "role": "generic",
+      "name": "Victor",
+      "mechanism": "cursor",
+      "logical_id": "c22"
+    },
+    {
+      "id": "c23",
+      "selector": "#c23",
+      "role": "generic",
+      "name": "Whiskey",
+      "mechanism": "cursor",
+      "logical_id": "c23"
+    },
+    {
+      "id": "c24",
+      "selector": "#c24",
+      "role": "generic",
+      "name": "Xray",
+      "mechanism": "cursor",
+      "logical_id": "c24"
+    },
+    {
+      "id": "c25",
+      "selector": "#c25",
+      "role": "generic",
+      "name": "Yankee",
+      "mechanism": "cursor",
+      "logical_id": "c25"
+    },
+    {
+      "id": "c26",
+      "selector": "#c26",
+      "role": "generic",
+      "name": "Zulu",
+      "mechanism": "cursor",
+      "logical_id": "c26"
+    },
+    {
+      "id": "c27",
+      "selector": "#c27",
+      "role": "generic",
+      "name": "Amber",
+      "mechanism": "cursor",
+      "logical_id": "c27"
+    },
+    {
+      "id": "c28",
+      "selector": "#c28",
+      "role": "generic",
+      "name": "Basil",
+      "mechanism": "cursor",
+      "logical_id": "c28"
+    },
+    {
+      "id": "c29",
+      "selector": "#c29",
+      "role": "generic",
+      "name": "Cedar",
+      "mechanism": "cursor",
+      "logical_id": "c29"
+    },
+    {
+      "id": "c30",
+      "selector": "#c30",
+      "role": "generic",
+      "name": "Dune",
+      "mechanism": "cursor",
+      "logical_id": "c30"
+    },
+    {
+      "id": "c31",
+      "selector": "#c31",
+      "role": "generic",
+      "name": "Ember",
+      "mechanism": "cursor",
+      "logical_id": "c31"
+    },
+    {
+      "id": "c32",
+      "selector": "#c32",
+      "role": "generic",
+      "name": "Fjord",
+      "mechanism": "cursor",
+      "logical_id": "c32"
+    },
+    {
+      "id": "c33",
+      "selector": "#c33",
+      "role": "generic",
+      "name": "Garnet",
+      "mechanism": "cursor",
+      "logical_id": "c33"
+    },
+    {
+      "id": "c34",
+      "selector": "#c34",
+      "role": "generic",
+      "name": "Harbor",
+      "mechanism": "cursor",
+      "logical_id": "c34"
+    },
+    {
+      "id": "c35",
+      "selector": "#c35",
+      "role": "generic",
+      "name": "Iris",
+      "mechanism": "cursor",
+      "logical_id": "c35"
+    },
+    {
+      "id": "c36",
+      "selector": "#c36",
+      "role": "generic",
+      "name": "Jasper",
+      "mechanism": "cursor",
+      "logical_id": "c36"
+    },
+    {
+      "id": "c37",
+      "selector": "#c37",
+      "role": "generic",
+      "name": "Koala",
+      "mechanism": "cursor",
+      "logical_id": "c37"
+    },
+    {
+      "id": "c38",
+      "selector": "#c38",
+      "role": "generic",
+      "name": "Lotus",
+      "mechanism": "cursor",
+      "logical_id": "c38"
+    },
+    {
+      "id": "c39",
+      "selector": "#c39",
+      "role": "generic",
+      "name": "Maple",
+      "mechanism": "cursor",
+      "logical_id": "c39"
+    },
+    {
+      "id": "c40",
+      "selector": "#c40",
+      "role": "generic",
+      "name": "Nectar",
+      "mechanism": "cursor",
+      "logical_id": "c40"
+    }
+  ],
+  "expected": {
+    "target_recall_min": 0.95
+  }
+}

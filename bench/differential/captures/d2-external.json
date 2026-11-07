@@ -1,0 +1,401 @@
+{
+  "accessLog": {
+    "entries": [
+      {
+        "host": "127.0.0.1:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/sitemap.xml"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/sitemap.xml"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/a"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/b/"
+      },
+      {
+        "host": "app.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/sub"
+      },
+      {
+        "host": "deep.app.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/deep"
+      },
+      {
+        "host": "www.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/www"
+      },
+      {
+        "host": "notgym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/lookalike"
+      },
+      {
+        "host": "other.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/ext"
+      },
+      {
+        "host": "other.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/ext-proto"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/a/deeper"
+      },
+      {
+        "host": "app.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/sub2"
+      },
+      {
+        "host": "deep.app.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/deep2"
+      },
+      {
+        "host": "www.gym.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/www2"
+      },
+      {
+        "host": "other.test:4101",
+        "method": "GET",
+        "path": "/d2/scope/ext2"
+      }
+    ]
+  },
+  "completed": 14,
+  "completedAt": "2026-10-28T12:19:46.703Z",
+  "crawlxSample": {
+    "family": "d2-external",
+    "job": "01a18273-b904-761a-bf2d-ac9a716f0cb8",
+    "provenance": "black_box_run",
+    "request": {
+      "allowExternalLinks": true,
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/d2/scope/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T12:19:44.516Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [
+        "http://gym.test:4101/d2/scope/a",
+        "http://gym.test:4101/d2/scope/b/",
+        "http://app.gym.test:4101/d2/scope/sub",
+        "http://deep.app.gym.test:4101/d2/scope/deep",
+        "http://www.gym.test:4101/d2/scope/www",
+        "http://notgym.test:4101/d2/scope/lookalike",
+        "http://other.test:4101/d2/scope/ext",
+        "http://other.test:4101/d2/scope/ext-proto",
+        "mailto:ops@gym.test",
+        "tel:+100",
+        "javascript:void(0)",
+        "http://gym.test:4101/d2/scope/#frag",
+        "ftp://gym.test/file"
+      ],
+      "markdown": "d2 scope: index is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Relative a](http://gym.test:4101/d2/scope/a)\n    \n*   [Relative b](http://gym.test:4101/d2/scope/b/)\n    \n*   [Subdomain](http://app.gym.test:4101/d2/scope/sub)\n    \n*   [Deep subdomain](http://deep.app.gym.test:4101/d2/scope/deep)\n    \n*   [www](http://www.gym.test:4101/d2/scope/www)\n    \n*   [Look-alike suffix](http://notgym.test:4101/d2/scope/lookalike)\n    \n*   [External](http://other.test:4101/d2/scope/ext)\n    \n*   [External, protocol-relative](http://other.test:4101/d2/scope/ext-proto)\n    \n*   [Mail](mailto:ops@gym.test)\n    \n*   [Phone](tel:+100)\n    \n*   [Script](javascript:void(0))\n    \n*   [Fragment](http://gym.test:4101/d2/scope/#frag)\n    \n*   [FTP](ftp://gym.test/file)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-baba-745f-9f4f-ee54038b7c51",
+        "sourceURL": "http://gym.test:4101/d2/scope/",
+        "statusCode": 200,
+        "title": "d2 scope: index",
+        "url": "http://gym.test:4101/d2/scope/"
+      },
+      "rawHtmlBytes": 1052,
+      "rawHtmlSha256": "331e8d22ef9af0fab66eb7f328475418748653ffdefbc34e924871963b6d16cc"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/d2/scope/"
+      ],
+      "markdown": "d2 scope: b is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/scope/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bd01-70fb-bc30-5b456db81c58",
+        "sourceURL": "http://gym.test:4101/d2/scope/b/",
+        "statusCode": 200,
+        "title": "d2 scope: b",
+        "url": "http://gym.test:4101/d2/scope/b/"
+      },
+      "rawHtmlBytes": 329,
+      "rawHtmlSha256": "2f0787fa1c1058e11b5a926fd49b0a9744850ccee7ad8d69cacc1a2ae4ea87a3"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/d2/scope/",
+        "http://gym.test:4101/d2/scope/a/deeper"
+      ],
+      "markdown": "d2 scope: a is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/scope/)\n    \n*   [Deeper](http://gym.test:4101/d2/scope/a/deeper)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bcf9-76a9-9e21-4ab434b9cc5f",
+        "sourceURL": "http://gym.test:4101/d2/scope/a",
+        "statusCode": 200,
+        "title": "d2 scope: a",
+        "url": "http://gym.test:4101/d2/scope/a"
+      },
+      "rawHtmlBytes": 378,
+      "rawHtmlSha256": "cd55aae1ec18b884b70427d4ae48941a6bcbf34a56a625e4f080d0336c4678fd"
+    },
+    {
+      "links": [
+        "http://deep.app.gym.test:4101/d2/scope/deep2"
+      ],
+      "markdown": "d2 scope: deep is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Deeper](http://deep.app.gym.test:4101/d2/scope/deep2)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bd08-7429-b986-72e40b8eee59",
+        "sourceURL": "http://deep.app.gym.test:4101/d2/scope/deep",
+        "statusCode": 200,
+        "title": "d2 scope: deep",
+        "url": "http://deep.app.gym.test:4101/d2/scope/deep"
+      },
+      "rawHtmlBytes": 373,
+      "rawHtmlSha256": "e46772398e68c874bb33d0bd0a8bf7129a6719af41138ab8a4b70b2ce20160e6"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/d2/scope/back-from-sub",
+        "http://app.gym.test:4101/d2/scope/sub2"
+      ],
+      "markdown": "d2 scope: sub is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Apex](http://gym.test:4101/d2/scope/back-from-sub)\n    \n*   [Sibling](http://app.gym.test:4101/d2/scope/sub2)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bd04-70ff-bbe6-44aa7f0fa03d",
+        "sourceURL": "http://app.gym.test:4101/d2/scope/sub",
+        "statusCode": 200,
+        "title": "d2 scope: sub",
+        "url": "http://app.gym.test:4101/d2/scope/sub"
+      },
+      "rawHtmlBytes": 437,
+      "rawHtmlSha256": "c7009ccb99c15ade425efd25b8d3a94040d4821d390539cb8b87fe76fa389094"
+    },
+    {
+      "links": [
+        "http://www.gym.test:4101/d2/scope/www2"
+      ],
+      "markdown": "d2 scope: www is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Second](http://www.gym.test:4101/d2/scope/www2)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bd0c-7298-99ef-549d4546c833",
+        "sourceURL": "http://www.gym.test:4101/d2/scope/www",
+        "statusCode": 200,
+        "title": "d2 scope: www",
+        "url": "http://www.gym.test:4101/d2/scope/www"
+      },
+      "rawHtmlBytes": 340,
+      "rawHtmlSha256": "d42d030af93fb2749d8250ed10cab6c3ab8cd0936084bc58e8fd1ec7d5df82e9"
+    },
+    {
+      "links": [],
+      "markdown": "d2 scope: lookalike is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bd0f-715e-8314-26fef04f39fb",
+        "sourceURL": "http://notgym.test:4101/d2/scope/lookalike",
+        "statusCode": 200,
+        "title": "d2 scope: lookalike",
+        "url": "http://notgym.test:4101/d2/scope/lookalike"
+      },
+      "rawHtmlBytes": 313,
+      "rawHtmlSha256": "2536cebc6b47f3f7be6200e110d99b7e221a59970ef63c0c1e8a6cb7badfad30"
+    },
+    {
+      "links": [],
+      "markdown": "d2 scope: ext proto is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bd14-709f-8968-c419d6f7e1a2",
+        "sourceURL": "http://other.test:4101/d2/scope/ext-proto",
+        "statusCode": 200,
+        "title": "d2 scope: ext proto",
+        "url": "http://other.test:4101/d2/scope/ext-proto"
+      },
+      "rawHtmlBytes": 313,
+      "rawHtmlSha256": "ebd1bff2322eecedaa43cea608dbf43d3113b7e1aacd9f82c2c26b60a0d300d5"
+    },
+    {
+      "links": [
+        "http://other.test:4101/d2/scope/ext2",
+        "http://gym.test:4101/d2/scope/back-from-ext"
+      ],
+      "markdown": "d2 scope: ext is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Second external](http://other.test:4101/d2/scope/ext2)\n    \n*   [Back](http://gym.test:4101/d2/scope/back-from-ext)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bd11-754b-993c-4f7d947d1233",
+        "sourceURL": "http://other.test:4101/d2/scope/ext",
+        "statusCode": 200,
+        "title": "d2 scope: ext",
+        "url": "http://other.test:4101/d2/scope/ext"
+      },
+      "rawHtmlBytes": 443,
+      "rawHtmlSha256": "b3c506463f00fc4d98473f00f95dc6b07c2010699963bc369a401e62c6be2a61"
+    },
+    {
+      "links": [],
+      "markdown": "d2 scope: deep2 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bf1d-7235-99fb-cc951b5ffea7",
+        "sourceURL": "http://deep.app.gym.test:4101/d2/scope/deep2",
+        "statusCode": 200,
+        "title": "d2 scope: deep2",
+        "url": "http://deep.app.gym.test:4101/d2/scope/deep2"
+      },
+      "rawHtmlBytes": 301,
+      "rawHtmlSha256": "ed2e3e1ac492eecbf8b8f10377b4dfc2ab6309a4453af7b410de12b599752c6a"
+    },
+    {
+      "links": [],
+      "markdown": "d2 scope: sub2 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bf1f-72ba-95b4-68cc94c622ac",
+        "sourceURL": "http://app.gym.test:4101/d2/scope/sub2",
+        "statusCode": 200,
+        "title": "d2 scope: sub2",
+        "url": "http://app.gym.test:4101/d2/scope/sub2"
+      },
+      "rawHtmlBytes": 298,
+      "rawHtmlSha256": "56a2d66e68a91973f1cbfc4e50d684737f46327f1a651c4526f580c293dff8b7"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/d2/scope/"
+      ],
+      "markdown": "d2 scope: a deeper is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [Index](http://gym.test:4101/d2/scope/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bf09-7528-a219-aa0c5bce6134",
+        "sourceURL": "http://gym.test:4101/d2/scope/a/deeper",
+        "statusCode": 200,
+        "title": "d2 scope: a deeper",
+        "url": "http://gym.test:4101/d2/scope/a/deeper"
+      },
+      "rawHtmlBytes": 350,
+      "rawHtmlSha256": "f5794e21b0ad145116a2c60368214a6e6889d80fc6cd13d34912afbd8945ea33"
+    },
+    {
+      "links": [],
+      "markdown": "d2 scope: www2 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bfc9-765d-81f4-cdec92eae59d",
+        "sourceURL": "http://www.gym.test:4101/d2/scope/www2",
+        "statusCode": 200,
+        "title": "d2 scope: www2",
+        "url": "http://www.gym.test:4101/d2/scope/www2"
+      },
+      "rawHtmlBytes": 298,
+      "rawHtmlSha256": "60a23508c7ad70da36c51f1426e7d20d7bfc8b2e5e25c44ad35baadf0fc67f22"
+    },
+    {
+      "links": [],
+      "markdown": "d2 scope: ext2 is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18273-bfd3-723b-98e0-8f360a9b9857",
+        "sourceURL": "http://other.test:4101/d2/scope/ext2",
+        "statusCode": 200,
+        "title": "d2 scope: ext2",
+        "url": "http://other.test:4101/d2/scope/ext2"
+      },
+      "rawHtmlBytes": 298,
+      "rawHtmlSha256": "a4369b1d85a35d723f7bf22a5104891b3ec81569e2a4d3cee138d5b3f652bee1"
+    }
+  ],
+  "duration": 2.187,
+  "errors": {
+    "errors": [],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T12:20:02.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 14
+}

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hybrid-mix pricing</title>
+{{GYM_JS}}
+</head>
+<body>
+<h1>Pricing</h1><p>Server-rendered page.</p><a id="pricing-app" href="/hybrid-mix/app.html#/billing">Change your plan in the app</a>
+<script>
+(function () {
+['pricing-app'].forEach(function (id) { document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); }); });
+})();
+</script>
+</body>
+</html>

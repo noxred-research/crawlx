@@ -1,0 +1,40 @@
+# Feature IDs of Trafilatura 2.3.1 (https://github.com/adbar/trafilatura/tree/e2f85c965662c7df26b73290ef175b2c2a5fdca6) recognised by extraction import.
+# Format: ID<TAB>upstream feature. Lines starting with '#' are comments.
+TF-01	`extract`, `bare_extraction`, `extract_with_metadata`; HTML element/bytes/string/response inputs, optional URL, `record_id`, `Document.as_dict`
+TF-02	`load_html`, `html2txt`, `baseline`
+TF-03	Rule extractor, readability/jusText comparisons, baseline rescue, short-result recall escalation
+TF-04	`fast` / `--fast` and deprecated `no_fallback`
+TF-05	`favor_precision`, `favor_recall`, `--precision`, `--recall`
+TF-06	`include_comments`, `--no-comments`, forum-post handling
+TF-07	Tables on by default, `include_tables`, `--no-tables`
+TF-08	`include_images`, `--images`; image alt/src/title
+TF-09	`include_links`, `include_formatting`; Markdown auto-formatting, JSON formatting caveat
+TF-10	Shared streaming JSON/JSONL/text/Markdown/HTML/CSV/XML/TEI article and collection serializers; actual CLI full local RELAX NG validation against BSD-2-Clause TEI P5 4.10.2, SHA-256 `95fa3f6e47cd196c353124e007bd5c4994989dba8a64496458442136293dafd0`; XML scalar preservation and CSV formula neutralization
+TF-11	Metadata title/author/date/site/categories/tags/description/image/type/license/hostname/fingerprint/filedate/ID
+TF-12	`extract_metadata`, `with_metadata`, `only_with_metadata` requiring title/URL/date
+TF-13	htmldate `date_extraction_params`, extensive search, maximum-date default derived from now
+TF-14	`target_language`, ISO 639-1 filter, optional py3langid model
+TF-15	`url_blacklist`, `author_blacklist`; CLI `--blacklist`
+TF-16	`prune_xpath` string/list
+TF-17	Deduplicate segments/documents, caller-scoped LRU; `--deduplicate`
+TF-18	Simhash/content fingerprint, bag-of-words hash and similarity helpers
+TF-19	Size/output/comment thresholds, maximum tree size, extraction timeout
+TF-20	Same parsed DOM feeds separate acquisition validation and article quality; unresolved media/read-more intents never fetch in the parser
+TF-21	urllib3 pool, optional pycurl, DNS/TLS-session sharing
+TF-22	gzip/deflate plus optional Brotli/Zstandard support and charset detection
+TF-23	Retry status list, backoff/Retry-After cap 30s, separate curl status retry count
+TF-24	Download timeout 30s, 10..20,000,000 byte defaults, redirects max 2
+TF-25	`http_proxy` SOCKS, `PROXY_URL`, UA list, COOKIE
+TF-26	SSRF protection direct connections; insecure SSL retry enabled by default; proxy limitations
+TF-27	`add_to_compressed_dict`, `load_download_buffer`, `buffered_downloads`; domain throttling, parallel limit
+TF-28	`find_feed_urls`: RSS/Atom/JSON feeds, rel=alternate/anchor discovery, homepage fallback
+TF-29	Hidden Google News fallback when feed search fails and language supplied
+TF-30	`sitemap_search`: robots declarations, guessed XML/gzip paths, nested indices, text sitemaps, hreflang/external filters
+TF-31	`focused_crawler`, navigation priority, `max_seen_urls=10`, `max_known_urls=100000`, todo/known resume, `is_still_navigation`
+TF-32	CLI `--feed`, `--sitemap`, `--crawl`, `--explore` (sitemap then crawl), `--probe`
+TF-33	CLI `--archived` Internet Archive fetch after failure
+TF-34	`--url-filter` substring patterns, target-language URL heuristics
+TF-35	URL, URL-list, HTML stdin, input-directory, parallel local processing
+TF-36	output-dir, backup-dir, keep-dirs, `--list`, verbosity/version/help, exit codes
+TF-37	`settingsfile`, config object, whole Extractor options; partial defaults overlay
+TF-38	CSS/adaptive selector learning

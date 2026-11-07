@@ -1,0 +1,15 @@
+{
+  "name": "crawlx-browser-oracle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CI-only actionability/candidate oracle for crawlx. Never shipped.",
+  "type": "module",
+  "scripts": {
+    "test": "node runner.mjs --self-test",
+    "oracle": "node runner.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.56.1",
+    "patchright": "1.56.1"
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "id": "g16",
+  "title": "Image upload, PDF upload, oversize rejection and a drop zone (fixture files only)",
+  "version": 1,
+  "url_path": "/g16/",
+  "controls": [
+    {
+      "id": "image-file",
+      "selector": "#image-file",
+      "role": "button",
+      "name": "Image file",
+      "logical_id": "image-file"
+    },
+    {
+      "id": "image-submit",
+      "selector": "#image-submit",
+      "role": "button",
+      "name": "Upload image",
+      "logical_id": "image-submit",
+      "effect": "POST /g16/api/upload/image"
+    },
+    {
+      "id": "pdf-file",
+      "selector": "#pdf-file",
+      "role": "button",
+      "name": "PDF file",
+      "logical_id": "pdf-file"
+    },
+    {
+      "id": "pdf-submit",
+      "selector": "#pdf-submit",
+      "role": "button",
+      "name": "Upload PDF",
+      "logical_id": "pdf-submit",
+      "effect": "POST /g16/api/upload/pdf"
+    },
+    {
+      "id": "oversize-file",
+      "selector": "#oversize-file",
+      "role": "button",
+      "name": "Any file",
+      "logical_id": "oversize-file"
+    },
+    {
+      "id": "oversize-submit",
+      "selector": "#oversize-submit",
+      "role": "button",
+      "name": "Upload anyway",
+      "logical_id": "oversize-submit",
+      "effect": "POST /g16/api/upload/oversize"
+    },
+    {
+      "id": "dropzone",
+      "selector": "#dropzone",
+      "role": "button",
+      "name": "Drop files here",
+      "logical_id": "dropzone",
+      "effect": "POST /g16/api/upload/dropzone"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g16/api/upload/image",
+      "POST /g16/api/upload/pdf",
+      "POST /g16/api/upload/oversize",
+      "POST /g16/api/upload/dropzone"
+    ],
+    "action_contexts": [
+      {
+        "principal": "anonymous",
+        "element": "image-submit",
+        "action_kind": "upload",
+        "input_class": "fixture_small_png",
+        "resource_context": "none",
+        "backend_effect": "upload:image:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "pdf-submit",
+        "action_kind": "upload",
+        "input_class": "fixture_pdf",
+        "resource_context": "none",
+        "backend_effect": "upload:pdf:accepted"
+      },
+      {
+        "principal": "anonymous",
+        "element": "oversize-submit",
+        "action_kind": "upload",
+        "input_class": "oversized",
+        "resource_context": "none",
+        "backend_effect": "upload:oversize:rejected_oversize"
+      },
+      {
+        "principal": "anonymous",
+        "element": "dropzone",
+        "action_kind": "upload",
+        "input_class": "fixture_small_png",
+        "resource_context": "none",
+        "backend_effect": "upload:dropzone:accepted"
+      }
+    ],
+    "unauthorized_actions": 0,
+    "target_recall_min": 1.0,
+    "volatile_regions": [
+      "#image-result",
+      "#pdf-result",
+      "#oversize-result",
+      "#drop-result"
+    ]
+  }
+}

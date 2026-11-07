@@ -1,0 +1,16 @@
+# Reviewed destinations and credentials stay outside Compose values and container arguments.
+services:
+  worker:
+    environment:
+      CRAWLX_DELIVERY_REGISTRY: /run/secrets/delivery_registry.json
+    secrets:
+      - { source: delivery_registry, target: delivery_registry.json }
+    volumes:
+      - type: bind
+        source: ${CRAWLX_DELIVERY_CREDENTIALS_DIR:?set CRAWLX_DELIVERY_CREDENTIALS_DIR to an operator-owned credentials directory}
+        target: /run/secrets/crawlx-delivery
+        read_only: true
+        bind: { create_host_path: false }
+secrets:
+  delivery_registry:
+    file: ${CRAWLX_DELIVERY_REGISTRY:?set CRAWLX_DELIVERY_REGISTRY to a reviewed registry JSON file}

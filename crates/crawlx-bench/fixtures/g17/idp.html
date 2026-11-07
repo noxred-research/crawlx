@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GymID sign-in</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  button { margin: 6px 4px; }
+</style>
+</head>
+<body>
+<h1>GymID</h1>
+<p>Fixture identity provider (test sink). The app <strong id="client">?</strong> asks to read your profile.</p>
+<form id="idp-form" aria-label="Authorize">
+  <label for="idp-user">User</label>
+  <input id="idp-user" name="user" type="text" value="alice" autocomplete="off">
+  <button id="idp-authorize" type="button">Authorize</button>
+  <button id="idp-deny" type="button">Deny</button>
+</form>
+<p id="idp-result" aria-live="polite"></p>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var q = new URLSearchParams(location.search);
+  $('client').textContent = q.get('client') || 'unknown';
+  function finish(decision, ev) {
+    __gym.hit(decision === 'allow' ? 'idp-authorize' : 'idp-deny', ev);
+    fetch('/g17/api/oauth/authorize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'decision=' + decision + '&user=' + encodeURIComponent($('idp-user').value)
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      $('idp-result').textContent = j.ok ? 'Authorized, code ' + j.code : 'Denied';
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'gym-oauth', code: j.code, error: j.ok ? null : j.error }, location.origin);
+        setTimeout(function () { window.close(); }, 100);
+      }
+    });
+  }
+  $('idp-authorize').addEventListener('click', function (ev) { finish('allow', ev); });
+  $('idp-deny').addEventListener('click', function (ev) { finish('deny', ev); });
+})();
+</script>
+</body>
+</html>

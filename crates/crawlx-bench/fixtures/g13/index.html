@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g13 hover menus</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  nav { display: flex; gap: 8px; }
+  .hm { position: relative; display: inline-block; }
+  .hm > .trigger { padding: 8px 14px; border: 1px solid #889; background: #f4f4f8; cursor: default; }
+  .hm > ul { display: none; position: absolute; top: 100%; left: 0; min-width: 160px; margin: 0; padding: 4px 0; list-style: none; background: #fff; border: 1px solid #889; z-index: 5; }
+  .hm.open > ul { display: block; }
+  .hm > ul > li > button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .hm > ul > li > button:hover { background: #dde; }
+</style>
+</head>
+<body>
+<h1>Hover menus</h1>
+<p>Menus open on pointer hover only and close when the pointer leaves. Last: <span id="out">none</span></p>
+<nav id="menus" aria-label="Hover menus"></nav>
+<script>
+(function () {
+  var MENUS = [
+    ['File', ['New file', 'Open file', 'Save file']],
+    ['Edit', ['Undo edit', 'Redo edit', 'Find text']],
+    ['View', ['Zoom in', 'Zoom out', 'Full screen']],
+    ['Insert', ['Insert image', 'Insert table', 'Insert link']],
+    ['Tools', ['Spell check', 'Word count', 'Macros']],
+    ['Help', ['Help topics', 'Keyboard shortcuts', 'About editor']]
+  ];
+  var out = document.getElementById('out');
+  var nav = document.getElementById('menus');
+  MENUS.forEach(function (m, mi) {
+    var id = 'menu-' + (mi + 1);
+    var wrap = document.createElement('div');
+    wrap.className = 'hm';
+    wrap.id = id + '-wrap';
+    var trigger = document.createElement('div');
+    trigger.className = 'trigger';
+    trigger.id = id;
+    trigger.textContent = m[0];
+    trigger.setAttribute('aria-haspopup', 'menu');
+    trigger.setAttribute('aria-expanded', 'false');
+    wrap.appendChild(trigger);
+    var ul = document.createElement('ul');
+    ul.setAttribute('role', 'menu');
+    ul.setAttribute('aria-label', m[0]);
+    m[1].forEach(function (label, ii) {
+      var iid = id + '-' + (ii + 1);
+      var li = document.createElement('li');
+      li.setAttribute('role', 'none');
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.id = iid;
+      b.setAttribute('role', 'menuitem');
+      b.textContent = label;
+      b.addEventListener('click', function (ev) { __gym.hit(iid, ev); out.textContent = iid; });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+    wrap.appendChild(ul);
+    wrap.addEventListener('mouseenter', function (ev) {
+      __gym.hit(id, ev);
+      wrap.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    });
+    wrap.addEventListener('mouseleave', function () {
+      wrap.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    });
+    nav.appendChild(wrap);
+  });
+})();
+</script>
+</body>
+</html>

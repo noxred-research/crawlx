@@ -1,0 +1,35 @@
+[package]
+name = "crawlx-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "crawlx: tracing subscriber, metrics registry, redaction layer"
+
+[features]
+default = []
+# OTLP export. Without this feature the OTLP module is a no-op.
+# The OpenTelemetry crates are optional and only linked when the feature is on;
+# the exporter is wired inside `src/otlp.rs` only.
+otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry"]
+
+[dependencies]
+crawlx-core = { path = "../crawlx-core" }
+parking_lot.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

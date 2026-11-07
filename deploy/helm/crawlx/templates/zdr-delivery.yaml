@@ -1,0 +1,83 @@
+{{- if .Values.zdr.enabled }}
+# Dedicated volatile transport. Restart intentionally loses undelivered content; no disk recovery.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-zdr
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: crawlx-zdr, release: {{ .Release.Name }} }
+  template:
+    metadata:
+      labels: { app: crawlx-zdr, release: {{ .Release.Name }} }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "crawlx.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: delivery
+          image: {{ .Values.zdr.image }}
+          command: [valkey-server]
+          args:
+            - --bind
+            - 0.0.0.0
+            - --protected-mode
+            - "yes"
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --maxmemory
+            - {{ .Values.zdr.maxmemory | quote }}
+            - --maxmemory-policy
+            - noeviction
+            - --dir
+            - /data
+            - --aclfile
+            - /run/secrets/zdr/users.acl
+          ports: [{ name: redis, containerPort: 6379 }]
+          readinessProbe:
+            tcpSocket: { port: redis }
+            periodSeconds: 5
+          securityContext:
+            {{- include "crawlx.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.zdr.resources | nindent 12 }}
+          volumeMounts:
+            - { name: memory, mountPath: /data }
+            - { name: credentials, mountPath: /run/secrets/zdr, readOnly: true }
+      volumes:
+        - { name: memory, emptyDir: { medium: Memory, sizeLimit: 16Mi } }
+        - name: credentials
+          secret:
+            secretName: {{ .Values.zdr.secret }}
+            items: [{ key: users.acl, path: users.acl }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-zdr
+spec:
+  selector: { app: crawlx-zdr, release: {{ .Release.Name }} }
+  ports: [{ name: redis, port: 6379, targetPort: redis }]
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-zdr
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-zdr, release: {{ .Release.Name }} }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: crawlx-api, release: {{ .Release.Name }} } }
+        - podSelector: { matchLabels: { app: crawlx-worker, release: {{ .Release.Name }}, crawlx.dev/egress: allowed } }
+      ports: [{ protocol: TCP, port: 6379 }]
+  egress: []
+{{- end }}
+{{- end }}

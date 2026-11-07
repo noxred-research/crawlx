@@ -1,0 +1,246 @@
+{
+  "id": "stale-rerender",
+  "title": "Whole-list rerender at a controllable delay after each observation; locators go stale while logical controls are unchanged (catalog G25)",
+  "version": 1,
+  "url_path": "/stale-rerender/",
+  "controls": [
+    {
+      "id": "delay",
+      "selector": "#delay",
+      "role": "spinbutton",
+      "name": "Rerender delay (ms, 0 disables)",
+      "logical_id": "delay"
+    },
+    {
+      "id": "rerender-now",
+      "selector": "#rerender-now",
+      "role": "button",
+      "name": "Rerender now",
+      "logical_id": "rerender-now"
+    },
+    {
+      "id": "open-1",
+      "selector": "#open-1",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-1"
+    },
+    {
+      "id": "star-1",
+      "selector": "#star-1",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-1",
+      "effect": "POST /stale-rerender/api/projects/1/star"
+    },
+    {
+      "id": "remove-1",
+      "selector": "#remove-1",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-1",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/1"
+    },
+    {
+      "id": "open-2",
+      "selector": "#open-2",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-2"
+    },
+    {
+      "id": "star-2",
+      "selector": "#star-2",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-2",
+      "effect": "POST /stale-rerender/api/projects/2/star"
+    },
+    {
+      "id": "remove-2",
+      "selector": "#remove-2",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-2",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/2"
+    },
+    {
+      "id": "open-3",
+      "selector": "#open-3",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-3"
+    },
+    {
+      "id": "star-3",
+      "selector": "#star-3",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-3",
+      "effect": "POST /stale-rerender/api/projects/3/star"
+    },
+    {
+      "id": "remove-3",
+      "selector": "#remove-3",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-3",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/3"
+    },
+    {
+      "id": "open-4",
+      "selector": "#open-4",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-4"
+    },
+    {
+      "id": "star-4",
+      "selector": "#star-4",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-4",
+      "effect": "POST /stale-rerender/api/projects/4/star"
+    },
+    {
+      "id": "remove-4",
+      "selector": "#remove-4",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-4",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/4"
+    },
+    {
+      "id": "open-5",
+      "selector": "#open-5",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-5"
+    },
+    {
+      "id": "star-5",
+      "selector": "#star-5",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-5",
+      "effect": "POST /stale-rerender/api/projects/5/star"
+    },
+    {
+      "id": "remove-5",
+      "selector": "#remove-5",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-5",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/5"
+    },
+    {
+      "id": "open-6",
+      "selector": "#open-6",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-6"
+    },
+    {
+      "id": "star-6",
+      "selector": "#star-6",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-6",
+      "effect": "POST /stale-rerender/api/projects/6/star"
+    },
+    {
+      "id": "remove-6",
+      "selector": "#remove-6",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-6",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/6"
+    },
+    {
+      "id": "open-7",
+      "selector": "#open-7",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-7"
+    },
+    {
+      "id": "star-7",
+      "selector": "#star-7",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-7",
+      "effect": "POST /stale-rerender/api/projects/7/star"
+    },
+    {
+      "id": "remove-7",
+      "selector": "#remove-7",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-7",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/7"
+    },
+    {
+      "id": "open-8",
+      "selector": "#open-8",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "open-8"
+    },
+    {
+      "id": "star-8",
+      "selector": "#star-8",
+      "role": "button",
+      "name": "Star",
+      "logical_id": "star-8",
+      "effect": "POST /stale-rerender/api/projects/8/star"
+    },
+    {
+      "id": "remove-8",
+      "selector": "#remove-8",
+      "role": "button",
+      "name": "Remove",
+      "logical_id": "remove-8",
+      "risk": "destructive",
+      "effect": "DELETE /stale-rerender/api/projects/8"
+    },
+    {
+      "id": "project-back",
+      "selector": "#project-back",
+      "role": "link",
+      "name": "Back to projects",
+      "logical_id": "project-back",
+      "page": "/project.html?id=1"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "DELETE /stale-rerender/api/projects/{id}",
+      "POST /stale-rerender/api/projects/{id}/star"
+    ],
+    "forbidden_ops": [
+      {
+        "method": "DELETE",
+        "path_prefix": "/stale-rerender/api/projects",
+        "profiles": [
+          "read_only"
+        ]
+      }
+    ],
+    "unauthorized_actions": 0,
+    "target_recall_min": 0.95,
+    "split_rate_max": 0.02,
+    "volatile_regions": [
+      "#renders",
+      "#delay-out",
+      "#out",
+      "#list li span"
+    ]
+  }
+}

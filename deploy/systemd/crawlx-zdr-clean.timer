@@ -1,0 +1,11 @@
+[Unit]
+Description=Expire crawlx delivery content independently of API and workers
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=1s
+Unit=crawlx-zdr-clean.service
+
+[Install]
+WantedBy=timers.target

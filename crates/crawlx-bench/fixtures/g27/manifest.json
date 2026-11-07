@@ -1,0 +1,111 @@
+{
+  "id": "g27",
+  "title": "Actionability matrix",
+  "version": 1,
+  "url_path": "/g27/",
+  "controls": [
+    {
+      "id": "c-plain",
+      "selector": "#c-plain",
+      "role": "button",
+      "name": "Plain",
+      "expected": "actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-covered",
+      "selector": "#c-covered",
+      "role": "button",
+      "name": "Covered",
+      "expected": "not_actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-zero",
+      "selector": "#c-zero",
+      "role": "button",
+      "name": "Zero size",
+      "expected": "not_actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-pointer-none",
+      "selector": "#c-pointer-none",
+      "role": "button",
+      "name": "Pointer none",
+      "expected": "not_actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-hidden",
+      "selector": "#c-hidden",
+      "role": "button",
+      "name": "Hidden",
+      "expected": "not_actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-disabled",
+      "selector": "#c-disabled",
+      "role": "button",
+      "name": "Disabled",
+      "expected": "not_actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-scrolled",
+      "selector": "#c-scrolled",
+      "role": "button",
+      "name": "Scrolled",
+      "expected": "actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-sticky",
+      "selector": "#c-sticky",
+      "role": "button",
+      "name": "Sticky",
+      "expected": "actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-iframe",
+      "selector": "#c-iframe",
+      "role": "button",
+      "name": "Iframe",
+      "expected": "actionable",
+      "mechanism": "ax",
+      "frame": "main/f1",
+      "oracle": {
+        "*": "oracle_gap"
+      }
+    },
+    {
+      "id": "c-shadow-open",
+      "selector": "#c-shadow-open",
+      "role": "button",
+      "name": "Shadow open",
+      "expected": "actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-modal-covered",
+      "selector": "#c-modal-covered",
+      "role": "button",
+      "name": "Modal covered",
+      "expected": "not_actionable",
+      "mechanism": "ax"
+    },
+    {
+      "id": "c-banner-accept",
+      "selector": "#c-banner-accept",
+      "role": "button",
+      "name": "Accept",
+      "expected": "actionable",
+      "mechanism": "ax"
+    }
+  ],
+  "expected": {
+    "target_recall_min": 0.95
+  }
+}

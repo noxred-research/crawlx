@@ -1,0 +1,172 @@
+{
+  "id": "g14",
+  "title": "Drag behaviors: kanban cards between columns, sortable list, native HTML5 drag to a drop zone",
+  "version": 1,
+  "url_path": "/g14/",
+  "controls": [
+    {
+      "id": "card-1",
+      "selector": "#card-1",
+      "role": "generic",
+      "name": "Write spec",
+      "logical_id": "card-1",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "card-2",
+      "selector": "#card-2",
+      "role": "generic",
+      "name": "Review design",
+      "logical_id": "card-2",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "card-3",
+      "selector": "#card-3",
+      "role": "generic",
+      "name": "Build fixture",
+      "logical_id": "card-3",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "sort-1",
+      "selector": "#sort-1",
+      "role": "listitem",
+      "name": "First",
+      "logical_id": "sort-1",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "sort-2",
+      "selector": "#sort-2",
+      "role": "listitem",
+      "name": "Second",
+      "logical_id": "sort-2",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "sort-3",
+      "selector": "#sort-3",
+      "role": "listitem",
+      "name": "Third",
+      "logical_id": "sort-3",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "sort-4",
+      "selector": "#sort-4",
+      "role": "listitem",
+      "name": "Fourth",
+      "logical_id": "sort-4",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "native-1",
+      "selector": "#native-1",
+      "role": "generic",
+      "name": "Draft note",
+      "logical_id": "native-1",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    },
+    {
+      "id": "native-2",
+      "selector": "#native-2",
+      "role": "generic",
+      "name": "Old invoice",
+      "logical_id": "native-2",
+      "mechanism": "listener",
+      "effect": "POST /g14/api/form/drag"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g14/api/form/drag"
+    ],
+    "action_contexts": [
+      {
+        "principal": "anonymous",
+        "element": "card-1",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:kanban"
+      },
+      {
+        "principal": "anonymous",
+        "element": "card-2",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:kanban"
+      },
+      {
+        "principal": "anonymous",
+        "element": "card-3",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:kanban"
+      },
+      {
+        "principal": "anonymous",
+        "element": "sort-1",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:sortable"
+      },
+      {
+        "principal": "anonymous",
+        "element": "sort-2",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:sortable"
+      },
+      {
+        "principal": "anonymous",
+        "element": "sort-3",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:sortable"
+      },
+      {
+        "principal": "anonymous",
+        "element": "sort-4",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:sortable"
+      },
+      {
+        "principal": "anonymous",
+        "element": "native-1",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:native"
+      },
+      {
+        "principal": "anonymous",
+        "element": "native-2",
+        "action_kind": "drag",
+        "input_class": "none",
+        "resource_context": "none",
+        "backend_effect": "drag:native"
+      }
+    ],
+    "target_recall_min": 0.9,
+    "volatile_regions": [
+      "#out"
+    ]
+  }
+}

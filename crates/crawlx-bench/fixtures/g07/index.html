@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g07 infinite feed</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 0; }
+  header { position: sticky; top: 0; background: #223; color: #fff; padding: 10px 16px; display: flex; gap: 12px; }
+  header a { color: #fff; }
+  #feed { list-style: none; margin: 0; padding: 16px; }
+  #feed li { border: 1px solid #ccd; border-radius: 6px; padding: 12px; margin: 0 0 12px; min-height: 90px; }
+  #sentinel { height: 40px; text-align: center; color: #889; }
+</style>
+</head>
+<body>
+<header>
+  <a id="nav-home" href="/g07/">Feed</a>
+  <a id="nav-about" href="/g07/about.html">About</a>
+  <button id="refresh" type="button">Refresh</button>
+  <span>Loaded pages: <span id="pages">0</span></span>
+</header>
+<ul id="feed" aria-label="Feed"></ul>
+<div id="sentinel" aria-hidden="true">Loading more…</div>
+<script>
+(function () {
+  var PAGE = 10;
+  var page = 0;
+  var loading = false;
+  var feed = document.getElementById('feed');
+  var TOPICS = ['Release notes', 'Incident report', 'Design review', 'Weekly digest', 'Office hours', 'Roadmap update', 'Hiring', 'Postmortem'];
+
+  function item(n, rng) {
+    var li = document.createElement('li');
+    li.id = 'post-' + n;
+    li.setAttribute('data-family', 'feed-item');
+    var h = document.createElement('h3');
+    h.textContent = __gym.pick(TOPICS, rng) + ' #' + n;
+    var p = document.createElement('p');
+    p.textContent = 'Post body ' + n + ' with ' + Math.floor(rng() * 900 + 100) + ' views.';
+    var like = document.createElement('button');
+    like.type = 'button';
+    like.id = 'like-' + n;
+    like.textContent = 'Like';
+    like.addEventListener('click', function (ev) { __gym.hit('like-' + n, ev); like.textContent = 'Liked'; });
+    var open = document.createElement('a');
+    open.id = 'open-' + n;
+    open.href = '/g07/post.html?id=' + n;
+    open.textContent = 'Open';
+    open.addEventListener('click', function (ev) { __gym.hit('open-' + n, ev); });
+    li.appendChild(h); li.appendChild(p); li.appendChild(like); li.appendChild(open);
+    return li;
+  }
+
+  function loadMore() {
+    if (loading) return;
+    loading = true;
+    page += 1;
+    var current = page;
+    __gym.api('GET', 'feed?page=' + current).then(function () {
+      var rng = __gym.rngFor('feed-page-' + current);
+      for (var i = 1; i <= PAGE; i++) feed.appendChild(item((current - 1) * PAGE + i, rng));
+      document.getElementById('pages').textContent = String(current);
+      loading = false;
+      // keep filling while the sentinel is still visible (tall viewports)
+      if (isVisible(sentinel)) setTimeout(loadMore, 50);
+    });
+  }
+  var sentinel = document.getElementById('sentinel');
+  function isVisible(el) {
+    var r = el.getBoundingClientRect();
+    return r.top < (window.innerHeight || document.documentElement.clientHeight);
+  }
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) {
+      if (entries.some(function (e) { return e.isIntersecting; })) loadMore();
+    }).observe(sentinel);
+  } else {
+    window.addEventListener('scroll', function () { if (isVisible(sentinel)) loadMore(); });
+  }
+  ['nav-home', 'nav-about'].forEach(function (id) {
+    document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); });
+  });
+  document.getElementById('refresh').addEventListener('click', function (ev) {
+    __gym.hit('refresh', ev);
+    feed.textContent = '';
+    page = 0;
+    loadMore();
+  });
+  loadMore();
+})();
+</script>
+</body>
+</html>

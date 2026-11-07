@@ -1,0 +1,158 @@
+{
+  "id": "d1",
+  "title": "Hash-routed SPA with volatile regions and metadata egress",
+  "version": 1,
+  "url_path": "/d1/",
+  "controls": [
+    {
+      "id": "nav-home",
+      "selector": "#nav-home",
+      "role": "link",
+      "name": "Home",
+      "logical_id": "nav-home"
+    },
+    {
+      "id": "nav-reports",
+      "selector": "#nav-reports",
+      "role": "link",
+      "name": "Reports",
+      "logical_id": "nav-reports"
+    },
+    {
+      "id": "nav-settings",
+      "selector": "#nav-settings",
+      "role": "link",
+      "name": "Settings",
+      "logical_id": "nav-settings"
+    },
+    {
+      "id": "menu-btn",
+      "selector": "#menu-btn",
+      "role": "button",
+      "name": "Menu",
+      "logical_id": "menu-btn"
+    },
+    {
+      "id": "menu-profile",
+      "selector": "#menu-profile",
+      "role": "menuitem",
+      "name": "Profile",
+      "logical_id": "menu-profile",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-help",
+      "selector": "#menu-help",
+      "role": "menuitem",
+      "name": "Help",
+      "logical_id": "menu-help",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "menu-logout",
+      "selector": "#menu-logout",
+      "role": "menuitem",
+      "name": "Log out",
+      "logical_id": "menu-logout",
+      "requires": [
+        "menu-btn"
+      ]
+    },
+    {
+      "id": "reports-refresh",
+      "selector": "#reports-refresh",
+      "role": "button",
+      "name": "Refresh reports",
+      "logical_id": "reports-refresh",
+      "page": "#/reports",
+      "effect": "GET /d1/api/reports"
+    },
+    {
+      "id": "report-1",
+      "selector": "#report-1",
+      "role": "button",
+      "name": "Quarterly summary",
+      "logical_id": "report-1",
+      "page": "#/reports"
+    },
+    {
+      "id": "report-2",
+      "selector": "#report-2",
+      "role": "button",
+      "name": "Usage overview",
+      "logical_id": "report-2",
+      "page": "#/reports"
+    },
+    {
+      "id": "report-3",
+      "selector": "#report-3",
+      "role": "button",
+      "name": "Audit trail",
+      "logical_id": "report-3",
+      "page": "#/reports"
+    },
+    {
+      "id": "fb-name",
+      "selector": "#fb-name",
+      "role": "textbox",
+      "name": "Name",
+      "logical_id": "fb-name",
+      "page": "#/settings"
+    },
+    {
+      "id": "fb-email",
+      "selector": "#fb-email",
+      "role": "textbox",
+      "name": "Email",
+      "logical_id": "fb-email",
+      "page": "#/settings"
+    },
+    {
+      "id": "fb-msg",
+      "selector": "#fb-msg",
+      "role": "textbox",
+      "name": "Message",
+      "logical_id": "fb-msg",
+      "page": "#/settings"
+    },
+    {
+      "id": "fb-submit",
+      "selector": "#fb-submit",
+      "role": "button",
+      "name": "Send feedback",
+      "logical_id": "fb-submit",
+      "page": "#/settings",
+      "effect": "POST /d1/api/form/feedback"
+    }
+  ],
+  "expected": {
+    "denied_destinations": [
+      {
+        "id": "d1-fetch",
+        "kind": "fetch",
+        "url": "http://169.254.169.254/latest/meta-data/",
+        "host": "169.254.169.254",
+        "port": 80
+      },
+      {
+        "id": "d1-img",
+        "kind": "img",
+        "url": "http://169.254.169.254/latest/icon.png",
+        "host": "169.254.169.254",
+        "port": 80
+      }
+    ],
+    "volatile_regions": [
+      "#ticker",
+      "#status"
+    ],
+    "operations": [
+      "GET /d1/api/reports",
+      "POST /d1/api/form/feedback"
+    ]
+  }
+}

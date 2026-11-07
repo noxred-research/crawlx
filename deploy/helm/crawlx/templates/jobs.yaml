@@ -1,0 +1,149 @@
+{{- if .Values.configCheck.enabled }}
+# Pre-roll validation: `crawlx config check` fails the release on
+# an unknown key, a missing secret file or a production-unsafe value.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-config-check
+  labels: { app: crawlx-config-check, app.kubernetes.io/part-of: crawlx }
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: crawlx-config-check }
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "crawlx.podSecurityContext" (dict "uid" 65532) | nindent 8 }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: config-check
+          image: {{ include "crawlx.apiImage" . }}
+          args: ["config", "check", "--config", "/etc/crawlx/crawlx.toml"]
+          env:
+            {{- include "crawlx.commonEnv" . | nindent 12 }}
+            {{- include "crawlx.capabilityEnv" (dict "root" . "worker" true) | nindent 12 }}
+            {{- include "crawlx.artifactCustodyEnv" (dict "root" . "worker" true) | nindent 12 }}
+            - name: CRAWLX_API_DATABASE_URL_FILE
+              value: /run/secrets/crawlx/database_url_api
+          securityContext:
+            {{- include "crawlx.containerSecurityContext" . | nindent 12 }}
+          resources:
+            requests: { cpu: "50m", memory: 64Mi }
+            limits:
+              memory: {{ ternary "1Gi" "128Mi" (not (empty .Values.capabilities.articleLanguage.existingClaim)) }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/crawlx, readOnly: true }
+            - { name: secrets, mountPath: /run/secrets/crawlx, readOnly: true }
+            {{- include "crawlx.operatorCapabilityMounts" . | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: { name: {{ .Release.Name }}-config }
+        - name: secrets
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.secrets.database }}
+                  items: [{ key: database_url, path: database_url }]
+              - secret:
+                  name: {{ .Values.secrets.databaseApi }}
+                  items: [{ key: database_url_api, path: database_url_api }]
+              - secret:
+                  name: {{ .Values.secrets.webhook }}
+                  items: [{ key: webhook_signing_key, path: webhook_signing_key }]
+              - secret:
+                  name: {{ .Values.secrets.objectStore }}
+                  optional: true
+                  items: [{ key: object_store_credentials, path: object_store_credentials }]
+              {{- include "crawlx.capabilitySources" (dict "root" . "worker" true) | nindent 14 }}
+              {{- include "crawlx.artifactCustodySources" (dict "root" . "worker" true) | nindent 14 }}
+        {{- include "crawlx.operatorCapabilityVolumes" . | nindent 8 }}
+{{- end }}
+{{- if .Values.migrate.enabled }}
+---
+# Schema migration as a pre-upgrade Job with the DDL role.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate
+  labels: { app: crawlx-migrate, app.kubernetes.io/part-of: crawlx }
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: { app: crawlx-migrate }
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "crawlx.podSecurityContext" (dict "uid" 65532) | nindent 8 }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: {{ include "crawlx.apiImage" . }}
+          args: ["migrate"]
+          env:
+            - name: CRAWLX_ENVIRONMENT
+              value: {{ .Values.environment | quote }}
+            - name: CRAWLX_DATABASE_URL_FILE
+              value: /run/secrets/crawlx/database_url
+          securityContext:
+            {{- include "crawlx.containerSecurityContext" . | nindent 12 }}
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: secrets, mountPath: /run/secrets/crawlx, readOnly: true }
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.secrets.databaseMigrate }}
+            items: [{ key: database_url, path: database_url }]
+{{- end }}
+{{- if .Values.gym.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-gym
+  labels: { app: crawlx-gym, app.kubernetes.io/part-of: crawlx }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: crawlx-gym, release: {{ .Release.Name }} }
+  template:
+    metadata:
+      labels: { app: crawlx-gym, release: {{ .Release.Name }} }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "crawlx.podSecurityContext" (dict "uid" 65532) | nindent 8 }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gym
+          image: {{ include "crawlx.gymImage" . }}
+          ports: [{ name: http, containerPort: 8090 }]
+          securityContext:
+            {{- include "crawlx.containerSecurityContext" . | nindent 12 }}
+          resources:
+            requests: { cpu: "100m", memory: 128Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-gym
+  labels: { app: crawlx-gym }
+spec:
+  selector: { app: crawlx-gym, release: {{ .Release.Name }} }
+  ports: [{ name: http, port: 8090, targetPort: http }]
+{{- end }}

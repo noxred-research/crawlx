@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g28 background traffic</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  button { margin: 4px; }
+  .mono { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Account overview</h1>
+<p>Service worker: <span id="sw-state" class="mono">registering</span>. Polls: <span id="polls" class="mono">0</span>. Last: <span id="out">none</span></p>
+<button id="refresh" type="button">Refresh balance</button>
+<button id="save" type="button">Save note</button>
+<button id="beacon-btn" type="button">Send feedback beacon</button>
+<p id="balance" class="mono" aria-live="polite">Balance: ?</p>
+<img id="tracker-pixel" alt="" width="1" height="1">
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  var other = location.origin.indexOf('127.0.0.1') >= 0
+    ? location.origin.replace('127.0.0.1', 'localhost')
+    : location.origin.replace('localhost', '127.0.0.1');
+
+  // --- third-party tracker: a different origin loads a pixel and a script ---
+  $('tracker-pixel').src = other + '/g28/api/tracker/pixel.gif?r=' + __gym.seed;
+  var s = document.createElement('script');
+  s.src = other + '/g28/tracker.js';
+  s.async = true;
+  document.head.appendChild(s);
+
+  // --- polling every 1.5 s, independent of any action ---
+  var polls = 0;
+  setInterval(function () {
+    polls += 1;
+    $('polls').textContent = String(polls);
+    fetch('/g28/api/poll?n=' + polls).then(function (response) { return response.text(); }).catch(function () {});
+  }, 1500);
+
+  // --- service worker: fetches on activate, on page messages and on its own timer ---
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/g28/sw.js', { scope: '/g28/' }).then(function (reg) {
+      $('sw-state').textContent = 'registered';
+      __gym.probe('sw', 'registered');
+      function ping() { if (reg.active) reg.active.postMessage({ type: 'sync' }); }
+      navigator.serviceWorker.ready.then(function () { $('sw-state').textContent = 'active'; ping(); });
+      setInterval(ping, 2000);
+    }).catch(function (e) {
+      $('sw-state').textContent = 'failed: ' + e;
+      __gym.probe('sw', 'failed');
+    });
+  } else {
+    $('sw-state').textContent = 'unsupported';
+    __gym.probe('sw', 'unsupported');
+  }
+
+  // --- beacons: on click and when the page is hidden ---
+  function beacon(reason) {
+    if (navigator.sendBeacon) navigator.sendBeacon('/g28/api/beacon?reason=' + reason, 'r=' + reason);
+    else fetch('/g28/api/beacon?reason=' + reason, { method: 'POST', keepalive: true }).catch(function () {});
+  }
+  document.addEventListener('visibilitychange', function () { if (document.hidden) beacon('hidden'); });
+
+  // --- trusted actions ---
+  $('refresh').addEventListener('click', function (ev) {
+    __gym.hit('refresh', ev);
+    __gym.api('GET', 'balance').then(function () { $('balance').textContent = 'Balance: ' + (100 + __gym.rng() * 50).toFixed(2); out.textContent = 'refresh'; });
+  });
+  $('save').addEventListener('click', function (ev) {
+    __gym.hit('save', ev);
+    __gym.api('POST', 'notes', { text: 'note' }).then(function () { out.textContent = 'save'; });
+  });
+  $('beacon-btn').addEventListener('click', function (ev) {
+    __gym.hit('beacon-btn', ev);
+    beacon('feedback');
+    out.textContent = 'beacon';
+  });
+})();
+</script>
+</body>
+</html>

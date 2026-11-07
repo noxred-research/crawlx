@@ -1,0 +1,251 @@
+{
+  "id": "g04",
+  "title": "Open and closed shadow roots with slotted content (24 targets, 8 in closed roots)",
+  "version": 1,
+  "url_path": "/g04/",
+  "controls": [
+    {
+      "id": "o1-1",
+      "selector": "#o1-1",
+      "role": "button",
+      "name": "Save Editor",
+      "logical_id": "o1-1",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o1-2",
+      "selector": "#o1-2",
+      "role": "button",
+      "name": "Cancel Editor",
+      "logical_id": "o1-2",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o1-3",
+      "selector": "#o1-3",
+      "role": "button",
+      "name": "Publish Editor",
+      "logical_id": "o1-3",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o1-4",
+      "selector": "#o1-4",
+      "role": "button",
+      "name": "Archive Editor",
+      "logical_id": "o1-4",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o2-1",
+      "selector": "#o2-1",
+      "role": "button",
+      "name": "Save Viewer",
+      "logical_id": "o2-1",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o2-2",
+      "selector": "#o2-2",
+      "role": "button",
+      "name": "Cancel Viewer",
+      "logical_id": "o2-2",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o2-3",
+      "selector": "#o2-3",
+      "role": "button",
+      "name": "Publish Viewer",
+      "logical_id": "o2-3",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o2-4",
+      "selector": "#o2-4",
+      "role": "button",
+      "name": "Archive Viewer",
+      "logical_id": "o2-4",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o3-1",
+      "selector": "#o3-1",
+      "role": "button",
+      "name": "Save Planner",
+      "logical_id": "o3-1",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o3-2",
+      "selector": "#o3-2",
+      "role": "button",
+      "name": "Cancel Planner",
+      "logical_id": "o3-2",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o3-3",
+      "selector": "#o3-3",
+      "role": "button",
+      "name": "Publish Planner",
+      "logical_id": "o3-3",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "o3-4",
+      "selector": "#o3-4",
+      "role": "button",
+      "name": "Archive Planner",
+      "logical_id": "o3-4",
+      "oracle": {
+        "*": "actionable"
+      }
+    },
+    {
+      "id": "slot-1",
+      "selector": "#slot-1",
+      "role": "button",
+      "name": "Slot save",
+      "logical_id": "slot-1"
+    },
+    {
+      "id": "slot-2",
+      "selector": "#slot-2",
+      "role": "button",
+      "name": "Slot cancel",
+      "logical_id": "slot-2"
+    },
+    {
+      "id": "slot-3",
+      "selector": "#slot-3",
+      "role": "button",
+      "name": "Slot publish",
+      "logical_id": "slot-3"
+    },
+    {
+      "id": "slot-4",
+      "selector": "#slot-4",
+      "role": "button",
+      "name": "Slot archive",
+      "logical_id": "slot-4"
+    },
+    {
+      "id": "c1-1",
+      "selector": "#c1-1",
+      "role": "button",
+      "name": "Save Vault A",
+      "logical_id": "c1-1",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c1-2",
+      "selector": "#c1-2",
+      "role": "button",
+      "name": "Cancel Vault A",
+      "logical_id": "c1-2",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c1-3",
+      "selector": "#c1-3",
+      "role": "button",
+      "name": "Publish Vault A",
+      "logical_id": "c1-3",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c1-4",
+      "selector": "#c1-4",
+      "role": "button",
+      "name": "Archive Vault A",
+      "logical_id": "c1-4",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c2-1",
+      "selector": "#c2-1",
+      "role": "button",
+      "name": "Save Vault B",
+      "logical_id": "c2-1",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c2-2",
+      "selector": "#c2-2",
+      "role": "button",
+      "name": "Cancel Vault B",
+      "logical_id": "c2-2",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c2-3",
+      "selector": "#c2-3",
+      "role": "button",
+      "name": "Publish Vault B",
+      "logical_id": "c2-3",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    },
+    {
+      "id": "c2-4",
+      "selector": "#c2-4",
+      "role": "button",
+      "name": "Archive Vault B",
+      "logical_id": "c2-4",
+      "oracle": {
+        "playwright": "oracle_gap",
+        "patchright": "actionable"
+      }
+    }
+  ],
+  "expected": {
+    "operations": [],
+    "target_recall_min": 0.95,
+    "volatile_regions": [
+      "#out"
+    ]
+  }
+}

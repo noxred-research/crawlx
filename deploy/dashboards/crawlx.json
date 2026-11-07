@@ -1,0 +1,1491 @@
+{
+  "__inputs": [
+    {
+      "name": "DS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus"
+    }
+  ],
+  "title": "crawlx",
+  "uid": "crawlx-ops",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": [
+    "crawlx"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "DS",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "SLO overview",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "API availability (30d)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - sum(increase(crawlx_api_requests_total{outcome=\"error\"}[30d])) / sum(increase(crawlx_api_requests_total{outcome=~\"ok|error\"}[30d]))",
+          "legendFormat": "availability"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "API error-budget burn rate (1h / 6h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(crawlx_api_requests_total{outcome=\"error\"}[1h])) / sum(rate(crawlx_api_requests_total{outcome=~\"ok|error\"}[1h]))) / 0.001",
+          "legendFormat": "1h"
+        },
+        {
+          "refId": "B",
+          "expr": "(sum(rate(crawlx_api_requests_total{outcome=\"error\"}[6h])) / sum(rate(crawlx_api_requests_total{outcome=~\"ok|error\"}[6h]))) / 0.001",
+          "legendFormat": "6h"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Job durability (missing / checked)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - sum(increase(crawlx_jobs_durability_audit_missing_total[30d])) / sum(increase(crawlx_jobs_durability_audit_checked_total[30d]))",
+          "legendFormat": "durability"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Terminal webhook delivery (7d)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(crawlx_webhook_deliveries_total{event=\"terminal\",outcome=\"delivered\"}[7d])) / sum(increase(crawlx_webhook_deliveries_total{event=\"terminal\",outcome=~\"delivered|exhausted\"}[7d]))",
+          "legendFormat": "delivered"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Stale leases unreconciled",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(crawlx_lease_stale_unreconciled)",
+          "legendFormat": "unreconciled"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Safety invariant violations / ZDR violations (24h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(crawlx_safety_invariant_violations_total[24h]))",
+          "legendFormat": "safety"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(crawlx_zdr_violations_total[24h]))",
+          "legendFormat": "zdr"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Open alerts",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ALERTS{alertstate=\"firing\",alertname=~\"Crawlx.*\"}",
+          "legendFormat": "{{alertname}} {{severity}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Crawl health",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "URL plane rates",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (plane) (rate(crawlx_urls_succeeded_total[5m]))",
+          "legendFormat": "succeeded {{plane}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (plane,reason) (rate(crawlx_urls_failed_total[5m]))",
+          "legendFormat": "failed {{plane}} {{reason}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (plane) (rate(crawlx_urls_admitted_total[5m]))",
+          "legendFormat": "admitted {{plane}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Interaction rates",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (lane) (rate(crawlx_interactions_executed_total[5m]))",
+          "legendFormat": "executed {{lane}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (reason) (rate(crawlx_interactions_dropped_stale_total[5m]))",
+          "legendFormat": "dropped stale {{reason}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum (rate(crawlx_interactions_unknown_outcome_total[5m]))",
+          "legendFormat": "unknown outcome"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "States",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 42
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (role) (rate(crawlx_states_observed_total[5m]))",
+          "legendFormat": "observed {{role}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (role) (rate(crawlx_states_splits_total[5m]))",
+          "legendFormat": "splits {{role}}"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (role) (crawlx_states_clusters)",
+          "legendFormat": "clusters {{role}}"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Action-context coverage per role",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 42
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (role) (crawlx_coverage_action_context)",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Frontier depth per plane",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (plane) (crawlx_frontier_depth)",
+          "legendFormat": "{{plane}}"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Stuck-crawl candidates (active, no progress 10m)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(crawlx_crawls_active) > 0 and (sum(rate(crawlx_interactions_executed_total[10m])) + sum(rate(crawlx_urls_succeeded_total[10m]))) == 0",
+          "legendFormat": "stalled"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Sessions and browsers",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Browser sessions / RSS",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(crawlx_browser_sessions)",
+          "legendFormat": "sessions"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(crawlx_browser_rss_bytes)",
+          "legendFormat": "rss bytes"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Crashes by reason / recoveries by rung",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 59
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(crawlx_browser_crashes_total[5m]))",
+          "legendFormat": "crash {{reason}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (rung) (rate(crawlx_session_recoveries_total[5m]))",
+          "legendFormat": "recovery rung {{rung}}"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Launch and settle duration p95",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 67
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_browser_launch_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "launch p95"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_settle_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "settle p95"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Settle timeouts / CPU pool queue depth",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 67
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(crawlx_settle_timeouts_total[5m]))",
+          "legendFormat": "settle timeouts"
+        },
+        {
+          "refId": "B",
+          "expr": "max(crawlx_cpu_pool_queue_depth)",
+          "legendFormat": "cpu pool queue"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Sessions by launch profile",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile) (crawlx_sessions_by_launch_profile)",
+          "legendFormat": "{{profile}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "row",
+      "title": "Journal and safety",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 83
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Journal T1 / T2 p95, halts",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 84
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_journal_t1_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "t1 p95"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_journal_t2_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "t2 p95"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(increase(crawlx_journal_halts_total[5m]))",
+          "legendFormat": "halts (5m)"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Unknown unreconciled",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 84
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(crawlx_interactions_unknown_unreconciled)",
+          "legendFormat": "unreconciled"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Safety verdicts / invariant violations",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 92
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (verdict) (rate(crawlx_safety_verdicts_total[5m]))",
+          "legendFormat": "{{verdict}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (reason) (increase(crawlx_safety_invariant_violations_total[5m]))",
+          "legendFormat": "violation {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Egress denials by plane and reason",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 92
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (plane,reason) (rate(crawlx_egress_denials_total[5m]))",
+          "legendFormat": "{{plane}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Trusted vs diagnostic action share by lane",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 100
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (lane) (rate(crawlx_actions_executed_total[5m])) / ignoring(lane) group_left sum(rate(crawlx_actions_executed_total[5m]))",
+          "legendFormat": "{{lane}}"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "row",
+      "title": "Scheduler and leases",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 108
+      }
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Scheduler op p95 by op / lease hold p95",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 109
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_scheduler_op_duration_seconds_bucket[5m])) by (le,op))",
+          "legendFormat": "{{op}} p95"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_scheduler_lease_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "lease hold p95"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Lease expired / fenced / reconcile p99.9",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 109
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(crawlx_lease_expired_total[5m]))",
+          "legendFormat": "expired"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(crawlx_lease_fenced_total[5m]))",
+          "legendFormat": "fenced"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.999, sum(rate(crawlx_lease_reconcile_duration_seconds_bucket[30m])) by (le))",
+          "legendFormat": "reconcile p99.9 (s)"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Leases held (scheduler lease_next rate) and crawls active",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 117
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(crawlx_scheduler_op_duration_seconds_count{op=\"lease_next\"}[5m]))",
+          "legendFormat": "lease_next/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(crawlx_crawls_active)",
+          "legendFormat": "crawls active"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "row",
+      "title": "Storage",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 125
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "DB pool in use / query p95 by op",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 126
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(crawlx_db_pool_in_use)",
+          "legendFormat": "pool in use"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_db_query_duration_seconds_bucket[5m])) by (le,op))",
+          "legendFormat": "{{op}} p95"
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "PostgreSQL: connections, replication lag, lock waits (postgres_exporter)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 126
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(pg_stat_activity_count)",
+          "legendFormat": "connections"
+        },
+        {
+          "refId": "B",
+          "expr": "max(pg_replication_lag_seconds)",
+          "legendFormat": "replication lag (s)"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(pg_locks_count{mode=~\".*ExclusiveLock\"})",
+          "legendFormat": "exclusive locks"
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Table growth (traffic_events, transitions, actions)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 134
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (relname) (pg_stat_user_tables_n_live_tup{relname=~\"traffic_events.*|transitions|actions\"})",
+          "legendFormat": "{{relname}}"
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "Object store: latency p95, error ratio, spool bytes",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 134
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_objectstore_duration_seconds_bucket[5m])) by (le,op))",
+          "legendFormat": "{{op}} p95"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(crawlx_objectstore_requests_total{outcome=\"error\"}[5m])) / sum(rate(crawlx_objectstore_requests_total[5m]))",
+          "legendFormat": "error ratio"
+        },
+        {
+          "refId": "C",
+          "expr": "max(crawlx_objectstore_spool_bytes)",
+          "legendFormat": "spool bytes"
+        }
+      ]
+    },
+    {
+      "id": 37,
+      "type": "row",
+      "title": "Models",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 142
+      }
+    },
+    {
+      "id": 38,
+      "type": "timeseries",
+      "title": "Model requests / abstentions by provider",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 143
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider,outcome) (rate(crawlx_model_requests_total[5m]))",
+          "legendFormat": "{{provider}} {{outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (provider) (rate(crawlx_model_abstentions_total[5m]))",
+          "legendFormat": "abstain {{provider}}"
+        }
+      ]
+    },
+    {
+      "id": 39,
+      "type": "timeseries",
+      "title": "Model latency p95 / breaker state",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 143
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_model_latency_seconds_bucket[5m])) by (le,provider))",
+          "legendFormat": "{{provider}} p95"
+        },
+        {
+          "refId": "B",
+          "expr": "max by (provider) (crawlx_model_breaker_state)",
+          "legendFormat": "breaker {{provider}}"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Fetch and politeness",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 151
+      }
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Origin wait p95 / throttles",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 152
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_fetch_origin_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "origin wait p95"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (reason) (rate(crawlx_fetch_throttles_total[5m]))",
+          "legendFormat": "throttle {{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Response outcome classes / politeness violations",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 152
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(crawlx_fetch_responses_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(crawlx_fetch_politeness_violations_total[5m]))",
+          "legendFormat": "politeness violations"
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "row",
+      "title": "Retention and webhooks",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 160
+      }
+    },
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "Overdue artifacts by kind / sweep failures / ZDR violations",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 161
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (kind) (crawlx_retention_overdue_artifacts)",
+          "legendFormat": "overdue {{kind}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(crawlx_retention_sweep_failures_total[15m]))",
+          "legendFormat": "sweep failures"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(increase(crawlx_zdr_violations_total[15m]))",
+          "legendFormat": "zdr violations"
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Webhooks: pending, oldest age, outcomes",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 161
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event) (crawlx_webhook_pending)",
+          "legendFormat": "pending {{event}}"
+        },
+        {
+          "refId": "B",
+          "expr": "max(crawlx_webhook_oldest_pending_age_seconds)",
+          "legendFormat": "oldest pending (s)"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (outcome) (rate(crawlx_webhook_deliveries_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "type": "row",
+      "title": "Capacity",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 169
+      }
+    },
+    {
+      "id": 47,
+      "type": "timeseries",
+      "title": "Renderer RSS per session (p95 across workers)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 170
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "quantile(0.95, crawlx_browser_rss_bytes / clamp_min(crawlx_browser_sessions, 1))",
+          "legendFormat": "rss/session p95"
+        }
+      ]
+    },
+    {
+      "id": 48,
+      "type": "timeseries",
+      "title": "Sessions per node / CPU per session",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 170
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (crawlx_browser_sessions)",
+          "legendFormat": "{{instance}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (instance) (rate(process_cpu_seconds_total{job=\"crawlx-worker\"}[5m])) / clamp_min(sum by (instance) (crawlx_browser_sessions), 1)",
+          "legendFormat": "cpu/session {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 49,
+      "type": "timeseries",
+      "title": "Target latency/error proxies per ramp step",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 178
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(crawlx_fetch_responses_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(crawlx_action_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "action p95 (s)"
+        }
+      ]
+    }
+  ]
+}

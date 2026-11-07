@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g26 State twins</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; max-width: 640px; }
+  label { display: block; margin: 8px 0; }
+  input { display: block; padding: 4px 6px; margin-top: 2px; width: 260px; }
+  .actions { display: flex; gap: 8px; margin: 12px 0; }
+</style>
+</head>
+<body>
+<h1>State twins</h1>
+<ul>
+  <li><a id="idx-profile" href="/g26/settings-profile">Profile settings</a></li>
+  <li><a id="idx-billing" href="/g26/settings-billing">Billing settings</a></li>
+  <li><a id="idx-news-a" href="/g26/news-a">News A</a></li>
+  <li><a id="idx-news-b" href="/g26/news-b">News B</a></li>
+</ul>
+<script>
+(function () {
+  ['idx-profile', 'idx-billing', 'idx-news-a', 'idx-news-b'].forEach(function (id) {
+    document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); });
+  });
+})();
+</script>
+</body>
+</html>

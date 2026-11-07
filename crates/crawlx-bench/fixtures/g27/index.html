@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280">
+<title>G27 actionability matrix</title>
+{{GYM_JS}}
+<style>
+  html, body { margin: 0; padding: 0; font: 14px/1.3 system-ui, sans-serif; background: #f4f4f6; color: #222; }
+  body { position: relative; width: 1280px; height: 800px; overflow: hidden; }
+  h1 { margin: 0; height: 34px; line-height: 34px; padding: 0 12px; font-size: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 300px); grid-template-rows: repeat(3, 220px); gap: 0 20px; padding: 0 12px; }
+  .cell { position: relative; box-sizing: border-box; height: 220px; overflow: hidden; }
+  .cell > .lbl { display: block; height: 16px; font-size: 12px; color: #666; }
+  .cell > .body { position: relative; height: 200px; background: #fff; border: 1px solid #ccd; box-sizing: border-box; padding: 8px; }
+  button { font: inherit; padding: 6px 12px; cursor: pointer; }
+  #c-covered-wrap { position: relative; display: inline-block; }
+  #c-overlay { position: absolute; left: -4px; top: -4px; right: -4px; bottom: -4px; background: #d33; opacity: 0.9; }
+  #c-zero { width: 0; height: 0; padding: 0; border: 0; overflow: hidden; }
+  #c-pointer-none { pointer-events: none; }
+  #c-hidden { display: none; }
+  #scroller, #sticky-scroller { height: 200px; overflow: auto; box-sizing: border-box; border: 1px solid #ccd; background: #fff; }
+  #scroller .spacer { height: 600px; }
+  #scroller .end { height: 120px; }
+  #sticky-scroller .pre { height: 100px; }
+  #sticky-scroller .post { height: 300px; }
+  #sticky-head { position: sticky; top: 0; height: 60px; line-height: 60px; background: #335; color: #fff; padding: 0 8px; }
+  #sticky-scroller .row { height: 36px; padding: 0 8px; }
+  #frame-wrap iframe { display: block; width: 100%; height: 200px; border: 1px solid #ccd; background: #fff; box-sizing: border-box; }
+  #cookie-banner { position: fixed; left: 0; right: 0; bottom: 0; height: 90px; box-sizing: border-box; padding: 24px 20px; background: #111; color: #fff; z-index: 100; display: flex; justify-content: space-between; align-items: center; }
+  #cookie-banner p { margin: 0; }
+  #modal-row { position: absolute; left: 12px; top: 740px; }
+</style>
+</head>
+<body>
+<h1>G27 actionability matrix</h1>
+<div class="grid">
+  <div class="cell"><span class="lbl">plain</span><div class="body"><button id="c-plain" type="button" onclick="__gym.hit('c-plain', event)">Plain</button></div></div>
+  <div class="cell"><span class="lbl">covered</span><div class="body"><span id="c-covered-wrap"><button id="c-covered" type="button" onclick="__gym.hit('c-covered', event)">Covered</button><div id="c-overlay"></div></span></div></div>
+  <div class="cell"><span class="lbl">zero size</span><div class="body"><button id="c-zero" type="button" onclick="__gym.hit('c-zero', event)">Zero size</button></div></div>
+  <div class="cell"><span class="lbl">pointer-events none</span><div class="body"><button id="c-pointer-none" type="button" onclick="__gym.hit('c-pointer-none', event)">Pointer none</button></div></div>
+
+  <div class="cell"><span class="lbl">display none</span><div class="body"><button id="c-hidden" type="button" onclick="__gym.hit('c-hidden', event)">Hidden</button></div></div>
+  <div class="cell"><span class="lbl">disabled</span><div class="body"><button id="c-disabled" type="button" disabled onclick="__gym.hit('c-disabled', event)">Disabled</button></div></div>
+  <div class="cell"><span class="lbl">nested scroll</span>
+    <div id="scroller"><div class="spacer"></div><button id="c-scrolled" type="button" onclick="__gym.hit('c-scrolled', event)">Scrolled</button><div class="end"></div></div>
+  </div>
+  <div class="cell"><span class="lbl">sticky header</span>
+    <div id="sticky-scroller">
+      <div class="pre"></div>
+      <div id="sticky-head">Sticky header</div>
+      <div class="row"><button id="c-sticky" type="button" onclick="__gym.hit('c-sticky', event)">Sticky</button></div>
+      <div class="post"></div>
+    </div>
+  </div>
+
+  <div class="cell" id="frame-wrap"><span class="lbl">same-origin iframe</span><iframe id="f1" title="Matrix frame" src="/g27/frame"></iframe></div>
+  <div class="cell"><span class="lbl">open shadow root</span><div class="body"><gym-open id="shadow-host"></gym-open></div></div>
+</div>
+
+<div id="modal-row"><button id="c-modal-covered" type="button" onclick="__gym.hit('c-modal-covered', event)">Modal covered</button></div>
+
+<div id="cookie-banner" role="region" aria-label="Cookie notice">
+  <p>We use cookies to keep this matrix deterministic.</p>
+  <button id="c-banner-accept" type="button" onclick="__gym.hit('c-banner-accept', event)">Accept</button>
+</div>
+
+<script>
+  (function () {
+    class GymOpen extends HTMLElement {
+      connectedCallback() {
+        if (this.shadowRoot) return;
+        var root = this.attachShadow({ mode: 'open' });
+        var btn = document.createElement('button');
+        btn.id = 'c-shadow-open';
+        btn.type = 'button';
+        btn.textContent = 'Shadow open';
+        btn.addEventListener('click', function (ev) { __gym.hit('c-shadow-open', ev); });
+        root.appendChild(btn);
+      }
+    }
+    customElements.define('gym-open', GymOpen);
+    // Start the sticky scroller scrolled so c-sticky sits under the sticky header.
+    document.getElementById('sticky-scroller').scrollTop = 120;
+  })();
+</script>
+</body>
+</html>

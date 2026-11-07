@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g12 Invoices</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<h1>Invoices</h1>
+<nav aria-label="Invoice links">
+  <ul>
+    <li><a id="inv-1" href="/g12/invoice?id=1">Invoice #1</a></li>
+    <li><a id="inv-2" href="/g12/invoice?id=2">Invoice #2</a></li>
+    <li><a id="inv-3" href="/g12/invoice?id=3">Invoice #3</a></li>
+    <li><a id="inv-4" href="/g12/invoice?id=4">Invoice #4</a></li>
+    <li><a id="inv-5" href="/g12/invoice?id=5">Invoice #5</a></li>
+    <li><a id="inv-1-utm" href="/g12/invoice?id=1&amp;utm_source=news">Invoice #1 (newsletter)</a></li>
+    <li><a id="inv-2-utm" href="/g12/invoice?id=2&amp;utm_campaign=x&amp;gclid=abc">Invoice #2 (campaign)</a></li>
+    <li><a id="inv-3-session" href="/g12/invoice?id=3&amp;sessionid=g12_session_canary_7d91e8c4">Invoice #3 (session)</a></li>
+    <li><a id="inv-1-sort" href="/g12/invoice?id=1&amp;sort=asc">Invoice #1 (sorted)</a></li>
+    <li><a id="list-p2" href="/g12/list?page=2">Invoice list page 2</a></li>
+    <li><a id="list-p3" href="/g12/list?page=3&amp;sort=desc">Invoice list page 3 (descending)</a></li>
+    <li><a id="inv-1-delete" href="/g12/invoice?id=1&amp;action=delete">Delete invoice 1 (link)</a></li>
+  </ul>
+</nav>
+<script>
+(function () {
+  function bind(id) {
+    document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); });
+  }
+  bind('inv-1');
+  bind('inv-2');
+  bind('inv-3');
+  bind('inv-4');
+  bind('inv-5');
+  bind('inv-1-utm');
+  bind('inv-2-utm');
+  bind('inv-3-session');
+  bind('inv-1-sort');
+  bind('list-p2');
+  bind('list-p3');
+  bind('inv-1-delete');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,507 @@
+{
+  "strategy": "interaction_bfs",
+  "version": 1,
+  "context": {
+    "candidates": 48,
+    "keyed_actions": 70,
+    "hidden_targets": 2,
+    "seed": 42
+  },
+  "rounds": [
+    {
+      "phase": "greedy",
+      "proposals": [
+        {
+          "key_id": "1559d8c7a3c4d00ef0b7ac8018529499",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a4c1d50b81f94467963cfac50c5aa0fcb17c8b0a6f10e4d369b99fd1f0ea6cc8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 312,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a4c1d50b81f9]"
+        },
+        {
+          "key_id": "70fd9df061d4ef6d2daf8b598e4327d8",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "f7eff62b5adfcade590a7b3023a0725e0ef4c6c7eaf9b5581928609fd67dede4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 52,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/about",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [f7eff62b5adf]"
+        },
+        {
+          "key_id": "80893d5e053cfece425ebad4837340f5",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 82,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/help#faq",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [11546801c7b6]"
+        },
+        {
+          "key_id": "ad358c8d3779e80d642817e5529cb244",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "13c675d39363b2599a5218a3f381b7708de2fee22df7fd98375731fae2a40598",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 392,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate button [13c675d39363]"
+        },
+        {
+          "key_id": "f07b96fe5cd34c7aa4692809a5aa90dd",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "d1c19c0b7c2db144d8458aefbf5f8434b9c3ca1f533483190e2a0cade59790e5",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 332,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [d1c19c0b7c2d]"
+        }
+      ]
+    },
+    {
+      "phase": "state_recovery",
+      "proposals": [
+        {
+          "key_id": "1559d8c7a3c4d00ef0b7ac8018529499",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a4c1d50b81f94467963cfac50c5aa0fcb17c8b0a6f10e4d369b99fd1f0ea6cc8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 312,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a4c1d50b81f9]"
+        },
+        {
+          "key_id": "70fd9df061d4ef6d2daf8b598e4327d8",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "f7eff62b5adfcade590a7b3023a0725e0ef4c6c7eaf9b5581928609fd67dede4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 52,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/about",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [f7eff62b5adf]"
+        },
+        {
+          "key_id": "80893d5e053cfece425ebad4837340f5",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 82,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/help#faq",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [11546801c7b6]"
+        },
+        {
+          "key_id": "ad358c8d3779e80d642817e5529cb244",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "13c675d39363b2599a5218a3f381b7708de2fee22df7fd98375731fae2a40598",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 392,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate button [13c675d39363]"
+        },
+        {
+          "key_id": "f07b96fe5cd34c7aa4692809a5aa90dd",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "d1c19c0b7c2db144d8458aefbf5f8434b9c3ca1f533483190e2a0cade59790e5",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 332,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [d1c19c0b7c2d]"
+        }
+      ]
+    },
+    {
+      "phase": "enablement_recovery",
+      "proposals": [
+        {
+          "key_id": "1559d8c7a3c4d00ef0b7ac8018529499",
+          "rank": 2,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "a4c1d50b81f94467963cfac50c5aa0fcb17c8b0a6f10e4d369b99fd1f0ea6cc8",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 312,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [a4c1d50b81f9]"
+        },
+        {
+          "key_id": "70fd9df061d4ef6d2daf8b598e4327d8",
+          "rank": 4,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "f7eff62b5adfcade590a7b3023a0725e0ef4c6c7eaf9b5581928609fd67dede4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 52,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/about",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [f7eff62b5adf]"
+        },
+        {
+          "key_id": "80893d5e053cfece425ebad4837340f5",
+          "rank": 3,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "11546801c7b64ca169b431fd0d696ea18a92052541aa7ea0108b0915c9cb20e4",
+            "action_kind": "click",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "click",
+          "target_backend_node": 82,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": "/help#faq",
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "click link [11546801c7b6]"
+        },
+        {
+          "key_id": "ad358c8d3779e80d642817e5529cb244",
+          "rank": 0,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "13c675d39363b2599a5218a3f381b7708de2fee22df7fd98375731fae2a40598",
+            "action_kind": "keyboard_activate",
+            "input_class": "none",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "keyboard_activate",
+          "target_backend_node": 392,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "keyboard_activate button [13c675d39363]"
+        },
+        {
+          "key_id": "f07b96fe5cd34c7aa4692809a5aa90dd",
+          "rank": 1,
+          "key": {
+            "principal": "member",
+            "route_template": "/app",
+            "element": "d1c19c0b7c2db144d8458aefbf5f8434b9c3ca1f533483190e2a0cade59790e5",
+            "action_kind": "set_checked",
+            "input_class": "bool:toggle",
+            "resource_context": "none",
+            "state_cluster": "8fe70517-cd24-cee5-c801-63c1ff5dc351"
+          },
+          "action_kind": "set_checked",
+          "target_backend_node": 332,
+          "navigate_url": null,
+          "epoch": {
+            "navigation_seq": 0,
+            "document_seq": 0,
+            "mutation_seq": 0
+          },
+          "strategy": "interaction_bfs",
+          "strategy_version": 1,
+          "confidence_micros": 500000,
+          "expected": {
+            "reveals": [],
+            "navigates_to": null,
+            "mutates_state": true
+          },
+          "hinted_risk": null,
+          "model_decision": null,
+          "summary": "set_checked checkbox [d1c19c0b7c2d]"
+        }
+      ]
+    }
+  ]
+}

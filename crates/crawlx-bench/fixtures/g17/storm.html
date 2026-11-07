@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g17 storm</title>
+{{GYM_JS}}
+</head>
+<body>
+<p>Storm window <span id="n"></span>.</p><button id="storm-close" type="button">Close</button>
+<script>
+(function () {
+document.getElementById('n').textContent = new URLSearchParams(location.search).get('n') || '?';
+  document.getElementById('storm-close').addEventListener('click', function (ev) { __gym.hit('storm-close', ev); window.close(); });
+})();
+</script>
+</body>
+</html>

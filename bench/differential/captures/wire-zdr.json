@@ -1,0 +1,250 @@
+{
+  "wireSample": {
+    "provenance": "black_box_run",
+    "system": "firecrawl",
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5",
+    "apiRoot": "http://127.0.0.1:3102",
+    "origin": "http://gym.test:4101"
+  },
+  "family": "wire-zdr",
+  "scenarios": [
+    {
+      "id": "zdr-true",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 10,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/tiny/",
+            "zeroDataRetention": true
+          },
+          "status": 403,
+          "response": {
+            "error": "Zero Data Retention (ZDR) is not enabled for your team. Contact support@firecrawl.com to enable this feature.",
+            "success": false
+          },
+          "elapsed_ms": 5
+        },
+        {
+          "step": "after:status-again",
+          "method": "GET",
+          "path": "/v2/crawl/unknown",
+          "status": 400,
+          "response": {
+            "error": "Invalid job ID format. Job ID must be a valid UUID.",
+            "success": false
+          },
+          "elapsed_ms": 1
+        },
+        {
+          "step": "after:errors",
+          "method": "GET",
+          "path": "/v2/crawl/unknown/errors",
+          "status": 400,
+          "response": {
+            "error": "Invalid job ID format. Job ID must be a valid UUID.",
+            "success": false
+          },
+          "elapsed_ms": 0
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "zdr-false",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "limit": 10,
+            "maxConcurrency": 1,
+            "url": "http://gym.test:4101/d2/tiny/",
+            "zeroDataRetention": false
+          },
+          "status": 200,
+          "response": {
+            "id": "01a18280-c1c2-75ca-9f3c-237e5131dc9f",
+            "success": true,
+            "url": "http://127.0.0.1:3102/v2/crawl/01a18280-c1c2-75ca-9f3c-237e5131dc9f"
+          },
+          "elapsed_ms": 20
+        },
+        {
+          "step": "final",
+          "method": "GET",
+          "path": "/v2/crawl/01a18280-c1c2-75ca-9f3c-237e5131dc9f",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:33:59.798Z",
+            "createdAt": "2026-10-28T12:33:58.722Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.076,
+            "expiresAt": "2026-10-29T12:34:02.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 6
+        },
+        {
+          "step": "after:status-again",
+          "method": "GET",
+          "path": "/v2/crawl/01a18280-c1c2-75ca-9f3c-237e5131dc9f",
+          "status": 200,
+          "response": {
+            "completed": 4,
+            "completedAt": "2026-10-28T12:33:59.798Z",
+            "createdAt": "2026-10-28T12:33:58.722Z",
+            "creditsUsed": -1,
+            "data": [
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/a",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/b",
+                "statusCode": 200
+              },
+              {
+                "sourceURL": "http://gym.test:4101/d2/tiny/c",
+                "statusCode": 200
+              }
+            ],
+            "duration": 1.076,
+            "expiresAt": "2026-10-29T12:34:02.000Z",
+            "status": "completed",
+            "success": true,
+            "total": 4
+          },
+          "elapsed_ms": 6
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "zdr-string",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/crawl",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/",
+            "zeroDataRetention": "true"
+          },
+          "status": 400,
+          "response": {
+            "code": "BAD_REQUEST",
+            "details": [
+              {
+                "code": "invalid_type",
+                "expected": "boolean",
+                "message": "Invalid input: expected boolean, received string",
+                "path": [
+                  "zeroDataRetention"
+                ]
+              }
+            ],
+            "error": "Bad Request",
+            "success": false
+          },
+          "elapsed_ms": 2
+        }
+      ],
+      "notes": {}
+    },
+    {
+      "id": "zdr-scrape",
+      "exchanges": [
+        {
+          "step": "request",
+          "method": "POST",
+          "path": "/v2/scrape",
+          "request": {
+            "url": "http://gym.test:4101/d2/tiny/",
+            "zeroDataRetention": true
+          },
+          "status": 403,
+          "response": {
+            "error": "Zero Data Retention (ZDR) is not enabled for your team. Contact support@firecrawl.com to enable this feature.",
+            "success": false
+          },
+          "elapsed_ms": 4
+        }
+      ],
+      "notes": {}
+    }
+  ],
+  "accessLog": {
+    "entries": [
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "127.0.0.1:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/robots.txt",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/sitemap.xml",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/a",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/b",
+        "host": "gym.test:4101"
+      },
+      {
+        "method": "GET",
+        "path": "/d2/tiny/c",
+        "host": "gym.test:4101"
+      }
+    ]
+  }
+}

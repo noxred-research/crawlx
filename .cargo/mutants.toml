@@ -1,0 +1,33 @@
+# cargo-mutants: the decision crates only. Run with
+#   cargo mutants -p crawlx-safety --no-shuffle -j 4     (then ci/mutants-gate.sh)
+# `cargo mutants -p crawlx-policy` / `-p crawlx-url` for the other two; the CI job `mutants`
+# runs all three weekly and gates only crawlx-safety at >= 95 % caught.
+
+# Only the sources of the three decision crates are mutated.
+examine_globs = [
+  "crates/crawlx-safety/src/**/*.rs",
+  "crates/crawlx-policy/src/**/*.rs",
+  "crates/crawlx-url/src/**/*.rs",
+]
+
+# Generated code, fixtures, benches and test modules are never mutated.
+exclude_globs = [
+  "**/build.rs",
+  "**/benches/**",
+  "**/tests/**",
+  "**/fixtures/**",
+  "**/testkit*",
+  "**/*_gen.rs",
+]
+
+# Formatting impls carry no decision logic; a mutant per `fmt` is noise.
+exclude_re = ["impl (std::fmt::|fmt::)?Debug for", "impl (std::fmt::|fmt::)?Display for"]
+
+# Each mutant runs only the mutated package's tests (cargo-mutants default); the trybuild
+# driver compiles a separate project per run and cannot observe a mutation, so skip it.
+additional_cargo_test_args = ["--", "--skip", "compile_fail_cases"]
+
+# Generous budget: the baseline is measured once; a mutant that loops forever is reported
+# as `timeout` and counts as caught by ci/mutants-gate.sh only when the gate says so.
+timeout_multiplier = 3.0
+minimum_test_timeout = 60.0

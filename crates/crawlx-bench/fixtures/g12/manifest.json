@@ -1,0 +1,138 @@
+{
+  "id": "g12",
+  "title": "Query-param resources",
+  "version": 1,
+  "url_path": "/g12/",
+  "controls": [
+    {
+      "id": "inv-1",
+      "selector": "#inv-1",
+      "role": "link",
+      "name": "Invoice #1",
+      "logical_id": "inv-1"
+    },
+    {
+      "id": "inv-2",
+      "selector": "#inv-2",
+      "role": "link",
+      "name": "Invoice #2",
+      "logical_id": "inv-2"
+    },
+    {
+      "id": "inv-3",
+      "selector": "#inv-3",
+      "role": "link",
+      "name": "Invoice #3",
+      "logical_id": "inv-3"
+    },
+    {
+      "id": "inv-4",
+      "selector": "#inv-4",
+      "role": "link",
+      "name": "Invoice #4",
+      "logical_id": "inv-4"
+    },
+    {
+      "id": "inv-5",
+      "selector": "#inv-5",
+      "role": "link",
+      "name": "Invoice #5",
+      "logical_id": "inv-5"
+    },
+    {
+      "id": "inv-1-utm",
+      "selector": "#inv-1-utm",
+      "role": "link",
+      "name": "Invoice #1 (newsletter)",
+      "logical_id": "inv-1"
+    },
+    {
+      "id": "inv-2-utm",
+      "selector": "#inv-2-utm",
+      "role": "link",
+      "name": "Invoice #2 (campaign)",
+      "logical_id": "inv-2"
+    },
+    {
+      "id": "inv-3-session",
+      "selector": "#inv-3-session",
+      "role": "link",
+      "name": "Invoice #3 (session)",
+      "logical_id": "inv-3"
+    },
+    {
+      "id": "inv-1-sort",
+      "selector": "#inv-1-sort",
+      "role": "link",
+      "name": "Invoice #1 (sorted)",
+      "logical_id": "inv-1-sort"
+    },
+    {
+      "id": "list-p2",
+      "selector": "#list-p2",
+      "role": "link",
+      "name": "Invoice list page 2",
+      "logical_id": "list-p2"
+    },
+    {
+      "id": "list-p3",
+      "selector": "#list-p3",
+      "role": "link",
+      "name": "Invoice list page 3 (descending)",
+      "logical_id": "list-p3"
+    },
+    {
+      "id": "inv-1-delete",
+      "selector": "#inv-1-delete",
+      "role": "link",
+      "name": "Delete invoice 1 (link)",
+      "logical_id": "inv-1-delete",
+      "risk": "destructive",
+      "effect": "POST /g12/api/invoice/1/delete"
+    },
+    {
+      "id": "pay",
+      "selector": "#pay",
+      "role": "button",
+      "name": "Mark paid",
+      "page": "/invoice?id=1",
+      "effect": "POST /g12/api/invoice/1/pay",
+      "logical_id": "pay"
+    },
+    {
+      "id": "inv-back",
+      "selector": "#inv-back",
+      "role": "link",
+      "name": "Back to index",
+      "page": "/invoice?id=1",
+      "logical_id": "inv-back"
+    },
+    {
+      "id": "list-back",
+      "selector": "#list-back",
+      "role": "link",
+      "name": "Back to index",
+      "page": "/list?page=2",
+      "logical_id": "list-back"
+    }
+  ],
+  "expected": {
+    "forbidden_ops": [
+      {
+        "method": "POST",
+        "path_prefix": "/g12/api/invoice",
+        "profiles": [
+          "read_only"
+        ]
+      }
+    ],
+    "operations": [
+      "POST /g12/api/invoice/1/pay",
+      "POST /g12/api/invoice/2/pay",
+      "POST /g12/api/invoice/3/pay",
+      "POST /g12/api/invoice/4/pay",
+      "POST /g12/api/invoice/5/pay",
+      "POST /g12/api/invoice/1/delete"
+    ]
+  }
+}

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g04 shadow DOM</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  gym-panel, gym-vault { display: block; border: 1px solid #889; padding: 10px; margin: 0 0 14px; }
+</style>
+</head>
+<body>
+<h1>Shadow DOM</h1>
+<p>Last: <span id="out">none</span></p>
+
+<!-- three open roots (4 controls each) -->
+<gym-panel id="open-1" data-label="Editor" data-prefix="o1"></gym-panel>
+<gym-panel id="open-2" data-label="Viewer" data-prefix="o2"></gym-panel>
+<gym-panel id="open-3" data-label="Planner" data-prefix="o3"></gym-panel>
+
+<!-- open root with four slotted light-DOM buttons -->
+<gym-panel id="slotted" data-label="Slotted" data-slots="1">
+  <button id="slot-1" type="button" slot="actions">Slot save</button>
+  <button id="slot-2" type="button" slot="actions">Slot cancel</button>
+  <button id="slot-3" type="button" slot="actions">Slot publish</button>
+  <button id="slot-4" type="button" slot="actions">Slot archive</button>
+</gym-panel>
+
+<!-- two closed roots (4 controls each) -->
+<gym-vault id="closed-1" data-label="Vault A" data-prefix="c1"></gym-vault>
+<gym-vault id="closed-2" data-label="Vault B" data-prefix="c2"></gym-vault>
+
+<script>
+(function () {
+  var out = document.getElementById('out');
+  var VERBS = ['Save', 'Cancel', 'Publish', 'Archive'];
+
+  function fill(root, host, label, prefix) {
+    var h = document.createElement('h2');
+    h.textContent = label;
+    root.appendChild(h);
+    if (host.dataset.slots) {
+      var slot = document.createElement('slot');
+      slot.name = 'actions';
+      root.appendChild(slot);
+      return;
+    }
+    VERBS.forEach(function (v, i) {
+      var id = prefix + '-' + (i + 1);
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.id = id;
+      b.textContent = v + ' ' + label;
+      b.addEventListener('click', function (ev) { __gym.hit(id, ev); out.textContent = id; });
+      root.appendChild(b);
+    });
+  }
+
+  class GymPanel extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      var root = this.attachShadow({ mode: 'open' });
+      fill(root, this, this.dataset.label, this.dataset.prefix);
+    }
+  }
+  class GymVault extends HTMLElement {
+    connectedCallback() {
+      if (this.__root) return;
+      var root = this.attachShadow({ mode: 'closed' });
+      this.__root = true;
+      fill(root, this, this.dataset.label, this.dataset.prefix);
+    }
+  }
+  customElements.define('gym-panel', GymPanel);
+  customElements.define('gym-vault', GymVault);
+
+  ['slot-1', 'slot-2', 'slot-3', 'slot-4'].forEach(function (id) {
+    document.getElementById(id).addEventListener('click', function (ev) { __gym.hit(id, ev); out.textContent = id; });
+  });
+})();
+</script>
+</body>
+</html>

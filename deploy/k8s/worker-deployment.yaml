@@ -1,0 +1,126 @@
+# crawlx worker pool: pinned Chromium, loopback egress proxy, Session Actors.
+# Security posture is the plan's excerpt verbatim: non-root, no privilege escalation, read-only
+# root, all capabilities dropped, the crawlx-chromium seccomp profile (user namespaces for
+# Chromium's sandbox, nothing wider), tmpfs for profiles and a *sized* /dev/shm.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crawlx-worker
+  namespace: crawlx
+  labels: { app: crawlx-worker }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: crawlx-worker }
+  strategy:
+    type: RollingUpdate
+    # Scale-in and rollouts drain (crawlx admin drain --worker <id>); never kill mid-action.
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 1 }
+  template:
+    metadata:
+      labels:
+        app: crawlx-worker
+        # RB-11 level 3: set to "denied" to match crawlx-worker-deny-all-egress (networkpolicy.yaml)
+        crawlx.dev/egress: allowed
+        # canary workers are labeled with the Chromium version they run
+        chromium: "155.0.8059.84"
+    spec:
+      automountServiceAccountToken: false
+      # drain: SIGTERM stops new leases; sessions hand over at the next action boundary
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: Localhost
+          localhostProfile: crawlx-chromium.json
+      containers:
+        - name: worker
+          image: ghcr.io/noxred-research/crawlx-worker:v0.1.0-chromium155.0.8059.84
+          args:
+            - worker
+            - --max-sessions=4
+            - --contexts-per-browser=4
+            - --artifacts-dir=/var/lib/crawlx/artifacts
+            - --metrics-bind=127.0.0.1:9464
+          env:
+            - name: CRAWLX_ENVIRONMENT
+              value: prod
+            - name: CRAWLX_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: crawlx-db, key: url } }
+            - name: CRAWLX_ZDR_REDIS_URL
+              valueFrom: { secretKeyRef: { name: crawlx-zdr, key: url, optional: true } }
+            - name: CRAWLX_OTLP_ENDPOINT
+              value: http://otel-collector.observability:4317
+            - name: CRAWLX_S3_ENDPOINT
+              valueFrom: { configMapKeyRef: { name: crawlx-objectstore, key: endpoint, optional: true } }
+            - name: CRAWLX_S3_BUCKET
+              valueFrom: { configMapKeyRef: { name: crawlx-objectstore, key: bucket, optional: true } }
+            # Artifact custody. Required: without both settings the worker refuses to start.
+            # Exactly one key provider, the same one as the API: the key file below, or
+            # CRAWLX_ARTIFACT_KMS_KEY_ID=<AWS KMS key ID/ARN> instead of the file (never both).
+            - name: CRAWLX_ARTIFACT_KEY_FILE
+              value: /run/secrets/crawlx-artifact/artifact_key
+            # Dedicated volatile (no RDB/AOF, noeviction) Redis for the run-wide secret registry,
+            # not the ZDR delivery Redis. Optional CRAWLX_SECRET_AUTHORITY_TTL_SECS (default and max 86400).
+            - name: CRAWLX_SECRET_REDIS_URL
+              valueFrom: { secretKeyRef: { name: crawlx-secret-registry, key: url } }
+            - name: TMPDIR
+              value: /tmp/crawlx
+            # HTML parse admission budget: input bytes x 500 per parse; 4 GiB + 256 MiB
+            # article output + 1.5 GiB tmpfs/shm leaves ~6 GiB of the 12Gi limit for Chromium.
+            - name: CRAWLX_PARSE_MEMORY_BYTES
+              value: "4294967296"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+            seccompProfile:
+              type: Localhost
+              localhostProfile: crawlx-chromium.json
+          resources:
+            requests: { cpu: "4", memory: 8Gi }
+            limits: { memory: 12Gi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp/crawlx }      # Chromium profile dirs (tmpfs)
+            - { name: shm, mountPath: /dev/shm }         # sized, not disabled
+            - { name: artifacts, mountPath: /var/lib/crawlx/artifacts }
+            - { name: artifact-key, mountPath: /run/secrets/crawlx-artifact, readOnly: true }
+        - name: metrics
+          image: otel/opentelemetry-collector-contrib:0.118.0
+          args: ["--config=/etc/otelcol/config.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+          resources:
+            requests: { cpu: "20m", memory: 64Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: metrics-config, mountPath: /etc/otelcol, readOnly: true }
+      volumes:
+        - { name: tmp, emptyDir: { medium: Memory, sizeLimit: 512Mi } }
+        - { name: shm, emptyDir: { medium: Memory, sizeLimit: 1Gi } }
+        - name: artifact-key
+          secret:
+            secretName: crawlx-artifact-key
+            items: [{ key: artifact_key, path: artifact_key, mode: 0440 }]
+        - name: artifacts
+          persistentVolumeClaim: { claimName: crawlx-artifacts }
+        - name: metrics-config
+          configMap: { name: crawlx-metrics-sidecar }
+---
+# PID limit (`limits.pids: 4096`): Kubernetes has no per-pod pids limit in the
+# resource block; set it through the kubelet's PodPidsLimit on the worker node pool, or with
+# a RuntimeClass whose handler configures `pids.max`. Documented here so it is not forgotten.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: crawlx-worker
+handler: runc
+overhead:
+  podFixed: { memory: 256Mi }

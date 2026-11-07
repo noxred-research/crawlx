@@ -1,0 +1,79 @@
+{
+  "id": "g21",
+  "title": "Conjunctive preconditions",
+  "version": 1,
+  "url_path": "/g21/",
+  "controls": [
+    {
+      "id": "x1",
+      "selector": "#x1",
+      "role": "button",
+      "name": "First prerequisite",
+      "logical_id": "x1"
+    },
+    {
+      "id": "x2",
+      "selector": "#x2",
+      "role": "button",
+      "name": "Second prerequisite",
+      "logical_id": "x2"
+    },
+    {
+      "id": "y",
+      "selector": "#y",
+      "role": "button",
+      "name": "Finish Y",
+      "logical_id": "y",
+      "requires": [
+        "x1",
+        "x2"
+      ]
+    },
+    {
+      "id": "a",
+      "selector": "#a",
+      "role": "button",
+      "name": "Open A",
+      "logical_id": "a"
+    },
+    {
+      "id": "b",
+      "selector": "#b",
+      "role": "button",
+      "name": "Reveal B",
+      "logical_id": "b",
+      "requires": [
+        "a"
+      ]
+    },
+    {
+      "id": "z",
+      "selector": "#z",
+      "role": "button",
+      "name": "Decoy Z",
+      "logical_id": "z"
+    }
+  ],
+  "expected": {
+    "enablement": [
+      {
+        "requires": [
+          "x1",
+          "x2"
+        ],
+        "target": "y",
+        "kind": "conjunctive"
+      },
+      {
+        "requires": [
+          "a"
+        ],
+        "target": "b",
+        "kind": "simple"
+      }
+    ],
+    "operations": [],
+    "target_recall_min": 1,
+    "target_precision_min": 1
+  }
+}

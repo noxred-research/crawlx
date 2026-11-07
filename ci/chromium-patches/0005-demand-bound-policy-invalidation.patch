@@ -1,0 +1,476 @@
+Subject: [PATCH] policy: demand-bind invalidation startup under background suppression
+
+Base: Chromium 155.0.8059.84
+Base-Commit: 5869fe313571d75152b77813cf0a4ee26a4e6df0
+Source-Base: https://raw.githubusercontent.com/chromium/chromium/155.0.8059.84/
+Original-SHA256: 39ed72ec9278df44d1a1d4a6fa6a02a1470b9f7dd282fb314c1c2ef55dd3007d  chrome/browser/policy/BUILD.gn
+Original-SHA256: 7a744ecd7273f8e6eb5a0dfda80a48918118d3a02aef695f7dacfa0835394020  chrome/browser/policy/cloud/fm_registration_token_uploader.h
+Original-SHA256: de2fd42faf5e5d1b1da851be54e71eb8a863664caeda3e645e8f19371c419e00  chrome/browser/policy/cloud/fm_registration_token_uploader.cc
+Original-SHA256: c2ea25b69ad5ada09fc3f9ff0b4761671ddfe6a2858564889b574683e074b273  chrome/browser/policy/cloud/fm_registration_token_uploader_unittest.cc
+Reference-SHA256: 4b85f6e3d2e688d83ff9bebbc96f38203483377848bc1f1becb1139ab5d15175  chrome/browser/policy/cloud/user_fm_registration_token_uploader.h
+Reference-SHA256: 0061b0cf7bd468c0ef2926b9d1bfa1bd9cd770785a1765f2f49f2ea9fa7888c5  chrome/browser/policy/cloud/user_fm_registration_token_uploader.cc
+Reference-SHA256: a33fa33ac09689ce8df4a9fcb0cf302bd3d76f1ffd29530d478bb987d80eb657  chrome/browser/policy/cloud/user_fm_registration_token_uploader_factory.cc
+Reference-SHA256: d92a6d274895553398b481c56bf29ddf17dfd10ed0eba33be6682142941841c6  chrome/browser/invalidation/profile_invalidation_provider_factory.cc
+Reference-SHA256: 331049d5964bf9049b1a0e85757b5d60e363a90d2e2fd59f7bccf16a433c92b0  components/policy/core/common/cloud/cloud_policy_core.h
+Reference-SHA256: 7c913ed1ac322fc0e8df55ee9bca291142c1d995d90f561dc7efae2c2036dd5b  components/policy/core/common/cloud/cloud_policy_core.cc
+Reference-SHA256: ef24bf2e1775d584387623f9118ed5b1e5a6781a1f78f26e1dd6ae23fd5e3ab6  components/invalidation/invalidation_listener_impl.cc
+Reference-SHA256: 12621a0cb7f9d837a1c9c9cda5964957c89eb6b81d7b8ae5ebded80971d1defd  components/invalidation/invalidation_listener_impl.h
+Reference-SHA256: b7db55a8a2d084f90c5781046c9070e543da846540a2102650bf0d7a67f20f77  components/gcm_driver/instance_id/instance_id_impl.cc
+Reference-SHA256: a1c2da223e741ae20329d4a1d2b1594b38029f0c9b991900db7da7451f867e32  components/gcm_driver/gcm_driver_desktop.cc
+Reference-SHA256: d59176056ec3ff8cea404755d974a9d069362501ff4abc2854db9727da651634  components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.h
+Reference-SHA256: cdba9ed1538717b39d66ccd4768c244281736d2a42e5fbd93e2e35c2d8651d53  components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.cc
+Reference-SHA256: 8844a64c1cf1d41a9cd7eaf0b2b6c516c6819651ad32c884582a2c4517c14c72  components/gcm_driver/instance_id/BUILD.gn
+Reference-SHA256: 012a236cac8efdba04b1e56b46779f339c22fae5fd3770778e9e74b75fcbb8c6  components/gcm_driver/BUILD.gn
+
+With --disable-background-networking, defer only policy-owned listener startup
+until its CloudPolicyCore has a registered client. Observe existing core/client
+lifecycle seams: a late connection or registration starts the listener exactly
+once; a disconnect drops the soon-to-be-destroyed client observation but keeps
+the core observation for managed reconnect. Core destruction clears deferred
+observations and the raw core reference. Shutdown detaches observations and
+does not shut down a listener that never started. No Profile pointer is added.
+
+After startup, leave invalidation delivery, token renewal, uploads and retries
+unchanged, including managed reconnect. Without the flag, retain eager startup.
+No changes to profile invalidation providers, GCM, InstanceID, explicit webpage
+Push, authentication, cookies, native forms, TLS or security policy consumers.
+
+Source route: eager UserFmRegistrationTokenUploader profile initialization
+creates policy/remote-command FmRegistrationTokenUploaders. Their listener
+Start() fetches a lazy InstanceID token, but InstanceIDImpl construction calls
+GetInstanceIDData(), whose desktop implementation requests IMMEDIATE_START.
+InstanceIDImpl also discards GetToken flags. This is source attribution, not
+proof that this route caused the observed android.clients.google.com checkin.
+
+Add seven desktop lifecycle regressions in both flag modes using the real
+InvalidationListener, InstanceIDDriver and InstanceIDImpl over the existing
+fake GCM transport. Count actual store reads and token fetches; assert handler
+presence and upload calls. Cover unregistered startup, existing/late managed
+registration, duplicate notifications, reconnect before registration, managed
+token renewal after reconnect, shutdown before later registration, and pending
+token delivery after shutdown. Also cover core destruction while deferred.
+
+Test target: unit_tests
+Test filter: FmRegistrationTokenUploaderTest.*:BackgroundNetworking/FmRegistrationTokenUploaderLifecycleTest.*
+New real-driver lifecycle tests exclude Android, whose InstanceID backend is
+different; the implementation and existing tests remain cross-platform.
+Add explicit non_code_constants dependency to policy impl and tests, and real
+invalidation/GCM test-support dependencies to policy unit_tests. No new library.
+No compilation, tests, formatters, linters or patch-application checks run.
+
+diff --git a/chrome/browser/policy/BUILD.gn b/chrome/browser/policy/BUILD.gn
+--- a/chrome/browser/policy/BUILD.gn
++++ b/chrome/browser/policy/BUILD.gn
+@@ -831,9 +831,13 @@
+     ":test_support",
+     "//chrome/browser/policy:test_support",
+     "//chrome/browser/prefs",
++    "//chrome/common:non_code_constants",
+     "//chrome/test:test_support",
+     "//components/account_id:test_support",
+     "//components/enterprise:test_support",
++    "//components/gcm_driver:test_support",
++    "//components/gcm_driver/instance_id:test_support",
++    "//components/invalidation",
+     "//components/invalidation:test_support",
+     "//components/policy/core/browser:test_support",
+     "//components/policy/core/common:test_support",
+@@ -1258,6 +1262,7 @@
+     "//chrome/browser/ui/toolbar/chrome_labs",
+     "//chrome/browser/ui/webui/version",
+     "//chrome/browser/webauthn",
++    "//chrome/common:non_code_constants",
+     "//components/autofill/core/browser/at_memory/policy",
+     "//components/blocked_content",
+     "//components/bookmarks/managed",
+diff --git a/chrome/browser/policy/cloud/fm_registration_token_uploader.h b/chrome/browser/policy/cloud/fm_registration_token_uploader.h
+--- a/chrome/browser/policy/cloud/fm_registration_token_uploader.h
++++ b/chrome/browser/policy/cloud/fm_registration_token_uploader.h
+@@ -9,6 +9,7 @@
+ 
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
+ #include "base/sequence_checker.h"
+ #include "base/time/time.h"
+ #include "components/invalidation/invalidation_listener.h"
+@@ -22,7 +23,9 @@
+ // Responsible for starting `InvalidationListener` and uploading FM registration
+ // token (obtained by the listener) to a backend server.
+ class FmRegistrationTokenUploader
+-    : public invalidation::RegistrationTokenHandler {
++    : public invalidation::RegistrationTokenHandler,
++      private CloudPolicyCore::Observer,
++      private CloudPolicyClient::Observer {
+  public:
+   FmRegistrationTokenUploader(
+       PolicyInvalidationScope scope,
+@@ -49,6 +52,16 @@
+     base::Time token_end_of_life;
+   };
+ 
++  // Observe only until the listener starts. A registered cloud policy client is
++  // explicit demand for policy invalidations, even with background networking
++  // disabled.
++  void StartInvalidationListener();
++  void OnCoreConnected(CloudPolicyCore* core) override;
++  void OnRefreshSchedulerStarted(CloudPolicyCore* core) override;
++  void OnCoreDisconnecting(CloudPolicyCore* core) override;
++  void OnCoreDestruction(CloudPolicyCore* core) override;
++  void OnRegistrationStateChanged(CloudPolicyClient* client) override;
++
+   void DoUploadRegistrationToken(TokenData token_data);
+   void DoAsyncUploadRegistrationToken(TokenData token_data,
+                                       base::TimeDelta delay);
+@@ -64,6 +77,12 @@
+ 
+   raw_ptr<CloudPolicyCore> core_ = nullptr;
+ 
++  bool listener_started_ = false;
++  base::ScopedObservation<CloudPolicyCore, CloudPolicyCore::Observer>
++      startup_core_observation_{this};
++  base::ScopedObservation<CloudPolicyClient, CloudPolicyClient::Observer>
++      startup_client_observation_{this};
++
+   std::unique_ptr<CloudPolicyCoreConnectionObserver> core_observer_;
+   std::unique_ptr<CloudPolicyClientRegistrationObserver> client_observer_;
+   std::unique_ptr<UploadJob> upload_job_;
+diff --git a/chrome/browser/policy/cloud/fm_registration_token_uploader.cc b/chrome/browser/policy/cloud/fm_registration_token_uploader.cc
+--- a/chrome/browser/policy/cloud/fm_registration_token_uploader.cc
++++ b/chrome/browser/policy/cloud/fm_registration_token_uploader.cc
+@@ -4,10 +4,12 @@
+ 
+ #include "chrome/browser/policy/cloud/fm_registration_token_uploader.h"
+ 
++#include "base/command_line.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback.h"
+ #include "base/notreached.h"
+ #include "base/scoped_observation.h"
++#include "chrome/common/chrome_switches.h"
+ #include "components/policy/core/common/cloud/policy_invalidation_scope.h"
+ #include "components/policy/core/common/cloud/signing_service.h"
+ #include "components/policy/core/common/policy_logger.h"
+@@ -162,13 +164,68 @@
+   CHECK_NE(scope_, PolicyInvalidationScope::kDeviceLocalAccount)
+       << "Registration token is not expected for device local "
+          "accounts";
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
++          switches::kDisableBackgroundNetworking)) {
++    // Starting the listener fetches an InstanceID token, which can initiate GCM
++    // check-in even for a new, unmanaged profile. Wait for an actual policy
++    // registration instead; do not disable invalidations for managed clients.
++    startup_core_observation_.Observe(core_);
++    OnCoreConnected(core_);
++  } else {
++    StartInvalidationListener();
++  }
++}
++
++FmRegistrationTokenUploader::~FmRegistrationTokenUploader() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++
++  startup_client_observation_.Reset();
++  startup_core_observation_.Reset();
++  if (listener_started_) {
++    invalidation_listener_->Shutdown();
++  }
++}
++
++void FmRegistrationTokenUploader::StartInvalidationListener() {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  CHECK(!listener_started_);
++  startup_client_observation_.Reset();
++  startup_core_observation_.Reset();
++  listener_started_ = true;
+   invalidation_listener_->Start(this);
+ }
+ 
+-FmRegistrationTokenUploader::~FmRegistrationTokenUploader() {
+-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+-
+-  invalidation_listener_->Shutdown();
++void FmRegistrationTokenUploader::OnCoreConnected(CloudPolicyCore* core) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (CloudPolicyClient* client = core->client()) {
++    startup_client_observation_.Observe(client);
++    OnRegistrationStateChanged(client);
++  }
++}
++
++void FmRegistrationTokenUploader::OnRefreshSchedulerStarted(
++    CloudPolicyCore* core) {}
++
++void FmRegistrationTokenUploader::OnCoreDisconnecting(CloudPolicyCore* core) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  // Disconnect destroys the client after notifying observers. Keep observing
++  // the core so a later managed connection can still start the listener.
++  startup_client_observation_.Reset();
++}
++
++void FmRegistrationTokenUploader::OnCoreDestruction(CloudPolicyCore* core) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  startup_client_observation_.Reset();
++  startup_core_observation_.Reset();
++  core_ = nullptr;
++}
++
++void FmRegistrationTokenUploader::OnRegistrationStateChanged(
++    CloudPolicyClient* client) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (client->is_registered()) {
++    StartInvalidationListener();
++  }
+ }
+ 
+ void FmRegistrationTokenUploader::OnRegistrationTokenReceived(
+diff --git a/chrome/browser/policy/cloud/fm_registration_token_uploader_unittest.cc b/chrome/browser/policy/cloud/fm_registration_token_uploader_unittest.cc
+--- a/chrome/browser/policy/cloud/fm_registration_token_uploader_unittest.cc
++++ b/chrome/browser/policy/cloud/fm_registration_token_uploader_unittest.cc
+@@ -6,9 +6,16 @@
+ 
+ #include <stdint.h>
+ 
++#include "base/command_line.h"
+ #include "base/test/protobuf_matchers.h"
++#include "base/test/scoped_command_line.h"
+ #include "base/test/task_environment.h"
++#include "build/build_config.h"
++#include "chrome/common/chrome_switches.h"
++#include "components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.h"
++#include "components/gcm_driver/instance_id/instance_id_driver.h"
+ #include "components/invalidation/invalidation_listener.h"
++#include "components/invalidation/invalidation_listener_impl.h"
+ #include "components/policy/core/common/cloud/cloud_policy_client.h"
+ #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+ #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
+@@ -283,4 +290,229 @@
+   core_.Disconnect();
+ }
+ 
++#if !BUILDFLAG(IS_ANDROID)
++
++namespace {
++
++// Exercise the real listener, InstanceIDDriver and InstanceIDImpl. Count both
++// store reads (the eager desktop startup path) and registration token fetches.
++class CountingGCMDriver : public instance_id::FakeGCMDriverForInstanceID {
++ public:
++  int instance_data_requests = 0;
++  int token_requests = 0;
++
++ protected:
++  void GetInstanceIDData(const std::string& app_id,
++                         GetInstanceIDDataCallback callback) override {
++    ++instance_data_requests;
++    FakeGCMDriverForInstanceID::GetInstanceIDData(app_id, std::move(callback));
++  }
++
++  void GetToken(const std::string& app_id,
++                const std::string& authorized_entity,
++                const std::string& scope,
++                base::TimeDelta time_to_live,
++                GetTokenCallback callback) override {
++    ++token_requests;
++    FakeGCMDriverForInstanceID::GetToken(
++        app_id, authorized_entity, scope, time_to_live, std::move(callback));
++  }
++};
++
++}  // namespace
++
++class FmRegistrationTokenUploaderLifecycleTest
++    : public FmRegistrationTokenUploaderTest,
++      public testing::WithParamInterface<bool> {
++ protected:
++  void SetUp() override {
++    base::CommandLine* command_line = command_line_.GetProcessCommandLine();
++    command_line->RemoveSwitch(switches::kDisableBackgroundNetworking);
++    if (GetParam()) {
++      command_line->AppendSwitch(switches::kDisableBackgroundNetworking);
++    }
++  }
++
++  std::unique_ptr<FmRegistrationTokenUploader> CreateUploader() {
++    return std::make_unique<FmRegistrationTokenUploader>(
++        PolicyInvalidationScope::kUser, listener_.get(), &core_);
++  }
++
++  void ExpectRequests(int expected) {
++    task_environment_.RunUntilIdle();
++    EXPECT_EQ(gcm_driver_.instance_data_requests, expected);
++    EXPECT_EQ(gcm_driver_.token_requests, expected);
++    EXPECT_EQ(instance_id_driver_.ExistsInstanceID(app_id_), expected != 0);
++    EXPECT_EQ(gcm_driver_.GetAppHandler(app_id_) != nullptr, expected != 0);
++  }
++
++  base::test::ScopedCommandLine command_line_;
++  CountingGCMDriver gcm_driver_;
++  instance_id::InstanceIDDriver instance_id_driver_{&gcm_driver_};
++  std::unique_ptr<invalidation::InvalidationListener> listener_ =
++      invalidation::InvalidationListener::Create(
++          &gcm_driver_, &instance_id_driver_, kFakeProjectNumber, "[test]");
++  const std::string app_id_ =
++      std::string(invalidation::InvalidationListener::kFmAppId) + "-1234567890";
++};
++
++TEST_P(FmRegistrationTokenUploaderLifecycleTest,
++       UnregisteredClientDoesNotFetchWithoutDemand) {
++  auto client = std::make_unique<MockCloudPolicyClient>();
++  EXPECT_CALL(*client, UploadFmRegistrationToken(_, _)).Times(0);
++  core_.Connect(std::move(client));
++
++  auto uploader = CreateUploader();
++  ExpectRequests(GetParam() ? 0 : 1);
++}
++
++TEST_P(FmRegistrationTokenUploaderLifecycleTest,
++       RegisteredClientStartsAndUploadsOnce) {
++  auto client = std::make_unique<MockCloudPolicyClient>();
++  auto* client_ptr = client.get();
++  client_ptr->SetDMToken(kFakeDMToken);
++  SetRegistrationTokenUploadState(
++      *client_ptr,
++      CloudPolicyClient::Result(DeviceManagementStatus::DM_STATUS_SUCCESS));
++  EXPECT_CALL(*client_ptr, UploadFmRegistrationToken(_, _)).Times(1);
++  core_.Connect(std::move(client));
++
++  auto uploader = CreateUploader();
++  ExpectRequests(1);
++  client_ptr->NotifyRegistrationStateChanged();
++  client_ptr->NotifyRegistrationStateChanged();
++  ExpectRequests(1);
++}
++
++TEST_P(FmRegistrationTokenUploaderLifecycleTest,
++       LateConnectionAndRegistrationStartOnce) {
++  auto uploader = CreateUploader();
++  ExpectRequests(GetParam() ? 0 : 1);
++
++  auto client = std::make_unique<MockCloudPolicyClient>();
++  auto* client_ptr = client.get();
++  core_.Connect(std::move(client));
++  ExpectRequests(GetParam() ? 0 : 1);
++  client_ptr->SetDMToken(kFakeDMToken);
++  SetRegistrationTokenUploadState(
++      *client_ptr,
++      CloudPolicyClient::Result(DeviceManagementStatus::DM_STATUS_SUCCESS));
++  EXPECT_CALL(*client_ptr, UploadFmRegistrationToken(_, _)).Times(1);
++  client_ptr->NotifyRegistrationStateChanged();
++  ExpectRequests(1);
++  client_ptr->NotifyRegistrationStateChanged();
++  ExpectRequests(1);
++}
++
++TEST_P(FmRegistrationTokenUploaderLifecycleTest,
++       DisconnectBeforeRegistrationAllowsManagedReconnect) {
++  core_.Connect(std::make_unique<MockCloudPolicyClient>());
++  auto uploader = CreateUploader();
++  ExpectRequests(GetParam() ? 0 : 1);
++  core_.Disconnect();
++
++  auto client = std::make_unique<MockCloudPolicyClient>();
++  auto* client_ptr = client.get();
++  client_ptr->SetDMToken(kFakeDMToken);
++  SetRegistrationTokenUploadState(
++      *client_ptr,
++      CloudPolicyClient::Result(DeviceManagementStatus::DM_STATUS_SUCCESS));
++  EXPECT_CALL(*client_ptr, UploadFmRegistrationToken(_, _))
++      .Times(GetParam() ? 1 : 0);
++  core_.Connect(std::move(client));
++  ExpectRequests(1);
++}
++
++TEST_P(FmRegistrationTokenUploaderLifecycleTest,
++       ManagedReconnectPreservesTokenRenewal) {
++  auto client = std::make_unique<MockCloudPolicyClient>();
++  client->SetDMToken(kFakeDMToken);
++  SetRegistrationTokenUploadState(
++      *client,
++      CloudPolicyClient::Result(DeviceManagementStatus::DM_STATUS_SUCCESS));
++  EXPECT_CALL(*client, UploadFmRegistrationToken(_, _)).Times(1);
++  core_.Connect(std::move(client));
++  auto uploader = CreateUploader();
++  ExpectRequests(1);
++  core_.Disconnect();
++
++  client = std::make_unique<MockCloudPolicyClient>();
++  client->SetDMToken(kFakeDMToken);
++  SetRegistrationTokenUploadState(
++      *client,
++      CloudPolicyClient::Result(DeviceManagementStatus::DM_STATUS_SUCCESS));
++  EXPECT_CALL(*client, UploadFmRegistrationToken(_, _)).Times(1);
++  core_.Connect(std::move(client));
++  ExpectRequests(1);
++  task_environment_.FastForwardBy(
++      invalidation::InvalidationListenerImpl::kRegistrationTokenValidationPeriod);
++  EXPECT_EQ(gcm_driver_.instance_data_requests, 1);
++  EXPECT_EQ(gcm_driver_.token_requests, 2);
++  EXPECT_NE(gcm_driver_.GetAppHandler(app_id_), nullptr);
++}
++
++TEST_P(FmRegistrationTokenUploaderLifecycleTest,
++       ShutdownRemovesObserversBeforeLaterRegistration) {
++  auto client = std::make_unique<MockCloudPolicyClient>();
++  auto* client_ptr = client.get();
++  EXPECT_CALL(*client_ptr, UploadFmRegistrationToken(_, _)).Times(0);
++  core_.Connect(std::move(client));
++  auto uploader = CreateUploader();
++  const int expected = GetParam() ? 0 : 1;
++  ExpectRequests(expected);
++
++  uploader.reset();
++  client_ptr->SetDMToken(kFakeDMToken);
++  client_ptr->NotifyRegistrationStateChanged();
++  core_.Disconnect();
++  client = std::make_unique<MockCloudPolicyClient>();
++  client->SetDMToken(kFakeDMToken);
++  EXPECT_CALL(*client, UploadFmRegistrationToken(_, _)).Times(0);
++  core_.Connect(std::move(client));
++  task_environment_.FastForwardBy(base::Days(2));
++  EXPECT_EQ(gcm_driver_.instance_data_requests, expected);
++  EXPECT_EQ(gcm_driver_.token_requests, expected);
++  EXPECT_EQ(gcm_driver_.GetAppHandler(app_id_), nullptr);
++}
++
++TEST_P(FmRegistrationTokenUploaderLifecycleTest,
++       ShutdownCancelsPendingTokenDelivery) {
++  auto client = std::make_unique<MockCloudPolicyClient>();
++  client->SetDMToken(kFakeDMToken);
++  EXPECT_CALL(*client, UploadFmRegistrationToken(_, _)).Times(0);
++  core_.Connect(std::move(client));
++
++  auto uploader = CreateUploader();
++  uploader.reset();
++  task_environment_.RunUntilIdle();
++  EXPECT_EQ(gcm_driver_.token_requests, 1);
++  EXPECT_EQ(gcm_driver_.GetAppHandler(app_id_), nullptr);
++}
++
++INSTANTIATE_TEST_SUITE_P(BackgroundNetworking,
++                         FmRegistrationTokenUploaderLifecycleTest,
++                         testing::Bool());
++
++// A core may disappear while startup is deferred. No listener was started, so
++// destruction must detach from the core without touching a destroyed client.
++TEST_F(FmRegistrationTokenUploaderTest, DeferredListenerHandlesCoreDestruction) {
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->AppendSwitch(
++      switches::kDisableBackgroundNetworking);
++  auto core = std::make_unique<CloudPolicyCore>(
++      dm_protocol::kChromeMachineLevelUserCloudPolicyType, std::string(),
++      &mock_store_, task_environment_.GetMainThreadTaskRunner(),
++      network::TestNetworkConnectionTracker::CreateGetter());
++  core->Connect(std::make_unique<MockCloudPolicyClient>());
++  EXPECT_CALL(mock_invalidation_listener_, Start(_)).Times(0);
++  EXPECT_CALL(mock_invalidation_listener_, Shutdown()).Times(0);
++  auto uploader = std::make_unique<FmRegistrationTokenUploader>(
++      PolicyInvalidationScope::kUser, &mock_invalidation_listener_, core.get());
++  core.reset();
++  task_environment_.RunUntilIdle();
++  uploader.reset();
++}
++
++#endif  // !BUILDFLAG(IS_ANDROID)
++
+ }  // namespace policy

@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "fixture_hosts": {
+    "d2": ["gym.test", "app.gym.test", "deep.app.gym.test", "www.gym.test", "notgym.test", "other.test", "big.gym.test", "e404.gym.test", "e403.gym.test", "e503.gym.test", "ua.gym.test"]
+  },
+  "comment": "Differential families run by run.sh. `request` is the Firecrawl crawl request body minus `url`: it is posted to POST /v2/crawl and the same options drive the crawlx in-process run (crawlx-differential --request). `fixture` is the gym fixture (crates/crawlx-bench/fixtures/<id>); its manifest `url_path` is the seed. `compare: cardinality` compares only the number of attempted URLs (a `limit` below the site size keeps an order-dependent subset). `expect` is the verdict the committed capture must reach with the ledger (pass: every difference is documented in divergences.toml; warn: undocumented content or counter differences; block: undocumented admission differences); `open` names the recorded residual that keeps a family at `block`. Every crawlx run uses the facade's worker canonicalization (`--trailing-slash keep`). Optional fields of the `d2` families: `host` (the name the gym is addressed by, default gym.test; the other names of the fixture are `fixture_hosts[fixture]`, which the crawlx resolver and the compose `extra_hosts` map to the gym), `seed_path` (seed below the origin instead of the manifest's `url_path`), `claim_origin` (the fixture owns the origin's robots.txt: gym-server --claim-origin, crawlx-differential --claim-origin), `aliases` (overrides `fixture_hosts`).",
+  "families": [
+    {
+      "id": "s1",
+      "fixture": "s1",
+      "plan_families": ["ADM", "SCOPE", "QRY", "DUP", "SITEMAP", "ROBOTS", "LINK", "EXT", "META", "CNT"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "s1-limit",
+      "fixture": "s1",
+      "plan_families": ["LIMIT"],
+      "request": {"limit": 10},
+      "compare": "cardinality",
+      "expect": "pass"
+    },
+    {
+      "id": "s1-depth",
+      "fixture": "s1",
+      "plan_families": ["DEPTH"],
+      "request": {"maxDiscoveryDepth": 1},
+      "expect": "pass"
+    },
+    {
+      "id": "s1-include",
+      "fixture": "s1",
+      "plan_families": ["REGEX", "SCOPE"],
+      "request": {"includePaths": ["^/s1/docs"]},
+      "expect": "pass"
+    },
+    {
+      "id": "s1-exclude",
+      "fixture": "s1",
+      "plan_families": ["REGEX", "SCOPE"],
+      "request": {"excludePaths": ["^/s1/blog"]},
+      "expect": "pass"
+    },
+    {
+      "id": "s1-sitemap-skip",
+      "fixture": "s1",
+      "plan_families": ["SITEMAP"],
+      "request": {"sitemap": "skip"},
+      "expect": "pass"
+    },
+    {
+      "id": "s1-sitemap-only",
+      "fixture": "s1",
+      "plan_families": ["SITEMAP"],
+      "request": {"sitemap": "only"},
+      "expect": "pass"
+    },
+    {
+      "id": "s1-ignore-query",
+      "fixture": "s1",
+      "plan_families": ["QRY", "DUP"],
+      "request": {"ignoreQueryParameters": true},
+      "expect": "pass"
+    },
+    {
+      "id": "s1-entire-domain",
+      "fixture": "s1",
+      "plan_families": ["SCOPE"],
+      "request": {"crawlEntireDomain": true},
+      "expect": "pass"
+    },
+    {
+      "id": "g12",
+      "fixture": "g12",
+      "plan_families": ["QRY", "DUP", "RENDER"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d1",
+      "fixture": "d1",
+      "plan_families": ["RENDER"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "hybrid-mix",
+      "fixture": "hybrid-mix",
+      "plan_families": ["LINK", "RENDER"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "g32",
+      "fixture": "g32",
+      "plan_families": ["LINK", "EXT"],
+      "request": {},
+      "expect": "block",
+      "open": "DIFF-INFO-MAZE"
+    },
+    {
+      "id": "d2-scope",
+      "fixture": "d2",
+      "seed_path": "/d2/scope/",
+      "claim_origin": true,
+      "plan_families": ["SCOPE", "EXT"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-subdomains",
+      "fixture": "d2",
+      "seed_path": "/d2/scope/",
+      "claim_origin": true,
+      "plan_families": ["SCOPE"],
+      "request": {"allowSubdomains": true},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-external",
+      "fixture": "d2",
+      "seed_path": "/d2/scope/",
+      "claim_origin": true,
+      "plan_families": ["SCOPE", "EXT"],
+      "request": {"allowExternalLinks": true},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-sub-ext",
+      "fixture": "d2",
+      "seed_path": "/d2/scope/",
+      "claim_origin": true,
+      "plan_families": ["SCOPE", "EXT"],
+      "request": {"allowSubdomains": true, "allowExternalLinks": true},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-redir",
+      "fixture": "d2",
+      "seed_path": "/d2/redir/",
+      "claim_origin": true,
+      "plan_families": ["REDIR"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-redir-external",
+      "fixture": "d2",
+      "seed_path": "/d2/redir/",
+      "claim_origin": true,
+      "plan_families": ["REDIR", "EXT"],
+      "request": {"allowExternalLinks": true},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-robots",
+      "fixture": "d2",
+      "seed_path": "/d2/robots/",
+      "claim_origin": true,
+      "plan_families": ["ROBOTS"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-robots-big",
+      "fixture": "d2",
+      "host": "big.gym.test",
+      "seed_path": "/d2/robots/",
+      "claim_origin": true,
+      "plan_families": ["ROBOTS"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-robots-404",
+      "fixture": "d2",
+      "host": "e404.gym.test",
+      "seed_path": "/d2/robots/",
+      "claim_origin": true,
+      "plan_families": ["ROBOTS"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-robots-403",
+      "fixture": "d2",
+      "host": "e403.gym.test",
+      "seed_path": "/d2/robots/",
+      "claim_origin": true,
+      "plan_families": ["ROBOTS"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-robots-503",
+      "fixture": "d2",
+      "host": "e503.gym.test",
+      "seed_path": "/d2/robots/",
+      "claim_origin": true,
+      "plan_families": ["ROBOTS"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-robots-ua",
+      "fixture": "d2",
+      "host": "ua.gym.test",
+      "seed_path": "/d2/robots/",
+      "claim_origin": true,
+      "plan_families": ["ROBOTS"],
+      "request": {},
+      "expect": "pass"
+    },
+    {
+      "id": "d2-prec",
+      "fixture": "d2",
+      "seed_path": "/d2/tiny/",
+      "claim_origin": true,
+      "plan_families": ["PREC", "REGEX"],
+      "request": {"includePaths": ["^/d2/tiny/(a|c)"], "excludePaths": ["^/d2/tiny/c"]},
+      "expect": "pass"
+    }
+  ]
+}

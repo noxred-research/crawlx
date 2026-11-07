@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g06 Card item</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; max-width: 720px; }
+  article { border: 1px solid #99a; border-radius: 6px; padding: 12px 16px; margin: 16px 0; }
+</style>
+</head>
+<body>
+<h1 id="page-title">Item</h1>
+<article id="item" aria-labelledby="item-title">
+  <h2 id="item-title"></h2>
+  <p>Posted <span id="item-when"></span></p>
+  <p>Likes: <span id="item-likes"></span></p>
+</article>
+<a id="item-back" href="/g06/">Back</a>
+<script>
+(function () {
+  var m = /[?&]id=(\d+)/.exec(location.search);
+  var n = m ? parseInt(m[1], 10) : 1;
+  var rng = __gym.rngFor('item-' + n);
+  var unit = __gym.pick(['minute', 'hour', 'day'], rng);
+  var amount = 1 + Math.floor(rng() * 23);
+  document.title = 'Card ' + n;
+  document.getElementById('page-title').textContent = 'Card ' + n;
+  document.getElementById('item-title').textContent = 'Card ' + n;
+  document.getElementById('item-when').textContent = amount + ' ' + unit + (amount === 1 ? '' : 's') + ' ago';
+  document.getElementById('item-likes').textContent = String(Math.floor(rng() * 500));
+  document.getElementById('item-back').addEventListener('click', function (ev) { __gym.hit('item-back', ev); });
+})();
+</script>
+</body>
+</html>

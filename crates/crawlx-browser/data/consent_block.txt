@@ -1,0 +1,110 @@
+# Cookie-consent banner request blocklist (`dynamic.blockConsentBanners`).
+#
+# One URL pattern per line; blank lines and lines starting with `#` are ignored. A pattern is
+# matched against the whole request URL and may contain `*` wildcards (the syntax of CDP
+# `Network.setBlockedURLs`, i.e. of `PageOp::BlockUrls`). Every entry is written
+# `*://<host>/<path>`: `*://` covers http, https and any other scheme, and a leading `*.` in the
+# host covers every subdomain. Keep entries specific to a consent-management provider's script,
+# stylesheet or API host: a pattern that also matches application traffic breaks pages.
+#
+# Own-authored list; extend it by provider, with the provider name in a comment above.
+
+# OneTrust / CookiePro
+*://cdn.cookielaw.org/*
+*://geolocation.onetrust.com/*
+*://cdn.cookiepro.com/*
+*://cookie-cdn.cookiepro.com/*
+*://optanon.blob.core.windows.net/*
+
+# Cookiebot (Usercentrics)
+*://consent.cookiebot.com/*
+*://consent.cookiebot.eu/*
+*://consentcdn.cookiebot.com/*
+*://consentcdn.cookiebot.eu/*
+*://imgsct.cookiebot.com/*
+
+# TrustArc / TRUSTe
+*://consent.trustarc.com/*
+*://consent-pref.trustarc.com/*
+*://consent-st.trustarc.com/*
+*://consent.truste.com/*
+*://choices.truste.com/*
+
+# Quantcast Choice
+*://quantcast.mgr.consensu.org/*
+*://static.quantcast.mgr.consensu.org/*
+*://cmp.quantcast.com/*
+
+# Usercentrics
+*://app.usercentrics.eu/*
+*://cdn.usercentrics.eu/*
+*://api.usercentrics.eu/*
+*://consent-api.service.consent.usercentrics.eu/*
+*://aggregator.service.usercentrics.eu/*
+
+# Didomi
+*://sdk.privacy-center.org/*
+*://api.privacy-center.org/*
+*://cdn.privacy-center.org/*
+
+# Osano
+*://cmp.osano.com/*
+
+# Iubenda
+*://cdn.iubenda.com/cs/*
+*://cdn.iubenda.com/cookie_solution/*
+*://cs.iubenda.com/*
+
+# CookieYes
+*://cdn-cookieyes.com/*
+*://app.cookieyes.com/*
+*://log.cookieyes.com/*
+
+# Termly
+*://app.termly.io/*
+*://cdn.termly.io/*
+
+# Sourcepoint
+*://cdn.privacy-mgmt.com/*
+*://cmp.privacy-mgmt.com/*
+*://sourcepoint.mgr.consensu.org/*
+
+# Google Funding Choices
+*://fundingchoicesmessages.google.com/*
+
+# CookieFirst
+*://consent.cookiefirst.com/*
+
+# Cookie Information
+*://policy.app.cookieinformation.com/*
+*://cdn.cookieinformation.com/*
+
+# Cookie Script
+*://cdn.cookie-script.com/*
+*://report.cookie-script.com/*
+
+# consentmanager
+*://cdn.consentmanager.net/*
+*://delivery.consentmanager.net/*
+
+# Axeptio
+*://static.axept.io/*
+*://api.axept.io/*
+
+# Civic Cookie Control
+*://cc.cdn.civiccomputing.com/*
+
+# CookieHub
+*://cdn.cookiehub.eu/*
+*://cookiehub.net/*
+
+# Ketch
+*://global.ketchcdn.com/*
+*://global.ketchjs.com/*
+
+# Transcend
+*://transcend-cdn.com/*
+*://cdn.transcend.io/*
+
+# Securiti
+*://cdn.securiti.ai/consent/*

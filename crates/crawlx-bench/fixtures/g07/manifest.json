@@ -1,0 +1,197 @@
+{
+  "id": "g07",
+  "title": "Infinite feed: ten posts appended per sentinel intersection, unbounded",
+  "version": 1,
+  "url_path": "/g07/",
+  "controls": [
+    {
+      "id": "nav-home",
+      "selector": "#nav-home",
+      "role": "link",
+      "name": "Feed",
+      "logical_id": "nav-home"
+    },
+    {
+      "id": "nav-about",
+      "selector": "#nav-about",
+      "role": "link",
+      "name": "About",
+      "logical_id": "nav-about"
+    },
+    {
+      "id": "refresh",
+      "selector": "#refresh",
+      "role": "button",
+      "name": "Refresh",
+      "logical_id": "refresh",
+      "effect": "GET /g07/api/feed"
+    },
+    {
+      "id": "about-back",
+      "selector": "#about-back",
+      "role": "link",
+      "name": "Back to the feed",
+      "logical_id": "about-back",
+      "page": "/about.html"
+    },
+    {
+      "id": "post-back",
+      "selector": "#post-back",
+      "role": "link",
+      "name": "Back to the feed",
+      "logical_id": "post-back",
+      "page": "/post.html?id=1"
+    },
+    {
+      "id": "like-1",
+      "selector": "#like-1",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-1",
+      "selector": "#open-1",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-1"
+    },
+    {
+      "id": "like-2",
+      "selector": "#like-2",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-2",
+      "selector": "#open-2",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-2"
+    },
+    {
+      "id": "like-3",
+      "selector": "#like-3",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-3",
+      "selector": "#open-3",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-3"
+    },
+    {
+      "id": "like-4",
+      "selector": "#like-4",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-4",
+      "selector": "#open-4",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-4"
+    },
+    {
+      "id": "like-5",
+      "selector": "#like-5",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-5",
+      "selector": "#open-5",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-5"
+    },
+    {
+      "id": "like-6",
+      "selector": "#like-6",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-6",
+      "selector": "#open-6",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-6"
+    },
+    {
+      "id": "like-7",
+      "selector": "#like-7",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-7",
+      "selector": "#open-7",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-7"
+    },
+    {
+      "id": "like-8",
+      "selector": "#like-8",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-8",
+      "selector": "#open-8",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-8"
+    },
+    {
+      "id": "like-9",
+      "selector": "#like-9",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-9",
+      "selector": "#open-9",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-9"
+    },
+    {
+      "id": "like-10",
+      "selector": "#like-10",
+      "role": "button",
+      "name": "Like",
+      "logical_id": "feed-like"
+    },
+    {
+      "id": "open-10",
+      "selector": "#open-10",
+      "role": "link",
+      "name": "Open",
+      "logical_id": "feed-open-10"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "GET /g07/api/feed"
+    ],
+    "volatile_regions": [
+      "#pages",
+      "#feed > li:nth-child(n+11)"
+    ],
+    "target_recall_min": 0.9,
+    "split_rate_max": 0.02
+  }
+}

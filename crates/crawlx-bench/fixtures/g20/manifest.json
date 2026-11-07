@@ -1,0 +1,754 @@
+{
+  "id": "g20",
+  "title": "Cross-user workflows (shared-workspace): Alice and Bob (members) and Admin over private and shared invoices; 48-cell principal x action x resource matrix",
+  "version": 1,
+  "url_path": "/g20/",
+  "controls": [
+    {
+      "id": "login-alice",
+      "selector": "#login-alice",
+      "role": "button",
+      "name": "Sign in as Alice (member)",
+      "logical_id": "login-alice",
+      "effect": "POST /g20/api/login"
+    },
+    {
+      "id": "login-bob",
+      "selector": "#login-bob",
+      "role": "button",
+      "name": "Sign in as Bob (member)",
+      "logical_id": "login-bob",
+      "effect": "POST /g20/api/login"
+    },
+    {
+      "id": "login-admin",
+      "selector": "#login-admin",
+      "role": "button",
+      "name": "Sign in as Admin",
+      "logical_id": "login-admin",
+      "effect": "POST /g20/api/login"
+    },
+    {
+      "id": "logout",
+      "selector": "#logout",
+      "role": "button",
+      "name": "Sign out",
+      "logical_id": "logout",
+      "effect": "POST /g20/api/logout"
+    },
+    {
+      "id": "new-title",
+      "selector": "#new-title",
+      "role": "textbox",
+      "name": "Title",
+      "logical_id": "new-title"
+    },
+    {
+      "id": "new-visibility",
+      "selector": "#new-visibility",
+      "role": "combobox",
+      "name": "Visibility",
+      "logical_id": "new-visibility"
+    },
+    {
+      "id": "create",
+      "selector": "#create",
+      "role": "button",
+      "name": "Create invoice",
+      "logical_id": "create",
+      "effect": "POST /g20/api/invoices"
+    },
+    {
+      "id": "view-1",
+      "selector": "#view-1",
+      "role": "link",
+      "name": "Invoice 1",
+      "logical_id": "row-view",
+      "effect": "GET /g20/api/invoices/1"
+    },
+    {
+      "id": "edit-1",
+      "selector": "#edit-1",
+      "role": "button",
+      "name": "Mark paid",
+      "logical_id": "row-edit",
+      "effect": "PUT /g20/api/invoices/1"
+    },
+    {
+      "id": "comment-1",
+      "selector": "#comment-1",
+      "role": "button",
+      "name": "Comment",
+      "logical_id": "row-comment",
+      "effect": "POST /g20/api/invoices/1/comments"
+    },
+    {
+      "id": "delete-1",
+      "selector": "#delete-1",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "row-delete",
+      "risk": "destructive",
+      "effect": "DELETE /g20/api/invoices/1"
+    },
+    {
+      "id": "view-2",
+      "selector": "#view-2",
+      "role": "link",
+      "name": "Invoice 2",
+      "logical_id": "row-view",
+      "effect": "GET /g20/api/invoices/2"
+    },
+    {
+      "id": "edit-2",
+      "selector": "#edit-2",
+      "role": "button",
+      "name": "Mark paid",
+      "logical_id": "row-edit",
+      "effect": "PUT /g20/api/invoices/2"
+    },
+    {
+      "id": "comment-2",
+      "selector": "#comment-2",
+      "role": "button",
+      "name": "Comment",
+      "logical_id": "row-comment",
+      "effect": "POST /g20/api/invoices/2/comments"
+    },
+    {
+      "id": "delete-2",
+      "selector": "#delete-2",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "row-delete",
+      "risk": "destructive",
+      "effect": "DELETE /g20/api/invoices/2"
+    },
+    {
+      "id": "view-3",
+      "selector": "#view-3",
+      "role": "link",
+      "name": "Invoice 3",
+      "logical_id": "row-view",
+      "effect": "GET /g20/api/invoices/3"
+    },
+    {
+      "id": "edit-3",
+      "selector": "#edit-3",
+      "role": "button",
+      "name": "Mark paid",
+      "logical_id": "row-edit",
+      "effect": "PUT /g20/api/invoices/3"
+    },
+    {
+      "id": "comment-3",
+      "selector": "#comment-3",
+      "role": "button",
+      "name": "Comment",
+      "logical_id": "row-comment",
+      "effect": "POST /g20/api/invoices/3/comments"
+    },
+    {
+      "id": "delete-3",
+      "selector": "#delete-3",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "row-delete",
+      "risk": "destructive",
+      "effect": "DELETE /g20/api/invoices/3"
+    },
+    {
+      "id": "view-4",
+      "selector": "#view-4",
+      "role": "link",
+      "name": "Invoice 4",
+      "logical_id": "row-view",
+      "effect": "GET /g20/api/invoices/4"
+    },
+    {
+      "id": "edit-4",
+      "selector": "#edit-4",
+      "role": "button",
+      "name": "Mark paid",
+      "logical_id": "row-edit",
+      "effect": "PUT /g20/api/invoices/4"
+    },
+    {
+      "id": "comment-4",
+      "selector": "#comment-4",
+      "role": "button",
+      "name": "Comment",
+      "logical_id": "row-comment",
+      "effect": "POST /g20/api/invoices/4/comments"
+    },
+    {
+      "id": "delete-4",
+      "selector": "#delete-4",
+      "role": "button",
+      "name": "Delete",
+      "logical_id": "row-delete",
+      "risk": "destructive",
+      "effect": "DELETE /g20/api/invoices/4"
+    },
+    {
+      "id": "inv-paid",
+      "selector": "#inv-paid",
+      "role": "button",
+      "name": "Mark paid",
+      "logical_id": "inv-paid",
+      "page": "/invoice.html?id=1",
+      "effect": "PUT /g20/api/invoices/1"
+    },
+    {
+      "id": "inv-comment",
+      "selector": "#inv-comment",
+      "role": "button",
+      "name": "Reply",
+      "logical_id": "inv-comment",
+      "page": "/invoice.html?id=1",
+      "effect": "POST /g20/api/invoices/1/comments"
+    },
+    {
+      "id": "inv-delete",
+      "selector": "#inv-delete",
+      "role": "button",
+      "name": "Delete invoice",
+      "logical_id": "inv-delete",
+      "page": "/invoice.html?id=1",
+      "risk": "destructive",
+      "effect": "DELETE /g20/api/invoices/1"
+    },
+    {
+      "id": "inv-back",
+      "selector": "#inv-back",
+      "role": "link",
+      "name": "Back to invoices",
+      "logical_id": "inv-back",
+      "page": "/invoice.html?id=1"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g20/api/login",
+      "POST /g20/api/logout",
+      "GET /g20/api/invoices",
+      "POST /g20/api/invoices",
+      "GET /g20/api/invoices/{id}",
+      "PUT /g20/api/invoices/{id}",
+      "POST /g20/api/invoices/{id}/comments",
+      "DELETE /g20/api/invoices/{id}"
+    ],
+    "forbidden_ops": [
+      {
+        "method": "DELETE",
+        "path_prefix": "/g20/api/invoices",
+        "profiles": [
+          "read_only"
+        ]
+      },
+      {
+        "method": "PUT",
+        "path_prefix": "/g20/api/invoices",
+        "profiles": [
+          "read_only"
+        ]
+      },
+      {
+        "method": "POST",
+        "path_prefix": "/g20/api/invoices",
+        "profiles": [
+          "read_only"
+        ]
+      }
+    ],
+    "action_contexts": [
+      {
+        "principal": "alice",
+        "element": "view-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "alice",
+        "element": "edit-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "alice",
+        "element": "comment-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "alice",
+        "element": "delete-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "alice",
+        "element": "view-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "alice",
+        "element": "edit-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "alice",
+        "element": "comment-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "alice",
+        "element": "delete-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "alice",
+        "element": "view-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "view:denied",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "alice",
+        "element": "edit-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "modify:denied",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "alice",
+        "element": "comment-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "comment:denied",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "alice",
+        "element": "delete-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "delete:denied",
+        "risk": "destructive",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "alice",
+        "element": "view-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "alice",
+        "element": "edit-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "alice",
+        "element": "comment-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "alice",
+        "element": "delete-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "delete:denied",
+        "risk": "destructive",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "bob",
+        "element": "view-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "view:denied",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "bob",
+        "element": "edit-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "modify:denied",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "bob",
+        "element": "comment-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "comment:denied",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "bob",
+        "element": "delete-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "other_user_same_role",
+        "backend_effect": "delete:denied",
+        "risk": "destructive",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "bob",
+        "element": "view-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "bob",
+        "element": "edit-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "bob",
+        "element": "comment-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "bob",
+        "element": "delete-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "shared",
+        "backend_effect": "delete:denied",
+        "risk": "destructive",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "bob",
+        "element": "view-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "bob",
+        "element": "edit-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "bob",
+        "element": "comment-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "bob",
+        "element": "delete-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "bob",
+        "element": "view-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "bob",
+        "element": "edit-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "bob",
+        "element": "comment-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "bob",
+        "element": "delete-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "own",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "admin",
+        "element": "view-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "admin",
+        "element": "edit-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "admin",
+        "element": "comment-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "admin",
+        "element": "delete-1",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-1"
+      },
+      {
+        "principal": "admin",
+        "element": "view-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "admin",
+        "element": "edit-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "admin",
+        "element": "comment-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "admin",
+        "element": "delete-2",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-2"
+      },
+      {
+        "principal": "admin",
+        "element": "view-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "admin",
+        "element": "edit-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "admin",
+        "element": "comment-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "admin",
+        "element": "delete-3",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-3"
+      },
+      {
+        "principal": "admin",
+        "element": "view-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "view:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "admin",
+        "element": "edit-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "modify:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "admin",
+        "element": "comment-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "comment:ok",
+        "risk": "safe",
+        "resource": "invoice-4"
+      },
+      {
+        "principal": "admin",
+        "element": "delete-4",
+        "action_kind": "click",
+        "input_class": "none",
+        "resource_context": "admin",
+        "backend_effect": "delete:ok",
+        "risk": "destructive",
+        "resource": "invoice-4"
+      }
+    ],
+    "unauthorized_actions": 0,
+    "target_recall_min": 0.9,
+    "volatile_regions": [
+      "#out",
+      "#who",
+      "#meta"
+    ]
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "id": "g18",
+  "title": "Session expires after three protected calls: silent refresh in one area, hard logout and re-login in the other (credentials live in backend.rs, never here)",
+  "version": 1,
+  "url_path": "/g18/",
+  "controls": [
+    {
+      "id": "login-user",
+      "selector": "#login-user",
+      "role": "textbox",
+      "name": "User",
+      "logical_id": "login-user"
+    },
+    {
+      "id": "login-pass",
+      "selector": "#login-pass",
+      "role": "textbox",
+      "name": "Password",
+      "logical_id": "login-pass"
+    },
+    {
+      "id": "login-mode",
+      "selector": "#login-mode",
+      "role": "combobox",
+      "name": "Session mode",
+      "logical_id": "login-mode"
+    },
+    {
+      "id": "login",
+      "selector": "#login",
+      "role": "button",
+      "name": "Sign in",
+      "logical_id": "login",
+      "effect": "POST /g18/api/login"
+    },
+    {
+      "id": "go-silent",
+      "selector": "#go-silent",
+      "role": "link",
+      "name": "Silent-refresh area",
+      "logical_id": "go-silent"
+    },
+    {
+      "id": "go-hard",
+      "selector": "#go-hard",
+      "role": "link",
+      "name": "Hard-logout area",
+      "logical_id": "go-hard"
+    },
+    {
+      "id": "s-load",
+      "selector": "#s-load",
+      "role": "button",
+      "name": "Load profile",
+      "logical_id": "s-load",
+      "page": "/silent.html",
+      "effect": "GET /g18/api/me"
+    },
+    {
+      "id": "s-ping",
+      "selector": "#s-ping",
+      "role": "button",
+      "name": "Ping",
+      "logical_id": "s-ping",
+      "page": "/silent.html",
+      "effect": "GET /g18/api/me"
+    },
+    {
+      "id": "s-secret",
+      "selector": "#s-secret",
+      "role": "button",
+      "name": "Secret action",
+      "logical_id": "s-secret",
+      "page": "/silent.html",
+      "requires": [
+        "s-load"
+      ],
+      "effect": "POST /g18/api/secret"
+    },
+    {
+      "id": "s-home",
+      "selector": "#s-home",
+      "role": "link",
+      "name": "Back",
+      "logical_id": "s-home",
+      "page": "/silent.html"
+    },
+    {
+      "id": "h-load",
+      "selector": "#h-load",
+      "role": "button",
+      "name": "Load profile",
+      "logical_id": "h-load",
+      "page": "/hard.html",
+      "effect": "GET /g18/api/me"
+    },
+    {
+      "id": "h-secret",
+      "selector": "#h-secret",
+      "role": "button",
+      "name": "Secret action",
+      "logical_id": "h-secret",
+      "page": "/hard.html",
+      "requires": [
+        "h-load"
+      ],
+      "effect": "POST /g18/api/secret"
+    },
+    {
+      "id": "h-user",
+      "selector": "#h-user",
+      "role": "textbox",
+      "name": "User",
+      "logical_id": "h-user",
+      "page": "/hard.html"
+    },
+    {
+      "id": "h-pass",
+      "selector": "#h-pass",
+      "role": "textbox",
+      "name": "Password",
+      "logical_id": "h-pass",
+      "page": "/hard.html"
+    },
+    {
+      "id": "h-login",
+      "selector": "#h-login",
+      "role": "button",
+      "name": "Sign in again",
+      "logical_id": "h-login",
+      "page": "/hard.html",
+      "effect": "POST /g18/api/login"
+    },
+    {
+      "id": "h-home",
+      "selector": "#h-home",
+      "role": "link",
+      "name": "Back",
+      "logical_id": "h-home",
+      "page": "/hard.html"
+    }
+  ],
+  "expected": {
+    "operations": [
+      "POST /g18/api/login",
+      "GET /g18/api/me",
+      "POST /g18/api/secret",
+      "POST /g18/api/refresh",
+      "POST /g18/api/logout"
+    ],
+    "enablement": [
+      {
+        "requires": [
+          "s-load"
+        ],
+        "target": "s-secret",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "h-load"
+        ],
+        "target": "h-secret",
+        "kind": "simple"
+      }
+    ],
+    "action_contexts": [
+      {
+        "principal": "member",
+        "element": "s-load",
+        "resource_context": "own",
+        "backend_effect": "session:silent_refresh"
+      },
+      {
+        "principal": "member",
+        "element": "h-load",
+        "resource_context": "own",
+        "backend_effect": "session:hard_logout"
+      }
+    ],
+    "target_recall_min": 0.9,
+    "volatile_regions": [
+      "#state",
+      "#s-state",
+      "#h-state"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g17 preview</title>
+{{GYM_JS}}
+</head>
+<body>
+<h1>Preview</h1><p>A window opened by script.</p><button id="preview-close" type="button">Close preview</button>
+<script>
+(function () {
+document.getElementById('preview-close').addEventListener('click', function (ev) { __gym.hit('preview-close', ev); window.close(); });
+})();
+</script>
+</body>
+</html>

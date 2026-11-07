@@ -1,0 +1,240 @@
+# crawlx Helm values. The `config` block is the `crawlx.toml` configuration surface, key for
+# key; it is rendered to /etc/crawlx/crawlx.toml and validated at deploy time by the
+# `crawlx config check` hook (templates/config-check-job.yaml). Secrets are never in values:
+# every `*_file` key names a mounted secret file.
+
+environment: prod # dev | ci | staging | prod; gym is refused outside dev/staging
+
+image:
+  registry: ghcr.io/noxred-research
+  tag: v0.1.0
+  chromiumVersion: "155.0.8059.84" # must equal chromium-pin.toml; the worker tag is <tag>-chromium<version>
+  pullPolicy: IfNotPresent
+
+# Optional multi-node volatile delivery. Standard deployments do not enable ZDR implicitly.
+# Secret keys: url (redis://user:password@<release>-zdr:6379/) and users.acl.
+zdr:
+  enabled: false
+  secret: crawlx-zdr
+  image: valkey/valkey:8.1.3-alpine
+  maxmemory: 2gb
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { memory: 3Gi }
+
+# `crawlx.toml`
+config:
+  database:
+    url_file: /run/secrets/crawlx/database_url
+    pool_max: 32
+    statement_timeout_ms: 5000
+  object_store:
+    endpoint: ""
+    bucket: ""
+    region: ""
+    credentials_file: /run/secrets/crawlx/object_store_credentials
+    spool_max_bytes: 2147483648
+    spool_max_entries: 1024
+    spool_max_attempts: 3
+    spool_retry_delay_ms: 1000
+    spool_request_timeout_ms: 30000
+  api:
+    listen: 0.0.0.0:8080
+    admin_listen: 127.0.0.1:9090
+    webhook:
+      signing_key_file: /run/secrets/crawlx/webhook_signing_key
+      retry_schedule: [10s, 1m, 5m, 30m, 2h, 6h, 12h, 24h]
+      retry_window: 24h
+  worker:
+    max_sessions: 4
+    contexts_per_browser: 4
+    checkpoint_every_actions: 50
+  scheduler:
+    session_lease_ttl_s: 30
+    url_lease_ttl_s: 60
+    heartbeat_s: 10
+    reaper_interval_s: 15
+    admission: open # open | drain | frozen; flipped at runtime by `crawlx admin freeze`
+  fetch:
+    per_origin_inflight: 1
+    min_spacing_ms: 250
+  egress:
+    mode: proxy # proxy | netns
+    # See docs/ops/runbooks.md#rb-10 (step 5). Hosts (with their subdomains), IPs and CIDRs no run may reach.
+    operator_blocklist: []
+    # Also available (unset here): `deployment_allowlist: [10.20.0.0/16]` bounds the private networks
+    # authorization records may name (unset = no bound, `[]` = no private network at all), and
+    # `deployment_allowlist_file` / `operator_blocklist_file` name files that REPLACE the static
+    # lists and are re-read on SIGHUP and every 60 s (mount them next to crawlx.toml).
+  browser:
+    pin_file: /etc/crawlx/chromium-pin.toml
+    allow_unpinned: false
+    launch_profile_allowed: [standard, stealth]
+  model:
+    mode_default: shadow
+    breaker:
+      failure_threshold: 5
+      cooldown_s: 30
+    timeout_ms: 800
+  retention:
+    sweep_interval_s: 300
+    grace_s: 900
+  telemetry:
+    # Optional: leave unset unless an operator supplies a collector.
+    trace_sampling: 0.1
+  safety:
+    default_profile: read_only
+  shadow:
+    sample_percent: 5 # planning default; 0 disables shadow runs
+  # OCR for scanned PDF pages and images. Off by default: `tesseract` needs the
+  # `tesseract` and `pdftoppm` binaries and trained data in the image, `ocrs` needs the two model
+  # files in models_dir. Set it for the api AND the worker; the paths are ignored while backend is off.
+  ocr:
+    backend: "off"
+    languages: eng
+    tesseract_path: /usr/bin/tesseract
+    tessdata_dir: /usr/share/tesseract/tessdata
+    models_dir: /var/lib/crawlx/ocr-models
+    rasterizer: auto
+    pdftoppm_path: /usr/bin/pdftoppm
+    dpi: 300
+    timeout_ms: 60000
+    max_pdf_pages: 100
+    max_image_pixels: 50000000
+    min_confidence: 0
+
+# Secret names (created outside the chart; keys become the *_file paths above)
+secrets:
+  database: crawlx-db          # key: database_url
+  databaseApi: crawlx-db-api   # key: database_url_api; non-owner NOBYPASSRLS request login
+  databaseMigrate: crawlx-db-migrate
+  objectStore: crawlx-objectstore # key: object_store_credentials (optional)
+  webhook: crawlx-webhook      # key: webhook_signing_key
+
+# Encrypted artifact custody (docs/design/data-and-secrets.md). Required by default: the chart refuses to render a worker,
+# API or config-check job until it is configured, so a release never runs without custody.
+#  * Key provider: set EXACTLY ONE of `kmsKeyId` (AWS KMS key ID/ARN, a public identifier; no
+#    plaintext fallback) or `keyFileSecret` (operator Secret, key `artifact_key`: exactly 64
+#    hexadecimal characters, optional trailing LF). API and workers MUST use the same provider
+#    and the same key. The API only decrypts for reads; it never writes encrypted data.
+#  * Secret registry (workers and config-check only): a dedicated Redis/Valkey instance with
+#    persistence disabled (no RDB/AOF), no replicas, positive maxmemory and noeviction, separate
+#    from the ZDR delivery Redis. Supply it (existingSecret key `url`: redis://:<password>@host:6379/)
+#    or let the chart run one (`secretRedis.managed.enabled`, then the Secret also needs `users.acl`).
+artifactCustody:
+  kmsKeyId: ""
+  keyFileSecret: "" # key: artifact_key
+  secretRedis:
+    existingSecret: "" # key: url (mounted as secret_redis_url -> CRAWLX_SECRET_REDIS_URL_FILE)
+    ttlSeconds: 86400 # volatile per-run authority lifetime, 1..86400; no renewal; writes fail closed after expiry
+    managed:
+      enabled: false # opt in to a chart-managed volatile Valkey; otherwise the operator supplies one
+      image: valkey/valkey:8.1.3-alpine
+      maxmemory: 256mb
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { memory: 512Mi }
+
+# Optional capabilities use existing operator-created Secrets or immutable model PVCs only.
+capabilities:
+  requestIdentity:
+    existingSecret: "" # key: request_identity_key; same immutable Secret for API and worker
+  checkpointEncryption:
+    kmsKeyId: "" # operator-owned AWS KMS key ID/ARN; no default key or plaintext fallback
+  retainedProfiles:
+    # Unavailable: the worker refuses retained browser profiles while encrypted artifact custody is
+    # enabled (always, in PostgreSQL mode) and the chart fails when true.
+    enabled: false
+  protocolRegistry:
+    existingSecret: "" # key: registry.json; reviewed endpoints and socket-address pins
+    credentialsSecret: "" # optional; keys mounted under /run/secrets/crawlx-protocol
+  deliveryRegistry:
+    existingSecret: "" # key: registry.json; reviewed destinations and socket-address pins
+    credentialsSecret: "" # optional; keys mounted under /run/secrets/crawlx-delivery
+  articleLanguage:
+    existingClaim: "" # immutable operator-provisioned bundle; mounted read-only, never downloaded
+    runtimeLibrary: /opt/crawlx/article-language/runtime/libonnxruntime.so
+
+# Memory sizing. HTML parsing is admitted against a process-wide budget of
+# `parseMemoryBytes` (CRAWLX_PARSE_MEMORY_BYTES): every parse charges input bytes x 500 (the
+# measured worst case of 364 bytes of heap per input byte plus margin, crawlx-extract
+# `parse_budget`), without waiting, and is refused with a typed error when the budget is full.
+# The container limit must cover that ceiling plus everything else in the process:
+#   limit = parseMemoryBytes + article output reservation (256Mi) + memory-backed emptyDirs
+#           (worker: tmpfs.profiles + tmpfs.shm) + the rest of the process (+ Chromium, worker).
+# The rest of the process and Chromium are NOT measured (capacity
+# profiling: record cgroup memory.peak per session count); the figures below only reserve room.
+# Effective cap: the largest HTML one parse accepts is parseMemoryBytes / 500 (worker 4Gi: about
+# 8 MiB; api 512Mi: about 1 MiB); a larger page fails terminally, it is not retried. Raise
+# parseMemoryBytes together with the container memory limit.
+api:
+  replicas: 2
+  # 512Mi = one 1 MiB parse (an input larger than ~1 MiB is refused with a typed error).
+  parseMemoryBytes: 536870912
+  resources:
+    # previous limit 1Gi covered everything but an unbounded parse: 1Gi + 512Mi ceiling, rounded up
+    requests: { cpu: "500m", memory: 512Mi }
+    limits: { memory: 2Gi }
+  service:
+    type: ClusterIP
+    port: 80
+  ingressNamespace: ingress
+
+worker:
+  replicas: 2
+  # 4Gi = eight concurrent parses of 1 MiB, or one parse of up to 8.1 MiB.
+  parseMemoryBytes: 4294967296
+  resources:
+    # 12Gi = 4Gi parse ceiling + 256Mi article output + 1.5Gi memory-backed emptyDirs
+    # (tmpfs.profiles + tmpfs.shm) leaves ~6.25Gi for Chromium (max_sessions x contexts) and the
+    # rest of the process. Requests are expected use, not the ceiling, so they stay at 8Gi.
+    requests: { cpu: "4", memory: 8Gi }
+    limits: { memory: 12Gi }
+  pids: 4096
+  tmpfs:
+    profiles: 512Mi
+    shm: 1Gi
+  seccompProfile: crawlx-chromium.json # under /var/lib/kubelet/seccomp on every worker node
+  terminationGracePeriodSeconds: 120
+  canary:
+    enabled: false
+    replicas: 1
+    chromiumVersion: "" # the candidate pin; workers carry the `chromium=<version>` label
+
+gym:
+  enabled: false # staging/CI only; the chart refuses it when environment is prod
+
+artifacts:
+  # filesystem store shared by API and workers; set `existingClaim` or use the object store
+  existingClaim: crawlx-artifacts
+
+networkPolicy:
+  enabled: true
+  postgresSelector: { app: crawlx-postgres }
+  modelSelector: { app: crawlx-model }
+  objectStoreSelector: { app: crawlx-minio }
+  # operator-supplied secret registry Redis (ignored when artifactCustody.secretRedis.managed.enabled)
+  secretRedisSelector: { app: crawlx-secret-registry }
+  observabilityNamespace: observability
+  deniedCidrsV4: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8]
+  deniedCidrsV6: [fc00::/7, fe80::/10, "::1/128", fd00:ec2::254/128]
+
+metricsSidecar:
+  image: otel/opentelemetry-collector-contrib:0.118.0
+  scrapeInterval: 15s
+
+migrate:
+  enabled: true
+
+configCheck:
+  enabled: true # pre-install/pre-upgrade hook running `crawlx config check`
+
+# One independent safety audit per minute, no browser or worker credentials.
+# Both secrets must exist before deployment; each has one `database_url` key.
+safetyAuditor:
+  enabled: true
+  readerSecret: crawlx-safety-reader
+  pauseSecret: crawlx-safety-pauser
+  resources:
+    requests: { cpu: "50m", memory: 64Mi }
+    limits: { cpu: "500m", memory: 256Mi }

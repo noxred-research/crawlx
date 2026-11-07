@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels: { app: crawlx-api, app.kubernetes.io/part-of: crawlx }
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels: { app: crawlx-api, release: {{ .Release.Name }} }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: crawlx-api, release: {{ .Release.Name }} }
+      annotations:
+        checksum/config: {{ include "crawlx.configToml" . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- include "crawlx.podSecurityContext" (dict "uid" 65532) | nindent 8 }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: api
+          image: {{ include "crawlx.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --bind={{ .Values.config.api.listen }}
+            - --metrics-bind=127.0.0.1:9464
+            - --artifacts-dir=/var/lib/crawlx/artifacts
+          env:
+            {{- include "crawlx.commonEnv" . | nindent 12 }}
+            {{- include "crawlx.deliveryEnv" . | nindent 12 }}
+            {{- include "crawlx.capabilityEnv" (dict "root" . "worker" false) | nindent 12 }}
+            {{- include "crawlx.artifactCustodyEnv" (dict "root" . "worker" false) | nindent 12 }}
+            - name: CRAWLX_API_DATABASE_URL_FILE
+              value: /run/secrets/crawlx/database_url_api
+            - name: CRAWLX_WEBHOOK_SECRET_FILE
+              value: {{ .Values.config.api.webhook.signing_key_file | quote }}
+            - name: CRAWLX_PARSE_MEMORY_BYTES
+              value: {{ .Values.api.parseMemoryBytes | int64 | quote }}
+          ports:
+            - { name: http, containerPort: {{ (splitList ":" .Values.config.api.listen) | last }} }
+          readinessProbe:
+            httpGet: { path: /v1/openapi.json, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /v1/openapi.json, port: http }
+            periodSeconds: 15
+          securityContext:
+            {{- include "crawlx.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/crawlx, readOnly: true }
+            - { name: secrets, mountPath: /run/secrets/crawlx, readOnly: true }
+            - { name: artifacts, mountPath: /var/lib/crawlx/artifacts }
+        {{- include "crawlx.metricsSidecar" . | nindent 8 }}
+      volumes:
+        - name: config
+          configMap: { name: {{ .Release.Name }}-config }
+        - name: secrets
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.secrets.database }}
+                  items: [{ key: database_url, path: database_url }]
+              - secret:
+                  name: {{ .Values.secrets.databaseApi }}
+                  items: [{ key: database_url_api, path: database_url_api }]
+              - secret:
+                  name: {{ .Values.secrets.webhook }}
+                  items: [{ key: webhook_signing_key, path: webhook_signing_key }]
+              - secret:
+                  name: {{ .Values.secrets.objectStore }}
+                  optional: true
+                  items: [{ key: object_store_credentials, path: object_store_credentials }]
+              {{- include "crawlx.capabilitySources" (dict "root" . "worker" false) | nindent 14 }}
+              {{- include "crawlx.artifactCustodySources" (dict "root" . "worker" false) | nindent 14 }}
+        - name: artifacts
+          persistentVolumeClaim: { claimName: {{ .Values.artifacts.existingClaim }} }
+        - name: metrics-config
+          configMap: { name: {{ .Release.Name }}-metrics-sidecar }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api
+  labels: { app: crawlx-api, app.kubernetes.io/part-of: crawlx }
+spec:
+  type: {{ .Values.api.service.type }}
+  selector: { app: crawlx-api, release: {{ .Release.Name }} }
+  ports:
+    - { name: http, port: {{ .Values.api.service.port }}, targetPort: http }

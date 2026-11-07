@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>async-late</title>
+{{GYM_JS}}
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 24px; }
+  button { margin: 4px; }
+  .mono { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Late traffic</h1>
+<p>Socket: <span id="ws-state" class="mono">connecting</span>. Last: <span id="out">none</span></p>
+<p>Each button starts traffic that lands after the action's own observation epoch has closed (`late` tagging and attribution).</p>
+<button id="fast" type="button">Fast request</button>
+<button id="slow" type="button">Slow request (server replies after 1.5 s)</button>
+<button id="timer" type="button">Timer request (fires 2 s later)</button>
+<button id="ws-ping" type="button">Ping over the socket</button>
+<ul id="log" class="mono" aria-live="polite"></ul>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  var out = $('out');
+  function log(text) {
+    var li = document.createElement('li');
+    li.textContent = text;
+    $('log').appendChild(li);
+  }
+  $('fast').addEventListener('click', function (ev) {
+    __gym.hit('fast', ev);
+    __gym.api('GET', 'fast').then(function () { log('fast done'); out.textContent = 'fast'; });
+  });
+  $('slow').addEventListener('click', function (ev) {
+    __gym.hit('slow', ev);
+    out.textContent = 'slow (pending)';
+    __gym.api('POST', 'slow').then(function () { log('slow done'); out.textContent = 'slow'; });
+  });
+  $('timer').addEventListener('click', function (ev) {
+    __gym.hit('timer', ev);
+    out.textContent = 'timer (armed)';
+    setTimeout(function () {
+      __gym.api('GET', 'timer').then(function () { log('timer done'); out.textContent = 'timer'; });
+    }, 2000);
+  });
+  var ws = null;
+  try {
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/async-late/ws');
+  } catch (e) { $('ws-state').textContent = 'unavailable'; }
+  if (ws) {
+    ws.onopen = function () { $('ws-state').textContent = 'open'; };
+    ws.onclose = function () { $('ws-state').textContent = 'closed'; };
+    ws.onmessage = function (m) {
+      var msg = {};
+      try { msg = JSON.parse(m.data); } catch (e) { return; }
+      // every unsolicited push triggers an HTTP request that no action caused
+      if (msg.push) __gym.api('GET', 'ws-ack?push=' + msg.push).then(function () { log('ack ' + msg.push); });
+      if (msg.reply) log('reply ' + msg.reply);
+    };
+  }
+  $('ws-ping').addEventListener('click', function (ev) {
+    __gym.hit('ws-ping', ev);
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ req: 'ping' }));
+    out.textContent = 'ws-ping';
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>counter: one non-idempotent button</title>
+{{GYM_JS}}
+</head>
+<body>
+<h1>Counter</h1>
+<p>The button posts <code>POST /counter/api/increment</code>; the server keeps the count.</p>
+<button id="increment" type="button">Increment</button>
+<p>Count: <output id="count" aria-live="polite" for="increment">0</output></p>
+<p id="last"></p>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function show(count) {
+    $('count').textContent = String(count);
+    document.title = 'counter: ' + count;
+  }
+  __gym.api('GET', 'count').then(function (r) {
+    if (r && typeof r.count === 'number') show(r.count);
+  });
+  $('increment').addEventListener('click', function (ev) {
+    __gym.hit('increment', ev);
+    $('last').textContent = 'increment sent';
+    __gym.api('POST', 'increment').then(function (r) {
+      if (r && typeof r.count === 'number') {
+        show(r.count);
+        $('last').textContent = 'increment applied';
+      } else {
+        $('last').textContent = 'increment failed';
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

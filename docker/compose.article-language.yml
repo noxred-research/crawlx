@@ -1,0 +1,26 @@
+# Explicit operator-installed language model and ONNX Runtime. No resource is downloaded.
+# Apply this overlay to both `build` and `up`; publish distinct ONNX-capable image tags.
+services:
+  api:
+    build:
+      args:
+        CRAWLX_CARGO_FEATURES: onnx
+  worker:
+    build:
+      args:
+        CRAWLX_CARGO_FEATURES: onnx
+    environment:
+      CRAWLX_ARTICLE_LANGUAGE_BUNDLE: /opt/crawlx/article-language
+      ORT_DYLIB_PATH: /opt/crawlx/onnxruntime/libonnxruntime.so
+      LD_LIBRARY_PATH: /opt/crawlx/onnxruntime
+    volumes:
+      - type: bind
+        source: ${CRAWLX_ARTICLE_LANGUAGE_BUNDLE:?set CRAWLX_ARTICLE_LANGUAGE_BUNDLE to an operator-verified bundle directory}
+        target: /opt/crawlx/article-language
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${CRAWLX_ONNX_RUNTIME_DIR:?set CRAWLX_ONNX_RUNTIME_DIR to an approved compatible ONNX Runtime directory}
+        target: /opt/crawlx/onnxruntime
+        read_only: true
+        bind: { create_host_path: false }

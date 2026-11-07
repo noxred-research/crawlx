@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>g21 conjunctive preconditions</title>
+{{GYM_JS}}
+</head>
+<body>
+<main>
+  <h1>Preconditions</h1>
+  <section id="conj">
+    <button id="x1" type="button">First prerequisite</button>
+    <button id="x2" type="button">Second prerequisite</button>
+    <p id="conj-state">Waiting for both steps</p>
+    <div id="y-slot"></div>
+  </section>
+  <section id="pair">
+    <button id="a" type="button">Open A</button>
+    <div id="b-slot"></div>
+  </section>
+  <section id="decoy">
+    <button id="z" type="button">Decoy Z</button>
+  </section>
+  <p id="result"></p>
+</main>
+<script>
+(function () {
+  var done = { x1: false, x2: false };
+  var state = document.getElementById('conj-state');
+  var result = document.getElementById('result');
+  var ySlot = document.getElementById('y-slot');
+
+  function maybeReveal() {
+    if (!(done.x1 && done.x2) || document.getElementById('y')) return;
+    var y = document.createElement('button');
+    y.id = 'y';
+    y.type = 'button';
+    y.textContent = 'Finish Y';
+    y.addEventListener('click', function (ev) {
+      __gym.hit('y', ev);
+      result.textContent = 'Done';
+    });
+    ySlot.appendChild(y);
+    state.textContent = 'Both steps complete';
+  }
+  ['x1', 'x2'].forEach(function (id) {
+    document.getElementById(id).addEventListener('click', function (ev) {
+      __gym.hit(id, ev);
+      done[id] = true;
+      state.textContent = 'Completed: ' + (done.x1 ? 'X1 ' : '') + (done.x2 ? 'X2' : '');
+      maybeReveal();
+    });
+  });
+
+  document.getElementById('a').addEventListener('click', function (ev) {
+    __gym.hit('a', ev);
+    if (document.getElementById('b')) return;
+    var b = document.createElement('button');
+    b.id = 'b';
+    b.type = 'button';
+    b.textContent = 'Reveal B';
+    b.addEventListener('click', function (e2) {
+      __gym.hit('b', e2);
+      result.textContent = 'B used';
+    });
+    document.getElementById('b-slot').appendChild(b);
+  });
+
+  document.getElementById('z').addEventListener('click', function (ev) {
+    __gym.hit('z', ev);
+  });
+})();
+</script>
+</body>
+</html>

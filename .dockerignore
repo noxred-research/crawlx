@@ -1,0 +1,24 @@
+# Build context of docker/Dockerfile.{api,worker,gym} is the repository root.
+# Keep the workspace (including crate-local data directories), vendored patch, pin files and
+# bench/seeds.toml. Exclude local state and unrelated documentation below.
+.git
+.github
+.cache
+.cargo
+.pytest_cache
+**/target
+**/node_modules
+mutants.out*
+crawlx-artifacts
+docs/**
+deploy
+fuzz
+gates
+tools
+docker/secrets
+docker/gates
+docker/.env
+bench/browser-oracle
+bench/differential
+bench/baselines
+bench/out

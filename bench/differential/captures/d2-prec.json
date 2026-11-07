@@ -1,0 +1,105 @@
+{
+  "accessLog": {
+    "entries": [
+      {
+        "host": "127.0.0.1:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/robots.txt"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/tiny/"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/tiny/sitemap.xml"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/sitemap.xml"
+      },
+      {
+        "host": "gym.test:4101",
+        "method": "GET",
+        "path": "/d2/tiny/a"
+      }
+    ]
+  },
+  "completed": 1,
+  "completedAt": "2026-10-28T12:22:19.110Z",
+  "crawlxSample": {
+    "family": "d2-prec",
+    "job": "01a18276-116f-765a-af9b-f13671d85217",
+    "provenance": "black_box_run",
+    "request": {
+      "excludePaths": [
+        "^/d2/tiny/c"
+      ],
+      "includePaths": [
+        "^/d2/tiny/(a|c)"
+      ],
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/d2/tiny/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T12:22:18.224Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [
+        "http://gym.test:4101/d2/tiny/c"
+      ],
+      "markdown": "d2 tiny: a is a page of the CrawlerGym d2 site. Its links are the ground truth of the differential crawl.\n\n*   [C](http://gym.test:4101/d2/tiny/c)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a18276-141f-76bc-b0a7-0d96b13ab114",
+        "sourceURL": "http://gym.test:4101/d2/tiny/a",
+        "statusCode": 200,
+        "title": "d2 tiny: a",
+        "url": "http://gym.test:4101/d2/tiny/a"
+      },
+      "rawHtmlBytes": 322,
+      "rawHtmlSha256": "0f99506b4979786e9bf21c6da8009e5addfc4998ef7137cf8f2acc372abd1d77"
+    }
+  ],
+  "duration": 0.886,
+  "errors": {
+    "errors": [
+      {
+        "code": "CRAWL_DENIAL",
+        "error": "This URL's path (\"/d2/tiny/\") does not match any of the regex patterns you provided in the includePaths parameter: [\"^/d2/tiny/(a|c)\"]. When includePaths is specified, only URLs matching at least one pattern are crawled. If this URL should be crawled, add a matching pattern to includePaths or remove the includePaths restriction.",
+        "id": "01a18276-12b4-7216-9c76-b34976623035",
+        "timestamp": "2026-10-28T12:22:18.919Z",
+        "url": "http://gym.test:4101/d2/tiny/"
+      }
+    ],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T12:22:32.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 1,
+  "warning": "Only 1 result(s) found. For broader coverage, try crawling with crawlEntireDomain=true or start from a higher-level path like gym.test"
+}

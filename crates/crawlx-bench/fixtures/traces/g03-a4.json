@@ -1,0 +1,1597 @@
+{
+  "version": 1,
+  "fixture": "g03",
+  "seed": 3,
+  "variant": "A4",
+  "steps": [
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          }
+        ]
+      },
+      "chosen": "cdfdc04aeb2275e34a8f46ee273c33d0",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          }
+        ]
+      },
+      "chosen": "561230b0aa91413933c24db216542f28",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [
+          "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+          "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+          "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+          "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+          "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4"
+        ],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "96a95b3e1b0af5286220668e10b48559",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "a74faeb0ed2f3ab41c91d80480568c81",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "f57e9fa2af7a24166bec96e1e912a9d5",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "9af0949cfd4fe1e08716019b56a8cab1",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "171e77e0b296f1b917229b4cbd8006a3",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "c672469fcb914d4f79e533eb27151967",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "e20345335aeb4bea0bd0f7e033188fe3",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          }
+        ]
+      },
+      "chosen": "40dce429e2fb85b8dca29f5e2c72d553",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [
+          "a5ed4703339a7123c2f34c3ff84de3c98f11d867dc07957d46b960c692969e29",
+          "d102b110b86ff2e47ec211d288aa8c2570e13d5f37bfa3ab25bca331b2b5d59a",
+          "fe8e61fed99848e2cfb8606551717c892f75839e47ef87c076d276ec75597c35",
+          "f22fca859e7775553207df54463a1b65b0dcd7d00bd803ea78610616390ba31d"
+        ],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          },
+          {
+            "context_id": "bbb517f6588ac852aaa25a32af211366",
+            "identity": "a5ed4703339a7123c2f34c3ff84de3c98f11d867dc07957d46b960c692969e29",
+            "family": "menuitem|",
+            "control": "m1",
+            "role": "menuitem",
+            "name": "Rename"
+          },
+          {
+            "context_id": "1b3311814f34c53dcd560ab13fd6005d",
+            "identity": "d102b110b86ff2e47ec211d288aa8c2570e13d5f37bfa3ab25bca331b2b5d59a",
+            "family": "menuitem|",
+            "control": "m2",
+            "role": "menuitem",
+            "name": "Duplicate"
+          },
+          {
+            "context_id": "d46ca2a4438490923e98a35f6f4dad18",
+            "identity": "fe8e61fed99848e2cfb8606551717c892f75839e47ef87c076d276ec75597c35",
+            "family": "menuitem|",
+            "control": "m3",
+            "role": "menuitem",
+            "name": "Archive"
+          },
+          {
+            "context_id": "558ee31f4bed4a286a3cb5124ceb7cce",
+            "identity": "f22fca859e7775553207df54463a1b65b0dcd7d00bd803ea78610616390ba31d",
+            "family": "menuitem|",
+            "control": "m4",
+            "role": "menuitem",
+            "name": "Share"
+          }
+        ]
+      },
+      "chosen": "bbb517f6588ac852aaa25a32af211366",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          },
+          {
+            "context_id": "bbb517f6588ac852aaa25a32af211366",
+            "identity": "a5ed4703339a7123c2f34c3ff84de3c98f11d867dc07957d46b960c692969e29",
+            "family": "menuitem|",
+            "control": "m1",
+            "role": "menuitem",
+            "name": "Rename"
+          },
+          {
+            "context_id": "1b3311814f34c53dcd560ab13fd6005d",
+            "identity": "d102b110b86ff2e47ec211d288aa8c2570e13d5f37bfa3ab25bca331b2b5d59a",
+            "family": "menuitem|",
+            "control": "m2",
+            "role": "menuitem",
+            "name": "Duplicate"
+          },
+          {
+            "context_id": "d46ca2a4438490923e98a35f6f4dad18",
+            "identity": "fe8e61fed99848e2cfb8606551717c892f75839e47ef87c076d276ec75597c35",
+            "family": "menuitem|",
+            "control": "m3",
+            "role": "menuitem",
+            "name": "Archive"
+          },
+          {
+            "context_id": "558ee31f4bed4a286a3cb5124ceb7cce",
+            "identity": "f22fca859e7775553207df54463a1b65b0dcd7d00bd803ea78610616390ba31d",
+            "family": "menuitem|",
+            "control": "m4",
+            "role": "menuitem",
+            "name": "Share"
+          }
+        ]
+      },
+      "chosen": "d46ca2a4438490923e98a35f6f4dad18",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          },
+          {
+            "context_id": "bbb517f6588ac852aaa25a32af211366",
+            "identity": "a5ed4703339a7123c2f34c3ff84de3c98f11d867dc07957d46b960c692969e29",
+            "family": "menuitem|",
+            "control": "m1",
+            "role": "menuitem",
+            "name": "Rename"
+          },
+          {
+            "context_id": "1b3311814f34c53dcd560ab13fd6005d",
+            "identity": "d102b110b86ff2e47ec211d288aa8c2570e13d5f37bfa3ab25bca331b2b5d59a",
+            "family": "menuitem|",
+            "control": "m2",
+            "role": "menuitem",
+            "name": "Duplicate"
+          },
+          {
+            "context_id": "d46ca2a4438490923e98a35f6f4dad18",
+            "identity": "fe8e61fed99848e2cfb8606551717c892f75839e47ef87c076d276ec75597c35",
+            "family": "menuitem|",
+            "control": "m3",
+            "role": "menuitem",
+            "name": "Archive"
+          },
+          {
+            "context_id": "558ee31f4bed4a286a3cb5124ceb7cce",
+            "identity": "f22fca859e7775553207df54463a1b65b0dcd7d00bd803ea78610616390ba31d",
+            "family": "menuitem|",
+            "control": "m4",
+            "role": "menuitem",
+            "name": "Share"
+          }
+        ]
+      },
+      "chosen": "1b3311814f34c53dcd560ab13fd6005d",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    },
+    {
+      "snapshot": {
+        "url": "http://gym.test/g03/",
+        "title": "Custom ARIA widgets",
+        "controls": [
+          {
+            "context_id": "c672469fcb914d4f79e533eb27151967",
+            "identity": "e13cb35dfb9697a36793307556a1ae9b3595d9a3e300ff7461b3ec148c9581cc",
+            "family": "tab|",
+            "control": "t1",
+            "role": "tab",
+            "name": "Overview"
+          },
+          {
+            "context_id": "e20345335aeb4bea0bd0f7e033188fe3",
+            "identity": "c8253a12cf2f2afb3f9a65cb9081ef7dcaf0d8f365702a7cf7e5efb7a0ff7947",
+            "family": "tab|",
+            "control": "t2",
+            "role": "tab",
+            "name": "Details"
+          },
+          {
+            "context_id": "c57c4ebf5a95e6012300f0c08a0e3ab8",
+            "identity": "0807caa048ed99949470d3696cee49724603ecb7b1b5a93f89a4d248c3de50fc",
+            "family": "tab|",
+            "control": "t3",
+            "role": "tab",
+            "name": "Reviews"
+          },
+          {
+            "context_id": "cdfdc04aeb2275e34a8f46ee273c33d0",
+            "identity": "42c2c4c08c94c41a746fc2e6a5979e4d2654e3429a7095457c465047e6d40005",
+            "family": "tab|",
+            "control": "t4",
+            "role": "tab",
+            "name": "History"
+          },
+          {
+            "context_id": "40dce429e2fb85b8dca29f5e2c72d553",
+            "identity": "eb572e6d1a33adfb994111d0156c42a1d7ba97a81e8f030b75e5ca4c626105ff",
+            "family": "button|",
+            "control": "m0",
+            "role": "button",
+            "name": "Actions"
+          },
+          {
+            "context_id": "561230b0aa91413933c24db216542f28",
+            "identity": "70bbf4231902ed5db3666c7adf2b498ec2d78d2ad21d025f4db333b5391dc5d0",
+            "family": "combobox|",
+            "control": "cb0",
+            "role": "combobox",
+            "name": "Fruit"
+          },
+          {
+            "context_id": "f57e9fa2af7a24166bec96e1e912a9d5",
+            "identity": "14a2d7e9294a7d6a310f6e403d7da35395c2bdfc68f99d00f87939b9ff52a019",
+            "family": "option|",
+            "control": "o1",
+            "role": "option",
+            "name": "Apple"
+          },
+          {
+            "context_id": "9af0949cfd4fe1e08716019b56a8cab1",
+            "identity": "616fa183daa4d162560521df83dd1788115379b213fe3d2c1e79b8be7c122e40",
+            "family": "option|",
+            "control": "o2",
+            "role": "option",
+            "name": "Banana"
+          },
+          {
+            "context_id": "a74faeb0ed2f3ab41c91d80480568c81",
+            "identity": "275bb67f5a8f06cde47b14bfa88c48e4bb42dcb97081c6787f500dc85160a280",
+            "family": "option|",
+            "control": "o3",
+            "role": "option",
+            "name": "Cherry"
+          },
+          {
+            "context_id": "96a95b3e1b0af5286220668e10b48559",
+            "identity": "5ac5ecfb7cbb7188901585b8ea35aebca8e6ce947ebcb21f55d6a2abeb683b10",
+            "family": "option|",
+            "control": "o4",
+            "role": "option",
+            "name": "Damson"
+          },
+          {
+            "context_id": "171e77e0b296f1b917229b4cbd8006a3",
+            "identity": "54bdc205c5833d680d4cc020aaa5a2e69c60ebb18102ff2f79af763bb3ea74f4",
+            "family": "option|",
+            "control": "o5",
+            "role": "option",
+            "name": "Elderberry"
+          },
+          {
+            "context_id": "bbb517f6588ac852aaa25a32af211366",
+            "identity": "a5ed4703339a7123c2f34c3ff84de3c98f11d867dc07957d46b960c692969e29",
+            "family": "menuitem|",
+            "control": "m1",
+            "role": "menuitem",
+            "name": "Rename"
+          },
+          {
+            "context_id": "1b3311814f34c53dcd560ab13fd6005d",
+            "identity": "d102b110b86ff2e47ec211d288aa8c2570e13d5f37bfa3ab25bca331b2b5d59a",
+            "family": "menuitem|",
+            "control": "m2",
+            "role": "menuitem",
+            "name": "Duplicate"
+          },
+          {
+            "context_id": "d46ca2a4438490923e98a35f6f4dad18",
+            "identity": "fe8e61fed99848e2cfb8606551717c892f75839e47ef87c076d276ec75597c35",
+            "family": "menuitem|",
+            "control": "m3",
+            "role": "menuitem",
+            "name": "Archive"
+          },
+          {
+            "context_id": "558ee31f4bed4a286a3cb5124ceb7cce",
+            "identity": "f22fca859e7775553207df54463a1b65b0dcd7d00bd803ea78610616390ba31d",
+            "family": "menuitem|",
+            "control": "m4",
+            "role": "menuitem",
+            "name": "Share"
+          }
+        ]
+      },
+      "chosen": "558ee31f4bed4a286a3cb5124ceb7cce",
+      "outcome": {
+        "succeeded": true,
+        "revealed": [],
+        "lane": "trusted_ui"
+      }
+    }
+  ]
+}

@@ -1,0 +1,220 @@
+{
+  "completed": 10,
+  "completedAt": "2026-10-28T06:25:50.907Z",
+  "crawlxSample": {
+    "family": "hybrid-mix",
+    "job": "01a1812f-b24e-7210-b674-d66cc3d24905",
+    "provenance": "black_box_run",
+    "request": {
+      "limit": 500,
+      "maxConcurrency": 1,
+      "scrapeOptions": {
+        "formats": [
+          "markdown",
+          "links",
+          "rawHtml"
+        ]
+      }
+    },
+    "seedUrl": "http://gym.test:4101/hybrid-mix/",
+    "statusPages": 1,
+    "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5"
+  },
+  "createdAt": "2026-10-28T06:25:49.134Z",
+  "creditsUsed": -1,
+  "data": [
+    {
+      "links": [],
+      "markdown": "Acme workspace\n==============\n\nServer-rendered documentation on the left, a single-page app on the right. Last: none",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b329-77ac-ac7e-8f496eb1409c",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/",
+        "statusCode": 200,
+        "title": "hybrid-mix",
+        "url": "http://gym.test:4101/hybrid-mix/"
+      },
+      "rawHtmlBytes": 4821,
+      "rawHtmlSha256": "fc587308d055ed01959d5cf25349a52ea56088e00603ca8e3f0a127e194bab14"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/hybrid-mix/docs-install.html",
+        "http://gym.test:4101/hybrid-mix/docs-configure.html",
+        "http://gym.test:4101/hybrid-mix/docs-faq.html",
+        "http://gym.test:4101/hybrid-mix/"
+      ],
+      "markdown": "Documentation\n=============\n\n*   [Install](http://gym.test:4101/hybrid-mix/docs-install.html)\n    \n*   [Configure](http://gym.test:4101/hybrid-mix/docs-configure.html)\n    \n*   [FAQ](http://gym.test:4101/hybrid-mix/docs-faq.html)\n    \n\n[Home](http://gym.test:4101/hybrid-mix/)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b3c6-74ee-a596-75404e420da0",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/docs-index.html",
+        "statusCode": 200,
+        "title": "hybrid-mix docs",
+        "url": "http://gym.test:4101/hybrid-mix/docs-index.html"
+      },
+      "rawHtmlBytes": 4686,
+      "rawHtmlSha256": "5413f869170b4eee021b197f5b4527d88cb9a2e50aa4e76d71aeb22a9bf0bd25"
+    },
+    {
+      "links": [],
+      "markdown": "Home\n====\n\nOpen the workspace menu to reach reports, billing and members.",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b3d3-755a-9146-91ced1bd01d5",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/app.html",
+        "statusCode": 200,
+        "title": "hybrid-mix app",
+        "url": "http://gym.test:4101/hybrid-mix/app.html#/home"
+      },
+      "rawHtmlBytes": 8314,
+      "rawHtmlSha256": "60fa9521f3e5b7cad7f44ea13b7af822dae6e701533b09efac68f16bb99c0fac"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/hybrid-mix/app.html#/billing"
+      ],
+      "markdown": "Pricing\n=======\n\nServer-rendered page.\n\n[Change your plan in the app](http://gym.test:4101/hybrid-mix/app.html#/billing)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b3da-7616-8e93-be0afab34f4a",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/pricing.html",
+        "statusCode": 200,
+        "title": "hybrid-mix pricing",
+        "url": "http://gym.test:4101/hybrid-mix/pricing.html"
+      },
+      "rawHtmlBytes": 4472,
+      "rawHtmlSha256": "0099b0528bc85308ceaef75d509cb4f57bf55d2b62e5b35c9dc66d2f6b1bdecb"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/hybrid-mix/docs-configure.html"
+      ],
+      "markdown": "Install\n=======\n\nServer-rendered page.\n\n[Next: configure](http://gym.test:4101/hybrid-mix/docs-configure.html)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b68b-743e-aba1-d9ae43774a47",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/docs-install.html",
+        "statusCode": 200,
+        "title": "hybrid-mix install",
+        "url": "http://gym.test:4101/hybrid-mix/docs-install.html"
+      },
+      "rawHtmlBytes": 4464,
+      "rawHtmlSha256": "355d6f4a3966281bc656f1c6e5cc138c6446c639d10d2335fcbdf39c020d3fba"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/hybrid-mix/docs-faq.html"
+      ],
+      "markdown": "Configure\n=========\n\nServer-rendered page.\n\n[Next: FAQ](http://gym.test:4101/hybrid-mix/docs-faq.html)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b694-778c-b805-06e589977e60",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/docs-configure.html",
+        "statusCode": 200,
+        "title": "hybrid-mix configure",
+        "url": "http://gym.test:4101/hybrid-mix/docs-configure.html"
+      },
+      "rawHtmlBytes": 4460,
+      "rawHtmlSha256": "7c7a35b66ea1b2cab68c21220daf7c120f6c852d769c6f4ac3c91ccda75ef496"
+    },
+    {
+      "links": [
+        "http://gym.test:4101/hybrid-mix/app.html"
+      ],
+      "markdown": "FAQ\n===\n\nServer-rendered page.\n\n[Try the app](http://gym.test:4101/hybrid-mix/app.html)",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b69f-7506-845a-fcc17e7eba43",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/docs-faq.html",
+        "statusCode": 200,
+        "title": "hybrid-mix faq",
+        "url": "http://gym.test:4101/hybrid-mix/docs-faq.html"
+      },
+      "rawHtmlBytes": 4431,
+      "rawHtmlSha256": "5e6be6ddc5d1ef0d7930e5e648416262f2c2642255e5084288c24c47e6d98a20"
+    },
+    {
+      "links": [],
+      "markdown": "Reports\n=======\n\nRun report",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b721-72e7-9a9d-c03402c22555",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/app.html#/reports",
+        "statusCode": 200,
+        "title": "hybrid-mix app",
+        "url": "http://gym.test:4101/hybrid-mix/app.html#/reports"
+      },
+      "rawHtmlBytes": 8347,
+      "rawHtmlSha256": "ce88e087ffea58aeb20ba0a6b753a615bfce36ba00eea90fb39770df1bb93242"
+    },
+    {
+      "links": [],
+      "markdown": "Billing\n=======\n\nChange plan",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b740-75ec-a225-e5bcb997ba88",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/app.html#/billing",
+        "statusCode": 200,
+        "title": "hybrid-mix app",
+        "url": "http://gym.test:4101/hybrid-mix/app.html#/billing"
+      },
+      "rawHtmlBytes": 8335,
+      "rawHtmlSha256": "33618b5829fb704c91ea6983939cc9b689dfd6939b7f42ad0483d38c348d3eda"
+    },
+    {
+      "links": [],
+      "markdown": "Members\n=======\n\nInvite member",
+      "metadata": {
+        "contentType": "text/html; charset=utf-8",
+        "creditsUsed": 1,
+        "language": "en",
+        "proxyUsed": "basic",
+        "scrapeId": "01a1812f-b769-7250-8195-56370babebb4",
+        "sourceURL": "http://gym.test:4101/hybrid-mix/app.html#/members",
+        "statusCode": 200,
+        "title": "hybrid-mix app",
+        "url": "http://gym.test:4101/hybrid-mix/app.html#/members"
+      },
+      "rawHtmlBytes": 8353,
+      "rawHtmlSha256": "fe16e4c20020d3993d8bc6fa602c2dd0a323ac50c0746e0dcb715d3202852ab7"
+    }
+  ],
+  "duration": 1.773,
+  "errors": {
+    "errors": [],
+    "robotsBlocked": []
+  },
+  "expiresAt": "2026-10-29T06:26:05.000Z",
+  "next": null,
+  "status": "completed",
+  "success": true,
+  "total": 10
+}

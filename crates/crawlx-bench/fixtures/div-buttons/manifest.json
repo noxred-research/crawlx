@@ -1,0 +1,255 @@
+{
+  "id": "div-buttons",
+  "title": "div/span controls with cursor:pointer only (catalog G03)",
+  "version": 1,
+  "url_path": "/div-buttons/",
+  "controls": [
+    {
+      "id": "db-1",
+      "selector": "#db-1",
+      "role": "generic",
+      "name": "Archive",
+      "logical_id": "db-1",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-2",
+      "selector": "#db-2",
+      "role": "generic",
+      "name": "Assign",
+      "logical_id": "db-2",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-3",
+      "selector": "#db-3",
+      "role": "generic",
+      "name": "Backup",
+      "logical_id": "db-3",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-4",
+      "selector": "#db-4",
+      "role": "generic",
+      "name": "Clone",
+      "logical_id": "db-4",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-5",
+      "selector": "#db-5",
+      "role": "generic",
+      "name": "Compare",
+      "logical_id": "db-5",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-6",
+      "selector": "#db-6",
+      "role": "generic",
+      "name": "Deploy",
+      "logical_id": "db-6",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-7",
+      "selector": "#db-7",
+      "role": "generic",
+      "name": "Download",
+      "logical_id": "db-7",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-8",
+      "selector": "#db-8",
+      "role": "generic",
+      "name": "Duplicate",
+      "logical_id": "db-8",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-9",
+      "selector": "#db-9",
+      "role": "generic",
+      "name": "Expand",
+      "logical_id": "db-9",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-10",
+      "selector": "#db-10",
+      "role": "generic",
+      "name": "Export",
+      "logical_id": "db-10",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-11",
+      "selector": "#db-11",
+      "role": "generic",
+      "name": "Favorite",
+      "logical_id": "db-11",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-12",
+      "selector": "#db-12",
+      "role": "generic",
+      "name": "Filter",
+      "logical_id": "db-12",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-13",
+      "selector": "#db-13",
+      "role": "generic",
+      "name": "Flag",
+      "logical_id": "db-13",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-14",
+      "selector": "#db-14",
+      "role": "generic",
+      "name": "Import",
+      "logical_id": "db-14",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-15",
+      "selector": "#db-15",
+      "role": "generic",
+      "name": "Invite",
+      "logical_id": "db-15",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-16",
+      "selector": "#db-16",
+      "role": "generic",
+      "name": "Lock",
+      "logical_id": "db-16",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-17",
+      "selector": "#db-17",
+      "role": "generic",
+      "name": "Merge",
+      "logical_id": "db-17",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-18",
+      "selector": "#db-18",
+      "role": "generic",
+      "name": "Mute",
+      "logical_id": "db-18",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-19",
+      "selector": "#db-19",
+      "role": "generic",
+      "name": "Pin",
+      "logical_id": "db-19",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "db-20",
+      "selector": "#db-20",
+      "role": "generic",
+      "name": "Preview",
+      "logical_id": "db-20",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-1",
+      "selector": "#chip-1",
+      "role": "generic",
+      "name": "Alpha",
+      "logical_id": "chip-1",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-2",
+      "selector": "#chip-2",
+      "role": "generic",
+      "name": "Bravo",
+      "logical_id": "chip-2",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-3",
+      "selector": "#chip-3",
+      "role": "generic",
+      "name": "Charlie",
+      "logical_id": "chip-3",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-4",
+      "selector": "#chip-4",
+      "role": "generic",
+      "name": "Delta",
+      "logical_id": "chip-4",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-5",
+      "selector": "#chip-5",
+      "role": "generic",
+      "name": "Echo",
+      "logical_id": "chip-5",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-6",
+      "selector": "#chip-6",
+      "role": "generic",
+      "name": "Foxtrot",
+      "logical_id": "chip-6",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-7",
+      "selector": "#chip-7",
+      "role": "generic",
+      "name": "Golf",
+      "logical_id": "chip-7",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-8",
+      "selector": "#chip-8",
+      "role": "generic",
+      "name": "Hotel",
+      "logical_id": "chip-8",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-9",
+      "selector": "#chip-9",
+      "role": "generic",
+      "name": "India",
+      "logical_id": "chip-9",
+      "mechanism": "cursor"
+    },
+    {
+      "id": "chip-10",
+      "selector": "#chip-10",
+      "role": "generic",
+      "name": "Juliet",
+      "logical_id": "chip-10",
+      "mechanism": "cursor"
+    }
+  ],
+  "expected": {
+    "operations": [],
+    "target_recall_min": 0.85,
+    "volatile_regions": [
+      "#out"
+    ]
+  }
+}

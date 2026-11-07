@@ -1,0 +1,207 @@
+{
+  "id": "g09",
+  "title": "Controls revealed by unsolicited WebSocket pushes (spurious) and by click-triggered replies (true edges)",
+  "version": 1,
+  "url_path": "/g09/",
+  "controls": [
+    {
+      "id": "a",
+      "selector": "#a",
+      "role": "button",
+      "name": "Request A",
+      "logical_id": "a"
+    },
+    {
+      "id": "a-reply",
+      "selector": "#a-reply",
+      "role": "button",
+      "name": "Reply A",
+      "logical_id": "a-reply",
+      "requires": [
+        "a"
+      ]
+    },
+    {
+      "id": "b",
+      "selector": "#b",
+      "role": "button",
+      "name": "Request B",
+      "logical_id": "b"
+    },
+    {
+      "id": "b-reply",
+      "selector": "#b-reply",
+      "role": "button",
+      "name": "Reply B",
+      "logical_id": "b-reply",
+      "requires": [
+        "b"
+      ]
+    },
+    {
+      "id": "d1",
+      "selector": "#d1",
+      "role": "button",
+      "name": "Decoy one",
+      "logical_id": "d1"
+    },
+    {
+      "id": "d2",
+      "selector": "#d2",
+      "role": "button",
+      "name": "Decoy two",
+      "logical_id": "d2"
+    },
+    {
+      "id": "d3",
+      "selector": "#d3",
+      "role": "button",
+      "name": "Decoy three",
+      "logical_id": "d3"
+    },
+    {
+      "id": "d4",
+      "selector": "#d4",
+      "role": "button",
+      "name": "Decoy four",
+      "logical_id": "d4"
+    },
+    {
+      "id": "d5",
+      "selector": "#d5",
+      "role": "button",
+      "name": "Decoy five",
+      "logical_id": "d5"
+    },
+    {
+      "id": "d6",
+      "selector": "#d6",
+      "role": "button",
+      "name": "Decoy six",
+      "logical_id": "d6"
+    },
+    {
+      "id": "p1",
+      "selector": "#p1",
+      "role": "button",
+      "name": "Pushed one",
+      "logical_id": "p1",
+      "reveal_after_ms": 1500
+    },
+    {
+      "id": "p2",
+      "selector": "#p2",
+      "role": "button",
+      "name": "Pushed two",
+      "logical_id": "p2",
+      "reveal_after_ms": 3500
+    },
+    {
+      "id": "p3",
+      "selector": "#p3",
+      "role": "button",
+      "name": "Pushed three",
+      "logical_id": "p3",
+      "reveal_after_ms": 5500
+    },
+    {
+      "id": "p4",
+      "selector": "#p4",
+      "role": "button",
+      "name": "Pushed four",
+      "logical_id": "p4",
+      "reveal_after_ms": 7500
+    },
+    {
+      "id": "p5",
+      "selector": "#p5",
+      "role": "button",
+      "name": "Pushed five",
+      "logical_id": "p5",
+      "reveal_after_ms": 9500
+    },
+    {
+      "id": "p6",
+      "selector": "#p6",
+      "role": "button",
+      "name": "Pushed six",
+      "logical_id": "p6",
+      "reveal_after_ms": 11500
+    }
+  ],
+  "expected": {
+    "enablement": [
+      {
+        "requires": [
+          "a"
+        ],
+        "target": "a-reply",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "b"
+        ],
+        "target": "b-reply",
+        "kind": "simple"
+      },
+      {
+        "requires": [
+          "d1"
+        ],
+        "target": "p1",
+        "kind": "spurious"
+      },
+      {
+        "requires": [
+          "d2"
+        ],
+        "target": "p2",
+        "kind": "spurious"
+      },
+      {
+        "requires": [
+          "d3"
+        ],
+        "target": "p3",
+        "kind": "spurious"
+      },
+      {
+        "requires": [
+          "d4"
+        ],
+        "target": "p4",
+        "kind": "spurious"
+      },
+      {
+        "requires": [
+          "d5"
+        ],
+        "target": "p5",
+        "kind": "spurious"
+      },
+      {
+        "requires": [
+          "d6"
+        ],
+        "target": "p6",
+        "kind": "spurious"
+      }
+    ],
+    "operations": [
+      "WS /g09/ws"
+    ],
+    "traffic_origins": [
+      {
+        "path_prefix": "/g09/ws",
+        "origin": "page",
+        "late": true
+      }
+    ],
+    "target_recall_min": 1.0,
+    "volatile_regions": [
+      "#ws-state",
+      "#out"
+    ]
+  }
+}

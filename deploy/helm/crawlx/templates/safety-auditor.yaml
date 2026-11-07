@@ -1,0 +1,70 @@
+{{- if .Values.safetyAuditor.enabled }}
+# Independent safety check: API CLI image contains no Chromium or worker credentials.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-safety-audit
+  labels: { app: crawlx-safety-auditor, app.kubernetes.io/part-of: crawlx }
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 30
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: { app: crawlx-safety-auditor, release: {{ .Release.Name }} }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            {{- include "crawlx.podSecurityContext" (dict "uid" 65532) | nindent 12 }}
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: safety-audit
+              image: {{ include "crawlx.apiImage" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["admin", "safety-audit", "--json"]
+              env:
+                - name: CRAWLX_ENVIRONMENT
+                  value: {{ .Values.environment | quote }}
+                - name: CRAWLX_SAFETY_READER_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.safetyAuditor.readerSecret | quote }}
+                      key: database_url
+                - name: CRAWLX_SAFETY_PAUSE_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.safetyAuditor.pauseSecret | quote }}
+                      key: database_url
+              securityContext:
+                {{- include "crawlx.containerSecurityContext" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.safetyAuditor.resources | nindent 16 }}
+---
+# Always enforce auditor isolation, even when general chart network policies are disabled.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-safety-auditor
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-safety-auditor, release: {{ .Release.Name }} }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.postgresSelector }} }
+      ports: [{ protocol: TCP, port: 5432 }]
+    # DNS is infrastructure-only; no crawl targets, API, model, object store or telemetry egress.
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+{{- end }}
