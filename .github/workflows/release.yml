@@ -3,9 +3,10 @@ name: release
 # Source-release workflow: runs on a `vX.Y.Z` tag, re-verifies the tagged tree, then builds a
 # deterministic source archive plus SHA256SUMS and creates a *draft* GitHub release. A person
 # publishes the draft after review. No binaries, container images or crates.io packages are
-# built or pushed by this workflow.
+# built or pushed by this workflow. On a public repository the release files carry build
+# provenance attestations and the source archive an SBOM attestation.
 #
-# Every action is pinned to the same commit SHA used in ci.yml.
+# Every action is pinned to a full commit SHA; the comment names the tag it was resolved from.
 #
 # Workflow gate. Only code owners (the `*` rule of .github/CODEOWNERS on the default
 # branch) can run this workflow: the first job, `authorize`, checks the actor and the
@@ -93,6 +94,7 @@ jobs:
 
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -145,18 +147,14 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: ci/lint-deps.sh
       - name: Workspace tests (PostgreSQL service; Chromium-gated tests skip here)
         run: cargo test --workspace --locked
       # The Chromium-gated suites run against the pinned build exactly as ci.yml's `browser` job
-      # does (the pin is sha256-verified by ci/fetch-chromium.sh).
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: .cache/chromium
-          key: chromium-${{ hashFiles('chromium-pin.toml') }}
+      # does (the pin is sha256-verified by ci/fetch-chromium.sh). A release build restores no
+      # caches: a cache written by an earlier run must not influence what is released.
       - name: Chrome for Testing runtime libraries
         run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
@@ -171,10 +169,13 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [authorize, verify]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
       contents: write
+      id-token: write # keyless signing identity for the build provenance attestation
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -202,13 +203,40 @@ jobs:
             echo "::error title=changelog::empty release notes for ${VERSION}"
             exit 1
           fi
+      - name: Generate the CycloneDX SBOM of the tagged tree
+        # Lists every locked dependency of the Rust workspace and the test tooling. The scanner
+        # image is pinned by digest. SHA256SUMS is rewritten to cover the SBOM as well.
+        env:
+          SYFT_IMAGE: anchore/syft:v1.20.0@sha256:b46e597614ddc78621e560af3fabf9346e35462ea1c886a38b30bcc7ca601a73
+        run: |
+          docker run --rm -v "$PWD:/src:ro" "$SYFT_IMAGE" dir:/src \
+            --exclude './dist/**' --source-name crawlx --source-version "$VERSION" \
+            -o cyclonedx-json > "dist/crawlx-${VERSION}-source.cdx.json"
+          (cd dist && sha256sum "crawlx-${VERSION}-source.tar.gz" "crawlx-${VERSION}-source.cdx.json" > SHA256SUMS && sha256sum --check SHA256SUMS)
+      - name: Attest build provenance of the release files
+        # Attestations of private repositories need a plan that includes them, so the
+        # attestation steps only run once the repository is public. Verify a download with
+        # `gh attestation verify <file> --repo <owner>/<repo>`.
+        if: ${{ github.event.repository.private == false }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/crawlx-${{ env.VERSION }}-source.tar.gz
+            dist/crawlx-${{ env.VERSION }}-source.cdx.json
+            dist/SHA256SUMS
+      - name: Attest the SBOM against the source archive
+        if: ${{ github.event.repository.private == false }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/crawlx-${{ env.VERSION }}-source.tar.gz
+          sbom-path: dist/crawlx-${{ env.VERSION }}-source.cdx.json
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            "dist/crawlx-${VERSION}-source.tar.gz" dist/SHA256SUMS \
+            "dist/crawlx-${VERSION}-source.tar.gz" "dist/crawlx-${VERSION}-source.cdx.json" dist/SHA256SUMS \
             --verify-tag \
             --draft \
             --title "crawlx ${VERSION}" \

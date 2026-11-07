@@ -8,6 +8,14 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Documentation
+
+- README redesign with banner, animated terminal demo, install options, quick starts, output examples and
+  an architecture diagram; reference material moved to `docs/reference.md`, with a local-run
+  `docs/walkthrough.md` and a `docs/roadmap.md`.
+- `SECURITY.md` gains response-time targets, safe-harbor terms, scope lists and release verification;
+  new `CODE_OF_CONDUCT.md`; YAML issue forms for bugs, feature requests and questions.
+
 ## [0.1.0] - 2026-11-07
 
 First public source release. Distribution is the GitHub repository and the tagged

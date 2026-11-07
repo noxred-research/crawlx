@@ -27,6 +27,12 @@ on:
 
 permissions: {}
 
+# One run per pull request and per scheduled trigger: a new push cancels the superseded
+# pull request run, while a started push or scheduled run is never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.event.schedule || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -95,6 +101,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -106,6 +113,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -122,6 +131,40 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check licenses advisories bans sources
+
+  workflow-lint:
+    # Static checks of the workflow files themselves: actionlint (syntax, expression types,
+    # embedded shell via shellcheck) and zizmor (script injection, excessive permissions,
+    # unpinned or impostor actions, credential persistence, cache poisoning). Both tools are
+    # pinned: actionlint by release checksum, zizmor by action SHA and exact version.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: authorize
+    if: needs.authorize.outputs.ok == 'true'
+    permissions:
+      contents: read
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install actionlint (pinned release, sha256-verified)
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSLo "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/actionlint-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint-bin" actionlint
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
+      - run: actionlint
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: "1.32.0"
+          inputs: .github
+          advanced-security: false
+          annotations: true
 
   public-hygiene:
     # Public-tree hygiene: no internal-document references, no host paths, no secret shapes.
@@ -159,6 +202,7 @@ jobs:
 
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -193,6 +237,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -216,6 +262,7 @@ jobs:
     # Nightly it also regenerates that snapshot with ci/schema-snapshot.sh (pg_dump of the
     # service's major) and fails if the committed file drifted.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -250,6 +297,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -271,6 +320,7 @@ jobs:
     # browser plane and nightly. Also the CDP-surface probe and the SIGKILL chaos
     # suite, which needs PostgreSQL for the journal the recovery worker reconciles.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -305,6 +355,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -334,11 +386,13 @@ jobs:
     # with crawlx on the pinned Chromium and asserts recall >= 0.95 over >= 200 oracle-actionable
     # elements plus per-fixture capability parity. The comparison is uploaded per driver.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'schedule' || contains(github.event.pull_request.title, 'browser'))
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         driver: ${{ github.event_name == 'schedule' && fromJSON('["playwright","patchright"]') || fromJSON('["playwright"]') }}
     env:
@@ -350,6 +404,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
@@ -381,6 +437,7 @@ jobs:
     # until the divergence ledger is complete. `run.sh all` runs every
     # family of bench/differential/families.json and fails when one misses its expected verdict.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && github.event_name == 'schedule'
     permissions:
@@ -393,6 +450,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -422,6 +481,7 @@ jobs:
     # on a different runner the absolute MAIN-target gates (p95) still apply but the relative
     # comparison is trend data, so the job never blocks a merge (continue-on-error).
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && github.event_name == 'schedule'
     permissions:
@@ -434,6 +494,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -450,6 +512,7 @@ jobs:
     # PRs, 30 min per target nightly. The targets also build on stable as stdin binaries
     # (`cargo check --manifest-path fuzz/Cargo.toml`), which the lint job does not cover.
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 60 }}
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -461,6 +524,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -510,6 +575,7 @@ jobs:
     # uploaded as the pin-bump review artifact: a pin may move only with a clean diff or with
     # every reported difference resolved.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && github.event_name == 'schedule'
     permissions:
@@ -524,6 +590,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -556,6 +624,7 @@ jobs:
     # a MinIO service container (CRAWLX_TEST_S3_ENDPOINT); the same test file also starts MinIO
     # through docker when it can, so both paths run here.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -580,6 +649,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -590,6 +661,7 @@ jobs:
     # Safety kernel on the adversarial fixtures: the safety crate's own
     # suite plus the worker end-to-end `safety_*` tests on the gym, which need real Chromium.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -601,6 +673,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -621,6 +695,7 @@ jobs:
     # workspace on the pinned Chromium and PostgreSQL. Weekly (Sunday cron) and on demand; the
     # per-PR `browser` job keeps the short SIGKILL subset.
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     needs: authorize
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
     permissions:
@@ -655,6 +730,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -688,6 +765,7 @@ jobs:
     # Toolchain canary: clippy and the unit suite on the latest stable, ignoring
     # rust-toolchain.toml. Never blocking; a failure is the early warning for the next pin bump.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -702,6 +780,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -719,6 +799,7 @@ jobs:
     # requires >= 95 % of viable crawlx-safety mutants caught; the other two crates are
     # reported only. Non-blocking (continue-on-error) until the gate has a history.
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
     permissions:
@@ -731,6 +812,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -763,6 +846,7 @@ jobs:
     # and `gate g1` evaluates the report. `gates/g1.passed` is build-scoped (scope_digest), so
     # it is uploaded as an artifact and never committed. Nightly and on demand.
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     needs: [authorize, unit, browser]
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     permissions:
@@ -797,6 +881,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -842,6 +928,7 @@ jobs:
     # uploaded as artifacts. Container publication and image signing (cosign) are not part of
     # the source-tag release workflow (release.yml); no image is pushed for a release.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -858,6 +945,8 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Build images
         run: |
           DOCKER_BUILDKIT=1 docker build --pull -f docker/Dockerfile.api -t "$API_IMAGE" .
