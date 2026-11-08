@@ -181,16 +181,18 @@ blocklist.
 `robots.txt` is implemented per RFC 9309: product-token group with `*` fallback, longest match wins,
 `Allow` wins ties, `*` and `$` wildcards, 500 KiB size cap. One cache is shared by both planes:
 24-hour TTL (from `Cache-Control` within 60 s to 24 h), 4xx and over-long redirect chains mean allow,
-5xx or unreachable means disallow with exponential backoff and a 24-hour give-up
-(`robots_unavailable`). The default product token is `crawlx`.
+5xx or unreachable means disallow (`robots_unavailable`); the cache applies exponential backoff and
+a 24-hour give-up, but the worker never refetches within a run, so such an origin stays blocked for
+the rest of the run. The default product token is `crawlx`.
 
 The browser plane checks robots for its own navigations and for page-initiated **main-frame**
 document requests (paused through the CDP `Fetch` domain, with a 30-second guard timeout). It does
 not check subresources or embedded frames.
 
 Overriding robots requires an authorization record with `robotsOverrideAcknowledged`.
-`Crawl-delay` is parsed (capped at 10 seconds) but does not yet change pacing; set
-`politeness.delayMs` instead.
+`Crawl-delay` (capped at 10 seconds) raises the origin's minimum spacing for a run that obeys robots,
+once the robots.txt answer is recorded and on every allowed URL; see
+[rate limits](#rate-limits-and-politeness). A run that overrides robots does not apply it itself.
 
 ## Rate limits and politeness
 
@@ -200,15 +202,31 @@ share a budget.
 - **Defaults.** One request in flight per origin, at least 250 ms between starts (floor 50 ms),
   global concurrency 10, a process-wide per-origin cap, optional global and per-host requests per
   second or minute.
+- **Robots `Crawl-delay`.** For an obeying run the origin's spacing never drops below
+  `max(politeness.delayMs, Crawl-delay)`. Only an explicit `Crawl-delay` value (including `0`)
+  changes the floor, setting it to `max(politeness.delayMs, hint)`; an adapted spacing then decays
+  toward it. A robots.txt answer or refetch without the directive (any `4xx`, including `429` and
+  `403`, is allow-all with no hint) keeps the floor learned earlier in the run. A hint learned while
+  a start is already admitted (spacing already read) applies from the next start, not that one. Only
+  the first robots.txt request of an origin is paced by the base delay; refetches are paced by the
+  floor.
+  Back-off, success decay and latency feedback all respect that floor. Discovery fetches that bypass
+  the gate (sitemaps, known files) are paced only on the origin whose robots.txt was recorded; a
+  sitemap host on another origin gets its own floor only once its robots.txt has been read. The floor
+  is not shared across workers: the process-wide cap and deployment admission (keyed by origin only)
+  hold back only the start that directly follows a floored start, including one from a run that
+  overrides robots, while a worker that has not learned the delay can space its own consecutive
+  starts at its own `delayMs`.
 - **Adaptive back-off.** `429` and `503` double the origin's spacing with ±20 % seeded jitter up to
-  60 s; `Retry-After` is a floor and is never shortened; after ten consecutive successes the spacing
-  halves down to the base. The cool-down is shared across workers.
+  60 s (never below the `Crawl-delay` floor); `Retry-After` is a floor and is never shortened; after
+  ten consecutive successes the spacing halves down to the floor. The cool-down is shared across
+  workers.
 - **Retries.** Three retries on `429` and `503` with exponential back-off from 500 ms (cap 30 s); a
   `Retry-After` longer than 60 s is not waited out.
 - **Ceilings.** Tenant ceilings raise the minimum delay and lower the in-flight limit; an
   authorization record can only tighten politeness further.
-- **Violations.** `crawlx.fetch.politeness_violations` counts permits issued sooner than the base
-  delay or above the in-flight cap. It should stay at zero.
+- **Violations.** `crawlx.fetch.politeness_violations` counts permits issued sooner than the
+  origin's spacing floor or above the in-flight cap. It should stay at zero.
 - **API limits.** A per-tenant token bucket (default 6000 requests per minute; `0` disables it)
   with `RateLimit-*` headers; at most 50 SSE streams per tenant and 5 per run.
 
@@ -247,5 +265,12 @@ isolation is enforced by PostgreSQL row-level security and a restricted API data
   store, so treat `approval_required` as `deny` in practice.
 - The kernel does not run without an audit sink attached; the in-process worker attaches an
   in-memory log, and the durable record is the `safety_decisions` row.
-- `Crawl-delay` is parsed but not applied (see above).
 - Robots is not consulted for browser subresources and frames.
+- `Crawl-delay`: the URL plane processes a leased batch sequentially, so a row on an origin with a
+  `Crawl-delay` floor waits for it in process (up to the 10 s cap) and the rows behind it in the
+  batch wait too. A `429` behaves differently: it publishes a cooldown, and later rows of that
+  origin are deferred instead of waited on. The acquisition budget (default 60 s
+  `max_elapsed_ms`) includes these pacing waits: a continuation makes at most `max_attempts`
+  requests, and on a 10 s floor at most about six within the 60 s deadline. A durable fix
+  (per-origin deferral without frontier churn) is open on
+  [#35](https://github.com/noxred-research/crawlx/issues/35).

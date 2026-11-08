@@ -93,7 +93,8 @@ pub struct GovernorConfig {
     pub max_delay: Duration,
     /// Concurrent requests per origin.
     pub max_in_flight_per_origin: usize,
-    /// After this many consecutive `2xx` the spacing halves (never below `base_delay`).
+    /// After this many consecutive `2xx` the spacing halves (never below the origin's spacing
+    /// floor, `max(base_delay, Crawl-delay)`).
     pub decay_after: u32,
     /// Source of the ±20% back-off jitter.
     pub seed: CrawlSeed,
@@ -283,6 +284,8 @@ impl HostBucket {
 struct Pacing {
     next_allowed: Instant,
     delay: Duration,
+    /// Lower bound of `delay`: `base_delay`, raised by the origin's `robots.txt` `Crawl-delay`.
+    floor: Duration,
     ok_streak: u32,
     /// Last HTTP admission or committed browser dispatch; `None` before the first.
     last_start: Option<Instant>,
@@ -586,15 +589,18 @@ impl Permit {
     pub fn commit_dispatch(&mut self) -> Result<(), StoreError> {
         if let Some(dispatch) = self.browser_dispatch.take() {
             let now = Instant::now();
+            let mut pacing = dispatch.state.pacing.lock();
+            // Spacing that rose while the browser was preparing (a `Crawl-delay` raising the
+            // floor, or a 429/503 back-off raising the delay) outranks the one captured at
+            // acquisition. `delay >= floor` always holds, so `delay` covers the floor too.
+            let spacing = dispatch.spacing.max(pacing.delay);
             let next = now
-                .checked_add(dispatch.spacing)
+                .checked_add(spacing)
                 .ok_or_else(|| StoreError::Conflict("origin spacing exceeds monotonic clock range".into()))?;
-            {
-                let mut pacing = dispatch.state.pacing.lock();
-                pacing.next_allowed = pacing.next_allowed.max(next);
-                pacing.last_start = Some(now);
-            }
-            *dispatch.shared.pacing.lock() = Some((now, dispatch.spacing));
+            pacing.next_allowed = pacing.next_allowed.max(next);
+            pacing.last_start = Some(now);
+            drop(pacing);
+            *dispatch.shared.pacing.lock() = Some((now, spacing));
             // Release the FIFO turn only after both spacing clocks are updated.
         }
         Ok(())
@@ -699,6 +705,7 @@ impl OriginGovernor {
             pacing: Mutex::new(Pacing {
                 next_allowed: Instant::now(),
                 delay: self.cfg.base_delay,
+                floor: self.cfg.base_delay,
                 ok_streak: 0,
                 last_start: None,
             }),
@@ -713,9 +720,10 @@ impl OriginGovernor {
     /// Dropping this future or the returned permit releases all capacity.
     /// The complete wait is observed in `crawlx.fetch.origin_wait`.
     ///
-    /// A permit handed out less than `base_delay` after the origin's previous one, or
-    /// while more than `max_in_flight_per_origin` permits are live for the origin, is
-    /// counted in `crawlx.fetch.politeness_violations` (the permit is still granted).
+    /// A permit handed out less than the origin's spacing floor (`max(base_delay, Crawl-delay)`,
+    /// as admitted when its spacing was read) after the origin's previous one, or while more
+    /// than `max_in_flight_per_origin` permits are live for the origin, is counted in
+    /// `crawlx.fetch.politeness_violations` (the permit is still granted).
     ///
     /// # Errors
     /// Returns a storage error when deployment admission is unavailable.
@@ -760,7 +768,11 @@ impl OriginGovernor {
             start
         };
         tokio::time::sleep_until(start).await;
-        let spacing = state.pacing.lock().delay.max(minimum);
+        let (delay, admitted_floor) = {
+            let p = state.pacing.lock();
+            (p.delay, p.floor)
+        };
+        let spacing = delay.max(minimum);
         let (global, turn) = self
             .origin_cap
             .start(origin, spacing, &mut deployment, &self.concurrency)
@@ -770,7 +782,7 @@ impl OriginGovernor {
             .observe_duration(waited_from.elapsed(), &[]);
         let browser_dispatch = if minimum.is_zero() {
             *self.origin_cap.state(origin).pacing.lock() = Some((Instant::now(), spacing));
-            self.record_start(&state);
+            self.record_start(&state, admitted_floor);
             drop(turn);
             None
         } else {
@@ -791,14 +803,18 @@ impl OriginGovernor {
     }
 
     /// Note that a permit is handed out now; count a politeness violation when it comes
-    /// sooner than `base_delay` after the origin's previous permit or while the origin's
-    /// in-flight cap is exceeded.
-    fn record_start(&self, state: &OriginState) {
+    /// sooner than `admitted_floor` (the origin's spacing floor in effect when the permit's
+    /// spacing was read, so a floor raised during acquisition is not charged to it) after the
+    /// origin's previous permit or while the origin's in-flight cap is exceeded.
+    fn record_start(&self, state: &OriginState, admitted_floor: Duration) {
         let cap = self.cfg.max_in_flight_per_origin.max(1);
         let live = cap.saturating_sub(state.sem.available_permits());
         let now = Instant::now();
         let mut p = state.pacing.lock();
-        let too_soon = p.last_start.is_some_and(|last| now < last + self.cfg.base_delay);
+        let too_soon = p
+            .last_start
+            .and_then(|last| last.checked_add(admitted_floor))
+            .is_some_and(|due| now < due);
         p.last_start = Some(now);
         drop(p);
         if too_soon || live > cap {
@@ -821,12 +837,15 @@ impl OriginGovernor {
                         .note_cooldown(origin, retry_after.unwrap_or_default(), true)
                 } else {
                     let jitter: f64 = self.rng.lock().random_range(0.8..1.2);
-                    let current = state.pacing.lock().delay;
+                    let (current, floor) = {
+                        let p = state.pacing.lock();
+                        (p.delay, p.floor)
+                    };
                     let doubled = current.saturating_mul(2);
                     let delay = Duration::try_from_secs_f64(doubled.as_secs_f64() * jitter)
                         .unwrap_or(Duration::MAX)
                         .min(self.cfg.max_delay)
-                        .max(self.cfg.base_delay)
+                        .max(floor)
                         .max(current)
                         .max(retry_after.unwrap_or_default());
                     self.origin_cap.note_cooldown(origin, delay, false);
@@ -834,7 +853,7 @@ impl OriginGovernor {
                 };
                 let mut p = state.pacing.lock();
                 if !python {
-                    p.delay = delay.max(self.cfg.base_delay);
+                    p.delay = delay.max(p.floor);
                 }
                 p.ok_streak = 0;
                 if let Some(until) = Instant::now().checked_add(delay) {
@@ -846,7 +865,7 @@ impl OriginGovernor {
                 p.ok_streak = p.ok_streak.saturating_add(1);
                 if p.ok_streak >= self.cfg.decay_after {
                     p.ok_streak = 0;
-                    p.delay = (p.delay / 2).max(self.cfg.base_delay);
+                    p.delay = (p.delay / 2).max(p.floor);
                 }
             }
             _ => {}
@@ -876,8 +895,8 @@ impl OriginGovernor {
                 let state = self.state(origin);
                 let mut p = state.pacing.lock();
                 let proposal = (p.delay.saturating_add(latency / target) / 2)
-                    .max(self.cfg.base_delay)
-                    .min(self.cfg.max_delay.max(self.cfg.base_delay));
+                    .max(p.floor)
+                    .min(self.cfg.max_delay.max(p.floor));
                 if status == 200 || proposal >= p.delay {
                     p.delay = proposal;
                 }
@@ -900,10 +919,47 @@ impl OriginGovernor {
         Ok(())
     }
 
-    /// Current spacing for `origin` (the base delay until adapted).
+    /// Current spacing for `origin` (the spacing floor, `max(base_delay, Crawl-delay)`, until
+    /// adapted).
     #[must_use]
     pub fn current_delay(&self, origin: &Origin) -> Duration {
         self.state(origin).pacing.lock().delay
+    }
+
+    /// Apply `origin`'s `robots.txt` `Crawl-delay` (already capped by the robots policy):
+    /// its spacing floor becomes `max(base_delay, crawl_delay)`. Back-off, success decay and
+    /// latency feedback never take the spacing below that floor, and the next start waits
+    /// until the floor has passed since the origin's previous one. The spacing handed to the
+    /// process-wide cap and to deployment admission carries the floor too.
+    ///
+    /// The robots gate calls this only with an actual `Crawl-delay` value, so a `robots.txt`
+    /// that drops the directive (or answers 4xx/5xx or is unreachable) keeps the floor for the
+    /// rest of the run. An explicit smaller value, including zero, lowers the floor to
+    /// `max(base_delay, hint)`; an already adapted spacing then decays toward it as usual.
+    ///
+    /// Calling it again with the same value is a no-op, as is a hint that does not raise the
+    /// floor above `base_delay` for an origin without pacing state (no state is created for
+    /// it).
+    pub fn set_crawl_delay(&self, origin: &Origin, crawl_delay: Duration) {
+        let floor = self.cfg.base_delay.max(crawl_delay);
+        let state = if floor == self.cfg.base_delay {
+            // Nothing to raise: do not create state for an origin that was only discovered.
+            let Some(state) = self.origins.lock().get(origin).cloned() else {
+                return;
+            };
+            state
+        } else {
+            self.state(origin)
+        };
+        let mut p = state.pacing.lock();
+        if floor == p.floor {
+            return;
+        }
+        p.floor = floor;
+        p.delay = p.delay.max(floor);
+        if let Some(next) = p.last_start.and_then(|last| last.checked_add(floor)) {
+            p.next_allowed = p.next_allowed.max(next);
+        }
     }
 }
 
@@ -1181,6 +1237,138 @@ mod tests {
         assert!(waited <= Duration::from_secs(12), "{waited:?}");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn crawl_delay_spaces_the_origin_from_its_previous_start() {
+        let g = OriginGovernor::new(cfg());
+        let o = origin("https://slow.test");
+        let t0 = Instant::now();
+        // the robots.txt fetch itself, before its Crawl-delay is known
+        drop(g.acquire(&o).await.unwrap());
+        g.set_crawl_delay(&o, Duration::from_secs(2));
+        drop(g.acquire(&o).await.unwrap());
+        assert_eq!(t0.elapsed(), Duration::from_secs(2));
+        drop(g.acquire(&o).await.unwrap());
+        assert_eq!(t0.elapsed(), Duration::from_secs(4));
+        // other origins keep the configured base delay
+        let other = origin("https://fast.test");
+        let t1 = Instant::now();
+        drop(g.acquire(&other).await.unwrap());
+        drop(g.acquire(&other).await.unwrap());
+        assert_eq!(t1.elapsed(), Duration::from_millis(250));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn crawl_delay_is_a_floor_for_backoff_decay_and_latency_feedback() {
+        let g = OriginGovernor::new(GovernorConfig {
+            base_delay: Duration::from_millis(250),
+            max_delay: Duration::from_secs(1),
+            decay_after: 2,
+            ..GovernorConfig::default()
+        });
+        let o = origin("https://floor.test");
+        // a hint below the configured delay never accelerates
+        g.set_crawl_delay(&o, Duration::from_millis(100));
+        assert_eq!(g.current_delay(&o), Duration::from_millis(250));
+        g.set_crawl_delay(&o, Duration::from_secs(3));
+        assert_eq!(g.current_delay(&o), Duration::from_secs(3));
+        // back-off above max_delay is not capped below the floor
+        g.on_response(&o, 429, None);
+        let backed_off = g.current_delay(&o);
+        assert!(backed_off >= Duration::from_secs(3), "{backed_off:?}");
+        for _ in 0..20 {
+            g.on_response(&o, 200, None);
+        }
+        assert_eq!(g.current_delay(&o), Duration::from_secs(3));
+        g.set_pacing_dialect(PacingDialectV1::ScrapyAutothrottleV1, 1);
+        g.on_response_with_latency(&o, 200, None, Some(Duration::ZERO), false)
+            .await
+            .unwrap();
+        assert_eq!(g.current_delay(&o), Duration::from_secs(3));
+        // a lower hint from a refreshed robots.txt lets the spacing decay to it
+        g.set_pacing_dialect(PacingDialectV1::Native, 1);
+        g.set_crawl_delay(&o, Duration::ZERO);
+        for _ in 0..20 {
+            g.on_response(&o, 200, None);
+        }
+        assert_eq!(g.current_delay(&o), Duration::from_millis(250));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn crawl_delay_reaches_governors_sharing_the_origin_cap() {
+        let shared = Arc::new(GlobalOriginCap::new(4));
+        let learned = OriginGovernor::with_global_cap(cfg(), Arc::clone(&shared));
+        let other = OriginGovernor::with_global_cap(cfg(), shared);
+        let o = origin("https://shared-delay.test");
+        learned.set_crawl_delay(&o, Duration::from_secs(2));
+        let t0 = Instant::now();
+        drop(learned.acquire(&o).await.unwrap());
+        drop(other.acquire(&o).await.unwrap());
+        assert_eq!(t0.elapsed(), Duration::from_secs(2));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hint_at_or_below_base_creates_no_origin_state() {
+        let g = OriginGovernor::new(cfg());
+        let o = origin("https://no-state.test");
+        g.set_crawl_delay(&o, Duration::ZERO);
+        g.set_crawl_delay(&o, Duration::from_millis(100));
+        g.set_crawl_delay(&o, Duration::from_millis(250));
+        assert!(g.origins.lock().is_empty());
+        // a raising hint does create it
+        g.set_crawl_delay(&o, Duration::from_secs(3));
+        assert_eq!(g.origins.lock().len(), 1);
+        assert_eq!(g.current_delay(&o), Duration::from_secs(3));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn browser_commit_carries_a_backoff_raised_during_preparation() {
+        let slow = GovernorConfig {
+            base_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(60),
+            ..GovernorConfig::default()
+        };
+        let shared = Arc::new(GlobalOriginCap::new(2));
+        let first = OriginGovernor::with_global_cap(slow.clone(), Arc::clone(&shared));
+        let second = OriginGovernor::with_global_cap(slow, shared);
+        let o = origin("https://backoff-in-preparation.test");
+        let mut prepared = first.acquire_browser(&o).await.unwrap();
+        // A 429 doubles the delay (±20% jitter) with no change to the floor.
+        first.on_response(&o, 429, None);
+        let backed_off = first.current_delay(&o);
+        assert!(backed_off > Duration::from_millis(1500), "{backed_off:?}");
+        // Let part of the shared cooldown from the 429 run down so that only the dispatch
+        // spacing decides the next start.
+        tokio::time::advance(Duration::from_secs(1)).await;
+        prepared.commit_dispatch().unwrap();
+        let dispatched = Instant::now();
+        drop(prepared);
+        let mut next = second.acquire_browser(&o).await.unwrap();
+        next.commit_dispatch().unwrap();
+        // The timer wheel rounds a sleep up to the next millisecond.
+        let waited = dispatched.elapsed();
+        assert!(
+            waited >= backed_off && waited <= backed_off + Duration::from_millis(1),
+            "{waited:?} vs {backed_off:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn browser_commit_carries_a_floor_raised_during_preparation() {
+        let shared = Arc::new(GlobalOriginCap::new(2));
+        let first = OriginGovernor::with_global_cap(cfg(), Arc::clone(&shared));
+        let second = OriginGovernor::with_global_cap(cfg(), shared);
+        let o = origin("https://raised-in-preparation.test");
+        let mut prepared = first.acquire_browser(&o).await.unwrap();
+        first.set_crawl_delay(&o, Duration::from_secs(3));
+        prepared.commit_dispatch().unwrap();
+        let dispatched = Instant::now();
+        drop(prepared);
+        // `second` never learned the hint: the shared pacing tuple must carry it
+        let mut next = second.acquire_browser(&o).await.unwrap();
+        next.commit_dispatch().unwrap();
+        assert_eq!(dispatched.elapsed(), Duration::from_secs(3));
+    }
+
     /// Serializes the tests that assert deltas of the process-global violation counter.
     static VIOLATIONS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -1234,6 +1422,65 @@ mod tests {
         let (s1, s2) = (first.await.unwrap(), second.await.unwrap());
         assert_eq!(s1, t0 + Duration::from_secs(1));
         assert!(s2 >= s1 + Duration::from_millis(250), "{s1:?} {s2:?}");
+        assert_eq!(violations(), before);
+    }
+
+    /// A start is a violation when it comes before `last_start + admitted floor`; an
+    /// unrepresentable deadline never panics and is never a violation.
+    #[tokio::test(start_paused = true)]
+    async fn record_start_counts_starts_below_the_admitted_floor() {
+        let _guard = VIOLATIONS_LOCK.lock().await;
+        let before = violations();
+        let g = OriginGovernor::new(cfg());
+        let o = origin("https://threshold.test");
+        let state = g.state(&o);
+        let floor = Duration::from_secs(3);
+        g.record_start(&state, floor);
+        assert_eq!(violations(), before, "first start has no predecessor");
+        tokio::time::advance(floor - Duration::from_millis(1)).await;
+        g.record_start(&state, floor);
+        assert_eq!(violations(), before + 1, "1 ms short of the floor");
+        tokio::time::advance(floor).await;
+        g.record_start(&state, floor);
+        assert_eq!(violations(), before + 1, "exactly the floor is paced");
+        g.record_start(&state, Duration::MAX);
+        assert_eq!(violations(), before + 1, "overflowing deadline is not too soon");
+    }
+
+    /// A `Crawl-delay` learned after a permit read its spacing (here while it waits for the
+    /// shared start turn and then for the shared pacing) is not charged to that permit.
+    #[tokio::test(start_paused = true)]
+    async fn floor_raised_during_acquisition_is_not_a_violation() {
+        let _guard = VIOLATIONS_LOCK.lock().await;
+        let before = violations();
+        let g = Arc::new(OriginGovernor::new(GovernorConfig {
+            max_in_flight_per_origin: 2,
+            ..cfg()
+        }));
+        let o = origin("https://raised-mid-acquire.test");
+        let t0 = Instant::now();
+        // The browser permit holds the origin's start turn; the HTTP permit reads its
+        // spacing (floor 250 ms) and queues behind it.
+        let mut browser = g.acquire_browser(&o).await.unwrap();
+        let http = {
+            let (g, o) = (Arc::clone(&g), o.clone());
+            tokio::spawn(async move {
+                let _permit = g.acquire(&o).await.unwrap();
+                Instant::now()
+            })
+        };
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        browser.commit_dispatch().unwrap();
+        drop(browser);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        // The HTTP permit is now waiting out the 500 ms browser spacing.
+        g.set_crawl_delay(&o, Duration::from_secs(3));
+        let started = http.await.unwrap();
+        assert_eq!(started - t0, Duration::from_millis(500));
         assert_eq!(violations(), before);
     }
 

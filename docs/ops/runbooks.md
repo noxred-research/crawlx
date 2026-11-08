@@ -458,8 +458,9 @@ Trigger: `fetch.politeness_violations` above 0, a target owner complaint, sustai
    seed host) times action rate. Several tenants crawling one target multiply load; reduce
    `worker.max_sessions` for that origin through the per-tenant or per-origin cap.
 4. Resume with higher spacing (for example 1000 ms) and a lower session count. Honor `Retry-After`.
-   `Crawl-delay` in `robots.txt` is parsed but does not change pacing, so set `politeness.delayMs`
-   to at least the declared delay.
+   A `Crawl-delay` in `robots.txt` (capped at 10 seconds) is applied automatically as the minimum
+   spacing of runs that obey robots, on the workers that have read it; set `politeness.delayMs` for
+   anything the site asks beyond that cap or for runs that override robots.
 5. If the target owner requests no further crawling, add the host to the operator blocklist and
    terminate with `policy_stopped`: write it to the file named by
    `egress.operator_blocklist_file` (`CRAWLX_EGRESS_OPERATOR_BLOCKLIST_FILE`, one host per line),
@@ -946,7 +947,7 @@ One card for each of the 32 rules, in file order.
 
 ## 29. CrawlxPolitenessViolation
 
-**SEV-3, ticket** (SEV-2 for that crawl while a target owner is complaining). `crawlx_fetch_politeness_violations_total` increased: a permit was handed out less than the origin's base delay after the previous one, or above `max_in_flight_per_origin`.
+**SEV-3, ticket** (SEV-2 for that crawl while a target owner is complaining). `crawlx_fetch_politeness_violations_total` increased: a permit was handed out sooner than the origin's spacing floor (`max(politeness.delayMs, Crawl-delay)`) in effect when it was admitted, or above `max_in_flight_per_origin`.
 
 - **Symptom.** A target sees more load than the configuration allows.
 - **Dashboards.** Fetch and politeness: "Origin wait p95 / throttles", "Response outcome classes / politeness violations".
