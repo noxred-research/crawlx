@@ -793,10 +793,13 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - name: Free runner disk space
+      - name: Free runner disk space, drop preinstalled browsers
         # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        # As in `unit`: the runner's Chrome cannot start its sandbox here, so Chromium-gated
+        # tests must not discover it; the `browser` job covers them with the pinned build.
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
