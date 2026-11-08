@@ -187,8 +187,10 @@ fn doc_text(wd: &[u8], table: &[u8], cap: usize) -> Result<String, ParseError> {
                 .get(at..at.saturating_add(count * 2))
                 .ok_or_else(|| bad("a text piece lies outside the document stream"))?;
             let units: Vec<u16> = raw
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
                 .collect();
             out.push_str(&String::from_utf16_lossy(&units));
         }
@@ -485,8 +487,10 @@ impl PptWalk {
                     RT_TEXT_CHARS | RT_TEXT_BYTES => {
                         let text = if ty == RT_TEXT_CHARS {
                             let units: Vec<u16> = body
-                                .chunks_exact(2)
-                                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                                .as_chunks::<2>()
+                                .0
+                                .iter()
+                                .map(|c| u16::from_le_bytes(*c))
                                 .collect();
                             String::from_utf16_lossy(&units)
                         } else {

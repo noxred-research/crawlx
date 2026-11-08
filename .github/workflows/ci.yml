@@ -968,8 +968,25 @@ jobs:
         run: ci/container-policy-test.sh "$API_IMAGE" "$WORKER_IMAGE"
       - name: Helm chart renders and the alert rules parse
         run: |
-          docker run --rm -v "$PWD:/src" -w /src alpine/helm:3.16.3 lint deploy/helm/crawlx
-          docker run --rm -v "$PWD:/src" -w /src alpine/helm:3.16.3 template crawlx deploy/helm/crawlx > /dev/null
+          set -euo pipefail
+          helm() { docker run --rm -v "$PWD:/src" -w /src alpine/helm:3.16.3 "$@"; }
+          # The chart fails closed without an artifact key provider and a secret-registry Redis,
+          # so a render must name both (non-secret test values; the Secrets are never created here).
+          custody=(--set artifactCustody.keyFileSecret=crawlx-artifact-key --set artifactCustody.secretRedis.existingSecret=crawlx-secret-registry)
+          helm lint deploy/helm/crawlx "${custody[@]}"
+          helm template crawlx deploy/helm/crawlx "${custody[@]}" > /dev/null
+          # Negative: with no key provider the chart must still refuse to render.
+          if refused="$(helm template crawlx deploy/helm/crawlx --set artifactCustody.secretRedis.existingSecret=crawlx-secret-registry 2>&1 > /dev/null)"; then
+            echo "chart rendered without an artifact key provider" >&2
+            exit 1
+          fi
+          grep -F 'artifactCustody requires an artifact key provider' <<< "$refused"
+          # Negative: with no secret-registry Redis the chart must still refuse to render.
+          if refused="$(helm template crawlx deploy/helm/crawlx --set artifactCustody.keyFileSecret=crawlx-artifact-key 2>&1 > /dev/null)"; then
+            echo "chart rendered without a secret-registry Redis" >&2
+            exit 1
+          fi
+          grep -F 'artifactCustody.secretRedis.existingSecret is required' <<< "$refused"
           docker run --rm -v "$PWD:/src" -w /src --entrypoint promtool prom/prometheus:v3.1.0 check rules deploy/alerts/crawlx-rules.yaml
       - name: SBOM (syft)
         run: |

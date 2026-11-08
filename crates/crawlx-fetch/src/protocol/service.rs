@@ -432,7 +432,7 @@ impl ServiceAdapter {
         }
         let sequence = self
             .sequence
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .map_err(|_| ProtocolError::Limit)?;
         let nonce = blake3::keyed_hash(
             blake3::hash(self.credential.expose().as_bytes()).as_bytes(),

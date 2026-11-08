@@ -60,7 +60,7 @@ pub fn merkle_root(leaves: &[Digest]) -> Option<Digest> {
             level.push(last);
         }
         let mut next = Vec::with_capacity(level.len() / 2);
-        for pair in level.chunks_exact(2) {
+        for pair in level.as_chunks::<2>().0 {
             buf[..32].copy_from_slice(&pair[0].0);
             buf[32..].copy_from_slice(&pair[1].0);
             next.push(Digest::of(MERKLE_DOMAIN, &buf));

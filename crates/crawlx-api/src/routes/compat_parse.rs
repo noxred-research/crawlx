@@ -204,7 +204,7 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
     };
     let mut have_file = false;
     let mut count = 0usize;
-    while let Some(mut field) = mp.next_field().await.map_err(&failed)? {
+    while let Some(mut field) = mp.next_field().await.map_err(failed)? {
         count += 1;
         if count > MAX_PARTS {
             return Err(bad_multipart(format!("more than {MAX_PARTS} parts")));
@@ -218,7 +218,7 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
                 have_file = true;
                 upload.filename = field.file_name().and_then(clean_filename);
                 upload.content_type = field.content_type().map(str::to_owned);
-                while let Some(chunk) = field.chunk().await.map_err(&failed)? {
+                while let Some(chunk) = field.chunk().await.map_err(failed)? {
                     if upload.bytes.len().saturating_add(chunk.len()) > file_cap {
                         return Err(too_large(file_cap));
                     }
@@ -227,7 +227,7 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
             }
             "options" => {
                 let mut raw: Vec<u8> = Vec::new();
-                while let Some(chunk) = field.chunk().await.map_err(&failed)? {
+                while let Some(chunk) = field.chunk().await.map_err(failed)? {
                     if raw.len().saturating_add(chunk.len()) > options_cap {
                         return Err(too_large(options_cap));
                     }
@@ -250,7 +250,7 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
                 upload.options = Some(value);
             }
             _ => {
-                while field.chunk().await.map_err(&failed)?.is_some() {}
+                while field.chunk().await.map_err(failed)?.is_some() {}
                 upload.extra_parts.push(name);
             }
         }

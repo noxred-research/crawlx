@@ -64,7 +64,7 @@ impl CheckpointContext {
         let mut aad = [0; DOMAIN.len() + 2 + 64];
         aad[..DOMAIN.len()].copy_from_slice(DOMAIN);
         aad[DOMAIN.len()..DOMAIN.len() + 2].copy_from_slice(&[VERSION, provider]);
-        for (slot, id) in aad[DOMAIN.len() + 2..].chunks_exact_mut(16).zip([
+        for (slot, id) in aad[DOMAIN.len() + 2..].as_chunks_mut::<16>().0.iter_mut().zip([
             self.tenant.0,
             self.run.0,
             self.session.0,

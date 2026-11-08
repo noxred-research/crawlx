@@ -105,3 +105,10 @@ bench = false
 
 [profile.release]
 debug = 1
+
+# `[patch]` is read only from the workspace root, and `fuzz/` is its own workspace, so the root
+# patches are repeated here (paths relative to `fuzz/`); without them the fuzz build links the
+# unpatched crates and fails to compile `crawlx-extract`. Keep in sync with the root `Cargo.toml`.
+[patch.crates-io]
+lopdf = { path = "../vendor/pdf-loader/lopdf-0.46.0" }
+hickory-resolver = { path = "../vendor/hickory-resolver" }

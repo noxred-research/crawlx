@@ -690,7 +690,7 @@ async fn memory_crypto(
     tokio::task::spawn_blocking(move || {
         let mut aad = [0; DOMAIN.len() + 48];
         aad[..DOMAIN.len()].copy_from_slice(DOMAIN);
-        for (slot, id) in aad[DOMAIN.len()..].chunks_exact_mut(16).zip([
+        for (slot, id) in aad[DOMAIN.len()..].as_chunks_mut::<16>().0.iter_mut().zip([
             context.tenant().0,
             context.run().0,
             context.artifact().0,

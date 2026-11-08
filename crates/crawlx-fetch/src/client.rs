@@ -910,7 +910,7 @@ impl Fetcher {
         loop {
             if let Some(allowance) = &opts.request_allowance {
                 allowance
-                    .fetch_update(
+                    .try_update(
                         std::sync::atomic::Ordering::AcqRel,
                         std::sync::atomic::Ordering::Acquire,
                         |remaining| remaining.checked_sub(1),

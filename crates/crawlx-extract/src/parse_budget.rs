@@ -130,7 +130,7 @@ impl ParseBudget {
     fn try_take(&self, bytes: usize) -> Result<(), ParseBudgetExhausted> {
         let limit = self.limit();
         self.used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes).filter(|total| *total <= limit)
             })
             .map(drop)
