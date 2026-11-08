@@ -10,10 +10,15 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ### Changed
 
-- `robots.txt` `Crawl-delay` (capped at 10 seconds) now paces the origin: once a URL is allowed, the
-  run's `OriginGovernor` keeps that origin's spacing at or above `max(politeness.delayMs,
-  Crawl-delay)` for HTTP and browser effects, across back-off, decay and deployment admission. Runs
-  that override robots ignore it. ([#35](https://github.com/noxred-research/crawlx/issues/35))
+- `robots.txt` `Crawl-delay` (capped at 10 seconds) now paces the origin for runs that obey robots:
+  once the robots.txt answer is recorded and on every allowed URL, the run's `OriginGovernor` keeps
+  spacing at or above `max(politeness.delayMs, Crawl-delay)` for HTTP and browser effects, across
+  back-off and decay. Only an explicit value (including `0`) changes the floor; a refetch that drops
+  the directive keeps the earlier one. A run that overrides robots does not apply it itself, and
+  other workers are only held back on the start that directly follows a floored start (process-wide
+  cap, deployment admission). Known limitation: the URL plane waits on the floor in process (up to
+  10 s), so rows behind it in the leased batch wait too, as with `429` back-off, and the acquisition
+  budget counts the wait. ([#35](https://github.com/noxred-research/crawlx/issues/35))
 
 ### Documentation
 
