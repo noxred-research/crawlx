@@ -20,8 +20,6 @@ crates.io packages are not part of the initial distribution.
 - **Approvals end to end.** The kernel enforces single-use, parameter-bound approvals, but its approval
   store is in-process and a decision made through the API route does not reach it, so `approval_required`
   behaves as `deny`. Connect the two.
-- **Robots `Crawl-delay`.** The directive is parsed (capped at 10 seconds) but does not change pacing yet;
-  feed it into the per-origin governor.
 - **Browser robots coverage.** Robots is checked for main-frame navigations but not for subresources and
   embedded frames. Decide and document the boundary, or extend it.
 - **Network-namespace egress mode.** The configuration enum and a deployment example exist; the worker

@@ -21,6 +21,7 @@ use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 use url::Url;
 
 /// The robots.txt product token Firecrawl's crawler answers to (lowercase).
@@ -160,7 +161,7 @@ impl RobotsGate {
             None => url.path().to_owned(),
         };
         for round in 0..2 {
-            let verdict = self.shared.cache.lock().evaluate(origin, &path);
+            let verdict = self.evaluate_and_pace(origin, url, &path);
             match verdict {
                 RobotsVerdict::Allowed => return Ok(RobotsDecision::Allowed),
                 RobotsVerdict::Disallowed(DisallowedBy::Rule(_)) => {
@@ -207,7 +208,7 @@ impl RobotsGate {
                     } else {
                         FetchStatus::Status5xx
                     };
-                    self.shared.cache.lock().record_fetch(origin, status);
+                    self.record_and_pace(origin, status, url);
                 }
                 RobotsVerdict::Unknown => return Ok(RobotsDecision::Blocked("robots_unavailable")),
             }
@@ -268,6 +269,7 @@ impl RobotsGate {
     /// `robots.txt` fetched first and the verdict re-evaluated; a second unknown answer, an
     /// unreachable file and a 5xx all block the URL as `robots_unavailable`. An egress refusal
     /// stays distinct: it is not evidence that the site's robots service is unavailable.
+    /// An allowed URL's origin is paced by its capped `Crawl-delay` from then on.
     pub(crate) async fn decide(&self, origin: &str, url: &Url) -> RobotsDecision {
         if !self.shared.obey {
             return RobotsDecision::Allowed;
@@ -277,7 +279,7 @@ impl RobotsGate {
             None => url.path().to_owned(),
         };
         for round in 0..2 {
-            let verdict = self.shared.cache.lock().evaluate(origin, &path);
+            let verdict = self.evaluate_and_pace(origin, url, &path);
             match verdict {
                 RobotsVerdict::Allowed => return RobotsDecision::Allowed,
                 RobotsVerdict::Disallowed(DisallowedBy::Rule(_)) => {
@@ -295,6 +297,52 @@ impl RobotsGate {
             }
         }
         RobotsDecision::Blocked("robots_unavailable")
+    }
+
+    /// The cached verdict for `path` on `origin`; an allowed verdict paces the governor origin
+    /// of `url` by the capped `Crawl-delay` of the same cache entry. Verdict and delay are
+    /// read under one cache guard, so a refetch in between cannot pair a verdict with another
+    /// entry's delay. The guard is never held across an `.await`.
+    fn evaluate_and_pace(&self, origin: &str, url: &Url, path: &str) -> RobotsVerdict {
+        let cache = self.shared.cache.lock();
+        let verdict = cache.evaluate(origin, path);
+        if matches!(verdict, RobotsVerdict::Allowed) {
+            if let Some(delay) = cache.crawl_delay(origin) {
+                self.pace(url, delay);
+            }
+        }
+        verdict
+    }
+
+    /// Make the fetcher's governor space `url`'s origin by `delay`, a capped `Crawl-delay`.
+    /// The governor itself ignores a value it already holds, so every gate over it, the
+    /// browser guard and the URL plane's included, can call this on each allowed URL.
+    /// A missing hint is never passed here: it does not lower a floor an earlier hint set.
+    /// The run governor is shared by the HTTP and browser planes, so both honour it. Only the
+    /// origin of `url` is paced, so a gate-bypassing fetch (sitemap, known-file discovery) is
+    /// paced only when it targets the origin whose `robots.txt` was recorded. Callers hold the
+    /// cache guard (lock order cache, governor; the governor never calls back into the
+    /// robots cache) and never across an `.await`.
+    fn pace(&self, url: &Url, delay: Duration) {
+        self.fetcher
+            .governor()
+            .set_crawl_delay(&crawlx_fetch::Origin::from_url(url), delay);
+    }
+
+    /// Record the `robots.txt` answer `status` for `origin` and, when the run obeys the file
+    /// and the cached entry carries a `Crawl-delay`, pace the governor origin of `url` by it,
+    /// so fetches that bypass the gate are spaced too. `url` is the URL whose origin the cache
+    /// entry is keyed by, never a redirect target; gate-bypassing fetches of any other origin
+    /// are not paced by this answer. An answer without a hint (4xx, 5xx, unreachable, a file
+    /// without `Crawl-delay`) leaves the floor as it was.
+    fn record_and_pace(&self, origin: &str, status: FetchStatus, url: &Url) {
+        let mut cache = self.shared.cache.lock();
+        cache.record_fetch(origin, status);
+        if self.shared.obey {
+            if let Some(delay) = cache.crawl_delay(origin) {
+                self.pace(url, delay);
+            }
+        }
     }
 
     /// Fetch the `robots.txt` of `origin` unless another task did while this one waited.
@@ -336,7 +384,7 @@ impl RobotsGate {
         if let FetchStatus::Ok(body) = &status {
             self.shared.bodies.lock().insert(origin.to_owned(), body.clone());
         }
-        self.shared.cache.lock().record_fetch(origin, status);
+        self.record_and_pace(origin, status, any_url);
         false
     }
 
@@ -479,6 +527,162 @@ mod tests {
         ));
     }
 
+    /// `gate` with `robots` already cached for `http://robots.invalid`.
+    fn gate_with_robots(mutate: impl FnOnce(&mut CreateCrawl), robots: &str) -> RobotsGate {
+        let gate = gate(mutate);
+        gate.shared.cache.lock().record_fetch(
+            "http://robots.invalid",
+            FetchStatus::Ok(robots.as_bytes().to_vec()),
+        );
+        gate
+    }
+
+    fn paced(gate: &RobotsGate) -> Duration {
+        paced_at(gate, &url("/"))
+    }
+
+    /// The spacing `gate`'s governor holds for the origin of `at`.
+    fn paced_at(gate: &RobotsGate, at: &Url) -> Duration {
+        gate.fetcher
+            .governor()
+            .current_delay(&crawlx_fetch::Origin::from_url(at))
+    }
+
+    /// Admission of a continuation that owns no extra hop: a `robots.txt` answered in one hop
+    /// only ever asks it for authority.
+    struct NoHop;
+
+    #[async_trait::async_trait]
+    impl crate::acquisition::HopAdmission for NoHop {
+        async fn admit(
+            &self,
+            _: &Url,
+            _: &FetchOptions,
+            _: &mut crate::acquisition::AcquisitionBudgetV1,
+            _: &tokio_util::sync::CancellationToken,
+        ) -> Result<(), FetchError> {
+            Err(FetchError::AcquisitionUnavailable)
+        }
+        async fn check_authority(&self) -> Result<(), FetchError> {
+            Ok(())
+        }
+    }
+
+    /// A gate reading `/robots.txt` from a loopback server that answers `status` with `body`,
+    /// the server's task (abort it when done) and a URL on the server.
+    async fn served_gate(status: u16, body: &'static str) -> (RobotsGate, Url, tokio::task::JoinHandle<()>) {
+        let status = axum::http::StatusCode::from_u16(status).unwrap();
+        let app = axum::Router::new().route(
+            "/robots.txt",
+            axum::routing::get(move || async move { (status, body) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = Url::parse(&format!("http://{}/selected", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut config = crawlx_fetch::FetchConfig::default();
+        config.governor.base_delay = Duration::ZERO;
+        let fetcher = Arc::new(
+            Fetcher::new(
+                config,
+                Arc::new(crawlx_policy::egress::EgressPolicy::new(true).with_seed_port(&target)),
+                Arc::new(StaticResolver::new()),
+            )
+            .unwrap(),
+        );
+        let gate = RobotsGate::for_crawl(&CreateCrawl::new(target.clone()), fetcher, Arc::new(SystemClock));
+        (gate, target, server)
+    }
+
+    #[tokio::test]
+    async fn an_allowed_url_paces_its_origin_by_the_capped_crawl_delay() {
+        let gate = gate_with_robots(|_| {}, "User-agent: *\nDisallow: /private\nCrawl-delay: 3\n");
+        let base = paced(&gate);
+        assert!(base < Duration::from_secs(3), "{base:?}");
+        // a refused URL is not fetched, so it changes no pacing
+        assert_eq!(
+            gate.decide("http://robots.invalid", &url("/private/x")).await,
+            RobotsDecision::Blocked("robots_disallow")
+        );
+        assert_eq!(paced(&gate), base);
+        assert_eq!(
+            gate.decide("http://robots.invalid", &url("/a")).await,
+            RobotsDecision::Allowed
+        );
+        assert_eq!(paced(&gate), Duration::from_secs(3));
+        // the browser plane's navigations go through the same gate
+        let browser = gate_with_robots(|_| {}, "User-agent: *\nCrawl-delay: 99\n");
+        assert_eq!(browser.check(&url("/b")).await, NavigationVerdict::Allow);
+        assert_eq!(paced(&browser), crawlx_policy::robots::MAX_CRAWL_DELAY);
+    }
+
+    #[tokio::test]
+    async fn a_robots_answer_without_a_hint_never_lowers_the_crawl_delay_floor() {
+        let origin = "http://robots.invalid";
+        let gate = gate_with_robots(|_| {}, "User-agent: *\nCrawl-delay: 3\n");
+        assert_eq!(gate.decide(origin, &url("/a")).await, RobotsDecision::Allowed);
+        assert_eq!(paced(&gate), Duration::from_secs(3));
+        // a refetch answered 429 or 403 is recorded as 4xx: allow-all, and no hint
+        gate.record_and_pace(origin, FetchStatus::Status4xx, &url("/"));
+        assert_eq!(gate.decide(origin, &url("/a")).await, RobotsDecision::Allowed);
+        // success decay must not speed the origin up past the last hint
+        let governor_origin = crawlx_fetch::Origin::from_url(&url("/"));
+        for _ in 0..20 {
+            gate.fetcher
+                .governor()
+                .on_response_with_latency(&governor_origin, 200, None, None, false)
+                .await
+                .unwrap();
+        }
+        assert_eq!(paced(&gate), Duration::from_secs(3));
+        // a parsed file with another value still updates the floor
+        gate.record_and_pace(
+            origin,
+            FetchStatus::Ok(b"User-agent: *\nCrawl-delay: 5\n".to_vec()),
+            &url("/"),
+        );
+        assert_eq!(paced(&gate), Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn a_run_that_ignores_robots_ignores_its_crawl_delay_too() {
+        let gate = gate_with_robots(
+            |c| c.safety.respect_robots_txt = false,
+            "User-agent: *\nCrawl-delay: 3\n",
+        );
+        let base = paced(&gate);
+        assert_eq!(gate.check(&url("/a")).await, NavigationVerdict::Allow);
+        assert_eq!(paced(&gate), base);
+    }
+
+    #[tokio::test]
+    async fn a_recorded_robots_answer_paces_its_origin_without_an_allowed_decision() {
+        // sitemap and known-file discovery fetch around the gate, after a seed it refused
+        let obeying = gate(|_| {});
+        let base = paced(&obeying);
+        assert!(base < Duration::from_secs(3), "{base:?}");
+        obeying.record_and_pace(
+            "http://robots.invalid",
+            FetchStatus::Ok(b"User-agent: *\nDisallow: /\nCrawl-delay: 3\n".to_vec()),
+            &url("/"),
+        );
+        assert_eq!(
+            obeying.decide("http://robots.invalid", &url("/a")).await,
+            RobotsDecision::Blocked("robots_disallow")
+        );
+        assert_eq!(paced(&obeying), Duration::from_secs(3));
+        // a run that ignores robots.txt is never paced by it
+        let ignoring = gate(|c| c.safety.respect_robots_txt = false);
+        let base = paced(&ignoring);
+        ignoring.record_and_pace(
+            "http://robots.invalid",
+            FetchStatus::Ok(b"User-agent: *\nCrawl-delay: 3\n".to_vec()),
+            &url("/"),
+        );
+        assert_eq!(paced(&ignoring), base);
+    }
+
     #[test]
     fn ignoring_robots_needs_a_record_reference() {
         let mut crawl = CreateCrawl::new(Url::parse("http://robots.invalid/").unwrap());
@@ -536,7 +740,7 @@ mod tests {
         });
         let crawl = CreateCrawl::new(target.clone());
         let mut config = crawlx_fetch::FetchConfig::default();
-        config.governor.base_delay = std::time::Duration::ZERO;
+        config.governor.base_delay = Duration::ZERO;
         let fetcher = Arc::new(
             Fetcher::new(
                 config,
@@ -595,5 +799,114 @@ mod tests {
         assert_eq!(cached.usage(), before);
         assert_eq!(hits.load(Ordering::Acquire), 2);
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_cached_allowed_continuation_paces_its_origin_by_the_crawl_delay() {
+        use crate::acquisition::AcquisitionBudgetV1;
+        use crawlx_core::acquisition::AcquisitionPolicyV1;
+        use tokio_util::sync::CancellationToken;
+        let gate = gate_with_robots(|_| {}, "User-agent: *\nDisallow: /private\nCrawl-delay: 3\n");
+        let base = paced(&gate);
+        assert!(base < Duration::from_secs(3), "{base:?}");
+        let mut budget = AcquisitionBudgetV1::new(&AcquisitionPolicyV1::default()).unwrap();
+        let cancel = CancellationToken::new();
+        let options = FetchOptions::default();
+        // a refused URL is not fetched, so it changes no pacing
+        assert_eq!(
+            gate.decide_with_budget(
+                "http://robots.invalid",
+                &url("/private/x"),
+                &options,
+                &mut budget,
+                &cancel,
+                &NoHop
+            )
+            .await
+            .unwrap(),
+            RobotsDecision::Blocked("robots_disallow")
+        );
+        assert_eq!(paced(&gate), base);
+        assert_eq!(
+            gate.decide_with_budget(
+                "http://robots.invalid",
+                &url("/a"),
+                &options,
+                &mut budget,
+                &cancel,
+                &NoHop
+            )
+            .await
+            .unwrap(),
+            RobotsDecision::Allowed
+        );
+        assert_eq!(paced(&gate), Duration::from_secs(3));
+    }
+
+    const ROBOTS: &str = "User-agent: *\nDisallow: /private\nCrawl-delay: 3\n";
+
+    #[tokio::test]
+    async fn a_fetched_robots_txt_paces_its_origin_without_a_decision() {
+        let (gate, target, server) = served_gate(200, ROBOTS).await;
+        let origin = target.origin().ascii_serialization();
+        assert!(paced_at(&gate, &target) < Duration::from_secs(3));
+        // the sitemap and known-file discovery path: fetch only, no `decide`
+        assert!(!gate.fetch(&origin, &target).await);
+        assert_eq!(paced_at(&gate, &target), Duration::from_secs(3));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_budgeted_robots_fetch_paces_its_origin_even_when_it_refuses_the_url() {
+        use crate::acquisition::AcquisitionBudgetV1;
+        use crawlx_core::acquisition::AcquisitionPolicyV1;
+        use tokio_util::sync::CancellationToken;
+        let (gate, target, server) = served_gate(200, ROBOTS).await;
+        let origin = target.origin().ascii_serialization();
+        let refused = target.join("/private/x").unwrap();
+        let mut budget = AcquisitionBudgetV1::new(&AcquisitionPolicyV1::default()).unwrap();
+        // the refused URL is never allowed, so only the record path can pace the origin
+        assert_eq!(
+            gate.decide_with_budget(
+                &origin,
+                &refused,
+                &FetchOptions::default(),
+                &mut budget,
+                &CancellationToken::new(),
+                &NoHop
+            )
+            .await
+            .unwrap(),
+            RobotsDecision::Blocked("robots_disallow")
+        );
+        assert_eq!(paced_at(&gate, &target), Duration::from_secs(3));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn gates_over_one_governor_never_leave_a_stale_floor() {
+        // the browser guard and the URL plane's gate share the run's governor and its cache
+        let origin = "http://robots.invalid";
+        let a = gate(|_| {});
+        let b = a.with_fetcher(Arc::clone(&a.fetcher));
+        let robots =
+            |delay: u8| FetchStatus::Ok(format!("User-agent: *\nCrawl-delay: {delay}\n").into_bytes());
+        a.record_and_pace(origin, robots(3), &url("/"));
+        assert_eq!(paced(&a), Duration::from_secs(3));
+        // `b` reads the file again after its TTL and finds an explicit `Crawl-delay: 0`: the
+        // floor drops (a missing directive would keep it)
+        b.record_and_pace(origin, robots(0), &url("/"));
+        let governor_origin = crawlx_fetch::Origin::from_url(&url("/"));
+        for _ in 0..20 {
+            a.fetcher
+                .governor()
+                .on_response_with_latency(&governor_origin, 200, None, None, false)
+                .await
+                .unwrap();
+        }
+        assert!(paced(&a) < Duration::from_secs(3), "{:?}", paced(&a));
+        // `a` sees the hint again: a per-gate memo of the last value would skip this
+        a.record_and_pace(origin, robots(3), &url("/"));
+        assert_eq!(paced(&a), Duration::from_secs(3));
     }
 }

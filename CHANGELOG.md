@@ -17,6 +17,17 @@ project is pre-1.0; minor versions may contain breaking changes.
   deterministic per seed within this version; a seed recorded with 0.1.0 does not reproduce the same
   sampled values. Journaled actions and recorded-path replay are unaffected.
 - Container base images are pinned by digest.
+- `robots.txt` `Crawl-delay` (capped at 10 seconds) now paces the origin for runs that obey robots:
+  once the robots.txt answer is recorded and on every allowed URL, the run's `OriginGovernor` keeps
+  spacing at or above `max(politeness.delayMs, Crawl-delay)` for HTTP and browser effects, across
+  back-off and decay. Only an explicit value (including `0`) changes the floor; a refetch that drops
+  the directive keeps the earlier one. A run that overrides robots does not apply it itself, and
+  other workers are only held back on the start that directly follows a floored start (process-wide
+  cap, deployment admission). Known limitation: the URL plane waits on the floor in process (up to
+  10 s), so rows behind it in the leased batch wait too (a `429` cooldown instead defers later rows
+  of that origin), and the acquisition budget counts the wait.
+  ([#35](https://github.com/noxred-research/crawlx/issues/35), contributed in
+  [#37](https://github.com/noxred-research/crawlx/pull/37))
 
 ### Security
 
