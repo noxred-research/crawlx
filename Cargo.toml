@@ -92,7 +92,7 @@ similar = { version = "2", default-features = false }
 oxc_parser = { version = "0.155", default-features = false }
 oxc_ast = "0.155"
 oxc_ast_visit = "0.155"
-oxc_allocator = "0.155"
+oxc_allocator = "0.156"
 oxc_span = "0.155"
 # db / storage
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
