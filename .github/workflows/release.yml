@@ -128,7 +128,7 @@ jobs:
           done
           docker logs secret-custody
           exit 1
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.ref }}
           persist-credentials: false
@@ -163,7 +163,7 @@ jobs:
         run: |
           cargo test -p crawlx-bench --locked -- browser_ --test-threads 1
           cargo test -p crawlx-browser --locked --test cdp_surface
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: cargo-deny@0.20.2
       - run: cargo deny --locked check
@@ -178,7 +178,7 @@ jobs:
       id-token: write # keyless signing identity for the build provenance attestation
       attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.ref }}
           persist-credentials: false
