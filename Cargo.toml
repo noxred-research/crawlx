@@ -31,7 +31,7 @@ bytes = "1"
 blake3 = "1"
 uuid = { version = "1", features = ["v7", "serde"] }
 rand = "0.8"
-rand_chacha = "0.3"
+rand_chacha = "0.9"
 # errors / logging
 thiserror = "2"
 tracing = "0.1"
