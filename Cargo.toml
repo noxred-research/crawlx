@@ -30,7 +30,7 @@ bytes = "1"
 # hashing / ids / rng
 blake3 = "1"
 uuid = { version = "1", features = ["v7", "serde"] }
-rand = "0.8"
+rand = "0.10"
 rand_chacha = "0.3"
 # errors / logging
 thiserror = "2"

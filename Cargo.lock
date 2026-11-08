@@ -1625,7 +1625,7 @@ dependencies = [
  "http-body-util",
  "jsonschema",
  "parking_lot 0.13.0",
- "rand 0.8.8",
+ "rand 0.10.3",
  "rand_chacha 0.3.1",
  "reqwest",
  "schemars",
@@ -1685,7 +1685,7 @@ dependencies = [
  "opentelemetry-proto",
  "parking_lot 0.13.0",
  "prost",
- "rand 0.8.8",
+ "rand 0.10.3",
  "reqwest",
  "serde",
  "serde_json",
@@ -1807,7 +1807,7 @@ dependencies = [
  "indexmap",
  "parking_lot 0.13.0",
  "proptest",
- "rand 0.8.8",
+ "rand 0.10.3",
  "rand_chacha 0.3.1",
  "regex",
  "ring",
@@ -1830,7 +1830,7 @@ dependencies = [
  "crawlx-url",
  "criterion",
  "proptest",
- "rand 0.8.8",
+ "rand 0.10.3",
  "rand_chacha 0.3.1",
  "regex",
  "serde",
@@ -1869,7 +1869,7 @@ dependencies = [
  "peak_alloc",
  "proptest",
  "quick-xml",
- "rand 0.8.8",
+ "rand 0.10.3",
  "rand_chacha 0.3.1",
  "regex",
  "regex-syntax",
@@ -1907,7 +1907,7 @@ dependencies = [
  "ipnet",
  "parking_lot 0.13.0",
  "percent-encoding",
- "rand 0.8.8",
+ "rand 0.10.3",
  "rand_chacha 0.3.1",
  "regex",
  "reqwest",
@@ -1935,7 +1935,7 @@ dependencies = [
  "crawlx-core",
  "criterion",
  "proptest",
- "rand 0.8.8",
+ "rand 0.10.3",
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
@@ -1952,7 +1952,7 @@ dependencies = [
  "crawlx-core",
  "criterion",
  "proptest",
- "rand 0.8.8",
+ "rand 0.10.3",
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
@@ -2054,7 +2054,7 @@ dependencies = [
  "loom",
  "parking_lot 0.13.0",
  "proptest",
- "rand 0.8.8",
+ "rand 0.10.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2138,7 +2138,7 @@ dependencies = [
  "hex",
  "hmac",
  "parking_lot 0.13.0",
- "rand 0.8.8",
+ "rand 0.10.3",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2226,7 +2226,7 @@ dependencies = [
  "ipnet",
  "parking_lot 0.13.0",
  "proptest",
- "rand 0.8.8",
+ "rand 0.10.3",
  "regex",
  "reqwest",
  "rustix 1.1.6",
@@ -5414,17 +5414,6 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
-dependencies = [
- "libc",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rand"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
@@ -5469,9 +5458,6 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-dependencies = [
- "getrandom 0.2.17",
-]
 
 [[package]]
 name = "rand_core"
