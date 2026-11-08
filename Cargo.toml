@@ -66,7 +66,7 @@ jsonschema = { version = "0.60", default-features = false }
 schemars = "1"
 # HIR walk of the HTML `pattern` attribute so a conforming form value can be generated (`crawlx-extract::form_fill`)
 regex-syntax = "0.8"
-quick-xml = "0.41"
+quick-xml = "0.42"
 # document parsers for `crawlx-extract::parse` (the `/parse` upload endpoint); all MIT-licensed.
 # `zip`: OOXML/ODF/EPUB containers; `calamine`: xlsx/xls/xlsb cells; `lopdf`: PDF text layer
 # (no rayon/chrono default features); `cfb`: OLE2 containers of legacy `.doc`/`.ppt`.
