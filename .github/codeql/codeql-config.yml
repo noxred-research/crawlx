@@ -1,0 +1,20 @@
+# CodeQL scope: the code crawlx ships.
+#
+# Not analyzed:
+# - vendor/: upstream sources (versions and licenses in THIRD_PARTY_NOTICES.md; advisories
+#   checked by `cargo deny`). The PDF loader implements the PDF encryption standard, which
+#   mandates RC4, MD5 and fixed padding constants; those findings belong upstream.
+# - tests, benches, fixtures, fuzz targets and the bench/ harnesses: never built into a release
+#   binary, and they deliberately hold test vectors, sample keys and loopback http:// URLs.
+#
+# Unit tests inside `#[cfg(test)]` modules of src files are still analyzed; their findings are
+# dismissed as "used in tests" one by one.
+name: crawlx
+
+paths-ignore:
+  - vendor/**
+  - "**/tests/**"
+  - "**/benches/**"
+  - "**/fixtures/**"
+  - fuzz/**
+  - bench/**
