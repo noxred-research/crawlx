@@ -163,9 +163,10 @@ jobs:
         run: |
           cargo test -p crawlx-bench --locked -- browser_ --test-threads 1
           cargo test -p crawlx-browser --locked --test cdp_surface
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          command: check
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --locked check
 
   release:
     runs-on: ubuntu-latest

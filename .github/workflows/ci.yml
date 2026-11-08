@@ -128,9 +128,12 @@ jobs:
       - run: ci/lint-chromiumoxide.sh
       - run: ci/provenance-check.sh
       - run: ci/shingle-scan.sh --self-test
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # cargo-deny as a prebuilt, checksum-verified binary (install-action retries downloads);
+      # the container-building action failed on a transient release-download error.
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          command: check licenses advisories bans sources
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --locked check licenses advisories bans sources
 
   workflow-lint:
     # Static checks of the workflow files themselves: actionlint (syntax, expression types,
