@@ -52,7 +52,7 @@ crawlx-strategies = { path = "../crawlx-strategies" }
 http-body-util.workspace = true
 sqlx.workspace = true
 tempfile.workspace = true
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 tower = { workspace = true, features = ["util"] }
 wiremock.workspace = true
 
