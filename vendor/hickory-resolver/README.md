@@ -29,6 +29,9 @@ In `src/name_server.rs`, `try_tcp_on_error` again retries UDP transport failures
 failure unchanged. Valid negative DNS responses do not trigger this retry. The
 retry runs at most once inside the existing name-server stack and uses existing
 connection selection, metrics, and error specificity.
+The two `AtomicU32::fetch_update` calls (`src/name_server.rs`, `src/recursor/handle.rs`)
+use `try_update`, the same method under its current name; newer toolchains deprecate the
+old name and the workspace builds with warnings denied.
 
 The application restores its former untrusted-negative system/default-server
 configuration without changing explicit caller configuration. Loopback-only

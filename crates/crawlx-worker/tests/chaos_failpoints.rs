@@ -171,7 +171,7 @@ async fn crash_and_recover(point: Point) -> Rig {
         .execute(r.admit(p, &c), QuiescencePolicy::default())
         .await
         .unwrap_err();
-    assert!(matches!(err, SessionError::ActorGone), "{err:?}");
+    assert!(stopped_by_dead_actor(&err), "{err:?}");
     assert_eq!(chaos::hits(point.name), 1, "{point:?}");
     chaos::configure("");
 
@@ -353,7 +353,7 @@ async fn reconcile_without_markers_in_another_cluster_is_indeterminate_and_never
         .execute(r.admit(p, &c), QuiescencePolicy::default())
         .await
         .unwrap_err();
-    assert!(matches!(err, SessionError::ActorGone), "{err:?}");
+    assert!(stopped_by_dead_actor(&err), "{err:?}");
     chaos::configure("");
     let id = r.actions().await[0].id;
     r.store
@@ -451,4 +451,10 @@ async fn an_unconfigured_failpoint_is_a_no_op() {
     assert_eq!(chaos::hits(chaos::AFTER_INTENT_BEFORE_PERFORM), 1);
     chaos::reset();
     assert_eq!(chaos::hits(chaos::AFTER_INTENT_BEFORE_PERFORM), 0);
+}
+
+/// The actor task died at the failpoint: callers see the stopped actor with its recorded
+/// cause (`ActorStopped(ActorGone)`), never a retryable or unrelated error.
+fn stopped_by_dead_actor(err: &SessionError) -> bool {
+    matches!(err, SessionError::ActorStopped(cause) if matches!(**cause, SessionError::ActorGone))
 }
