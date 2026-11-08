@@ -10,7 +10,7 @@
 use crate::errors::{Detail, HttpError};
 use crate::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_policy::EgressPolicy;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
 use std::collections::BTreeMap;
@@ -169,7 +169,7 @@ pub struct JobEvent<'a> {
 #[must_use]
 pub fn firecrawl_signature(secret: &str, body: &[u8]) -> String {
     // HMAC accepts keys of any length, so construction cannot fail.
-    let Ok(mut mac) = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes()) else {
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes()) else {
         return String::new();
     };
     mac.update(body);

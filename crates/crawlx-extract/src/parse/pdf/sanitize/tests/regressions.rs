@@ -236,17 +236,15 @@ fn xml_value(bytes: &[u8]) -> String {
     let mut value = String::new();
     loop {
         match reader.read_event().unwrap() {
-            quick_xml::events::Event::Text(text) => value.push_str(&text.decode().unwrap()),
+            quick_xml::events::Event::Text(text) => value.push_str(&text),
             quick_xml::events::Event::GeneralRef(reference) => {
                 if let Some(ch) = reference.resolve_char_ref().unwrap() {
                     value.push(ch);
                 } else {
-                    value.push_str(
-                        quick_xml::escape::resolve_xml_entity(&reference.decode().unwrap()).unwrap(),
-                    );
+                    value.push_str(quick_xml::escape::resolve_xml_entity(&reference).unwrap());
                 }
             }
-            quick_xml::events::Event::CData(text) => value.push_str(&text.decode().unwrap()),
+            quick_xml::events::Event::CData(text) => value.push_str(&text),
             quick_xml::events::Event::Eof => break,
             _ => {}
         }

@@ -31,13 +31,13 @@ pub(crate) fn local(name: &[u8]) -> &[u8] {
 
 /// Local name of an element.
 pub(crate) fn tag<'a>(e: &'a BytesStart<'_>) -> &'a [u8] {
-    local(e.name().into_inner())
+    local(e.name().into_inner().as_bytes())
 }
 
 /// The value of the attribute whose local name is `key` (prefix ignored).
 pub(crate) fn attr(e: &BytesStart<'_>, key: &str) -> Option<String> {
     e.attributes().flatten().find_map(|a| {
-        (local(a.key.into_inner()) == key.as_bytes())
+        (local(a.key.into_inner().as_bytes()) == key.as_bytes())
             .then(|| attribute_text(&a).ok().map(|value| value.into_owned()))
             .flatten()
     })
@@ -46,7 +46,7 @@ pub(crate) fn attr(e: &BytesStart<'_>, key: &str) -> Option<String> {
 /// The value of the attribute named exactly `key` (prefix included, e.g. `r:id`).
 pub(crate) fn attr_q(e: &BytesStart<'_>, key: &str) -> Option<String> {
     e.attributes().flatten().find_map(|a| {
-        (a.key.into_inner() == key.as_bytes())
+        (a.key.into_inner() == key)
             .then(|| attribute_text(&a).ok().map(|value| value.into_owned()))
             .flatten()
     })
@@ -56,9 +56,8 @@ pub(crate) fn attr_q(e: &BytesStart<'_>, key: &str) -> Option<String> {
 fn attribute_text<'a>(
     attribute: &'a quick_xml::events::attributes::Attribute<'_>,
 ) -> Result<std::borrow::Cow<'a, str>, quick_xml::Error> {
-    let raw = std::str::from_utf8(&attribute.value).map_err(quick_xml::encoding::EncodingError::from)?;
     Ok(quick_xml::escape::unescape_with(
-        raw,
+        &attribute.value,
         quick_xml::escape::resolve_xml_entity,
     )?)
 }
@@ -74,7 +73,13 @@ pub(crate) fn walk(
     mut f: impl FnMut(Ev<'_>) -> Result<bool, ParseError>,
 ) -> Result<(), ParseError> {
     let xml = xml.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(xml);
-    let mut reader = Reader::from_reader(xml);
+    // quick-xml 0.42 rejects invalid UTF-8 while reading. Text and CDATA have always been read
+    // lossily here, so substitute U+FFFD up front; attributes stay strict (see below).
+    let (xml, lossy) = match std::str::from_utf8(xml) {
+        Ok(valid) => (Cow::Borrowed(valid), false),
+        Err(_) => (Cow::Owned(String::from_utf8_lossy(xml).into_owned()), true),
+    };
+    let mut reader = Reader::from_str(&xml);
     let cfg = reader.config_mut();
     cfg.expand_empty_elements = true;
     cfg.check_end_names = false;
@@ -92,15 +97,18 @@ pub(crate) fn walk(
                     attribute_text(&attribute).map_err(|e| {
                         ParseError::corrupt_from(format, "invalid XML attribute reference", e)
                     })?;
+                    // Invalid UTF-8 in an attribute value was an error before the lossy
+                    // substitution above; keep it one. Only reachable for documents that
+                    // already contained invalid bytes.
+                    if lossy && attribute.value.contains('\u{fffd}') {
+                        return Err(ParseError::corrupt(format, "invalid UTF-8 in XML attribute"));
+                    }
                 }
                 f(Ev::Start(e))?
             }
-            Event::End(e) => f(Ev::End(local(e.name().into_inner())))?,
+            Event::End(e) => f(Ev::End(local(e.name().into_inner().as_bytes())))?,
             Event::Text(t) => {
-                let decoded = match t.decode() {
-                    Ok(value) => value,
-                    Err(_) => Cow::Owned(String::from_utf8_lossy(t).into_owned()),
-                };
+                let decoded = t.clone().into_inner();
                 if let Some(run) = text.as_mut() {
                     run.to_mut().push_str(&decoded);
                 } else {
@@ -115,10 +123,8 @@ pub(crate) fn walk(
                 {
                     text.get_or_insert(Cow::Borrowed("")).to_mut().push(ch);
                 } else {
-                    let name = reference
-                        .decode()
-                        .map_err(|e| ParseError::corrupt_from(format, "invalid XML entity name", e))?;
-                    let value = quick_xml::escape::resolve_xml_entity(&name)
+                    let name: &str = reference;
+                    let value = quick_xml::escape::resolve_xml_entity(name)
                         .ok_or_else(|| ParseError::corrupt(format, "custom XML entities are forbidden"))?;
                     if let Some(run) = text.as_mut() {
                         run.to_mut().push_str(value);
@@ -128,7 +134,7 @@ pub(crate) fn walk(
                 }
                 true
             }
-            Event::CData(c) => f(Ev::Text(&String::from_utf8_lossy(c)))?,
+            Event::CData(c) => f(Ev::Text(c))?,
             Event::DocType(_) => {
                 return Err(ParseError::corrupt(
                     format,

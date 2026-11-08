@@ -5,13 +5,15 @@
 # delayed by the cooldown.
 #
 # Dependabot pull requests never run the CI workflows: their actor and author are the bot, and
-# the `authorize` job in every workflow only admits code owners (see .github/CODEOWNERS). A
-# maintainer therefore checks them as follows:
-#   1. Read the diff. For the github-actions ecosystem this includes the new commit SHA.
-#   2. Run CI on the branch under the maintainer's own identity:
-#        gh workflow run ci.yml --ref <dependabot branch>
-#      Re-running the failed pull request run is not enough: a re-run keeps the original actor.
-#   3. Merge once the dispatched run is green.
+# the `authorize` job in every workflow only admits code owners (see .github/CODEOWNERS). The
+# required `required` check therefore fails on them. A maintainer handles them as follows:
+#   1. Read the diff. For the github-actions ecosystem this includes the new commit SHA, which
+#      must also be added to the repository's allowed-actions list or every run fails to start.
+#   2. Bring the update onto a branch of your own (merge or cherry-pick it, adapt the code to
+#      any breaking change, keep Cargo.lock in step) and open a pull request from that branch.
+#      Its CI runs under your identity; `gate-g1`, which holds the gate keys, never runs
+#      outside main.
+#   3. Merge that pull request once it is green; GitHub then closes the Dependabot one.
 
 version: 2
 
@@ -28,17 +30,10 @@ updates:
       cargo-minor-patch:
         update-types: [minor, patch]
 
-  - package-ecosystem: cargo
-    directory: /fuzz
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    commit-message:
-      prefix: "chore(fuzz)"
-    groups:
-      fuzz-minor-patch:
-        update-types: [minor, patch]
+  # No separate `/fuzz` entry: the fuzz crate depends on the workspace crates by path, so
+  # Dependabot resolved its updates into the root `Cargo.toml` without touching the root
+  # `Cargo.lock` (fuzz/Cargo.lock is not committed), leaving the lockfile out of date. The
+  # root entry above already covers every crate the fuzz targets build.
 
   - package-ecosystem: github-actions
     directory: /

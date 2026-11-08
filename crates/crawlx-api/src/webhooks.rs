@@ -43,7 +43,7 @@ use crawlx_policy::EgressPolicy;
 use crawlx_storage::{BufferedPage, DeliveryBuffer};
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use parking_lot::Mutex;
 use rand::Rng as _;
 use serde_json::json;
@@ -165,7 +165,7 @@ impl WebhookTransport for ReqwestTransport {
 #[must_use]
 pub fn signature(secret: &str, timestamp: i64, body: &[u8]) -> String {
     // HMAC accepts keys of any length, so construction cannot fail.
-    let Ok(mut mac) = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes()) else {
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes()) else {
         return String::new();
     };
     mac.update(timestamp.to_string().as_bytes());
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn signature_matches_known_hmac_sha256() {
         // RFC 4231 test case 2 style check: HMAC-SHA256("Jefe", "what do ya want for nothing?")
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(b"Jefe").unwrap();
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(b"Jefe").unwrap();
         mac.update(b"what do ya want for nothing?");
         assert_eq!(
             hex::encode(mac.finalize().into_bytes()),

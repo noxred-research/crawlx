@@ -278,7 +278,7 @@ fn parent_tag(el: ElementRef<'_>) -> Option<&str> {
 }
 
 fn in_svg(el: ElementRef<'_>) -> bool {
-    el.value().name.ns.as_ref() == "http://www.w3.org/2000/svg"
+    &*el.value().name.ns == "http://www.w3.org/2000/svg"
 }
 
 /// Run every body parser over `doc`, resolving against `base`.

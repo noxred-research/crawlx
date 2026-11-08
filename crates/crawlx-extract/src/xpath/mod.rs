@@ -213,9 +213,9 @@ impl<'a> SelectorDocument<'a> {
                         }
                         for (name, value) in &e.attrs {
                             d.charge(1)?;
-                            if name.prefix.as_ref().is_some_and(|p| p.as_ref() == "xmlns") {
+                            if name.prefix.as_ref().is_some_and(|p| &**p == "xmlns") {
                                 bindings.insert(name.local.as_ref(), value.as_ref());
-                            } else if name.local.as_ref() == "xmlns" {
+                            } else if &*name.local == "xmlns" {
                                 bindings.insert("", value.as_ref());
                             }
                         }
@@ -230,9 +230,7 @@ impl<'a> SelectorDocument<'a> {
                 }
                 for (name, value) in &el.attrs {
                     d.charge(1)?;
-                    if name.local.as_ref() == "xmlns"
-                        || name.prefix.as_ref().is_some_and(|p| p.as_ref() == "xmlns")
-                    {
+                    if &*name.local == "xmlns" || name.prefix.as_ref().is_some_and(|p| &**p == "xmlns") {
                         continue;
                     }
                     let id = d.virtual_entry(
@@ -904,7 +902,7 @@ impl<'a> SelectorDocument<'a> {
                             .value()
                             .attrs
                             .iter()
-                            .find(|(n, _)| n.local.as_ref() == "lang" && n.ns.as_ref() == XML_NS)
+                            .find(|(n, _)| &*n.local == "lang" && &*n.ns == XML_NS)
                             .map(|(_, v)| v.as_ref())
                             .or_else(|| el.value().attr("lang"));
                         if let Some(lang) = lang {

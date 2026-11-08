@@ -22,7 +22,7 @@ use crate::Strategy;
 use crawlx_core::config::{StrategyArm, StrategyName};
 use crawlx_core::gates::GateStatus;
 use crawlx_core::hash::Digest;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::BTreeMap;

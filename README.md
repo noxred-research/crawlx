@@ -9,7 +9,7 @@
 
 Map the real attack surface of modern web applications, on systems you own or are explicitly authorized to test.
 
-[![License: AGPL-3.0-only](https://img.shields.io/github/license/noxred-research/crawlx?color=blue)](LICENSE) [![CI](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml/badge.svg)](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/noxred-research/crawlx?include_prereleases&sort=semver)](https://github.com/noxred-research/crawlx/releases) [![Rust 1.97.1](https://img.shields.io/badge/rust-1.97.1-orange?logo=rust)](rust-toolchain.toml) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md) [![Security policy](https://img.shields.io/badge/security-policy-informational?logo=github)](SECURITY.md)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE) [![CI](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml) [![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-informational)](CHANGELOG.md) [![Rust 1.97.1](https://img.shields.io/badge/rust-1.97.1-orange?logo=rust)](rust-toolchain.toml) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md) [![Security policy](https://img.shields.io/badge/security-policy-informational?logo=github)](SECURITY.md)
 
 [Why crawlx](#why-crawlx) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) · [CLI](#command-line-overview) · [Responsible use](#responsible-use) · [Security](#security) · [Docs](docs/README.md)
 
@@ -490,7 +490,7 @@ review flow. The [roadmap](docs/roadmap.md) lists open work that is a good place
 
 If crawlx saves you time, a star helps others find it.
 
-[![Stars](https://img.shields.io/github/stars/noxred-research/crawlx?style=social)](https://github.com/noxred-research/crawlx/stargazers)
+[![Star crawlx on GitHub](https://img.shields.io/badge/star-crawlx-yellow?logo=github&style=social)](https://github.com/noxred-research/crawlx)
 
 ## License
 
