@@ -142,7 +142,7 @@ impl Pg {
                AND (a.status = 'proposed' OR (a.status = 'reconciled' AND a.reconcile_resolution = 'not_applied')) \
              ORDER BY a.proposed_at, a.seq LIMIT $3"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .bind(session.map(|s| s.0))
             .bind(i64::from(limit))
@@ -610,7 +610,7 @@ impl ActionJournal for Pg {
     async fn get(&self, id: ActionId) -> Result<ActionRecord, StoreError> {
         let _timer = self.query_timer("journal.get");
         let sql = format!("{ACTION_SELECT}{KEY_COLS} FROM actions a JOIN action_contexts c ON c.context_id = a.context_id WHERE a.action_id = $1");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id.0)
             .fetch_optional(&self.pool)
             .await
@@ -629,7 +629,7 @@ impl ActionJournal for Pg {
             "{ACTION_SELECT}{KEY_COLS} FROM actions a JOIN action_contexts c ON c.context_id = a.context_id \
              WHERE a.run_id = $1 AND ($2::text IS NULL OR a.status::text = $2) ORDER BY a.session_id, a.seq"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .bind(status.map(ActionStatus::as_str))
             .fetch_all(&self.pool)

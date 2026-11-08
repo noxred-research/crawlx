@@ -83,12 +83,12 @@ impl CheckpointRepo for Pg {
 
     async fn list(&self, session: SessionId) -> Result<Vec<CheckpointRecord>, StoreError> {
         let _timer = self.query_timer("checkpoint.list");
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {COLS} FROM checkpoints c JOIN artifacts a ON a.artifact_id = c.storage_artifact_id \
-             WHERE c.session_id = $1 AND c.expires_at > clock_timestamp() \
-               AND a.deleted_at IS NULL AND (a.expires_at IS NULL OR a.expires_at > clock_timestamp()) \
-             ORDER BY c.action_seq DESC, c.created_at DESC"
-        ))
+         WHERE c.session_id = $1 AND c.expires_at > clock_timestamp() \
+           AND a.deleted_at IS NULL AND (a.expires_at IS NULL OR a.expires_at > clock_timestamp()) \
+         ORDER BY c.action_seq DESC, c.created_at DESC"
+        )))
         .bind(session.0)
         .fetch_all(&self.pool)
         .await

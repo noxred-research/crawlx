@@ -343,9 +343,9 @@ async fn postgres_transactional_append_cas_fencing_retry_isolation_and_physical_
         "dataset_delivery_outbox",
         "artifacts",
     ] {
-        let rows: Vec<String> = sqlx::query_scalar(&format!(
+        let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT row_to_json(t)::text FROM {table} t WHERE run_id=$1"
-        ))
+        )))
         .bind(pending.run.id.0)
         .fetch_all(pg.pool())
         .await

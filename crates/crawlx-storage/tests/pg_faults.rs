@@ -104,7 +104,7 @@ impl Env {
         }
     }
 
-    async fn count(&self, sql: &str, run: CrawlRunId) -> i64 {
+    async fn count(&self, sql: &'static str, run: CrawlRunId) -> i64 {
         sqlx::query_scalar(sql)
             .bind(run.0)
             .fetch_one(self.pg.pool())

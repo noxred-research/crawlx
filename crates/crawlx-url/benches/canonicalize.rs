@@ -8,8 +8,9 @@
 use crawlx_core::config::Scope;
 use crawlx_core::url::RouteTemplate;
 use crawlx_url::{CanonicalizeOptions, Canonicalizer, ParamClassifier, ParamObservation, ScopeFilter};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::BTreeMap;
+use std::hint::black_box;
 use url::Url;
 
 fn short_urls(n: usize) -> Vec<String> {

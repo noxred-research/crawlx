@@ -96,3 +96,7 @@ updates:
     groups:
       compose-images:
         patterns: ["*"]
+    # bitnamilegacy/minio is frozen (no new version tags); Dependabot proposed the floating
+    # `2025-debian-12` tag in place of the pinned `2025.7.23`, which CI's service container uses.
+    ignore:
+      - dependency-name: bitnamilegacy/minio

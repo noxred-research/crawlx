@@ -902,9 +902,9 @@ async fn postgres_priority_backfill_reads_volatile_original_method_and_fails_clo
             .unwrap();
     assert_eq!(missing, 0, "score every candidate before LIMIT");
     for table in ["crawl_runs", "url_frontier", "frontier_batch_receipts"] {
-        let rows: Vec<String> = sqlx::query_scalar(&format!(
+        let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT row_to_json(t)::text FROM {table} t WHERE run_id=$1"
-        ))
+        )))
         .bind(run.id.0)
         .fetch_all(pg.pool())
         .await

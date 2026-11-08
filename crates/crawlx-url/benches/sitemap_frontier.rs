@@ -8,8 +8,9 @@
 use crawlx_core::url::CanonicalUrl;
 use crawlx_url::sitemap::{SitemapKind, SitemapParser, MAX_URLS};
 use crawlx_url::{CanonicalizeOptions, Canonicalizer, Frontier, LinkSource};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use std::fmt::Write as _;
+use std::hint::black_box;
 use url::Url;
 
 const SITEMAP_BYTES: usize = 10 * 1024 * 1024;

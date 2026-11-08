@@ -180,7 +180,7 @@ async fn cancellation_before_browser_admission_closes_unleased_sessions_on_postg
     pg.drop_schema().await.unwrap();
 }
 
-async fn sqlx_count(pg: &Pg, sql: &str) -> i64 {
+async fn sqlx_count(pg: &Pg, sql: &'static str) -> i64 {
     // the schema's search_path is set on every pooled connection
     sqlx::query_scalar(sql).fetch_one(pg.pool()).await.unwrap()
 }

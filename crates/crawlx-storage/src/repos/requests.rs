@@ -577,7 +577,7 @@ impl Pg {
         if limit == 0 || limit > 1000 {
             return Err(StoreError::Conflict("invalid frontier page limit".into()));
         }
-        let rows=sqlx::query(&format!("SELECT {ENTRY_COLS} FROM url_frontier WHERE run_id=$1 AND frontier_id>$2 ORDER BY frontier_id LIMIT $3"))
+        let rows=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {ENTRY_COLS} FROM url_frontier WHERE run_id=$1 AND frontier_id>$2 ORDER BY frontier_id LIMIT $3")))
             .bind(run.0).bind(after).bind(i64::from(limit)).fetch_all(&self.pool).await.map_err(db)?;
         let mut entries = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -586,7 +586,7 @@ impl Pg {
         Ok(entries)
     }
     pub(super) async fn request_get(&self, run: CrawlRunId, id: i64) -> Result<QueuedRequestV1, StoreError> {
-        let row=sqlx::query(&format!("SELECT {ENTRY_COLS},principal,canonical_key,revisit_generation,request_envelope,envelope_bytes,state_version FROM url_frontier WHERE run_id=$1 AND frontier_id=$2"))
+        let row=sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {ENTRY_COLS},principal,canonical_key,revisit_generation,request_envelope,envelope_bytes,state_version FROM url_frontier WHERE run_id=$1 AND frontier_id=$2")))
             .bind(run.0).bind(id).fetch_optional(&self.pool).await.map_err(db)?.ok_or_else(||not_found("frontier row",id))?;
         let entry = entry_from_row(self, &row).await?;
         let (tenant, zdr) = self.privacy_scope(run).await?;

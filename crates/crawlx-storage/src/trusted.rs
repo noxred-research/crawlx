@@ -266,7 +266,7 @@ impl TrustedCorpus {
             "{TRAFFIC_SELECT} AND ($3::text IS NULL OR s.role = $3) AND ($4::uuid IS NULL OR e.epoch_id = $4) \
                AND ($5::text IS NULL OR e.origin = $5) ORDER BY e.event_id"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .bind(lane.labels())
             .bind(query.role)
@@ -294,7 +294,7 @@ impl TrustedCorpus {
                AND a.before_state_id IN (SELECT state_id FROM trusted_reachable_states WHERE run_id = $1) \
              ORDER BY e.event_id"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .bind(LaneFilter::TrustedUi.labels())
             .fetch_all(&self.pg.pool)
@@ -322,7 +322,7 @@ impl TrustedCorpus {
              FROM action_contexts c LEFT JOIN trusted t ON t.context_id = c.context_id \
              WHERE c.run_id = $1 ORDER BY c.context_id"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .fetch_all(&self.pg.pool)
             .await

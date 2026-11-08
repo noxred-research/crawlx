@@ -10,8 +10,9 @@
 use crawlx_core::config::{CreateCrawl, HostScope};
 use crawlx_policy::robots::{Match, RobotsTxt};
 use crawlx_policy::{EgressPolicy, ScopePolicy, ScopeVerdict};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::fmt::Write as _;
+use std::hint::black_box;
 use url::Url;
 
 const RULES: usize = 200;

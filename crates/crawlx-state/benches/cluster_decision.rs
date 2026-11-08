@@ -9,7 +9,8 @@ mod common;
 use crawlx_state::{
     score, ClusterConfig, ClusterIndex, Fingerprinter, MaskBuilder, MaskConfig, StateProfile,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 
 const CLUSTERS: usize = 5_000;
 

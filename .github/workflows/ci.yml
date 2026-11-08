@@ -175,6 +175,9 @@ jobs:
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     runs-on: ubuntu-latest
+    # PUBLIC_LINT_RULES is an environment secret, not a repository secret: only jobs that
+    # name this environment can read it.
+    environment: public-lint
     timeout-minutes: 15
     permissions:
       contents: read
@@ -876,6 +879,9 @@ jobs:
     # branch only: the job holds CRAWLX_GATE_KEYS, so a dispatch on an unreviewed branch (for
     # example a dependency update) must not run it.
     runs-on: ubuntu-latest
+    # CRAWLX_GATE_KEYS lives in the `gate-keys` environment, which deploys from `main` only
+    # and waits for a code owner's approval, so every run that receives the keys is reviewed.
+    environment: gate-keys
     timeout-minutes: 120
     needs: [authorize, unit, browser]
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)

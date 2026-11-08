@@ -286,12 +286,14 @@ impl RunRepo for Pg {
 
     async fn get(&self, id: CrawlRunId) -> Result<CrawlRun, StoreError> {
         let _timer = self.query_timer("run.get");
-        let row = sqlx::query(&format!("SELECT {RUN_COLS} FROM crawl_runs WHERE run_id = $1"))
-            .bind(id.0)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| not_found("crawl_run", id))?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {RUN_COLS} FROM crawl_runs WHERE run_id = $1"
+        )))
+        .bind(id.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| not_found("crawl_run", id))?;
         run_from_row(self, &row).await
     }
 
@@ -311,12 +313,14 @@ impl RunRepo for Pg {
     }
 
     async fn get_metadata(&self, id: CrawlRunId) -> Result<RunMetadata, StoreError> {
-        let row = sqlx::query(&format!("SELECT {RUN_COLS} FROM crawl_runs WHERE run_id = $1"))
-            .bind(id.0)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| not_found("crawl_run", id))?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {RUN_COLS} FROM crawl_runs WHERE run_id = $1"
+        )))
+        .bind(id.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| not_found("crawl_run", id))?;
         if get::<String>(&row, "retention_mode")? != "zdr" {
             return Ok(RunMetadata::from(&run_from_row(self, &row).await?));
         }
@@ -426,9 +430,9 @@ impl RunRepo for Pg {
 
     async fn list_sessions(&self, run: CrawlRunId) -> Result<Vec<CrawlSession>, StoreError> {
         let _timer = self.query_timer("run.list_sessions");
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {SESSION_COLS} FROM crawl_sessions s WHERE s.run_id = $1 ORDER BY s.schedule_slot"
-        ))
+        )))
         .bind(run.0)
         .fetch_all(&self.pool)
         .await

@@ -619,7 +619,7 @@ async fn worker_runs_the_pprof_listener() {
     };
     // a throwaway schema, migrated by the binary itself (the chaos suite's recipe)
     let schema = format!("t_pprof_{}", uuid::Uuid::now_v7().simple());
-    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
         .execute(&admin)
         .await
         .unwrap();
@@ -675,7 +675,7 @@ async fn worker_runs_the_pprof_listener() {
         Ok::<(), String>(())
     }
     .await;
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&admin)
         .await
         .unwrap();

@@ -1131,7 +1131,7 @@ async fn actual_provisioned_api_role_uses_only_owned_producer_sequence() {
         .unwrap();
     let role = format!("custody_api_{}", Uuid::now_v7().simple());
     let password = Uuid::now_v7().simple().to_string();
-    sqlx::query(&format!("CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT")))
         .execute(f.pg.pool()).await.unwrap();
     // Test-only actor probe proves acquisition actually used the restricted pool.
     sqlx::query(
@@ -1148,7 +1148,7 @@ async fn actual_provisioned_api_role_uses_only_owned_producer_sequence() {
         .replace("crawlx_api", &role);
     // Execute the actual production grant logic, including its owned-column
     // sequence discovery. Deliberately never grant ALL SEQUENCES.
-    sqlx::raw_sql(&actual_provisioning)
+    sqlx::raw_sql(sqlx::AssertSqlSafe(actual_provisioning))
         .execute(f.pg.pool())
         .await
         .unwrap();
@@ -1208,11 +1208,11 @@ async fn actual_provisioned_api_role_uses_only_owned_producer_sequence() {
         .unwrap();
     drop(authority);
     restricted.pool().close().await;
-    sqlx::query(&format!("DROP OWNED BY {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role}")))
         .execute(f.pg.pool())
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(f.pg.pool())
         .await
         .unwrap();

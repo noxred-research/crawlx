@@ -491,11 +491,13 @@ impl RetentionSweeper {
     }
 }
 
-async fn delete_run_rows(pg: &Pg, table: &str, run: CrawlRunId) -> Result<u64, StoreError> {
+/// `table` is `'static` so only compile-time literals can name the target of the
+/// interpolated `DELETE`.
+async fn delete_run_rows(pg: &Pg, table: &'static str, run: CrawlRunId) -> Result<u64, StoreError> {
     let mut total = 0;
     loop {
         let sql = format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE run_id = $1 LIMIT {PURGE_BATCH})");
-        let n = sqlx::query(&sql)
+        let n = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .execute(&pg.pool)
             .await
@@ -510,14 +512,14 @@ async fn delete_run_rows(pg: &Pg, table: &str, run: CrawlRunId) -> Result<u64, S
 
 async fn delete_batched(
     pg: &Pg,
-    table: &str,
-    predicate: &str,
+    table: &'static str,
+    predicate: &'static str,
     at: Option<Timestamp>,
 ) -> Result<u64, StoreError> {
     let mut total = 0;
     loop {
         let sql = format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT {PURGE_BATCH})");
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
         if let Some(at) = at {
             q = q.bind(at);
         }
@@ -660,7 +662,8 @@ async fn move_and_create_partition(
     start: NaiveDate,
     end: NaiveDate,
 ) -> Result<(), StoreError> {
-    // dates are formatted by chrono from integers, never from user input
+    // Interpolated: `name` (built by `ensure_traffic_partitions` from integer year/month only)
+    // and `lo`/`hi` (chrono-formatted dates). No request or tenant data reaches these statements.
     let (lo, hi) = (start.format("%Y-%m-%d"), end.format("%Y-%m-%d"));
     let stmts = [
         format!(
@@ -676,7 +679,10 @@ async fn move_and_create_partition(
         "INSERT INTO traffic_events OVERRIDING SYSTEM VALUE SELECT * FROM _tev_moved".to_owned(),
     ];
     for sql in stmts {
-        sqlx::query(&sql).execute(&mut *conn).await.map_err(db)?;
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await
+            .map_err(db)?;
     }
     Ok(())
 }

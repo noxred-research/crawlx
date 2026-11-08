@@ -80,6 +80,19 @@ fn valid_schema(s: &str) -> bool {
     !s.is_empty() && s.len() <= 63 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
+/// Build `<prefix><schema><suffix>`. The schema is the only dynamic part and is
+/// re-checked against [`valid_schema`] (ASCII alphanumerics and `_`, at most 63
+/// bytes), so it can never carry SQL syntax; prefix and suffix are literals.
+pub(crate) fn schema_sql(prefix: &str, schema: &str, suffix: &str) -> Result<sqlx::SqlStr, sqlx::Error> {
+    use sqlx::SqlSafeStr as _;
+    if !valid_schema(schema) {
+        return Err(sqlx::Error::Configuration(
+            format!("invalid schema name {schema:?}").into(),
+        ));
+    }
+    Ok(sqlx::AssertSqlSafe(format!("{prefix}{schema}{suffix}")).into_sql_str())
+}
+
 /// Publish `crawlx.db.pool.in_use` (`size - num_idle`) for `pool`.
 pub(crate) fn set_pool_in_use(pool: &PgPool) {
     let idle = u32::try_from(pool.num_idle()).unwrap_or(u32::MAX);
@@ -139,7 +152,7 @@ impl Pg {
             }
             if create_schema {
                 let mut conn = sqlx::PgConnection::connect_with(&opts).await.map_err(db)?;
-                conn.execute(format!("CREATE SCHEMA IF NOT EXISTS {schema}").as_str())
+                conn.execute(schema_sql("CREATE SCHEMA IF NOT EXISTS ", schema, "").map_err(db)?)
                     .await
                     .map_err(db)?;
                 conn.close().await.map_err(db)?;
@@ -154,7 +167,7 @@ impl Pg {
                 let schema = schema.clone();
                 Box::pin(async move {
                     if let Some(s) = schema {
-                        conn.execute(format!("SET search_path TO {s}").as_str()).await?;
+                        conn.execute(schema_sql("SET search_path TO ", &s, "")?).await?;
                     }
                     Ok(())
                 })
@@ -273,7 +286,7 @@ impl Pg {
         if let Some(schema) = &self.cfg.schema {
             if valid_schema(schema) {
                 self.pool
-                    .execute(format!("DROP SCHEMA IF EXISTS {schema} CASCADE").as_str())
+                    .execute(schema_sql("DROP SCHEMA IF EXISTS ", schema, " CASCADE").map_err(db)?)
                     .await
                     .map_err(db)?;
             }

@@ -148,9 +148,9 @@ impl IntelRepo for Pg {
 
     async fn job_get(&self, tenant: TenantId, id: Uuid) -> IntelResult<Option<JobRecord>> {
         let _timer = self.query_timer("intel.job_get");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {JOB_COLS} FROM intel_jobs WHERE job_id = $1 AND tenant_id = $2"
-        ))
+        )))
         .bind(id)
         .bind(tenant.0)
         .fetch_optional(&self.pool)
@@ -179,19 +179,17 @@ impl IntelRepo for Pg {
         // Every SET expression reads the pre-update row, so a terminal job keeps its status,
         // result, error, stop reason and finish time while counters and `updated_at` still move.
         // Under READ COMMITTED a concurrent writer's committed row is re-read before the SET runs.
-        sqlx::query(&format!(
-            "UPDATE intel_jobs SET \
-               updated_at = $3, \
-               status = CASE WHEN status = 'processing' THEN COALESCE($4::text, status) ELSE status END, \
-               result = CASE WHEN status = 'processing' THEN COALESCE($5::jsonb, result) ELSE result END, \
-               error = CASE WHEN status = 'processing' THEN COALESCE($6::text, error) ELSE error END, \
-               stop_reason = CASE WHEN status = 'processing' THEN COALESCE($7::text, stop_reason) ELSE stop_reason END, \
-               tokens_used = COALESCE($8::bigint, tokens_used), \
-               credits_used = COALESCE($9::bigint, credits_used), \
-               finished_at = CASE WHEN status = 'processing' THEN COALESCE($10::timestamptz, finished_at) ELSE finished_at END \
-             WHERE job_id = $1 AND tenant_id = $2 \
-             RETURNING {JOB_COLS}"
-        ))
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE intel_jobs SET \
+           updated_at = $3, \
+           status = CASE WHEN status = 'processing' THEN COALESCE($4::text, status) ELSE status END, \
+           result = CASE WHEN status = 'processing' THEN COALESCE($5::jsonb, result) ELSE result END, \
+           error = CASE WHEN status = 'processing' THEN COALESCE($6::text, error) ELSE error END, \
+           stop_reason = CASE WHEN status = 'processing' THEN COALESCE($7::text, stop_reason) ELSE stop_reason END, \
+           tokens_used = COALESCE($8::bigint, tokens_used), \
+           credits_used = COALESCE($9::bigint, credits_used), \
+           finished_at = CASE WHEN status = 'processing' THEN COALESCE($10::timestamptz, finished_at) ELSE finished_at END \
+         WHERE job_id = $1 AND tenant_id = $2 \
+         RETURNING {JOB_COLS}")))
         .bind(id)
         .bind(tenant.0)
         .bind(patch.at)
@@ -218,14 +216,14 @@ impl IntelRepo for Pg {
         after: Option<(Timestamp, Uuid)>,
     ) -> IntelResult<Vec<JobRecord>> {
         let _timer = self.query_timer("intel.job_list");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {JOB_COLS} FROM intel_jobs \
-             WHERE tenant_id = $1 \
-               AND ($2::text IS NULL OR kind = $2) \
-               AND ($3::timestamptz IS NULL OR (created_at, job_id) < ($3::timestamptz, $4::uuid)) \
-             ORDER BY created_at DESC, job_id DESC \
-             LIMIT $5"
-        ))
+         WHERE tenant_id = $1 \
+           AND ($2::text IS NULL OR kind = $2) \
+           AND ($3::timestamptz IS NULL OR (created_at, job_id) < ($3::timestamptz, $4::uuid)) \
+         ORDER BY created_at DESC, job_id DESC \
+         LIMIT $5"
+        )))
         .bind(tenant.0)
         .bind(kind.map(JobKind::as_str))
         .bind(after.map(|(at, _)| at))
@@ -409,10 +407,10 @@ impl IntelRepo for Pg {
 
     async fn monitor_insert(&self, m: &MonitorRecord) -> IntelResult<()> {
         let _timer = self.query_timer("intel.monitor_insert");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO monitors ({MONITOR_COLS}) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
-        ))
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
+        )))
         .bind(m.id)
         .bind(m.tenant.0)
         .bind(m.name.as_deref())
@@ -471,9 +469,9 @@ impl IntelRepo for Pg {
 
     async fn monitor_get(&self, tenant: TenantId, id: Uuid) -> IntelResult<Option<MonitorRecord>> {
         let _timer = self.query_timer("intel.monitor_get");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {MONITOR_COLS} FROM monitors WHERE monitor_id = $1 AND tenant_id = $2"
-        ))
+        )))
         .bind(id)
         .bind(tenant.0)
         .fetch_optional(&self.pool)
@@ -491,10 +489,10 @@ impl IntelRepo for Pg {
         offset: u32,
     ) -> IntelResult<Vec<MonitorRecord>> {
         let _timer = self.query_timer("intel.monitor_list");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {MONITOR_COLS} FROM monitors WHERE tenant_id = $1 \
-             ORDER BY created_at DESC, monitor_id DESC LIMIT $2 OFFSET $3"
-        ))
+         ORDER BY created_at DESC, monitor_id DESC LIMIT $2 OFFSET $3"
+        )))
         .bind(tenant.0)
         .bind(i64::from(limit))
         .bind(i64::from(offset))
@@ -538,16 +536,16 @@ impl IntelRepo for Pg {
         let _timer = self.query_timer("intel.monitor_claim_due");
         // One atomic statement: competing tickers skip rows another ticker holds locked, and a
         // row claimed by a committed ticker no longer satisfies the `claimed_until` predicate.
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE monitors SET claimed_until = $2 \
-             WHERE monitor_id IN ( \
-               SELECT monitor_id FROM monitors \
-               WHERE status = 'active' AND next_run_at <= $1 AND (claimed_until IS NULL OR claimed_until <= $1) \
-               ORDER BY next_run_at, monitor_id \
-               LIMIT $3 \
-               FOR UPDATE SKIP LOCKED) \
-             RETURNING {MONITOR_COLS}"
-        ))
+         WHERE monitor_id IN ( \
+           SELECT monitor_id FROM monitors \
+           WHERE status = 'active' AND next_run_at <= $1 AND (claimed_until IS NULL OR claimed_until <= $1) \
+           ORDER BY next_run_at, monitor_id \
+           LIMIT $3 \
+           FOR UPDATE SKIP LOCKED) \
+         RETURNING {MONITOR_COLS}"
+        )))
         .bind(now)
         .bind(lease_until)
         .bind(i64::from(limit))
@@ -590,9 +588,9 @@ impl IntelRepo for Pg {
 
     async fn check_insert(&self, c: &CheckRecord) -> IntelResult<()> {
         let _timer = self.query_timer("intel.check_insert");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "INSERT INTO monitor_checks ({CHECK_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
-        ))
+        )))
         .bind(c.id)
         .bind(c.monitor)
         .bind(c.tenant.0)
@@ -633,9 +631,7 @@ impl IntelRepo for Pg {
 
     async fn check_get(&self, tenant: TenantId, monitor: Uuid, id: Uuid) -> IntelResult<Option<CheckRecord>> {
         let _timer = self.query_timer("intel.check_get");
-        sqlx::query(&format!(
-            "SELECT {CHECK_COLS} FROM monitor_checks WHERE check_id = $1 AND monitor_id = $2 AND tenant_id = $3"
-        ))
+        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CHECK_COLS} FROM monitor_checks WHERE check_id = $1 AND monitor_id = $2 AND tenant_id = $3")))
         .bind(id)
         .bind(monitor)
         .bind(tenant.0)
@@ -656,11 +652,11 @@ impl IntelRepo for Pg {
         offset: u32,
     ) -> IntelResult<Vec<CheckRecord>> {
         let _timer = self.query_timer("intel.check_list");
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {CHECK_COLS} FROM monitor_checks \
-             WHERE monitor_id = $1 AND tenant_id = $2 AND ($3::text IS NULL OR status = $3) \
-             ORDER BY started_at DESC, check_id DESC LIMIT $4 OFFSET $5"
-        ))
+         WHERE monitor_id = $1 AND tenant_id = $2 AND ($3::text IS NULL OR status = $3) \
+         ORDER BY started_at DESC, check_id DESC LIMIT $4 OFFSET $5"
+        )))
         .bind(monitor)
         .bind(tenant.0)
         .bind(status)

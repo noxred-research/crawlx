@@ -41,38 +41,38 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
     };
     let owner = Pg::connect(&url, cfg.clone()).await.unwrap();
     owner.migrate().await.unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOBYPASSRLS NOINHERIT"
-    ))
+    )))
     .execute(owner.pool())
     .await
     .unwrap();
-    sqlx::query(&format!("GRANT USAGE ON SCHEMA {schema} TO {role}"))
-        .execute(owner.pool())
-        .await
-        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "GRANT USAGE ON SCHEMA {schema} TO {role}"
+    )))
+    .execute(owner.pool())
+    .await
+    .unwrap();
     // Grant real DML on tenant tables, but never worker-only operational tables.
-    sqlx::query(&format!(
-        "DO $$ DECLARE t text; BEGIN FOR t IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{schema}' AND c.relrowsecurity LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.%I TO {role}', t); END LOOP; END $$"
-    ))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DO $$ DECLARE t text; BEGIN FOR t IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{schema}' AND c.relrowsecurity LOOP EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.%I TO {role}', t); END LOOP; END $$")))
         .execute(owner.pool())
         .await
         .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "GRANT SELECT ON {schema}.trusted_reachable_states, {schema}.run_errors TO {role}"
-    ))
+    )))
     .execute(owner.pool())
     .await
     .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {schema} TO {role}"
-    ))
+    )))
     .execute(owner.pool())
     .await
     .unwrap();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "REVOKE UPDATE, DELETE ON {schema}.audit_events FROM {role}"
-    ))
+    )))
     .execute(owner.pool())
     .await
     .unwrap();
@@ -189,11 +189,11 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
 
     // A missing middleware scope must not accidentally pass these HTTP tests by
     // falling back to the owner's bypass privileges.
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE FUNCTION require_request_role() RETURNS trigger LANGUAGE plpgsql AS $$ \
-         BEGIN IF current_user <> '{role}' OR crawlx_current_tenant() IS DISTINCT FROM NEW.tenant_id \
-         THEN RAISE EXCEPTION 'request role or transaction-local tenant missing'; END IF; RETURN NEW; END $$"
-    ))
+     BEGIN IF current_user <> '{role}' OR crawlx_current_tenant() IS DISTINCT FROM NEW.tenant_id \
+     THEN RAISE EXCEPTION 'request role or transaction-local tenant missing'; END IF; RETURN NEW; END $$"
+    )))
     .execute(owner.pool())
     .await
     .unwrap();
@@ -466,11 +466,11 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
     drop(request_pg);
     restricted.pool().close().await;
     owner.clone().drop_schema().await.unwrap();
-    sqlx::query(&format!("DROP OWNED BY {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP OWNED BY {role}")))
         .execute(inspector.pool())
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {role}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {role}")))
         .execute(inspector.pool())
         .await
         .unwrap();

@@ -14,8 +14,9 @@ use crawlx_elements::{
     MatchDecision, MatchWeights,
 };
 use crawlx_url::{CanonicalizeOptions, Canonicalizer};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::BTreeMap;
+use std::hint::black_box;
 use uuid::Uuid;
 
 const ORIGIN: &str = "https://shop.example";

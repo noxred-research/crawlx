@@ -11,7 +11,7 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use sqlx::postgres::{PgQueryResult, PgRow, PgStatement, PgTypeInfo};
-use sqlx::{Describe, Either, Error, Execute, Executor, PgPool, Postgres, Transaction};
+use sqlx::{Describe, Either, Error, Execute, Executor, PgPool, Postgres, SqlStr, Transaction};
 use std::future::Future;
 use std::ops::Deref;
 
@@ -126,11 +126,11 @@ impl<'c> Executor<'c> for &'c TenantPool {
         })
     }
 
-    fn prepare_with<'e, 'q: 'e>(
+    fn prepare_with<'e>(
         self,
-        sql: &'q str,
+        sql: SqlStr,
         parameters: &'e [PgTypeInfo],
-    ) -> BoxFuture<'e, Result<PgStatement<'q>, Error>>
+    ) -> BoxFuture<'e, Result<PgStatement, Error>>
     where
         'c: 'e,
     {
@@ -145,7 +145,7 @@ impl<'c> Executor<'c> for &'c TenantPool {
         })
     }
 
-    fn describe<'e, 'q: 'e>(self, sql: &'q str) -> BoxFuture<'e, Result<Describe<Postgres>, Error>>
+    fn describe<'e>(self, sql: SqlStr) -> BoxFuture<'e, Result<Describe<Postgres>, Error>>
     where
         'c: 'e,
     {
