@@ -200,7 +200,7 @@ impl OdfWalk<'_> {
                     self.styles.ordered_lists.entry(n.clone()).or_insert(false);
                 }
             }
-            b"text" | b"spreadsheet" | b"presentation" if e.name().as_ref().starts_with(b"office:") => {
+            b"text" | b"spreadsheet" | b"presentation" if e.name().as_ref().starts_with("office:") => {
                 self.in_body = true;
             }
             _ => {}
@@ -226,7 +226,7 @@ impl OdfWalk<'_> {
                 let i = st.as_ref().is_some_and(|s| self.styles.italic.contains(s));
                 self.span_fmt.push((b, i));
             }
-            b"a" if e.name().as_ref().starts_with(b"text:") => {
+            b"a" if e.name().as_ref().starts_with("text:") => {
                 self.hrefs.push(attr(e, "href"));
             }
             b"s" => {
@@ -251,7 +251,7 @@ impl OdfWalk<'_> {
                     *u = false;
                 }
             }
-            b"page" if e.name().as_ref().starts_with(b"draw:") => {
+            b"page" if e.name().as_ref().starts_with("draw:") => {
                 self.pages += 1;
                 if self.pages > self.limits.max_pages {
                     self.truncated_pages = true;
@@ -263,13 +263,13 @@ impl OdfWalk<'_> {
                 }
                 self.page_open = true;
             }
-            b"frame" if e.name().as_ref().starts_with(b"draw:") => {
+            b"frame" if e.name().as_ref().starts_with("draw:") => {
                 self.frame_depth += 1;
                 if self.frame_depth == 1 {
                     self.frame_class = attr(e, "class");
                 }
             }
-            b"table" if e.name().as_ref().starts_with(b"table:") => {
+            b"table" if e.name().as_ref().starts_with("table:") => {
                 self.tbl_depth += 1;
                 if self.tbl_depth == 1 {
                     if self.kind == OdfKind::Sheet {

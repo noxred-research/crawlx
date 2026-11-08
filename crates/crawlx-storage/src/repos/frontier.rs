@@ -565,9 +565,9 @@ impl FrontierRepo for Pg {
 
     async fn list(&self, run: CrawlRunId) -> Result<Vec<FrontierEntry>, StoreError> {
         let _timer = self.query_timer("frontier.list");
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {ENTRY_COLS} FROM url_frontier WHERE run_id = $1 ORDER BY frontier_id"
-        ))
+        )))
         .bind(run.0)
         .fetch_all(&self.pool)
         .await

@@ -47,7 +47,7 @@ impl QaReport {
 fn checked_bytes(capture: &ReplayCapture) -> Result<(), ReplayError> {
     if capture.bytes.len() > 16 * 1024 * 1024
         || capture.length != capture.bytes.len()
-        || capture.digest != format!("sha256:{:x}", Sha256::digest(&capture.bytes))
+        || capture.digest != format!("sha256:{}", hex::encode(Sha256::digest(&capture.bytes)))
     {
         return Err(ReplayError::Refused("QA capture fixity or byte bound"));
     }

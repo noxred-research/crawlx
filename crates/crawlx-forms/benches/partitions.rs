@@ -16,8 +16,9 @@ use crawlx_core::url::RouteTemplate;
 use crawlx_forms::{
     FormGrouper, Partition, ValueContext, ValuePartitions, ALL_PARTITIONS, GENERATOR_VERSION,
 };
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::BTreeMap;
+use std::hint::black_box;
 use uuid::Uuid;
 
 const TRIPLES: usize = 1_000;

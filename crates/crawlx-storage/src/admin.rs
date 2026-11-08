@@ -124,12 +124,25 @@ pub enum RunSelector {
     All,
 }
 
+/// `$head` + the selector's predicate + `$tail` as a compile-time `&'static str`.
+/// The predicate is one of three constants, so no SQL text is ever built at runtime.
+macro_rules! selected_sql {
+    ($sel:expr, $head:literal, $tail:literal) => {
+        match $sel {
+            RunSelector::Crawl(_) => concat!($head, "run_id = $1", $tail),
+            RunSelector::Tenant(_) => concat!($head, "tenant_id = $1", $tail),
+            RunSelector::All => concat!($head, "$1::uuid IS NULL", $tail),
+        }
+    };
+}
+
 impl RunSelector {
-    fn clause(self) -> (&'static str, Option<uuid::Uuid>) {
+    /// The value bound to `$1` of [`selected_sql!`].
+    fn arg(self) -> Option<uuid::Uuid> {
         match self {
-            Self::Crawl(id) => ("run_id = $1", Some(id.0)),
-            Self::Tenant(t) => ("tenant_id = $1", Some(t.0)),
-            Self::All => ("$1::uuid IS NULL", None),
+            Self::Crawl(id) => Some(id.0),
+            Self::Tenant(t) => Some(t.0),
+            Self::All => None,
         }
     }
 
@@ -761,13 +774,14 @@ impl<'a> AdminOps<'a> {
     /// # Errors
     /// Returns an error if the update, the event append or the audit append fails.
     pub async fn pause(&self, sel: RunSelector) -> Result<Vec<CrawlRunId>, StoreError> {
-        let (clause, arg) = sel.clause();
-        let sql = format!(
+        let sql = selected_sql!(
+            sel,
             "UPDATE crawl_runs SET status = 'paused', pause_requested_at = now() \
-             WHERE status = 'running' AND {clause} RETURNING run_id, tenant_id"
+             WHERE status = 'running' AND ",
+            " RETURNING run_id, tenant_id"
         );
-        let rows = sqlx::query(&sql)
-            .bind(arg)
+        let rows = sqlx::query(sql)
+            .bind(sel.arg())
             .fetch_all(&self.pg.pool)
             .await
             .map_err(db)?;
@@ -789,13 +803,14 @@ impl<'a> AdminOps<'a> {
     /// # Errors
     /// Returns an error if the update, the event append or the audit append fails.
     pub async fn resume(&self, sel: RunSelector) -> Result<Vec<CrawlRunId>, StoreError> {
-        let (clause, arg) = sel.clause();
-        let sql = format!(
+        let sql = selected_sql!(
+            sel,
             "UPDATE crawl_runs SET status = 'running', pause_requested_at = NULL \
-             WHERE status = 'paused' AND {clause} RETURNING run_id, tenant_id"
+             WHERE status = 'paused' AND ",
+            " RETURNING run_id, tenant_id"
         );
-        let rows = sqlx::query(&sql)
-            .bind(arg)
+        let rows = sqlx::query(sql)
+            .bind(sel.arg())
             .fetch_all(&self.pg.pool)
             .await
             .map_err(db)?;
@@ -823,15 +838,15 @@ impl<'a> AdminOps<'a> {
                 "cancel reason must be `cancelled` or `policy_stopped`, got {reason:?}"
             )));
         }
-        let (clause, arg) = sel.clause();
-        let sql = format!(
+        let sql = selected_sql!(
+            sel,
             "UPDATE crawl_runs SET status = 'cancelled', terminal_reason = $2::text::terminal_reason, \
                cancel_requested_at = now(), finished_at = now() \
-             WHERE status::text IN ('queued','running','pausing','paused','cancelling') AND {clause} \
-             RETURNING run_id, tenant_id"
+             WHERE status::text IN ('queued','running','pausing','paused','cancelling') AND ",
+            " RETURNING run_id, tenant_id"
         );
-        let rows = sqlx::query(&sql)
-            .bind(arg)
+        let rows = sqlx::query(sql)
+            .bind(sel.arg())
             .bind(reason)
             .fetch_all(&self.pg.pool)
             .await
@@ -1367,8 +1382,10 @@ mod tests {
 
     #[test]
     fn selector_clauses_bind_one_argument() {
-        assert_eq!(RunSelector::All.clause().0, "$1::uuid IS NULL");
+        assert_eq!(selected_sql!(RunSelector::All, "", ""), "$1::uuid IS NULL");
+        assert_eq!(RunSelector::All.arg(), None);
         let id = CrawlRunId::new();
-        assert_eq!(RunSelector::Crawl(id).clause(), ("run_id = $1", Some(id.0)));
+        assert_eq!(selected_sql!(RunSelector::Crawl(id), "", ""), "run_id = $1");
+        assert_eq!(RunSelector::Crawl(id).arg(), Some(id.0));
     }
 }

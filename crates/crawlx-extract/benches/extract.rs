@@ -7,9 +7,10 @@
 use crawlx_extract::dom::{convert_node, Node, Selected};
 use crawlx_extract::endpoints::{discover, DiscoveryInput};
 use crawlx_extract::{links, markdown, metadata};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use scraper::Html;
 use std::fmt::Write as _;
+use std::hint::black_box;
 use url::Url;
 
 const PAGE_URL: &str = "https://docs.example.com/guide/intro";

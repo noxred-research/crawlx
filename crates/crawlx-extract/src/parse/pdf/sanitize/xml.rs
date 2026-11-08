@@ -44,17 +44,17 @@ pub(super) fn sanitize_xml(
         let is_start = matches!(&event, Event::Start(_));
         let event = match event {
             Event::Start(start) | Event::Empty(start) => {
-                let name = std::str::from_utf8(start.name().as_ref())
-                    .map_err(xml_error)?
-                    .to_owned();
+                let name = start.name().as_ref().to_owned();
                 let mut clean = BytesStart::new(&name);
                 for attribute in start.attributes() {
                     let attribute = attribute.map_err(xml_error)?;
-                    let key = std::str::from_utf8(attribute.key.as_ref()).map_err(xml_error)?;
-                    let raw = reader.decoder().decode(&attribute.value).map_err(xml_error)?;
+                    let key = attribute.key.as_ref();
                     // Do not normalize literal attribute whitespace during redaction.
-                    let value = quick_xml::escape::unescape_with(&raw, quick_xml::escape::resolve_xml_entity)
-                        .map_err(xml_error)?;
+                    let value = quick_xml::escape::unescape_with(
+                        &attribute.value,
+                        quick_xml::escape::resolve_xml_entity,
+                    )
+                    .map_err(xml_error)?;
                     let value = if policy.is_sensitive_name(key) {
                         crawlx_core::secret::REDACTED.to_owned()
                     } else {
@@ -77,9 +77,9 @@ pub(super) fn sanitize_xml(
                 Event::End(end.into_owned())
             }
             Event::Text(text) => {
-                let decoded = text.decode().map_err(xml_error)?;
+                let decoded: &str = &text;
                 text_event(
-                    &decoded,
+                    decoded,
                     &sensitive,
                     &mut logical,
                     &mut texts,
@@ -89,12 +89,10 @@ pub(super) fn sanitize_xml(
             }
             Event::GeneralRef(reference) => {
                 let mut encoded = [0; 4];
-                let name;
                 let decoded = if let Some(ch) = reference.resolve_char_ref().map_err(xml_error)? {
                     ch.encode_utf8(&mut encoded)
                 } else {
-                    name = reference.decode().map_err(xml_error)?;
-                    quick_xml::escape::resolve_xml_entity(&name).ok_or_else(|| {
+                    quick_xml::escape::resolve_xml_entity(&reference).ok_or_else(|| {
                         ParseError::corrupt("pdf", "custom metadata XML entities are forbidden")
                     })?
                 };
@@ -108,9 +106,9 @@ pub(super) fn sanitize_xml(
                 )?
             }
             Event::CData(text) => {
-                let decoded = text.decode().map_err(xml_error)?;
+                let decoded: &str = &text;
                 text_event(
-                    &decoded,
+                    decoded,
                     &sensitive,
                     &mut logical,
                     &mut texts,
@@ -119,13 +117,13 @@ pub(super) fn sanitize_xml(
                 )?
             }
             Event::Comment(comment) => {
-                let text = std::str::from_utf8(&comment).map_err(xml_error)?;
+                let text: &str = &comment;
                 let clean = redact(text)?;
                 Event::Comment(BytesText::from_escaped(clean).into_owned())
             }
             Event::DocType(_) => return Err(ParseError::corrupt("pdf", "metadata DTD is unsupported")),
             other => {
-                let text = std::str::from_utf8(&other).map_err(xml_error)?;
+                let text: &str = &other;
                 if redact(text)? != text {
                     return Err(ParseError::corrupt(
                         "pdf",

@@ -203,7 +203,7 @@ impl PgApiRepo {
         let _timer = self.pg.query_timer("api.authorization_stored");
         let sql =
             format!("SELECT {COLUMNS} FROM authorization_records WHERE record_id = $1 AND tenant_id = $2");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id.0)
             .bind(tenant.0)
             .fetch_optional(&self.pg.pool)
@@ -357,7 +357,7 @@ impl Pg {
         record: AuthorizationRecordId,
     ) -> Result<Option<Value>, StoreError> {
         let sql = format!("SELECT {COLUMNS} FROM authorization_records WHERE record_id = $1");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(record.0)
             .fetch_optional(&self.pool)
             .await

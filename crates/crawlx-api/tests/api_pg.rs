@@ -888,11 +888,13 @@ async fn authenticated_zdr_auditor_event_does_not_block_webhooks_for_other_runs(
         .await
         .unwrap();
     for table in ["crawl_events", "webhook_deliveries"] {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table} WHERE run_id = $1"))
-            .bind(run.0)
-            .fetch_one(r.pg.pool())
-            .await
-            .unwrap();
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE run_id = $1"
+        )))
+        .bind(run.0)
+        .fetch_one(r.pg.pool())
+        .await
+        .unwrap();
         assert_eq!(count, 0, "run erasure must remove {table}");
     }
     let retained: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_events WHERE audit_id = $1)")

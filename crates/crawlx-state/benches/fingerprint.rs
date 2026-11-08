@@ -7,7 +7,8 @@
 mod common;
 
 use crawlx_state::{Fingerprinter, MaskBuilder, MaskConfig};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 
 fn fingerprint(c: &mut Criterion) {
     let fp = Fingerprinter::default();

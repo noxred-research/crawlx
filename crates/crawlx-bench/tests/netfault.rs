@@ -182,7 +182,7 @@ fn site(n: usize) -> FakeScript {
     script
 }
 
-async fn count(pg: &Pg, sql: &str) -> i64 {
+async fn count(pg: &Pg, sql: &'static str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(pg.pool()).await.unwrap()
 }
 

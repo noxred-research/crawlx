@@ -10,11 +10,11 @@ use quick_xml::reader::NsReader;
 use std::collections::BTreeSet;
 use url::Url;
 
-const ATOM: &[u8] = b"http://www.w3.org/2005/Atom";
-const RSS1: &[u8] = b"http://purl.org/rss/1.0/";
-const RDF: &[u8] = b"http://www.w3.org/1999/02/22-rdf-syntax-ns#";
-const MEDIA: &[u8] = b"http://search.yahoo.com/mrss/";
-const TRENDS: &[u8] = b"https://trends.google.com/trending/rss";
+const ATOM: &str = "http://www.w3.org/2005/Atom";
+const RSS1: &str = "http://purl.org/rss/1.0/";
+const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+const MEDIA: &str = "http://search.yahoo.com/mrss/";
+const TRENDS: &str = "https://trends.google.com/trending/rss";
 const MAX_URL_BYTES: usize = 4096;
 const MAX_HINT_BYTES: usize = 2048;
 
@@ -174,13 +174,13 @@ struct PendingEntry {
 fn attribute_text<'a>(
     attribute: &'a quick_xml::events::attributes::Attribute<'_>,
 ) -> Result<std::borrow::Cow<'a, str>, quick_xml::Error> {
-    let raw = std::str::from_utf8(&attribute.value).map_err(quick_xml::encoding::EncodingError::from)?;
+    let raw: &str = &attribute.value;
     Ok(quick_xml::escape::unescape_with(
         raw,
         quick_xml::escape::resolve_xml_entity,
     )?)
 }
-fn attr(element: &BytesStart<'_>, name: &[u8]) -> Result<Option<String>, FeedError> {
+fn attr(element: &BytesStart<'_>, name: &str) -> Result<Option<String>, FeedError> {
     for attribute in element.attributes() {
         let attribute = attribute.map_err(quick_xml::Error::from)?;
         if attribute.key.as_ref() == name {
@@ -192,7 +192,7 @@ fn attr(element: &BytesStart<'_>, name: &[u8]) -> Result<Option<String>, FeedErr
 fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Result<FeedDocument, FeedError> {
     let mut reader = NsReader::from_reader(bytes);
     reader.config_mut().expand_empty_elements = true;
-    let mut stack: Vec<(Namespace, Vec<u8>)> = Vec::new();
+    let mut stack: Vec<(Namespace, String)> = Vec::new();
     let mut bases: Vec<Option<Url>> = Vec::new();
     let mut document: Option<FeedDocument> = None;
     let mut pending: Option<PendingEntry> = None;
@@ -225,7 +225,7 @@ fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Resu
                     return Err(DiscoveryErrorV1::Limit("feed_nesting").into());
                 }
                 let inherited = bases.iter().rev().find_map(Option::as_ref).unwrap_or(base);
-                let local_base = match attr(&element, b"xml:base")? {
+                let local_base = match attr(&element, "xml:base")? {
                     Some(value) => {
                         Some(reference(inherited, &value).ok_or_else(|| protocol("invalid XML base URL"))?)
                     }
@@ -237,9 +237,9 @@ fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Resu
                 let name = local.as_ref();
                 if document.is_none() {
                     let kind = match (ns, name) {
-                        (Namespace::None, b"rss") => FeedKind::Rss,
-                        (Namespace::Rdf, b"RDF") => FeedKind::Rdf,
-                        (Namespace::Atom, b"feed") => FeedKind::Atom,
+                        (Namespace::None, "rss") => FeedKind::Rss,
+                        (Namespace::Rdf, "RDF") => FeedKind::Rdf,
+                        (Namespace::Atom, "feed") => FeedKind::Atom,
                         _ => return Err(protocol("unsupported feed root namespace")),
                     };
                     document = Some(FeedDocument {
@@ -251,7 +251,7 @@ fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Resu
                 }
                 let article = matches!(
                     (ns, name),
-                    (Namespace::None | Namespace::Rss1, b"item") | (Namespace::Atom, b"entry")
+                    (Namespace::None | Namespace::Rss1, "item") | (Namespace::Atom, "entry")
                 );
                 if article {
                     if pending.is_some() {
@@ -267,11 +267,11 @@ fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Resu
                     pending = Some(PendingEntry::default());
                     entry_depth = stack.len();
                 }
-                if ns == Namespace::Atom && name == b"link" {
-                    let rel = attr(&element, b"rel")?.unwrap_or_else(|| "alternate".into());
-                    let kind = attr(&element, b"type")?;
+                if ns == Namespace::Atom && name == "link" {
+                    let rel = attr(&element, "rel")?.unwrap_or_else(|| "alternate".into());
+                    let kind = attr(&element, "type")?;
                     if let Some(url) =
-                        attr(&element, b"href")?.and_then(|value| reference(active_base, &value))
+                        attr(&element, "href")?.and_then(|value| reference(active_base, &value))
                     {
                         if let Some(entry) = pending.as_mut() {
                             if rel == "alternate"
@@ -298,34 +298,34 @@ fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Resu
                     }
                 }
                 if let Some(entry) = pending.as_mut() {
-                    if (ns == Namespace::Media && matches!(name, b"content" | b"thumbnail"))
-                        || (matches!(ns, Namespace::None | Namespace::Rss1) && name == b"enclosure")
+                    if (ns == Namespace::Media && matches!(name, "content" | "thumbnail"))
+                        || (matches!(ns, Namespace::None | Namespace::Rss1) && name == "enclosure")
                     {
                         if let Some(url) =
-                            attr(&element, b"url")?.and_then(|value| reference(active_base, &value))
+                            attr(&element, "url")?.and_then(|value| reference(active_base, &value))
                         {
                             unique_push(&mut entry.media, url, 16);
                         }
                     }
                 }
-                stack.push((ns, name.to_vec()));
+                stack.push((ns, name.to_owned()));
             }
             Event::Text(part) => {
-                text.push_str(&part.decode().map_err(quick_xml::Error::from)?);
+                text.push_str(&part);
             }
             Event::GeneralRef(reference) => {
                 if let Some(ch) = reference.resolve_char_ref()? {
                     text.push(ch);
                 } else {
-                    let name = reference.decode().map_err(quick_xml::Error::from)?;
+                    let name: &str = &reference;
                     text.push_str(
-                        quick_xml::escape::resolve_xml_entity(&name)
+                        quick_xml::escape::resolve_xml_entity(name)
                             .ok_or_else(|| protocol("custom XML entities are forbidden"))?,
                     );
                 }
             }
             Event::CData(part) => {
-                text.push_str(&String::from_utf8_lossy(part.as_ref()));
+                text.push_str(&part);
             }
             Event::End(_) => {
                 let Some((ns, name)) = stack.pop() else {
@@ -334,8 +334,8 @@ fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Resu
                 bases.pop();
                 if stack.len() == entry_depth
                     && matches!(
-                        (ns, name.as_slice()),
-                        (Namespace::None | Namespace::Rss1, b"item") | (Namespace::Atom, b"entry")
+                        (ns, name.as_str()),
+                        (Namespace::None | Namespace::Rss1, "item") | (Namespace::Atom, "entry")
                     )
                 {
                     if let Some(entry) = pending.take() {
@@ -384,31 +384,29 @@ fn parse_xml(bytes: &[u8], base: &Url, policy: &SourceDiscoveryPolicyV1) -> Resu
     }
     document.ok_or_else(|| protocol("empty feed document"))
 }
-fn assign(stack: &[(Namespace, Vec<u8>)], pending: Option<&mut PendingEntry>, text: &str, base: &Url) {
+fn assign(stack: &[(Namespace, String)], pending: Option<&mut PendingEntry>, text: &str, base: &Url) {
     let Some(entry) = pending else {
         return;
     };
     let Some((ns, name)) = stack.last() else {
         return;
     };
-    match (*ns, name.as_slice()) {
-        (Namespace::None | Namespace::Rss1, b"link") if entry.url.is_none() => {
+    match (*ns, name.as_str()) {
+        (Namespace::None | Namespace::Rss1, "link") if entry.url.is_none() => {
             entry.url = reference(base, text)
         }
-        (Namespace::None | Namespace::Rss1 | Namespace::Atom, b"title") if entry.title.is_none() => {
+        (Namespace::None | Namespace::Rss1 | Namespace::Atom, "title") if entry.title.is_none() => {
             entry.title = hint(text)
         }
-        (Namespace::None, b"pubDate") | (Namespace::Atom, b"published" | b"updated")
-            if entry.date.is_none() =>
-        {
+        (Namespace::None, "pubDate") | (Namespace::Atom, "published" | "updated") if entry.date.is_none() => {
             entry.date = hint(text)
         }
-        (Namespace::None | Namespace::Rss1, b"source") | (Namespace::Atom, b"name")
+        (Namespace::None | Namespace::Rss1, "source") | (Namespace::Atom, "name")
             if entry.publisher.is_none() =>
         {
             entry.publisher = hint(text)
         }
-        (Namespace::Trends, b"news_item_url") => {
+        (Namespace::Trends, "news_item_url") => {
             if let Some(url) = reference(base, text) {
                 unique_push(&mut entry.related, url, 16);
             }

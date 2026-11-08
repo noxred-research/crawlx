@@ -153,9 +153,9 @@ async fn privileged_bypass_pauses_only_affected_run_with_independent_identities(
         (&reader, "crawlx_safety_reader"),
         (&pauser, "crawlx_safety_pauser"),
     ] {
-        sqlx::query(&format!("CREATE ROLE {login} LOGIN INHERIT PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {login} LOGIN INHERIT PASSWORD '{password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")))
             .execute(pg.pool()).await.unwrap();
-        sqlx::query(&format!("GRANT {capability} TO {login}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("GRANT {capability} TO {login}")))
             .execute(pg.pool())
             .await
             .unwrap();
@@ -351,7 +351,7 @@ async fn privileged_bypass_pauses_only_affected_run_with_independent_identities(
     let admin = sqlx::PgPool::connect(&base).await.unwrap();
     pg.drop_schema().await.unwrap();
     for login in [&reader, &pauser] {
-        sqlx::query(&format!("DROP ROLE {login}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {login}")))
             .execute(&admin)
             .await
             .unwrap();

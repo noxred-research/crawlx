@@ -119,9 +119,7 @@ impl Rig {
 
     /// What an operator does: revoke the stored record.
     async fn revoke(&self, ago: &str) {
-        sqlx::query(&format!(
-            "UPDATE authorization_records SET revoked_at = now() - interval '{ago}', revoked_reason = 'takedown request' WHERE record_id = $1"
-        ))
+        sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE authorization_records SET revoked_at = now() - interval '{ago}', revoked_reason = 'takedown request' WHERE record_id = $1")))
         .bind(self.record.id.0)
         .execute(self.pg.pool())
         .await

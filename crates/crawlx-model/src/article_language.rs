@@ -122,7 +122,7 @@ fn read_verified(
     if u64::try_from(bytes.len()).map_err(|_| ArticleLanguageError::Contract("resource size"))? > limit {
         return Err(ArticleLanguageError::Contract("resource size"));
     }
-    if format!("{:x}", Sha256::digest(&bytes)) != expected {
+    if hex::encode(Sha256::digest(&bytes)) != expected {
         return Err(ArticleLanguageError::DigestMismatch(name));
     }
     Ok(bytes)
@@ -440,7 +440,7 @@ mod tests {
             read_verified(root.path(), "regular", "0000", 100),
             Err(ArticleLanguageError::DigestMismatch("regular"))
         ));
-        let sha = format!("{:x}", Sha256::digest(b"approved"));
+        let sha = hex::encode(Sha256::digest(b"approved"));
         assert_eq!(
             read_verified(root.path(), "regular", &sha, 100).unwrap(),
             b"approved"

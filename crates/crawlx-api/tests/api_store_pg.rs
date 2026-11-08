@@ -129,11 +129,13 @@ impl Env {
     }
 
     async fn count(&self, table: &str, run: CrawlRunId) -> i64 {
-        sqlx::query_scalar(&format!("SELECT count(*) FROM {table} WHERE run_id = $1"))
-            .bind(run.0)
-            .fetch_one(self.pg.pool())
-            .await
-            .unwrap()
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE run_id = $1"
+        )))
+        .bind(run.0)
+        .fetch_one(self.pg.pool())
+        .await
+        .unwrap()
     }
 
     async fn hold(&self, action: ActionId) -> String {

@@ -13,7 +13,7 @@ use crawlx_policy::egress::EgressPolicy;
 use crawlx_policy::fixture_evaluation::{FixtureEvaluationLease, FixtureEvaluationScope};
 use crawlx_storage::archive::collection::{ApprovedLocalDependency, ArchiveCollection};
 use crawlx_storage::archive::{ArchiveError, Limits};
-use hmac::Mac as _;
+use hmac::{KeyInit as _, Mac as _};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -187,7 +187,7 @@ pub struct ReplayArchive {
 }
 
 fn digest(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 fn executable_build(cancel: &CancellationToken) -> Result<String, ReplayError> {
@@ -220,9 +220,9 @@ fn executable_build(cancel: &CancellationToken) -> Result<String, ReplayError> {
         hash.update(&bytes[..count]);
     }
     Ok(format!(
-        "crawlx-worker/{};host-executable-sha256:{:x}",
+        "crawlx-worker/{};host-executable-sha256:{}",
         env!("CARGO_PKG_VERSION"),
-        hash.finalize()
+        hex::encode(hash.finalize())
     ))
 }
 

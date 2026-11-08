@@ -666,7 +666,7 @@ impl PgApiRepo {
     pub async fn approvals_list(&self, run: CrawlRunId) -> Result<Vec<ApprovalRecord>, StoreError> {
         let _timer = self.pg.query_timer("api.approvals_list");
         let sql = format!("SELECT {APPROVAL_COLS} FROM approvals WHERE run_id = $1 ORDER BY approval_id");
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .fetch_all(&self.pg.pool)
             .await
@@ -685,7 +685,7 @@ impl PgApiRepo {
     ) -> Result<Option<ApprovalRecord>, StoreError> {
         let _timer = self.pg.query_timer("api.approval_get");
         let sql = format!("SELECT {APPROVAL_COLS} FROM approvals WHERE run_id = $1 AND approval_id = $2");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .bind(id.0)
             .fetch_optional(&self.pg.pool)
@@ -725,7 +725,7 @@ impl PgApiRepo {
         let sql = format!(
             "SELECT {APPROVAL_COLS} FROM approvals WHERE run_id = $1 AND approval_id = $2 FOR UPDATE"
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .bind(id.0)
             .fetch_optional(&mut *tx)
@@ -748,7 +748,7 @@ impl PgApiRepo {
             "UPDATE approvals SET decision = $2, decided_by = $3, decided_at = $4, reason = $5 \
              WHERE approval_id = $1 RETURNING {APPROVAL_COLS}"
         );
-        let updated = sqlx::query(&sql)
+        let updated = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id.0)
             .bind(decision.as_str())
             .bind(decided_by)
@@ -979,7 +979,7 @@ impl PgApiRepo {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(now)
             .bind(i64::from(limit))
             .bind(f64::from(lease_secs))
@@ -1066,7 +1066,7 @@ impl PgApiRepo {
         let sql = format!(
             "SELECT {WEBHOOK_COLS} FROM webhook_deliveries WHERE run_id = $1 ORDER BY event_seq, delivery_id"
         );
-        let rows = sqlx::query(&sql)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(run.0)
             .fetch_all(&self.pg.pool)
             .await

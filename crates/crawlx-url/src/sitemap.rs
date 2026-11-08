@@ -117,16 +117,16 @@ enum Tag {
     Other,
 }
 
-fn classify_tag(local: &[u8]) -> Tag {
+fn classify_tag(local: &str) -> Tag {
     match local {
-        b"urlset" => Tag::UrlSet,
-        b"sitemapindex" => Tag::SitemapIndex,
-        b"url" => Tag::Url,
-        b"sitemap" => Tag::Sitemap,
-        b"loc" => Tag::Loc,
-        b"lastmod" => Tag::Lastmod,
-        b"priority" => Tag::Priority,
-        b"changefreq" => Tag::Changefreq,
+        "urlset" => Tag::UrlSet,
+        "sitemapindex" => Tag::SitemapIndex,
+        "url" => Tag::Url,
+        "sitemap" => Tag::Sitemap,
+        "loc" => Tag::Loc,
+        "lastmod" => Tag::Lastmod,
+        "priority" => Tag::Priority,
+        "changefreq" => Tag::Changefreq,
         _ => Tag::Other,
     }
 }
@@ -144,7 +144,7 @@ struct Entry {
 fn attribute_text<'a>(
     attribute: &'a quick_xml::events::attributes::Attribute<'_>,
 ) -> Result<std::borrow::Cow<'a, str>, quick_xml::Error> {
-    let raw = std::str::from_utf8(&attribute.value).map_err(quick_xml::encoding::EncodingError::from)?;
+    let raw: &str = &attribute.value;
     Ok(quick_xml::escape::unescape_with(
         raw,
         quick_xml::escape::resolve_xml_entity,
@@ -238,7 +238,7 @@ impl SitemapParser {
                     let tag = match reader.resolver().resolve_element(e.name()).0 {
                         ResolveResult::Unbound => classify_tag(e.local_name().as_ref()),
                         ResolveResult::Bound(namespace)
-                            if namespace.as_ref() == b"http://www.sitemaps.org/schemas/sitemap/0.9" =>
+                            if namespace.as_ref() == "http://www.sitemaps.org/schemas/sitemap/0.9" =>
                         {
                             classify_tag(e.local_name().as_ref())
                         }
@@ -247,9 +247,9 @@ impl SitemapParser {
                         }
                         _ => Tag::Other,
                     };
-                    if e.local_name().as_ref() == b"link" && stack.last() == Some(&Tag::Url) {
+                    if e.local_name().as_ref() == "link" && stack.last() == Some(&Tag::Url) {
                         let (namespace, _) = reader.resolver().resolve_element(e.name());
-                        if matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref() == b"http://www.w3.org/1999/xhtml")
+                        if matches!(namespace, ResolveResult::Bound(ns) if ns.as_ref() == "http://www.w3.org/1999/xhtml")
                         {
                             let mut rel = None;
                             let mut language = None;
@@ -261,9 +261,9 @@ impl SitemapParser {
                                     .map_err(|error| UrlError::Sitemap(error.to_string()))?
                                     .into_owned();
                                 match attribute.key.as_ref() {
-                                    b"rel" => rel = Some(value),
-                                    b"hreflang" => language = Some(value),
-                                    b"href" => href = Some(value),
+                                    "rel" => rel = Some(value),
+                                    "hreflang" => language = Some(value),
+                                    "href" => href = Some(value),
                                     _ => {}
                                 }
                             }
@@ -330,11 +330,7 @@ impl SitemapParser {
                     }
                 }
                 Event::Text(part) => {
-                    text.push_str(
-                        &part
-                            .decode()
-                            .map_err(|error| UrlError::Sitemap(error.to_string()))?,
-                    );
+                    text.push_str(&part);
                 }
                 Event::GeneralRef(reference) => {
                     if let Some(ch) = reference
@@ -343,18 +339,16 @@ impl SitemapParser {
                     {
                         text.push(ch);
                     } else {
-                        let name = reference
-                            .decode()
-                            .map_err(|error| UrlError::Sitemap(error.to_string()))?;
+                        let name: &str = &reference;
                         text.push_str(
-                            quick_xml::escape::resolve_xml_entity(&name).ok_or_else(|| {
+                            quick_xml::escape::resolve_xml_entity(name).ok_or_else(|| {
                                 UrlError::Sitemap("custom XML entities are forbidden".into())
                             })?,
                         );
                     }
                 }
                 Event::CData(part) => {
-                    text.push_str(&String::from_utf8_lossy(part.as_ref()));
+                    text.push_str(&part);
                 }
                 Event::DocType(_) => {
                     return Err(UrlError::Sitemap(

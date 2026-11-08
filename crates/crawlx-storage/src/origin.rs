@@ -51,7 +51,7 @@ impl PgOriginAdmission {
                     let schema = schema.clone();
                     Box::pin(async move {
                         if let Some(schema) = schema {
-                            conn.execute(format!("SET search_path TO {schema}").as_str())
+                            conn.execute(crate::pg::schema_sql("SET search_path TO ", &schema, "")?)
                                 .await?;
                         }
                         if check_disconnect {

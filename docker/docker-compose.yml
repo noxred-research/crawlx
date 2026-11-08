@@ -374,7 +374,7 @@ services:
   minio:
     # Same pinned image as the CI integration job (`bitnamilegacy/minio`: the upstream
     # `minio/minio` images are no longer published). S3 API on :9000, console on :9001, neither published.
-    image: bitnamilegacy/minio:2025-debian-12
+    image: bitnamilegacy/minio:2025.7.23
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
@@ -405,7 +405,7 @@ services:
     # one-shot: create the artifact bucket (versioning on) once MinIO answers. The
     # bitnami entrypoint runs a throwaway MinIO for its setup, stops it and starts the real one, and
     # /minio/health/live already answers during the first: the alias is retried across that restart.
-    image: bitnamilegacy/minio:2025-debian-12
+    image: bitnamilegacy/minio:2025.7.23
     restart: "no"
     entrypoint: ["/bin/sh", "-ceu"]
     command:

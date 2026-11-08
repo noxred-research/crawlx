@@ -141,10 +141,8 @@ impl LedgerRepo for Pg {
 
     async fn list(&self, run: CrawlRunId) -> Result<Vec<LedgerRow>, StoreError> {
         let _timer = self.query_timer("ledger.list");
-        let rows = sqlx::query(&format!(
-            "SELECT {KEY_COLS}, c.succeeded_trusted, c.succeeded, c.failed, c.first_seen_at, c.last_exercised_at \
-             FROM action_contexts c WHERE c.run_id = $1 ORDER BY c.context_id"
-        ))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {KEY_COLS}, c.succeeded_trusted, c.succeeded, c.failed, c.first_seen_at, c.last_exercised_at \
+         FROM action_contexts c WHERE c.run_id = $1 ORDER BY c.context_id")))
         .bind(run.0)
         .fetch_all(&self.pool)
         .await

@@ -267,7 +267,11 @@ async fn create_is_idempotent_and_never_overwrites() {
 
 async fn update_error(env: &Env, set: &str, id: AuthorizationRecordId) -> Option<String> {
     let sql = format!("UPDATE authorization_records SET {set} WHERE record_id = $1");
-    match sqlx::query(&sql).bind(id.0).execute(env.pg.pool()).await {
+    match sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id.0)
+        .execute(env.pg.pool())
+        .await
+    {
         Ok(_) => None,
         Err(sqlx::Error::Database(d)) => Some(format!("{}: {}", d.code().unwrap_or_default(), d.message())),
         Err(e) => panic!("unexpected error: {e}"),

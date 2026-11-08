@@ -363,11 +363,13 @@ async fn cancellation_purge_run_expiry_and_status_stop_every_fenced_mutation() {
             return;
         };
         let lease = acquired(&f.first, &f).await;
-        sqlx::query(&format!("UPDATE crawl_runs SET {change} WHERE run_id=$1"))
-            .bind(f.run.0)
-            .execute(f.pg.pool())
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE crawl_runs SET {change} WHERE run_id=$1"
+        )))
+        .bind(f.run.0)
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
         assert!(f.first.claim(f.tenant, f.run).await.is_err(), "{change}");
         assert!(f.first.renew(&lease).await.is_err(), "{change}");
         assert!(f.first.checkpoint(&lease, 1).await.is_err(), "{change}");
@@ -737,7 +739,10 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
         format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {schema} TO {api}"),
         format!("GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO {api}"),
     ] {
-        sqlx::query(&sql).execute(&mut *admin).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *admin)
+            .await
+            .unwrap();
     }
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
@@ -748,10 +753,12 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
     .await
     .unwrap();
     for table in tables {
-        sqlx::query(&format!("ALTER TABLE {schema}.{table} OWNER TO {owner}"))
-            .execute(&mut *admin)
-            .await
-            .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE {schema}.{table} OWNER TO {owner}"
+        )))
+        .execute(&mut *admin)
+        .await
+        .unwrap();
     }
     // SET ROLE changes PostgreSQL's effective privilege/RLS identity. The pool
     // has exactly one connection; every worker transaction below uses this
@@ -767,7 +774,7 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
     .await
     .unwrap();
     let mut connection = worker_pg.pool().acquire().await.unwrap();
-    sqlx::query(&format!("SET ROLE {owner}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {owner}")))
         .execute(&mut *connection)
         .await
         .unwrap();
@@ -840,20 +847,21 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
         .await
         .unwrap();
         assert_eq!(flags, (true, false, true), "{table}");
-        sqlx::query(&format!("SELECT tenant_id FROM {table}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("SELECT tenant_id FROM {table}")))
             .fetch_all(worker_pg.pool())
             .await
             .unwrap();
     }
-    sqlx::query(&format!("SET ROLE {api}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {api}")))
         .execute(&mut *admin)
         .await
         .unwrap();
     for table in ["run_bootstrap_producers", "run_secret_authority"] {
-        let tenants: Vec<Uuid> = sqlx::query_scalar(&format!("SELECT tenant_id FROM {table}"))
-            .fetch_all(&mut *admin)
-            .await
-            .unwrap();
+        let tenants: Vec<Uuid> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT tenant_id FROM {table}")))
+                .fetch_all(&mut *admin)
+                .await
+                .unwrap();
         assert!(tenants.is_empty(), "{table}: unscoped API must fail closed");
     }
     sqlx::query("SET app.tenant_id = ''")
@@ -861,10 +869,11 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
         .await
         .unwrap();
     for table in ["run_bootstrap_producers", "run_secret_authority"] {
-        let tenants: Vec<Uuid> = sqlx::query_scalar(&format!("SELECT tenant_id FROM {table}"))
-            .fetch_all(&mut *admin)
-            .await
-            .unwrap();
+        let tenants: Vec<Uuid> =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT tenant_id FROM {table}")))
+                .fetch_all(&mut *admin)
+                .await
+                .unwrap();
         assert!(tenants.is_empty(), "{table}: reset tenant must fail closed");
     }
     for tenant in [f.tenant, other_tenant] {
@@ -874,10 +883,11 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
             .await
             .unwrap();
         for table in ["run_bootstrap_producers", "run_secret_authority"] {
-            let tenants: Vec<Uuid> = sqlx::query_scalar(&format!("SELECT tenant_id FROM {table}"))
-                .fetch_all(&mut *admin)
-                .await
-                .unwrap();
+            let tenants: Vec<Uuid> =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT tenant_id FROM {table}")))
+                    .fetch_all(&mut *admin)
+                    .await
+                    .unwrap();
             assert_eq!(tenants, vec![tenant.0], "{table}");
         }
         let hidden_tenant = if tenant == f.tenant {
@@ -895,11 +905,11 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
     }
     sqlx::query("RESET ROLE").execute(&mut *admin).await.unwrap();
     worker_pg.pool().close().await;
-    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
         .execute(&mut *admin)
         .await
         .unwrap();
-    sqlx::query(&format!("DROP ROLE {owner}, {api}"))
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP ROLE {owner}, {api}")))
         .execute(&mut *admin)
         .await
         .unwrap();

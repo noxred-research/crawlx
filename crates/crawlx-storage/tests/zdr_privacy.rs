@@ -39,9 +39,9 @@ async fn setup() -> Option<(Pg, Arc<DeliveryBuffer>, Arc<ManualClock>, TenantId)
 async fn durable_dump(pg: &Pg, run: CrawlRunId) -> String {
     let mut dump = String::new();
     for table in ["crawl_runs", "url_frontier", "pages", "webhook_deliveries"] {
-        let rows: Vec<String> = sqlx::query_scalar(&format!(
+        let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT row_to_json(t)::text FROM {table} t WHERE run_id = $1"
-        ))
+        )))
         .bind(run.0)
         .fetch_all(pg.pool())
         .await

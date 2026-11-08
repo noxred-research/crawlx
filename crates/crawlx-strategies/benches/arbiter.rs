@@ -12,7 +12,8 @@ use crawlx_core::proposal::ActionProposal;
 use crawlx_core::CrawlRunId;
 use crawlx_graph::EnablementGraph;
 use crawlx_strategies::{Arbiter, FrontierStats, InMemoryLedger};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 use std::sync::Arc;
 use uuid::Uuid;
 

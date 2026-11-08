@@ -357,10 +357,10 @@ impl Pg {
                 .or_default()
                 .insert(StateClusterId(get(r, "cluster_id")?), n);
         }
-        let contexts = sqlx::query(&format!(
+        let contexts = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT c.context_id, {KEY_COLS} FROM action_contexts c \
-             WHERE c.run_id = $1 AND c.state_cluster_id = $2 ORDER BY c.context_id FOR UPDATE"
-        ))
+         WHERE c.run_id = $1 AND c.state_cluster_id = $2 ORDER BY c.context_id FOR UPDATE"
+        )))
         .bind(split.run.0)
         .bind(split.source.0)
         .fetch_all(&mut *tx)

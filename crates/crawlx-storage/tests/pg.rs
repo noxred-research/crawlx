@@ -91,7 +91,7 @@ impl Env {
         out
     }
 
-    async fn count(&self, sql: &str, run: CrawlRunId) -> i64 {
+    async fn count(&self, sql: &'static str, run: CrawlRunId) -> i64 {
         sqlx::query_scalar(sql)
             .bind(run.0)
             .fetch_one(self.pg.pool())
@@ -2801,7 +2801,10 @@ async fn row_level_security_isolates_two_tenants() {
         format!("GRANT USAGE ON SCHEMA {schema} TO crawlx_rls_test"),
         format!("GRANT SELECT ON ALL TABLES IN SCHEMA {schema} TO crawlx_rls_test"),
     ] {
-        sqlx::query(&sql).execute(&mut *conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await
+            .unwrap();
     }
     async fn runs(conn: &mut sqlx::PgConnection) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
         sqlx::query_scalar("SELECT tenant_id FROM crawl_runs ORDER BY tenant_id")
@@ -3496,7 +3499,7 @@ async fn zdr_metadata_stays_ephemeral_and_consumers_fail_closed_after_expiry() {
     ] {
         let sql =
             format!("SELECT COALESCE(jsonb_agg(to_jsonb(t))::text, '') FROM {table} t WHERE run_id = $1");
-        let durable: String = sqlx::query_scalar(&sql)
+        let durable: String = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(run.id.0)
             .fetch_one(env.pg.pool())
             .await
@@ -3570,7 +3573,7 @@ async fn zdr_metadata_stays_ephemeral_and_consumers_fail_closed_after_expiry() {
     ] {
         let sql =
             format!("SELECT COALESCE(jsonb_agg(to_jsonb(t))::text, '') FROM {table} t WHERE run_id = $1");
-        let durable: String = sqlx::query_scalar(&sql)
+        let durable: String = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
             .bind(run.id.0)
             .fetch_one(env.pg.pool())
             .await

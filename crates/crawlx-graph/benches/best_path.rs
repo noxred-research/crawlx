@@ -11,7 +11,8 @@ use crawlx_core::hash::Digest;
 use crawlx_core::identity::ElementIdentityHash;
 use crawlx_core::{ActionContextId, CrawlRunId, StateClusterId, TrustLane};
 use crawlx_graph::{best_path, Confounders, EnablementGraph, PathGoal, SearchParams, TransitionObservation};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 use uuid::Uuid;
 
 const SIDE: u32 = 50;

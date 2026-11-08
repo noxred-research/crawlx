@@ -259,7 +259,7 @@ async fn claim_pg(
                    WHERE fact->>'backendId'=required.backend_id AND fact->'available'='true'::jsonb)))) \
            AND crawlx_worker_data_eligible($1,(SELECT data_requirements FROM crawl_runs WHERE run_id=$2)) \
            AND s.session_id=({candidate}) RETURNING {SESSION_COLS},s.fencing_token,s.lease_expires_at");
-    let row = sqlx::query(&sql)
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(worker.0)
         .bind(run.0)
         .bind(secs(pg.cfg.session_ttl))
@@ -379,7 +379,7 @@ impl LeaseRepo for Pg {
                       WHERE fact->>'backendId'=required.backend_id AND fact->'available'='true'::jsonb)))) \
               AND crawlx_worker_data_eligible($6,r.data_requirements) \
             RETURNING {SESSION_COLS},s.fencing_token,s.lease_expires_at");
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(session.id.0)
             .bind(session.run.0)
             .bind(&session.role.0)

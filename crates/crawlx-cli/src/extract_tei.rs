@@ -33,14 +33,13 @@ fn preflight(bytes: &[u8], schema: bool) -> anyhow::Result<()> {
         if let Event::Start(element) | Event::Empty(element) = &event {
             for attribute in element.attributes() {
                 let attribute = attribute.context("malformed TEI XML attribute")?;
-                let raw = std::str::from_utf8(&attribute.value).context("TEI XML must be UTF-8")?;
-                quick_xml::escape::unescape_with(raw, quick_xml::escape::resolve_xml_entity)
+                quick_xml::escape::unescape_with(&attribute.value, quick_xml::escape::resolve_xml_entity)
                     .context("invalid TEI XML attribute reference")?;
             }
         }
         if schema {
             if let Event::Start(element) | Event::Empty(element) = &event {
-                if matches!(element.local_name().as_ref(), b"include" | b"externalRef") {
+                if matches!(element.local_name().as_ref(), "include" | "externalRef") {
                     bail!("pinned TEI schema must have an empty external dependency closure");
                 }
             }
@@ -49,7 +48,7 @@ fn preflight(bytes: &[u8], schema: bool) -> anyhow::Result<()> {
             Event::DocType(_) => bail!("TEI DTD and entity declarations are forbidden"),
             Event::Decl(decl) => {
                 if let Some(encoding) = decl.encoding() {
-                    if !encoding?.as_ref().eq_ignore_ascii_case(b"UTF-8") {
+                    if !encoding?.eq_ignore_ascii_case("UTF-8") {
                         bail!("TEI XML must declare UTF-8");
                     }
                 }
@@ -69,8 +68,8 @@ fn preflight(bytes: &[u8], schema: bool) -> anyhow::Result<()> {
                     .context("invalid TEI character reference")?
                     .is_none()
                 {
-                    let name = reference.decode().context("invalid TEI entity name")?;
-                    if quick_xml::escape::resolve_xml_entity(&name).is_none() {
+                    let name: &str = &reference;
+                    if quick_xml::escape::resolve_xml_entity(name).is_none() {
                         bail!("TEI custom entities are forbidden");
                     }
                 }

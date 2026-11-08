@@ -175,6 +175,9 @@ jobs:
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     runs-on: ubuntu-latest
+    # PUBLIC_LINT_RULES is an environment secret, not a repository secret: only jobs that
+    # name this environment can read it.
+    environment: public-lint
     timeout-minutes: 15
     permissions:
       contents: read
@@ -872,11 +875,16 @@ jobs:
     # Milestone gate G1: the chaos subset, then `g1-report`
     # crawls the D1 set twice per seed on the pinned Chromium and replays the recorded paths,
     # and `gate g1` evaluates the report. `gates/g1.passed` is build-scoped (scope_digest), so
-    # it is uploaded as an artifact and never committed. Nightly and on demand.
+    # it is uploaded as an artifact and never committed. Nightly and on demand, on the default
+    # branch only: the job holds CRAWLX_GATE_KEYS, so a dispatch on an unreviewed branch (for
+    # example a dependency update) must not run it.
     runs-on: ubuntu-latest
+    # CRAWLX_GATE_KEYS lives in the `gate-keys` environment, which deploys from `main` only
+    # and waits for a code owner's approval, so every run that receives the keys is reviewed.
+    environment: gate-keys
     timeout-minutes: 120
     needs: [authorize, unit, browser]
-    if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     permissions:
       contents: read
     services:
@@ -1028,3 +1036,43 @@ jobs:
           path: |
             sbom/
             scan/
+
+  # The one check the default-branch ruleset requires. A job skipped by `if:` counts as
+  # passed for a required check, so the gated jobs themselves cannot be required: a pull
+  # request the gate refuses (a fork, Dependabot, any non-owner) would look green. This job
+  # always runs and fails unless the gate admitted the event and every merge-blocking job
+  # succeeded, so such a pull request stays unmergeable until an owner runs CI on it.
+  required:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - authorize
+      - lint
+      - workflow-lint
+      - public-hygiene
+      - unit
+      - schema-snapshot
+      - browser
+      - fuzz-short
+      - integration
+      - safety-adversarial
+      - images
+    if: always()
+    permissions: {}
+    steps:
+      - name: Gate admitted the event and every merge-blocking job passed
+        env:
+          ADMITTED: ${{ needs.authorize.outputs.ok }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          if [ "$ADMITTED" != true ]; then
+            echo "::error title=required::the workflow gate did not admit this event; a code owner must run CI"
+            exit 1
+          fi
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<< "$NEEDS")
+          if [ -n "$failed" ]; then
+            while IFS= read -r job; do echo "::error title=required::not passed: $job"; done <<< "$failed"
+            exit 1
+          fi
+          echo "all merge-blocking jobs passed"
