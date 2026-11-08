@@ -4,7 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use http::{header, HeaderMap};
-use rand::Rng;
+use rand::{Rng, RngExt as _};
 use std::time::Duration;
 
 /// Retry budget and backoff curve.
@@ -55,7 +55,7 @@ impl RetryPolicy {
         }
         let factor = 2u32.saturating_pow(attempt.min(20));
         let backoff = self.base_backoff.saturating_mul(factor).min(self.max_backoff);
-        let jitter: f64 = rng.gen_range(0.8..1.2);
+        let jitter: f64 = rng.random_range(0.8..1.2);
         let jittered = backoff.mul_f64(jitter).min(self.max_backoff);
         Some(retry_after.map_or(jittered, |ra| ra.max(jittered)))
     }

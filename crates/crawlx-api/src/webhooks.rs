@@ -45,7 +45,7 @@ use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
 use hmac::{Hmac, KeyInit, Mac};
 use parking_lot::Mutex;
-use rand::Rng as _;
+use rand::RngExt as _;
 use serde_json::json;
 use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -188,7 +188,7 @@ pub fn retry_delay(run: &CrawlRun, delivery: Uuid, attempt: u16) -> Option<Durat
     let mut rng = run
         .seed
         .rng("webhook-jitter", &[delivery.as_bytes(), &attempt.to_le_bytes()]);
-    let factor: f64 = 0.8 + 0.4 * rng.gen::<f64>();
+    let factor: f64 = 0.8 + 0.4 * rng.random::<f64>();
     Some(Duration::from_secs(base).mul_f64(factor))
 }
 

@@ -14,7 +14,7 @@ use chrono::{Datelike, Days, NaiveDate};
 use crawlx_core::identity::ActionContextKey;
 use crawlx_core::secret::SecretOr;
 use crawlx_core::seed::CrawlSeed;
-use rand::RngCore;
+use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
 /// Current generator revision. Recorded on `crawl_runs`; bumping it changes

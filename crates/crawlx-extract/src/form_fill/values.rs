@@ -11,7 +11,7 @@
 //! expression fails to evaluate.
 
 use crawlx_core::seed::CrawlSeed;
-use rand::RngCore;
+use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 
 const DSL_PURPOSE: &str = "extract/form_fill/dsl/v1";

@@ -544,8 +544,8 @@ impl PgSecretAuthority {
         let client =
             redis::Client::open(url).map_err(|_| denied("invalid secret authority Redis configuration"))?;
         let config = redis::AsyncConnectionConfig::new()
-            .set_connection_timeout(Duration::from_secs(10))
-            .set_response_timeout(Duration::from_secs(30));
+            .set_connection_timeout(Some(Duration::from_secs(10)))
+            .set_response_timeout(Some(Duration::from_secs(30)));
         let connection = client
             .get_multiplexed_async_connection_with_config(&config)
             .await

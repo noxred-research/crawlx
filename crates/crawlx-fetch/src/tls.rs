@@ -20,7 +20,7 @@ use crawlx_core::seed::CrawlSeed;
 use crawlx_policy::egress::EgressPolicy;
 use http::{HeaderMap, Method, StatusCode, Version};
 use rand::seq::SliceRandom;
-use rand::Rng;
+use rand::RngExt as _;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use url::Url;
@@ -89,8 +89,8 @@ impl SelectedHello {
             curves: groups.iter().map(|(curve, _)| *curve).collect(),
             sigalgs_list: joined(sigalgs.into_iter()),
             permutation,
-            ocsp: rng.gen_bool(0.5),
-            sct: rng.gen_bool(0.5),
+            ocsp: rng.random_bool(0.5),
+            sct: rng.random_bool(0.5),
             #[cfg(test)]
             cipher_ids: ciphers.iter().map(|(_, id)| *id).collect(),
             #[cfg(test)]

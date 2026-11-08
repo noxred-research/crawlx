@@ -8,6 +8,25 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- Dependencies moved to rand 0.10 / rand_chacha 0.10, sqlx 0.9, redis 1.8, quick-xml 0.42,
+  sha1/sha2 0.11 with hmac 0.13, html5ever 0.40 / scraper 0.29, oxc 0.156 and criterion 0.8.
+- Seeded sampling changed with rand 0.10: for the same `--seed`, retry and backoff jitter, scheduler
+  and frontier shuffle order, and the synthetic TLS ClientHello ordering differ from 0.1.0. Runs stay
+  deterministic per seed within this version; a seed recorded with 0.1.0 does not reproduce the same
+  sampled values. Journaled actions and recorded-path replay are unaffected.
+- Container base images are pinned by digest.
+
+### Security
+
+- CI only runs for code owners; a `required` aggregate check fails for pull requests the workflow
+  gate refuses. Secrets moved into environments (`gate-keys` deploys from `main` only and needs a
+  code owner's approval). Private-rule hits of the public-tree lint no longer print rule names or
+  matching text.
+- Every SQL string built at runtime is audited and marked for sqlx 0.9's injection check; values stay
+  bound parameters.
+
 ### Documentation
 
 - Positioning and intended use: the README, docs index, `SECURITY.md`, `CONTRIBUTING.md` and

@@ -3,7 +3,7 @@
 
 use crawlx_core::seed::CrawlSeed;
 use crawlx_core::StoreError;
-use rand::Rng as _;
+use rand::RngExt as _;
 use std::future::Future;
 use std::time::Duration;
 
@@ -83,7 +83,7 @@ impl RetryPolicy {
         }
         let mut rng = seed.rng("retry-jitter", &[key, &attempt.to_le_bytes()]);
         let span = u64::from(self.jitter_permille);
-        let permille = 1000 - span + rng.gen_range(0..=2 * span);
+        let permille = 1000 - span + rng.random_range(0..=2 * span);
         let millis = u64::try_from(base.as_millis()).unwrap_or(u64::MAX);
         Duration::from_millis(millis.saturating_mul(permille) / 1000).min(self.max_delay)
     }

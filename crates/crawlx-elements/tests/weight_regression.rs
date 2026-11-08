@@ -20,8 +20,8 @@ use crawlx_core::observation::{BoundingBox, ObservedDescriptor, RuntimeLocator};
 use crawlx_core::seed::CrawlSeed;
 use crawlx_elements::{IdentityResolver, InMemoryIdentityIndex, MatchDecision, MatchWeights};
 use crawlx_url::CanonicalizeOptions;
-use rand::seq::SliceRandom;
-use rand::Rng;
+use rand::seq::{IndexedRandom as _, SliceRandom as _};
+use rand::RngExt as _;
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -579,7 +579,14 @@ mod gen {
     // ---- perturbations ------------------------------------------------------------------
 
     fn drift(bbox: Option<[f64; 4]>, rng: &mut ChaCha8Rng, px: f64) -> Option<[f64; 4]> {
-        bbox.map(|[x, y, w, h]| [x + rng.gen_range(-px..=px), y + rng.gen_range(-px..=px), w, h])
+        bbox.map(|[x, y, w, h]| {
+            [
+                x + rng.random_range(-px..=px),
+                y + rng.random_range(-px..=px),
+                w,
+                h,
+            ]
+        })
     }
 
     /// G02 `volatile()` / G06 `draw()`: new non-semantic attributes, a fresh counter in the
@@ -588,11 +595,11 @@ mod gen {
         let mut d = t.base.clone();
         if t.fixture == "g02" {
             d.attributes
-                .insert("class".into(), format!("r{}", rng.gen_range(0..1_000_000u32)));
+                .insert("class".into(), format!("r{}", rng.random_range(0..1_000_000u32)));
             d.attributes.insert("data-render".into(), render.to_string());
         }
         if t.group == "like" {
-            let name = format!("Like ({})", rng.gen_range(0..500u32));
+            let name = format!("Like ({})", rng.random_range(0..500u32));
             d.accessible_name = Some(name.clone());
             d.text = Some(name);
         }
@@ -603,10 +610,10 @@ mod gen {
     /// Extra generic wrappers between the control and its stable ancestors.
     fn wrapped(t: &Template, rng: &mut ChaCha8Rng) -> Desc {
         let mut d = t.base.clone();
-        let extra = rng.gen_range(1..=4usize);
-        let at = rng.gen_range(1..=d.ancestor_roles.len());
+        let extra = rng.random_range(1..=4usize);
+        let at = rng.random_range(1..=d.ancestor_roles.len());
         for _ in 0..extra {
-            let role = ["generic", "group", "none", "div"][rng.gen_range(0..4usize)];
+            let role = ["generic", "group", "none", "div"][rng.random_range(0..4usize)];
             d.ancestor_roles.insert(at, role.into());
         }
         d.bbox = drift(d.bbox, rng, 1.0);
@@ -617,11 +624,11 @@ mod gen {
     /// sibling's slot and ordinal.
     fn reordered(t: &Template, siblings: &[&Template], rng: &mut ChaCha8Rng) -> Desc {
         let mut d = t.base.clone();
-        let other = siblings[rng.gen_range(0..siblings.len())];
+        let other = siblings[rng.random_range(0..siblings.len())];
         d.bbox = other.base.bbox;
         d.instance_ordinal = other.ordinal;
         if t.group == "like" {
-            let name = format!("Like ({})", rng.gen_range(0..500u32));
+            let name = format!("Like ({})", rng.random_range(0..500u32));
             d.accessible_name = Some(name.clone());
             d.text = Some(name);
         }
@@ -680,7 +687,7 @@ mod gen {
             ));
         }
         // ---- same: G06 like buttons: counters in names, reorder, template ordinals -------
-        let sampled_likes: Vec<&&Template> = likes.choose_multiple(&mut rng, 12).collect();
+        let sampled_likes: Vec<&&Template> = likes.sample(&mut rng, 12).collect();
         for t in &sampled_likes {
             pairs.push(pair(
                 Label::Same,
@@ -696,7 +703,7 @@ mod gen {
                 rerender(t, &mut rng, 3),
                 reordered(t, &likes, &mut rng),
             ));
-            let other = likes[rng.gen_range(0..likes.len())];
+            let other = likes[rng.random_range(0..likes.len())];
             pairs.push(pair(
                 Label::Same,
                 "template_ordinal",
@@ -715,8 +722,8 @@ mod gen {
             rerender_btn.base.clone(),
             rerender(rerender_btn, &mut rng, 1),
         ));
-        for t in opens.choose_multiple(&mut rng, 8) {
-            let other = opens[rng.gen_range(0..opens.len())];
+        for t in opens.sample(&mut rng, 8) {
+            let other = opens[rng.random_range(0..opens.len())];
             pairs.push(pair(
                 Label::Same,
                 "template_ordinal",
@@ -766,7 +773,7 @@ mod gen {
             ));
         }
         // ---- different: same control template in another named landmark -----------------
-        for t in g02.choose_multiple(&mut rng, 16) {
+        for t in g02.sample(&mut rng, 16) {
             let mut moved = rerender(t, &mut rng, 1);
             let container = moved.container_text.clone().unwrap();
             let (kind, _) = container.split_once('|').unwrap();
@@ -779,7 +786,7 @@ mod gen {
                 moved,
             ));
         }
-        for t in likes.choose_multiple(&mut rng, 4) {
+        for t in likes.sample(&mut rng, 4) {
             let mut moved = rerender(t, &mut rng, 1);
             moved.ancestor_roles = roles(&["RootWebArea", "complementary"]);
             moved.container_text = Some("complementary|Trending".into());
@@ -792,7 +799,7 @@ mod gen {
             ));
         }
         // ---- different: same name, another role (hard gate) ------------------------------
-        for t in g02.choose_multiple(&mut rng, 10) {
+        for t in g02.sample(&mut rng, 10) {
             let mut other = rerender(t, &mut rng, 1);
             other.role = if t.control.role == "link" {
                 "button".into()
@@ -809,10 +816,7 @@ mod gen {
             ));
         }
         // ---- different: same descriptor inside a frame (hard gate) -----------------------
-        for t in g02
-            .choose_multiple(&mut rng, 12)
-            .chain(likes.choose_multiple(&mut rng, 4))
-        {
+        for t in g02.sample(&mut rng, 12).chain(likes.sample(&mut rng, 4)) {
             let mut framed = rerender(t, &mut rng, 1);
             framed.frame_lineage = vec![format!("iframe:/{}/embed:0", t.fixture)];
             pairs.push(pair(
@@ -825,17 +829,17 @@ mod gen {
         }
         // ---- different: a second "Open" link of the card pointing at another href template
         // (ids are unique per document, so the sibling anchor carries its own id or none) ----
-        for t in opens.choose_multiple(&mut rng, 12) {
+        for t in opens.sample(&mut rng, 12) {
             let n = ordinal_of(&t.control.id);
             let mut other = rerender(t, &mut rng, 1);
-            let (prefix, href) = match rng.gen_range(0..3u8) {
+            let (prefix, href) = match rng.random_range(0..3u8) {
                 0 => ("edit", format!("/g06/item/{n}/edit")),
                 1 => ("archive", format!("/g06/archive?id={n}")),
                 _ => ("history", format!("/g06/item?id={n}&tab=history")),
             };
             other.href = Some(href.clone());
             other.attributes.insert("href".into(), href);
-            if rng.gen_bool(0.5) {
+            if rng.random_bool(0.5) {
                 other.attributes.insert("id".into(), format!("{prefix}-{n}"));
             } else {
                 other.attributes.remove("id");

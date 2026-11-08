@@ -41,7 +41,7 @@ use crawlx_policy::authorization::{AuthorizationRecord, Evidence};
 use crawlx_policy::testkit::sample_record;
 use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, PgConfig};
 use crawlx_worker::{run_local_with, LocalRun, Stores, WorkerConfig};
-use rand::Rng as _;
+use rand::RngExt as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -923,7 +923,7 @@ async fn run_admitted(
                         () = cancel.cancelled() => break,
                         () = tokio::time::sleep(every) => {}
                     }
-                    let kind = match rng.gen_range(0..3u8) {
+                    let kind = match rng.random_range(0..3u8) {
                         0 => FaultKind::ResetAll,
                         1 => FaultKind::Latency,
                         _ => FaultKind::Blackhole,

@@ -28,7 +28,7 @@ use crawlx_core::StoreError;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
 use parking_lot::Mutex;
-use rand::Rng as _;
+use rand::RngExt as _;
 use rand_chacha::ChaCha8Rng;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
@@ -820,7 +820,7 @@ impl OriginGovernor {
                     self.origin_cap
                         .note_cooldown(origin, retry_after.unwrap_or_default(), true)
                 } else {
-                    let jitter: f64 = self.rng.lock().gen_range(0.8..1.2);
+                    let jitter: f64 = self.rng.lock().random_range(0.8..1.2);
                     let current = state.pacing.lock().delay;
                     let doubled = current.saturating_mul(2);
                     let delay = Duration::try_from_secs_f64(doubled.as_secs_f64() * jitter)

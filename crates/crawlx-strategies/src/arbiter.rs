@@ -15,7 +15,7 @@ use crawlx_core::proposal::ActionProposal;
 use crawlx_core::repo::{SafetyContext, SafetyGate};
 use crawlx_core::safety::{SafetyDecision, SafetyVerdict};
 use crawlx_core::{ActionContextId, ActionKind};
-use rand::RngCore;
+use rand::Rng;
 use std::collections::BTreeMap;
 
 /// Version of the arbiter logic and default coefficients; recorded with the run config digest.

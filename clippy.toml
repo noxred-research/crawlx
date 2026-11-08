@@ -1,6 +1,10 @@
 disallowed-methods = [
   { path = "rand::thread_rng", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
   { path = "rand::random", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::rng", reason = "use the seeded RNG derived from crawl_seed (rand 0.10 name of thread_rng)", allow-invalid = true },
+  { path = "rand::random_range", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::random_bool", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::random_ratio", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
 ]
 # Decision and hashing paths must be deterministic. The lint is
 # `warn` workspace-wide and `#![deny(clippy::disallowed_types)]` in crawlx-state, crawlx-graph

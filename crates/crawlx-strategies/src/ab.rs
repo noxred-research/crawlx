@@ -12,7 +12,7 @@ use crate::error::StrategyError;
 use crate::Strategy;
 use crawlx_core::seed::CrawlSeed;
 use crawlx_core::PrincipalId;
-use rand::RngCore as _;
+use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
