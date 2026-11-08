@@ -142,7 +142,7 @@ opentelemetry-proto = { version = "0.33", default-features = false, features = [
 prost = "0.14"
 # ONNX inference (crawlx-model `onnx` feature only): `load-dynamic` binds the
 # ONNX Runtime shared library named by `ORT_DYLIB_PATH` at run time; nothing is downloaded at build time.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic"] }
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 # dev
 proptest = "1"
