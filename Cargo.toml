@@ -89,7 +89,7 @@ rten = "0.26"
 similar = { version = "2", default-features = false }
 # JavaScript AST endpoint pass (crawlx-extract `js-ast` feature); `regular_expression`
 # off: regex literals are never inspected, only parsed as opaque tokens
-oxc_parser = { version = "0.155", default-features = false }
+oxc_parser = { version = "0.156", default-features = false }
 oxc_ast = "0.155"
 oxc_ast_visit = "0.155"
 oxc_allocator = "0.155"
