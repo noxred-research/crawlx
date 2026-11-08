@@ -86,7 +86,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 ocrs = { version = "0.13", default-features = false, features = ["onnx"] }
 rten = "0.26"
 # line diff of `markdown_diff` (`crawlx-extract::diff`, Firecrawl change tracking git-diff output)
-similar = { version = "2", default-features = false }
+similar = { version = "3", default-features = false }
 # JavaScript AST endpoint pass (crawlx-extract `js-ast` feature); `regular_expression`
 # off: regex literals are never inspected, only parsed as opaque tokens
 oxc_parser = { version = "0.156", default-features = false }
