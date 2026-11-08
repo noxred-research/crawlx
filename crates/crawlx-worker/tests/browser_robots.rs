@@ -20,6 +20,7 @@ use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
 use crawlx_core::counters::ActionStatus;
+use crawlx_core::identity::ActionKind;
 use crawlx_core::repo::{EventRepo, FrontierStatus};
 use crawlx_core::{AuthorizationRecordId, Clock, CreateCrawl, SystemClock};
 use crawlx_fetch::StaticResolver;
@@ -128,19 +129,35 @@ async fn site(robots: Robots) -> Site {
     Site { base, hits, task }
 }
 
-/// The same pages as the site, for the scripted browser: every link navigates to its target.
+/// The same pages as the site, for the scripted browser: every link navigates to its target,
+/// whether the explorer clicks it or activates it from the keyboard (as a real link does), and
+/// every leaf links back home. Without the way back, a walk that happens to visit `/public`
+/// first would be stranded on a page with nothing to act on and end before it reached the
+/// disallowed links; the order of the walk depends on element identities, which depend on the
+/// mock server's port.
 fn script(base: &str) -> FakeScript {
+    fn link(page: FakePage, key: &str, name: &str, path: &str) -> FakePage {
+        let navigate = vec![FakeEffect::Navigate(path.to_owned())];
+        page.node(FakeAxSpec::link(key, name, path))
+            .on_click(key, navigate.clone())
+            .on(ActionKind::KeyboardActivate, key, navigate)
+    }
     let mut home = FakePage::new(&format!("{base}/")).title("Home");
     for (key, name, path) in [
         ("lnk-public", "Public", "/public"),
         ("lnk-secret", "Secret", "/private/x"),
         ("lnk-open", "Open", "/private/open"),
     ] {
-        home = home
-            .node(FakeAxSpec::link(key, name, path))
-            .on_click(key, vec![FakeEffect::Navigate(path.to_owned())]);
+        home = link(home, key, name, path);
     }
-    let leaf = |path: &str, title: &str| FakePage::new(&format!("{base}{path}")).title(title);
+    let leaf = |path: &str, title: &str| {
+        link(
+            FakePage::new(&format!("{base}{path}")).title(title),
+            "lnk-home",
+            "Home",
+            "/",
+        )
+    };
     FakeScript::new()
         .page(home)
         .page(leaf("/public", "Public"))
