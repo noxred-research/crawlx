@@ -27,9 +27,19 @@ on:
 
 permissions: {}
 
+# One run per pull request and per scheduled trigger: a new push cancels the superseded
+# pull request run, while a started push or scheduled run is never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.event.schedule || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # No debug info in CI builds: the workspace has ~300 test binaries and full debug info
+  # exhausts the hosted runner disk (linker "Bus error" during the coverage build).
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   # Workflow gate (see the header comment). Every other job depends on this one.
@@ -91,12 +101,20 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     permissions:
       contents: read
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -110,9 +128,46 @@ jobs:
       - run: ci/lint-chromiumoxide.sh
       - run: ci/provenance-check.sh
       - run: ci/shingle-scan.sh --self-test
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      # cargo-deny as a prebuilt, checksum-verified binary (install-action retries downloads);
+      # the container-building action failed on a transient release-download error.
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          command: check licenses advisories bans sources
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --locked check licenses advisories bans sources
+
+  workflow-lint:
+    # Static checks of the workflow files themselves: actionlint (syntax, expression types,
+    # embedded shell via shellcheck) and zizmor (script injection, excessive permissions,
+    # unpinned or impostor actions, credential persistence, cache poisoning). Both tools are
+    # pinned: actionlint by release checksum, zizmor by action SHA and exact version.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: authorize
+    if: needs.authorize.outputs.ok == 'true'
+    permissions:
+      contents: read
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install actionlint (pinned release, sha256-verified)
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 5 -o "$archive" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/actionlint-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint-bin" actionlint
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
+      - run: actionlint
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: "1.32.0"
+          inputs: .github
+          advanced-security: false
+          annotations: true
 
   public-hygiene:
     # Public-tree hygiene: no internal-document references, no host paths, no secret shapes.
@@ -140,7 +195,7 @@ jobs:
       - name: Install gitleaks (pinned release, sha256-verified)
         run: |
           archive="$RUNNER_TEMP/gitleaks.tar.gz"
-          curl -fsSLo "$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 5 -o "$archive" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/gitleaks-bin"
           tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
@@ -150,6 +205,7 @@ jobs:
 
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -168,6 +224,15 @@ jobs:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
+      - name: Free runner disk space, drop preinstalled browsers
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        # Browser tests belong to the `browser` job, which runs the pinned Chromium. Tests
+        # that discover a system browser would start the runner's preinstalled Chrome, which
+        # cannot create its sandbox here (unprivileged user namespaces are restricted).
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser
+          df -h /
       - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
         # A step, not a `services:` container: services cannot pass server arguments.
         run: |
@@ -179,6 +244,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -188,12 +255,19 @@ jobs:
         with:
           tool: cargo-nextest,cargo-llvm-cov
       - name: Unit and integration tests with coverage (nextest under cargo-llvm-cov)
-        run: cargo llvm-cov nextest --workspace --exclude crawlx-bench --lcov --output-path lcov.info
-      - run: cargo nextest run -p crawlx-bench -E 'not test(/browser_/)'
+        run: cargo llvm-cov nextest --no-fail-fast --workspace --exclude crawlx-bench --lcov --output-path lcov.info
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-lcov
           path: lcov.info
+      - name: Free the coverage build before the bench tests
+        # The instrumented build fills most of the hosted runner disk; the bench crate builds
+        # in the normal target directory.
+        run: |
+          cargo llvm-cov clean --workspace
+          rm -rf target/llvm-cov-target
+          df -h /
+      - run: cargo nextest run --no-fail-fast -p crawlx-bench -E 'not test(/browser_/)'
 
   schema-snapshot:
     # Storage fault drills and the previous-release schema snapshot: the
@@ -202,6 +276,7 @@ jobs:
     # Nightly it also regenerates that snapshot with ci/schema-snapshot.sh (pg_dump of the
     # service's major) and fails if the committed file drifted.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -220,6 +295,11 @@ jobs:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
         # A step, not a `services:` container: services cannot pass server arguments.
         run: |
@@ -231,6 +311,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -252,6 +334,7 @@ jobs:
     # browser plane and nightly. Also the CDP-surface probe and the SIGKILL chaos
     # suite, which needs PostgreSQL for the journal the recovery worker reconciles.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -270,6 +353,11 @@ jobs:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
         # A step, not a `services:` container: services cannot pass server arguments.
         run: |
@@ -281,6 +369,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -293,6 +383,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
+      - name: Chromium sandbox preflight (sandbox stays on; unprivileged user namespaces)
+        run: ci/chromium-sandbox.sh
       - run: cargo test -p crawlx-bench -- browser_ --test-threads 1
       - name: CDP surface against the pinned build
         run: cargo test -p crawlx-browser --test cdp_surface
@@ -310,17 +402,26 @@ jobs:
     # with crawlx on the pinned Chromium and asserts recall >= 0.95 over >= 200 oracle-actionable
     # elements plus per-fixture capability parity. The comparison is uploaded per driver.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'schedule' || contains(github.event.pull_request.title, 'browser'))
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         driver: ${{ github.event_name == 'schedule' && fromJSON('["playwright","patchright"]') || fromJSON('["playwright"]') }}
     env:
       ORACLE_DRIVER: ${{ matrix.driver }}
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
@@ -352,13 +453,21 @@ jobs:
     # until the divergence ledger is complete. `run.sh all` runs every
     # family of bench/differential/families.json and fails when one misses its expected verdict.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && github.event_name == 'schedule'
     permissions:
       contents: read
     continue-on-error: true
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -388,13 +497,21 @@ jobs:
     # on a different runner the absolute MAIN-target gates (p95) still apply but the relative
     # comparison is trend data, so the job never blocks a merge (continue-on-error).
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && github.event_name == 'schedule'
     permissions:
       contents: read
     continue-on-error: true
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -411,12 +528,20 @@ jobs:
     # PRs, 30 min per target nightly. The targets also build on stable as stdin binaries
     # (`cargo check --manifest-path fuzz/Cargo.toml`), which the lint job does not cover.
     runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'schedule' && 360 || 60 }}
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
       contents: read
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -466,6 +591,7 @@ jobs:
     # uploaded as the pin-bump review artifact: a pin may move only with a clean diff or with
     # every reported difference resolved.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && github.event_name == 'schedule'
     permissions:
@@ -474,17 +600,26 @@ jobs:
     env:
       CRAWLX_ALLOW_UNPINNED: "1"
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install the latest stable Chrome for Testing
         run: |
-          sudo apt-get update && sudo apt-get install -y libnss3 libatk-bridge2.0-0 libgbm1 libxkbcommon0 libasound2t64 || true
-          VERSION=$(curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["channels"]["Stable"]["version"])')
+          if ! { sudo apt-get update && sudo apt-get install -y libnss3 libatk-bridge2.0-0 libgbm1 libxkbcommon0 libasound2t64; }; then
+            echo "::warning title=chromium-next::Chrome runtime libraries did not install; the CDP surface step reports the effect"
+          fi
+          VERSION=$(curl -fsSL --retry 5 --retry-delay 5 https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["channels"]["Stable"]["version"])')
           echo "chromium-next: Stable is $VERSION (pin: $(grep '^version' chromium-pin.toml))"
-          curl -fsSLo chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/${VERSION}/linux64/chrome-linux64.zip"
+          curl -fsSL --retry 5 --retry-delay 5 -o chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/${VERSION}/linux64/chrome-linux64.zip"
           unzip -q chrome.zip -d "$RUNNER_TEMP"
           echo "CRAWLX_CHROMIUM_PATH=$RUNNER_TEMP/chrome-linux64/chrome" >> "$GITHUB_ENV"
       - name: CDP surface against Stable
@@ -507,6 +642,7 @@ jobs:
     # a MinIO service container (CRAWLX_TEST_S3_ENDPOINT); the same test file also starts MinIO
     # through docker when it can, so both paths run here.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -525,7 +661,14 @@ jobs:
       CRAWLX_TEST_S3_ACCESS_KEY: crawlx
       CRAWLX_TEST_S3_SECRET_KEY: crawlx-secret
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -536,12 +679,20 @@ jobs:
     # Safety kernel on the adversarial fixtures: the safety crate's own
     # suite plus the worker end-to-end `safety_*` tests on the gym, which need real Chromium.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
       contents: read
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -554,6 +705,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
+      - name: Chromium sandbox preflight (sandbox stays on; unprivileged user namespaces)
+        run: ci/chromium-sandbox.sh
       - run: cargo test -p crawlx-safety
       - run: cargo test -p crawlx-bench --test worker_e2e safety_ -- --test-threads 1 --nocapture
 
@@ -562,6 +715,7 @@ jobs:
     # workspace on the pinned Chromium and PostgreSQL. Weekly (Sunday cron) and on demand; the
     # per-PR `browser` job keeps the short SIGKILL subset.
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     needs: authorize
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
     permissions:
@@ -580,6 +734,11 @@ jobs:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
         # A step, not a `services:` container: services cannot pass server arguments.
         run: |
@@ -591,6 +750,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -603,6 +764,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
+      - name: Chromium sandbox preflight (sandbox stays on; unprivileged user namespaces)
+        run: ci/chromium-sandbox.sh
       - run: cargo test -p crawlx-storage --features chaos -- --nocapture
       - run: cargo test -p crawlx-worker --features chaos -- --nocapture
       - run: cargo test -p crawlx-cli --features chaos -- --test-threads 1 --nocapture
@@ -624,6 +787,7 @@ jobs:
     # Toolchain canary: clippy and the unit suite on the latest stable, ignoring
     # rust-toolchain.toml. Never blocking; a failure is the early warning for the next pin bump.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -632,7 +796,17 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
+      - name: Free runner disk space, drop preinstalled browsers
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        # As in `unit`: the runner's Chrome cannot start its sandbox here, so Chromium-gated
+        # tests must not discover it; the `browser` job covers them with the pinned build.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -642,7 +816,10 @@ jobs:
           key: rust-latest
       - run: rustc --version
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --exclude crawlx-bench
+      - name: Unit suite on latest stable
+        # The trybuild compile-fail cases compare rustc's exact diagnostics, which are pinned to
+        # rust-toolchain.toml and change between releases; `unit` runs them on the pinned build.
+        run: cargo test --workspace --exclude crawlx-bench -- --skip compile_fail_cases
 
   mutants:
     # Mutation testing: cargo-mutants over the decision crates
@@ -650,13 +827,21 @@ jobs:
     # requires >= 95 % of viable crawlx-safety mutants caught; the other two crates are
     # reported only. Non-blocking (continue-on-error) until the gate has a history.
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
     permissions:
       contents: read
     continue-on-error: true
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -689,6 +874,7 @@ jobs:
     # and `gate g1` evaluates the report. `gates/g1.passed` is build-scoped (scope_digest), so
     # it is uploaded as an artifact and never committed. Nightly and on demand.
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     needs: [authorize, unit, browser]
     if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     permissions:
@@ -707,6 +893,11 @@ jobs:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
         # A step, not a `services:` container: services cannot pass server arguments.
         run: |
@@ -718,6 +909,8 @@ jobs:
           docker logs secret-custody
           exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -730,6 +923,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
+      - name: Chromium sandbox preflight (sandbox stays on; unprivileged user namespaces)
+        run: ci/chromium-sandbox.sh
       - name: Capture completed chaos suites (G1 criterion)
         run: cargo run -p crawlx-bench --bin chaos-report -- --out bench/out/chaos-report.json
       - name: Assemble the G1 report (D1 set, ordered traces, every recorded path)
@@ -763,6 +958,7 @@ jobs:
     # uploaded as artifacts. Container publication and image signing (cosign) are not part of
     # the source-tag release workflow (release.yml); no image is pushed for a release.
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: [authorize, unit]
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -773,7 +969,14 @@ jobs:
       SYFT_IMAGE: anchore/syft:v1.20.0
       TRIVY_IMAGE: aquasec/trivy:0.58.2
     steps:
+      - name: Free runner disk space
+        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Build images
         run: |
           DOCKER_BUILDKIT=1 docker build --pull -f docker/Dockerfile.api -t "$API_IMAGE" .
@@ -782,8 +985,25 @@ jobs:
         run: ci/container-policy-test.sh "$API_IMAGE" "$WORKER_IMAGE"
       - name: Helm chart renders and the alert rules parse
         run: |
-          docker run --rm -v "$PWD:/src" -w /src alpine/helm:3.16.3 lint deploy/helm/crawlx
-          docker run --rm -v "$PWD:/src" -w /src alpine/helm:3.16.3 template crawlx deploy/helm/crawlx > /dev/null
+          set -euo pipefail
+          helm() { docker run --rm -v "$PWD:/src" -w /src alpine/helm:3.16.3 "$@"; }
+          # The chart fails closed without an artifact key provider and a secret-registry Redis,
+          # so a render must name both (non-secret test values; the Secrets are never created here).
+          custody=(--set artifactCustody.keyFileSecret=crawlx-artifact-key --set artifactCustody.secretRedis.existingSecret=crawlx-secret-registry)
+          helm lint deploy/helm/crawlx "${custody[@]}"
+          helm template crawlx deploy/helm/crawlx "${custody[@]}" > /dev/null
+          # Negative: with no key provider the chart must still refuse to render.
+          if refused="$(helm template crawlx deploy/helm/crawlx --set artifactCustody.secretRedis.existingSecret=crawlx-secret-registry 2>&1 > /dev/null)"; then
+            echo "chart rendered without an artifact key provider" >&2
+            exit 1
+          fi
+          grep -F 'artifactCustody requires an artifact key provider' <<< "$refused"
+          # Negative: with no secret-registry Redis the chart must still refuse to render.
+          if refused="$(helm template crawlx deploy/helm/crawlx --set artifactCustody.keyFileSecret=crawlx-artifact-key 2>&1 > /dev/null)"; then
+            echo "chart rendered without a secret-registry Redis" >&2
+            exit 1
+          fi
+          grep -F 'artifactCustody.secretRedis.existingSecret is required' <<< "$refused"
           docker run --rm -v "$PWD:/src" -w /src --entrypoint promtool prom/prometheus:v3.1.0 check rules deploy/alerts/crawlx-rules.yaml
       - name: SBOM (syft)
         run: |

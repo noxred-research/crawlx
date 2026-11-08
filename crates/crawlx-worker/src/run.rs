@@ -2683,7 +2683,7 @@ pub(crate) mod login_lifecycle_tests {
         execution_ttl: Option<chrono::Duration>,
         binding_ttl: Option<chrono::Duration>,
     ) -> LoginFixture {
-        let dir = tempfile::tempdir_in("/data").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
             .await
             .unwrap();

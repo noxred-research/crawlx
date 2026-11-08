@@ -41,9 +41,11 @@ fi
 #    `ops.rs`/`config_check.rs` carry the `--firecrawl-keys` flag and its env name; `robots.rs`
 #    and `url_plane.rs` name the public `FirecrawlAgent` robots product token (an alias the
 #    facade honours so sites' robots rules for Firecrawl apply to facade runs); the `d2` gym
-#    fixture serves a robots.txt with that group so the differential exercises it.
+#    fixture serves a robots.txt with that group so the differential exercises it;
+#    `migration_inspect.rs` names Firecrawl as one `crawlx source-import` dialect (the
+#    upstream version and request-field mapping a user migrates from).
 #    Each is a wire-shape or naming reference; checks 1 and 2 still apply to every file.
-SURFACE='compat|differential|scrape_service|/scrape/|scrape\.rs|firecrawl_meta\.rs|diff\.rs|webhooks\.rs|auth\.rs|intel/|/mcp|parse/html\.rs|llm/openai\.rs|openapi_schemas/|policy/src/robots\.rs|worker/src/url_plane\.rs|gym/fixtures/d2\.rs|worker/src/robots_gate\.rs'
+SURFACE='compat|differential|scrape_service|/scrape/|scrape\.rs|firecrawl_meta\.rs|diff\.rs|webhooks\.rs|auth\.rs|intel/|/mcp|parse/html\.rs|llm/openai\.rs|openapi_schemas/|policy/src/robots\.rs|worker/src/url_plane\.rs|gym/fixtures/d2\.rs|worker/src/robots_gate\.rs|cli/src/migration_inspect\.rs'
 hits=$(grep -rnIi 'firecrawl' crates/ --include='*.rs' \
   | grep -vE "^[^:]*($SURFACE)[^:]*:" \
   | grep -vE '^[^:]*/tests/[^:]*:' \

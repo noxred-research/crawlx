@@ -627,7 +627,19 @@ async fn revoking_the_record_mid_run_stops_the_url_plane_and_abandons_the_fronti
             "{later}"
         );
     }
-    assert_eq!(report.counters.urls.abandoned, 3, "{:?}", report.counters.urls);
+    // `/a` is in flight when the record is revoked: the guard's stop token aborts it
+    // (abandoned), or its response lands first and the commit refuses it (policy blocked).
+    let in_flight = row(&frontier, &format!("{}/a", s.base)).status;
+    let expected_abandoned = match in_flight {
+        FrontierStatus::Abandoned => 4,
+        FrontierStatus::PolicyBlocked => 3,
+        other => panic!("/a ended {other:?} after the revocation"),
+    };
+    assert_eq!(
+        report.counters.urls.abandoned, expected_abandoned,
+        "{:?}",
+        report.counters.urls
+    );
     assert!(report.counters.urls.invariants_hold());
     let events = event_payloads(&stores, report.run_id, "authorization.revoked").await;
     assert_eq!(events.len(), 1, "{events:?}");

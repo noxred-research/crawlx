@@ -1,9 +1,20 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img alt="crawlx" src="assets/logo-light.svg" width="260">
+  </picture>
+</p>
+
 # crawlx documentation
 
-crawlx is a Rust hybrid web crawler: a Firecrawl-compatible URL and content crawling plane combined
-with a browser-interaction plane for dynamic applications (accessibility-tree discovery, semantic
-element identity, a probabilistic enablement graph, reversible state clustering and a hard safety
-kernel), with optional typed-decision and LLM guidance.
+crawlx is a next-generation AI/LLM-native crawler for **authorized security research**: it maps the attack
+surface of dynamic web applications with a URL plane and a browser-interaction plane (accessibility-tree
+discovery, semantic element identity, a probabilistic enablement graph, reversible state clustering), under a
+hard safety kernel. Optional typed-decision, ONNX-ranker and LLM guidance advises and never authorizes.
+
+crawlx is built and intended for testing systems you own or have written authorization to test. It is not for
+unauthorized scraping, credential attacks, evading a site's protections or any other abuse. See
+[Responsible use](../README.md#responsible-use) and the [safety model](design/safety-model.md).
 
 crawlx is pre-1.0. Production qualification is in progress; see the
 [README](../README.md#release-status) and the [changelog](../CHANGELOG.md) for known limitations.
@@ -22,6 +33,8 @@ crawlx is pre-1.0. Production qualification is in progress; see the
 
 | Page | Covers |
 |---|---|
+| [Reference](reference.md) | Source discovery, response cache and replay, adaptive extraction, MCP, Katana-style flags, JavaScript endpoint mining, wordlists, captcha solving |
+| [Walkthrough](walkthrough.md) | An end-to-end local run against the CrawlerGym fixture with PostgreSQL and Chromium, including a sample authorization record |
 | [Firecrawl clients and integrations](integrations.md) | Pointing Firecrawl's SDKs, CLI and third-party integrations at the compatibility facade, the endpoints served, operator protocol and acquisition-service boundary |
 | [Operations](ops/README.md) | Provisioning and validation of optional operator capabilities |
 | [Operator runbooks](ops/runbooks.md) | Runbooks RB-01 to RB-12, alert cards, the `crawlx admin` command table, backup, restore and rollback |
@@ -29,8 +42,10 @@ crawlx is pre-1.0. Production qualification is in progress; see the
 ## Project
 
 - [README](../README.md): what crawlx is, quick start and configuration pointers
+- [Roadmap](roadmap.md): open work
 - [CONTRIBUTING](../CONTRIBUTING.md): coding standards, checks and contribution flow
-- [SECURITY](../SECURITY.md): private vulnerability reporting
+- [SECURITY](../SECURITY.md): private vulnerability reporting, response times and safe harbor
+- [CODE_OF_CONDUCT](../CODE_OF_CONDUCT.md)
 - [CHANGELOG](../CHANGELOG.md) and [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)
 - Deployment files: [`docker/`](../docker/), [`deploy/helm/crawlx/`](../deploy/helm/crawlx/Chart.yaml),
   [`deploy/k8s/`](../deploy/k8s/README.md), [`deploy/systemd/`](../deploy/systemd/)

@@ -211,7 +211,7 @@ async fn run(crawl: CreateCrawl) -> RunReport {
     run_with_targets(crawl, &[]).await
 }
 async fn run_with_targets(crawl: CreateCrawl, targets: &[&Site]) -> RunReport {
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     common::authorization::run_authorized_local(crawl, config_with_targets(dir.path(), targets))
         .await
         .unwrap()
@@ -443,7 +443,7 @@ async fn retained_replay_preserves_selected_evidence_and_uses_zero_network_with_
     use crawlx_core::cache::{CacheModeV1, CachePolicyV1};
     let site = site().await;
     site.set("/source", refresh("/final", "0"));
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
         .await
         .unwrap();
@@ -503,7 +503,7 @@ async fn cancellation_of_selected_target_does_not_publish_original() {
     let mut parked = Reply::html("<title>Not observed</title>");
     parked.park = true;
     site.set("/final", parked);
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let cancel = CancellationToken::new();
     let local = LocalRun::new(request(&site, "/source"), config(dir.path())).with_cancel(cancel.clone());
     let task = tokio::spawn(common::authorization::run_authorized_local_with(local));
@@ -530,7 +530,7 @@ async fn fenced_restart_cannot_reset_meta_count_or_parent_escrow() {
     let mut parked = Reply::html("<title>Never observed</title>");
     parked.park = true;
     site.set("/final", parked);
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = rig.stores(dir.path()).await;
     let run = enqueue(&rig, &stores, &site.base, |crawl| {
         enable(crawl);
@@ -566,7 +566,7 @@ async fn unsupported_modes_actions_and_sessions_refuse_before_any_connection() {
     for mode in [CrawlMode::Dynamic, CrawlMode::Hybrid] {
         let mut crawl = request(&site, "/source");
         crawl.mode = mode;
-        let dir = tempfile::tempdir_in("/data").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         assert!(
             common::authorization::run_authorized_local(crawl, config(dir.path()))
                 .await
@@ -588,7 +588,7 @@ async fn unsupported_modes_actions_and_sessions_refuse_before_any_connection() {
             crawlx_core::scrape::JobKind::Scrape,
             options,
         ));
-        let dir = tempfile::tempdir_in("/data").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         assert!(
             common::authorization::run_authorized_local(crawl, config(dir.path()))
                 .await
@@ -602,7 +602,7 @@ async fn unsupported_modes_actions_and_sessions_refuse_before_any_connection() {
         login_plan: Some("builtin:form".into()),
         replica_base_url: None,
     });
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     assert!(
         common::authorization::run_authorized_local(session, config(dir.path()))
             .await
@@ -636,7 +636,7 @@ async fn unsupported_modes_actions_and_sessions_refuse_before_any_connection() {
 async fn target_404_publishes_initial_and_selected_failure_facts_not_a_success_page() {
     let site = site().await;
     site.set("/source", refresh("/missing", "0"));
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
         .await
         .unwrap();
@@ -688,7 +688,7 @@ async fn private_target_listener_receives_no_connection_outside_authorized_netwo
     let source = site().await;
     let target = site_on("127.0.0.2").await;
     source.set("/source", refresh(target.url("/final").as_str(), "0"));
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
         .await
         .unwrap();
@@ -735,7 +735,7 @@ async fn continuation_admission_never_dispatches_a_differently_normalized_raw_ur
 #[tokio::test]
 async fn rejected_refresh_urls_do_not_persist_userinfo_or_session_query_values() {
     let site = site().await;
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     for target in [
         format!(
             "http://owned-user:refresh_password_canary_810a@{}/final",
@@ -768,7 +768,7 @@ async fn continuation_cache_live_freshness_refuses_before_validator_or_redirect_
     use crawlx_core::cache::{CacheFreshnessV1, CachePolicyV1};
     let site = site().await;
     site.set("/source", refresh("/final", "0"));
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
         .await
         .unwrap();
@@ -902,7 +902,7 @@ async fn replaced_parent_fence_during_uncached_robots_cannot_dispatch_selected_t
     let mut parked = Reply::html("User-agent: *\nAllow: /\n");
     parked.park = true;
     target.set("/robots.txt", parked);
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
         .await
         .unwrap();
@@ -937,7 +937,7 @@ async fn replaced_parent_fence_cancels_target_waiting_for_origin_governor() {
     let source = site().await;
     let target = site().await;
     source.set("/source", refresh(target.url("/final").as_str(), "0"));
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
         .await
         .unwrap();
@@ -1000,7 +1000,7 @@ async fn completed_short_governor_wait_rechecks_original_parent_fence_before_dis
         source.base = source.base.replace("127.0.0.1", "dispatch.fixture.test");
         target.base = target.base.replace("127.0.0.1", "dispatch.fixture.test");
         source.set("/source", refresh(target.url("/final").as_str(), "0"));
-        let dir = tempfile::tempdir_in("/data").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
             .await
             .unwrap();
@@ -1083,7 +1083,7 @@ async fn uncached_continuation_robots_obeys_parent_cancellation_and_deadline() {
         let mut parked = Reply::html("User-agent: *\nAllow: /\n");
         parked.park = true;
         target.set("/robots.txt", parked);
-        let dir = tempfile::tempdir_in("/data").unwrap();
+        let dir = tempfile::tempdir().unwrap();
         let mut crawl = request(&source, "/source");
         if cause == "deadline" {
             crawl.acquisition.as_mut().unwrap().max_elapsed_ms = 500;
@@ -1113,7 +1113,7 @@ async fn uncached_continuation_robots_obeys_parent_cancellation_and_deadline() {
 async fn static_scrape_failure_keeps_selected_continuation_facts_in_consumer_event() {
     let site = site().await;
     site.set("/source", refresh("/missing", "0"));
-    let dir = tempfile::tempdir_in("/data").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
         .await
         .unwrap();

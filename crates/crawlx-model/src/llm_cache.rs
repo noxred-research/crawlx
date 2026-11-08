@@ -146,7 +146,7 @@ impl CallCap {
     pub fn acquire(&self) -> Result<(), CallCapExceeded> {
         let max = self.max;
         self.used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| match max {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| match max {
                 Some(m) if n >= m => None,
                 _ => Some(n.saturating_add(1)),
             })

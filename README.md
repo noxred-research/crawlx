@@ -1,41 +1,443 @@
-# crawlx
+<div align="center">
 
-crawlx is a hybrid web crawler written in Rust. It combines two planes:
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+  <img alt="crawlx: next-generation AI/LLM-native crawler for authorized security research" src="docs/assets/banner-light.svg" width="100%">
+</picture>
 
-- a **URL and content plane**: scope and robots admission, canonicalization, bounded static
-  fetching, content extraction to Markdown, metadata and links, with a Firecrawl-compatible API
-  facade and Katana-style crawl options; and
-- a **browser-interaction plane** for dynamic applications: Chromium over CDP, accessibility-tree
-  discovery, semantic element identity, a probabilistic enablement graph, reversible state
-  clustering and an action intent journal that survives crashes.
+**Next-generation AI/LLM-native crawler for authorized security research.**
 
-Every request passes an independent hard safety kernel and an egress (SSRF) policy. Optional
-typed-decision, ONNX-ranker and LLM guidance can rank candidate actions but can never authorize one.
+Map the real attack surface of modern web applications, on systems you own or are explicitly authorized to test.
 
-Documentation index: [`docs/README.md`](docs/README.md).
+[![License: AGPL-3.0-only](https://img.shields.io/github/license/noxred-research/crawlx?color=blue)](LICENSE) [![CI](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml/badge.svg)](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/noxred-research/crawlx?include_prereleases&sort=semver)](https://github.com/noxred-research/crawlx/releases) [![Rust 1.97.1](https://img.shields.io/badge/rust-1.97.1-orange?logo=rust)](rust-toolchain.toml) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md) [![Security policy](https://img.shields.io/badge/security-policy-informational?logo=github)](SECURITY.md)
 
-## Release status
+[Why crawlx](#why-crawlx) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) · [CLI](#command-line-overview) · [Responsible use](#responsible-use) · [Security](#security) · [Docs](docs/README.md)
 
-crawlx is pre-1.0 (current release: 0.1.0). Production qualification is in progress. Do not deploy
-this checkout as a public service or use it for sensitive authenticated sessions.
+</div>
 
-The first distribution is this GitHub repository and tagged source releases. Downloadable
-binaries, published containers, a hosted service and crates.io packages are not part of it.
+> [!IMPORTANT]
+> **Security research and authorized testing only.** crawlx is built for testing systems you own or have
+> written authorization to test. It is not for unauthorized scraping, credential attacks, evading a site's
+> protections, or any other abuse. Privileged modes require an [authorization record](docs/design/safety-model.md#authorization-records),
+> and a hard safety kernel refuses actions outside the run's profile. See [Responsible use](#responsible-use).
 
-Release-specific limitations (strategies gated by signed gate files, the HTML parsing memory
-ceiling, encrypted artifact custody restrictions and Chromium background traffic) are listed in the
-[changelog](CHANGELOG.md).
+<p align="center">
+  <img src="docs/assets/demo.svg" alt="Animated terminal: a static crawl, then a dynamic observe-only crawl that blocks the cloud metadata address" width="860">
+</p>
 
-## Authorized use and security
+<p align="center"><sub>Two real <code>crawlx crawl</code> runs against the bundled CrawlerGym fixture (browser log lines condensed).<br>The second run shows the egress policy refusing the cloud metadata address.</sub></p>
 
-Use crawlx only against systems you own or are authorized to test. Requests that need elevated
-authority (private-network access, the `test_environment` and `authorized_security_test` safety
-profiles, the robots override) require an operator-created authorization record; see the
-[safety model](docs/design/safety-model.md). Report vulnerabilities privately through GitHub
-private vulnerability reporting, not in public issues; see [SECURITY.md](SECURITY.md). Third-party
-licenses and notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## Why crawlx
 
-## Layout
+Security testing of modern applications has two problems. Plain HTTP crawlers miss everything that only
+exists after JavaScript runs: routes, endpoints, forms and state behind clicks. Browser automation sees it,
+but is slow, fragile and one careless click away from "Delete account". crawlx treats both as engineering
+problems under one set of rules.
+
+- **It maps the surface you cannot see from the HTML.** A URL plane for documents plus a browser plane that
+  reads the accessibility tree, recognizes elements across page changes and groups page states, in one run
+  (`--mode hybrid`, the default).
+- **It is careful by construction.** The default profile cannot change server state. An independent safety
+  kernel classifies every browser action, and a deny-first egress policy covers every request.
+- **It leaves a trail you can defend.** Every action is journaled before it is performed, crashes are
+  reconciled rather than retried blindly, and runs replay from a seed.
+- **It is AI/LLM-native, with a leash.** Models can plan and rank; they never authorize.
+  [Details below](#aillm-native-with-a-leash).
+- **It handles findings responsibly.** Secrets are detected without storing their values, sensitive
+  results can run under zero data retention, and retained artifacts are encrypted at rest.
+
+## Responsible use
+
+crawlx is built and intended for **security research and authorized testing only**: testing systems you own,
+or systems you have **written authorization** to test. This is the project's intended-use policy and a
+condition of community participation and support; the [AGPL-3.0-only](LICENSE) license itself is unchanged.
+
+Do not use crawlx for unauthorized scraping, credential attacks, evading a site's protections, or any
+other abuse. You are responsible for your use.
+
+How the project enforces this in code, not just in words:
+
+- **Authorization records.** Anything privileged (private-network access, the `test_environment` and
+  `authorized_security_test` profiles, the robots override) needs an operator-created record naming the
+  authorizer, the exact origins, the permitted risk classes and a validity window of at most 90 days. The
+  record bounds every request of the run and is re-checked while it runs. It states what you are authorized
+  to do; it does not verify that you are.
+- **A hard safety kernel.** The default `read_only` profile refuses actions that could change server state.
+  Higher profiles still deny financial transactions and security-setting changes unless
+  `authorized_security_test` and an explicit approval apply, and no model hint can loosen a decision. See the [risk matrix](docs/design/safety-matrix.md).
+- **Scope and robots by default.** Robots is honored (overriding it needs an authorization record) and a host
+  scope applies.
+- **Network guardrails.** Loopback, private, link-local and cloud-metadata addresses are refused on every
+  redirect hop and browser request; crawling is rate-limited per origin (one request in flight, at least
+  250 ms apart, backing off on `429` and `503`).
+- **Opt-in features that touch a target's defenses** (the stealth launch profile, captcha solving) exist for
+  testing systems you own or are authorized to test. They are refused under the default profile and must
+  not be used anywhere else.
+
+Details: [safety model](docs/design/safety-model.md) · [SECURITY.md](SECURITY.md).
+
+<a id="release-status"></a>
+
+> **Status:** pre-1.0 (0.1.0). Production qualification is in progress. Do not deploy this checkout as a
+> public service or use it for sensitive authenticated sessions. The first distribution is this
+> repository and tagged source releases; no binaries, images or crates.io packages are published.
+> Release-specific limitations are listed in the [changelog](CHANGELOG.md), and open work in the
+> [roadmap](docs/roadmap.md).
+
+## Features
+
+| Capability | What you get |
+|---|---|
+| 🎯 **Attack-surface discovery** | Chromium over CDP and accessibility-tree discovery of single-page and script-heavy apps; durable element identity, reversible state clustering and a learned enablement graph show what each action reveals; sitemaps, feeds and known files; URL canonicalization and shape filters keep large sites tractable |
+| 🔎 **Form and endpoint discovery** | Form and input extraction (`--form-extraction`), XHR extraction, JavaScript endpoint mining (regex and AST), technology detection, page-type classification, custom field rules, seeded and reproducible form input |
+| 🧠 **AI/LLM-native** | A constrained LLM planner, a typed-decision service and an ONNX ranker, LLM-assisted form values, LLM-ready Markdown and chunks, an MCP server; models advise and never authorize ([details](#aillm-native-with-a-leash)) |
+| 🔑 **Secret detection** | Nine secret kinds found in fetched content (cloud, source-host, chat and payment tokens, JWTs, private keys, generic keys), reported as kind, location and a keyed hash, never the value |
+| 🛡️ **Guardrails** | `read_only` default profile, an independent hard safety kernel, authorization records, robots and scope enforcement, a deny-first SSRF policy, per-origin politeness, an independent safety auditor |
+| 🧾 **Audit and replay** | Intent journal with `unknown`-outcome reconciliation, a recorded safety verdict per action, fenced leases, checkpoints, seed-derived decisions and recorded-path replay |
+| 🔒 **Handling sensitive findings** | Zero-data-retention mode, secret redaction in logs and exports, encrypted artifact custody, tenant row-level security |
+| 📦 **Output** | JSONL, `metadata.json`, `links.json`, `report.json`, Markdown pages, templates, wordlists, bounded WARC/WACZ archives, a REST and SSE API |
+| 🔌 **Interoperability** | A Firecrawl-compatible API facade and Katana-style flags so existing tooling can plug in, plus an OpenAI-compatible provider interface |
+| 🚢 **Operations** | PostgreSQL and S3-compatible storage, Docker Compose, Helm chart, Prometheus metrics, OTLP, alert rules, [runbooks](docs/ops/runbooks.md) |
+
+### AI/LLM-native, with a leash
+
+Every AI feature is optional and off by default. The rule is the same everywhere: **models advise, the safety
+kernel decides.**
+
+| Feature | What it does | Turn it on |
+|---|---|---|
+| **LLM-guided planning** | A constrained planner DSL: the model returns a bounded plan (at most 20 steps) of candidate indexes and value references, never free-form selectors or URLs; the plan is validated before use | `--planner-endpoint`, `dynamic.llmPlanner` (`off`, `stalled_only`, `enabled`) |
+| **Typed-decision service and ONNX ranker** | Calibrated, abstaining rankings over a crawler-built shortlist of safe candidate actions; circuit-broken and time-boxed | `--model-endpoint`, `--system1-mode shadow\|advisory` (`advisory` needs a signed gate), `onnx` cargo feature |
+| **LLM-assisted form values** | An OpenAI-compatible model proposes values for fields the form filler cannot classify; call-capped (default 100) and recordable for offline replay | `--ai-url`, `--ai-model`, `--ai-record`, `--ai-replay` |
+| **Extract, agent and search endpoints** | The Firecrawl-compatible facade serves `/extract`, `/agent` and `/search` over an OpenAI-compatible provider you configure (and SearXNG for search) | `OPENAI_BASE_URL`, `MODEL_NAME`, `SEARXNG_ENDPOINT` |
+| **LLM-ready output** | Clean Markdown, structured metadata and optional word-window chunks of extracted text | `extract.content.chunks` |
+| **MCP server** | Exposes crawl, scrape, map, search and extract tools to agent tooling over stdio | `crawlx mcp` |
+| **Understanding web apps** | The accessibility tree gives roles, names and states, so elements keep a stable identity across re-renders and layout changes | built in (`--mode dynamic`) |
+
+The guardrails around models are structural. The model crate does not depend on the safety kernel and cannot
+authorize anything; a model hint can only make a decision stricter. Page text reaches a model only inside
+provenance-tagged untrusted fields. Zero-data-retention runs keep to the default model and skip optional LLM
+refinement steps.
+
+### Capability highlights
+
+| | `--mode static` | `--mode dynamic` | `--mode hybrid` (default) |
+|---|:---:|:---:|:---:|
+| Needs Chromium | no | yes | yes |
+| Fetches with the HTTP client, writes Markdown pages | yes | no | yes |
+| Executes page JavaScript | no | yes | yes |
+| Clicks and navigates (`read_only` profile) | no | yes | yes |
+| Element identity, state clusters, enablement graph | no | yes | yes |
+| Journal and crash reconciliation for actions | n/a | yes | yes |
+| Sitemaps, known files, content-similarity filters | yes | n/a | yes |
+| Robots enforced | URL fetches | main-frame navigations | both |
+| Egress (SSRF) policy | every hop | every browser request | both |
+
+## Install
+
+<details open>
+<summary><b>From source</b>: the CLI, development, one-shot crawls</summary>
+
+```
+git clone https://github.com/noxred-research/crawlx.git && cd crawlx
+cargo build --release -p crawlx-cli          # binary: target/release/crawlx
+```
+
+The pinned Rust toolchain (1.97.1, see [`rust-toolchain.toml`](rust-toolchain.toml)) installs through
+`rustup`. Dynamic and hybrid crawls also need the pinned Chromium, below.
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b>: a single-host stack with PostgreSQL, API, Chromium worker and MinIO</summary>
+
+```
+docker/init-compose.sh && docker compose -f docker/docker-compose.yml up -d --build --wait
+```
+
+`init-compose.sh` generates the secret files and a bootstrap API key in `docker/.env`. The images are
+built locally. `CRAWLX_COMPOSE_UP=1 ci/compose-smoke.sh` checks the stack end to end, and
+`crawlx healthcheck --url <URL>` is the probe its containers use.
+
+</details>
+
+<details>
+<summary><b>Helm</b>: Kubernetes</summary>
+
+The chart is in [`deploy/helm/crawlx`](deploy/helm/crawlx/Chart.yaml). Build the images from
+[`docker/`](docker/), push them to your registry, set `image.registry` and `image.tag`, and create the
+Secrets described in [operations](docs/ops/README.md#helm-exact-external-secret-keys) before installing.
+Plain manifests, network policies and a safety-auditor CronJob are in [`deploy/k8s`](deploy/k8s/README.md).
+
+</details>
+
+No prebuilt binaries or images are published; build them from a tagged source release.
+
+**Chromium.** Dynamic and hybrid crawls use the pinned Chrome for Testing build in
+[`chromium-pin.toml`](chromium-pin.toml). Fetch it with either command; both verify the pinned SHA-256:
+
+```
+export CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)    # downloads into .cache/chromium/
+crawlx browser install                                  # or add --auto-download-chromium to a crawl
+```
+
+The launch check reads `CRAWLX_PIN_FILE`, else the nearest `chromium-pin.toml` from the working
+directory upward, else the pin embedded in the binary. `CRAWLX_ALLOW_UNPINNED=1` lets a different build
+run and records `pinned = false`.
+
+## Quick start
+
+### Static crawl
+
+Crawl a site you are authorized to crawl. It runs in-process with an in-memory store, no database:
+
+```
+crawlx crawl https://example.org --mode static --seed 20261019 --limit-urls 50 --output ./out
+```
+
+`--seed` makes the run reproducible. Results land in `./out` (see [Output](#output)).
+
+### Dynamic crawl
+
+Observe a web application with the pinned Chromium, without interacting:
+
+```
+export CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)
+crawlx crawl https://app.example.org --mode dynamic --observe-only --output ./out
+```
+
+A loopback or private-network target needs an authorization record. For a local fixture, see the
+[walkthrough](docs/walkthrough.md#the-authorization-record):
+
+```
+crawlx crawl http://127.0.0.1:8080/ --mode dynamic --observe-only \
+  --allow-private-networks --authorization-record authz.local.json
+```
+
+Drop `--observe-only` to let the default `read_only` profile click and navigate. It still refuses
+anything that could change server state.
+
+### API and worker
+
+Start the single-host stack, then create a crawl with the bootstrap API key that `init-compose.sh` wrote
+to `docker/.env`:
+
+```
+docker/init-compose.sh && docker compose -f docker/docker-compose.yml up -d --build --wait
+KEY=$(sed -n 's/^CRAWLX_API_KEY_SPEC="default=\(.*\)"$/\1/p' docker/.env)
+
+curl -s http://127.0.0.1:8080/v1/crawls -H "Authorization: Bearer $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"seedUrl":"https://example.org/","mode":"static","limits":{"urls":50}}'
+# 202 Accepted: {"id":"<run-id>","status":"queued", ...}
+
+curl -s http://127.0.0.1:8080/v1/crawls/<run-id>        -H "Authorization: Bearer $KEY"   # status, counters
+curl -s http://127.0.0.1:8080/v1/crawls/<run-id>/pages  -H "Authorization: Bearer $KEY"   # pages
+```
+
+The OpenAPI document is served at `/v1/openapi.json`. Without Compose, run `crawlx migrate`,
+`crawlx serve` and `crawlx worker` against your own PostgreSQL; see the
+[walkthrough](docs/walkthrough.md) and [operations](docs/ops/README.md).
+
+### Tooling interoperability: Firecrawl-compatible API
+
+So that existing tooling can plug in, the API serves Firecrawl's v2 endpoints under `/compat/firecrawl/v2`. With
+the stack above, the same key works there:
+
+```
+curl -s http://127.0.0.1:8080/compat/firecrawl/v2/scrape -H "Authorization: Bearer $KEY" \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.org","formats":["markdown","links"]}'
+```
+
+The Node and Python SDKs, the `firecrawl` CLI and LangChain's loader are exercised against the facade by
+`cargo test -p crawlx-cli --test sdk_python`. To accept `fc-` keys, start the API with
+`crawlx serve --firecrawl-keys --api-key acme=fc-<32 hex>`. Base URLs per client, the endpoints each
+integration calls and what is not served: [docs/integrations.md](docs/integrations.md).
+
+### MCP
+
+`crawlx mcp` exposes the Firecrawl MCP tools over stdio as a thin client of a crawlx API. The client
+configuration is in the [reference](docs/reference.md#mcp-server).
+
+## Output
+
+A CLI crawl prints a short summary and writes files under `--output` (default `./crawlx-out`). This is the
+real output of the first run in the demo above:
+
+```
+$ crawlx crawl http://127.0.0.1:34635/s1/ --mode static --seed 20261019 \
+    --authorization-record authz.local.json --allow-private-networks --limit-urls 50 --output ./out
+crawl 01a1b818-be89-7584-953e-8c1b094bf92f mode=static terminal_reason=frontier_exhausted
+urls.discovered      90
+urls.admitted        30
+urls.deduplicated    55
+urls.policy_blocked   3
+urls.robots_blocked   2
+urls.attempted       32
+urls.succeeded       30
+urls.failed           2
+unknown_outcome       0
+pages written: 30  -> ./out/pages/*.md  (+ metadata.json, links.json)
+
+out/
+├── pages/127-0-0-1-34635-s1-about.md   Markdown of each fetched page, named after its URL
+├── metadata.json                       one entry per page
+├── links.json                          outgoing links per page
+├── report.json                         counters, states, actions; request with header and cookie values redacted
+└── artifacts/                          sealed objects; not readable after the process exits (see data and secrets)
+```
+
+`metadata.json` (abbreviated; keys are sorted):
+
+```json
+[
+  {
+    "contentType": "text/html; charset=utf-8",
+    "fetchedAt": "...",
+    "file": "pages/127-0-0-1-34635-s1.md",
+    "metadata": { "...": "..." },
+    "status": 200,
+    "title": "...",
+    "url": "http://127.0.0.1:34635/s1/"
+  }
+]
+```
+
+`--jsonl` also writes one record per page to `results.jsonl` (or `-o FILE`). Each record has a
+`timestamp`, a `request` (`method`, `endpoint`, `tag`, `attribute`, `source`, ...) and a `response`
+(`status_code`, `headers`, `body`, `technologies`, ...). `--list-output-fields` prints every field name,
+`--exclude-output-fields` drops some, and `--omit-raw` and `--omit-body` shrink the records:
+
+```json
+{"timestamp":"...","request":{"method":"GET","endpoint":"https://example.org/","source":"..."},"response":{"status_code":200,"headers":{"...":"..."},"technologies":[]}}
+```
+
+`--output-template '{{url}}'`, `--field` and `--store-field` print or store selected values; see
+[wordlists](docs/reference.md#wordlists-and-stored-fields). A dynamic crawl adds recorded states and
+actions to `report.json`, and a stored run can be read back with `crawlx inspect` and `crawlx export`.
+
+Native API responses are JSON. `GET /v1/crawls/{id}` returns (abbreviated):
+
+```json
+{ "id": "<run-id>", "status": "queued", "terminalReason": null, "mode": "static", "seed": 20261019,
+  "safetyProfile": "read_only", "counters": { "urls": { "...": 0 } }, "sessions": [],
+  "coverage": { "unit": "ActionContextKey", "discovered": 0, "exercisedTrusted": 0 } }
+```
+
+The facade's `POST /compat/firecrawl/v2/scrape` answers `{"success": true, "data": {"markdown": "...", ...}}`.
+
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph C["Clients"]
+        CLI["crawlx CLI"]
+        REST["REST + SSE clients"]
+        SDK["Firecrawl SDKs · MCP"]
+    end
+    subgraph A["API process"]
+        ADM["Admission · auth · idempotency"]
+    end
+    subgraph W["Worker process"]
+        LEASE["Lease loop"]
+        URLP["URL plane"]
+        ACT["Session Actors"]
+        SAFE{{"Safety kernel"}}
+        PROXY["Egress proxy"]
+        CHR["Pinned Chromium"]
+    end
+    subgraph S["State"]
+        PG[("PostgreSQL")]
+        OBJ[("Object store")]
+    end
+    WEB(("The web"))
+    CLI --> ADM
+    REST --> ADM
+    SDK --> ADM
+    ADM --> PG
+    PG --> LEASE
+    LEASE --> URLP
+    LEASE --> ACT
+    ACT --> SAFE
+    SAFE --> CHR
+    URLP --> PROXY
+    CHR --> PROXY
+    PROXY --> WEB
+    ACT --> PG
+    URLP --> OBJ
+```
+
+`crawlx crawl` runs the whole pipeline in-process. `crawlx serve` and `crawlx worker` split it: the API
+validates and persists a run, and workers lease it from PostgreSQL. Strategies and models only *propose*
+actions; the safety kernel alone decides which are admitted, and the Session Actor re-confirms each one
+against the live page before performing it.
+
+<details>
+<summary>Polished diagram</summary>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <img alt="crawlx architecture: clients, API process, worker process, state and the web" src="docs/assets/architecture-light.svg">
+</picture>
+
+</details>
+
+Read more: [architecture](docs/design/architecture.md) · [crawl model](docs/design/crawl-model.md) ·
+[safety model](docs/design/safety-model.md) · [data and secrets](docs/design/data-and-secrets.md).
+
+## Command-line overview
+
+`crawlx --help` lists the commands. The common ones:
+
+| Command | Purpose |
+|---|---|
+| `crawl` | Crawl in-process and write files |
+| `serve`, `worker`, `migrate` | API (REST, SSE, facade), lease-loop worker, database migrations |
+| `inspect`, `export`, `replay`, `replay-response` | Read a stored run, export JSON lines, re-execute a recorded path, replay a retained response offline |
+| `extract`, `archive`, `corpus`, `source-import` | Local extraction, WARC/WACZ, operator-authorized local corpus, declarative source manifests |
+| `authz` | Authorization records: `create`, `show`, `revoke`, `verify` against an API; `sign`, `challenge` offline |
+| `admin`, `config check`, `healthcheck` | Operator commands, configuration validation, container probe |
+| `mcp`, `browser` | MCP server over stdio; Chromium tooling |
+
+<details>
+<summary>Flags of <code>crawlx crawl</code>, by group</summary>
+
+`crawlx crawl --help` is the full, authoritative list.
+
+| Group | Flags |
+|---|---|
+| Input | `URL...`, `-u/--url`, `--list FILE`, `-` (stdin), `--request JSON`, `--config FILE`, `--resume FILE`, `-p/--parallelism` |
+| Mode and safety | `--mode static\|dynamic\|hybrid` (default hybrid), `--observe-only`, `--profile`, `--authorization-record`, `--allow-private-networks`, `--seed`, `--role` |
+| Scope and limits | `--field-scope fqdn\|rdn\|dn\|none`, `--no-scope`, `--crawl-scope`, `--crawl-out-scope`, `--exclude-hosts`, `-d/--depth`, `--strategy`, `--known-files`, `--max-pages-per-host`, `--extension-match`, `--extension-filter`, `--limit-urls`, `--limit-interactions`, `--crawl-duration` |
+| Filters | `--filter-similar`, `--content-similar off\|simhash\|tfidf\|bm25`, `--match-regex`, `--filter-regex`, `--match-condition`, `--filter-condition`, `--filter-page-type` |
+| Politeness and fetch | `--rate-limit`, `--host-rate-limit`, `--concurrency`, `--delay-ms`, `--timeout`, `--retries`, `--max-response-size`, `--no-redirects`, `--proxy`, `--headers`, `--cookie`, `--user-agent` |
+| Extraction | `--js-crawl`, `--javascript-mode off\|regex\|ast\|both`, `--form-extraction`, `--detect-secrets`, `--tech-detect`, `--knowledge-base`, `--custom-field-config` |
+| Browser | `--page-load-strategy`, `--dom-wait-time`, `--show-browser`, `--cdp-ws-url`, `--no-incognito`, `--auto-download-chromium`, `--interaction-depth`, `--interaction-max-actions` |
+| Output | `--output DIR`, `-j/--jsonl`, `-o/--output-file`, `--output-template`, `--field`, `--store-field`, `--store-response`, `--omit-raw`, `--list-output-fields`, `--silent`, `--verbose` |
+
+Behavior of the less obvious options (source discovery, response cache and replay, adaptive extraction,
+Katana-style flags, JavaScript endpoint mining, captcha solving) is in [docs/reference.md](docs/reference.md).
+
+</details>
+
+<details>
+<summary>Configuration</summary>
+
+- `crawlx.toml` (path in `CRAWLX_CONFIG`) and `CRAWLX_*` environment variables. `crawlx config check`
+  validates them and prints the effective values with secrets redacted.
+- Request bodies (API) and `crawlx crawl --request <json>` or `--config <file>` share one request schema;
+  command-line flags override the file.
+- Pass secrets as `*_FILE` variables or `env://` and `file://` references rather than literal command-line
+  values. See [data and secrets](docs/design/data-and-secrets.md#deployment-secrets).
+- Safety profile: `read_only` (default), `test_environment`, `authorized_security_test`.
+- Retention: `standard`, `extended` and zero-data-retention (ZDR) modes.
+- Milestone-gated strategies and model modes need signed gate files; see [`gates/README.md`](gates/README.md).
+
+</details>
+
+<details>
+<summary>Repository layout and development</summary>
 
 ```
 Cargo.toml            workspace (21 crates under crates/)
@@ -44,221 +446,67 @@ ci/                   layering and dependency lint, Chromium fetch/build scripts
 bench/                benchmarks, Firecrawl differential harness, Playwright/Patchright oracle
 deploy/               Helm chart, Kubernetes manifests, systemd units, alert rules, dashboard
 docker/               Dockerfiles, Compose stack, seccomp profile
-docs/                 design documentation, integrations, operations
+docs/                 design documentation, integrations, reference, operations
 ```
-
-Crates: `crawlx-core` (shared types and traits), `crawlx-url`, `crawlx-policy`, `crawlx-fetch`,
-`crawlx-extract`, `crawlx-browser`, `crawlx-observe`, `crawlx-elements`, `crawlx-state`,
-`crawlx-graph`, `crawlx-strategies`, `crawlx-forms`, `crawlx-model`, `crawlx-safety`,
-`crawlx-storage`, `crawlx-scheduler`, `crawlx-telemetry`, `crawlx-worker`, `crawlx-api`,
-`crawlx-bench`, `crawlx-cli` (binary `crawlx`). The [architecture page](docs/design/architecture.md)
-describes each one.
-
-## Build
 
 ```
 cargo build --workspace
-cargo test --workspace
+cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ci/lint-deps.sh
 ```
 
-Storage tests need PostgreSQL: set `CRAWLX_TEST_DATABASE_URL=postgres://crawlx@127.0.0.1:54329/crawlx_test`; they skip when unset. Browser tests need a Chromium binary (`CRAWLX_CHROMIUM_PATH`); `CRAWLX_ALLOW_UNPINNED=1` records `pinned = false` when the installed build differs from `chromium-pin.toml`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full list of checks.
+PostgreSQL tests read `CRAWLX_TEST_DATABASE_URL` and Chromium tests read `CRAWLX_CHROMIUM_PATH`; both skip
+when unset. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Dynamic and hybrid crawls need the pinned Chrome for Testing build: `export CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)` downloads it into `.cache/chromium/`, verifies its pinned SHA-256 and prints the binary path. The launch check reads `CRAWLX_PIN_FILE`, else the nearest `chromium-pin.toml` from the working directory upward, else the pin embedded in the `crawlx` binary.
+</details>
 
-## Quick start
+## Security
 
-Static crawl of a site you are authorized to crawl (in-process, in-memory store, no database):
+Report vulnerabilities in crawlx privately through GitHub private vulnerability reporting, never in a public
+issue. [SECURITY.md](SECURITY.md) has the supported versions, response times, safe-harbor terms, scope and the
+intended-use statement.
 
-```
-crawlx crawl https://example.org --mode static --seed 20261019 --output ./out
-```
+Releases are built from a tag by a gated workflow that publishes a source archive, a CycloneDX SBOM and
+`SHA256SUMS` as a draft for a maintainer to publish; verification steps are in
+[SECURITY.md](SECURITY.md#verifying-a-release). Workflows run only for code owners, every action is pinned
+to a commit, and dependency, secret and static-analysis scans run in CI.
 
-Dynamic crawl: observe only, with the pinned Chromium. A loopback or private-network target needs an authorization record:
+## Getting help
 
-```
-export CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)
-crawlx crawl https://app.example.org --mode dynamic --observe-only
-crawlx crawl http://127.0.0.1:8080/ --mode dynamic --observe-only \
-  --allow-private-networks --authorization-record authz.local.json
-```
-
-The authorization record is a JSON `AuthorizationRecord` (`crawlx_policy::authorization`) naming the authorizer, the permitted origins or URL prefixes, the validity window, the profile cap and permitted risk classes. API tenants register theirs through the API (`crawlx authz create|show|revoke|verify`, scope `authorizations:write`); `crawlx authz sign` and `challenge` work offline.
-
-More commands:
-
-```
-crawlx migrate --database-url postgres://crawlx@127.0.0.1:54329/crawlx
-crawlx crawl https://example.org --mode static --field-scope rdn --strategy depth-first --known-files robots_paths,sitemap \
-  --filter-similar --content-similar simhash --rate-limit 20 --timeout 15 --jsonl --field qurl --store-fields ./wordlists
-crawlx serve      # REST/SSE API (and the /compat/firecrawl/v2 facade)
-crawlx worker     # lease loop + Session Actors
-crawlx mcp        # MCP server over stdio (Firecrawl MCP tools backed by a crawlx API)
-crawlx inspect actions <crawl-id> --status unknown
-```
-
-`crawlx crawl` runs in-process (in-memory store unless `--database-url` is given) and writes `pages/*.md`, `metadata.json`, `links.json` and `report.json` under `--output`; requests that need an authorization record (`--allow-private-networks`, `--profile authorized_security_test`) take `--authorization-record <json>`. `--trailing-slash strip|keep|add` sets URL canonicalization. `crawlx worker --recover` reaps expired leases, restores the newest checkpoint of recovering sessions, reconciles their `unknown` actions by re-observation and exits when idle. `crawlx replay <run-id> --to <transition-id> --mode verify|reproduce` re-executes a recorded path through a fresh session.
-
-Production-shaped single-host stack (PostgreSQL, migrate, API, pinned-Chromium worker, MinIO, and a volatile `secret-custody` Valkey for artifact custody): `docker/init-compose.sh && docker compose -f docker/docker-compose.yml up -d --build --wait`, checked end to end by `CRAWLX_COMPOSE_UP=1 ci/compose-smoke.sh`. `crawlx healthcheck --url <URL>` is the probe its containers use (exit 0 for a 2xx answer, 1 otherwise). Operator provisioning and runbooks are in [`docs/ops/README.md`](docs/ops/README.md) and [`docs/ops/runbooks.md`](docs/ops/runbooks.md).
-
-## Configuration
-
-- `crawlx.toml` (path in `CRAWLX_CONFIG`) and `CRAWLX_*` environment variables; `crawlx config check` validates them and prints the effective values with secrets redacted. Prefer `*_FILE` variables and `env://` or `file://` references for secrets over literal command-line values.
-- Request bodies (API) and `crawlx crawl --request <json>` / `--config <file>` use the same request schema; command-line flags override the file.
-- Safety profile: `--profile read_only` (default), `test_environment`, `authorized_security_test`.
-- Retention: `standard`, `extended` and zero-data-retention (ZDR) modes; see [data and secrets](docs/design/data-and-secrets.md).
-- Milestone-gated strategies and model modes need signed gate files; see [`gates/README.md`](gates/README.md).
-
-### Bounded source discovery
-
-Native JSON requests can opt into source discovery without changing ordinary crawl defaults:
-
-```json
-{
-  "scope": {
-    "sources": ["html", "feeds", "sitemap", "categories", "conventional"],
-    "maxKnownUrls": 100000,
-    "discovery": {
-      "version": 1,
-      "mode": "explore",
-      "conventionalPaths": ["/feed", "/rss"],
-      "maxSourceDocuments": 16,
-      "maxFeedBytes": 2097152,
-      "maxEntries": 1000,
-      "maxNesting": 32,
-      "maxSourceDepth": 5,
-      "maxCategoryLinks": 32,
-      "maxFocusedLinks": 64,
-      "minSitemapArticles": 1,
-      "sufficientMainChars": 300,
-      "readMoreHops": 0,
-      "mediaProbes": 0
-    }
-  }
-}
-```
-
-`feeds` parses declared RSS 2.0, RDF/RSS 1.0, Atom and JSON Feed 1.0/1.1 sources. Parsing is offline; links and publisher/date/title hints are not authorization or verified article facts. DTDs, external entities, excessive nesting and oversized sources are refused. Conventional paths are requested only when explicitly listed. Empty `sources` keeps legacy HTML/sitemap behavior; non-legacy sources require `discovery`.
-
-Sitemap candidates, including namespace-checked hreflang variants, pass normal scope and robots admission. Discovery-enabled exploration acquires bounded sitemaps before focused HTML fallback. `probe` records actual selected article length/quality and insufficiency reasons. Category/domain heuristics never expand scope. Source requests and cursor advances commit together under the parent lease; a changed source representation cannot silently continue an old cursor.
-
-`readMoreHops` and `mediaProbes` are opt-in worker acquisitions. Read-more follows explicit article intents, records separate original/final URLs and child artifacts, and stops on cycles or its hop allowance. Media probes inspect at most `mediaHeaderBytes` (at most 65536) and refuse dimensions above `maxMediaPixels`; they never decode a full image. Sitemap traversal, redirects, read-more and media work share the primary page's `acquisition.maxAttempts`, `maxNetworkRequests`, byte allowance and deadline. Configure sufficient shared allowance when enabling several auxiliary stages; a stage does not receive fresh retries.
-
-Choose teaser links with `extract.content.selectors.readMore`, for example `[{"kind":"xpath","expression":"//a[@class='teaser']/@href"}]`; these selectors only produce parser references. The worker's independent `readMoreHops` policy controls acquisition. ZDR source discovery also requires the protected worker request-identity key; missing key is `CapabilityUnavailable`, never a public-seed-derived correlation fallback. ZDR source cursor receipts use the shared volatile retention boundary.
-
-External providers have no built-in endpoint or fallback. Add `scope.discovery.connectors` with explicit `provider` (`google_news`, `google_trends`, `internet_archive`), authorized `endpoint`, and CDX `archiveBase` when needed. Enable the corresponding source (`google_news`, `google_trends`, `archive`). News accepts RSS/Atom and recorded `garturlres` results; trends accepts daily-trends JSON or RSS; archive accepts a CDX JSON table. Archive provenance keeps original URL, replay URL, capture time and optional recorded original status separate from the provider's HTTP status. Missing providers return `ProviderUnavailable`.
-
-Cache-only/development replay never requests robots, sitemap, provider, conventional, media or read-more resources. Missing retained responses return `cache_miss`; explicit external-provider requests fail as `ProviderForbiddenInReplay`. Reprocessed artifacts record current robots as unobserved, not approved. These are source/runtime contracts, not a claim of upstream service availability or live-provider certification.
-
-### Native response cache and development replay
-
-Native requests use `cache: {"schemaVersion": 1, "mode": "read_write", "maxAgeMs": 172800000, "freshness": "retained", "developmentReplay": false}`. The scrape facade also accepts this explicit extension. Without it, existing `maxAge`, `minAge`, `lockdown` and `storeInCache` behavior remains in force.
-
-| Mode | Read retained response | Write reusable response | Fetch on miss |
-| --- | --- | --- | --- |
-| `read_write` | Yes, within age and retention | Yes | Yes |
-| `bypass` | No | Yes | Yes |
-| `disabled` | No | No | Yes |
-| `read_only` | Yes, within age and retention | No | **Never** |
-| `write_only` | No | Yes | Yes |
-
-`developmentReplay: true` overrides the mode with offline reads and no reusable writes. Replay records the source run, source fetch time and zero current target requests. `freshness: head` requires the same retained ETag or Last-Modified validator; `conditional_get` requires a matching owned body and `304`. A changed validator invalidates the entry. These requests use the checked fetcher, global pacing and the same parent attempt/request/byte/deadline allowance as the ensuing fetch. Read-only and development replay never send either validator request.
-
-Cache identity includes the authenticated API-key principal, acquisition policy, registered HTTP implementation revision, validator, representation and request/extraction route identity. Local runs without a trusted principal cannot read another run's cache. Credential-bearing reuse requires the operator's protected `CRAWLX_REQUEST_IDENTITY_KEY` (64 hexadecimal digits): tenant-derived keyed correlation covers resolved headers and cookies, not public unkeyed credential hashes. Missing keys make credential-bearing results uncacheable; cache-only requests fail explicitly. Mutable browser profiles, unobserved browser builds and protocol delegates do not claim reusable cache capability.
-
-Missing retained content is `stored_body_unavailable` (`STORED_BODY_UNAVAILABLE` on the facade), not permission to fetch during offline replay. ZDR never creates a durable response cache. For an exact existing local artifact, use `crawlx replay-response RUN --frontier ID --tenant TENANT --identity SAVED_DIGEST --database-url URL --artifacts-dir DIRECTORY`; supply `--principal API_KEY_ID` for an API-owned source. This command reads committed retained content only and emits base64 JSON with explicit rendition/provenance. Existing `crawlx replay` remains browser-action replay.
-
-### Scoped adaptive extraction descriptors
-
-`PUT /v1/crawls/{id}/adaptive-selectors/{selector_id}` captures structure from a committed page's retained HTML. Its body supplies `page`, static selector-document `node`, `source`, `schema`, optional `expiresAt`, `threshold`, `runnerUpMargin` and `maxCandidates`. The server supplies tenant, principal and acquired origin. `GET` uses the same page/source/schema namespace. `POST .../{selector_id}/relocate` accepts `page`, `source`, `schema` and returns `recovered`, `ambiguous` or `not_found`. An ambiguous response contains no selected node. Static document nodes are never browser action locators.
-
-Descriptors contain only bounded structural features, not page text, IDs or attribute values. PostgreSQL migration `0030_adaptive_selectors.sql` enforces tenant RLS, run ownership and fixed source-retention expiry. ZDR stores only lookup metadata durably; payloads use the existing shared volatile delivery buffer, whose original TTL never renews on update. HTML reads check ownership, sensitivity, expiry, byte bounds and artifact fixity before bounded CPU evaluation.
-
-
-`crawlx mcp` is a Model Context Protocol server over stdio (newline-delimited JSON-RPC 2.0; revision 2025-03-26, downgrading to 2024-11-05). It offers the Firecrawl MCP tools (`firecrawl_scrape`, `firecrawl_map`, `firecrawl_search`, `firecrawl_crawl`, `firecrawl_check_crawl_status`, `firecrawl_extract`, `firecrawl_extract_status`, `firecrawl_parse`, `firecrawl_agent`, `firecrawl_agent_status`) as a thin client of a crawlx API's `/compat/firecrawl/v2` facade: `--api-url` (`CRAWLX_API_URL`, then `FIRECRAWL_API_URL`, default `http://127.0.0.1:8080`), `--api-key` (`CRAWLX_API_KEY`, then `FIRECRAWL_API_KEY`; sent as `Authorization: Bearer`, never logged), `--timeout-ms` (per HTTP request, default 120000), `--poll-interval-ms` / `--poll-timeout-ms` (waiting on extract and agent jobs). API errors come back as `isError` tool results; results are cut at 1 MiB. Client config: `{"mcpServers": {"crawlx": {"command": "crawlx", "args": ["mcp"], "env": {"CRAWLX_API_URL": "http://127.0.0.1:8080", "CRAWLX_API_KEY": "…"}}}}`.
-
-`firecrawl_parse` reads the file path it is given on the machine running `crawlx mcp` and uploads the bytes to the API, so point `--api-url` only at an API you trust.
-
-Firecrawl's own clients use the same facade: `crawlx serve --firecrawl-keys --api-key acme=fc-<32 hex>` accepts an `fc-` key on `/compat/firecrawl`, and the Python and Node SDKs, the `firecrawl` CLI and LangChain's loader run against it in `cargo test -p crawlx-cli --test sdk_python` (installs the packages from PyPI and npm, skips when they are unreachable). Base URLs per client (the Python SDK drops a path prefix and needs a `/v2/*` rewrite), the endpoints each integration calls and what does not work (`/v1`-only tools such as Flowise): [`docs/integrations.md`](docs/integrations.md).
-
-The Katana-style flags map onto the request: scope (`--field-scope fqdn|rdn|dn|none`, `--crawl-scope`/`--crawl-out-scope` URL regexes, `--exclude-hosts`, `--strategy`, `--max-pages-per-host`, `--known-files`, `--extension-match`/`--extension-filter`/`--no-default-ext-filter`, `--no-js-endpoints`), filters (`--filter-similar[-threshold|-budget]`, `--content-similar off|simhash|tfidf|bm25` with `-distance|-threshold|-budget`, `--filter-page-type`), rate limits (`--rate-limit[-minute]`, `--host-rate-limit[-minute]`, `--concurrency`), fetch (`--max-response-size`, `--timeout` seconds, `--retries`, `--no-redirects`, `--proxy`), extraction (`--custom-field-config` YAML/JSON in katana's `field-config.yaml` shape, `--detect-secrets`, `--form-extraction`/`--no-form-extraction`), browser (`--page-hooks`, `--page-load-strategy`, `--dom-wait-time` seconds) and output (`--display-out-scope`, `--jsonl` writing `results.jsonl`, `--field`/`--output-template` printing one line per value, `--store-fields DIR` wordlists). With `--request <json>` the flags override the file's fields. `crawlx worker --cdp-ws-url ws://… [--no-incognito]` attaches to a running Chrome instead of launching one.
-
-JavaScript endpoint mining uses `extract.javascript.mode=off|regex|ast|both`
-in native request JSON (or `[crawl.extract.javascript]` with `mode = "ast"` in
-TOML configuration). Native requests default to `both`. `crawlx crawl
---javascript-mode MODE` selects the exact miners; `--js-crawl` selects regex,
-`--jsluice` selects AST, and combining those two switches selects both.
-Explicit `--javascript-mode` conflicts with those switches and
-`--no-js-endpoints`. Higher-priority command-line selections replace YAML
-JavaScript switches as a group and override request-body configuration.
-Off keeps structural HTML links, script sources and header discovery.
-Regex never parses JavaScript; AST never runs regex, including after malformed
-or oversized source. Both retains the existing regex fallback when AST parsing
-fails or exceeds its 4 MiB bound. Selecting AST or both without the `js-ast`
-feature returns an explicit unavailable error, never a silent regex fallback.
-The standalone extractor's unspecified default follows its compiled miners
-(both with `js-ast`, regex without it).
-
-
-`crawlx crawl` and `crawlx export` accept `--store-field qurl,key` (comma-separated,
-repeatable) to select wordlist fields independently of `--field` and `--output-template`.
-`--store-fields DIR` retains its directory meaning; `--store-field-dir DIR` is an alias.
-Without an explicit selector, directory-only usage keeps the displayed/template fields.
-With a selector but no directory, crawl writes under `<--output>/katana_field`; export
-writes `katana_field` beside `--out`, otherwise beside the source report, otherwise under
-the standard `./crawlx-out` output directory for database runs. Templates do not add fields
-to an explicit stored list. Valid custom field names read retained `metadata.custom_fields`;
-missing custom values produce no wordlist entries. Wordlists retain their per-host sanitized
-filenames and append only first-seen values.
-Explicit wordlists use the JSONL page-admission rules: URL/extension filters, page-type
-exclusions and DSL conditions. Regexes are evaluated against the URL for this admission,
-not display/template values. A missing template field suppresses display lines but does
-not suppress selected wordlists. Directory-only legacy storage still requires an emitted
-display line. Text display retains its existing per-line filtering.
-
-Captcha solving is opt-in: `--captcha-solver-provider capsolver` (`-csp` / `-captcha-solver-provider`, or `CAPTCHA_SOLVER_PROVIDER`) requires a key. Use `--captcha-solver-key-ref env://MY_CAPTCHA_KEY` or `file:///run/secrets/captcha-key`; `--captcha-solver-key` (`-csk` / `-captcha-solver-key`, or `CAPTCHA_SOLVER_KEY`) keeps a literal key only in process memory behind a transient resolver reference. Explicit key references override ambient keys. A key without a provider does not enable solving, and unknown providers fail. YAML configuration uses these long flag names. JSON requests use `crawl.captcha` with `provider`, `key_ref`, `endpoint`, `timeout_seconds` and `poll_interval_ms`; TOML wraps the request in `[crawl]`, so solver settings use `[crawl.crawl.captcha]`. Neither request serialization nor argument debugging includes a literal key.
-
-The endpoint defaults to `https://api.capsolver.com/`; `--captcha-solver-endpoint` accepts HTTPS or explicit HTTP IP-loopback fixture endpoints only. `--captcha-solver-timeout-seconds` defaults to 120 and bounds the entire solve, including response bodies; `--captcha-solver-poll-interval-ms` defaults to 1000. Task creation is never retried. Task mappings follow [Katana's MIT-licensed CapSolver integration](https://github.com/projectdiscovery/katana/blob/main/pkg/engine/headless/captcha/capsolver/capsolver.go). Tests use local fixtures; external provider availability and account access are not verified.
-
-Captcha configuration requires an enabled browser plane; static-only crawls reject it. Callback delivery passes through the safety kernel as an `Unclassified` action, so the default `read_only` profile refuses delivery. Use `--profile test_environment` only for controlled targets you are authorized to test; configuring a solver never bypasses action admission.
-
-Supported widgets are reCAPTCHA v2/v3 and Enterprise variants, Turnstile, and hCaptcha. The browser fills each detected widget's response fields and invokes only its recorded callback or v3 promise resolver; it does not submit a form. Direct form submission during callback delivery is refused. Each widget gets at most one billed attempt per document, including ambiguous failures. Callback delivery has a separate ten-second bound and observes crawl cancellation. Keys and tokens are redacted from observations, console output, traffic metadata, page HTML/JSON, and storage exports. Full response-body capture, screenshots, PDFs, and raw DOM artifacts are refused with solving enabled because binary or opaque content cannot be safely redacted.
-
-Tests use controlled fixtures, not a live provider: `cargo test -p crawlx-browser --test captcha_transport`, `cargo test -p crawlx-browser --test captcha_widgets` (needs the pinned Chromium) and `cargo test -p crawlx-safety --test captcha`. An authorized operator smoke command is `CAPTCHA_SOLVER_PROVIDER=capsolver CAPTCHA_SOLVER_KEY=... crawlx crawl https://controlled.example.test/challenge --mode dynamic --profile test_environment --limit-urls 1`; it needs a real provider account and a controlled target you are authorized to test.
-
-## Walkthrough (CrawlerGym + PostgreSQL + Chromium)
-
-```
-gym-server --bind 127.0.0.1:34635                      # 14 fixtures under /<id>/
-export DB=postgres://crawlx@127.0.0.1:54329/crawlx CRAWLX_ALLOW_UNPINNED=1
-crawlx migrate --database-url $DB
-# static plane: prints discovered 90 / admitted 30 / deduplicated 55 /
-# policy_blocked 3 / robots_blocked 2 / succeeded 28 / failed 2 and writes 28 pages.
-crawlx crawl http://127.0.0.1:34635/s1/ --mode static --authorization-record authz.local.json \
-  --allow-private-networks --seed 20261019 --trailing-slash strip --database-url $DB --output ./out/static
-# observe only: one state with an AX artifact; the metadata-address request is blocked.
-crawlx crawl http://127.0.0.1:34635/d1/ --mode dynamic --observe-only --authorization-record authz.local.json \
-  --allow-private-networks --seed 20261019 --database-url $DB --output ./out/observe
-crawlx inspect states <run-id> --database-url $DB; crawlx inspect epochs <run-id> --database-url $DB
-# read_only interaction. kill -9 mid-action, then:
-crawlx worker --recover --database-url $DB             # intended -> unknown -> reconciled, never re-executed
-crawlx inspect actions <run-id> --status reconciled --database-url $DB
-# API: serve + worker must share --artifacts-dir when no S3-compatible store is configured. A PostgreSQL worker also
-# needs an artifact key provider (CRAWLX_ARTIFACT_KEY_FILE or CRAWLX_ARTIFACT_KMS_KEY_ID) and CRAWLX_SECRET_REDIS_URL;
-# the API needs the key provider (see docs/design/data-and-secrets.md).
-crawlx serve --bind 127.0.0.1:38080 --database-url $DB --artifacts-dir ./crawlx-artifacts --api-key <tenant-uuid>=cx_live_<26 chars>
-crawlx worker --database-url $DB --artifacts-dir ./crawlx-artifacts
-```
-
-The authorization record covers the gym origin and `127.0.0.0/8`.
+- **Documentation:** [docs/README.md](docs/README.md). Operators: [runbooks](docs/ops/runbooks.md).
+- **Bugs and feature requests:** open an issue with the matching form. Include the version or commit and a
+  minimal reproduction, and remove credentials and captured third-party content first.
+- **Questions:** use the question form after searching the docs and closed issues.
+- **Conduct concerns:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the checks, coding standards and
+review flow. The [roadmap](docs/roadmap.md) lists open work that is a good place to start.
+
+## Support the project
+
+If crawlx saves you time, a star helps others find it.
+
+[![Stars](https://img.shields.io/github/stars/noxred-research/crawlx?style=social)](https://github.com/noxred-research/crawlx/stargazers)
 
 ## License
 
-CrawlX is licensed under [GNU AGPL version 3 only](LICENSE)
-(`AGPL-3.0-only`), not “version 3 or later.” Third-party dependencies, vendored
-sources, and embedded resources retain their own licenses and notices.
+crawlx is licensed under the [GNU AGPL version 3 only](LICENSE) (`AGPL-3.0-only`), not “version 3 or
+later.” Third-party dependencies, vendored sources and embedded resources keep their own licenses and
+notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+crawlx is built and intended for security research and authorized testing only (see
+[Responsible use](#responsible-use)); this is a project policy and does not change the license.
+
+### Project owners
+
+crawlx is owned and maintained by:
+
+- [Noxtica](https://noxtica.com)
+- [NoxRed Security Research](https://noxred.ai)
+- [CrawlX](https://crawlx.dev)
+- [Kaan Keskin](https://www.linkedin.com/in/keskinkaan/)
+- [Onur Yalcin](https://www.linkedin.com/in/imonuryalcin/)

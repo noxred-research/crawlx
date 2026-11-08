@@ -275,7 +275,7 @@ impl crawlx_core::browser::NavigationGuard for BudgetNavigationGuard {
         if self
             .allowance
             .requests
-            .fetch_update(
+            .try_update(
                 std::sync::atomic::Ordering::AcqRel,
                 std::sync::atomic::Ordering::Acquire,
                 |left| left.checked_sub(1),

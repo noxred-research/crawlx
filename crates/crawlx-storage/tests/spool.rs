@@ -95,7 +95,7 @@ impl ArtifactBlobs for BackendHandle {
         }
         if self
             .failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
             .is_ok()
         {
             return Err(StoreError::Unavailable("deterministic outage".into()));
@@ -111,7 +111,7 @@ impl ArtifactBlobs for BackendHandle {
         self.head_attempts.fetch_add(1, Ordering::SeqCst);
         if self
             .head_failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
             .is_ok()
         {
             return Err(StoreError::Unavailable("deterministic head outage".into()));
@@ -123,7 +123,7 @@ impl ArtifactBlobs for BackendHandle {
         if !key.starts_with("_index/")
             && self
                 .delete_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok()
         {
             return Err(StoreError::Unavailable(

@@ -246,7 +246,9 @@ impl RobotsTxt {
             .iter()
             .filter_map(|g| g.crawl_delay)
             .fold(None, |acc: Option<f64>, d| Some(acc.map_or(d, |a| a.max(d))))?;
-        Some(Duration::from_secs_f64(secs).min(MAX_CRAWL_DELAY))
+        // Parsing keeps only finite, non-negative values, so a failed conversion means the
+        // value exceeds `Duration`'s range: that is a delay above the cap, not an error.
+        Some(Duration::try_from_secs_f64(secs).map_or(MAX_CRAWL_DELAY, |d| d.min(MAX_CRAWL_DELAY)))
     }
 }
 
@@ -801,6 +803,12 @@ mod tests {
         assert_eq!(
             RobotsTxt::parse(b"User-agent: *\nCrawl-delay: abc\n").crawl_delay(UA),
             None
+        );
+        // fuzz finding: a finite value beyond `Duration`'s range is capped, never a panic
+        let huge = format!("User-agent: *\nCrawl-delay: {}\n", "7".repeat(300));
+        assert_eq!(
+            RobotsTxt::parse(huge.as_bytes()).crawl_delay(UA),
+            Some(MAX_CRAWL_DELAY)
         );
         assert_eq!(
             RobotsTxt::parse(b"User-agent: *\nCrawl-delay: -3\n").crawl_delay(UA),

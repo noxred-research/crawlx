@@ -246,7 +246,7 @@ impl ProtocolRuntime {
         let scope = self.scope(run, tenant, attempt, &route.policy_revision, zdr);
         let allowance = requests.load(Ordering::Acquire);
         requests
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
             .map_err(|_| ProtocolError::Limit)?;
         let resource = if route.delegate_id.as_deref() == Some("native_whois") {
             let mut registry = self
@@ -285,7 +285,7 @@ impl ProtocolRuntime {
         };
         let extra = resource.network_requests.saturating_sub(1);
         requests
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(extra))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(extra))
             .map_err(|_| ProtocolError::Limit)?;
         Ok(resource)
     }

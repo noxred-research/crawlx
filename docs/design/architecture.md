@@ -56,22 +56,10 @@ hash or an ordering. Callers pass timestamps in; randomness comes from a seed.
 
 ## Processes
 
-```
-Clients / SDKs
-      |
-      v
-API process  (crawlx serve)             Worker process  (crawlx worker, N replicas)
-  Axum router, auth, admission            lease loop
-  SSE, webhooks                           Session Actors  ---->  Chromium processes
-  Firecrawl facade                        URL-plane runners       (one incognito context
-      |                                   CPU pool                 per session)
-      |                                   browser pool
-      |                                   egress proxy (loopback) <---- Chromium and fetch traffic
-      v                                        |
- PostgreSQL <--------------------------------- +----> S3-compatible object store
-                                                +----> decision service / ONNX ranker / LLM (optional)
-                                                +----> Valkey/Redis (ZDR delivery buffer, secret registry)
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/architecture-dark.svg">
+  <img alt="crawlx architecture: clients, API process, worker process with URL plane, Session Actors, safety kernel, egress proxy and Chromium, state stores, and the web" src="../assets/architecture-light.svg">
+</picture>
 
 - **API process.** Stateless. It validates a request, runs admission, persists the run in `queued`
   status and returns; it serves everything the worker journals, streams SSE from PostgreSQL, sends

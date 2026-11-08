@@ -274,6 +274,28 @@ The Session Actor is the only code that calls a browser context. For each admitt
    cluster membership, ledger and graph updates. T2 is retried (three attempts, 100 ms to 2 s backoff);
    if it still fails the action stays `intended` and the actor halts.
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Exploration driver
+    participant K as Safety kernel
+    participant A as Session Actor
+    participant B as Browser context
+    participant J as Journal (PostgreSQL)
+    D->>K: adjudicate(proposal at epoch E)
+    K-->>D: AdmittedAction (audited)
+    D->>A: execute(action)
+    A->>B: revalidate(locator, E)
+    B-->>A: actionable + live facts
+    A->>K: confirm(action, live facts)
+    A->>J: T1 intend (status = intended)
+    A->>B: perform (native input)
+    A->>B: settle (quiescence policy)
+    A->>B: observe (after)
+    A->>J: T2 outcome + transition + traffic
+    A-->>D: outcome and new observation
+```
+
 Before step 1 and before any action riskier than a reversible preference, a checkpoint is taken if due.
 
 ### Intent journal

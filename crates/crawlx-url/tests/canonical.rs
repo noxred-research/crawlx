@@ -148,7 +148,7 @@ fn canonicalization_worked_example() {
     assert_eq!(hashed.len(), 32);
     assert_eq!(
         destination_key(&c),
-        format!("https://shop.example/invoice/:id?id=:id&page=2")
+        "https://shop.example/invoice/:id?id=:id&page=2".to_string()
     );
     let rk = c.route_key();
     assert_eq!(rk.query_schema.len(), 2);

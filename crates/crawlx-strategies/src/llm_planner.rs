@@ -320,7 +320,7 @@ impl LlmPlanner {
                 PlanStep::Select { target, option_index } => {
                     Planned::Select(resolve(*target)?, *option_index)
                 }
-                PlanStep::Press { target, key } => Planned::Press((*target).map(&resolve).transpose()?, *key),
+                PlanStep::Press { target, key } => Planned::Press((*target).map(resolve).transpose()?, *key),
                 PlanStep::NavigateKnownRoute { route } => Planned::Navigate(RouteTemplate(route.clone())),
                 PlanStep::Expect { expectation } => {
                     let e = match expectation {

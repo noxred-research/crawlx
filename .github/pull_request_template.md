@@ -1,14 +1,19 @@
 ## Summary
 
-<!-- What changes and why. Link the issue. -->
+<!-- What changes and why. Link the issue (`Fixes #123`). -->
+
+## How was it tested?
+
+<!-- The exact commands you ran and what you observed. -->
 
 ## Checks
 
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
 - [ ] `cargo test --workspace` (tests added or updated for the change)
-- [ ] `ci/lint-deps.sh` and `ci/provenance-check.sh`
+- [ ] `ci/lint-deps.sh`, `ci/lint-public.sh` and `ci/provenance-check.sh`
 - [ ] Docs and `CHANGELOG.md` updated for behavior, configuration, API or schema changes
+- [ ] I have read the [contributing guide](https://github.com/noxred-research/crawlx/blob/main/CONTRIBUTING.md) and agree to the [Code of Conduct](https://github.com/noxred-research/crawlx/blob/main/CODE_OF_CONDUCT.md)
 
 ## Safety impact
 

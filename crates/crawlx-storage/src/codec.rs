@@ -134,12 +134,10 @@ pub(crate) fn unpack_u64s(b: &[u8]) -> Result<Vec<u64>, StoreError> {
             "minhash length is not a multiple of 8".to_owned(),
         ));
     }
-    Ok(b.chunks_exact(8)
-        .map(|c| {
-            let mut a = [0u8; 8];
-            a.copy_from_slice(c);
-            u64::from_le_bytes(a)
-        })
+    Ok(b.as_chunks::<8>()
+        .0
+        .iter()
+        .map(|c| u64::from_le_bytes(*c))
         .collect())
 }
 

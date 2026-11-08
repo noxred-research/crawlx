@@ -1,0 +1,135 @@
+name: security
+
+# Supply-chain checks that need the dependency graph or the public repository:
+#   - dependency-review: on pull requests, fails when the change introduces a dependency with a
+#     known vulnerability of high severity or worse, or with a license the project does not allow.
+#   - scorecard: a weekly OpenSSF Scorecard run of the default branch; the result is uploaded to
+#     code scanning and, because the repository is public, published to the Scorecard API.
+# Advisories for the locked Rust dependencies are also checked by `cargo deny` in ci.yml, which
+# runs on every push and nightly.
+#
+# Both jobs only run once the repository is public: the dependency graph snapshot API,
+# code scanning uploads and result publication are not available to a private repository on
+# every plan. Until then the workflow runs only its `authorize` job.
+#
+# Workflow gate. Only code owners (the `*` rule of .github/CODEOWNERS on the default
+# branch) can run this workflow: the first job, `authorize`, checks the actor, the triggering
+# actor and, for pull requests, the author and that the head branch is not a fork. Every other
+# job needs it. The privileged fork-PR trigger and `workflow_run` are deliberately not used,
+# and the gate refuses any event outside the allow-list below.
+#
+# This gate is defense in depth. The authoritative controls are repository settings that the
+# maintainers apply: fork pull request workflows disabled (or approval required for all
+# external contributors), and a branch ruleset that requires code-owner review.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 5 * * 2" # weekly (Tuesday)
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.event.schedule || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Workflow gate (see the header comment). Every other job depends on this one.
+  authorize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      ok: ${{ steps.gate.outputs.ok }}
+    steps:
+      - name: Only code owners' events run workflows
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          deny() {
+            echo "::notice title=workflow gate::not run: $1"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          case "$EVENT_NAME" in
+            push|pull_request|schedule|workflow_dispatch) ;;
+            *) deny "event ${EVENT_NAME} is not allowed" ;;
+          esac
+          # CODEOWNERS comes from the default branch through the API, never from the checkout
+          # of the event under test, so a change to the file cannot authorize itself.
+          branch="${DEFAULT_BRANCH:-$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)}"
+          codeowners=$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/CODEOWNERS?ref=${branch}" --jq .content | base64 -d)
+          # Users owning the `*` rule (the last `*` line wins, as in GitHub). Team owners
+          # (@org/team) cannot be resolved with the workflow token and are ignored.
+          owners=$(printf '%s\n' "$codeowners" | awk '
+            $1 == "*" {
+              o = ""
+              for (i = 2; i <= NF; i++) {
+                if ($i ~ /^#/) break
+                if ($i ~ /^@[A-Za-z0-9-]+$/) o = o tolower(substr($i, 2)) "\n"
+              }
+            }
+            END { printf "%s", o }')
+          [ -n "$owners" ] || deny "no user owner for the * rule in CODEOWNERS on ${branch}"
+          is_owner() {
+            [ -n "$1" ] && printf '%s\n' "$owners" | grep -qxF -- "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+          }
+          is_owner "$ACTOR" || deny "actor is not a code owner"
+          is_owner "$TRIGGERING_ACTOR" || deny "triggering actor is not a code owner"
+          if [ "$EVENT_NAME" = pull_request ]; then
+            is_owner "$PR_AUTHOR" || deny "pull request author is not a code owner"
+            [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ] || deny "pull request comes from a fork"
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: authorize
+    if: needs.authorize.outputs.ok == 'true' && github.event_name == 'pull_request' && github.event.repository.private == false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: never
+
+  scorecard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: authorize
+    if: needs.authorize.outputs.ok == 'true' && github.event_name != 'pull_request' && github.event.repository.private == false
+    permissions:
+      contents: read
+      actions: read
+      security-events: write # upload the SARIF result to code scanning
+      id-token: write # sign the published result
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: scorecard.sarif
+          category: scorecard

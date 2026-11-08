@@ -10,7 +10,36 @@ license under the AGPL, and do not copy code from projects whose licenses are in
 (see [clean-room rules](#clean-room-rules-for-the-firecrawl-compatibility-layer)).
 
 Security vulnerabilities are **not** reported through issues or pull requests; follow
-[SECURITY.md](SECURITY.md).
+[SECURITY.md](SECURITY.md). Everyone taking part in the project is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Intended use and what we accept
+
+crawlx is built for security research and authorized testing only: testing systems you own or have written
+authorization to test. Contributions must fit that purpose. We will decline changes that:
+
+- add capabilities aimed at unauthorized scraping, credential attacks, exploitation, or evading a site's
+  protections;
+- weaken, bypass or add exceptions to the safety kernel, the egress (SSRF) policy, authorization-record
+  enforcement, robots handling or the politeness limits;
+- make a model able to authorize an action (models advise; the kernel decides);
+- ship real-world target lists, harvested data, credentials or exploit payloads in code, fixtures or tests.
+
+Test only against local fixtures (the CrawlerGym server) or systems you own. Never point your development
+runs at someone else's site, and never include evidence from one in an issue or pull request. See the
+[safety model](docs/design/safety-model.md) and [Responsible use](README.md#responsible-use).
+
+## Choose your path
+
+| If you want to | Start here |
+| --- | --- |
+| Report a bug or request a feature | Open an issue with the matching form; search existing issues first |
+| Ask how to use or deploy crawlx | The [docs](docs/README.md), then the question form |
+| Fix a typo or improve documentation | A pull request against `docs/` or the README; no issue needed |
+| Change crawler behavior | Open an issue first, then follow the [contribution flow](#contribution-flow) |
+| Pick something to work on | The [roadmap](docs/roadmap.md) |
+| Run the crawler locally to develop | [Development setup](#development-setup) and the [walkthrough](docs/walkthrough.md) |
+| Operate or deploy crawlx | [Operations](docs/ops/README.md) and the [runbooks](docs/ops/runbooks.md) |
 
 ## Where to start
 
@@ -40,6 +69,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ci/lint-deps.sh
+ci/lint-public.sh
 ```
 
 Also run `ci/provenance-check.sh` when you touch `crawlx-url`, `crawlx-policy`,
@@ -125,22 +155,38 @@ comparison inside `bench/differential/`; and add no AGPL/GPL-family dependency.
 
 ## Contribution flow
 
-1. Fork the repository and create a branch from `main`.
-2. Make focused commits. A pull request should do one thing.
-3. Run the [checks](#checks-to-run-before-opening-a-pull-request) locally.
-4. Open a pull request and fill in the template. Describe what changed, why, and its safety
+1. Fork the repository and create a branch from `main` whose name describes the change.
+2. Reproduce the current behavior before editing, and add or update tests for the successful
+   path and the relevant failures.
+3. Make focused commits. A pull request should do one thing, with the smallest change that
+   satisfies the tests.
+4. Run the [checks](#checks-to-run-before-opening-a-pull-request) locally.
+5. Open a pull request and fill in the template: why the change is needed, what behavior
+   changed, the exact checks you ran, and any safety, configuration, migration or deployment
    impact.
-5. A code owner reviews the pull request. Expect requests for tests, documentation, or a
-   narrower scope.
+6. A code owner reviews the pull request. Expect requests for tests, documentation, or a
+   narrower scope. Do not bypass a failing check; fix it, or describe an unrelated failure
+   precisely enough for a reviewer to reproduce it.
+
+Keep credentials, local environment files, raw user data and generated secrets out of commits
+and pull requests.
 
 ### Continuous integration for external pull requests
 
 GitHub Actions workflows run only for pull requests from code owners. For a pull request from
 a fork, a maintainer runs the checks above (and the relevant suites with PostgreSQL, Redis and
 Chromium) and reports the result on the pull request. A green local run from you speeds this up;
-it does not replace the maintainer's run.
+it does not replace the maintainer's run. Dependency-update pull requests are handled the same way.
+
+## Getting help
+
+- Questions: the [docs](docs/README.md), then the question issue form.
+- Bugs and feature ideas: the matching issue form.
+- Security: [SECURITY.md](SECURITY.md), never a public issue.
+- Conduct concerns: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Conduct
 
 Be respectful and assume good faith. Discussions stay technical. Maintainers may close issues or
-pull requests that are abusive, off-topic or unsafe to run.
+pull requests that are abusive, off-topic or unsafe to run. The full policy is in the
+[Code of Conduct](CODE_OF_CONDUCT.md).
