@@ -77,8 +77,8 @@ lopdf = { version = "0.46", default-features = false }
 cfb = "0.16"
 encoding_rs = "0.8"
 scraper = "0.29"
-html5ever = "0.29"
-ego-tree = "0.10"
+html5ever = "0.40"
+ego-tree = "0.11"
 # OCR (`crawlx-extract::parse::ocr`): `image` decodes/rotates/encodes scans (PNG, JPEG, GIF, BMP, TIFF incl. CCITT,
 # WebP; no rayon); `ocrs` + `rten` are the optional pure-Rust backend (`ocrs` feature of crawlx-extract; models are
 # loaded from `CRAWLX_OCR_MODELS`, nothing is downloaded at build or run time). All MIT OR Apache-2.0.
