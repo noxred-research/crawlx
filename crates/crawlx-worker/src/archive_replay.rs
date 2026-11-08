@@ -14,7 +14,8 @@ use crawlx_policy::fixture_evaluation::{FixtureEvaluationLease, FixtureEvaluatio
 use crawlx_storage::archive::collection::{ApprovedLocalDependency, ArchiveCollection};
 use crawlx_storage::archive::{ArchiveError, Limits};
 use hmac::{KeyInit as _, Mac as _};
-use rand::RngCore as _;
+use rand::rngs::{SysError, SysRng};
+use rand::TryRng as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
@@ -76,7 +77,7 @@ pub enum ReplayError {
     Cleanup(#[source] crate::error::SessionError),
     /// The operating system did not supply cryptographic capability entropy.
     #[error("offline replay capability entropy unavailable")]
-    Entropy(#[source] rand::Error),
+    Entropy(#[source] SysError),
     /// Secret request controls could not be installed.
     #[error("offline replay request controls failed")]
     Controls(#[from] crawlx_core::CoreError),
@@ -446,7 +447,7 @@ struct LocalAccess {
 impl LocalAccess {
     fn new() -> Result<Self, ReplayError> {
         let mut entropy = zeroize::Zeroizing::new([0u8; 32]);
-        rand::rngs::OsRng
+        SysRng
             .try_fill_bytes(&mut *entropy)
             .map_err(ReplayError::Entropy)?;
         let mut value = String::with_capacity(64);

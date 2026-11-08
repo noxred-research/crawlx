@@ -20,7 +20,9 @@ use crawlx_policy::{AdmissionError, TenantLimits};
 use crawlx_scheduler::RunPlanner;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
-use rand::RngCore as _;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
+use rand::Rng as _;
 use serde_json::{json, Value};
 
 /// A freshly persisted run.
@@ -177,7 +179,7 @@ async fn create_admitted_run(
     if crawl.seed.is_none() {
         // Server-drawn seed: any value in 0..2^63, from the OS entropy source.
         let mut raw = [0u8; 8];
-        rand::rngs::OsRng.fill_bytes(&mut raw);
+        UnwrapErr(SysRng).fill_bytes(&mut raw);
         crawl.seed = Some(u64::from_le_bytes(raw) >> 1);
     }
     let record = match crawl.safety.authorization_record_ref {

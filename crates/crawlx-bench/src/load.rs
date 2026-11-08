@@ -14,7 +14,7 @@
 use crate::error::BenchError;
 use crate::stats::quantile;
 use crawlx_core::seed::CrawlSeed;
-use rand::Rng as _;
+use rand::RngExt as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -466,8 +466,8 @@ pub async fn run(cfg: &LoadConfig) -> Result<LoadReport, BenchError> {
     let start = Instant::now();
     for i in 0..ticks {
         tokio::time::sleep_until((start + interval * i).into()).await;
-        let route = cfg.mix.pick(rng.gen_range(0..total));
-        let run_index = rng.gen_range(0..cfg.runs);
+        let route = cfg.mix.pick(rng.random_range(0..total));
+        let run_index = rng.random_range(0..cfg.runs);
         let Ok(permit) = in_flight.clone().try_acquire_owned() else {
             dropped += 1;
             continue;

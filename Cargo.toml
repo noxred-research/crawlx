@@ -30,8 +30,8 @@ bytes = "1"
 # hashing / ids / rng
 blake3 = "1"
 uuid = { version = "1", features = ["v7", "serde"] }
-rand = "0.8"
-rand_chacha = "0.3"
+rand = "0.10"
+rand_chacha = "0.10"
 # errors / logging
 thiserror = "2"
 tracing = "0.1"
@@ -122,7 +122,7 @@ mimalloc = { version = "0.1.52", features = ["no_thp"] }
 pprof = { version = "0.15", default-features = false, features = ["protobuf-codec"] }
 parking_lot = "0.13"
 # Shared volatile ZDR delivery; server persistence is refused by the adapter.
-redis = { version = "0.32", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-webpki-roots", "script"] }
+redis = { version = "1.8", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-webpki-roots", "script"] }
 indexmap = { version = "2", features = ["serde"] }
 ipnet = { version = "2", features = ["serde"] }
 # public suffix list for `scope.hostScope: rdn`; bundled list, no network

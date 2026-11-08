@@ -7,7 +7,7 @@
 //! enumeration for small samples (no approximation noise).
 
 use crawlx_core::seed::CrawlSeed;
-use rand::Rng as _;
+use rand::RngExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -194,7 +194,7 @@ pub fn paired_bootstrap(
     for _ in 0..resamples {
         let mut acc = 0.0;
         for _ in 0..n {
-            acc += diffs[rng.gen_range(0..n)];
+            acc += diffs[rng.random_range(0..n)];
         }
         means.push(acc / f64::from(u32::try_from(n).unwrap_or(u32::MAX)));
     }

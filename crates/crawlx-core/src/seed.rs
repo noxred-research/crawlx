@@ -1,5 +1,5 @@
 //! Seeded randomness. All tie-breaks and generated
-//! values derive from `crawl_seed`; `rand::thread_rng` is lint-denied.
+//! values derive from `crawl_seed`; `rand::rng` (formerly `rand::thread_rng`) is lint-denied.
 
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -38,7 +38,7 @@ impl CrawlSeed {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use rand::RngCore as _;
+    use rand::Rng as _;
 
     #[test]
     fn same_inputs_same_stream() {

@@ -20,7 +20,7 @@ use crawlx_scheduler::{Reaper, ReaperConfig};
 use crawlx_storage::MemoryStore;
 use crawlx_worker::chaos;
 use crawlx_worker::{SessionError, SessionHandle, ShutdownReason, StateAnalyzer};
-use rand::Rng as _;
+use rand::RngExt as _;
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
@@ -407,7 +407,7 @@ async fn random_point_kills_keep_the_journal_invariants() {
     let mut picked = [0usize; 5];
     for i in 0..ITERATIONS {
         chaos::reset();
-        let choice = rng.gen_range(0..5usize);
+        let choice = rng.random_range(0..5usize);
         picked[choice] += 1;
         let r = if choice < POINTS.len() {
             crash_and_recover(POINTS[choice]).await

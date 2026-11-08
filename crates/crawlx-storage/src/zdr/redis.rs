@@ -92,8 +92,8 @@ impl RedisPages {
         let client = ::redis::Client::open(url)
             .map_err(|_| StoreError::Backend("zdr redis connection configuration is invalid".into()))?;
         let config = ::redis::AsyncConnectionConfig::new()
-            .set_connection_timeout(std::time::Duration::from_secs(10))
-            .set_response_timeout(std::time::Duration::from_secs(30));
+            .set_connection_timeout(Some(std::time::Duration::from_secs(10)))
+            .set_response_timeout(Some(std::time::Duration::from_secs(30)));
         let connection = client
             .get_multiplexed_async_connection_with_config(&config)
             .await

@@ -29,6 +29,11 @@ updates:
     groups:
       cargo-minor-patch:
         update-types: [minor, patch]
+    ignore:
+      # rten moves in lockstep with ocrs (ocrs 0.13 requires rten ^0.26); a lone rten bump
+      # cannot build. Remove once a newer ocrs is taken.
+      - dependency-name: rten
+        update-types: ["version-update:semver-minor"]
 
   # No separate `/fuzz` entry: the fuzz crate depends on the workspace crates by path, so
   # Dependabot resolved its updates into the root `Cargo.toml` without touching the root

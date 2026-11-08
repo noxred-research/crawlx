@@ -10,7 +10,9 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use crawlx_core::{TenantId, Timestamp};
 use parking_lot::Mutex;
-use rand::RngCore;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
+use rand::Rng as _;
 use std::collections::{BTreeSet, HashMap};
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -35,7 +37,7 @@ const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 #[must_use]
 pub fn generate_key() -> String {
     let mut bytes = [0u8; 17];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
     let mut bits = 0u32;
     let mut have = 0u32;
     let mut out = String::with_capacity(KEY_PREFIX.len() + SECRET_LEN);
@@ -60,7 +62,7 @@ pub fn generate_key() -> String {
 #[must_use]
 pub fn generate_firecrawl_key() -> String {
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
     format!("{FIRECRAWL_KEY_PREFIX}{}", hex::encode(bytes))
 }
 

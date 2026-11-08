@@ -12,7 +12,7 @@ use crawlx_core::repo::EdgeRecord;
 use crawlx_core::seed::CrawlSeed;
 use crawlx_core::{ActionContextId, CrawlRunId, StateClusterId, TrustLane};
 use crawlx_graph::{Confounders, EdgeTarget, EnablementGraph, TransitionObservation};
-use rand::Rng;
+use rand::RngExt as _;
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
@@ -60,23 +60,23 @@ fn simulate(seed: u64, filtered: bool) -> SimResult {
     let mut g = EnablementGraph::new(CrawlRunId(Uuid::from_u128(7)));
     let mut pairs = Vec::new();
     for i in 0..TRANSITIONS {
-        let a = rng.gen_range(0..ACTIONS);
+        let a = rng.random_range(0..ACTIONS);
         let mut revealed: Vec<ElementIdentityHash> = Vec::new();
         let mut baseline: Vec<ElementIdentityHash> = Vec::new();
         let mut timer_fired = false;
-        if rng.gen_bool(TRUE_RATE) {
+        if rng.random_bool(TRUE_RATE) {
             revealed.push(true_target(a));
         }
         for j in 0..TIMERS {
-            if rng.gen_bool(TIMER_RATE) {
+            if rng.random_bool(TIMER_RATE) {
                 timer_fired = true;
                 revealed.push(timer_target(j));
-                if filtered && rng.gen_bool(BASELINE_CATCH) {
+                if filtered && rng.random_bool(BASELINE_CATCH) {
                     baseline.push(timer_target(j));
                 }
             }
         }
-        let busy = rng.gen_bool(if timer_fired { CONFOUNDER_WHEN_TIMER } else { 0.05 });
+        let busy = rng.random_bool(if timer_fired { CONFOUNDER_WHEN_TIMER } else { 0.05 });
         let confounders = if filtered && busy {
             Confounders {
                 ws_frames: 0,
