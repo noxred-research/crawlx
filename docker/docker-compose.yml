@@ -494,7 +494,7 @@ services:
       dockerfile: docker/Dockerfile.gym
       args:
         # the `debug` flavour of the same distroless base adds /busybox/wget for the healthcheck
-        BASE_IMAGE: gcr.io/distroless/cc-debian12:debug-nonroot
+        BASE_IMAGE: gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc
     restart: "no"
     # gym-server stops on SIGINT only (tokio ctrl_c)
     stop_signal: SIGINT
