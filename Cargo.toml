@@ -120,7 +120,7 @@ mimalloc = { version = "0.1.52", features = ["no_thp"] }
 # CPU profiling for `crawlx serve|worker --pprof-bind`: `protobuf-codec` is the pure-Rust encoder of the
 # pprof `profile.proto` (no `protoc`), `cpp` (C++ symbol demangling) is off.
 pprof = { version = "0.15", default-features = false, features = ["protobuf-codec"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 # Shared volatile ZDR delivery; server persistence is refused by the adapter.
 redis = { version = "0.32", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-webpki-roots", "script"] }
 indexmap = { version = "2", features = ["serde"] }
