@@ -253,11 +253,18 @@ jobs:
           tool: cargo-nextest,cargo-llvm-cov
       - name: Unit and integration tests with coverage (nextest under cargo-llvm-cov)
         run: cargo llvm-cov nextest --no-fail-fast --workspace --exclude crawlx-bench --lcov --output-path lcov.info
-      - run: cargo nextest run --no-fail-fast -p crawlx-bench -E 'not test(/browser_/)'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-lcov
           path: lcov.info
+      - name: Free the coverage build before the bench tests
+        # The instrumented build fills most of the hosted runner disk; the bench crate builds
+        # in the normal target directory.
+        run: |
+          cargo llvm-cov clean --workspace
+          rm -rf target/llvm-cov-target
+          df -h /
+      - run: cargo nextest run --no-fail-fast -p crawlx-bench -E 'not test(/browser_/)'
 
   schema-snapshot:
     # Storage fault drills and the previous-release schema snapshot: the
