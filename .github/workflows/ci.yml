@@ -813,7 +813,10 @@ jobs:
           key: rust-latest
       - run: rustc --version
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --exclude crawlx-bench
+      - name: Unit suite on latest stable
+        # The trybuild compile-fail cases compare rustc's exact diagnostics, which are pinned to
+        # rust-toolchain.toml and change between releases; `unit` runs them on the pinned build.
+        run: cargo test --workspace --exclude crawlx-bench -- --skip compile_fail_cases
 
   mutants:
     # Mutation testing: cargo-mutants over the decision crates
