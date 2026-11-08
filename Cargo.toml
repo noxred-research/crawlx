@@ -99,7 +99,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 chrono = { version = "0.4", features = ["serde"] }
 # monitor schedules (crawlx-scheduler `Schedule`): IANA zones and DST-aware five-field cron evaluation
 chrono-tz = "0.10"
-icu_segmenter = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
+icu_segmenter = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
 croner = "4"
 # S3-compatible object store; TLS through rustls+ring like the rest of the workspace, not aws-lc
 aws-config = { version = "1.13", default-features = false, features = ["rt-tokio"] }
