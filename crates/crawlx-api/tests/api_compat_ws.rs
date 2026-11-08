@@ -671,8 +671,11 @@ async fn missing_or_bad_keys_are_refused_before_the_upgrade() {
     // a token that is no key at all
     let (status, _) = refused(&server, &path, Some("graphql"), None).await;
     assert_eq!(status, 401);
-    // a key with the wrong secret
-    let forged = format!("{}x", &env.key[..env.key.len() - 1]);
+    // a key with the wrong secret: the last character changed (to a different one, so the
+    // forgery never equals the real key when that already ends in the replacement)
+    let (head, last) = env.key.split_at(env.key.len() - 1);
+    let forged = format!("{head}{}", if last == "x" { "y" } else { "x" });
+    assert_ne!(forged, env.key);
     let (status, _) = refused(&server, &path, Some(&forged), None).await;
     assert_eq!(status, 401);
     // an `fc-` key is off unless `compat.firecrawlKeys` is on
