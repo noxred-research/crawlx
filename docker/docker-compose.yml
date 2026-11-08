@@ -340,7 +340,7 @@ services:
     # restart loses every run's secret authority, after which durable content writes of those runs
     # fail closed until the run ends. The ACL file is generated into a private tmpfs from the mounted
     # password secret; the password never appears in an argument or an environment variable.
-    image: valkey/valkey:8.1.3-alpine
+    image: valkey/valkey:9.1.3-alpine
     restart: unless-stopped
     user: "10001:10001"
     entrypoint: ["/bin/sh", "-ec"]
@@ -374,7 +374,7 @@ services:
   minio:
     # Same pinned image as the CI integration job (`bitnamilegacy/minio`: the upstream
     # `minio/minio` images are no longer published). S3 API on :9000, console on :9001, neither published.
-    image: bitnamilegacy/minio:2025.7.23
+    image: bitnamilegacy/minio:2025-debian-12
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
@@ -405,7 +405,7 @@ services:
     # one-shot: create the artifact bucket (versioning on) once MinIO answers. The
     # bitnami entrypoint runs a throwaway MinIO for its setup, stops it and starts the real one, and
     # /minio/health/live already answers during the first: the alias is retried across that restart.
-    image: bitnamilegacy/minio:2025.7.23
+    image: bitnamilegacy/minio:2025-debian-12
     restart: "no"
     entrypoint: ["/bin/sh", "-ceu"]
     command:
