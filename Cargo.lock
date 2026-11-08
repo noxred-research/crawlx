@@ -1854,7 +1854,7 @@ dependencies = [
  "crawlx-observe",
  "crawlx-url",
  "criterion",
- "ego-tree 0.10.0",
+ "ego-tree",
  "encoding_rs",
  "http",
  "icu_segmenter",
@@ -1865,7 +1865,7 @@ dependencies = [
  "oxc_ast 0.155.0",
  "oxc_ast_visit",
  "oxc_parser",
- "oxc_span 0.155.0",
+ "oxc_span 0.156.0",
  "peak_alloc",
  "proptest",
  "quick-xml",
@@ -2175,7 +2175,7 @@ dependencies = [
  "chrono",
  "crawlx-core",
  "criterion",
- "ego-tree 0.10.0",
+ "ego-tree",
  "parking_lot 0.13.0",
  "proptest",
  "quick-xml",
@@ -2659,12 +2659,6 @@ checksum = "26f2a8b3e564eba0877223dc343703ad0385794e882e6d13f3a4dd5c6b1f41ac"
 dependencies = [
  "cipher",
 ]
-
-[[package]]
-name = "ego-tree"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2972feb8dffe7bc8c5463b1dacda1b0dfbed3710e50f977d965429692d74cd8"
 
 [[package]]
 name = "ego-tree"
@@ -5079,7 +5073,7 @@ checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall",
+ "redox_syscall 0.5.18",
  "smallvec",
  "windows-link 0.2.1",
 ]
@@ -5091,7 +5085,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cfff060068cc18aa7815010fcaf80c68c7fb9e85fc7f5c0f9bf142c21d19826"
 dependencies = [
  "libc",
- "redox_syscall 0.9.4",
+ "redox_syscall 0.9.5",
  "smallvec",
  "windows-link 0.2.1",
 ]
@@ -5743,6 +5737,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_syscall"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
+dependencies = [
+ "bitflags 2.13.2",
+]
+
+[[package]]
 name = "ref-cast"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6173,7 +6176,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6844b5f49a5579f12ba4f89d9f7eec6d71889e4aa0bc7181821040ce66f08fff"
 dependencies = [
  "cssparser",
- "ego-tree 0.11.1",
+ "ego-tree",
  "getopts",
  "html5ever",
  "precomputed-hash",
