@@ -283,6 +283,8 @@ impl HostBucket {
 struct Pacing {
     next_allowed: Instant,
     delay: Duration,
+    /// Lower bound of `delay`: `base_delay`, raised by the origin's `robots.txt` `Crawl-delay`.
+    floor: Duration,
     ok_streak: u32,
     /// Last HTTP admission or committed browser dispatch; `None` before the first.
     last_start: Option<Instant>,
@@ -699,6 +701,7 @@ impl OriginGovernor {
             pacing: Mutex::new(Pacing {
                 next_allowed: Instant::now(),
                 delay: self.cfg.base_delay,
+                floor: self.cfg.base_delay,
                 ok_streak: 0,
                 last_start: None,
             }),
@@ -791,14 +794,14 @@ impl OriginGovernor {
     }
 
     /// Note that a permit is handed out now; count a politeness violation when it comes
-    /// sooner than `base_delay` after the origin's previous permit or while the origin's
+    /// sooner than the origin's spacing floor after its previous permit or while the origin's
     /// in-flight cap is exceeded.
     fn record_start(&self, state: &OriginState) {
         let cap = self.cfg.max_in_flight_per_origin.max(1);
         let live = cap.saturating_sub(state.sem.available_permits());
         let now = Instant::now();
         let mut p = state.pacing.lock();
-        let too_soon = p.last_start.is_some_and(|last| now < last + self.cfg.base_delay);
+        let too_soon = p.last_start.is_some_and(|last| now < last + p.floor);
         p.last_start = Some(now);
         drop(p);
         if too_soon || live > cap {
@@ -821,12 +824,15 @@ impl OriginGovernor {
                         .note_cooldown(origin, retry_after.unwrap_or_default(), true)
                 } else {
                     let jitter: f64 = self.rng.lock().gen_range(0.8..1.2);
-                    let current = state.pacing.lock().delay;
+                    let (current, floor) = {
+                        let p = state.pacing.lock();
+                        (p.delay, p.floor)
+                    };
                     let doubled = current.saturating_mul(2);
                     let delay = Duration::try_from_secs_f64(doubled.as_secs_f64() * jitter)
                         .unwrap_or(Duration::MAX)
                         .min(self.cfg.max_delay)
-                        .max(self.cfg.base_delay)
+                        .max(floor)
                         .max(current)
                         .max(retry_after.unwrap_or_default());
                     self.origin_cap.note_cooldown(origin, delay, false);
@@ -834,7 +840,7 @@ impl OriginGovernor {
                 };
                 let mut p = state.pacing.lock();
                 if !python {
-                    p.delay = delay.max(self.cfg.base_delay);
+                    p.delay = delay.max(p.floor);
                 }
                 p.ok_streak = 0;
                 if let Some(until) = Instant::now().checked_add(delay) {
@@ -846,7 +852,7 @@ impl OriginGovernor {
                 p.ok_streak = p.ok_streak.saturating_add(1);
                 if p.ok_streak >= self.cfg.decay_after {
                     p.ok_streak = 0;
-                    p.delay = (p.delay / 2).max(self.cfg.base_delay);
+                    p.delay = (p.delay / 2).max(p.floor);
                 }
             }
             _ => {}
@@ -876,8 +882,8 @@ impl OriginGovernor {
                 let state = self.state(origin);
                 let mut p = state.pacing.lock();
                 let proposal = (p.delay.saturating_add(latency / target) / 2)
-                    .max(self.cfg.base_delay)
-                    .min(self.cfg.max_delay.max(self.cfg.base_delay));
+                    .max(p.floor)
+                    .min(self.cfg.max_delay.max(p.floor));
                 if status == 200 || proposal >= p.delay {
                     p.delay = proposal;
                 }
@@ -904,6 +910,28 @@ impl OriginGovernor {
     #[must_use]
     pub fn current_delay(&self, origin: &Origin) -> Duration {
         self.state(origin).pacing.lock().delay
+    }
+
+    /// Apply `origin`'s `robots.txt` `Crawl-delay` (already capped by the robots policy):
+    /// its spacing floor becomes `max(base_delay, crawl_delay)`. Back-off, success decay and
+    /// latency feedback never take the spacing below that floor, and the next start waits
+    /// until the floor has passed since the origin's previous one. The spacing handed to the
+    /// process-wide cap and to deployment admission carries the floor too.
+    ///
+    /// Calling it again with the same value is a no-op. A lower value lowers the floor; an
+    /// already adapted spacing then decays toward it as usual.
+    pub fn set_crawl_delay(&self, origin: &Origin, crawl_delay: Duration) {
+        let state = self.state(origin);
+        let mut p = state.pacing.lock();
+        let floor = self.cfg.base_delay.max(crawl_delay);
+        if floor == p.floor {
+            return;
+        }
+        p.floor = floor;
+        p.delay = p.delay.max(floor);
+        if let Some(next) = p.last_start.and_then(|last| last.checked_add(floor)) {
+            p.next_allowed = p.next_allowed.max(next);
+        }
     }
 }
 
@@ -1179,6 +1207,75 @@ mod tests {
         let waited = t0.elapsed();
         assert!(waited >= Duration::from_secs(8), "{waited:?}");
         assert!(waited <= Duration::from_secs(12), "{waited:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn crawl_delay_spaces_the_origin_from_its_previous_start() {
+        let g = OriginGovernor::new(cfg());
+        let o = origin("https://slow.test");
+        let t0 = Instant::now();
+        // the robots.txt fetch itself, before its Crawl-delay is known
+        drop(g.acquire(&o).await.unwrap());
+        g.set_crawl_delay(&o, Duration::from_secs(2));
+        drop(g.acquire(&o).await.unwrap());
+        assert_eq!(t0.elapsed(), Duration::from_secs(2));
+        drop(g.acquire(&o).await.unwrap());
+        assert_eq!(t0.elapsed(), Duration::from_secs(4));
+        // other origins keep the configured base delay
+        let other = origin("https://fast.test");
+        let t1 = Instant::now();
+        drop(g.acquire(&other).await.unwrap());
+        drop(g.acquire(&other).await.unwrap());
+        assert_eq!(t1.elapsed(), Duration::from_millis(250));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn crawl_delay_is_a_floor_for_backoff_decay_and_latency_feedback() {
+        let g = OriginGovernor::new(GovernorConfig {
+            base_delay: Duration::from_millis(250),
+            max_delay: Duration::from_secs(1),
+            decay_after: 2,
+            ..GovernorConfig::default()
+        });
+        let o = origin("https://floor.test");
+        // a hint below the configured delay never accelerates
+        g.set_crawl_delay(&o, Duration::from_millis(100));
+        assert_eq!(g.current_delay(&o), Duration::from_millis(250));
+        g.set_crawl_delay(&o, Duration::from_secs(3));
+        assert_eq!(g.current_delay(&o), Duration::from_secs(3));
+        // back-off above max_delay is not capped below the floor
+        g.on_response(&o, 429, None);
+        let backed_off = g.current_delay(&o);
+        assert!(backed_off >= Duration::from_secs(3), "{backed_off:?}");
+        for _ in 0..20 {
+            g.on_response(&o, 200, None);
+        }
+        assert_eq!(g.current_delay(&o), Duration::from_secs(3));
+        g.set_pacing_dialect(PacingDialectV1::ScrapyAutothrottleV1, 1);
+        g.on_response_with_latency(&o, 200, None, Some(Duration::ZERO), false)
+            .await
+            .unwrap();
+        assert_eq!(g.current_delay(&o), Duration::from_secs(3));
+        // a lower hint from a refreshed robots.txt lets the spacing decay to it
+        g.set_pacing_dialect(PacingDialectV1::Native, 1);
+        g.set_crawl_delay(&o, Duration::ZERO);
+        for _ in 0..20 {
+            g.on_response(&o, 200, None);
+        }
+        assert_eq!(g.current_delay(&o), Duration::from_millis(250));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn crawl_delay_reaches_governors_sharing_the_origin_cap() {
+        let shared = Arc::new(GlobalOriginCap::new(4));
+        let learned = OriginGovernor::with_global_cap(cfg(), Arc::clone(&shared));
+        let other = OriginGovernor::with_global_cap(cfg(), shared);
+        let o = origin("https://shared-delay.test");
+        learned.set_crawl_delay(&o, Duration::from_secs(2));
+        let t0 = Instant::now();
+        drop(learned.acquire(&o).await.unwrap());
+        drop(other.acquire(&o).await.unwrap());
+        assert_eq!(t0.elapsed(), Duration::from_secs(2));
     }
 
     /// Serializes the tests that assert deltas of the process-global violation counter.

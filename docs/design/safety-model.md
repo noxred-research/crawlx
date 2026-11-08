@@ -189,8 +189,8 @@ document requests (paused through the CDP `Fetch` domain, with a 30-second guard
 not check subresources or embedded frames.
 
 Overriding robots requires an authorization record with `robotsOverrideAcknowledged`.
-`Crawl-delay` is parsed (capped at 10 seconds) but does not yet change pacing; set
-`politeness.delayMs` instead.
+`Crawl-delay` (capped at 10 seconds) raises the origin's minimum spacing once a URL on it is allowed;
+see [rate limits](#rate-limits-and-politeness). A run that overrides robots ignores it too.
 
 ## Rate limits and politeness
 
@@ -200,15 +200,19 @@ share a budget.
 - **Defaults.** One request in flight per origin, at least 250 ms between starts (floor 50 ms),
   global concurrency 10, a process-wide per-origin cap, optional global and per-host requests per
   second or minute.
+- **Robots `Crawl-delay`.** The origin's spacing never drops below `max(politeness.delayMs,
+  Crawl-delay)`. Back-off, success decay and latency feedback all respect that floor, and the
+  spacing passed to the process-wide cap and to deployment admission carries it to other workers.
 - **Adaptive back-off.** `429` and `503` double the origin's spacing with ±20 % seeded jitter up to
-  60 s; `Retry-After` is a floor and is never shortened; after ten consecutive successes the spacing
-  halves down to the base. The cool-down is shared across workers.
+  60 s (never below the `Crawl-delay` floor); `Retry-After` is a floor and is never shortened; after
+  ten consecutive successes the spacing halves down to the floor. The cool-down is shared across
+  workers.
 - **Retries.** Three retries on `429` and `503` with exponential back-off from 500 ms (cap 30 s); a
   `Retry-After` longer than 60 s is not waited out.
 - **Ceilings.** Tenant ceilings raise the minimum delay and lower the in-flight limit; an
   authorization record can only tighten politeness further.
-- **Violations.** `crawlx.fetch.politeness_violations` counts permits issued sooner than the base
-  delay or above the in-flight cap. It should stay at zero.
+- **Violations.** `crawlx.fetch.politeness_violations` counts permits issued sooner than the
+  origin's spacing floor or above the in-flight cap. It should stay at zero.
 - **API limits.** A per-tenant token bucket (default 6000 requests per minute; `0` disables it)
   with `RateLimit-*` headers; at most 50 SSE streams per tenant and 5 per run.
 
@@ -247,5 +251,4 @@ isolation is enforced by PostgreSQL row-level security and a restricted API data
   store, so treat `approval_required` as `deny` in practice.
 - The kernel does not run without an audit sink attached; the in-process worker attaches an
   in-memory log, and the durable record is the `safety_decisions` row.
-- `Crawl-delay` is parsed but not applied (see above).
 - Robots is not consulted for browser subresources and frames.

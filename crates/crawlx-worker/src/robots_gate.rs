@@ -162,7 +162,10 @@ impl RobotsGate {
         for round in 0..2 {
             let verdict = self.shared.cache.lock().evaluate(origin, &path);
             match verdict {
-                RobotsVerdict::Allowed => return Ok(RobotsDecision::Allowed),
+                RobotsVerdict::Allowed => {
+                    self.apply_crawl_delay(origin, url);
+                    return Ok(RobotsDecision::Allowed);
+                }
                 RobotsVerdict::Disallowed(DisallowedBy::Rule(_)) => {
                     return Ok(RobotsDecision::Blocked("robots_disallow"))
                 }
@@ -268,6 +271,7 @@ impl RobotsGate {
     /// `robots.txt` fetched first and the verdict re-evaluated; a second unknown answer, an
     /// unreachable file and a 5xx all block the URL as `robots_unavailable`. An egress refusal
     /// stays distinct: it is not evidence that the site's robots service is unavailable.
+    /// An allowed URL's origin is paced by its capped `Crawl-delay` from then on.
     pub(crate) async fn decide(&self, origin: &str, url: &Url) -> RobotsDecision {
         if !self.shared.obey {
             return RobotsDecision::Allowed;
@@ -279,7 +283,10 @@ impl RobotsGate {
         for round in 0..2 {
             let verdict = self.shared.cache.lock().evaluate(origin, &path);
             match verdict {
-                RobotsVerdict::Allowed => return RobotsDecision::Allowed,
+                RobotsVerdict::Allowed => {
+                    self.apply_crawl_delay(origin, url);
+                    return RobotsDecision::Allowed;
+                }
                 RobotsVerdict::Disallowed(DisallowedBy::Rule(_)) => {
                     return RobotsDecision::Blocked("robots_disallow")
                 }
@@ -295,6 +302,16 @@ impl RobotsGate {
             }
         }
         RobotsDecision::Blocked("robots_unavailable")
+    }
+
+    /// Make the fetcher's governor space `url`'s origin by the capped `Crawl-delay` of the
+    /// cached `robots.txt` of `origin` (no hint lowers the floor back to the base delay).
+    /// The run governor is shared by the HTTP and browser planes, so both honour it.
+    fn apply_crawl_delay(&self, origin: &str, url: &Url) {
+        let delay = self.shared.cache.lock().crawl_delay(origin).unwrap_or_default();
+        self.fetcher
+            .governor()
+            .set_crawl_delay(&crawlx_fetch::Origin::from_url(url), delay);
     }
 
     /// Fetch the `robots.txt` of `origin` unless another task did while this one waited.
@@ -477,6 +494,55 @@ mod tests {
             &first.shared,
             &second.with_fetcher(Arc::clone(&first.fetcher)).shared
         ));
+    }
+
+    /// `gate` with `robots` already cached for `http://robots.invalid`.
+    fn gate_with_robots(mutate: impl FnOnce(&mut CreateCrawl), robots: &str) -> RobotsGate {
+        let gate = gate(mutate);
+        gate.shared.cache.lock().record_fetch(
+            "http://robots.invalid",
+            FetchStatus::Ok(robots.as_bytes().to_vec()),
+        );
+        gate
+    }
+
+    fn paced(gate: &RobotsGate) -> std::time::Duration {
+        gate.fetcher
+            .governor()
+            .current_delay(&crawlx_fetch::Origin::from_url(&url("/")))
+    }
+
+    #[tokio::test]
+    async fn an_allowed_url_paces_its_origin_by_the_capped_crawl_delay() {
+        let gate = gate_with_robots(|_| {}, "User-agent: *\nDisallow: /private\nCrawl-delay: 3\n");
+        let base = paced(&gate);
+        assert!(base < std::time::Duration::from_secs(3), "{base:?}");
+        // a refused URL is not fetched, so it changes no pacing
+        assert_eq!(
+            gate.decide("http://robots.invalid", &url("/private/x")).await,
+            RobotsDecision::Blocked("robots_disallow")
+        );
+        assert_eq!(paced(&gate), base);
+        assert_eq!(
+            gate.decide("http://robots.invalid", &url("/a")).await,
+            RobotsDecision::Allowed
+        );
+        assert_eq!(paced(&gate), std::time::Duration::from_secs(3));
+        // the browser plane's navigations go through the same gate
+        let browser = gate_with_robots(|_| {}, "User-agent: *\nCrawl-delay: 99\n");
+        assert_eq!(browser.check(&url("/b")).await, NavigationVerdict::Allow);
+        assert_eq!(paced(&browser), crawlx_policy::robots::MAX_CRAWL_DELAY);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_ignores_robots_ignores_its_crawl_delay_too() {
+        let gate = gate_with_robots(
+            |c| c.safety.respect_robots_txt = false,
+            "User-agent: *\nCrawl-delay: 3\n",
+        );
+        let base = paced(&gate);
+        assert_eq!(gate.check(&url("/a")).await, NavigationVerdict::Allow);
+        assert_eq!(paced(&gate), base);
     }
 
     #[test]

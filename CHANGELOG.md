@@ -8,6 +8,13 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- `robots.txt` `Crawl-delay` (capped at 10 seconds) now paces the origin: once a URL is allowed, the
+  run's `OriginGovernor` keeps that origin's spacing at or above `max(politeness.delayMs,
+  Crawl-delay)` for HTTP and browser effects, across back-off, decay and deployment admission. Runs
+  that override robots ignore it. ([#35](https://github.com/noxred-research/crawlx/issues/35))
+
 ### Documentation
 
 - Positioning and intended use: the README, docs index, `SECURITY.md`, `CONTRIBUTING.md` and
