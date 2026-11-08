@@ -61,7 +61,7 @@ rustix = { version = "1", features = ["fs", "process"] }
 # parsing
 regex = "1"
 # JSON Schema validation of `/extract` and `/agent` results (no http/file `$ref` retrieval)
-jsonschema = { version = "0.58", default-features = false }
+jsonschema = { version = "0.60", default-features = false }
 # OpenAPI per-operation schemas of the facade (`crawlx-api::openapi_schemas`): `#[derive(JsonSchema)]` request/response types; MIT
 schemars = "1"
 # HIR walk of the HTML `pattern` attribute so a conforming form value can be generated (`crawlx-extract::form_fill`)
