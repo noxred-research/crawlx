@@ -76,7 +76,7 @@ calamine = { version = "0.38", default-features = false }
 lopdf = { version = "0.46", default-features = false }
 cfb = "0.15"
 encoding_rs = "0.8"
-scraper = "0.23"
+scraper = "0.29"
 html5ever = "0.29"
 ego-tree = "0.10"
 # OCR (`crawlx-extract::parse::ocr`): `image` decodes/rotates/encodes scans (PNG, JPEG, GIF, BMP, TIFF incl. CCITT,
