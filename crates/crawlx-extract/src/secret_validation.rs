@@ -1,7 +1,7 @@
-//! Online secret validation plans (`extract.validateSecrets`, katana
+//! Online secret validation plans (`extract.validateSecrets`, compatibility flag
 //! `-kb-validate-secrets`).
 //!
-//! Katana's Titus engine confirms a detected credential by calling the
+//! The reference implementation's scanning engine confirms a detected credential by calling the
 //! provider's API. crawlx does the same only when an operator supplies a
 //! validator file, and keeps this crate free of I/O: [`SecretValidators::plan`]
 //! turns a detected token into the [`ValidationRequest`] to send (through the
@@ -31,8 +31,8 @@
 //!       "invalid_status": [401]
 //!     },
 //!     {
-//!       "kind": "slack_token",
-//!       "url": "https://slack.com/api/auth.test?token={token}",
+//!       "kind": "generic_api_key",
+//!       "url": "https://validator.example/api/check?token={token}",
 //!       "valid_status": [200],
 //!       "invalid_status": [401],
 //!       "body_regex": "\"ok\"\\s*:\\s*true"

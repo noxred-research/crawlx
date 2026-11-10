@@ -15,7 +15,7 @@ fn t() -> bool {
 }
 
 // serde `skip_serializing_if` predicates keep default values off the wire, so requests that
-// never set the katana options serialize (and hash) exactly as before.
+// never set the surface-discovery options serialize (and hash) exactly as before.
 #[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
 const fn is_false(v: &bool) -> bool {
     !*v
@@ -34,14 +34,14 @@ pub const MAX_PATTERN_LEN: usize = 512;
 /// Maximum number of patterns (or host exclusions, or extensions) per list.
 pub const MAX_PATTERNS: usize = 100;
 /// Maximum length in bytes of one path or URL pattern of `scope.includePaths`, `excludePaths`,
-/// `urlInclude` and `urlExclude` (Firecrawl's limit; the compiled-size limits of `crawlx-url`
+/// `urlInclude` and `urlExclude` (the compatibility API's limit; the compiled-size limits of `crawlx-url`
 /// still bound every pattern).
 pub const MAX_PATH_PATTERN_LEN: usize = 2000;
-/// Maximum number of patterns in one of those four lists (Firecrawl's limit).
+/// Maximum number of patterns in one of those four lists (the compatibility API's limit).
 pub const MAX_PATH_PATTERNS: usize = 1000;
 /// Maximum number of `extract.customFields`.
 pub const MAX_CUSTOM_FIELDS: usize = 50;
-/// Most extra seed URLs of one Firecrawl batch scrape (`scrape.urls`).
+/// Most extra seed URLs of one compatibility-API batch scrape (`scrape.urls`).
 pub const MAX_BATCH_URLS: usize = 10_000;
 
 /// `mode`: which planes run.
@@ -167,7 +167,7 @@ pub enum CrawlStrategy {
     BreadthFirst,
     /// Most recently discovered, deepest URL first.
     DepthFirst,
-    /// Katana `priority`: lowest `depth - surface score` first, where the score rewards
+    /// Surface-priority order: lowest `depth - surface score` first, where the score rewards
     /// attack-surface path words, query strings and non-GET requests (ties: discovery order).
     Priority,
 }
@@ -696,7 +696,7 @@ pub struct Scope {
     /// Per-parameter-name class overrides; they beat the built-in classification.
     #[serde(default)]
     pub query_overrides: BTreeMap<String, ParamClass>,
-    /// Katana `-ignore-query-params` alias: `true` forces `queryPolicy: strip_all` (default false).
+    /// Compatibility alias `-ignore-query-params`: `true` forces `queryPolicy: strip_all` (default false).
     #[serde(default)]
     pub ignore_query_params: bool,
     /// Host scope relative to the seed host (default: fqdn).
@@ -753,18 +753,18 @@ pub struct Scope {
     #[serde(default)]
     pub filter_page_types: Vec<PageType>,
     /// Admit `Regex`-confidence endpoints mined from JavaScript into the frontier
-    /// (katana `-jc`; default true). `Structural` endpoints are always admitted.
+    /// (compatibility flag `-jc`; default true). `Structural` endpoints are always admitted.
     #[serde(default = "t")]
     pub js_endpoints: bool,
-    /// Katana `-path-climb`: every discovered URL also enqueues its parent directory paths
+    /// Compatibility flag `-path-climb`: every discovered URL also enqueues its parent directory paths
     /// (`/a/b/c.html` adds `/a/b/` and `/a/`), subject to the same scope rules (default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub path_climb: bool,
-    /// Katana `-disable-unique-filter`: keep pages whose body is byte-identical to an earlier
+    /// Compatibility flag `-disable-unique-filter`: keep pages whose body is byte-identical to an earlier
     /// page instead of dropping them as `content_exact` duplicates (default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub disable_unique_filter: bool,
-    /// Katana `-field-scope <regex>`: hosts matching this regex (over the host name) are in
+    /// Compatibility flag `-field-scope <regex>`: hosts matching this regex (over the host name) are in
     /// scope in addition to what `hostScope` admits; `None` is off. At most 512 bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_scope_pattern: Option<String>,
@@ -847,8 +847,8 @@ pub const MAX_PROFILE_NAME_LEN: usize = 128;
 /// Largest `dynamic.pageHookOptions.timerAcceleration` divisor.
 pub const MAX_TIMER_ACCELERATION: u8 = 100;
 
-/// `dynamic.pageHookOptions`: the page hooks katana ships that change application behaviour
-/// (`pkg/engine/headless/js/page-init.js`), adopted as opt-in with every default off
+/// `dynamic.pageHookOptions`: the behaviour-changing page hooks of the reference headless driver
+/// (a page-init script), adopted as opt-in with every default off
 /// They run in the page's main world, are refused under the
 /// stealth profile, and a session crawled with any of them is tagged `page_hooks` with the
 /// option names ([`Self::names`]) so fingerprint studies can exclude it.
@@ -911,7 +911,7 @@ impl PageHookOptions {
     }
 }
 
-/// `dynamic.browserProfile` (Firecrawl `profile{name,saveChanges}`): a named persistent
+/// `dynamic.browserProfile` (compatibility API `profile{name,saveChanges}`): a named persistent
 /// browser profile. The worker keeps it as a Chromium user-data directory under its
 /// `--profiles-dir`, namespaced by tenant. With `saveChanges` the run reuses the directory
 /// (cookies and local storage written by earlier runs are present, and its own are kept);
@@ -921,7 +921,7 @@ impl PageHookOptions {
 pub struct BrowserProfile {
     /// Profile name: 1 to 128 of `A-Z a-z 0-9 _ -`.
     pub name: String,
-    /// Keep what the run writes into the profile (Firecrawl default `true`).
+    /// Keep what the run writes into the profile (compatibility API default `true`).
     #[serde(default = "t")]
     pub save_changes: bool,
 }
@@ -989,7 +989,7 @@ pub struct Dynamic {
     /// clamped to 0..=60,000 (default 5,000).
     #[serde(default = "Dynamic::default_dom_wait_ms")]
     pub dom_wait_ms: u32,
-    /// Katana `-max-scroll-steps`: after a page settles the browser plane scrolls down in
+    /// Compatibility flag `-max-scroll-steps`: after a page settles the browser plane scrolls down in
     /// viewport steps (at most this many, stopping when the page height stops growing) so lazy
     /// content loads and its links are discovered; 0 is off; clamped to 0..=100 (default 0).
     #[serde(default, skip_serializing_if = "is_zero_u8")]
@@ -998,43 +998,43 @@ pub struct Dynamic {
     /// (`crawlx-browser/data/consent_block.txt`) in the browser plane (default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub block_consent_banners: bool,
-    /// Katana `-interaction-depth`: maximum consecutive interactions from one page state
+    /// Compatibility flag `-interaction-depth`: maximum consecutive interactions from one page state
     /// before the driver returns to the page URL; 0 is unlimited; clamped to 0..=100.
     #[serde(default, skip_serializing_if = "is_zero_u8")]
     pub interaction_depth: u8,
-    /// Katana `-interaction-selector`: CSS selectors; when non-empty only matching elements
+    /// Compatibility flag `-interaction-selector`: CSS selectors; when non-empty only matching elements
     /// are interaction candidates. At most 100 selectors of 512 bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub interaction_selector: Vec<String>,
-    /// Katana `-interaction-exclude`: CSS selectors whose matching elements (and descendants)
+    /// Compatibility flag `-interaction-exclude`: CSS selectors whose matching elements (and descendants)
     /// are never interaction candidates. At most 100 selectors of 512 bytes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub interaction_exclude: Vec<String>,
-    /// Katana `-interaction-settle`: milliseconds waited after each interaction before the
+    /// Compatibility flag `-interaction-settle`: milliseconds waited after each interaction before the
     /// page is observed again; 0 uses the readiness preset; clamped to 0..=60,000.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub interaction_settle_ms: u32,
-    /// Katana `-interaction-duration`: wall-clock seconds the interaction phase of a session
+    /// Compatibility flag `-interaction-duration`: wall-clock seconds the interaction phase of a session
     /// may run before it stops exploring; 0 is bounded only by `limits.durationSeconds`;
     /// clamped to 0..=604,800.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub interaction_duration_seconds: u32,
-    /// Katana `-max-failure-count`: consecutive dropped actions after which a session stops;
+    /// Compatibility flag `-max-failure-count`: consecutive dropped actions after which a session stops;
     /// 0 keeps the driver default (30); clamped to 0..=1,000.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub max_failure_count: u32,
-    /// Katana `-enable-diagnostics`: record per-session driver diagnostics (steps, drops,
+    /// Compatibility flag `-enable-diagnostics`: record per-session driver diagnostics (steps, drops,
     /// recoveries, tab evictions, state counts) in the run report (default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub enable_diagnostics: bool,
-    /// Katana `-time-stable`: quiet window in milliseconds the page's DOM and network must stay
+    /// Compatibility flag `-time-stable`: quiet window in milliseconds the page's DOM and network must stay
     /// unchanged before a page counts as settled. `0` keeps the `pageLoadStrategy` preset; a
     /// positive value raises both idle windows of the quiescence policy to at least this long
-    /// and the settle hard timeout to at least twice as long (katana caps the window at half the
+    /// and the settle hard timeout to at least twice as long (the window is capped at half the
     /// timeout). Clamped to 0..=60,000.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub time_stable_ms: u32,
-    /// Katana's behaviour-changing page hooks (all off by default):
+    /// Behaviour-changing page hooks (all off by default):
     /// timer acceleration, `form.reset()` and `window.close()` prevention. Independent of
     /// [`Self::page_hooks`] (the discovery recorder); any option that is on tags the session
     /// `page_hooks` with the option names so fingerprint studies can exclude it.
@@ -1046,7 +1046,7 @@ pub struct Dynamic {
     /// is gated like the stealth profile: `test_environment` or `authorized_security_test`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub stealth_patches: bool,
-    /// Firecrawl `profile{name,saveChanges}`: a named persistent browser profile (cookies,
+    /// Compatibility API `profile{name,saveChanges}`: a named persistent browser profile (cookies,
     /// local storage) kept under the worker's `--profiles-dir` and reused across runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_profile: Option<BrowserProfile>,
@@ -1222,10 +1222,10 @@ pub struct Output {
     /// Milliseconds to wait before extracting a page; 0 means no extra wait (default 0).
     #[serde(default)]
     pub wait_for_ms: u32,
-    /// CSS selectors kept when extracting (Firecrawl `includeTags`).
+    /// CSS selectors kept when extracting (compatibility API `includeTags`).
     #[serde(default)]
     pub include_tags: Vec<String>,
-    /// CSS selectors dropped when extracting (Firecrawl `excludeTags`).
+    /// CSS selectors dropped when extracting (compatibility API `excludeTags`).
     #[serde(default)]
     pub exclude_tags: Vec<String>,
     /// Record out-of-scope endpoints as `leaf_only` entries that are never fetched (default false).
@@ -1362,14 +1362,14 @@ pub struct Fetch {
     /// Upstream proxy for the fetch plane; egress checks still apply (`http`, `https`, `socks5`).
     #[serde(default)]
     pub proxy: Option<url::Url>,
-    /// Katana `-resolvers`: DNS servers (`ip` or `ip:port`) the fetch plane resolves hosts
+    /// Compatibility flag `-resolvers`: DNS servers (`ip` or `ip:port`) the fetch plane resolves hosts
     /// with instead of the system resolver; at most 8. Egress checks apply to the answers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resolvers: Vec<String>,
-    /// Headers added to every request of both planes (katana `-H`, Firecrawl `headers`); names
+    /// Headers added to every request of both planes (compatibility flag `-H`, compatibility API `headers`); names
     /// are lower-cased. `Host`, `Content-Length`, `Cookie`, `User-Agent`, `Proxy-*` and
     /// `Crawlx-*` are rejected. Values are secrets: literals or credential references
-    /// (`env://`, `file://`, `vault://`, `aws-sm://`), never logged. See [`Fetch::set_header`].
+    /// (`env://`, `file://`, `vault://`, `cloud-sm://`), never logged. See [`Fetch::set_header`].
     #[serde(default, skip_serializing_if = "ExtraHeaders::is_empty")]
     pub extra_headers: ExtraHeaders,
     /// Cookies sent by both planes to hosts matching `domain`/`path` (default: the seed's
@@ -1380,11 +1380,11 @@ pub struct Fetch {
     /// browser's own value for the browser plane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
-    /// User-agent token robots.txt groups are matched with (Firecrawl `robotsUserAgent`);
+    /// User-agent token robots.txt groups are matched with (compatibility API `robotsUserAgent`);
     /// `None` uses `userAgent`, else the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub robots_user_agent: Option<String>,
-    /// Accept any server certificate on both planes (default false; the Firecrawl facade maps
+    /// Accept any server certificate on both planes (default false; the compatibility API maps
     /// its default `true` here explicitly).
     #[serde(default, skip_serializing_if = "is_false")]
     pub skip_tls_verification: bool,
@@ -1424,7 +1424,7 @@ impl Default for Fetch {
     }
 }
 
-/// `extract.formFill`: katana `-automatic-form-fill` / `-form-config` for the URL plane.
+/// `extract.formFill`: compatibility flags `-automatic-form-fill` / `-form-config` for the URL plane.
 ///
 /// Static forms are completed with deterministic values: a configured value per field class,
 /// else a value derived from the crawl seed. GET forms become fetchable URLs; every other
@@ -1515,19 +1515,19 @@ pub struct Extract {
     #[serde(default = "t")]
     pub page_type: bool,
     /// Collect the XHR/fetch requests the browser plane observed on each page into
-    /// `pages.metadata.xhr_requests` (katana `-xhr-extraction`, default false).
+    /// `pages.metadata.xhr_requests` (compatibility flag `-xhr-extraction`, default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub xhr: bool,
     /// Attach the `knowledgebase` object (`page_type`, `forms`, `secrets`, `endpoints`) to
-    /// records (katana `-knowledge-base`; forces `pageType` and `forms`; default false).
+    /// records (compatibility flag `-knowledge-base`; forces `pageType` and `forms`; default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub knowledge_base: bool,
     /// Classify discovered endpoints as REST, GraphQL, SOAP, XHR or static into
-    /// `pages.metadata.endpoints` (katana `-kb-endpoints`, default false).
+    /// `pages.metadata.endpoints` (compatibility flag `-kb-endpoints`, default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub kb_endpoints: bool,
     /// Send detected tokens to the provider validation endpoints the operator lists in
-    /// `crawlx-extract/data/secret_validators.json` (katana `-kb-validate-secrets`;
+    /// `crawlx-extract/data/secret_validators.json` (compatibility flag `-kb-validate-secrets`;
     /// requires `detectSecrets`; default false).
     #[serde(default, skip_serializing_if = "is_false")]
     pub validate_secrets: bool,
@@ -1681,7 +1681,7 @@ pub struct CreateCrawl {
     /// Extraction options.
     #[serde(default)]
     pub extract: Extract,
-    /// Firecrawl scrape job: when set, every page of the run is produced by the
+    /// Compatibility-API scrape job: when set, every page of the run is produced by the
     /// scrape engine with these options and the run is reported as a crawl or batch scrape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scrape: Option<crate::scrape::ScrapeJob>,
@@ -2220,7 +2220,7 @@ impl CreateCrawl {
             }
         }
         self.dynamic.dom_wait_ms = self.dynamic.dom_wait_ms.min(60_000);
-        self.normalize_katana(&mut errs);
+        self.normalize_surface_options(&mut errs);
         self.normalize_scope(&mut errs);
         self.normalize_extract(&mut errs);
         self.normalize_scrape(&mut errs);
@@ -2348,9 +2348,9 @@ impl CreateCrawl {
         s.filter_page_types.dedup();
     }
 
-    /// Bounds of the katana-derived options (`scope.hostScopePattern`, `dynamic.interaction*`,
+    /// Bounds of the surface-discovery options (`scope.hostScopePattern`, `dynamic.interaction*`,
     /// `dynamic.maxScrollSteps`, `fetch.resolvers`, `extract.knowledgeBase`, `extract.formFill`).
-    fn normalize_katana(&mut self, errs: &mut Vec<CoreError>) {
+    fn normalize_surface_options(&mut self, errs: &mut Vec<CoreError>) {
         if let Some(p) = &self.scope.host_scope_pattern {
             if p.trim().is_empty() {
                 self.scope.host_scope_pattern = None;
@@ -2442,7 +2442,7 @@ impl CreateCrawl {
         }
     }
 
-    /// Validate the Firecrawl scrape job: option limits and, for batch jobs, the extra seeds.
+    /// Validate the compatibility-API scrape job: option limits and, for batch jobs, the extra seeds.
     fn normalize_scrape(&self, errs: &mut Vec<CoreError>) {
         let Some(job) = &self.scrape else { return };
         if let Err(reason) = job.options.validate() {
@@ -2791,7 +2791,7 @@ mod tests {
     #[test]
     fn retained_response_modes_validate_policy_conflicts() {
         let mut request = req(
-            r#"{"seedUrl":"https://a.test/","mode":"dynamic","capture":{"responseBodies":"full"},"crawl":{"captcha":{"provider":"capsolver","key_ref":"env://CAPTCHA_KEY"}}}"#,
+            r#"{"seedUrl":"https://a.test/","mode":"dynamic","capture":{"responseBodies":"full"},"crawl":{"captcha":{"provider":"task-api","key_ref":"env://CAPTCHA_KEY"}}}"#,
         );
         let errors = request.normalize().unwrap_err();
         assert!(errors.iter().any(|error| matches!(
@@ -2879,7 +2879,7 @@ mod tests {
     }
 
     #[test]
-    fn katana_fields_default_per_plan_10() {
+    fn surface_fields_default_per_plan_10() {
         let mut r = req(r#"{"seedUrl":"https://a.test/"}"#);
         assert!(r.normalize().is_ok());
         let s = &r.scope;
@@ -2939,7 +2939,7 @@ mod tests {
     }
 
     #[test]
-    fn katana_fields_parse_and_clamp() {
+    fn surface_fields_parse_and_clamp() {
         let mut r = req(
             r#"{"seedUrl":"https://a.test/","scope":{"hostScope":"rdn","strategy":"depth_first",
             "knownFiles":["sitemap","robots_paths","sitemap"],"extensionMatch":[".PHP","js","js"," "],
@@ -2986,10 +2986,10 @@ mod tests {
     }
 
     #[test]
-    fn katana_fields_validation_errors() {
+    fn surface_fields_validation_errors() {
         let long = "a".repeat(513);
         let many: Vec<String> = (0..101).map(|i| format!("x{i}")).collect();
-        // path/URL pattern lists have the larger Firecrawl bounds (1000 of 2000 bytes)
+        // path/URL pattern lists have the larger compatibility-API bounds (1000 of 2000 bytes)
         let long_path = "a".repeat(MAX_PATH_PATTERN_LEN + 1);
         let many_paths: Vec<String> = (0..=MAX_PATH_PATTERNS).map(|i| format!("x{i}")).collect();
         let mut r = CreateCrawl::new(url::Url::parse("https://a.test/").unwrap());

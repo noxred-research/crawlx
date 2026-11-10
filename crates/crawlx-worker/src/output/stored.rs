@@ -1,9 +1,9 @@
-//! Stored raw requests/responses (katana `-sr/-store-response`, `-srd/-store-response-dir`).
+//! Stored raw requests/responses (the `-sr/-store-response` and `-srd/-store-response-dir` compatibility flags).
 //!
-//! Layout from katana `pkg/output/responses.go` (MIT): `<dir>/<host>/<sha1(url)>.txt` per
+//! Layout from an MIT-licensed upstream (see THIRD_PARTY_NOTICES.md): `<dir>/<host>/<sha1(url)>.txt` per
 //! URL (`host` is the URL host with `:` replaced by `_`), holding the URL, the raw request and
 //! the raw response; `<dir>/index.txt` gets one line per stored file,
-//! `<file> <url> (<status>)`. Differences: katana wipes sibling `katana_response*`
+//! `<file> <url> (<status>)`. Differences: the reference wipes sibling default-named response
 //! directories when the default directory is used without `-ncb`; crawlx never deletes
 //! anything, a reused directory keeps its files and its index is appended to. With `-ncb`
 //! the directory is numbered like every other no-clobber target
@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_and_index_follow_katana() {
+    fn layout_and_index_follow_the_reference() {
         let dir = tempfile::tempdir().unwrap();
         let store = StoredResponses::new(dir.path().join("resp"), false).unwrap();
         assert!(store.index_path().is_file(), "index exists before any response");

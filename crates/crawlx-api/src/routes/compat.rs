@@ -1,4 +1,4 @@
-//! Firecrawl v2 compatibility facade mounted at `/compat/firecrawl`: start,
+//! compat v2 compatibility facade mounted at `/compat`: start,
 //! status, cancel and errors of a crawl. The request translation lives in
 //! [`crate::routes::compat_crawl`], the crawl is a run whose pages the worker's scrape engine
 //! produces ([`crate::scrape_service`]).
@@ -18,8 +18,8 @@ use crate::routes::compat_scrape::{request_id_conflict, request_key};
 use crate::routes::crawls::{apply_verb, load_run, load_run_metadata, Verb};
 use crate::routes::pages::{page_key, sorted_pages};
 use crate::scrape_service::{
-    base_url, create_scrape_run, create_scrape_run_as, credits_for, failure_code, failure_index,
-    failure_reason, failure_text, firecrawl_document, parse_target, record_run_usage,
+    base_url, compat_document, create_scrape_run, create_scrape_run_as, credits_for, failure_code,
+    failure_index, failure_reason, failure_text, parse_target, record_run_usage,
 };
 use crate::state::AppState;
 use crate::store::Scope;
@@ -46,11 +46,11 @@ pub const SHADOW_HEADER: &str = "x-crawlx-shadow";
 const SHADOW_LIMIT_MAX: u32 = 200;
 
 /// Frontier denial reason of an external homepage skipped under `allowExternalLinks`
-/// (`DenialReason::ExternalHomepage`); Firecrawl reports it as `EXTERNAL_LINK`.
+/// (`DenialReason::ExternalHomepage`); the compat API reports it as `EXTERNAL_LINK`.
 const EXTERNAL_HOMEPAGE: &str = "external_homepage";
 
 /// The `code` of the `errors[]` entry of the crawl's entry URL that `includePaths` (or
-/// `regexOnFullURL` patterns) refused as a page: Firecrawl still fetches that URL to find links,
+/// `regexOnFullURL` patterns) refused as a page: the compat API still fetches that URL to find links,
 /// and reports it as a denied URL.
 const CRAWL_DENIAL: &str = "CRAWL_DENIAL";
 
@@ -117,7 +117,7 @@ async fn plan_from_prompt(
     Ok(planned.value.as_object().cloned().map(|m| (m, planned.usage)))
 }
 
-/// Firecrawl's `429` text for an exhausted concurrency allowance.
+/// The compat API's `429` text for an exhausted concurrency allowance.
 pub(crate) fn concurrency_limit(mut e: HttpError) -> HttpError {
     if e.code == "quota_exceeded" {
         e.message = format!("Concurrency limit reached: {}", e.message);
@@ -171,10 +171,10 @@ fn robots_override_error(e: HttpError, lowered: bool) -> HttpError {
     }
 }
 
-/// `POST /compat/firecrawl/v2/crawl`. `x-request-id` (else `Idempotency-Key`) is the replay key.
+/// `POST /compat/v2/crawl`. `x-request-id` (else `Idempotency-Key`) is the replay key.
 ///
 /// The strangler gateway is honoured here: the tenant's `engine` flag decides
-/// whether a non-shadow request is served (`crawlx`) or refused (`firecrawl`, `shadow`), and a
+/// whether a non-shadow request is served (`crawlx`) or refused (`upstream`, `shadow`), and a
 /// request carrying `X-Crawlx-Shadow: 1` is mirrored into a `run_kind = 'shadow'` run when it
 /// falls into the configured sample and does not ask for zero data retention.
 ///
@@ -201,10 +201,10 @@ pub async fn create(
         .is_some_and(|v| v.trim() == "1");
     let engine = state.repos.api.tenant_engine(principal.tenant).await?;
     match (engine, shadow) {
-        (TenantEngine::Firecrawl | TenantEngine::Shadow, false) => {
+        (TenantEngine::Upstream | TenantEngine::Shadow, false) => {
             return Err(HttpError::engine_mismatch(engine.as_str(), false));
         }
-        (TenantEngine::Firecrawl, true) => {
+        (TenantEngine::Upstream, true) => {
             return Err(HttpError::engine_mismatch(engine.as_str(), true));
         }
         _ => {}
@@ -215,65 +215,57 @@ pub async fn create(
         return shadow_create(&state, &principal, key, &base, &body).await;
     }
     let (st, pr, bd, bs) = (&state, &principal, &body, &base);
-    idempotent_job(
-        st,
-        pr,
-        key,
-        "POST",
-        "/compat/firecrawl/v2/crawl",
-        bd,
-        |id| async move {
-            let planned = plan_from_prompt(st, bd).await?;
-            let Translated {
-                mut crawl,
-                mut warnings,
-                robots_override,
-            } = translate(bd, planned.as_ref().map(|(m, _)| m))?;
-            // the LLM formats need the configured LLM: refuse before a run exists
-            if crawl
-                .scrape
-                .as_ref()
-                .is_some_and(|j| j.options.formats.iter().any(FormatSpec::needs_llm))
-            {
-                llm(st)?;
-            }
-            if robots_override {
-                lower_robots_gate(st, &mut crawl)?;
-            }
-            // the run is created under the id the idempotency claim announced
-            let run = create_scrape_run_as(st, pr, crawl, &mut warnings, id)
-                .await
-                .map_err(|e| robots_override_error(e, robots_override))?;
-            announce_started(st, &run).await?;
-            if let Some((_, tokens)) = planned {
-                usage::record(
-                    st,
-                    pr.tenant,
-                    "crawl-prompt",
-                    // not the run id: `record_run_usage` books the crawl by that reference
-                    None,
-                    "completed",
-                    Cost { credits: 0, tokens },
-                )
-                .await;
-            }
-            Ok(Reply::new(
-                StatusCode::OK,
-                json!({
-                    "success": true,
-                    "id": id,
-                    "url": format!("{bs}/compat/firecrawl/v2/crawl/{id}"),
-                    "warnings": warnings,
-                }),
+    idempotent_job(st, pr, key, "POST", "/compat/v2/crawl", bd, |id| async move {
+        let planned = plan_from_prompt(st, bd).await?;
+        let Translated {
+            mut crawl,
+            mut warnings,
+            robots_override,
+        } = translate(bd, planned.as_ref().map(|(m, _)| m))?;
+        // the LLM formats need the configured LLM: refuse before a run exists
+        if crawl
+            .scrape
+            .as_ref()
+            .is_some_and(|j| j.options.formats.iter().any(FormatSpec::needs_llm))
+        {
+            llm(st)?;
+        }
+        if robots_override {
+            lower_robots_gate(st, &mut crawl)?;
+        }
+        // the run is created under the id the idempotency claim announced
+        let run = create_scrape_run_as(st, pr, crawl, &mut warnings, id)
+            .await
+            .map_err(|e| robots_override_error(e, robots_override))?;
+        announce_started(st, &run).await?;
+        if let Some((_, tokens)) = planned {
+            usage::record(
+                st,
+                pr.tenant,
+                "crawl-prompt",
+                // not the run id: `record_run_usage` books the crawl by that reference
+                None,
+                "completed",
+                Cost { credits: 0, tokens },
             )
-            .for_run(id))
-        },
-    )
+            .await;
+        }
+        Ok(Reply::new(
+            StatusCode::OK,
+            json!({
+                "success": true,
+                "id": id,
+                "url": format!("{bs}/compat/v2/crawl/{id}"),
+                "warnings": warnings,
+            }),
+        )
+        .for_run(id))
+    })
     .await
     .map_err(|e| crawl_request_conflict(e, by_request_id))
 }
 
-/// The conflicts of a repeated crawl request in Firecrawl's words: a repeat that arrives while
+/// The conflicts of a repeated crawl request in the compat API's words: a repeat that arrives while
 /// the original is still being processed is `409 request_in_flight` whichever header carried the
 /// key; the same `x-request-id` with other parameters is `409 duplicate_request`. Both carry the
 /// `id` of the original job. An `Idempotency-Key` with other parameters stays `422
@@ -307,7 +299,7 @@ async fn shadow_create(
         principal,
         key,
         "POST",
-        "/compat/firecrawl/v2/crawl#shadow",
+        "/compat/v2/crawl#shadow",
         body,
         || async {
             if zdr {
@@ -348,7 +340,7 @@ async fn shadow_create(
                 json!({
                     "success": true,
                     "id": id,
-                    "url": format!("{base}/compat/firecrawl/v2/crawl/{id}"),
+                    "url": format!("{base}/compat/v2/crawl/{id}"),
                     "shadow": true,
                     "mirrored": true,
                     "warnings": warnings,
@@ -360,7 +352,7 @@ async fn shadow_create(
     .await
 }
 
-/// The Firecrawl `status` of a run: `scraping` until it is terminal.
+/// The compat `status` of a run: `scraping` until it is terminal.
 pub(crate) const fn facade_status(s: RunStatus) -> &'static str {
     match s {
         RunStatus::Queued | RunStatus::Running | RunStatus::Paused => "scraping",
@@ -370,7 +362,7 @@ pub(crate) const fn facade_status(s: RunStatus) -> &'static str {
     }
 }
 
-/// Firecrawl's `total` of a crawl: the completed pages plus the ones in flight or queued; failed
+/// The compat API's `total` of a crawl: the completed pages plus the ones in flight or queued; failed
 /// pages are not counted, and a finished crawl has nothing left in flight.
 pub(crate) fn crawl_total(run: &CrawlRun) -> u64 {
     let c = &run.counters.urls;
@@ -422,9 +414,9 @@ fn skip_link(path: &str, params: &Params, skip: usize) -> Value {
     Value::String(format!("{path}?{}", ser.finish()))
 }
 
-/// `GET /compat/firecrawl/v2/crawl/{id}`.
+/// `GET /compat/v2/crawl/{id}`.
 ///
-/// `data` holds the Firecrawl documents of the crawl's pages (`?limit=` per response, `?skip=`
+/// `data` holds the compat documents of the crawl's pages (`?limit=` per response, `?skip=`
 /// as an offset or `?cursor=` as the opaque position the `next` link carries). `creditsUsed`
 /// sums the credits of every stored page (`1` per page plus the extras of `json` and the other
 /// LLM formats); a terminal crawl is booked in the usage ledger once.
@@ -467,7 +459,7 @@ pub async fn status(
                 .credits,
         ),
     };
-    let path = format!("{base}/compat/firecrawl/v2/crawl/{}", run.id);
+    let path = format!("{base}/compat/v2/crawl/{}", run.id);
     let (page, next) = if let Some(skipped) = skip {
         let rest: Vec<PageRecord> = keyed.into_iter().map(|(_, p)| p).skip(skipped).collect();
         let more = rest.len() > limit;
@@ -486,7 +478,7 @@ pub async fn status(
     let mut data = Vec::with_capacity(page.len());
     if let Some(live) = &live {
         for p in &page {
-            data.push(firecrawl_document(&state, live, p, &base).await);
+            data.push(compat_document(&state, live, p, &base).await);
         }
     }
     let coverage = state.repos.ledger.summary(run.id).await?;
@@ -543,7 +535,7 @@ fn seconds(ms: i64) -> f64 {
     ms as f64 / 1000.0
 }
 
-/// `DELETE /compat/firecrawl/v2/crawl/{id}` (cancels the crawl).
+/// `DELETE /compat/v2/crawl/{id}` (cancels the crawl).
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:write`, `404 not_found` for an unknown run, a run owned by
@@ -563,7 +555,7 @@ pub async fn cancel(
     ))
 }
 
-/// `GET /compat/firecrawl/v2/crawl/{id}/errors`: `errors[{id, timestamp, url, code, error}]`
+/// `GET /compat/v2/crawl/{id}/errors`: `errors[{id, timestamp, url, code, error}]`
 /// for pages that failed, for external homepages skipped under `allowExternalLinks` (code
 /// `EXTERNAL_LINK`) and for the entry URL that `includePaths` refused as a page (code
 /// `CRAWL_DENIAL`; it was fetched for its links only), `robotsBlocked[]` and the additive

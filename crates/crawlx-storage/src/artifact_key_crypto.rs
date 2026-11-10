@@ -1,11 +1,11 @@
 //! Explicit artifact data-key custody, separate from encrypted staging bytes.
 //!
-//! Production uses AWS KMS GenerateDataKey/Decrypt with the exact ownership map
+//! Production uses cloud KMS GenerateDataKey/Decrypt with the exact ownership map
 //! defined by [`ArtifactKeyEnvelope`]. No provider embeds its envelope in stage
 //! bytes. Construction does not prove KMS grants or availability; each operation
 //! fails closed, including unknown remote outcomes. Configure a stable symmetric
-//! key ARN, AWS region/credentials and kms:GenerateDataKey/kms:Decrypt permissions.
-//! AWS may record the non-secret ownership context in CloudTrail.
+//! key ARN, cloud region/credentials and kms:GenerateDataKey/kms:Decrypt permissions.
+//! The provider may record the non-secret ownership context in its audit trail.
 //!
 //! [`MemoryArtifactKeys`] is explicit ephemeral local/test custody only. Its
 //! version-zero envelopes cannot pass the production catalog's version-one
@@ -125,7 +125,7 @@ pub enum ArtifactKeyError {
     /// No custody provider was explicitly configured.
     #[error("artifact key custody unavailable")]
     Unavailable,
-    /// The configured KMS key or AWS region was missing/invalid.
+    /// The configured KMS key or cloud region was missing/invalid.
     #[error("artifact key configuration invalid")]
     InvalidConfiguration,
     /// Wrapped metadata was malformed, oversized or did not match ownership/provider.
@@ -137,7 +137,7 @@ pub enum ArtifactKeyError {
     /// Stage size, entropy or bounded crypto operation failed.
     #[error("artifact encryption preparation failed")]
     Crypto(#[from] ArtifactCryptoError),
-    /// AWS rejected or did not confirm an operation; no local fallback is permitted.
+    /// The KMS provider rejected or did not confirm an operation; no local fallback is permitted.
     #[error("artifact kms operation failed")]
     Kms(#[source] ArtifactKeySource),
     /// OS cryptographic entropy was unavailable.
@@ -148,7 +148,7 @@ pub enum ArtifactKeyError {
     Task(#[source] tokio::task::JoinError),
 }
 
-/// Durable symmetric AWS KMS custody using the approved rustls+ring connector.
+/// Durable symmetric cloud KMS custody using the approved rustls+ring connector.
 #[non_exhaustive]
 pub struct KmsArtifactKeys {
     client: Client,
@@ -164,7 +164,7 @@ impl fmt::Debug for KmsArtifactKeys {
 impl KmsArtifactKeys {
     /// Load default credentials, pin a stable key ARN and its trusted HTTPS endpoint.
     ///
-    /// Only AWS commercial, China and GovCloud key ARNs are supported. The ARN
+    /// Only the commercial, China and government-cloud key ARN partitions are supported. The ARN
     /// determines region and endpoint; ambient endpoint URLs, service profiles,
     /// region, FIPS and dual-stack settings cannot redirect this client's KMS
     /// requests. Explicit loopback endpoint injection exists only in unit tests.
@@ -359,7 +359,7 @@ pub enum ArtifactKeyFileError {
     Invalid,
 }
 
-/// Durable wrapping root loaded from a file, for deployments without AWS KMS.
+/// Durable wrapping root loaded from a file, for deployments without cloud KMS.
 ///
 /// Per-artifact data keys are wrapped under the root with AES-256-GCM bound to the
 /// tenant/run/artifact ownership context, so wrapped keys survive restarts and are
@@ -624,17 +624,17 @@ fn trusted_endpoint(key_id: &str) -> Result<TrustedKmsEndpoint, ArtifactKeyError
         return Err(invalid());
     }
     let suffix = match partition {
-        "aws"
+        "aws" // wire-compat: key ARN partition
             if ["af-", "ap-", "ca-", "eu-", "il-", "me-", "mx-", "sa-", "us-"]
                 .iter()
                 .any(|prefix| region.starts_with(prefix))
                 && !region.starts_with("us-gov-")
                 && !region.starts_with("us-iso") =>
         {
-            "amazonaws.com"
+            "amazonaws.com" // wire-compat: KMS endpoint host suffix
         }
-        "aws-cn" if region.starts_with("cn-") => "amazonaws.com.cn",
-        "aws-us-gov" if region.starts_with("us-gov-") => "amazonaws.com",
+        "aws-cn" if region.starts_with("cn-") => "amazonaws.com.cn", // wire-compat: key ARN partition, KMS endpoint host suffix
+        "aws-us-gov" if region.starts_with("us-gov-") => "amazonaws.com", // wire-compat: key ARN partition, KMS endpoint host suffix
         _ => return Err(invalid()),
     };
     let id = resource.strip_prefix("key/").ok_or_else(invalid)?;

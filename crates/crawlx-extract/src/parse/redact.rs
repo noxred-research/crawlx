@@ -31,7 +31,7 @@ pub enum RedactEntity {
 }
 
 impl RedactEntity {
-    /// Every entity, in the order of Firecrawl's `RedactPIIEntity`.
+    /// Every entity, in the order of the compatibility API's `RedactPIIEntity`.
     pub const ALL: [Self; 6] = [
         Self::Person,
         Self::Email,
@@ -65,7 +65,7 @@ impl RedactEntity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum RedactMode {
-    /// Firecrawl's default; here the same as [`RedactMode::Fast`].
+    /// The compatibility API's default; here the same as [`RedactMode::Fast`].
     #[default]
     Accurate,
     /// Also redact bare 10-15 digit runs as phone numbers.
@@ -292,7 +292,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
-    // Synthetic detector canary: the AWS-shaped key is assembled from parts.
+    // Synthetic detector canary: the cloud-key-shaped key is assembled from parts.
     const SAMPLE: &str = concat!(
         "Mail jane.doe@example.com or call +1 415-555-0132. Card 4111 1111 1111 1111, \
         IBAN GB82 WEST 1234 5698 7654 32, key AKIA",

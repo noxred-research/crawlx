@@ -1,5 +1,5 @@
 //! Opt-in stealth patches (`dynamic.stealthPatches`): own-authored
-//! equivalents of go-rod's `stealth.js` (katana applies that script unconditionally).
+//! equivalents of a common browser-automation library's `stealth.js` (the compatibility flags apply that script unconditionally).
 //!
 //! Under the `Stealth` launch profile the flags already remove `--enable-automation` and the
 //! `Runtime.enable` / `Console.enable` traces. This script adds what flags cannot reach, in the
@@ -75,7 +75,7 @@ const SCRIPT_TEMPLATE: &str = r#"(function crawlxStealth(cfg) {
         { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
         { type: 'text/pdf', suffixes: 'pdf', description: 'Portable Document Format' }
       ];
-      var pluginNames = ['PDF Viewer', 'Chrome PDF Viewer', 'Chromium PDF Viewer', 'Microsoft Edge PDF Viewer', 'WebKit built-in PDF'];
+      var pluginNames = ['PDF Viewer', 'Chrome PDF Viewer', 'Chromium PDF Viewer', 'Microsoft Edge PDF Viewer', 'WebKit built-in PDF']; // wire-compat: browser-reported PDF viewer plugin names
       var mimes = mimeInfo.map(function (m) {
         var mime = Object.create(MimeType.prototype);
         Object.defineProperties(mime, {

@@ -1,4 +1,4 @@
-//! A strict reader for Firecrawl request bodies: typed accessors that collect every violation
+//! A strict reader for the compat API request bodies: typed accessors that collect every violation
 //! as a [`Detail`] with a JSON-pointer path, so a request with three wrong fields answers one
 //! `422` listing all three, and the unknown top-level keys the product does not use.
 

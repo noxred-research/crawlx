@@ -1,4 +1,4 @@
-//! The cookie-consent banner blocklist behind `dynamic.blockConsentBanners` (katana's
+//! The cookie-consent banner blocklist behind `dynamic.blockConsentBanners` (the compatibility
 //! cookie-consent bypass).
 //!
 //! `data/consent_block.txt` lists the URL patterns of well-known consent-management providers

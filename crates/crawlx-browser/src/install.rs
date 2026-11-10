@@ -1,4 +1,4 @@
-//! Chromium auto-download: katana downloads a browser by default, crawlx
+//! Chromium auto-download: the compatibility flags download a browser by default, crawlx
 //! only when asked (`crawlx browser install`, `WorkerConfig.auto_download_chromium`).
 //!
 //! What is downloaded is the Chrome-for-Testing archive `chromium-pin.toml` names

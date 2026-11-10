@@ -20,8 +20,8 @@ use uuid::Uuid;
 
 /// Every key starts with this literal.
 pub const KEY_PREFIX: &str = "cx_live_";
-/// Firecrawl-style keys start with this literal (`compat.firecrawlKeys`).
-pub const FIRECRAWL_KEY_PREFIX: &str = "fc-";
+/// compat-style keys start with this literal (`compat.prefixedKeys`).
+pub const COMPAT_KEY_PREFIX: &str = "fc-";
 /// Length of the base32 secret part.
 pub const SECRET_LEN: usize = 26;
 /// Characters of the secret part stored as `api_keys.prefix`.
@@ -57,13 +57,13 @@ pub fn generate_key() -> String {
     out
 }
 
-/// A fresh random Firecrawl-style key: `fc-` + 32 lowercase hexadecimal characters. It
-/// authenticates only when `compat.firecrawlKeys` is on, and only on `/compat/` routes.
+/// A fresh random compat-style key: `fc-` + 32 lowercase hexadecimal characters. It
+/// authenticates only when `compat.prefixedKeys` is on, and only on `/compat/` routes.
 #[must_use]
-pub fn generate_firecrawl_key() -> String {
+pub fn generate_compat_key() -> String {
     let mut bytes = [0u8; 16];
     UnwrapErr(SysRng).fill_bytes(&mut bytes);
-    format!("{FIRECRAWL_KEY_PREFIX}{}", hex::encode(bytes))
+    format!("{COMPAT_KEY_PREFIX}{}", hex::encode(bytes))
 }
 
 /// The lookup prefix of a well-formed key, or `None` for anything else.
@@ -78,22 +78,22 @@ pub fn parse_key(token: &str) -> Option<&str> {
 
 /// The lookup prefix of a well-formed `fc-` key (`fc-` + the first [`LOOKUP_LEN`] characters of
 /// its secret), or `None` for anything else. The secret is 16 to 64 ASCII alphanumerics
-/// (Firecrawl's own keys are 32 hexadecimal characters). The prefix is longer than a
+/// (the compat API's own keys are 32 hexadecimal characters). The prefix is longer than a
 /// `cx_live_` lookup prefix, so the two key families can never collide in `api_keys.prefix`.
 #[must_use]
-pub fn parse_firecrawl_key(token: &str) -> Option<&str> {
-    let secret = token.strip_prefix(FIRECRAWL_KEY_PREFIX)?;
+pub fn parse_compat_key(token: &str) -> Option<&str> {
+    let secret = token.strip_prefix(COMPAT_KEY_PREFIX)?;
     if !(16..=64).contains(&secret.len()) || !secret.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return None;
     }
-    token.get(..FIRECRAWL_KEY_PREFIX.len() + LOOKUP_LEN)
+    token.get(..COMPAT_KEY_PREFIX.len() + LOOKUP_LEN)
 }
 
 /// The lookup prefix of `token`: a `cx_live_` key always, an `fc-` key only when
-/// `firecrawl_keys` is `true` (`compat.firecrawlKeys`).
+/// `prefixed_keys` is `true` (`compat.prefixedKeys`).
 #[must_use]
-pub fn lookup_prefix(token: &str, firecrawl_keys: bool) -> Option<&str> {
-    parse_key(token).or_else(|| firecrawl_keys.then(|| parse_firecrawl_key(token)).flatten())
+pub fn lookup_prefix(token: &str, prefixed_keys: bool) -> Option<&str> {
+    parse_key(token).or_else(|| prefixed_keys.then(|| parse_compat_key(token)).flatten())
 }
 
 /// BLAKE3-256 of the full key.
@@ -108,16 +108,16 @@ pub fn key_record(token: &str, tenant: TenantId, scopes: BTreeSet<Scope>) -> Opt
     key_record_for(token, tenant, scopes, false)
 }
 
-/// As [`key_record`], additionally accepting an `fc-` key when `firecrawl_keys` is `true`
-/// (`compat.firecrawlKeys`). The record's `prefix` is [`lookup_prefix`] of the key.
+/// As [`key_record`], additionally accepting an `fc-` key when `prefixed_keys` is `true`
+/// (`compat.prefixedKeys`). The record's `prefix` is [`lookup_prefix`] of the key.
 #[must_use]
 pub fn key_record_for(
     token: &str,
     tenant: TenantId,
     scopes: BTreeSet<Scope>,
-    firecrawl_keys: bool,
+    prefixed_keys: bool,
 ) -> Option<KeyRecord> {
-    let prefix = lookup_prefix(token, firecrawl_keys)?.to_owned();
+    let prefix = lookup_prefix(token, prefixed_keys)?.to_owned();
     Some(KeyRecord {
         key_id: Uuid::now_v7(),
         tenant,
@@ -332,18 +332,18 @@ pub(crate) fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
 }
 
 /// The API key a WebSocket handshake carries as its subprotocol: the first offered
-/// `Sec-WebSocket-Protocol` token that is shaped like a key. Browsers and the Firecrawl SDK
+/// `Sec-WebSocket-Protocol` token that is shaped like a key. Browsers and the compat SDK
 /// (`new WebSocket(url, apiKey)`) cannot set an `Authorization` header on a WebSocket, so the
 /// facade accepts the key there; the handshake echoes the token back as the chosen subprotocol.
 #[must_use]
-pub(crate) fn websocket_key(headers: &HeaderMap, firecrawl_keys: bool) -> Option<&str> {
+pub(crate) fn websocket_key(headers: &HeaderMap, prefixed_keys: bool) -> Option<&str> {
     headers
         .get_all(header::SEC_WEBSOCKET_PROTOCOL)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(','))
         .map(str::trim)
-        .find(|token| lookup_prefix(token, firecrawl_keys).is_some())
+        .find(|token| lookup_prefix(token, prefixed_keys).is_some())
 }
 
 /// Validate a bearer token against the key store.
@@ -352,7 +352,7 @@ pub(crate) fn websocket_key(headers: &HeaderMap, firecrawl_keys: bool) -> Option
 /// `401 unauthenticated` for malformed, unknown, revoked, expired or wrong keys.
 pub async fn authenticate(state: &AppState, token: &str) -> Result<Principal, HttpError> {
     let prefix =
-        lookup_prefix(token, state.config.compat.firecrawl_keys).ok_or_else(HttpError::unauthenticated)?;
+        lookup_prefix(token, state.config.compat.prefixed_keys).ok_or_else(HttpError::unauthenticated)?;
     let now = state.clock.now();
     let now_ms = now.timestamp_millis();
     let record = match state.keys.get(prefix, now_ms) {
@@ -443,14 +443,14 @@ pub async fn auth_layer(State(state): State<AppState>, mut req: Request, next: N
         && is_websocket_upgrade(req.headers());
     let token = match bearer(req.headers()) {
         Some(token) => Some(token),
-        None if handshake => websocket_key(req.headers(), state.config.compat.firecrawl_keys),
+        None if handshake => websocket_key(req.headers(), state.config.compat.prefixed_keys),
         None => None,
     };
     let Some(token) = token else {
         return HttpError::unauthenticated().into_response();
     };
     // an `fc-` key is a facade credential: it never opens a native `/v1` route
-    if token.starts_with(FIRECRAWL_KEY_PREFIX) && !req.uri().path().starts_with("/compat/") {
+    if token.starts_with(COMPAT_KEY_PREFIX) && !req.uri().path().starts_with("/compat/") {
         return HttpError::unauthenticated().into_response();
     }
     let principal = match authenticate(&state, token).await {
@@ -528,10 +528,10 @@ mod tests {
     }
 
     #[test]
-    fn firecrawl_keys_parse_only_when_enabled() {
-        let fc = generate_firecrawl_key();
+    fn prefixed_keys_parse_only_when_enabled() {
+        let fc = generate_compat_key();
         assert!(fc.starts_with("fc-") && fc.len() == 3 + 32);
-        assert_eq!(parse_firecrawl_key(&fc), Some(&fc[..3 + LOOKUP_LEN]));
+        assert_eq!(parse_compat_key(&fc), Some(&fc[..3 + LOOKUP_LEN]));
         assert_eq!(lookup_prefix(&fc, true), Some(&fc[..3 + LOOKUP_LEN]));
         assert_eq!(lookup_prefix(&fc, false), None, "off by default");
         assert!(key_record(&fc, TenantId::new(), Scope::all_set()).is_none());
@@ -552,7 +552,7 @@ mod tests {
         ] {
             assert_eq!(lookup_prefix(bad, true), None, "{bad}");
         }
-        assert_eq!(parse_firecrawl_key(&format!("fc-{}", "a".repeat(65))), None);
+        assert_eq!(parse_compat_key(&format!("fc-{}", "a".repeat(65))), None);
     }
 
     #[test]
@@ -567,7 +567,7 @@ mod tests {
         assert!(is_websocket_upgrade(&h));
 
         let cx = generate_key();
-        let fc = generate_firecrawl_key();
+        let fc = generate_compat_key();
         let mut h = HeaderMap::new();
         assert_eq!(websocket_key(&h, true), None);
         h.insert(

@@ -1,4 +1,4 @@
-# crawlx ad, analytics, tracker, pixel and cookie-popup blocklist (Firecrawl `blockAds`).
+# crawlx ad, analytics, tracker, pixel and cookie-popup blocklist (compatibility API `blockAds`).
 #
 # Authored for crawlx from publicly known third-party advertising, measurement and consent
 # vendors; it is not copied from any filter list. Only third-party infrastructure belongs here:

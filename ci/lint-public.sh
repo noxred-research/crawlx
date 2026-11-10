@@ -52,6 +52,13 @@ RULES=(
   $'bench-evidence\tbench/evidence'
   $'host-path\t/data/(tmp|cache|workspace)'
   $'privileged-pr-trigger\tpull_request_target'
+  # Third-party products, services and vendors are not named in this repository; integrations
+  # keep working under neutral names. Exceptions: a line carrying the `wire-compat` marker (an
+  # exact string an external client or service needs) or the `detection-data` marker (a name
+  # matched on target sites), dependency manifests and imports, license attributions, detection
+  # data files, recorded upstream responses, and migrations published before this rule (their
+  # text is checksummed by the schema migrator and must not change).
+  $'third-party-name\t(?i)(firecrawl|katana|projectdiscovery|playwright|patchright|puppeteer|selenium|scrapling|crawl4ai|crawlee|scrapy|colly|nutch|stormcrawler|heritrix|browsertrix|trafilatura|newspaper4k|searxng|openai|ollama|capsolver|2captcha|langchain|mendable|sideguide|wappalyzer|mozilla|turnstile|recaptcha|hcaptcha|cloudflare|\\butls\\b)\t^(THIRD_PARTY_NOTICES\\.md|CODE_OF_CONDUCT\\.md|deny\\.toml|LICENSE[^:]*|[^:]*/LICENSE[^:]*|[^:]*package\\.json|[^:]*requirements[^:]*\\.txt|tests/sdk/[^:]*|bench/differential/(sdk_shape_[^:]*|captures/[^:]*)|crates/[^/]+/data/[^:]*|crates/crawlx-storage/migrations/00([0-3][0-9]|4[0-4])_[^:]*|crates/crawlx-cli/schemas/[^:]*):|wire-compat|detection-data'
 )
 
 # --- private rules -------------------------------------------------------------------------
@@ -132,6 +139,24 @@ for rule in "${RULES[@]}"; do
       1) continue ;;
       *) echo "lint-public: rule [$name] has a line filter that failed (exit $rc)" >&2; exit 2 ;;
     esac
+  fi
+  # A marker may sit on the line just above or below the hit (rustfmt moves trailing comments of
+  # long lines onto their own line; raw strings cannot carry a comment).
+  if [ "$name" = third-party-name ]; then
+    kept=""
+    while IFS= read -r hit; do
+      [ -n "$hit" ] || continue
+      file=${hit%%:*}
+      rest=${hit#*:}
+      line=${rest%%:*}
+      from=$((line > 1 ? line - 1 : 1))
+      if sed -n "${from},$((line + 1))p" -- "$file" | grep -qE 'wire-compat|detection-data'; then
+        continue
+      fi
+      kept+="$hit"$'\n'
+    done <<<"$matches"
+    matches=${kept%$'\n'}
+    [ -n "$matches" ] || continue
   fi
   # file:line:text -> file:line: [rule] text (text cut at 120 columns; none for private rules)
   printf '%s\n' "$matches" | awk -F: -v rule="$name" '

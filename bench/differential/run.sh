@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Differential run: crawl gym fixtures through the unmodified Firecrawl
+# Differential run: crawl gym fixtures through the unmodified upstream
 # self-host at the pinned commit, export each result as data, crawl the same fixture with the
 # same request through crawlx, and score both with `crawlx-differential`.
 #
@@ -10,40 +10,40 @@
 # is allowed), 1 when one does not, 2 on setup errors.
 #
 # Environment:
-#   FIRECRAWL_COMMIT   pinned commit (default c31e88c07afe941bfd8aebde61684eeba042abb5)
-#   FIRECRAWL_REPO     git URL (default https://github.com/firecrawl/firecrawl.git)
-#   FIRECRAWL_SRC      the upstream checkout (default bench/differential/.firecrawl-src, git-ignored).
+#   UPSTREAM_COMMIT   pinned commit (default c31e88c07afe941bfd8aebde61684eeba042abb5)
+#   UPSTREAM_REPO     git URL (default https://github.com/firecrawl/firecrawl.git; wire-compat: pinned dependency checkout URL)
+#   UPSTREAM_SRC      the upstream checkout (default bench/differential/.upstream-src, git-ignored).
 #                      Must stay outside crates/; a shared checkout such as
-#                      $HOME/.cache/firecrawl-upstream works well. Its HEAD must equal FIRECRAWL_COMMIT.
-#   FIRECRAWL_PORT     host port of the Firecrawl API (default 3002)
-#   FIRECRAWL_URL      use an already running API (no compose, no checkout), e.g. http://127.0.0.1:3102
+#                      $HOME/.cache/upstream-checkout works well. Its HEAD must equal UPSTREAM_COMMIT.
+#   UPSTREAM_PORT     host port of the upstream API (default 3002)
+#   UPSTREAM_URL      use an already running API (no compose, no checkout), e.g. http://127.0.0.1:3102
 #   GYM_PORT           host port of the gym fixture server (default 4100)
 #   GYM_HOST           hostname the containers use for the gym (default gym.test, see the compose override)
-#   KEEP_STACK=1       do not tear the Firecrawl stack down afterwards
-#   SKIP_FIRECRAWL=1   offline replay: reuse the committed bench/differential/captures/<family>.json
-#                      instead of crawling through Firecrawl (what `cargo test -p crawlx-bench --test
+#   KEEP_STACK=1       do not tear the upstream stack down afterwards
+#   SKIP_UPSTREAM=1   offline replay: reuse the committed bench/differential/captures/<family>.json
+#                      instead of crawling through upstream (what `cargo test -p crawlx-bench --test
 #                      differential` does for the families it covers)
 #   PROMOTE=1          copy each fresh export to bench/differential/captures/<family>.json
 #                      and each scorecard to bench/out/differential/<family>.scorecard.md
 #
-# Requires docker compose v2 (unless FIRECRAWL_URL or SKIP_FIRECRAWL is set), git, python3 and a
+# Requires docker compose v2 (unless UPSTREAM_URL or SKIP_UPSTREAM is set), git, python3 and a
 # Rust toolchain. Not part of the PR gate (ci.yml job `differential-nightly`, schedule only).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 SELECT="${1:-s1}"
 OUT="${2:-bench/differential/out}"
-FIRECRAWL_COMMIT="${FIRECRAWL_COMMIT:-c31e88c07afe941bfd8aebde61684eeba042abb5}"
-FIRECRAWL_REPO="${FIRECRAWL_REPO:-https://github.com/firecrawl/firecrawl.git}"
-FIRECRAWL_SRC="${FIRECRAWL_SRC:-bench/differential/.firecrawl-src}"
-FIRECRAWL_PORT="${FIRECRAWL_PORT:-3002}"
+UPSTREAM_COMMIT="${UPSTREAM_COMMIT:-c31e88c07afe941bfd8aebde61684eeba042abb5}"
+UPSTREAM_REPO="${UPSTREAM_REPO:-https://github.com/firecrawl/firecrawl.git}" # wire-compat: pinned dependency checkout URL
+UPSTREAM_SRC="${UPSTREAM_SRC:-bench/differential/.upstream-src}"
+UPSTREAM_PORT="${UPSTREAM_PORT:-3002}"
 GYM_PORT="${GYM_PORT:-4100}"
 GYM_HOST="${GYM_HOST:-gym.test}"
 CAPTURES="bench/differential/captures"
 EVIDENCE="bench/out/differential"
 FAMILIES="bench/differential/families.json"
-COMPOSE=(docker compose -p crawlx-differential --env-file bench/differential/firecrawl.env
-  -f "$FIRECRAWL_SRC/docker-compose.yaml" -f bench/differential/docker-compose.firecrawl.yaml)
+COMPOSE=(docker compose -p crawlx-differential --env-file bench/differential/upstream.env
+  -f "$UPSTREAM_SRC/docker-compose.yaml" -f bench/differential/docker-compose.upstream.yaml)
 mkdir -p "$OUT"
 
 cargo build -p crawlx-bench --bins
@@ -79,24 +79,24 @@ IDS=$(family_ids)
 cleanup() {
   if [[ -n "${GYM_PID:-}" ]]; then kill "$GYM_PID" 2>/dev/null || true; fi
   if [[ -n "${STACK_UP:-}" && -z "${KEEP_STACK:-}" ]]; then
-    PORT="$FIRECRAWL_PORT" "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+    PORT="$UPSTREAM_PORT" "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
 
-API="${FIRECRAWL_URL:-http://127.0.0.1:$FIRECRAWL_PORT}"
-if [[ -z "${SKIP_FIRECRAWL:-}" ]]; then
-  # 1. The unmodified pinned Firecrawl checkout (AGPL-3.0; outside crates/, never committed).
-  if [[ -z "${FIRECRAWL_URL:-}" ]]; then
-    if [[ ! -d "$FIRECRAWL_SRC/.git" ]]; then
-      git init -q "$FIRECRAWL_SRC"
-      git -C "$FIRECRAWL_SRC" remote add origin "$FIRECRAWL_REPO"
+API="${UPSTREAM_URL:-http://127.0.0.1:$UPSTREAM_PORT}"
+if [[ -z "${SKIP_UPSTREAM:-}" ]]; then
+  # 1. The unmodified pinned upstream checkout (AGPL-3.0; outside crates/, never committed).
+  if [[ -z "${UPSTREAM_URL:-}" ]]; then
+    if [[ ! -d "$UPSTREAM_SRC/.git" ]]; then
+      git init -q "$UPSTREAM_SRC"
+      git -C "$UPSTREAM_SRC" remote add origin "$UPSTREAM_REPO"
     fi
-    if ! git -C "$FIRECRAWL_SRC" cat-file -e "$FIRECRAWL_COMMIT^{commit}" 2>/dev/null; then
-      git -C "$FIRECRAWL_SRC" fetch -q --depth 1 origin "$FIRECRAWL_COMMIT"
+    if ! git -C "$UPSTREAM_SRC" cat-file -e "$UPSTREAM_COMMIT^{commit}" 2>/dev/null; then
+      git -C "$UPSTREAM_SRC" fetch -q --depth 1 origin "$UPSTREAM_COMMIT"
     fi
-    if [[ "$(git -C "$FIRECRAWL_SRC" rev-parse HEAD 2>/dev/null)" != "$FIRECRAWL_COMMIT" ]]; then
-      git -C "$FIRECRAWL_SRC" checkout -q --detach "$FIRECRAWL_COMMIT"
+    if [[ "$(git -C "$UPSTREAM_SRC" rev-parse HEAD 2>/dev/null)" != "$UPSTREAM_COMMIT" ]]; then
+      git -C "$UPSTREAM_SRC" checkout -q --detach "$UPSTREAM_COMMIT"
     fi
   fi
 
@@ -107,11 +107,11 @@ if [[ -z "${SKIP_FIRECRAWL:-}" ]]; then
     exit 2
   fi
 
-  # 3. Firecrawl stack: only the API and its dependencies (the FoundationDB services of the
-  # upstream file are for an optional queue backend).
-  if [[ -z "${FIRECRAWL_URL:-}" ]]; then
-    PORT="$FIRECRAWL_PORT" "${COMPOSE[@]}" build api playwright-service nuq-postgres
-    PORT="$FIRECRAWL_PORT" "${COMPOSE[@]}" up -d --wait api
+  # 3. Upstream stack: only the API and its dependencies (the FoundationDB services of the
+  # Compose file are for an optional queue backend).
+  if [[ -z "${UPSTREAM_URL:-}" ]]; then
+    PORT="$UPSTREAM_PORT" "${COMPOSE[@]}" build api playwright-service nuq-postgres # wire-compat: service names of the upstream Compose file
+    PORT="$UPSTREAM_PORT" "${COMPOSE[@]}" up -d --wait api
     STACK_UP=1
   fi
   for _ in $(seq 1 60); do
@@ -120,13 +120,13 @@ if [[ -z "${SKIP_FIRECRAWL:-}" ]]; then
   done
 fi
 
-# 4. Per family: export through Firecrawl, crawl with crawlx, score.
+# 4. Per family: export through upstream, crawl with crawlx, score.
 overall=0
 SUMMARY="$OUT/summary.md"
 {
   echo "# Differential run"
   echo
-  echo "| family | verdict | expect | open | attempted (firecrawl/crawlx) | findings |"
+  echo "| family | verdict | expect | open | attempted (upstream/crawlx) | findings |"
   echo "|---|---|---|---|---:|---:|"
 } >"$SUMMARY"
 for id in $IDS; do
@@ -148,12 +148,12 @@ print(" ".join(fam.get("aliases") or data.get("fixture_hosts", {}).get(fam["fixt
 PY
 )
   if [[ "$claim" != "True" ]]; then claim=""; fi
-  export_file="$OUT/$id.firecrawl.json"
-  if [[ -n "${SKIP_FIRECRAWL:-}" ]]; then
+  export_file="$OUT/$id.upstream.json"
+  if [[ -n "${SKIP_UPSTREAM:-}" ]]; then
     export_file="$CAPTURES/$id.json"
   else
     # Gym fixture server on all interfaces, reachable from the containers as $host (and the
-    # other names of the fixture, see docker-compose.firecrawl.yaml). A fixture that owns the
+    # other names of the fixture, see docker-compose.upstream.yaml). A fixture that owns the
     # origin's robots.txt is claimed up front.
     gym_args=(--bind "0.0.0.0:$GYM_PORT")
     if [[ -n "$claim" ]]; then gym_args+=(--claim-origin "$fixture"); fi
@@ -163,8 +163,8 @@ PY
       curl -fsS "http://127.0.0.1:$GYM_PORT/robots.txt" >/dev/null 2>&1 && break
       sleep 0.2
     done
-    python3 bench/differential/firecrawl_export.py --api "$API" --origin "http://$host:$GYM_PORT" \
-      --seed-path "$seed_path" --request "$request" --family "$id" --commit "$FIRECRAWL_COMMIT" \
+    python3 bench/differential/upstream_export.py --api "$API" --origin "http://$host:$GYM_PORT" \
+      --seed-path "$seed_path" --request "$request" --family "$id" --commit "$UPSTREAM_COMMIT" \
       --gym-ledger "http://127.0.0.1:$GYM_PORT/__gym/ledger" --out "$export_file"
     kill "$GYM_PID" 2>/dev/null || true
     wait "$GYM_PID" 2>/dev/null || true
@@ -180,8 +180,8 @@ PY
   fi
   set +e
   "$DIFF_BIN" \
-    --firecrawl "$export_file" \
-    --firecrawl-origin "http://$host:$GYM_PORT" \
+    --upstream "$export_file" \
+    --upstream-origin "http://$host:$GYM_PORT" \
     --fixture "$fixture" \
     --request "@$export_file" \
     ${extra[@]+"${extra[@]}"} \
@@ -203,7 +203,7 @@ PY
     echo "run.sh: family $id reached $verdict, expected $expect (exit $code)" >&2
     overall=1
   fi
-  if [[ -n "${PROMOTE:-}" && -z "${SKIP_FIRECRAWL:-}" ]]; then
+  if [[ -n "${PROMOTE:-}" && -z "${SKIP_UPSTREAM:-}" ]]; then
     mkdir -p "$CAPTURES" "$EVIDENCE"
     cp "$export_file" "$CAPTURES/$id.json"
     cp "$OUT/$id.scorecard.md" "$EVIDENCE/$id.scorecard.md"

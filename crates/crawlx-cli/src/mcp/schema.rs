@@ -5,7 +5,7 @@
 //! `required`, `additionalProperties` (as a schema), `items`, `minimum`, `maximum`,
 //! `minLength`, `maxLength`, `minItems`, `maxItems` and `format` (`uri`, `uuid`).
 //!
-//! Like the upstream Firecrawl MCP server (which validates with zod), the check is
+//! Like the upstream MCP server (which validates with zod), the check is
 //! tolerant on the way in: `null` values and blank strings of optional properties count as
 //! absent, and properties the schema does not list are dropped instead of rejected.
 

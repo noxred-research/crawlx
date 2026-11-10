@@ -2,7 +2,7 @@
 //!
 //! Paragraph classification, integer parent/grandparent gravity and density share
 //! one annotated owned tree. Candidates contain block indices, never DOM copies.
-//! These rules do not claim Trafilatura/jusText/Newspaper output parity.
+//! These rules do not claim parity with other extractors.
 
 use crate::{
     dom::{Elem, Node},

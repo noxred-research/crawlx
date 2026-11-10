@@ -1,4 +1,4 @@
-//! Firecrawl monitors: scheduled checks that scrape a set of targets, compare every
+//! The compat API monitors: scheduled checks that scrape a set of targets, compare every
 //! page with its stored baseline and report `new`, `same`, `changed`, `removed` or `error` pages.
 //!
 //! * [`model`] validates the create and update requests.

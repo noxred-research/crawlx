@@ -13,9 +13,8 @@
 //! The tracker reads no clock: every event carries its timestamp, and the
 //! tracker's "now" is the latest timestamp it has seen.
 //!
-//! [`classify_endpoint`] is adapted from projectdiscovery/katana
-//! `pkg/knowledgebase/extractors/endpoints/endpoints.go` (`classify`) at
-//! commit 9662cd7 (MIT); katana's "skip" outcome is [`EndpointClass::Static`].
+//! [`classify_endpoint`] is ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md.
+//! The upstream's "skip" outcome is [`EndpointClass::Static`].
 
 use chrono::Duration;
 use crawlx_core::ids::{ActionId, NetworkEpochId};
@@ -91,7 +90,7 @@ impl EndpointClass {
     }
 }
 
-/// Path substrings that suggest an API endpoint (katana `apiPathSegments`).
+/// Path substrings that suggest an API endpoint (the upstream's `apiPathSegments` list).
 const API_PATH_SEGMENTS: &[&str] = &[
     "/api/",
     "/v1/",

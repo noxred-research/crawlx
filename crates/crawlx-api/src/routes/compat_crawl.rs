@@ -1,20 +1,20 @@
-//! Firecrawl v2 crawl request translation (`POST /crawl`) and the crawl endpoints that are
+//! compat v2 crawl request translation (`POST /crawl`) and the crawl endpoints that are
 //! neither start, status nor cancel: `GET /crawl/active` and `POST /crawl/params-preview`.
 //!
-//! [`translate`] turns a Firecrawl crawl body into a [`CreateCrawl`] whose `scrape` job
+//! [`translate`] turns a compat crawl body into a [`CreateCrawl`] whose `scrape` job
 //! (`kind: crawl`) carries the per-page `scrapeOptions`: every page of the run is produced by the
 //! worker's scrape engine. Options crawlx cannot honour are reported in the additive
 //! `warnings[]`, never dropped silently:
 //!
-//! | Firecrawl | crawlx |
+//! | compat API | crawlx |
 //! |---|---|
 //! | `includePaths` / `excludePaths` | `scope.includePaths` / `excludePaths` (URL pathname regexes) |
 //! | the same with `regexOnFullURL: true` | `scope.urlInclude` / `urlExclude` (full URL regexes) |
 //! | `maxDiscoveryDepth`, `sitemap`, `crawlEntireDomain`, `allowSubdomains` | the `scope` fields of the same name |
 //! | `allowExternalLinks` | `scope.allowExternalLinks`: external pages are fetched as leaves (one hop), external homepages are skipped and reported as `EXTERNAL_LINK` |
 //! | `ignoreQueryParameters` | `scope.queryPolicy` (`strip_all`, else `keep_all`) |
-//! | `deduplicateSimilarURLs` (default `true`, Firecrawl's: URL normalization) | no per-request counterpart: `crawlx-url` canonicalization always merges equivalent URLs (host case, default port, fragment, query order; a trailing slash stays a distinct URL under the worker's default `Keep` policy). An explicit `false` is accepted with an `unsupported_option` warning and not honoured. Never `scope.filterSimilar` (the URL-shape filter stays at its native default `false`) |
-//! | `delay` (seconds) | `politeness.delayMs`, and concurrency 1 (Firecrawl: "delay forces concurrency to 1") |
+//! | `deduplicateSimilarURLs` (default `true`, the compat API's: URL normalization) | no per-request counterpart: `crawlx-url` canonicalization always merges equivalent URLs (host case, default port, fragment, query order; a trailing slash stays a distinct URL under the worker's default `Keep` policy). An explicit `false` is accepted with an `unsupported_option` warning and not honoured. Never `scope.filterSimilar` (the URL-shape filter stays at its native default `false`) |
+//! | `delay` (seconds) | `politeness.delayMs`, and concurrency 1 (the compat API: "delay forces concurrency to 1") |
 //! | `maxConcurrency` | `politeness.maxConcurrency` (1..=256) and `maxInFlightPerOrigin` (at most 8) |
 //! | `robotsUserAgent` | `fetch.robotsUserAgent` |
 //! | `ignoreRobotsTxt` | `safety.respectRobotsTxt = false` under the facade's authorization record (`compat.robotsAuthorization`; [`crate::routes::compat::create`] attaches it), else `403 ROBOTS_OVERRIDE_NOT_AUTHORIZED` |
@@ -57,17 +57,17 @@ use serde_json::{json, Map, Value};
 pub const OPERATIONS: &[Operation] = &[
     (
         "get",
-        "/compat/firecrawl/v2/crawl/active",
-        "firecrawlActiveCrawls",
-        "Firecrawl v2 crawl facade: the tenant's queued, running and paused crawls",
+        "/compat/v2/crawl/active",
+        "compatActiveCrawls",
+        "compat v2 crawl facade: the tenant's queued, running and paused crawls",
         "crawls:read",
         "200",
     ),
     (
         "post",
-        "/compat/firecrawl/v2/crawl/params-preview",
-        "firecrawlCrawlParamsPreview",
-        "Firecrawl v2 crawl facade: crawl options the configured LLM derives from a prompt",
+        "/compat/v2/crawl/params-preview",
+        "compatCrawlParamsPreview",
+        "compat v2 crawl facade: crawl options the configured LLM derives from a prompt",
         "crawls:write",
         "200",
     ),
@@ -76,8 +76,8 @@ pub const OPERATIONS: &[Operation] = &[
 /// Routes of this module, mounted behind authentication.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/compat/firecrawl/v2/crawl/active", get(active))
-        .route("/compat/firecrawl/v2/crawl/params-preview", post(params_preview))
+        .route("/compat/v2/crawl/active", get(active))
+        .route("/compat/v2/crawl/params-preview", post(params_preview))
 }
 
 /// Request keys of a crawl body (after v1 aliases are resolved); everything else warns.
@@ -109,12 +109,12 @@ const KNOWN: [&str; 21] = [
 /// SDK bookkeeping keys that are accepted without a warning.
 const SILENT: [&str; 1] = ["origin"];
 
-/// Webhook event names of a crawl (Firecrawl accepts them with or without the `crawl.` prefix).
+/// Webhook event names of a crawl (the compat API accepts them with or without the `crawl.` prefix).
 pub(crate) const WEBHOOK_EVENTS: [&str; 4] = ["started", "page", "completed", "failed"];
 
-/// Most patterns of one `includePaths` / `excludePaths` list (Firecrawl limit).
+/// Most patterns of one `includePaths` / `excludePaths` list (the compat API limit).
 const MAX_PATTERNS: usize = MAX_PATH_PATTERNS;
-/// Longest pattern in bytes (Firecrawl limit).
+/// Longest pattern in bytes (the compat API limit).
 const MAX_PATTERN_LEN: usize = MAX_PATH_PATTERN_LEN;
 /// `politeness.maxInFlightPerOrigin` ceiling.
 const MAX_PER_ORIGIN: u64 = 8;
@@ -348,12 +348,12 @@ fn check_patterns(cx: &mut Cx, crawl: &CreateCrawl) {
     }
 }
 
-/// Translate a Firecrawl crawl request. `plan` is the object `plan_crawl_options` returned for
+/// Translate a compat crawl request. `plan` is the object `plan_crawl_options` returned for
 /// the request's `prompt` (explicit options override it); without a plan a `prompt` only
 /// warns.
 ///
 /// # Errors
-/// `400 BAD_REQUEST` (every violation in `details`, Firecrawl's error shape) for a missing or
+/// `400 BAD_REQUEST` (every violation in `details`, the compat API's error shape) for a missing or
 /// invalid `url` and any other invalid value, including a pattern that does not compile, an
 /// invalid webhook and a header the fetch controls reject.
 pub(crate) fn translate(body: &Value, plan: Option<&Map<String, Value>>) -> ApiResult<Translated> {
@@ -498,7 +498,7 @@ pub(crate) fn translate(body: &Value, plan: Option<&Map<String, Value>>) -> ApiR
     scope.crawl_entire_domain = entire_domain.unwrap_or(false);
     scope.allow_external_links = external.unwrap_or(false);
     scope.allow_subdomains = subdomains.unwrap_or(false);
-    // `deduplicateSimilarURLs` is URL normalization in Firecrawl, not a URL-shape filter:
+    // `deduplicateSimilarURLs` is URL normalization in the compat API, not a URL-shape filter:
     // `scope.filterSimilar` stays at its native default. The URL canonicalizer of `crawlx-url`
     // always merges equivalent URLs (the default `true`, the trailing slash aside: the worker's
     // `TrailingSlash::Keep` is not a per-request setting); an explicit `false` cannot be honoured.
@@ -522,7 +522,7 @@ pub(crate) fn translate(body: &Value, plan: Option<&Map<String, Value>>) -> ApiR
     }
     if let Some(d) = delay {
         crawl.politeness.delay_ms = delay_ms(d);
-        // Firecrawl: setting `delay` forces concurrency to 1
+        // The compat API: setting `delay` forces concurrency to 1
         crawl.politeness.max_concurrency = 1;
         crawl.politeness.max_in_flight_per_origin = 1;
         if concurrency.is_some() {
@@ -575,7 +575,7 @@ pub(crate) fn translate(body: &Value, plan: Option<&Map<String, Value>>) -> ApiR
     })
 }
 
-/// Firecrawl `delay` seconds as politeness milliseconds, capped at one minute.
+/// The compat API `delay` seconds as politeness milliseconds, capped at one minute.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -585,8 +585,8 @@ fn delay_ms(seconds: f64) -> u32 {
     (seconds * 1000.0).round().min(60_000.0) as u32
 }
 
-/// The Firecrawl name of a `scrapeOptions` key of the serialized core options.
-const fn firecrawl_key(core: &str) -> Option<&'static str> {
+/// The compat name of a `scrapeOptions` key of the serialized core options.
+const fn compat_key(core: &str) -> Option<&'static str> {
     match core.as_bytes() {
         b"maxAgeMs" => Some("maxAge"),
         b"minAgeMs" => Some("minAge"),
@@ -596,7 +596,7 @@ const fn firecrawl_key(core: &str) -> Option<&'static str> {
     }
 }
 
-/// `scrapeOptions` of a stored scrape job as Firecrawl spells them.
+/// `scrapeOptions` of a stored scrape job as the compat API spells them.
 fn scrape_options_json(o: &ScrapeOptions) -> Value {
     let Ok(Value::Object(core)) = serde_json::to_value(o) else {
         return json!({});
@@ -607,7 +607,7 @@ fn scrape_options_json(o: &ScrapeOptions) -> Value {
         if k == "headers" {
             continue;
         }
-        match firecrawl_key(&k) {
+        match compat_key(&k) {
             Some(name) => out.insert(name.to_owned(), v),
             None => out.insert(k, v),
         };
@@ -615,7 +615,7 @@ fn scrape_options_json(o: &ScrapeOptions) -> Value {
     Value::Object(out)
 }
 
-/// The Firecrawl-shaped options of a stored crawl: what `GET /crawl/active` returns as
+/// The compat-shaped options of a stored crawl: what `GET /crawl/active` returns as
 /// `options`. Webhook headers and metadata are never part of it.
 pub(crate) fn options_json(config: &CreateCrawl) -> Value {
     let s = &config.scope;
@@ -665,7 +665,7 @@ pub(crate) fn options_json(config: &CreateCrawl) -> Value {
     Value::Object(o)
 }
 
-/// `GET /compat/firecrawl/v2/crawl/active`: the tenant's queued, running and paused crawls.
+/// `GET /compat/v2/crawl/active`: the tenant's queued, running and paused crawls.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`, storage failures.
@@ -703,7 +703,7 @@ pub async fn active(
     ))
 }
 
-/// `POST /compat/firecrawl/v2/crawl/params-preview`: the crawl options the configured LLM
+/// `POST /compat/v2/crawl/params-preview`: the crawl options the configured LLM
 /// derives from `prompt` for `url`, without creating a crawl.
 ///
 /// # Errors
@@ -830,7 +830,7 @@ mod tests {
 
     #[test]
     fn deduplicate_similar_urls_never_turns_on_the_shape_filter() {
-        // Firecrawl's option is URL normalization, not a shape filter (real pinned run,
+        // The compat API's option is URL normalization, not a shape filter (real pinned run,
         // 2026-10-28: the default fetches every sibling page, `false` only adds the
         // non-normalized `/s1/blog`). crawlx canonicalizes always, so the default `true` needs
         // nothing and only an explicit `false` warns.
@@ -998,12 +998,12 @@ mod tests {
     }
 
     #[test]
-    fn violations_are_all_reported_with_firecrawl_status() {
+    fn violations_are_all_reported_with_compat_status() {
         let err = translate(&json!({"limit": 0, "sitemap": "weird", "delay": -1}), None).unwrap_err();
         assert_eq!(
             err.status,
             StatusCode::BAD_REQUEST,
-            "a missing url is a 400 like Firecrawl's"
+            "a missing url is a 400 like the compat API's"
         );
         assert_eq!(err.code, "BAD_REQUEST");
         let paths: Vec<&str> = err.details.iter().map(|d| d.path.as_str()).collect();
@@ -1044,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    fn options_json_renders_firecrawl_names() {
+    fn options_json_renders_compat_names() {
         let c = t(&json!({
             "url": "https://a.example.test/",
             "delay": 2,

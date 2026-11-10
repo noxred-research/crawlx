@@ -1,9 +1,9 @@
-//! HTML body parsers: every construct of katana's parser table plus inline
+//! HTML body parsers: every construct of the reference parser table plus inline
 //! script text and event-handler attributes.
 //!
-//! Ported from projectdiscovery/katana `pkg/engine/parser/parser.go`
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md
 //! (`body*TagParser`, `bodyFormTagParser`, `bodyHtmxAttrParser`,
-//! `scriptContentRegexParser`) at commit 9662cd7 (MIT). The tree is walked
+//! `scriptContentRegexParser`). The tree is walked
 //! once; each element is dispatched on its tag name. Form bodies are
 //! synthesized with deterministic placeholder values (no random fillers).
 
@@ -158,7 +158,7 @@ pub const JS_EVENTSOURCE: EndpointSource = src("js", "eventsource");
 /// AST pass: a string, template or concatenation that looks like a URL.
 pub const JS_STRING: EndpointSource = src("js", "string");
 
-/// Deterministic form-fill placeholders (katana's `DefaultFormFillData`
+/// Deterministic form-fill placeholders (the reference `DefaultFormFillData`
 /// without the random e-mail; `rand_*` fillers are not adopted).
 pub(super) mod fill {
     pub const EMAIL: &str = "crawlx@example.org";
@@ -168,7 +168,7 @@ pub(super) mod fill {
     pub const PLACEHOLDER: &str = "crawlx";
 }
 
-/// Fixed multipart boundary (katana uses a random one; crawlx output is deterministic).
+/// Fixed multipart boundary (the reference uses a random one; crawlx output is deterministic).
 pub const MULTIPART_BOUNDARY: &str = "crawlx-form-boundary";
 
 struct Ctx<'a> {
@@ -229,7 +229,7 @@ impl Ctx<'_> {
     }
 
     /// Event-handler attributes (`onclick="fetch('/x')"`) go through the AST
-    /// pass only: the regex pass never mined them (katana parity).
+    /// pass only: the regex pass never mined them (reference parity).
     #[cfg(feature = "js-ast")]
     fn event_handlers(&mut self, el: ElementRef<'_>) {
         if !self.javascript_mode.ast() {
@@ -438,7 +438,7 @@ fn meta(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
 }
 
 fn htmx(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
-    // `hx-delete` is deliberately excluded (katana does the same).
+    // `hx-delete` is deliberately excluded (the reference does the same).
     cx.method(el, "hx-get", Method::GET, HTMX_GET);
     cx.method(el, "hx-post", Method::POST, HTMX_POST);
     cx.method(el, "hx-put", Method::PUT, HTMX_PUT);
@@ -446,7 +446,7 @@ fn htmx(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
 }
 
 /// Insertion-ordered `name → value` with set-overwrites-in-place semantics
-/// (katana's `OrderedMap`).
+/// (the reference `OrderedMap`).
 #[derive(Default)]
 struct Fields(Vec<(String, String)>);
 

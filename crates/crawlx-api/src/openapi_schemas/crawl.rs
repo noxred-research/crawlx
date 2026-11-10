@@ -82,7 +82,7 @@ pub(super) struct CrawlRequest {
     /// Do not store the pages; billed one extra credit per page.
     #[serde(rename = "zeroDataRetention")]
     zero_data_retention: Option<bool>,
-    /// URL normalization dedupe (default `true`, as in Firecrawl). Canonicalization always merges
+    /// URL normalization dedupe (default `true`, as in the compat API). Canonicalization always merges
     /// equivalent URLs: an explicit `false` is accepted with an `unsupported_option` warning and
     /// not honoured.
     #[serde(rename = "deduplicateSimilarURLs")]
@@ -235,7 +235,7 @@ pub(super) struct CrawlErrors {
     policy_blocked: Vec<PolicyBlocked>,
 }
 
-/// The options of a stored crawl, with Firecrawl's names.
+/// The options of a stored crawl, with the compat API's names.
 #[derive(JsonSchema)]
 pub(super) struct CrawlOptionsEcho {
     /// Page limit.
@@ -335,7 +335,7 @@ pub(super) struct CrawlStatusQuery {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlCreateCrawl" => Spec::new(&[400, 409, 413, 422, 503])
+        "compatCreateCrawl" => Spec::new(&[400, 409, 413, 422, 503])
             .json::<CrawlRequest>("The start URL and the crawl options.")
             .header(
                 "x-request-id",
@@ -350,19 +350,19 @@ pub(super) fn spec(id: &str) -> Option<Spec> {
                 "`1` marks a request mirrored by the strangler gateway: it is run as a shadow crawl when sampled.",
             )
             .reply::<CrawlCreateResponse>("200", "The crawl was started."),
-        "firecrawlGetCrawl" => Spec::new(&[400, 404])
+        "compatGetCrawl" => Spec::new(&[400, 404])
             .path("id", "Id of the crawl.", Some("uuid"))
             .query::<CrawlStatusQuery>()
             .reply::<CrawlStatus>("200", "Status, counters and one page of documents.")
             .reply::<super::watch::WatchFrame>("101", super::watch::UPGRADE),
-        "firecrawlCancelCrawl" => Spec::new(&[404, 409])
+        "compatCancelCrawl" => Spec::new(&[404, 409])
             .path("id", "Id of the crawl.", Some("uuid"))
             .reply::<CrawlCancelled>("200", "The crawl was cancelled."),
-        "firecrawlCrawlErrors" => Spec::new(&[404])
+        "compatCrawlErrors" => Spec::new(&[404])
             .path("id", "Id of the crawl.", Some("uuid"))
             .reply::<CrawlErrors>("200", "Failed pages, robots-blocked and policy-blocked URLs."),
-        "firecrawlActiveCrawls" => Spec::new(&[]).reply::<ActiveCrawls>("200", "The tenant's active crawls."),
-        "firecrawlCrawlParamsPreview" => Spec::new(&[400, 413, 502, 503, 504])
+        "compatActiveCrawls" => Spec::new(&[]).reply::<ActiveCrawls>("200", "The tenant's active crawls."),
+        "compatCrawlParamsPreview" => Spec::new(&[400, 413, 502, 503, 504])
             .json::<CrawlParamsPreviewRequest>("The start URL and a description of the crawl.")
             .reply::<CrawlParamsPreview>("200", "The crawl options the LLM derived."),
         _ => return None,

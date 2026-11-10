@@ -94,7 +94,7 @@ pub enum BenchError {
     /// names the offending input.
     #[error("{0}")]
     CrawlBench(String),
-    /// A Firecrawl crawl request given to the differential runner is malformed.
+    /// An upstream crawl request given to the differential runner is malformed.
     #[error("differential request: {0}")]
     Request(String),
 }

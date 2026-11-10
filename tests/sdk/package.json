@@ -1,7 +1,7 @@
 {
   "name": "crawlx-sdk-tests",
   "private": true,
-  "description": "Official Firecrawl Node packages driven by test_node.mjs (run by crates/crawlx-cli/tests/sdk_python.rs). firecrawl-cli 1.26.24 depends on the `firecrawl` SDK 4.51.0 and ships the `firecrawl` binary the agent skills call.",
+  "description": "Official upstream Node packages driven by test_node.mjs (run by crates/crawlx-cli/tests/sdk_python.rs). The firecrawl-cli package 1.26.24 depends on the `firecrawl` SDK 4.51.0 and ships the binary its agent skills call.",
   "type": "module",
   "dependencies": {
     "firecrawl-cli": "1.26.24"

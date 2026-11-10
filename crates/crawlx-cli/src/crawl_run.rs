@@ -16,8 +16,8 @@ use crawlx_core::{CreateCrawl, SystemClock};
 use crawlx_extract::secret_validation::SecretValidators;
 use crawlx_policy::{AdmissionPolicy, AuthorizationRecord, TenantLimits};
 use crawlx_url::TrailingSlash;
-use crawlx_worker::katana::resume::{ResumeEntry, ResumeState};
-use crawlx_worker::katana::traffic_export::TrafficExportConfig;
+use crawlx_worker::surface::resume::{ResumeEntry, ResumeState};
+use crawlx_worker::surface::traffic_export::TrafficExportConfig;
 use crawlx_worker::{run_local_with, Gates, LocalRun, RunReport, WorkerConfig, WorkerError};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -29,7 +29,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-/// Seeds crawled at the same time when `--parallelism` is not given (katana's default).
+/// Seeds crawled at the same time when `--parallelism` is not given (the compatibility default).
 const DEFAULT_PARALLELISM: usize = 10;
 
 /// Reads one environment variable.
@@ -129,7 +129,7 @@ pub(crate) async fn run(
     // parse the output selectors before the crawl so a bad field, template or condition fails fast
     let plan = args.out.plan(
         &output,
-        args.katana_defaults && !args.tech_detect,
+        args.compat_defaults && !args.tech_detect,
         first.extract.knowledge_base,
     )?;
     if let (Some(validators), false) = (&base.secret_validators, args.out.silent) {

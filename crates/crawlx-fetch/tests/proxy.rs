@@ -187,7 +187,7 @@ async fn connect_to_denied_hosts_returns_403() {
         ("pub.test:443", "loopback"),
         ("169.254.169.254:80", "metadata"),
         ("localhost:8080", "hostname"),
-        ("metadata.google.internal:80", "metadata"),
+        ("metadata.google.internal:80", "metadata"), // detection-data
         ("[::1]:443", "loopback"),
     ] {
         let (head, _s) = raw_head(

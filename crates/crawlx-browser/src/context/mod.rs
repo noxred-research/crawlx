@@ -1002,7 +1002,7 @@ fn auto_attach_params() -> Value {
 /// overrides. Cookies are not sent here; see `CdpContext::seed_request_cookies`.
 ///
 /// Extra headers go on every request of the session, third-party subresources included,
-/// as katana `-H` and Firecrawl `headers` do; the URL plane's fetcher scopes them to the
+/// as the compatibility `-H` flag and the compatibility API's `headers` do; the URL plane's fetcher scopes them to the
 /// seed's registrable domain instead. A popup's first document request leaves before its
 /// session attaches and so carries neither headers nor the override.
 ///

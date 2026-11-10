@@ -60,7 +60,7 @@ spec:
               valueFrom: { configMapKeyRef: { name: crawlx-objectstore, key: bucket, optional: true } }
             # Artifact custody. Required: without both settings the worker refuses to start.
             # Exactly one key provider, the same one as the API: the key file below, or
-            # CRAWLX_ARTIFACT_KMS_KEY_ID=<AWS KMS key ID/ARN> instead of the file (never both).
+            # CRAWLX_ARTIFACT_KMS_KEY_ID=<cloud KMS key ID/ARN> instead of the file (never both).
             - name: CRAWLX_ARTIFACT_KEY_FILE
               value: /run/secrets/crawlx-artifact/artifact_key
             # Dedicated volatile (no RDB/AOF, noeviction) Redis for the run-wide secret registry,

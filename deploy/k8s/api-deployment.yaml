@@ -109,7 +109,7 @@ spec:
               valueFrom: { secretKeyRef: { name: crawlx-zdr, key: url, optional: true } }
             # Artifact custody: the API decrypts for reads and never writes encrypted data, so it
             # needs only the key provider (the same one as the workers, no Redis URL). Without it the API
-            # starts and sealed artifacts fail with a clear error. Use CRAWLX_ARTIFACT_KMS_KEY_ID=<AWS KMS
+            # starts and sealed artifacts fail with a clear error. Use CRAWLX_ARTIFACT_KMS_KEY_ID=<cloud KMS
             # key ID/ARN> instead of the key file when workers use KMS (never both).
             - name: CRAWLX_ARTIFACT_KEY_FILE
               value: /run/secrets/crawlx-artifact/artifact_key

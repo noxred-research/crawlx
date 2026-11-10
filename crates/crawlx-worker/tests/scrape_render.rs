@@ -1265,6 +1265,7 @@ async fn rig(profile: SafetyProfile) -> Option<Rig> {
     let crawl = crawl_for(&format!("http://site.test:{}/lab", fx.port), profile);
     let mut record = authorization_fixture::verified_record(&crawl, stores.tenant);
     for host in ["other.test", "googleads.g.doubleclick.net", "meta.site.test"] {
+        // detection-data
         let mut target = crawl.seed_url.clone();
         target.set_host(Some(host)).unwrap();
         record.origins.push(target.origin().ascii_serialization());
@@ -1276,7 +1277,7 @@ async fn rig(profile: SafetyProfile) -> Option<Rig> {
         StaticResolver::new()
             .with("site.test", [lo()])
             .with("other.test", [lo()])
-            .with("googleads.g.doubleclick.net", [lo()])
+            .with("googleads.g.doubleclick.net", [lo()]) // detection-data
             .with("meta.site.test", [IpAddr::from([169, 254, 169, 254])]),
     );
     let mut cfg = WorkerConfig {
@@ -1605,7 +1606,7 @@ async fn chromium_block_ads_cancels_tracker_requests() {
     let Some(rig) = rig(SafetyProfile::ReadOnly).await else {
         return;
     };
-    let tracker = Url::parse("http://googleads.g.doubleclick.net/pixel").unwrap();
+    let tracker = Url::parse("http://googleads.g.doubleclick.net/pixel").unwrap(); // detection-data
     assert!(
         crawlx_extract::blocklist::is_blocked_for(&Url::parse("http://site.test/").unwrap(), &tracker),
         "the fixture tracker must be on the blocklist"
@@ -1614,7 +1615,7 @@ async fn chromium_block_ads_cancels_tracker_requests() {
         rig.proxy
             .dialed_hosts()
             .iter()
-            .any(|(host, _)| host == "googleads.g.doubleclick.net")
+            .any(|(host, _)| host == "googleads.g.doubleclick.net") // detection-data
     };
     let blocked = rig
         .render("/lab", &options(json!({"blockAds": true, "waitForMs": 800})))

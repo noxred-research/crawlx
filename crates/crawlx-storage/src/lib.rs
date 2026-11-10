@@ -13,7 +13,7 @@
 //!   Backends implement [`artifacts::ArtifactBlobs`]; [`s3`] is the S3-compatible one
 //!   and the only one that presigns `content` URLs.
 //! * [`checkpoint_crypto`] – ownership-bound checkpoint encryption with process-local
-//!   memory custody or explicit AWS KMS envelope keys; no plaintext fallback.
+//!   memory custody or explicit cloud KMS envelope keys; no plaintext fallback.
 //! * [`zdr`] – [`zdr::DeliveryBuffer`], bounded shared volatile delivery over Redis or an
 //!   explicitly configured tmpfs; process memory is an explicit local/test backend only.
 //!   ZDR content disappears on webhook acknowledgement or fixed 1 h expiry.
@@ -27,7 +27,7 @@
 //!   ([`audit::MerkleExport`]).
 //! * [`leases`] – session leases with fencing tokens and the round-robin turn
 //!   barrier, plus the stale-lease reaper primitives.
-//! * [`intel`] – [`IntelRepo`], the persistence of the Firecrawl-parity LLM products:
+//! * [`intel`] – [`IntelRepo`], the persistence of the compatibility API's LLM products:
 //!   `extract`/`agent` jobs with trace, snapshots and threads, scheduled monitors with
 //!   checks and baselines, the usage ledger behind `/team/*` and tenant settings.
 //!   [`MemoryIntel`] is the in-memory implementation; `Pg` implements it over migration 0016.

@@ -221,7 +221,7 @@ impl FromRequest<AppState> for JsonBody {
     }
 }
 
-/// `Idempotency-Key` (or the Firecrawl alias) when present and valid.
+/// `Idempotency-Key` (or the compat alias) when present and valid.
 ///
 /// # Errors
 /// `422 validation_failed` for keys outside 1..=255 printable ASCII characters.

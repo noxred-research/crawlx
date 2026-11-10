@@ -1,5 +1,5 @@
 //! The exchange seam of the agent (`exchange` request member): third-party data providers the
-//! agent may call besides the web. Firecrawl calls them Alexandria providers; crawlx has no hosted
+//! agent may call besides the web. the reference service offers them as hosted providers; crawlx has no hosted
 //! catalogue, so the operator plugs one in through [`ExchangeProvider`] (production wiring is the
 //! coordinator's job; [`MockExchange`] serves hermetic tests).
 //!

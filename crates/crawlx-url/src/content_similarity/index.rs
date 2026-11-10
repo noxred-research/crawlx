@@ -1,8 +1,8 @@
 //! Content similarity index with a per-cluster budget.
 //!
-//! Ported from projectdiscovery/katana `pkg/similarity/index.go` at commit
-//! 9662cd7 (MIT). Cluster ids are stable (`mode:n`) and survive eviction of
-//! their representative, so a budget never attaches to the wrong cluster.
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md. Cluster
+//! ids are stable (`mode:n`) and survive eviction of their representative, so
+//! a budget never attaches to the wrong cluster.
 
 use std::collections::BTreeMap;
 

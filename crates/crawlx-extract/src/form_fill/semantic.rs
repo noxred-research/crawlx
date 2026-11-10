@@ -1,10 +1,10 @@
 //! What a form control expects, decided from its `type`, `autocomplete`
 //! token, then the words of its `name` and `id`.
 //!
-//! Ported from projectdiscovery/katana `pkg/utils/formsemantic.go`
-//! (`fieldSemantic`, `fieldWords`, `fixedValues`) at commit 9662cd7 (MIT).
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md
+//! (`fieldSemantic`, `fieldWords`, `fixedValues`).
 //! The fixed values are constants so repeated crawls submit the same form;
-//! the loopback `ip` of katana becomes an RFC 5737 documentation address so a
+//! the loopback `ip` of the reference becomes an RFC 5737 documentation address so a
 //! filled form never points the target at its own loopback.
 
 use std::collections::BTreeSet;

@@ -1,7 +1,7 @@
 {
   "wireSample": {
     "provenance": "black_box_run",
-    "system": "firecrawl",
+    "system": "upstream",
     "upstreamCommit": "c31e88c07afe941bfd8aebde61684eeba042abb5",
     "apiRoot": "http://127.0.0.1:3102",
     "origin": "http://gym.test:4101"

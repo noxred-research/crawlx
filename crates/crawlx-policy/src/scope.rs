@@ -1,7 +1,7 @@
 //! Crawl scope policy.
 //!
 //! Wraps `crawlx_url::scope::ScopeFilter`, which owns the path-pattern logic
-//! (there is exactly one copy of it), and adds the katana
+//! (there is exactly one copy of it), and adds the surface discovery
 //! scope model: [`HostScopeRule`] (`fqdn | rdn | dn | none`), [`UrlPatterns`]
 //! (regexes over the full URL), [`ExcludeHosts`] (`private-ips`, `cdn`, CIDR, IP,
 //! regex), the `hostScopePattern` host regex, the extension filter, the depth limit, and a
@@ -29,7 +29,7 @@ use ipnet::IpNet;
 use publicsuffix::{List, Psl};
 use url::Url;
 
-/// Mozilla's public suffix list (MPL-2.0), vendored so `rdn` scoping needs
+/// The public suffix list (MPL-2.0), vendored so `rdn` scoping needs
 /// no network; refresh `data/public_suffix_list.dat` with dependency updates.
 static PSL: LazyLock<Result<List, publicsuffix::Error>> =
     LazyLock::new(|| List::from_bytes(include_bytes!("../data/public_suffix_list.dat")));
@@ -95,7 +95,7 @@ pub enum DenialReason {
     /// The host already admitted `scope.maxPagesPerHost` pages.
     HostPageLimit,
     /// The root page (`/` or no path) of another site, skipped under `allowExternalLinks` of a
-    /// Firecrawl scrape job (Firecrawl reports it as `EXTERNAL_LINK`).
+    /// compatibility API scrape job (which reports it as `EXTERNAL_LINK`).
     ExternalHomepage,
     /// Outside the target of the run's authorization record: a hard bound that no
     /// `scope` setting widens.
@@ -389,7 +389,7 @@ pub struct ScopePolicy {
     max_depth: u16,
     leaf_out_of_scope: bool,
     fetch_leaves: bool,
-    /// A Firecrawl scrape job under `allowExternalLinks` never follows a link to the root page
+    /// A compatibility API scrape job under `allowExternalLinks` never follows a link to the root page
     /// of another site (`DenialReason::ExternalHomepage`).
     skip_external_homepages: bool,
     max_pages_per_host: Option<u32>,

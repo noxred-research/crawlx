@@ -316,7 +316,7 @@ pub const DENIED_V6: &[V6Range] = &[
         base: [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254],
         prefix: 128,
         rule: DenyRule::Metadata,
-        name: "metadata fd00:ec2::254 (AWS)",
+        name: "metadata fd00:ec2::254 (cloud)",
     },
     V6Range {
         base: [0, 0, 0, 0, 0, 0, 0, 0],
@@ -429,7 +429,7 @@ pub const DENIED_V6: &[V6Range] = &[
 ];
 
 /// Cloud metadata hostnames (denied before resolution, never exemptable).
-const METADATA_HOSTS: &[&str] = &["metadata.google.internal", "metadata.goog", "instance-data"];
+const METADATA_HOSTS: &[&str] = &["metadata.google.internal", "metadata.goog", "instance-data"]; // detection-data
 
 /// Host suffixes denied before resolution unless private networks are
 /// authorized (resolved addresses are still range-checked).
@@ -1070,13 +1070,13 @@ mod tests {
             "localhost.",
             "foo.localhost",
             "db.internal",
-            "metadata.google.internal",
+            "metadata.google.internal", // detection-data
             "printer.local",
         ] {
             assert!(p.check_host(h).is_err(), "{h}");
         }
         assert_eq!(
-            p.check_host("metadata.google.internal").unwrap_err().rule,
+            p.check_host("metadata.google.internal").unwrap_err().rule, // detection-data
             DenyRule::Metadata
         );
         for h in [
@@ -1095,7 +1095,7 @@ mod tests {
         assert!(p.check_host("staging.internal").is_ok());
         assert!(p.check_host("localhost").is_ok());
         assert_eq!(
-            p.check_host("metadata.google.internal").unwrap_err().rule,
+            p.check_host("metadata.google.internal").unwrap_err().rule, // detection-data
             DenyRule::Metadata
         );
     }

@@ -1,4 +1,4 @@
-//! Parent directory URLs of a URL (katana `-pc` / `utils.ExtractParentPaths`, MIT): the
+//! Parent directory URLs of a URL (the compatibility `-pc` flag, MIT-licensed upstream): the
 //! candidates the worker offers to the frontier when `scope.pathClimb` is on.
 //!
 //! Pure and deterministic: the result depends only on the URL.

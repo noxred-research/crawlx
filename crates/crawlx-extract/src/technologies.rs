@@ -1,4 +1,4 @@
-//! Technology detection from a curated catalog (katana `-td`).
+//! Technology detection from a curated catalog (compatibility flag `-td`).
 //!
 //! The catalog is `data/technologies.json`, authored for this repository (no
 //! third-party fingerprint data). It

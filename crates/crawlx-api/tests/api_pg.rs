@@ -249,7 +249,7 @@ async fn full_lifecycle_over_postgres() {
     let (s, _, c, _) = r
         .call(
             Method::POST,
-            "/compat/firecrawl/v2/crawl",
+            "/compat/v2/crawl",
             &[],
             Some(&json!({"url": "https://docs.example.test/", "ignoreQueryParameters": true})),
         )
@@ -257,12 +257,7 @@ async fn full_lifecycle_over_postgres() {
     assert_eq!(s, StatusCode::OK, "{c}");
     let cid = c["id"].as_str().unwrap();
     let (_, _, st, _) = r
-        .call(
-            Method::GET,
-            &format!("/compat/firecrawl/v2/crawl/{cid}"),
-            &[],
-            None,
-        )
+        .call(Method::GET, &format!("/compat/v2/crawl/{cid}"), &[], None)
         .await;
     assert_eq!(st["status"], "scraping");
     let stored = r.pg.get(cid.parse().unwrap()).await.unwrap();
@@ -452,12 +447,7 @@ async fn shared_zdr_delivery_expiry_preserves_status_and_numeric_billing_without
     assert_eq!(status, StatusCode::OK);
     assert!(!String::from_utf8(events).unwrap().contains("ZDR_BODY_CANARY"));
     let (status, _, compat, _) = r
-        .call(
-            Method::GET,
-            &format!("/compat/firecrawl/v2/crawl/{run}"),
-            &[],
-            None,
-        )
+        .call(Method::GET, &format!("/compat/v2/crawl/{run}"), &[], None)
         .await;
     assert_eq!(status, StatusCode::OK, "{compat}");
     assert_eq!(compat["creditsUsed"], 2);

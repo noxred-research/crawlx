@@ -12,9 +12,9 @@ use crawlx_core::config::Scope;
 
 use crate::error::UrlError;
 
-/// Maximum pattern length in bytes (Firecrawl: 2000).
+/// Maximum pattern length in bytes (compatibility API limit: 2000).
 pub const MAX_PATTERN_LEN: usize = crawlx_core::config::MAX_PATH_PATTERN_LEN;
-/// Maximum number of patterns per list (Firecrawl: 1000).
+/// Maximum number of patterns per list (compatibility API limit: 1000).
 pub const MAX_PATTERNS: usize = crawlx_core::config::MAX_PATH_PATTERNS;
 /// Lists longer than this compile every pattern under [`LARGE_LIST_REGEX_SIZE_LIMIT`].
 const LARGE_LIST: usize = 100;

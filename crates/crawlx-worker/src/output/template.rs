@@ -1,7 +1,7 @@
-//! Output templates (katana `-output-template '{{email}} - {{url}}'`).
+//! Output templates (the `-output-template '{{email}} - {{url}}'` compatibility flag).
 //!
-//! Katana (`pkg/output/format_template.go`, commit `9662cd7b60ba1bc3a88232433ddefc4f48a65bfe`,
-//! MIT) expands `{{tag}}` through `fasttemplate` with the last value of each field. Here a
+//! The reference tool (an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md)
+//! expands `{{tag}}` through a template engine with the last value of each field. Here a
 //! template renders the cross product of its fields' values: a multi-valued field yields one
 //! line per value and a field without a value yields no line at all, so templates compose
 //! with multi-valued fields such as `key` or custom regex fields.

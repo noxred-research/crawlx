@@ -1,4 +1,4 @@
-//! Browser-plane flags of `crawlx crawl` (katana's Headless group).
+//! Browser-plane flags of `crawlx crawl` (the compatibility Headless group).
 //!
 //! Request-level flags (interaction, scroll, diagnostics, ...) land in `CreateCrawl.dynamic`;
 //! operator-level flags (visible window, Chromium path, profile directory, extra Chromium
@@ -17,7 +17,7 @@ use std::time::Duration;
 /// Environment variable that permits `--no-sandbox` (CI containers without user namespaces).
 pub const UNSAFE_NO_SANDBOX_ENV: &str = "CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI";
 
-/// katana's "0 is unlimited" for `limits.states` / `limits.interactions`: the largest value
+/// The compatibility "0 is unlimited" for `limits.states` / `limits.interactions`: the largest value
 /// the request accepts.
 const UNLIMITED: u32 = 100_000;
 /// Longest `dynamic.interactionSettleMs`.
@@ -167,7 +167,7 @@ pub struct HeadlessArgs {
     #[arg(long, value_name = "DIR", help_heading = "Headless")]
     pub chromium_cache: Option<PathBuf>,
     /// Attach to the running Chromium at this DevTools websocket instead of launching one
-    /// (katana `-chrome-ws-url`, `-cwu`). Refused unless the safety profile is
+    /// (compatibility `-chrome-ws-url`, `-cwu`). Refused unless the safety profile is
     /// `test_environment` or `authorized_security_test`.
     #[arg(
         long = "cdp-ws-url",
@@ -177,7 +177,7 @@ pub struct HeadlessArgs {
     )]
     pub cdp_ws_url: Option<url::Url>,
     /// With `--cdp-ws-url`, reuse the attached browser's default context (its logged-in
-    /// session) instead of opening incognito contexts (katana `-no-incognito`, `-noi`).
+    /// session) instead of opening incognito contexts (compatibility `-no-incognito`, `-noi`).
     #[arg(long, requires = "cdp_ws_url", help_heading = "Headless")]
     pub no_incognito: bool,
 }
@@ -477,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn request_flags_map_with_katana_semantics() {
+    fn request_flags_map_with_compat_semantics() {
         let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
         let args = HeadlessArgs {
             interaction_max_states: Some(0),

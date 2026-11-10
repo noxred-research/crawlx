@@ -339,20 +339,20 @@ async fn malformed_scrape_content_policy_is_rejected_before_native_or_facade_que
 
         for (path, request) in [
             (
-                "/compat/firecrawl/v2/scrape",
+                "/compat/v2/scrape",
                 json!({
                     "url": "https://app.example.test/article", "contentPolicy": policy.clone(),
                     "cache": {"mode": "read_only"}
                 }),
             ),
             (
-                "/compat/firecrawl/v2/batch/scrape",
+                "/compat/v2/batch/scrape",
                 json!({
                     "urls": ["https://app.example.test/article"], "contentPolicy": policy.clone()
                 }),
             ),
             (
-                "/compat/firecrawl/v2/crawl",
+                "/compat/v2/crawl",
                 json!({
                     "url": "https://app.example.test/article", "scrapeOptions": {"contentPolicy": policy.clone()}
                 }),
@@ -661,10 +661,10 @@ async fn openapi_lists_every_route_without_authentication() {
         ("post", "/v1/authorizations/{id}/verify"),
         ("get", "/v1/openapi.json"),
         ("get", "/metrics"),
-        ("post", "/compat/firecrawl/v2/crawl"),
-        ("get", "/compat/firecrawl/v2/crawl/{id}"),
-        ("delete", "/compat/firecrawl/v2/crawl/{id}"),
-        ("get", "/compat/firecrawl/v2/crawl/{id}/errors"),
+        ("post", "/compat/v2/crawl"),
+        ("get", "/compat/v2/crawl/{id}"),
+        ("delete", "/compat/v2/crawl/{id}"),
+        ("get", "/compat/v2/crawl/{id}/errors"),
     ];
     for (method, path) in expected.iter().copied() {
         assert!(

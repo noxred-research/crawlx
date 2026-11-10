@@ -2,8 +2,8 @@
 //! endpoints, so binary payloads never launder chance `./x` byte runs into
 //! requests.
 //!
-//! Ported from projectdiscovery/katana `pkg/engine/parser/parser.go`
-//! (`isTextualMediaType`, `isTextualResponse`) at commit 9662cd7 (MIT). The
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md
+//! (`isTextualMediaType`, `isTextualResponse`). The
 //! magic-byte sniffer stands in for Go's `http.DetectContentType`: it knows
 //! the binary formats the guard must exclude and otherwise falls back to the
 //! "no control bytes → text" rule of the MIME sniffing algorithm.

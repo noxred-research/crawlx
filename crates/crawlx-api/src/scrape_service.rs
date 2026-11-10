@@ -1,17 +1,17 @@
-//! The scrape service behind the Firecrawl facade: option parsing, run creation and
-//! waiting, stored pages rendered as Firecrawl documents, credits and failure mapping.
+//! The scrape service behind the compat facade: option parsing, run creation and
+//! waiting, stored pages rendered as the compat API documents, credits and failure mapping.
 //!
 //! Every scrape product is a normal queued run that a worker executes
 //! ([`crawlx_core::scrape::ScrapeJob`]): the API never fetches a page and never starts a
 //! browser. `POST /scrape` creates a [`JobKind::Scrape`] run and waits for it
 //! ([`scrape_url`]); batch scrapes and crawls create their run and return at once
-//! ([`create_scrape_run`]); a stored page becomes the Firecrawl `data` object in
-//! [`firecrawl_document`].
+//! ([`create_scrape_run`]); a stored page becomes the compat `data` object in
+//! [`compat_document`].
 
 mod document;
 mod options;
 
-pub use document::{credits_for, firecrawl_document, scrape_id};
+pub use document::{compat_document, credits_for, scrape_id};
 pub use options::{parse_scrape_options, parse_scrape_options_in, ParsedScrape};
 
 use crate::auth::Principal;
@@ -66,11 +66,11 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// answer with the worker's reason instead of cancelling first).
 const TIMEOUT_GRACE: Duration = Duration::from_millis(1_500);
 
-/// The result of one scrape: the Firecrawl `data` object and what it cost.
+/// The result of one scrape: the compat `data` object and what it cost.
 #[derive(Clone, PartialEq, Debug)]
 #[non_exhaustive]
 pub struct ScrapeDone {
-    /// The Firecrawl `data` object (`markdown`, ..., `metadata`).
+    /// The compat `data` object (`markdown`, ..., `metadata`).
     pub document: Value,
     /// Credits the scrape costs.
     pub credits: u64,
@@ -90,7 +90,7 @@ pub struct MapEntry {
 
 /// The outcome of one scrape request.
 pub(crate) struct Scraped {
-    /// The Firecrawl `data` object.
+    /// The compat `data` object.
     pub document: Value,
     /// Credits the scrape costs.
     pub credits: u64,
@@ -108,7 +108,7 @@ pub fn service_principal(tenant: TenantId) -> Principal {
     }
 }
 
-/// Firecrawl's answer to a request admission rejected: egress-denied targets are
+/// The compat API's answer to a request admission rejected: egress-denied targets are
 /// `403 UNSUPPORTED_SITE`, every other violation `400 BAD_REQUEST`.
 fn admission_error(e: HttpError) -> HttpError {
     if e.status != StatusCode::UNPROCESSABLE_ENTITY {
@@ -228,7 +228,7 @@ fn timeout_error() -> HttpError {
 
 /// Parse the `url` of a scrape request: `http(s)` with a host. A value without a scheme
 /// (`example.com/a`) gets `http://` and must then name a dotted host or an IP address, like
-/// Firecrawl's URL check (`nope` is not a URL).
+/// The compat API's URL check (`nope` is not a URL).
 ///
 /// # Errors
 /// `400` detail for `path` when the value is not a usable URL.
@@ -255,7 +255,7 @@ pub(crate) fn parse_target(raw: &str, path: &str) -> Result<Url, Detail> {
     }
     Ok(url)
 }
-/// One worker failure reason and the Firecrawl error it is reported as: by `POST /scrape`, by
+/// One worker failure reason and the compat error it is reported as: by `POST /scrape`, by
 /// `GET /scrape/{id}` of a failed page and as the `code` of `GET /crawl/{id}/errors`. Every
 /// worker reason has exactly one row; a reason without one is reported as
 /// `SCRAPE_ALL_ENGINES_FAILED` (HTTP 500).
@@ -265,7 +265,7 @@ pub struct FailureCode {
     pub reason: &'static str,
     /// HTTP status of a single scrape that failed this way.
     pub status: u16,
-    /// The `SCRAPE_*` (or Firecrawl-documented) error code.
+    /// The `SCRAPE_*` (or compat-documented) error code.
     pub code: &'static str,
     /// What went wrong, in words.
     pub text: &'static str,
@@ -443,7 +443,7 @@ pub(crate) fn failure_text(reason: &str, message: Option<&str>) -> String {
     }
 }
 
-/// Failure of the page of `row` as the Firecrawl response the caller sees. `message` is the
+/// Failure of the page of `row` as the compat response the caller sees. `message` is the
 /// worker's `page.failed` text when it has one.
 pub(crate) fn failure_error(row: &FrontierEntry, message: Option<&str>) -> HttpError {
     let reason = failure_reason(row);
@@ -486,13 +486,13 @@ pub(crate) async fn failure_index(state: &AppState, run: CrawlRunId) -> FailureI
     index
 }
 
-/// The Firecrawl error of the failed frontier row `row` of `run`.
+/// The compat error of the failed frontier row `row` of `run`.
 pub(crate) fn row_failure(row: &FrontierEntry, index: &FailureIndex) -> HttpError {
     let message = index.get(row.url.url.as_str()).and_then(|(m, _)| m.as_deref());
     failure_error(row, message)
 }
 
-/// Why `run` produced no page: the frontier row of its seed mapped to a Firecrawl error.
+/// Why `run` produced no page: the frontier row of its seed mapped to a compat error.
 pub(crate) async fn run_failure(state: &AppState, run: &CrawlRun) -> HttpError {
     let rows = match state.repos.frontier.list(run.id).await {
         Ok(r) => r,
@@ -705,7 +705,7 @@ async fn stored_scrape(
 /// # Errors
 /// `503 llm_not_configured` when a format needs the LLM and none is configured; `404
 /// SCRAPE_NO_CACHED_DATA` / `SCRAPE_LOCKDOWN_CACHE_MISS` for `minAge` / `lockdown` without a
-/// stored scrape; everything [`create_scrape_run`] and [`wait_for_run`] answer; the Firecrawl
+/// stored scrape; everything [`create_scrape_run`] and [`wait_for_run`] answer; the compat API
 /// failure of the page ([`failure_error`]) when the run produced none.
 pub(crate) async fn scrape_url(
     state: &AppState,
@@ -746,7 +746,7 @@ pub(crate) async fn scrape_url(
         });
     }
     if o.cache.is_none() && o.lockdown {
-        // Firecrawl bills a lockdown cache miss one credit
+        // The compat API bills a lockdown cache miss one credit
         record_usage(state, principal.tenant, None, "failed", 1, 0).await;
         return Err(HttpError::compat(
             StatusCode::NOT_FOUND,
@@ -787,8 +787,8 @@ pub(crate) async fn scrape_url(
     })
 }
 
-/// Scrape `url` for `tenant` with raw Firecrawl scrape `options` (an object; `null` means
-/// defaults) and return the Firecrawl `data` object with its credits. Links to stored blobs are
+/// Scrape `url` for `tenant` with raw compat API scrape `options` (an object; `null` means
+/// defaults) and return the compat `data` object with its credits. Links to stored blobs are
 /// relative to the API root.
 ///
 /// # Errors
@@ -830,7 +830,7 @@ pub async fn scrape_one(
     })
 }
 
-/// The URLs of the site at `url` for `tenant` with raw Firecrawl map `options` (`sitemap`,
+/// The URLs of the site at `url` for `tenant` with raw compat API map `options` (`sitemap`,
 /// `includeSubdomains`, `search`, `limit`, ...; an object, `null` means defaults), ranked by
 /// `search` and cut to `limit`. One credit is booked in the usage ledger.
 ///

@@ -6,11 +6,11 @@ use url::{Host, Url};
 
 /// External CAPTCHA solving service. Unknown providers are rejected by serde.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum CaptchaProvider {
-    /// CapSolver's task API.
-    Capsolver,
+    /// A task-based captcha-solving HTTP API.
+    TaskApi,
 }
 
 /// Durable solver settings. The API key itself must never enter configuration.
@@ -44,6 +44,7 @@ const fn default_poll_interval() -> u64 {
 #[allow(clippy::expect_used, reason = "the built-in endpoint is a valid constant URL")]
 fn default_endpoint() -> Url {
     Url::parse("https://api.capsolver.com/").expect("valid built-in captcha endpoint")
+    // wire-compat: default task-API service endpoint
 }
 
 impl CaptchaConfig {
@@ -121,18 +122,18 @@ impl CaptchaCredentials {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum CaptchaKind {
-    /// Google reCAPTCHA v2.
-    RecaptchaV2,
-    /// Google reCAPTCHA v3.
-    RecaptchaV3,
-    /// Google reCAPTCHA Enterprise v2.
-    RecaptchaV2Enterprise,
-    /// Google reCAPTCHA Enterprise v3.
-    RecaptchaV3Enterprise,
-    /// Cloudflare Turnstile.
-    Turnstile,
-    /// hCaptcha.
-    Hcaptcha,
+    /// Checkbox widget, family A, version 2.
+    CheckboxV2,
+    /// Score-based widget, family A, version 3.
+    ScoreV3,
+    /// Enterprise edition of the checkbox widget, family A.
+    CheckboxV2Enterprise,
+    /// Enterprise edition of the score-based widget, family A.
+    ScoreV3Enterprise,
+    /// Challenge widget, family C.
+    ChallengeWidgetT,
+    /// Challenge widget, family B.
+    ChallengeWidgetH,
 }
 
 /// Challenge metadata captured at the browser boundary.
@@ -145,13 +146,13 @@ pub struct CaptchaChallenge {
     pub website_url: String,
     /// Public widget site key.
     pub site_key: String,
-    /// Optional reCAPTCHA page action or Turnstile action.
+    /// Optional widget page action (family A) or widget action (family C).
     pub action: Option<String>,
-    /// Optional reCAPTCHA Enterprise payload.
+    /// Optional enterprise payload of the family A enterprise widget.
     pub enterprise_payload: Option<serde_json::Value>,
-    /// Optional Turnstile cData.
+    /// Optional family C `cData`.
     pub data: Option<String>,
-    /// Optional Turnstile chlPageData.
+    /// Optional family C `chlPageData`.
     pub pagedata: Option<String>,
 }
 
@@ -370,10 +371,10 @@ mod tests {
     #[test]
     fn defaults_are_opt_in_secret_references() {
         let config = CaptchaConfig::new(
-            CaptchaProvider::Capsolver,
-            CredentialRef("env://CAPSOLVER_KEY".into()),
+            CaptchaProvider::TaskApi,
+            CredentialRef("env://CAPTCHA_KEY".into()),
         );
-        assert_eq!(config.endpoint.as_str(), "https://api.capsolver.com/");
+        assert_eq!(config.endpoint.as_str(), "https://api.capsolver.com/"); // wire-compat: default task-API service endpoint
         assert_eq!(config.timeout_seconds, 120);
         assert_eq!(config.poll_interval_ms, 1000);
         assert_eq!(config.validate(), Ok(()));
@@ -383,12 +384,11 @@ mod tests {
 
     #[test]
     fn rejects_literal_keys_insecure_endpoints_and_invalid_timing() {
-        let mut config =
-            CaptchaConfig::new(CaptchaProvider::Capsolver, CredentialRef("literal-secret".into()));
+        let mut config = CaptchaConfig::new(CaptchaProvider::TaskApi, CredentialRef("literal-secret".into()));
         assert_eq!(config.validate(), Err(CaptchaError::Configuration));
         config.key_ref = CredentialRef("env://KEY".into());
         for endpoint in [
-            "http://api.capsolver.com/",
+            "http://api.capsolver.com/", // wire-compat: default task-API service host
             "http://localhost/",
             "https://user:secret@example.com/",
             "https://example.com/?key=secret",
@@ -407,12 +407,12 @@ mod tests {
 
     #[test]
     fn credentials_and_challenge_debug_are_redacted() {
-        let config = CaptchaConfig::new(CaptchaProvider::Capsolver, CredentialRef("env://KEY".into()));
+        let config = CaptchaConfig::new(CaptchaProvider::TaskApi, CredentialRef("env://KEY".into()));
         let credentials = CaptchaCredentials::new(config, SecretOr::Plain("private-key".into()));
         assert!(credentials.key.is_secret());
         assert!(!format!("{credentials:?}").contains("private-key"));
         let challenge = CaptchaChallenge::new(
-            CaptchaKind::Turnstile,
+            CaptchaKind::ChallengeWidgetT,
             "https://example.com/?secret".into(),
             "site-key".into(),
         );
@@ -444,7 +444,7 @@ mod tests {
     fn invalid_captcha_settings_fail_crawl_normalization() {
         let mut request = crate::config::CreateCrawl::new(Url::parse("https://example.test/").unwrap());
         request.crawl.captcha = Some(CaptchaConfig::new(
-            CaptchaProvider::Capsolver,
+            CaptchaProvider::TaskApi,
             CredentialRef("literal-private-key".into()),
         ));
         let errors = request.normalize().unwrap_err();
@@ -468,7 +468,7 @@ mod tests {
             request.mode = mode;
             request.dynamic.enabled = enabled;
             request.crawl.captcha = Some(CaptchaConfig::new(
-                CaptchaProvider::Capsolver,
+                CaptchaProvider::TaskApi,
                 CredentialRef("env://KEY".into()),
             ));
             assert!(request.normalize().unwrap_err().iter().any(|error| matches!(

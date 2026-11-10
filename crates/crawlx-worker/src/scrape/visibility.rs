@@ -1,6 +1,6 @@
 //! `changeTracking.visibility`: is the page still reachable from the site's own link graph?
 //!
-//! Firecrawl: `visible` means discoverable through links or the sitemap, `hidden` means the URL
+//! Compatibility API: `visible` means discoverable through links or the sitemap, `hidden` means the URL
 //! works but nothing points at it any more. crawlx decides from what it can observe:
 //!
 //! 1. a page of a crawl that was found by following a link or reading the sitemap (frontier

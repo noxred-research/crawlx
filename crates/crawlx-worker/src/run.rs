@@ -12,9 +12,6 @@ use crate::counters::RunCounters;
 use crate::diagnostics::{DiagnosticsSink, SessionDiagnostics};
 use crate::driver::{DriverConfig, DriverEnd, ExplorationDriver};
 use crate::error::{SessionError, WorkerError};
-use crate::katana::form_ai::FormAi;
-use crate::katana::resume::ResumeState;
-use crate::katana::traffic_export::TrafficExporter;
 use crate::login::{LoginCredential, LoginMaterial};
 use crate::model::{ModelOverlay, ModelServices, StrategySet};
 use crate::pool::{BrowserPool, PoolConfig};
@@ -23,6 +20,9 @@ use crate::routes::RouteLearner;
 use crate::secrets::ChainResolver;
 use crate::stores::Stores;
 use crate::supervisor::Supervisor;
+use crate::surface::form_ai::FormAi;
+use crate::surface::resume::ResumeState;
+use crate::surface::traffic_export::TrafficExporter;
 use crate::url_plane::{UrlPlaneDeps, UrlPlaneRunner};
 use crate::xhr::XhrSink;
 use crawlx_core::browser::BrowserError;
@@ -234,7 +234,7 @@ pub struct EgressCapture {
     pub denied_events: Vec<DeniedEvent>,
 }
 
-/// A frontier row that ended `failed` or `unreachable` (katana `-elog` entries).
+/// A frontier row that ended `failed` or `unreachable` (`-elog` error-log entries).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub struct UrlFailure {
@@ -340,7 +340,7 @@ pub struct LocalRun {
     /// store's own source (the stored record in PostgreSQL; the supplied record, fixed, in
     /// memory). Tests revoke a record mid-run through it.
     pub authorization_source: Option<Arc<dyn AuthorizationSource>>,
-    /// Progress of an earlier run to continue (katana `-resume`): its visited URLs are not
+    /// Progress of an earlier run to continue (the `-resume` compatibility flag): its visited URLs are not
     /// fetched again and its pending URLs seed the frontier.
     pub resume: Option<ResumeState>,
     /// Optional graceful shutdown signal, distinct from hard caller cancellation.
@@ -2025,7 +2025,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     let _fixture_watch = fixture_evaluation
         .as_ref()
         .map(|permit| permit.watch(run_cancel.clone()));
-    // a scrape run (Firecrawl scrape, batch, crawl, map) never explores in browser sessions:
+    // a scrape run (compatibility scrape, batch, crawl, map) never explores in browser sessions:
     // its pages come from the scrape engine, whose renderer opens its own browser contexts
     let dynamic = crawl.mode != CrawlMode::Static && crawl.dynamic.enabled && crawl.scrape.is_none();
     if dynamic {
@@ -2174,7 +2174,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             )?
             .with_cpu_pool(rc.cpu_pool.clone())
             .with_route_learner(rc.routes.clone())
-            .with_katana_services(&rc)
+            .with_surface_services(&rc)
             .with_scrape_services(&rc, &cfg)
             .with_authorization(rc.authorization.clone());
             if let Some(drain) = &graceful_drain {

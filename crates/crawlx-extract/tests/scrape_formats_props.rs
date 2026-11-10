@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Property tests of the Firecrawl scrape-format functions: they never panic on
+//! Property tests of the compatibility API scrape-format functions: they never panic on
 //! arbitrary input and keep their invariants (a diff reconstructs the new document, ranking is a
 //! permutation, branding is deterministic and well-formed).
 

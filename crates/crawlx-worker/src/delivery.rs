@@ -937,16 +937,16 @@ impl DeliveryDestination for S3Destination {
 pub enum HttpDeliveryProtocol {
     /// Generic approved POST. Duplicate output remains possible unless provider honors the key.
     Http,
-    /// Solr JSON update API; stable document IDs are required by the producer schema.
-    Solr,
-    /// OpenSearch NDJSON bulk API; every record result must acknowledge success.
-    OpenSearch,
-    /// Confluent-compatible Kafka REST v2 binary producer API, not a native Kafka broker.
-    KafkaRestV2,
-    /// RabbitMQ management publish API with routed acknowledgement.
-    RabbitMqManagement,
-    /// GCS JSON media upload endpoint with fixed object identity and generation precondition.
-    GcsJsonUpload,
+    /// Search-engine JSON update API; stable document IDs are required by the producer schema.
+    SearchUpdate,
+    /// Search-index NDJSON bulk API; every record result must acknowledge success.
+    SearchIndex,
+    /// Confluent-compatible stream REST v2 binary producer API, not a native broker protocol.
+    StreamRestV2,
+    /// Message-queue HTTP publish API with routed acknowledgement.
+    QueueHttpV1,
+    /// Object-store JSON media upload endpoint with fixed object identity and generation precondition.
+    ObjectJsonUpload,
     /// Approved isolated FTP/FTPS service, acknowledging committed remote publication.
     FtpServiceV1,
 }
@@ -1008,9 +1008,9 @@ impl DeliveryDestination for HttpDestination {
     fn duplicate_possible(&self) -> bool {
         !matches!(
             self.protocol,
-            HttpDeliveryProtocol::Solr
-                | HttpDeliveryProtocol::OpenSearch
-                | HttpDeliveryProtocol::GcsJsonUpload
+            HttpDeliveryProtocol::SearchUpdate
+                | HttpDeliveryProtocol::SearchIndex
+                | HttpDeliveryProtocol::ObjectJsonUpload
         )
     }
     fn permits_zdr(&self) -> bool {
@@ -1018,8 +1018,8 @@ impl DeliveryDestination for HttpDestination {
     }
     fn working_bytes(&self, input: u64) -> Option<u64> {
         let factor = match self.protocol {
-            HttpDeliveryProtocol::Http | HttpDeliveryProtocol::GcsJsonUpload => 1,
-            HttpDeliveryProtocol::Solr | HttpDeliveryProtocol::OpenSearch => 3,
+            HttpDeliveryProtocol::Http | HttpDeliveryProtocol::ObjectJsonUpload => 1,
+            HttpDeliveryProtocol::SearchUpdate | HttpDeliveryProtocol::SearchIndex => 3,
             _ => 4,
         };
         input.checked_mul(factor)?.checked_add(256 * 1024)
@@ -1043,25 +1043,25 @@ impl DeliveryDestination for HttpDestination {
                 .map_err(|_| DeliveryError::Rejected("invalid_idempotency_key"))?,
         );
         let body = match self.protocol {
-            HttpDeliveryProtocol::KafkaRestV2 => {
+            HttpDeliveryProtocol::StreamRestV2 => {
                 headers.insert(
                     CONTENT_TYPE,
-                    HeaderValue::from_static("application/vnd.kafka.binary.v2+json"),
+                    HeaderValue::from_static("application/vnd.kafka.binary.v2+json"), // wire-compat: stream REST media type
                 );
                 Bytes::from(serde_json::to_vec(&json!({"records":[{"key":base64::engine::general_purpose::STANDARD.encode(batch.idempotency_key.as_bytes()),"value":base64::engine::general_purpose::STANDARD.encode(&bytes)}]}))
-                    .map_err(|_| DeliveryError::Rejected("kafka_serialization_failed"))?)
+                    .map_err(|_| DeliveryError::Rejected("stream_serialization_failed"))?)
             }
-            HttpDeliveryProtocol::RabbitMqManagement => {
+            HttpDeliveryProtocol::QueueHttpV1 => {
                 headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
                 Bytes::from(serde_json::to_vec(&json!({"properties":{"message_id":batch.idempotency_key,"delivery_mode":2},"routing_key":"","payload":base64::engine::general_purpose::STANDARD.encode(&bytes),"payload_encoding":"base64"}))
-                    .map_err(|_| DeliveryError::Rejected("rabbitmq_serialization_failed"))?)
+                    .map_err(|_| DeliveryError::Rejected("queue_serialization_failed"))?)
             }
             HttpDeliveryProtocol::FtpServiceV1 => {
                 headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
                 headers.insert("x-crawlx-protocol-version", HeaderValue::from_static("1"));
                 bytes
             }
-            HttpDeliveryProtocol::GcsJsonUpload => {
+            HttpDeliveryProtocol::ObjectJsonUpload => {
                 endpoint
                     .query_pairs_mut()
                     .append_pair("uploadType", "media")
@@ -1078,12 +1078,12 @@ impl DeliveryDestination for HttpDestination {
                 headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
                 bytes
             }
-            HttpDeliveryProtocol::OpenSearch | HttpDeliveryProtocol::Solr => {
+            HttpDeliveryProtocol::SearchIndex | HttpDeliveryProtocol::SearchUpdate => {
                 let projection: crawlx_core::extraction::SearchProjectionV1 = serde_json::from_slice(&bytes)
                     .map_err(|_| DeliveryError::Rejected("search_projection_required"))?;
                 projection.validate()?;
                 search_receipt = Some((projection.document_id.clone(), projection.deleted));
-                if self.protocol == HttpDeliveryProtocol::Solr {
+                if self.protocol == HttpDeliveryProtocol::SearchUpdate {
                     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
                     let value = if projection.deleted {
                         json!({"delete":{"id":projection.document_id}})
@@ -1198,21 +1198,22 @@ impl DeliveryDestination for HttpDestination {
             }
             ack.extend_from_slice(&chunk);
         }
-        if self.protocol == HttpDeliveryProtocol::Http || self.protocol == HttpDeliveryProtocol::GcsJsonUpload
+        if self.protocol == HttpDeliveryProtocol::Http
+            || self.protocol == HttpDeliveryProtocol::ObjectJsonUpload
         {
             return Ok(());
         }
         let value: Value =
             serde_json::from_slice(&ack).map_err(|_| DeliveryError::Rejected("provider_ack_invalid_json"))?;
-        let accepted =
-            match self.protocol {
-                HttpDeliveryProtocol::Solr => {
-                    value.pointer("/responseHeader/status").and_then(Value::as_u64) == Some(0)
-                }
-                HttpDeliveryProtocol::OpenSearch => search_receipt
-                    .as_ref()
-                    .is_some_and(|(id, deleted)| search_acknowledged(&value, id, *deleted)),
-                HttpDeliveryProtocol::KafkaRestV2 => value
+        let accepted = match self.protocol {
+            HttpDeliveryProtocol::SearchUpdate => {
+                value.pointer("/responseHeader/status").and_then(Value::as_u64) == Some(0)
+            }
+            HttpDeliveryProtocol::SearchIndex => search_receipt
+                .as_ref()
+                .is_some_and(|(id, deleted)| search_acknowledged(&value, id, *deleted)),
+            HttpDeliveryProtocol::StreamRestV2 => {
+                value
                     .get("offsets")
                     .and_then(Value::as_array)
                     .is_some_and(|offsets| {
@@ -1224,18 +1225,17 @@ impl DeliveryDestination for HttpDestination {
                                         .and_then(Value::as_i64)
                                         .is_some_and(|offset| offset >= 0)
                             })
-                    }),
-                HttpDeliveryProtocol::RabbitMqManagement => {
-                    value.get("routed").and_then(Value::as_bool) == Some(true)
-                }
-                HttpDeliveryProtocol::FtpServiceV1 => {
-                    value.get("version").and_then(Value::as_u64) == Some(1)
-                        && value.get("committed").and_then(Value::as_bool) == Some(true)
-                        && value.get("idempotencyKey").and_then(Value::as_str)
-                            == Some(batch.idempotency_key.as_str())
-                }
-                _ => false,
-            };
+                    })
+            }
+            HttpDeliveryProtocol::QueueHttpV1 => value.get("routed").and_then(Value::as_bool) == Some(true),
+            HttpDeliveryProtocol::FtpServiceV1 => {
+                value.get("version").and_then(Value::as_u64) == Some(1)
+                    && value.get("committed").and_then(Value::as_bool) == Some(true)
+                    && value.get("idempotencyKey").and_then(Value::as_str)
+                        == Some(batch.idempotency_key.as_str())
+            }
+            _ => false,
+        };
         if !accepted {
             return Err(DeliveryError::Rejected("provider_ack_rejected"));
         }

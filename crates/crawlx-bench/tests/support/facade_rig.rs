@@ -1,7 +1,7 @@
-//! The crawlx side of the wire families, in process: the Firecrawl compat facade
+//! The crawlx side of the wire families, in process: the compat facade
 //! on a real TCP port, a REAL worker lease loop over the same store (the in-memory store or one
 //! throwaway schema of `CRAWLX_TEST_DATABASE_URL`), a webhook sender delivering to the runner's
-//! sink, and a CrawlerGym server, all reached under the host names the Firecrawl containers use
+//! sink, and a CrawlerGym server, all reached under the host names the upstream containers use
 //! (`gym.test`, ...): admission denies literal loopback, so the worker's injected resolver maps
 //! the names of `d2::HOSTS` to 127.0.0.1.
 //!
@@ -16,7 +16,7 @@
 
 use async_trait::async_trait;
 use axum::Router;
-use crawlx_api::auth::{generate_firecrawl_key, key_record_for, tenant_id_for};
+use crawlx_api::auth::{generate_compat_key, key_record_for, tenant_id_for};
 use crawlx_api::config::CompatConfig;
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookSender, WebhookTransport};
 use crawlx_api::{ApiConfig, ApiStore, AppState, Repos, Scope};
@@ -295,7 +295,7 @@ impl FacadeRig {
                 (Repos::pg(admin, artifacts.clone()), artifacts)
             }
         };
-        let key = generate_firecrawl_key();
+        let key = generate_compat_key();
         let rec = key_record_for(&key, tenant_id_for("acme"), Scope::all_set(), true).unwrap();
         crawlx_api::ApiStore::key_insert(repos.api.as_ref(), &rec, "acme")
             .await
@@ -324,7 +324,7 @@ impl FacadeRig {
             rate_limit_per_minute: 0,
             webhook_secret: WEBHOOK_SECRET.to_owned(),
             compat: CompatConfig {
-                firecrawl_keys: true,
+                prefixed_keys: true,
                 ..CompatConfig::default()
             },
             ..ApiConfig::default()
@@ -423,7 +423,7 @@ impl FacadeRig {
         Target::new(
             "crawlx",
             "crawlx_facade",
-            &format!("http://127.0.0.1:{}/compat/firecrawl", self.port),
+            &format!("http://127.0.0.1:{}/compat", self.port),
             &self.key,
             &format!("http://gym.test:{}", self.gym.port),
         )
@@ -476,7 +476,7 @@ impl FacadeRig {
     }
 }
 
-/// Restart of the API and the worker, the counterpart of restarting the Firecrawl container.
+/// Restart of the API and the worker, the counterpart of restarting the upstream container.
 struct RestartAll(Arc<FacadeRig>);
 
 #[async_trait]

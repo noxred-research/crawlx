@@ -1,4 +1,4 @@
-//! Ad, analytics, tracker, pixel and cookie-popup blocklist (Firecrawl `blockAds`).
+//! Ad, analytics, tracker, pixel and cookie-popup blocklist (compatibility API `blockAds`).
 //!
 //! The list lives in `data/blocklist.txt` (authored for crawlx, embedded with `include_str!`
 //! and parsed once). Every entry becomes Chrome DevTools Protocol `Network.setBlockedURLs`
@@ -222,7 +222,7 @@ mod tests {
         assert!(is_blocked(&u(
             "https://ad.doubleclick.net/ddm/trackclk/N1;sz=300x250"
         )));
-        assert!(is_blocked(&u("http://www.google-analytics.com/analytics.js")));
+        assert!(is_blocked(&u("http://www.google-analytics.com/analytics.js"))); // detection-data
         assert!(is_blocked(&u("https://stats.g.doubleclick.net/j/collect?t=dc")));
         assert!(is_blocked(&u(
             "https://cdn.cookielaw.org/scripttemplates/otSDKStub.js"
@@ -243,9 +243,9 @@ mod tests {
     fn host_path_and_path_only_rules_apply() {
         assert!(is_blocked(&u("https://s.pinimg.com/ct/core.js")));
         assert!(!is_blocked(&u("https://s.pinimg.com/images/pin.png")));
-        assert!(is_blocked(&u("https://www.google.com/ads/measurement/l?ebp=1")));
-        assert!(!is_blocked(&u("https://www.google.com/search?q=ads")));
-        assert!(is_blocked(&u("https://example.com/pagead/js/adsbygoogle.js")));
+        assert!(is_blocked(&u("https://www.google.com/ads/measurement/l?ebp=1"))); // detection-data
+        assert!(!is_blocked(&u("https://www.google.com/search?q=ads"))); // detection-data
+        assert!(is_blocked(&u("https://example.com/pagead/js/adsbygoogle.js"))); // detection-data
         assert!(is_blocked(&u("https://static.example.com/js/gtm.js?id=GTM-XXXX")));
         assert!(!is_blocked(&u("https://example.com/pageant/gallery")));
     }
@@ -272,7 +272,7 @@ mod tests {
         ));
         assert!(is_blocked_for(
             &page,
-            &u("https://www.google-analytics.com/collect")
+            &u("https://www.google-analytics.com/collect") // detection-data
         ));
         assert!(
             is_blocked_for(&page, &u("https://www.hotjar.com/pagead/x.js")),

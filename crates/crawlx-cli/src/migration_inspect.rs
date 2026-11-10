@@ -33,117 +33,120 @@ pub struct ManifestArgs {
     /// Regular exported JSON file, at most one MiB; symlinks/special files refused.
     pub manifest: PathBuf,
 }
-/// Separately version-pinned source families; these are not execution runtimes.
+/// Separately version-pinned input formats; these are not execution runtimes.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum SourceDialectV1 {
-    /// Crawlee JavaScript 3.18.2.
-    CrawleeJs,
-    /// Crawlee Python 1.11.0.
-    CrawleePython,
-    /// Scrapy 2.19.0.
-    Scrapy,
-    /// Colly 2.2.0.
-    Colly,
-    /// Firecrawl pinned self-hosted inventory.
-    Firecrawl,
-    /// Scrapling 0.4.15.
-    Scrapling,
-    /// Crawl4AI 0.9.5.
-    Crawl4ai,
-    /// Apache Nutch 1.21; inspection only, not a seed-directory loader.
-    Nutch,
-    /// Released StormCrawler 3.5.1, never the separate 4.0 snapshot.
-    Stormcrawler,
-    /// Heritrix 3.18.0; inspection only, not a CXML/Groovy loader.
-    Heritrix,
-    /// Browsertrix Crawler 1.15.2; literal single-seed depth-zero subset.
-    Browsertrix,
+    /// JavaScript actor-style crawler options, pinned release 3.18.2.
+    JsActor,
+    /// Python actor-style crawler options, pinned release 1.11.0.
+    PyActor,
+    /// Python spider-style settings, pinned release 2.19.0.
+    PythonSpider,
+    /// Go collector-style options, pinned release 2.2.0.
+    GoCollector,
+    /// Compatibility-API request options, pinned self-hosted inventory.
+    CompatApi,
+    /// Adaptive Python fetcher options, pinned release 0.4.15.
+    AdaptivePy,
+    /// LLM-oriented Python crawler options, pinned release 0.9.5.
+    LlmPy,
+    /// Seed-list batch crawler properties, pinned release 1.21; inspection only, not a seed-directory loader.
+    SeedlistBatch,
+    /// Released topology-stream crawler settings 3.5.1, never the separate 4.0 snapshot.
+    TopologyStream,
+    /// Bean-configured archival crawler 3.18.0; inspection only, not a CXML/Groovy loader.
+    BeanConfig,
+    /// Browser-driven YAML crawler 1.15.2; literal single-seed depth-zero subset.
+    BrowserYaml,
 }
 impl SourceDialectV1 {
     fn version(self) -> &'static str {
         match self {
-            Self::CrawleeJs => "3.18.2",
-            Self::CrawleePython => "1.11.0",
-            Self::Scrapy => "2.19.0",
-            Self::Colly => "2.2.0",
-            Self::Firecrawl => "2.11.162",
-            Self::Scrapling => "0.4.15",
-            Self::Crawl4ai => "0.9.5",
-            Self::Nutch => "1.21",
-            Self::Stormcrawler => "3.5.1",
-            Self::Heritrix => "3.18.0",
-            Self::Browsertrix => "1.15.2",
+            Self::JsActor => "3.18.2",
+            Self::PyActor => "1.11.0",
+            Self::PythonSpider => "2.19.0",
+            Self::GoCollector => "2.2.0",
+            Self::CompatApi => "2.11.162",
+            Self::AdaptivePy => "0.4.15",
+            Self::LlmPy => "0.9.5",
+            Self::SeedlistBatch => "1.21",
+            Self::TopologyStream => "3.5.1",
+            Self::BeanConfig => "3.18.0",
+            Self::BrowserYaml => "1.15.2",
         }
     }
     /// Feature IDs of the pinned upstream release, one per line (`#` starts a comment).
     fn inventory(self) -> &'static str {
         match self {
-            Self::CrawleeJs | Self::CrawleePython => {
-                include_str!("../data/source-inventories/crawlee.txt")
+            Self::JsActor | Self::PyActor => {
+                include_str!("../data/source-inventories/js-py-actor.txt")
             }
-            Self::Scrapy => include_str!("../data/source-inventories/scrapy.txt"),
-            Self::Colly => include_str!("../data/source-inventories/colly.txt"),
-            Self::Firecrawl => include_str!("../data/source-inventories/firecrawl.txt"),
-            Self::Scrapling => include_str!("../data/source-inventories/scrapling.txt"),
-            Self::Crawl4ai => include_str!("../data/source-inventories/crawl4ai.txt"),
-            Self::Nutch => include_str!("../data/source-inventories/nutch.txt"),
-            Self::Stormcrawler => include_str!("../data/source-inventories/stormcrawler.txt"),
-            Self::Heritrix => include_str!("../data/source-inventories/heritrix.txt"),
-            Self::Browsertrix => include_str!("../data/source-inventories/browsertrix.txt"),
+            Self::PythonSpider => include_str!("../data/source-inventories/python-spider.txt"),
+            Self::GoCollector => include_str!("../data/source-inventories/go-collector.txt"),
+            Self::CompatApi => include_str!("../data/source-inventories/compat-api.txt"),
+            Self::AdaptivePy => include_str!("../data/source-inventories/adaptive-py.txt"),
+            Self::LlmPy => include_str!("../data/source-inventories/llm-py.txt"),
+            Self::SeedlistBatch => include_str!("../data/source-inventories/seedlist-batch.txt"),
+            Self::TopologyStream => include_str!("../data/source-inventories/topology-stream.txt"),
+            Self::BeanConfig => include_str!("../data/source-inventories/bean-config.txt"),
+            Self::BrowserYaml => include_str!("../data/source-inventories/browser-yaml.txt"),
         }
     }
     fn prefix(self) -> &'static str {
         match self {
-            Self::CrawleeJs => "CJ",
-            Self::CrawleePython => "CP",
-            Self::Scrapy => "SC",
-            Self::Colly => "CO",
-            Self::Firecrawl => "FC",
-            Self::Scrapling => "SP",
-            Self::Crawl4ai => "C4",
-            Self::Nutch => "NUT-",
-            Self::Stormcrawler => "STC-",
-            Self::Heritrix => "HER-",
-            Self::Browsertrix => "BTR-",
+            Self::JsActor => "CJ",
+            Self::PyActor => "CP",
+            Self::PythonSpider => "SC",
+            Self::GoCollector => "CO",
+            Self::CompatApi => "FC",
+            Self::AdaptivePy => "SP",
+            Self::LlmPy => "C4",
+            Self::SeedlistBatch => "NUT-",
+            Self::TopologyStream => "STC-",
+            Self::BeanConfig => "HER-",
+            Self::BrowserYaml => "BTR-",
         }
     }
     fn key(self, key: &str) -> Option<(&'static str, &'static str)> {
         match (self, key) {
-            (Self::CrawleeJs, "startUrls") => Some(("seedUrl", "CJ10")),
-            (Self::CrawleePython, "start_urls") => Some(("seedUrl", "CP01")),
-            (Self::Scrapy | Self::Scrapling, "start_urls") => Some((
+            // Source option names below are the external formats' own keys.
+            (Self::JsActor, "startUrls") => Some(("seedUrl", "CJ10")), // wire-compat: source option name
+            (Self::PyActor, "start_urls") => Some(("seedUrl", "CP01")), // wire-compat: source option name
+            (Self::PythonSpider | Self::AdaptivePy, "start_urls") => Some((
+                // wire-compat: source option name
                 "seedUrl",
-                if matches!(self, Self::Scrapy) {
+                if matches!(self, Self::PythonSpider) {
                     "SC01"
                 } else {
                     "SP26"
                 },
             )),
-            (Self::Colly, "URL") => Some(("seedUrl", "CO02")),
-            (Self::Firecrawl | Self::Crawl4ai, "url") => Some((
+            (Self::GoCollector, "URL") => Some(("seedUrl", "CO02")), // wire-compat: source option name
+            (Self::CompatApi | Self::LlmPy, "url") => Some((
+                // wire-compat: source option name
                 "seedUrl",
-                if matches!(self, Self::Firecrawl) {
+                if matches!(self, Self::CompatApi) {
                     "FC01"
                 } else {
                     "C401"
                 },
             )),
-            (Self::CrawleeJs, "maxRequestsPerCrawl") => Some(("limits.urls", "CJ01")),
-            (Self::CrawleePython, "max_requests_per_crawl") => Some(("limits.urls", "CP01")),
-            (Self::Scrapy, "CLOSESPIDER_PAGECOUNT") => Some(("limits.urls", "SC01")),
-            (Self::Colly, "MaxRequests") => Some(("limits.urls", "CO05")),
-            (Self::Firecrawl, "limit") => Some(("limits.urls", "FC01")),
-            (Self::CrawleeJs, "maxCrawlDepth") => Some(("scope.maxDiscoveryDepth", "CJ09")),
-            (Self::CrawleePython, "max_crawl_depth") => Some(("scope.maxDiscoveryDepth", "CP01")),
-            (Self::Scrapy, "DEPTH_LIMIT") => Some(("scope.maxDiscoveryDepth", "SC01")),
-            (Self::Colly, "MaxDepth") => Some(("scope.maxDiscoveryDepth", "CO05")),
-            // Pinned Browsertrix CLI options [B5] and crawl scope [B7].
+            (Self::JsActor, "maxRequestsPerCrawl") => Some(("limits.urls", "CJ01")), // wire-compat: source option name
+            (Self::PyActor, "max_requests_per_crawl") => Some(("limits.urls", "CP01")), // wire-compat: source option name
+            (Self::PythonSpider, "CLOSESPIDER_PAGECOUNT") => Some(("limits.urls", "SC01")), // wire-compat: source option name
+            (Self::GoCollector, "MaxRequests") => Some(("limits.urls", "CO05")), // wire-compat: source option name
+            (Self::CompatApi, "limit") => Some(("limits.urls", "FC01")), // wire-compat: source option name
+            (Self::JsActor, "maxCrawlDepth") => Some(("scope.maxDiscoveryDepth", "CJ09")), // wire-compat: source option name
+            (Self::PyActor, "max_crawl_depth") => Some(("scope.maxDiscoveryDepth", "CP01")), // wire-compat: source option name
+            (Self::PythonSpider, "DEPTH_LIMIT") => Some(("scope.maxDiscoveryDepth", "SC01")), // wire-compat: source option name
+            (Self::GoCollector, "MaxDepth") => Some(("scope.maxDiscoveryDepth", "CO05")), // wire-compat: source option name
+            // Pinned browser-yaml CLI options [B5] and crawl scope [B7].
             // Positive depths need prefix/www/scheme/redirect semantics which
             // native scope does not implement; only explicit depth zero maps.
-            (Self::Browsertrix, "url" | "seeds") => Some(("seedUrl", "BTR-02")),
-            (Self::Browsertrix, "depth") => Some(("scope.maxDiscoveryDepth", "BTR-03")),
+            (Self::BrowserYaml, "url" | "seeds") => Some(("seedUrl", "BTR-02")), // wire-compat: source option name
+            (Self::BrowserYaml, "depth") => Some(("scope.maxDiscoveryDepth", "BTR-03")), // wire-compat: source option name
             _ => None,
         }
     }
@@ -246,10 +249,10 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
                     || (b == b'.'
                         && matches!(
                             manifest.source,
-                            SourceDialectV1::Nutch
-                                | SourceDialectV1::Stormcrawler
-                                | SourceDialectV1::Heritrix
-                                | SourceDialectV1::Browsertrix
+                            SourceDialectV1::SeedlistBatch
+                                | SourceDialectV1::TopologyStream
+                                | SourceDialectV1::BeanConfig
+                                | SourceDialectV1::BrowserYaml
                         ))
             })
         {
@@ -262,10 +265,10 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
                 state: "rejected",
                 target: None,
                 reason: match manifest.source {
-                    SourceDialectV1::Nutch => "Nutch seed directories, per-iteration fetchlists and plugin properties have no literal native seed/global-limit mapping; no files or JVM classes are loaded",
-                    SourceDialectV1::Stormcrawler => "StormCrawler topology/spout inputs and queue caps are not native seeds/global crawl limits; YAML, classes and snapshot-only settings are not imported",
-                    SourceDialectV1::Heritrix => "Heritrix ReadSource beans, ordered hop rules and graceful document limits are not literal native seeds/depth/hard URL limits; CXML and Groovy are not loaded",
-                    SourceDialectV1::Browsertrix => "only one literal url/seeds and explicit depth zero map; page/dedupe caps, scope overrides, behaviors, endpoints and credentials are not imported",
+                    SourceDialectV1::SeedlistBatch => "seed directories, per-iteration fetchlists and plugin properties have no literal native seed/global-limit mapping; no files or JVM classes are loaded",
+                    SourceDialectV1::TopologyStream => "topology/spout inputs and queue caps are not native seeds/global crawl limits; YAML, classes and snapshot-only settings are not imported",
+                    SourceDialectV1::BeanConfig => "ReadSource beans, ordered hop rules and graceful document limits are not literal native seeds/depth/hard URL limits; CXML and Groovy are not loaded",
+                    SourceDialectV1::BrowserYaml => "only one literal url/seeds and explicit depth zero map; page/dedupe caps, scope overrides, behaviors, endpoints and credentials are not imported",
                     _ => "unknown or unmapped source option; arbitrary callbacks and runtime plugins are never imported",
                 },
                 requested: true,
@@ -289,7 +292,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
                         && u.password().is_none()
                 }),
             "limits.urls" => value.as_u64().is_some_and(|n| (1..=1_000_000).contains(&n)),
-            "scope.maxDiscoveryDepth" if matches!(manifest.source, SourceDialectV1::Browsertrix) => {
+            "scope.maxDiscoveryDepth" if matches!(manifest.source, SourceDialectV1::BrowserYaml) => {
                 value.as_u64() == Some(0)
             }
             "scope.maxDiscoveryDepth" => value.as_u64().is_some_and(|n| (1..=100).contains(&n)),
@@ -307,7 +310,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             });
             continue;
         }
-        if matches!(manifest.source, SourceDialectV1::Browsertrix) && fields.contains_key(target) {
+        if matches!(manifest.source, SourceDialectV1::BrowserYaml) && fields.contains_key(target) {
             valid = false;
             dispositions.push(ImportDispositionV1 {
                 id: key.clone(),
@@ -338,8 +341,8 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
         })
         .map(CreateCrawl::new);
     if let Some(crawl) = &mut crawl {
-        crawl.mode = if matches!(manifest.source, SourceDialectV1::Browsertrix) {
-            // This is browser acquisition, not Browsertrix behavior/archive parity.
+        crawl.mode = if matches!(manifest.source, SourceDialectV1::BrowserYaml) {
+            // This is browser acquisition, not browser-yaml behavior/archive parity.
             crawlx_core::CrawlMode::Dynamic
         } else {
             crawlx_core::CrawlMode::Static
@@ -361,9 +364,9 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             }
         }
         if let Some(v) = fields.get("scope.maxDiscoveryDepth") {
-            // Zero is finite only for the explicit Browsertrix depth-zero subset.
+            // Zero is finite only for the explicit browser-yaml depth-zero subset.
             if let Some(n) = v.as_u64().and_then(|n| u16::try_from(n).ok()).filter(|n| {
-                if matches!(manifest.source, SourceDialectV1::Browsertrix) {
+                if matches!(manifest.source, SourceDialectV1::BrowserYaml) {
                     *n == 0
                 } else {
                     (1..=100).contains(n)
@@ -374,7 +377,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
                 valid = false;
             }
         }
-        if matches!(manifest.source, SourceDialectV1::Browsertrix) {
+        if matches!(manifest.source, SourceDialectV1::BrowserYaml) {
             // Omitted depth means unlimited upstream; never substitute native ten.
             if !fields.contains_key("scope.maxDiscoveryDepth") {
                 valid = false;
@@ -382,7 +385,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
                     id: "source-scope".into(),
                     state: "rejected",
                     target: None,
-                    reason: "Browsertrix requires explicit depth zero; default unlimited depth and positive-depth prefix scope have no equivalent native mapping",
+                    reason: "browser-yaml requires explicit depth zero; default unlimited depth and positive-depth prefix scope have no equivalent native mapping",
                     requested: true,
                 });
             }
@@ -488,7 +491,10 @@ pub async fn run(args: SourceImportArgs, out: &mut dyn Write) -> anyhow::Result<
         source: std::borrow::Cow<'a, str>,
     }
     let source: Source<'_> = serde_json::from_slice(&bytes).context("reading import source dialect")?;
-    if matches!(source.source.as_ref(), "trafilatura" | "newspaper4k" | "katana") {
+    if matches!(
+        source.source.as_ref(),
+        "text-precision" | "news-article" | "surface-flags"
+    ) {
         return crate::extraction_import::run_manifest(&bytes, convert, out).await;
     }
     let manifest: SourceManifestV1 =
@@ -514,17 +520,17 @@ mod tests {
     #[test]
     fn bundled_inventories_hold_the_pinned_identifier_counts() {
         let expected = [
-            (SourceDialectV1::CrawleeJs, 38),
-            (SourceDialectV1::CrawleePython, 40),
-            (SourceDialectV1::Scrapy, 50),
-            (SourceDialectV1::Colly, 38),
-            (SourceDialectV1::Firecrawl, 43),
-            (SourceDialectV1::Scrapling, 48),
-            (SourceDialectV1::Crawl4ai, 50),
-            (SourceDialectV1::Nutch, 40),
-            (SourceDialectV1::Stormcrawler, 38),
-            (SourceDialectV1::Heritrix, 40),
-            (SourceDialectV1::Browsertrix, 46),
+            (SourceDialectV1::JsActor, 38),
+            (SourceDialectV1::PyActor, 40),
+            (SourceDialectV1::PythonSpider, 50),
+            (SourceDialectV1::GoCollector, 38),
+            (SourceDialectV1::CompatApi, 43),
+            (SourceDialectV1::AdaptivePy, 48),
+            (SourceDialectV1::LlmPy, 50),
+            (SourceDialectV1::SeedlistBatch, 40),
+            (SourceDialectV1::TopologyStream, 38),
+            (SourceDialectV1::BeanConfig, 40),
+            (SourceDialectV1::BrowserYaml, 46),
         ];
         for (dialect, count) in expected {
             let prefix = dialect.prefix();
@@ -545,8 +551,10 @@ mod tests {
     use serde_json::json;
     #[test]
     fn unknown_option_fails_conversion_and_is_reported() {
-        let manifest = serde_json::from_value(json!({"version":1,"source":"scrapy","sourceVersion":"2.19.0",
-            "options":{"start_urls":["https://fixture.test/"],"DOWNLOADER_MIDDLEWARES":{"evil.Plugin":1}}}))
+        let manifest = serde_json::from_value(
+            json!({"version":1,"source":"python-spider","sourceVersion":"2.19.0",
+            "options":{"start_urls":["https://fixture.test/"],"DOWNLOADER_MIDDLEWARES":{"evil.Plugin":1}}}),
+        )
         .unwrap();
         let (report, crawl) = inspect(&manifest).unwrap();
         assert!(!report.convertible);
@@ -559,8 +567,10 @@ mod tests {
     }
     #[test]
     fn converted_recipe_runs_real_native_fixture_parser_and_pipeline() {
-        let manifest = serde_json::from_value(json!({"version":1,"source":"colly","sourceVersion":"2.2.0",
-            "options":{"URL":"https://fixture.test/","MaxRequests":4,"MaxDepth":2}}))
+        let manifest = serde_json::from_value(
+            json!({"version":1,"source":"go-collector","sourceVersion":"2.2.0",
+            "options":{"URL":"https://fixture.test/","MaxRequests":4,"MaxDepth":2}}),
+        )
         .unwrap();
         let (report, crawl) = inspect(&manifest).unwrap();
         assert!(report.convertible);
@@ -584,7 +594,7 @@ mod tests {
     #[test]
     fn wrapper_unknown_fields_fail_before_conversion() {
         assert!(
-            serde_json::from_value::<SourceManifestV1>(json!({"version":1,"source":"scrapy",
+            serde_json::from_value::<SourceManifestV1>(json!({"version":1,"source":"python-spider",
             "sourceVersion":"2.19.0","options":{},"pythonModule":"evil"}))
             .is_err()
         );

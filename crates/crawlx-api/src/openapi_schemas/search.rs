@@ -22,8 +22,8 @@ pub(super) enum SourceName {
     #[serde(rename = "images")]
     Images,
     /// The hosted data-provider index: not available, ignored with a warning.
-    #[serde(rename = "alexandria")]
-    Alexandria,
+    #[serde(rename = "alexandria")] // wire-compat: source value clients send
+    HostedIndex,
 }
 
 /// A search source with options.
@@ -122,10 +122,10 @@ pub(super) struct SearchRequest {
     /// Never these hosts (at most 100 of at most 253 characters).
     #[serde(rename = "excludeDomains")]
     exclude_domains: Option<Vec<String>>,
-    /// Accepted; applies to the hosted Alexandria index and is ignored.
+    /// Accepted; applies to the hosted data-provider index and is ignored.
     #[serde(rename = "domainTools")]
     domain_tools: Option<Value>,
-    /// Accepted; applies to the hosted Alexandria index and is ignored.
+    /// Accepted; applies to the hosted data-provider index and is ignored.
     #[serde(rename = "toolDetail")]
     tool_detail: Option<Value>,
     /// SDK bookkeeping; accepted without effect.
@@ -704,29 +704,29 @@ pub(super) struct SimilarResponse {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlSearch" => Spec::new(&[422, 502, 503, 504])
+        "compatSearch" => Spec::new(&[422, 502, 503, 504])
             .json::<SearchRequest>("The query and the search options.")
             .reply::<SearchResponse>("200", "The hits by source."),
-        "firecrawlSearchFeedback" => Spec::new(&[404, 422])
+        "compatSearchFeedback" => Spec::new(&[404, 422])
             .path("jobId", "Id of the search (`id` of its response).", Some("uuid"))
             .json::<SearchFeedbackRequest>("The rating and what was useful or missing.")
             .reply::<FeedbackResponse>("200", "The feedback was stored."),
-        "firecrawlSearchDeveloperGet" => Spec::new(&[422, 502, 503, 504])
+        "compatSearchDeveloperGet" => Spec::new(&[422, 502, 503, 504])
             .query::<DeveloperQuery>()
             .reply::<DeveloperResponse>("200", "Developer hits by type."),
-        "firecrawlSearchDeveloper" => Spec::new(&[422, 502, 503, 504])
+        "compatSearchDeveloper" => Spec::new(&[422, 502, 503, 504])
             .json::<DeveloperParams>("The query and filters.")
             .reply::<DeveloperResponse>("200", "Developer hits by type."),
-        "firecrawlSearchGovGet" => Spec::new(&[422, 502, 503, 504])
+        "compatSearchGovGet" => Spec::new(&[422, 502, 503, 504])
             .query::<GovParams>()
             .reply::<GovResponse>("200", "Government hits."),
-        "firecrawlSearchGov" => Spec::new(&[422, 502, 503, 504])
+        "compatSearchGov" => Spec::new(&[422, 502, 503, 504])
             .json::<GovParams>("The query and filters.")
             .reply::<GovResponse>("200", "Government hits."),
-        "firecrawlResearchPapers" => Spec::new(&[422, 502, 503, 504])
+        "compatResearchPapers" => Spec::new(&[422, 502, 503, 504])
             .query::<PapersQuery>()
             .reply::<PapersResponse>("200", "Paper hits."),
-        "firecrawlResearchPaper" => Spec::new(&[404, 422, 503])
+        "compatResearchPaper" => Spec::new(&[404, 422, 503])
             .path(
                 "paperId",
                 "Canonical paper id: `arxiv:<id>`, `doi:<doi>`, `pmid:<id>`, `pmcid:<id>` or `web:<url>`.",
@@ -737,7 +737,7 @@ pub(super) fn spec(id: &str) -> Option<Spec> {
                 "200",
                 "The paper's metadata, and with `query` its best matching passages.",
             ),
-        "firecrawlResearchSimilar" => Spec::new(&[404, 422, 502, 503, 504])
+        "compatResearchSimilar" => Spec::new(&[404, 422, 502, 503, 504])
             .path("paperId", "Canonical paper id.", None)
             .query::<SimilarQuery>()
             .reply::<SimilarResponse>("200", "Related papers."),

@@ -1,15 +1,15 @@
 //! `crawl-bench`: crawl coverage and throughput of the real URL plane, per target and crawl
-//! profile, with baseline comparison (katana `cmd/tools/crawl-bench` equivalent).
+//! profile, with baseline comparison (equivalent of a reference crawl-bench tool).
 //!
 //! # What it measures
 //!
 //! Every target sits behind a [`recorder::Recorder`] (a loopback reverse proxy). The crawl runs
 //! through [`crawlx_worker::run_local_with`] against the proxy, so the numbers that describe
 //! the *target* (requests received, `5xx` answers, page latency) are observed server-side, the
-//! way katana's harness does it, while the numbers that describe the *crawl* (pages fetched,
+//! way the reference harness does it, while the numbers that describe the *crawl* (pages fetched,
 //! endpoints discovered, recall) come from the run report. One crawl is a [`Sample`]; `repeat`
 //! samples of one target and profile are combined into a [`Metrics`] row by the per-field
-//! median (katana's convention), except page latency, whose percentiles are taken over the
+//! median (the reference harness's convention), except page latency, whose percentiles are taken over the
 //! pooled requests of all repeats.
 //!
 //! | metric | meaning |
@@ -45,7 +45,7 @@
 //! |---|---|
 //! | `static` | the gym's reference slice: crawlx request defaults at the gym's pace (the 50 ms per-origin delay floor) |
 //! | `crawlx-defaults` | the request defaults of `crawlx crawl` including the production politeness (250 ms per-origin delay) |
-//! | `katana-defaults` | katana's flag defaults mapped onto the request, see [`Profile::apply`] |
+//! | `compat-flag-defaults` | the compatibility flag dialect's defaults mapped onto the request, see [`Profile::apply`] |
 //!
 //! # Baselines
 //!
@@ -108,22 +108,22 @@ pub const AGGREGATE_LABEL: &str = "(all)";
 pub enum Profile {
     /// The gym's reference static slice (`mode = static`, crawlx request defaults, gym pace).
     Static,
-    /// Katana's flag defaults mapped onto the request.
-    KatanaDefaults,
+    /// The compatibility flag dialect's defaults mapped onto the request.
+    CompatFlagDefaults,
     /// The request defaults of `crawlx crawl`, production politeness included.
     CrawlxDefaults,
 }
 
 impl Profile {
     /// Every profile, in table order.
-    pub const ALL: [Self; 3] = [Self::Static, Self::KatanaDefaults, Self::CrawlxDefaults];
+    pub const ALL: [Self; 3] = [Self::Static, Self::CompatFlagDefaults, Self::CrawlxDefaults];
 
     /// Name used on the command line and as the JSON key.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Static => "static",
-            Self::KatanaDefaults => "katana-defaults",
+            Self::CompatFlagDefaults => "compat-flag-defaults",
             Self::CrawlxDefaults => "crawlx-defaults",
         }
     }
@@ -143,9 +143,9 @@ impl Profile {
     /// forces `mode = static` and leaves the harness-owned parts (seed, safety profile,
     /// authorization, `limits.urls` and `limits.durationSeconds`) alone.
     ///
-    /// `katana-defaults` maps katana's flag defaults (`cmd/katana/main.go`) like this:
+    /// `compat-flag-defaults` maps the compatibility flag dialect's defaults like this:
     ///
-    /// | katana | crawlx request field |
+    /// | compat flag | crawlx request field |
     /// |---|---|
     /// | `-fs rdn` | `scope.hostScope = rdn` |
     /// | `-d 3` | `scope.maxDiscoveryDepth = 3` |
@@ -162,7 +162,7 @@ impl Profile {
         match self {
             Self::Static => {}
             Self::CrawlxDefaults => req.politeness = Politeness::default(),
-            Self::KatanaDefaults => {
+            Self::CompatFlagDefaults => {
                 req.scope.host_scope = HostScope::Rdn;
                 req.scope.max_discovery_depth = 3;
                 req.scope.strategy = CrawlStrategy::DepthFirst;
@@ -502,7 +502,7 @@ pub fn summarize(
     }
 }
 
-/// The element at index `len / 2` of the sorted values (katana's median).
+/// The element at index `len / 2` of the sorted values (the reference median).
 fn median<T: Copy + Ord>(mut values: Vec<T>) -> Option<T> {
     values.sort_unstable();
     values.get(values.len() / 2).copied()
@@ -763,7 +763,7 @@ fn render(rows: &[Vec<String>]) -> String {
     out
 }
 
-/// The change from `base` to `current` as katana's report prints it.
+/// The change from `base` to `current` as the reference report prints it.
 #[must_use]
 pub fn delta_label(base: f64, current: f64) -> String {
     if base == 0.0 {

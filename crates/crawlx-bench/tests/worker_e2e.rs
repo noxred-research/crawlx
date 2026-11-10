@@ -293,7 +293,7 @@ async fn worker_executor_runs_matrix_rows_and_refuses_discovery_only_rows() {
 /// the worker's loopback egress proxy (`--proxy-bypass-list=<-loopback>`), so the proxy's
 /// admitted-target log is the complete set of hosts Chromium reached.
 ///
-/// The stock pinned Chromium also makes unsolicited Google-service requests (see
+/// The stock pinned Chromium also makes unsolicited browser-vendor service requests (see
 /// `docs/design/data-and-secrets.md`). They are accepted only as denied containment: the proxy
 /// refuses each before any connection, so they never appear in `dialed_hosts`, and each denied
 /// event must be for a host in `BROWSER_BACKGROUND_HOST_SUFFIXES`. A page-initiated

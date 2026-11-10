@@ -343,10 +343,10 @@ pub(super) struct ParseFormatsResponse {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlParse" => Spec::new(&[400, 408, 413, 415, 422, 502, 503, 504])
+        "compatParse" => Spec::new(&[400, 408, 413, 415, 422, 502, 503, 504])
             .multipart::<ParseUpload>("A `file` part and an optional `options` part.")
             .reply::<ParseResponse>("200", "The converted document."),
-        "firecrawlParseFormats" => {
+        "compatParseFormats" => {
             Spec::new(&[]).reply::<ParseFormatsResponse>("200", "The supported file formats.")
         }
         _ => return None,

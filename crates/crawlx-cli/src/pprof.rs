@@ -1,6 +1,6 @@
 //! `--pprof-bind`: the debug listener of `crawlx serve` and `crawlx worker`.
 //!
-//! This is crawlx's counterpart of katana's `-pprof-server`. When `--pprof-bind ADDR` (env
+//! This is crawlx's counterpart of the compatibility `-pprof-server`. When `--pprof-bind ADDR` (env
 //! `CRAWLX_PPROF_BIND`) is given, a small HTTP server answers two routes:
 //!
 //! * `GET /debug/pprof/profile?seconds=N` samples the CPU of the whole process at

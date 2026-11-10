@@ -280,7 +280,7 @@ async fn tenant_engine_flag_is_stored_and_audited() {
         Some(TenantEngine::Crawlx)
     );
     assert_eq!(
-        ops.set_tenant_engine(env.tenant, TenantEngine::Firecrawl)
+        ops.set_tenant_engine(env.tenant, TenantEngine::Upstream)
             .await
             .unwrap(),
         TenantEngine::Crawlx
@@ -289,7 +289,7 @@ async fn tenant_engine_flag_is_stored_and_audited() {
         crawlx_storage::admin::tenant_engine_of(&env.pg, env.tenant)
             .await
             .unwrap(),
-        Some(TenantEngine::Firecrawl)
+        Some(TenantEngine::Upstream)
     );
     assert!(ops
         .set_tenant_engine(TenantId::new(), TenantEngine::Shadow)

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Capture what the official `firecrawl-py` SDK sees from one Firecrawl v2 API.
+"""Capture what the official upstream Python SDK (`firecrawl-py`) sees from one upstream v2 API.
 
-Run once against the real self-hosted Firecrawl and once against the crawlx compat facade, with the
+Run once against the real self-hosted upstream and once against the crawlx compat facade, with the
 same calls on the same gym fixture; `sdk_shape_diff.py` diffs the two captures field by field.
 
     sdk_shape_capture.py --api URL --site ORIGIN --out FILE --label LABEL [--key KEY] [--fixture s1]
 
-`--api` is the value handed to the SDK as `api_url`. firecrawl-py joins the rooted `/v2/...` paths
+`--api` is the value handed to the SDK as `api_url`. the SDK joins the rooted `/v2/...` paths
 onto it, so the crawlx facade needs a root that serves `/v2/*` (the rig's `rewritten_root`, which
-rewrites to `/compat/firecrawl/v2/*`). `--site` is the origin the API reaches the fixture at
+rewrites to `/compat/v2/*`). `--site` is the origin the API reaches the fixture at
 (`http://gym.test:4100` for the self-host, `http://site.example.test:4100` for the rig); the seed is
 `ORIGIN/<fixture>/`.
 
@@ -87,7 +87,7 @@ TAP = []
 
 
 def install_tap():
-    """Record every HTTP exchange firecrawl-py makes through `requests.post/get/delete`."""
+    """Record every HTTP exchange the SDK makes through `requests.post/get/delete`."""
     import requests
 
     def wrap(verb):

@@ -1,4 +1,4 @@
-//! The Firecrawl `branding` format: a `BrandingProfile` read from a page's markup and styles.
+//! The compatibility API `branding` format: a `BrandingProfile` read from a page's markup and styles.
 //!
 //! [`branding`] is a pure, deterministic heuristic; it never renders the page. Inputs are the
 //! page HTML (its `<style>` blocks, `style=""` attributes, `<meta>` and `<link>` tags, logo-like
@@ -14,7 +14,7 @@
 //!   `--bg`, `--text`, ...), `<meta name=theme-color>`, the rules of `body`/`a`/buttons and the
 //!   frequency of saturated colours; every colour is upper-case `#RRGGBB`;
 //! * `fonts` and `typography` (`fontFamilies`, `fontSizes`, `fontWeights`, `lineHeights`): from
-//!   `font-family`/`font-size`/`font-weight`/`line-height` declarations (and Google Fonts
+//!   `font-family`/`font-size`/`font-weight`/`line-height` declarations (and hosted-font
 //!   links), ranked by use; `rem`/`em` sizes are converted to `px`;
 //! * `spacing` (`baseUnit`, `borderRadius`), `components` (`buttonPrimary`, `buttonSecondary`,
 //!   `input`), `animations`, `layout`, `icons`, `personality`;
@@ -137,7 +137,7 @@ struct Scan {
     dark_hint: bool,
     body_bgcolor: Option<Rgb>,
     body_text: Option<Rgb>,
-    google_fonts: Vec<String>,
+    hosted_fonts: Vec<String>,
     logo: Option<(i32, String)>,
     icons: Vec<IconLink>,
     apple: Vec<IconLink>,
@@ -272,12 +272,12 @@ fn best_icon(icons: &[IconLink]) -> Option<&str> {
 fn is_font_host(u: &Url) -> bool {
     matches!(
         u.host_str(),
-        Some("fonts.googleapis.com" | "fonts.bunny.net" | "fonts.googleapis.cn")
+        Some("fonts.googleapis.com" | "fonts.bunny.net" | "fonts.googleapis.cn") // detection-data
     )
 }
 
-/// Families named by a Google Fonts (CSS API v1 or v2) URL.
-fn google_families(u: &Url) -> Vec<String> {
+/// Families named by a hosted-font CSS API (v1 or v2) URL.
+fn hosted_font_families(u: &Url) -> Vec<String> {
     u.query_pairs()
         .filter(|(k, _)| k == "family")
         .flat_map(|(_, v)| v.split('|').map(str::to_owned).collect::<Vec<_>>())
@@ -375,8 +375,8 @@ fn scan_page(doc: &Html, base: &Url, scan: &mut Scan) {
                 let rels: Vec<&str> = rel.split_whitespace().collect();
                 if let Some(href) = v.attr("href") {
                     if let Some(u) = resolve(base, href) {
-                        if is_font_host(&u) && scan.google_fonts.len() < MAX_PAGE_ITEMS {
-                            scan.google_fonts.extend(google_families(&u));
+                        if is_font_host(&u) && scan.hosted_fonts.len() < MAX_PAGE_ITEMS {
+                            scan.hosted_fonts.extend(hosted_font_families(&u));
                         }
                     }
                     if let Some(url) = http_url(base, href) {
@@ -693,7 +693,7 @@ fn typography(f: &Facts, fonts: &[String]) -> Option<Value> {
 
 fn merged_fonts(scan: &Scan, f: &Facts) -> Vec<String> {
     let mut fonts: Vec<String> = Vec::new();
-    for name in f.fonts.iter().chain(&scan.google_fonts) {
+    for name in f.fonts.iter().chain(&scan.hosted_fonts) {
         if fonts.len() >= MAX_FONTS {
             break;
         }
@@ -729,7 +729,7 @@ fn motion_and_layout(f: &Facts, out: &mut Map<String, Value>) {
     }
 }
 
-/// The brand profile of the page described by `input` (Firecrawl `BrandingProfile` shape).
+/// The brand profile of the page described by `input` (compatibility API `BrandingProfile` shape).
 /// Input beyond the default extraction limits yields an empty object. The parse is not charged
 /// to [`crate::parse_budget`]: callers hold a [`crate::parse_budget::charge`] around this call.
 #[must_use]
@@ -1062,7 +1062,7 @@ mod tests {
             [
                 "https://acme.example/assets/site.css",
                 "https://acme.example/assets/late.css",
-                "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto+Mono&display=swap",
+                "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto+Mono&display=swap", // detection-data
             ]
         );
     }

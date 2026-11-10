@@ -114,7 +114,7 @@ impl ChromiumBackend {
         launched
     }
 
-    /// Attach to a running browser's DevTools endpoint (`ws_url`, katana `-chrome-ws-url`).
+    /// Attach to a running browser's DevTools endpoint (`ws_url`, compatibility flag `-chrome-ws-url`).
     /// Nothing is spawned; `config` supplies the launch profile the contexts
     /// will assume, the fixtures directory, the egress proxy port and the CDP queue size.
     /// The build is recorded with `pinned = false` and `attached = true` (the pin and sandbox

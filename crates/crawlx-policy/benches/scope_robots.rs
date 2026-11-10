@@ -90,7 +90,7 @@ fn hosts(n: usize) -> Vec<String> {
         .map(|i| match i % 12 {
             0 => format!("www{}.example.com", i % 50),
             1 => format!("api-{}.internal", i % 9),
-            2 => "metadata.google.internal".to_owned(),
+            2 => "metadata.google.internal".to_owned(), // detection-data
             3 => format!("10.{}.{}.{}", i % 256, (i / 3) % 256, (i / 7) % 256),
             4 => format!("192.168.{}.{}", i % 256, (i / 5) % 256),
             5 => format!("203.0.113.{}", i % 256),

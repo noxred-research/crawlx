@@ -1,4 +1,4 @@
-//! Firecrawl v2 `parse` endpoints of the compat facade: `POST /parse` converts an
+//! compat v2 `parse` endpoints of the compat facade: `POST /parse` converts an
 //! uploaded file (`multipart/form-data`: `file` + an `options` JSON part) into Markdown, HTML,
 //! text, links, images and metadata with [`crawlx_extract::parse`], and `GET /parse/formats` lists
 //! what it accepts.
@@ -69,36 +69,33 @@ const MAX_INJECTION_SCAN_BYTES: usize = 8 * 1024 * 1024;
 pub const OPERATIONS: &[Operation] = &[
     (
         "post",
-        "/compat/firecrawl/v2/parse",
-        "firecrawlParse",
-        "Firecrawl v2 parse: upload a file (multipart/form-data) and convert it to Markdown, HTML, text, links and metadata",
+        "/compat/v2/parse",
+        "compatParse",
+        "compat v2 parse: upload a file (multipart/form-data) and convert it to Markdown, HTML, text, links and metadata",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/parse/formats",
-        "firecrawlParseFormats",
-        "Firecrawl v2 parse: the file formats /parse accepts",
+        "/compat/v2/parse/formats",
+        "compatParseFormats",
+        "compat v2 parse: the file formats /parse accepts",
         "crawls:read",
         "200",
     ),
 ];
 
-/// Routes of this module, mounted under `/compat/firecrawl/v2` behind authentication.
+/// Routes of this module, mounted under `/compat/v2` behind authentication.
 ///
 /// The upload route lifts axum's 2 MiB default body limit: [`read_upload`] enforces
 /// `Settings::parse_limits` itself while it streams the body.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route(
-            "/compat/firecrawl/v2/parse",
-            post(parse).layer(DefaultBodyLimit::disable()),
-        )
-        .route("/compat/firecrawl/v2/parse/formats", get(formats))
+        .route("/compat/v2/parse", post(parse).layer(DefaultBodyLimit::disable()))
+        .route("/compat/v2/parse/formats", get(formats))
 }
 
-/// `GET /compat/firecrawl/v2/parse/formats`: `{success, data:{formats:[{format, kind,
+/// `GET /compat/v2/parse/formats`: `{success, data:{formats:[{format, kind,
 /// extensions, mimeTypes, available}]}}`, cacheable for an hour.
 ///
 /// # Errors
@@ -285,7 +282,7 @@ fn parse_error(e: ParseError, req: &ParseRequest) -> HttpError {
         ParseError::UnsupportedFormat { detail } => HttpError::compat(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "unsupported_content_type",
-            format!("unsupported file type: {detail}; GET /compat/firecrawl/v2/parse/formats lists the supported formats"),
+            format!("unsupported file type: {detail}; GET /compat/v2/parse/formats lists the supported formats"),
         ),
         e @ ParseError::TooLarge { .. } => {
             HttpError::compat(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", e.to_string())
@@ -440,7 +437,7 @@ async fn llm_formats(
     if let Some(q) = &f.highlights {
         let c = llm.highlights(input, q).await.map_err(|e| llm_error(&e))?;
         tokens.add(c.usage);
-        // Firecrawl documents `highlights` as one string of selected source text
+        // The compat API documents `highlights` as one string of selected source text
         out.insert("highlights".to_owned(), Value::String(c.value.join("\n\n")));
     }
     Ok((out, tokens))
@@ -454,7 +451,7 @@ fn injection_blocked(rule: &str) -> HttpError {
     )
 }
 
-/// `POST /compat/firecrawl/v2/parse`: see the module docs.
+/// `POST /compat/v2/parse`: see the module docs.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:write`; `400 BAD_REQUEST` for a body that is not

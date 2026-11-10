@@ -147,10 +147,10 @@ fn native_word_chunks_reject_nonprogress_underflow_and_unrepresentable_limits() 
     let mut excessive = WordChunkPolicyV1::default();
     excessive.max_input_bytes = usize::MAX;
     assert_eq!(excessive.validate(), Err(WordChunkErrorV1::InvalidPolicy));
-    assert!(
-        serde_json::from_value::<WordChunkPolicyV1>(serde_json::json!({"strategy":{"kind":"punkt"}}))
-            .is_err()
-    );
+    assert!(serde_json::from_value::<WordChunkPolicyV1>(
+        serde_json::json!({"strategy":{"kind":"sentence_model"}})
+    )
+    .is_err());
 }
 
 #[test]

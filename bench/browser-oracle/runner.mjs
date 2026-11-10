@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // crawlx browser oracle.
 //
-// Runs an actionability matrix against a fixture page with either stock
-// Playwright or the Patchright fork, selected by ORACLE_DRIVER, and writes a
+// Runs an actionability matrix against a fixture page with either the stock
+// reference automation driver or its hardened fork, selected by ORACLE_DRIVER
+// (`reference` | `hardened`; the npm packages behind them are listed in PACKAGES), and writes a
 // result file that records the driver and its package version. Result files
 // from different drivers are never merged (see compare.mjs).
 //
 // Usage:
-//   ORACLE_DRIVER=playwright node runner.mjs --manifest fixtures/g27.json --out results/g27.playwright.json
-//   ORACLE_DRIVER=patchright node runner.mjs --manifest fixtures/g31.json --out results/g31.patchright.json
-//   ORACLE_DRIVER=playwright node runner.mjs --discover out/job.json --proxy http://127.0.0.1:PROXY_PORT --out out/discovery.playwright.json
+//   ORACLE_DRIVER=reference node runner.mjs --manifest fixtures/g27.json --out results/g27.reference.json
+//   ORACLE_DRIVER=hardened node runner.mjs --manifest fixtures/g31.json --out results/g31.hardened.json
+//   ORACLE_DRIVER=reference node runner.mjs --discover out/job.json --proxy http://127.0.0.1:PROXY_PORT --out out/discovery.reference.json
 //   node runner.mjs --self-test
 //
 // Manifest shape: { "url": "http://127.0.0.1:PORT/g27/", "controls": [ { "id": "c1", "selector": "#c1", "expected": "actionable|not_actionable|oracle_gap" } ] }
@@ -40,10 +41,12 @@ import { dirname } from "node:path";
 
 const require = createRequire(import.meta.url);
 
-const DRIVERS = new Set(["playwright", "patchright"]);
+// Driver id -> npm package that implements it (dependency names stay as package names).
+const PACKAGES = { reference: "playwright", hardened: "patchright" }; // wire-compat: npm package names
+const DRIVERS = new Set(Object.keys(PACKAGES));
 
 // ARIA widget roles that make a node a crawlx candidate (crawlx-elements `WIDGET_ROLES`
-// plus the `menuitem*` family), restricted to roles Playwright's `getByRole` accepts.
+// plus the `menuitem*` family), restricted to roles the reference driver's role locator accepts.
 export const WIDGET_ROLES = [
   "button",
   "link",
@@ -92,13 +95,14 @@ function validateDiscoveryProxy(proxy) {
 
 export function loadDriver(name) {
   if (!DRIVERS.has(name)) throw new Error(`ORACLE_DRIVER must be one of ${[...DRIVERS].join("|")}, got ${name}`);
-  const mod = require(name);
-  const version = require(`${name}/package.json`).version;
+  const pkg = PACKAGES[name];
+  const mod = require(pkg);
+  const version = require(`${pkg}/package.json`).version;
   return { name, version, chromium: mod.chromium };
 }
 
 function classify(trialResult) {
-  // Playwright/Patchright `locator.click({ trial: true })` performs the
+  // The drivers' `locator.click({ trial: true })` performs the
   // actionability checks (visible, stable, enabled, receives events) without
   // clicking; the thrown message names the failing check.
   if (trialResult.ok) return { verdict: "actionable", reason: null };
@@ -139,7 +143,7 @@ export async function runMatrix(driver, manifest, opts = {}) {
   return {
     driver: driver.name,
     driver_version: driver.version,
-    console_capture: driver.name === "playwright", // Patchright disables the Console domain
+    console_capture: driver.name === "reference", // the hardened driver disables the Console domain
     manifest_url: manifest.url,
     started,
     finished: new Date().toISOString(),
@@ -352,7 +356,7 @@ async function main() {
     throw new Error("--out and one of --manifest or --discover are required");
   }
   if (args.discover) validateDiscoveryProxy(args.proxy);
-  const driver = loadDriver(process.env.ORACLE_DRIVER ?? "playwright");
+  const driver = loadDriver(process.env.ORACLE_DRIVER ?? "reference");
   const chromium = args.chromium ?? process.env.CRAWLX_CHROMIUM_PATH;
   mkdirSync(dirname(args.out), { recursive: true });
   if (args.discover) {

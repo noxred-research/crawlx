@@ -370,12 +370,12 @@ async fn actual_missing_provider_is_typed_before_any_http_including_robots() {
     let site = site(false).await;
     let dir = tempfile::tempdir().unwrap();
     let mut request = crawl(&site);
-    request.scope.sources = vec![DiscoverySourceV1::GoogleNews];
+    request.scope.sources = vec![DiscoverySourceV1::NewsSearch];
     let result = common::authorization::run_authorized_local(request, config(dir.path())).await;
     assert!(matches!(
         result,
         Err(WorkerError::Discovery(DiscoveryErrorV1::ProviderUnavailable(
-            DiscoveryProviderV1::GoogleNews
+            DiscoveryProviderV1::NewsSearch
         )))
     ));
     assert!(site.state.hits.lock().unwrap().is_empty());
@@ -389,12 +389,12 @@ async fn cache_only_rejects_explicit_providers_before_any_http() {
     let mut cache = crawlx_core::cache::CachePolicyV1::default();
     cache.development_replay = true;
     request.cache = Some(cache);
-    request.scope.sources = vec![DiscoverySourceV1::GoogleTrends];
+    request.scope.sources = vec![DiscoverySourceV1::TrendsSearch];
     let result = common::authorization::run_authorized_local(request, config(dir.path())).await;
     assert!(matches!(
         result,
         Err(WorkerError::Discovery(
-            DiscoveryErrorV1::ProviderForbiddenInReplay(DiscoveryProviderV1::GoogleTrends)
+            DiscoveryErrorV1::ProviderForbiddenInReplay(DiscoveryProviderV1::TrendsSearch)
         ))
     ));
     assert!(site.state.hits.lock().unwrap().is_empty());
@@ -573,8 +573,8 @@ async fn actual_explicit_local_provider_connectors_preserve_archive_target_statu
         .unwrap();
     let mut request = crawl(&site);
     request.scope.sources = vec![
-        DiscoverySourceV1::GoogleNews,
-        DiscoverySourceV1::GoogleTrends,
+        DiscoverySourceV1::NewsSearch,
+        DiscoverySourceV1::TrendsSearch,
         DiscoverySourceV1::Archive,
     ];
     request.scope.include_paths = vec![
@@ -587,9 +587,9 @@ async fn actual_explicit_local_provider_connectors_preserve_archive_target_statu
     policy.media_probes = 0;
     policy.read_more_hops = 0;
     policy.connectors = serde_json::from_value(serde_json::json!([
-        {"provider":"google_news","endpoint":format!("{}/news-provider",site.base),"archiveBase":null},
-        {"provider":"google_trends","endpoint":format!("{}/trends-provider",site.base),"archiveBase":null},
-        {"provider":"internet_archive","endpoint":format!("{}/cdx-provider",site.base),"archiveBase":format!("{}/web/",site.base)}
+        {"provider":"news_search","endpoint":format!("{}/news-provider",site.base),"archiveBase":null},
+        {"provider":"trends_search","endpoint":format!("{}/trends-provider",site.base),"archiveBase":null},
+        {"provider":"web_archive_index","endpoint":format!("{}/cdx-provider",site.base),"archiveBase":format!("{}/web/",site.base)}
     ])).unwrap();
     let report = common::authorization::run_authorized_local_with(
         LocalRun::new(request, config(dir.path())).with_stores(stores.clone()),

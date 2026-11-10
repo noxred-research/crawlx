@@ -19,18 +19,18 @@
 //! [`DeliveryBuffer`] carries `data.content.{markdown,html,...}` in the request body, and a
 //! `2xx` acknowledges the page out of the buffer.
 //!
-//! Runs with a scrape job (the Firecrawl crawl and batch scrape facade) deliver the
-//! Firecrawl payload instead: `POST <url>` with the body
+//! Runs with a scrape job (the compat crawl and batch scrape facade) deliver the
+//! compat payload instead: `POST <url>` with the body
 //! `{success, type: "crawl.page" | "crawl.started" | "crawl.completed" | "crawl.failed" |
 //! "batch_scrape.*", id, webhookId, data: [document...], metadata, error?}` and the header
-//! `X-Firecrawl-Signature: sha256=<hex HMAC-SHA256(secret, body)>` (`secret` is
+//! [`SIGNATURE_HEADER`]`: sha256=<hex HMAC-SHA256(secret, body)>` (`secret` is
 //! `ApiConfig::webhook_secret`), plus the job's `webhook.headers`. `webhook.events` selects
 //! `started`, `page`, `completed`, `failed` (with or without the product prefix); the retry
 //! schedule is the one above.
 
-use crate::intel::webhook::firecrawl_signature;
+use crate::intel::webhook::{compat_signature, SIGNATURE_HEADER};
 use crate::routes::events::delivery_envelope;
-use crate::scrape_service::{firecrawl_document, record_run_usage};
+use crate::scrape_service::{compat_document, record_run_usage};
 use crate::state::AppState;
 use crate::store::{ApiStore, DeliveryResult, DeliveryStatus, WebhookDelivery};
 use async_trait::async_trait;
@@ -216,17 +216,17 @@ struct Prepared {
     buffered: Option<BufferedPage>,
 }
 
-/// Outcome of preparing a Firecrawl delivery.
+/// Outcome of preparing a compat delivery.
 enum Prep {
     Ready(Prepared),
     /// The delivery cannot be built and is dead (the reason is recorded on the outbox row).
     Dead(String),
 }
 
-/// The Firecrawl event name (`started`, `page`, `completed`, `failed`) of a run event of a scrape
-/// run; `None` for run events Firecrawl has no webhook for. A `completed` event of a failed run
+/// The compat event name (`started`, `page`, `completed`, `failed`) of a run event of a scrape
+/// run; `None` for run events the compat API has no webhook for. A `completed` event of a failed run
 /// is `failed`; a cancelled run ends `completed`; a failed page is a `page`.
-fn firecrawl_event(ev: &RunEvent) -> Option<&'static str> {
+fn compat_event(ev: &RunEvent) -> Option<&'static str> {
     match ev.kind.as_str() {
         "started" => Some("started"),
         "page" | "page.failed" => Some("page"),
@@ -249,9 +249,9 @@ fn bare_event(name: &str) -> &str {
         .unwrap_or(name)
 }
 
-/// Does the webhook's `events` filter select Firecrawl event `name` (empty means every event;
+/// Does the webhook's `events` filter select the compat API event `name` (empty means every event;
 /// the `crawl.` / `batch_scrape.` prefix is optional)?
-fn firecrawl_wants(events: &[String], name: &str) -> bool {
+fn compat_wants(events: &[String], name: &str) -> bool {
     events.is_empty() || events.iter().any(|e| bare_event(e) == name)
 }
 
@@ -259,19 +259,15 @@ fn firecrawl_wants(events: &[String], name: &str) -> bool {
 fn reserved_header(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     n.starts_with("crawlx-")
+        || n.eq_ignore_ascii_case(SIGNATURE_HEADER)
         || matches!(
             n.as_str(),
-            "content-type"
-                | "content-length"
-                | "host"
-                | "transfer-encoding"
-                | "connection"
-                | "x-firecrawl-signature"
+            "content-type" | "content-length" | "host" | "transfer-encoding" | "connection"
         )
 }
 
 /// Record that `run` started: the `started` event of a scrape run with a webhook. The run is
-/// accepted and queued; Firecrawl's `crawl.started` / `batch_scrape.started` tell the receiver
+/// accepted and queued; the compat API's `crawl.started` / `batch_scrape.started` tell the receiver
 /// the job exists and its id.
 ///
 /// # Errors
@@ -343,7 +339,7 @@ impl WebhookSender {
     }
 
     /// Render the documents of the `page` events of scrape runs (crawl and batch scrape
-    /// webhooks carry the Firecrawl document of the page) with `state`. Without it a delivery
+    /// webhooks carry the compat document of the page) with `state`. Without it a delivery
     /// for a scrape run is `dead` with an explanatory error.
     #[must_use]
     pub fn with_documents(mut self, state: AppState) -> Self {
@@ -476,10 +472,10 @@ impl WebhookSender {
                 }
                 for ev in &batch {
                     cursor = ev.seq;
-                    // scrape runs deliver Firecrawl events: a `completed` event of a failed run
+                    // scrape runs deliver the compat API events: a `completed` event of a failed run
                     // is `failed`, a `page.failed` is a `page`
                     let deliver = if scrape {
-                        firecrawl_event(ev).is_some_and(|name| firecrawl_wants(&hook.events, name))
+                        compat_event(ev).is_some_and(|name| compat_wants(&hook.events, name))
                     } else {
                         wanted.contains(&ev.kind.as_str())
                     };
@@ -560,7 +556,7 @@ impl WebhookSender {
         }
         let now = self.clock.now();
         let prepared = match run.config.scrape.as_ref() {
-            Some(job) => match self.firecrawl_request(&run, job, d, &event, pages).await? {
+            Some(job) => match self.compat_request(&run, job, d, &event, pages).await? {
                 Prep::Ready(p) => p,
                 Prep::Dead(reason) => return Ok(dead(None, reason)),
             },
@@ -659,11 +655,11 @@ impl WebhookSender {
         Ok(hit)
     }
 
-    /// The Firecrawl delivery of a run event of a scrape run: `{success, type, id, webhookId,
-    /// data, metadata, error?}` signed as `X-Firecrawl-Signature: sha256=<hmac of the body>`,
+    /// The compat delivery of a run event of a scrape run: `{success, type, id, webhookId,
+    /// data, metadata, error?}` signed as `<SIGNATURE_HEADER>: sha256=<hmac of the body>`,
     /// with the job's `webhook.headers` added (they never override the signature, content type
     /// or host headers and are never logged).
-    async fn firecrawl_request(
+    async fn compat_request(
         &self,
         run: &CrawlRun,
         job: &ScrapeJob,
@@ -671,9 +667,9 @@ impl WebhookSender {
         event: &RunEvent,
         pages: &mut PageCache,
     ) -> Result<Prep, StoreError> {
-        let Some(name) = firecrawl_event(event) else {
+        let Some(name) = compat_event(event) else {
             return Ok(Prep::Dead(
-                "the run event has no Firecrawl counterpart".to_owned(),
+                "the run event has no compat API counterpart".to_owned(),
             ));
         };
         let Some(state) = &self.documents else {
@@ -691,7 +687,7 @@ impl WebhookSender {
                 let Some(page) = self.page_for(state, pages, run, id).await? else {
                     return Ok(Prep::Dead(format!("page {id} no longer exists")));
                 };
-                data.push(firecrawl_document(state, run, &page, "").await);
+                data.push(compat_document(state, run, &page, "").await);
             }
             "page.failed" => {
                 let text = |k: &str| event.payload.get(k).and_then(serde_json::Value::as_str);
@@ -739,10 +735,7 @@ impl WebhookSender {
             ("Content-Type".to_owned(), "application/json".to_owned()),
             ("Crawlx-Event".to_owned(), event_type),
             ("Crawlx-Delivery-Id".to_owned(), d.id.to_string()),
-            (
-                "X-Firecrawl-Signature".to_owned(),
-                firecrawl_signature(&self.secret, &body),
-            ),
+            (SIGNATURE_HEADER.to_owned(), compat_signature(&self.secret, &body)),
         ];
         headers.extend(
             job.webhook_headers
@@ -803,8 +796,8 @@ mod tests {
     }
 
     #[test]
-    fn run_events_map_to_firecrawl_event_names() {
-        let name = |kind: &str, payload: serde_json::Value| firecrawl_event(&run_event(kind, payload));
+    fn run_events_map_to_compat_event_names() {
+        let name = |kind: &str, payload: serde_json::Value| compat_event(&run_event(kind, payload));
         assert_eq!(name("started", json!({})), Some("started"));
         assert_eq!(name("page", json!({"pageId": 1})), Some("page"));
         assert_eq!(name("page.failed", json!({})), Some("page"));
@@ -824,21 +817,21 @@ mod tests {
     }
 
     #[test]
-    fn firecrawl_event_filters_accept_prefixed_names() {
+    fn compat_event_filters_accept_prefixed_names() {
         let events = |l: &[&str]| l.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        assert!(firecrawl_wants(&[], "failed"), "no filter means every event");
-        assert!(firecrawl_wants(&events(&["crawl.page"]), "page"));
-        assert!(firecrawl_wants(&events(&["batch_scrape.completed"]), "completed"));
-        assert!(firecrawl_wants(&events(&["started", "page"]), "started"));
-        assert!(!firecrawl_wants(&events(&["started", "page"]), "completed"));
+        assert!(compat_wants(&[], "failed"), "no filter means every event");
+        assert!(compat_wants(&events(&["crawl.page"]), "page"));
+        assert!(compat_wants(&events(&["batch_scrape.completed"]), "completed"));
+        assert!(compat_wants(&events(&["started", "page"]), "started"));
+        assert!(!compat_wants(&events(&["started", "page"]), "completed"));
     }
 
     #[test]
     fn webhook_headers_cannot_override_the_signature() {
         for reserved in [
             "Content-Type",
-            "x-firecrawl-signature",
-            "X-FIRECRAWL-SIGNATURE",
+            "x-firecrawl-signature", // wire-compat: header existing receivers verify
+            "X-FIRECRAWL-SIGNATURE", // wire-compat
             "Crawlx-Event",
             "Host",
             "Content-Length",

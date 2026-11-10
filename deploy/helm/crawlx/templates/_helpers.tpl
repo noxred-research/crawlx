@@ -58,7 +58,7 @@ capabilities:
 {{- fail "artifactCustody.kmsKeyId and artifactCustody.keyFileSecret are mutually exclusive: set exactly one artifact key provider (CRAWLX_ARTIFACT_KMS_KEY_ID or CRAWLX_ARTIFACT_KEY_FILE)" }}
 {{- end }}
 {{- if not (or $a.kmsKeyId $a.keyFileSecret) }}
-{{- fail "artifactCustody requires an artifact key provider: set artifactCustody.kmsKeyId (AWS KMS key ID/ARN) or artifactCustody.keyFileSecret (Secret with key artifact_key: 64 hexadecimal characters); API and workers must use the same key" }}
+{{- fail "artifactCustody requires an artifact key provider: set artifactCustody.kmsKeyId (cloud KMS key ID/ARN) or artifactCustody.keyFileSecret (Secret with key artifact_key: 64 hexadecimal characters); API and workers must use the same key" }}
 {{- end }}
 {{- if $a.kmsKeyId }}
 - name: CRAWLX_ARTIFACT_KMS_KEY_ID

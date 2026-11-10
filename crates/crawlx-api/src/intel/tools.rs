@@ -9,10 +9,10 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// A scraped page in the Firecrawl `data` shape (`markdown`, `html`, `links`, `metadata`, ...).
+/// A scraped page in the compat `data` shape (`markdown`, `html`, `links`, `metadata`, ...).
 #[derive(Clone, PartialEq, Debug)]
 pub struct ScrapedPage {
-    /// The Firecrawl document object.
+    /// The compat document object.
     pub document: Value,
     /// Credits the scrape cost.
     pub credits: u64,
@@ -56,7 +56,7 @@ pub enum ToolError {
     /// The options or URL are invalid (maps to HTTP 400/422).
     #[error("invalid input: {0}")]
     Invalid(String),
-    /// The target refused or could not be reached; carries the Firecrawl-style error text.
+    /// The target refused or could not be reached; carries the compat-style error text.
     #[error("{0}")]
     Failed(String),
 }
@@ -64,13 +64,13 @@ pub enum ToolError {
 /// Scrape and map pages on behalf of a tenant. Object-safe.
 #[async_trait]
 pub trait PageTools: Send + Sync {
-    /// Scrape `url` with Firecrawl scrape `options` (`formats`, `onlyMainContent`, ...).
+    /// Scrape `url` with the compat API scrape `options` (`formats`, `onlyMainContent`, ...).
     ///
     /// # Errors
     /// [`ToolError::Invalid`] for bad options or URL, [`ToolError::Failed`] when the page cannot be scraped.
     async fn scrape(&self, tenant: TenantId, url: &str, options: &Value) -> Result<ScrapedPage, ToolError>;
 
-    /// List URLs of the site of `url` with Firecrawl map `options` (`search`, `limit`,
+    /// List URLs of the site of `url` with the compat API map `options` (`search`, `limit`,
     /// `includeSubdomains`, `sitemap`, ...).
     ///
     /// # Errors

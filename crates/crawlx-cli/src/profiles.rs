@@ -105,7 +105,7 @@ fn bounded_file(path: &std::path::Path, max: usize) -> anyhow::Result<Vec<u8>> {
 /// # Errors
 /// Returns invalid scope/key, retention denial, expiry, stale fence or profile generation conflict.
 pub async fn run(args: ProfilesArgs) -> anyhow::Result<ExitCode> {
-    if !["env://", "file://", "vault://", "aws-sm://"]
+    if !["env://", "file://", "vault://", "cloud-sm://"]
         .iter()
         .any(|scheme| args.key_ref.starts_with(scheme))
     {

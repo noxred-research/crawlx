@@ -117,7 +117,7 @@ async fn fake_s3_backend_contract_and_store_round_trip() {
     let store = ObjectArtifactStore::new(
         blobs(
             &endpoint,
-            Some(Sse::AwsKms {
+            Some(Sse::CloudKms {
                 key_id: Some("kms-key-1".to_owned()),
             }),
         ),
@@ -152,7 +152,7 @@ async fn fake_s3_backend_contract_and_store_round_trip() {
         let first_put = log.iter().position(|(m, k, ..)| m == "PUT" && k == &key).unwrap();
         assert!(first_head < first_put, "existence check before the write");
         for (_, k, sse, kms) in log.iter().filter(|(m, ..)| m == "PUT") {
-            assert_eq!(sse.as_deref(), Some("aws:kms"), "SSE header on {k}");
+            assert_eq!(sse.as_deref(), Some("aws:kms"), "SSE header on {k}"); // wire-compat: S3 SSE algorithm label
             assert_eq!(kms.as_deref(), Some("kms-key-1"), "KMS key id on {k}");
         }
     }
@@ -279,7 +279,7 @@ async fn fake_s3_presigns_content_urls_for_at_most_sixty_seconds() {
     assert_eq!(query.get("X-Amz-Expires").map(String::as_str), Some("60"));
     assert_eq!(
         query.get("X-Amz-Algorithm").map(String::as_str),
-        Some("AWS4-HMAC-SHA256")
+        Some("AWS4-HMAC-SHA256") // wire-compat: S3 signature algorithm label
     );
     assert!(query.contains_key("X-Amz-Signature"), "{query:?}");
     assert!(query.contains_key("X-Amz-Date"), "{query:?}");

@@ -1,10 +1,10 @@
-//! The request error log (katana `-elog/-error-log`).
+//! The request error log (the `-elog/-error-log` compatibility flags).
 //!
-//! Katana appends one JSON object per failed request to the file
+//! The reference tool appends one JSON object per failed request to the file
 //! (`pkg/output/error.go`: `timestamp`, `endpoint`, `source`, `error`). crawlx writes the
 //! failed frontier rows of a finished run: `timestamp` (when the log was written),
 //! `endpoint`, `error` (the failure reason), `depth` and, when a response was seen,
-//! `status_code`. The file is created even when nothing failed, as katana creates it at
+//! `status_code`. The file is created even when nothing failed, as the reference tool creates it at
 //! start-up.
 
 use super::text_file::TextFile;

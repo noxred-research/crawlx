@@ -28,11 +28,11 @@ pub enum DiscoverySourceV1 {
     Categories,
     /// Explicitly configured conventional feed paths.
     Conventional,
-    /// Explicit Google News connector.
-    GoogleNews,
-    /// Explicit Google Trends connector.
-    GoogleTrends,
-    /// Explicit Internet Archive CDX connector.
+    /// Explicit news-search connector.
+    NewsSearch,
+    /// Explicit trends-search connector.
+    TrendsSearch,
+    /// Explicit web-archive CDX index connector.
     Archive,
 }
 /// Whether to explore or measure actual extracted article sufficiency.
@@ -52,11 +52,11 @@ pub enum DiscoveryModeV1 {
 #[non_exhaustive]
 pub enum DiscoveryProviderV1 {
     /// RSS article records, including publisher-source hints.
-    GoogleNews,
-    /// Google Trends daily-trends JSON response or trends RSS.
-    GoogleTrends,
+    NewsSearch,
+    /// Trends-search daily-trends JSON response or trends RSS.
+    TrendsSearch,
     /// CDX JSON table with original, timestamp and optional statuscode columns.
-    InternetArchive,
+    WebArchiveIndex,
 }
 /// Operator-selected connector. The endpoint is still subject to run authorization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,7 +262,7 @@ impl SourceDiscoveryPolicyV1 {
             })
             && self.connectors.iter().all(|connector| {
                 safe_endpoint(&connector.endpoint)
-                    && (connector.provider != DiscoveryProviderV1::InternetArchive
+                    && (connector.provider != DiscoveryProviderV1::WebArchiveIndex
                         || connector.archive_base.is_some())
                     && connector.archive_base.as_ref().is_none_or(safe_endpoint)
             });

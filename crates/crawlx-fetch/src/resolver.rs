@@ -82,7 +82,7 @@ impl HickoryResolver {
     }
 
     /// Query exactly `servers` (UDP first, TCP for truncated answers) instead of the system
-    /// configuration (katana `-r`): no search domains and no hosts file, so a name resolves
+    /// configuration (the `-r` compatibility flag): no search domains and no hosts file, so a name resolves
     /// the way the listed servers answer it.
     ///
     /// # Errors

@@ -1,9 +1,9 @@
-//! The scrape request model behind the Firecrawl facade: per-page options, the
+//! The scrape request model behind the compatibility API: per-page options, the
 //! `formats[]` vocabulary, caller-specified browser `actions[]`, and the job description that
 //! turns a crawl run into a crawl, a batch scrape or a single scrape.
 //!
-//! The types are transport only: the API parses Firecrawl's wire JSON into them (with
-//! Firecrawl's error shapes), the worker's scrape engine executes them. Field names on the wire
+//! The types are transport only: the API parses the compatibility API's wire JSON into them (with
+//! its error shapes), the worker's scrape engine executes them. Field names on the wire
 //! of *this* model are camelCase, like every other `crawlx-core` request type.
 
 use crate::hash::Digest;
@@ -11,22 +11,24 @@ use crate::page_op::SelectorState;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Most `actions[]` a request may carry (Firecrawl limit).
+/// Most `actions[]` a request may carry (compatibility API limit).
 pub const MAX_ACTIONS: usize = 50;
-/// Longest `waitFor` / `wait` action in milliseconds (Firecrawl limit).
+/// Longest `waitFor` / `wait` action in milliseconds (compatibility API limit).
 pub const MAX_WAIT_MS: u32 = 60_000;
-/// Default `timeout` in milliseconds (Firecrawl default).
+/// Default `timeout` in milliseconds (compatibility API default).
 pub const DEFAULT_TIMEOUT_MS: u32 = 60_000;
-/// Default `maxAge` in milliseconds: two days (Firecrawl default).
+/// Default `maxAge` in milliseconds: two days (compatibility API default).
 pub const DEFAULT_MAX_AGE_MS: u64 = 172_800_000;
-/// Viewport of `mobile: true` (Firecrawl: 390x844) in CSS pixels.
+/// Viewport of `mobile: true` (390x844) in CSS pixels.
 pub const MOBILE_VIEWPORT: ScreenshotViewport = ScreenshotViewport {
     width: 390,
     height: 844,
 };
 /// `User-Agent` sent by `mobile: true`.
-pub const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) \
-AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+pub const MOBILE_USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) ", // wire-compat: user-agent product token
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+);
 
 fn t() -> bool {
     true
@@ -77,7 +79,7 @@ pub enum ChangeMode {
     Json,
 }
 
-/// `query` format `mode` (Firecrawl: `freeform` default, or `directQuote`).
+/// `query` format `mode` (`freeform` default, or `directQuote`).
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum QueryMode {
@@ -92,7 +94,7 @@ pub enum QueryMode {
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PiiMode {
-    /// Firecrawl's default.
+    /// The compatibility API's default.
     #[default]
     Accurate,
     /// Also treats bare 10-15 digit runs as phone numbers.
@@ -204,7 +206,7 @@ pub enum FormatSpec {
         /// The query.
         query: String,
     },
-    /// A free-form prompt over the page through the configured LLM (Firecrawl's deprecated
+    /// A free-form prompt over the page through the configured LLM (the compatibility API's deprecated
     /// `query`; its answer is returned in `answer`).
     Query {
         /// The prompt.
@@ -213,7 +215,7 @@ pub enum FormatSpec {
         #[serde(default)]
         mode: QueryMode,
     },
-    /// The audio track of the media the page is or references, stored as an artifact (Firecrawl
+    /// The audio track of the media the page is or references, stored as an artifact (compatibility API
     /// `audio`: a signed URL; the transcript when the LLM endpoint transcribes).
     Audio,
     /// The video of the media the page is or references, stored as an artifact.
@@ -237,7 +239,7 @@ pub enum FormatSpec {
 }
 
 impl FormatSpec {
-    /// The Firecrawl name of the format (the `type` of its object form).
+    /// The compatibility API name of the format (the `type` of its object form).
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -289,7 +291,7 @@ pub enum PdfMode {
     Ocr,
 }
 
-/// `parsers[]` entry (Firecrawl v2 `ScrapeOptions.parsers`). The list as a whole decides which
+/// `parsers[]` entry (compatibility API v2 `ScrapeOptions.parsers`). The list as a whole decides which
 /// file types are parsed: an absent `parsers` means `[pdf, image]`, a listed parser is on, an
 /// unlisted one is off, and an empty list returns a PDF unparsed as base64.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -436,7 +438,7 @@ pub enum ScrapeAction {
 }
 
 impl ScrapeAction {
-    /// The Firecrawl `type` of the action.
+    /// The compatibility API `type` of the action.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -454,7 +456,7 @@ impl ScrapeAction {
     }
 }
 
-/// Deployment proxy tier requested by a Firecrawl scrape.
+/// Deployment proxy tier requested by a compatibility-API scrape.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -477,7 +479,7 @@ impl ProxyMode {
     }
 }
 
-/// Per-page scrape options (Firecrawl `ScrapeOptions`).
+/// Per-page scrape options (compatibility API `ScrapeOptions`).
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ScrapeOptions {
@@ -554,20 +556,20 @@ pub struct ScrapeOptions {
     #[serde(default, skip_serializing_if = "is_false")]
     pub skip_tls_verification: bool,
     /// Run an LLM cleanup pass over the markdown to remove residual boilerplate
-    /// (Firecrawl `onlyCleanContent`, beta). Skipped with a document `warning` when no LLM is
+    /// (compatibility API `onlyCleanContent`, beta). Skipped with a document `warning` when no LLM is
     /// configured or the markdown is too long for one pass.
     #[serde(default, skip_serializing_if = "is_false")]
     pub only_clean_content: bool,
     /// Scan the markdown for prompt-injection attempts before any LLM-backed format runs; a hit
-    /// fails the page as `prompt_injection_detected` (Firecrawl `checkPromptInjection`, +4 credits).
+    /// fails the page as `prompt_injection_detected` (compatibility API `checkPromptInjection`, +4 credits).
     #[serde(default, skip_serializing_if = "is_false")]
     pub check_prompt_injection: bool,
-    /// Firecrawl `profile{name,saveChanges}`: render in a named persistent browser profile
+    /// Compatibility API `profile{name,saveChanges}`: render in a named persistent browser profile
     /// (cookies and local storage persist across scrapes). Forces the browser leg; the run
     /// carries it as `dynamic.browserProfile`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<crate::config::BrowserProfile>,
-    /// Redact personal data from the returned markdown, html and rawHtml (Firecrawl `redactPII`).
+    /// Redact personal data from the returned markdown, html and rawHtml (compatibility API `redactPII`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redact_pii: Option<RedactPii>,
 }
@@ -589,7 +591,7 @@ impl ScrapeOptions {
         DEFAULT_TIMEOUT_MS
     }
 
-    /// Firecrawl's default `parsers`: `[pdf, image]`. An absent `parsers` key means this; an
+    /// The compatibility API's default `parsers`: `[pdf, image]`. An absent `parsers` key means this; an
     /// explicit empty list is kept (it returns PDFs as base64).
     fn default_parsers() -> Vec<ParserSpec> {
         vec![ParserSpec::pdf(), ParserSpec::Image]
@@ -675,7 +677,7 @@ impl Default for ScrapeOptions {
     }
 }
 
-/// Which Firecrawl product a run serves; decides event names (`crawl.*` / `batch_scrape.*`),
+/// Which compatibility-API product a run serves; decides event names (`crawl.*` / `batch_scrape.*`),
 /// the status route and the credit model.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "snake_case")]
@@ -710,7 +712,7 @@ impl JobKind {
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ScrapeJob {
-    /// The Firecrawl product.
+    /// The compatibility-API product.
     #[serde(default)]
     pub kind: JobKind,
     /// Options applied to every page.
@@ -719,11 +721,11 @@ pub struct ScrapeJob {
     /// Seeds besides `seedUrl` (batch scrape).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub urls: Vec<url::Url>,
-    /// Extra headers sent with every webhook delivery (Firecrawl `webhook.headers`); never
+    /// Extra headers sent with every webhook delivery (compatibility API `webhook.headers`); never
     /// returned by the API (they may carry credentials).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub webhook_headers: BTreeMap<String, String>,
-    /// Caller metadata echoed in every webhook payload (Firecrawl `webhook.metadata`).
+    /// Caller metadata echoed in every webhook payload (compatibility API `webhook.metadata`).
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub webhook_metadata: serde_json::Value,
 }
@@ -743,7 +745,7 @@ impl ScrapeJob {
 }
 
 impl ScrapeOptions {
-    /// Check the Firecrawl limits (`actions` ≤ [`MAX_ACTIONS`], waits ≤ [`MAX_WAIT_MS`] in total,
+    /// Check the compatibility API limits (`actions` ≤ [`MAX_ACTIONS`], waits ≤ [`MAX_WAIT_MS`] in total,
     /// `timeout` 1 000..=300 000, `screenshot` quality 1..=100, `rawBase64` alone, `pdf` scale
     /// 0.1..=2, unique `changeTracking`).
     ///
@@ -895,7 +897,7 @@ pub enum ChangeStatus {
     Removed,
 }
 
-/// `changeTracking` of one scrape (Firecrawl shape).
+/// `changeTracking` of one scrape (compatibility API shape).
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeTrackingResult {
@@ -924,9 +926,9 @@ pub enum CacheState {
     Hit,
 }
 
-/// The Firecrawl document of one scraped page, as the scrape engine stores it in
+/// The compatibility-API document of one scraped page, as the scrape engine stores it in
 /// `PageRecord.metadata["scrape"]`. `markdown`, `html` and `links` stay on the page row
-/// (`PageRecord::markdown`, `html`, `links`); everything else of the Firecrawl `data` object is
+/// (`PageRecord::markdown`, `html`, `links`); everything else of the compatibility API `data` object is
 /// here. Heavy values are [`BlobRef`]s that the API resolves when it renders the response.
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -951,7 +953,7 @@ pub struct ScrapeDocument {
     /// Non-fatal problem the caller should know (`data.warning`), e.g. a format that was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
-    /// Firecrawl `metadata` keys derived from the page: `title`, `description`, `language`,
+    /// Compatibility API `metadata` keys derived from the page: `title`, `description`, `language`,
     /// `keywords`, `robots`, `ogTitle`, `ogDescription`, `ogUrl`, `ogImage`, `ogLocaleAlternate`,
     /// `ogSiteName` and every other `<meta>` name verbatim.
     #[serde(default)]
@@ -992,7 +994,7 @@ pub struct ScrapeDocument {
     /// `attributes` format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Vec<AttributeResult>>,
-    /// `branding` format (Firecrawl `BrandingProfile` shape).
+    /// `branding` format (compatibility API `BrandingProfile` shape).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branding: Option<serde_json::Value>,
     /// `summary` format.
@@ -1007,7 +1009,7 @@ pub struct ScrapeDocument {
     /// `highlights` format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlights: Option<Vec<String>>,
-    /// `query` format: the answer, returned as `data.answer` (Firecrawl: the `question` and
+    /// `query` format: the answer, returned as `data.answer` (the `question` and
     /// `query` formats share that field; `question` wins when both are requested).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
@@ -1017,7 +1019,7 @@ pub struct ScrapeDocument {
     /// `pages` PDF parser option: the markdown of every parsed physical page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pages: Option<Vec<PdfPageMarkdown>>,
-    /// `blocks` PDF parser option: typed layout blocks per page, Firecrawl shape
+    /// `blocks` PDF parser option: typed layout blocks per page, compatibility API shape
     /// `[{pageNumber, width, height, status, items: [{id, type, label, bbox, content,
     /// markdownSpan, readingOrder, source, confidence}]}]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1119,7 +1121,7 @@ pub fn credits_for(run: &crate::repo::CrawlRun, page: &crate::repo::PageRecord) 
     )
 }
 
-/// Firecrawl-compatible credits for one document: parsed PDF pages, format extras and privacy checks.
+/// Compatibility-API credits for one document: parsed PDF pages, format extras and privacy checks.
 #[must_use]
 pub fn page_credits(options: &ScrapeOptions, document: &ScrapeDocument, zdr: bool) -> u64 {
     const EXTRA_CREDITS: u64 = 4;
@@ -1169,7 +1171,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_follow_firecrawl() {
+    fn defaults_follow_compat_api() {
         let o = ScrapeOptions::default();
         assert!(o.only_main_content && o.remove_base64_images && o.block_ads && o.store_in_cache);
         assert_eq!(o.max_age_ms, 172_800_000);
@@ -1298,7 +1300,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_objects_use_the_firecrawl_names() {
+    fn parser_objects_use_the_compat_names() {
         let p: ParserSpec = serde_json::from_value(serde_json::json!({
             "type": "pdf", "mode": "ocr", "maxPages": 3, "pages": true, "blocks": true, "pageMarkers": true
         }))

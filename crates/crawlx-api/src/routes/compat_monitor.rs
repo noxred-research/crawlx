@@ -1,4 +1,4 @@
-//! Firecrawl v2 `monitor` endpoints of the compat facade.
+//! compat v2 `monitor` endpoints of the compat facade.
 //!
 //! | endpoint | scope |
 //! |---|---|
@@ -39,7 +39,7 @@ use uuid::Uuid;
 pub const OPERATIONS: &[Operation] = &[
     (
         "post",
-        "/compat/firecrawl/v2/monitor",
+        "/compat/v2/monitor",
         "createMonitor",
         "Create a scheduled monitor",
         "crawls:write",
@@ -47,7 +47,7 @@ pub const OPERATIONS: &[Operation] = &[
     ),
     (
         "get",
-        "/compat/firecrawl/v2/monitor",
+        "/compat/v2/monitor",
         "listMonitors",
         "List monitors (limit, offset, status)",
         "crawls:read",
@@ -55,7 +55,7 @@ pub const OPERATIONS: &[Operation] = &[
     ),
     (
         "get",
-        "/compat/firecrawl/v2/monitor/{monitorId}",
+        "/compat/v2/monitor/{monitorId}",
         "getMonitor",
         "Get a monitor",
         "crawls:read",
@@ -63,7 +63,7 @@ pub const OPERATIONS: &[Operation] = &[
     ),
     (
         "patch",
-        "/compat/firecrawl/v2/monitor/{monitorId}",
+        "/compat/v2/monitor/{monitorId}",
         "updateMonitor",
         "Update, pause or resume a monitor",
         "crawls:write",
@@ -71,7 +71,7 @@ pub const OPERATIONS: &[Operation] = &[
     ),
     (
         "delete",
-        "/compat/firecrawl/v2/monitor/{monitorId}",
+        "/compat/v2/monitor/{monitorId}",
         "deleteMonitor",
         "Delete a monitor with its checks and baselines",
         "crawls:write",
@@ -79,7 +79,7 @@ pub const OPERATIONS: &[Operation] = &[
     ),
     (
         "post",
-        "/compat/firecrawl/v2/monitor/{monitorId}/run",
+        "/compat/v2/monitor/{monitorId}/run",
         "runMonitor",
         "Run a monitor check now",
         "crawls:write",
@@ -87,7 +87,7 @@ pub const OPERATIONS: &[Operation] = &[
     ),
     (
         "get",
-        "/compat/firecrawl/v2/monitor/{monitorId}/checks",
+        "/compat/v2/monitor/{monitorId}/checks",
         "listMonitorChecks",
         "List monitor checks (limit, offset, status)",
         "crawls:read",
@@ -95,7 +95,7 @@ pub const OPERATIONS: &[Operation] = &[
     ),
     (
         "get",
-        "/compat/firecrawl/v2/monitor/{monitorId}/checks/{checkId}",
+        "/compat/v2/monitor/{monitorId}/checks/{checkId}",
         "getMonitorCheck",
         "Get a monitor check with its pages (limit, skip, status)",
         "crawls:read",
@@ -103,18 +103,18 @@ pub const OPERATIONS: &[Operation] = &[
     ),
 ];
 
-/// Routes of this module, mounted under `/compat/firecrawl/v2` behind authentication.
+/// Routes of this module, mounted under `/compat/v2` behind authentication.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/compat/firecrawl/v2/monitor", post(create).get(list))
+        .route("/compat/v2/monitor", post(create).get(list))
         .route(
-            "/compat/firecrawl/v2/monitor/{monitorId}",
+            "/compat/v2/monitor/{monitorId}",
             get(get_one).patch(update).delete(remove),
         )
-        .route("/compat/firecrawl/v2/monitor/{monitorId}/run", post(run))
-        .route("/compat/firecrawl/v2/monitor/{monitorId}/checks", get(checks))
+        .route("/compat/v2/monitor/{monitorId}/run", post(run))
+        .route("/compat/v2/monitor/{monitorId}/checks", get(checks))
         .route(
-            "/compat/firecrawl/v2/monitor/{monitorId}/checks/{checkId}",
+            "/compat/v2/monitor/{monitorId}/checks/{checkId}",
             get(check_detail),
         )
 }
@@ -244,7 +244,7 @@ fn stored_notification(notification: &Value, judge_explicit: Option<bool>) -> Va
     out
 }
 
-/// `POST /compat/firecrawl/v2/monitor`.
+/// `POST /compat/v2/monitor`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:write`; `422 validation_failed` listing every violation
@@ -281,7 +281,7 @@ pub async fn create(
     Ok(ok(&view::monitor_json(&record, &MonitorExtras::default())))
 }
 
-/// `GET /compat/firecrawl/v2/monitor`.
+/// `GET /compat/v2/monitor`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`; `422 validation_failed` for a bad `limit`,
@@ -341,7 +341,7 @@ pub async fn list(
     Ok(ok(&Value::Array(data)))
 }
 
-/// `GET /compat/firecrawl/v2/monitor/{monitorId}`.
+/// `GET /compat/v2/monitor/{monitorId}`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`; `404 not_found` for an unknown monitor or one of
@@ -356,7 +356,7 @@ pub async fn get_one(
     Ok(ok(&monitor_body(&state, &monitor).await?))
 }
 
-/// `PATCH /compat/firecrawl/v2/monitor/{monitorId}`: update any member, pause (`status: paused`
+/// `PATCH /compat/v2/monitor/{monitorId}`: update any member, pause (`status: paused`
 /// clears `nextRunAt`) or resume (`status: active` schedules the next occurrence).
 ///
 /// # Errors
@@ -443,7 +443,7 @@ pub async fn update(
     Ok(ok(&monitor_body(&state, &stored).await?))
 }
 
-/// `DELETE /compat/firecrawl/v2/monitor/{monitorId}`: removes the monitor, its checks, pages and
+/// `DELETE /compat/v2/monitor/{monitorId}`: removes the monitor, its checks, pages and
 /// baselines and cancels a check that is running.
 ///
 /// # Errors
@@ -467,7 +467,7 @@ pub async fn remove(
     Ok(json_response(StatusCode::OK, &json!({ "success": true })))
 }
 
-/// `POST /compat/firecrawl/v2/monitor/{monitorId}/run`: starts a check now (also for a paused
+/// `POST /compat/v2/monitor/{monitorId}/run`: starts a check now (also for a paused
 /// monitor) and returns its id; the check runs in the background.
 ///
 /// # Errors
@@ -488,7 +488,7 @@ pub async fn run(
     ))
 }
 
-/// `GET /compat/firecrawl/v2/monitor/{monitorId}/checks`.
+/// `GET /compat/v2/monitor/{monitorId}/checks`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`; `404 not_found`; `422 validation_failed` for a bad
@@ -527,7 +527,7 @@ pub async fn checks(
     Ok(ok(&Value::Array(data)))
 }
 
-/// `GET /compat/firecrawl/v2/monitor/{monitorId}/checks/{checkId}`: the check with its pages,
+/// `GET /compat/v2/monitor/{monitorId}/checks/{checkId}`: the check with its pages,
 /// ordered by target and URL, `limit` per response, `next` while more pages remain.
 ///
 /// # Errors
@@ -576,7 +576,7 @@ pub async fn check_detail(
             query.append_pair("status", s);
         }
         Value::String(format!(
-            "{}/compat/firecrawl/v2/monitor/{}/checks/{}?{}",
+            "{}/compat/v2/monitor/{}/checks/{}?{}",
             base_url(&headers),
             monitor.id,
             check.id,

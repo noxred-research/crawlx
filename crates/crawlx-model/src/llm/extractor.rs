@@ -1,4 +1,4 @@
-//! The document-level LLM seam of the Firecrawl-compatible products (`json`, `summary`,
+//! The document-level LLM seam of the compatibility API's products (`json`, `summary`,
 //! `question`, `highlights` formats, `/extract`, `/agent`, `/monitor` judging and
 //! `crawl/params-preview`).
 //!
@@ -25,7 +25,7 @@ pub const DEFAULT_MAX_INPUT_CHARS: usize = 200_000;
 /// Longest `prompt`/`question`/`query` text accepted by the provided methods.
 pub const MAX_INSTRUCTION_CHARS: usize = 10_000;
 
-/// Crawl options [`LlmExtractor::plan_crawl_options`] may return (Firecrawl `crawl` body keys).
+/// Crawl options [`LlmExtractor::plan_crawl_options`] may return (compatibility API `crawl` body keys).
 pub const PLANNED_CRAWL_KEYS: [&str; 11] = [
     "includePaths",
     "excludePaths",
@@ -193,7 +193,7 @@ fn take_field(mut value: Value, field: &str) -> Result<Value, LlmError> {
         .ok_or_else(|| LlmError::InvalidOutput(format!("reply has no `{field}` field")))
 }
 
-/// Keep only the Firecrawl crawl options of [`PLANNED_CRAWL_KEYS`] whose value has the documented
+/// Keep only the compatibility-API crawl options of [`PLANNED_CRAWL_KEYS`] whose value has the documented
 /// type, dropping everything else, and clamp the numeric ones.
 #[must_use]
 pub fn sanitize_crawl_options(raw: &Value) -> Value {
@@ -235,7 +235,7 @@ pub fn sanitize_crawl_options(raw: &Value) -> Value {
     Value::Object(out)
 }
 
-/// The document-level LLM operations of the Firecrawl-compatible products. Object-safe.
+/// The document-level LLM operations of the compatibility API's products. Object-safe.
 #[async_trait]
 pub trait LlmExtractor: Send + Sync {
     /// One JSON-mode chat completion. `system` is the instruction channel, `user` carries the
@@ -364,7 +364,7 @@ pub trait LlmExtractor: Send + Sync {
         Ok(Completion { value: items, usage })
     }
 
-    /// The Firecrawl `query` format: answer `prompt` from the page. `Freeform` is a plain answer;
+    /// The `query` format: answer `prompt` from the page. `Freeform` is a plain answer;
     /// `DirectQuote` returns only exact excerpts of the page (excerpts the page does not contain
     /// are dropped, so a model cannot invent a quote).
     ///
@@ -440,7 +440,7 @@ pub trait LlmExtractor: Send + Sync {
         Ok(cleaned)
     }
 
-    /// Firecrawl crawl options (camelCase `crawl` body keys, see [`PLANNED_CRAWL_KEYS`]) a
+    /// Compatibility-API crawl options (camelCase `crawl` body keys, see [`PLANNED_CRAWL_KEYS`]) a
     /// natural-language `prompt` asks for on `url`; only well-typed known keys are returned.
     ///
     /// # Errors

@@ -13,7 +13,7 @@ use regex::Regex;
 use serde_json::Value;
 use url::Url;
 
-use crate::{firecrawl_meta, images, ExtractError, ExtractOptions, Extractor};
+use crate::{compat_meta, images, ExtractError, ExtractOptions, Extractor};
 
 use super::{ParseError, ParseLimits};
 
@@ -137,7 +137,7 @@ pub(crate) fn convert(
         links,
         images: imgs,
         title: doc.title.clone(),
-        metadata: firecrawl_meta::firecrawl_meta(&doc),
+        metadata: compat_meta::compat_meta(&doc),
         raw,
     })
 }

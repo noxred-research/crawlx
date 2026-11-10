@@ -7,7 +7,7 @@ By contributing you agree that your contribution is licensed under the project l
 [GNU AGPL version 3 only](LICENSE) (`AGPL-3.0-only`). There is no contributor license
 agreement and no DCO sign-off requirement. Do not submit code you do not have the right to
 license under the AGPL, and do not copy code from projects whose licenses are incompatible
-(see [clean-room rules](#clean-room-rules-for-the-firecrawl-compatibility-layer)).
+(see [clean-room rules](#clean-room-rules-for-the-compatibility-layer)).
 
 Security vulnerabilities are **not** reported through issues or pull requests; follow
 [SECURITY.md](SECURITY.md). Everyone taking part in the project is expected to follow the
@@ -73,7 +73,7 @@ ci/lint-public.sh
 ```
 
 Also run `ci/provenance-check.sh` when you touch `crawlx-url`, `crawlx-policy`,
-`crawlx-extract`, the `crawlx-api` compatibility routes or the Firecrawl differential harness.
+`crawlx-extract`, the `crawlx-api` compatibility routes or the upstream differential harness.
 
 ## Coding standards
 
@@ -143,14 +143,14 @@ Migrations are forward-only and run by `crawlx migrate`. Never edit a migration 
 released; add a new one. Follow expand-then-contract: a release ships only backward-compatible
 changes, and removals ship at least one release later.
 
-## Clean-room rules for the Firecrawl compatibility layer
+## Clean-room rules for the compatibility layer
 
-crawlx offers a Firecrawl-compatible API facade. Firecrawl's server is AGPL-licensed, and this
+crawlx offers a compatibility API. The reference implementation's server is AGPL-licensed, and this
 project must not become a derivative of it. Changes that touch `crawlx-url`, `crawlx-policy`,
 `crawlx-extract`, the `crawlx-api` compatibility routes or the differential harness must follow
 the checklist in the pull request template: implement behavior from public documentation,
-black-box observation, the MIT-licensed SDK types and RFCs; never copy or mechanically translate
-Firecrawl server source; do not copy its test fixtures; keep any self-hosted Firecrawl used for
+black-box observation, the MIT-licensed client types and RFCs; never copy or mechanically translate
+the reference server's source; do not copy its test fixtures; keep any self-hosted copy used for
 comparison inside `bench/differential/`; and add no AGPL/GPL-family dependency.
 
 ## Contribution flow

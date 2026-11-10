@@ -56,7 +56,7 @@ pub struct ReplayArgs {
 /// `--format` of `export`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum ExportFormat {
-    /// One request/response record per page (katana `-jsonl`).
+    /// One request/response record per page (compatibility `-jsonl`).
     #[value(name = "jsonl")]
     Jsonl,
     /// One line per field or template value.
@@ -104,7 +104,7 @@ pub struct ExportArgs {
     #[arg(long, visible_alias = "store-field-dir", value_name = "DIR")]
     pub store_fields: Option<PathBuf>,
     /// Store only these fields (comma separated, repeatable), independently of display fields.
-    /// Without `--store-fields`, use `katana_field` beside `--out`, the report, or in `crawlx-out`.
+    /// Without `--store-fields`, use `field_wordlists` beside `--out`, the report, or in `crawlx-out`.
     #[arg(long, value_name = "FIELDS", value_delimiter = ',')]
     pub store_field: Vec<String>,
     /// JSONL record fields to drop (e.g. `timestamp,headers`).
@@ -143,14 +143,14 @@ pub struct ServeArgs {
     /// Artifacts dir.
     pub artifacts_dir: PathBuf,
     /// Bootstrap API key as `tenant=cx_live_<26 base32>`, or `tenant=fc-<16 to 64 alphanumerics>`
-    /// with `--firecrawl-keys`. Repeatable.
+    /// with `--compat-keys`. Repeatable.
     #[arg(long = "api-key", value_name = "TENANT=KEY")]
     pub api_keys: Vec<String>,
-    /// Accept Firecrawl-style `fc-...` bearer keys on the `/compat/firecrawl` routes
-    /// (`compat.firecrawlKeys`; the environment variable `CRAWLX_COMPAT_FIRECRAWL_KEYS=1` does the
+    /// Accept prefixed `fc-...` bearer keys on the `/compat` routes
+    /// (`compat.prefixedKeys`; the environment variable `CRAWLX_COMPAT_KEYS=1` does the
     /// same); an `fc-` key never opens a native `/v1` route.
     #[arg(long)]
-    pub firecrawl_keys: bool,
+    pub compat_keys: bool,
     /// Requests per minute per key.
     #[arg(long)]
     pub rate_limit_per_minute: Option<u32>,
@@ -255,7 +255,7 @@ pub(crate) async fn worker(
     let (model, planner) = args
         .model
         .settings(args.model.system1_mode.map_or(System1Mode::Off, Into::into))?;
-    // Firecrawl self-host variables (`OPENAI_BASE_URL`, `MODEL_NAME`, `OPENAI_API_KEY`,
+    // Self-host provider variables (`CRAWLX_LLM_BASE_URL`, `CRAWLX_LLM_MODEL`, `CRAWLX_LLM_API_KEY`,
     // `EXTRACTION_PROVIDER_*`, `BRANDING_LLM_*`) feed the document LLM behind the scrape formats
     // `json`, `summary`, `question`, `highlights`, `query` and the `branding` refinement
     let intel = crawlx_api::config::IntelConfig::default()
@@ -289,7 +289,7 @@ pub(crate) async fn worker(
         extraction_llm: llms.extraction,
         branding_llm: llms.branding,
         ocr,
-        traffic_export: crawlx_worker::katana::traffic_export::TrafficExportConfig::from_env(getenv)
+        traffic_export: crawlx_worker::surface::traffic_export::TrafficExportConfig::from_env(getenv)
             .context("traffic export")?,
         egress: crawlx_worker::EgressConfig {
             lists: Some(egress_feed.lists()),
@@ -357,7 +357,7 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
     if let Some(n) = args.rate_limit_per_minute {
         cfg.rate_limit_per_minute = n;
     }
-    cfg.compat.firecrawl_keys = args.firecrawl_keys;
+    cfg.compat.prefixed_keys = args.compat_keys;
     if let Some(s) = crate::config_check::webhook_secret(args.webhook_secret.as_deref())? {
         cfg.webhook_secret = s;
     }

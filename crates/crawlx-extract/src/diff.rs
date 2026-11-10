@@ -1,4 +1,4 @@
-//! Change-tracking diffs (Firecrawl `changeTracking`, `git-diff` and `json` modes).
+//! Change-tracking diffs (compatibility API `changeTracking`, `git-diff` and `json` modes).
 //!
 //! [`markdown_diff`] compares two Markdown documents line by line and renders the result the
 //! way `git diff` does: hunks with three lines of context, a `@@ -a,b +c,d @@` header per hunk,
@@ -38,7 +38,7 @@ pub struct MarkdownDiff {
     /// Git-style hunk list; empty when the inputs are equal. Lines are joined by `\n` with no
     /// trailing newline.
     pub text: String,
-    /// The same hunks as Firecrawl's structured `diff.json`.
+    /// The same hunks as the compatibility API's structured `diff.json`.
     pub json: Value,
 }
 
@@ -245,7 +245,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn changed_lines_render_exactly_like_the_firecrawl_example() {
+    fn changed_lines_render_exactly_like_the_reference_example() {
         let prev = "# Pricing\nStarter: $9/mo\nPro: $29/mo\n";
         let cur = "# Pricing\nStarter: $12/mo\nPro: $39/mo\n";
         let d = markdown_diff(prev, cur);

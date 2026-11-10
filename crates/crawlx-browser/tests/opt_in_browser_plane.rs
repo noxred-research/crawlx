@@ -1,18 +1,18 @@
 //! Opt-in browser-plane behaviours against a local Chromium (skipped without one; set
-//! `CRAWLX_CHROMIUM_PATH`): katana's timer / form-reset / window-close hooks
+//! `CRAWLX_CHROMIUM_PATH`): the timer / form-reset / window-close hooks
 //! (`dynamic.pageHookOptions`), the stealth patches (`dynamic.stealthPatches`) and named
 //! persistent profiles (`dynamic.browserProfile`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod katana_p4_support;
+mod surface_support;
 
 use crawlx_browser::CdpContext;
 use crawlx_core::browser::{BrowserBackend, BrowserContext, ContextConfig, ProfileSpec};
 use crawlx_core::config::{LaunchProfile, PageHookOptions};
 use crawlx_core::observation::QuiescencePolicy;
-use katana_p4_support::{canonical, context_config, launch, serve};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
+use surface_support::{canonical, context_config, launch, serve};
 
 fn html(body: &str) -> (&'static str, String) {
     (

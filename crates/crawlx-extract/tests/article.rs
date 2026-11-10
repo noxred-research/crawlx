@@ -226,7 +226,7 @@ fn quality_rejection_partial_and_missing_model_are_not_transport_failures() {
     let partial = extract(fixture("main"), capped);
     assert_eq!(partial.article.unwrap().quality.status, QualityStatusV1::Partial);
     let mut model = policy();
-    model.nlp = NlpCapabilityV1::PunktModel;
+    model.nlp = NlpCapabilityV1::SentenceModel;
     let unavailable = extract(fixture("main"), model);
     let article = unavailable.article.unwrap();
     assert_eq!(article.quality.status, QualityStatusV1::Unavailable);

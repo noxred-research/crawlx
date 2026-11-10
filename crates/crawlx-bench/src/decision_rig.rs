@@ -194,7 +194,7 @@ impl DecisionRig {
     }
 
     /// Open an owned evaluation fixture with explicitly supplied checkpoint custody.
-    /// Process-local providers cannot establish cross-process recovery or AWS acceptance.
+    /// Process-local providers cannot establish cross-process recovery or cloud acceptance.
     ///
     /// # Errors
     /// Rejects absent custody, invalid fixture/model origins, or failed model/database setup.

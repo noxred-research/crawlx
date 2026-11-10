@@ -1,5 +1,5 @@
 //! The divergence ledger `bench/differential/divergences.toml`:
-//! every documented difference between Firecrawl and crawlx, with its class, provenance and
+//! every documented difference between upstream and crawlx, with its class, provenance and
 //! the match rule the runner applies. A difference without a matching entry fails the run.
 
 use crate::error::BenchError;
@@ -15,11 +15,11 @@ pub enum DivergenceClass {
     IntentionalSecurity,
     /// crawlx is deliberately different for correctness or explainability.
     IntentionalCorrectness,
-    /// Firecrawl's behavior is the defect.
-    FirecrawlBug,
-    /// A Firecrawl feature crawlx does not provide.
+    /// upstream's behavior is the defect.
+    UpstreamBug,
+    /// An upstream feature crawlx does not provide.
     UnsupportedFeature,
-    /// The behavior cannot be exercised on the Firecrawl self-host as the harness runs it
+    /// The behavior cannot be exercised on the upstream self-host as the harness runs it
     /// (no LLM provider, no team flags, no database): the reference answered with a refusal or
     /// a degraded behavior that says nothing about the feature itself.
     ReferenceUnavailable,
@@ -55,8 +55,8 @@ pub enum DivergenceKind {
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Side {
-    /// Present on the Firecrawl side only.
-    FirecrawlOnly,
+    /// Present on the upstream side only.
+    UpstreamOnly,
     /// Present on the crawlx side only.
     CrawlxOnly,
 }
@@ -258,7 +258,7 @@ id = "QRY-001"
 family = "QRY"
 level = "C1"
 kind = "admission"
-side = "firecrawl_only"
+side = "upstream_only"
 match = "*?utm_*"
 class = "intentional_correctness"
 source = "adr:0018"
@@ -282,7 +282,7 @@ user_visible = "tracking-parameter variants are one page"
         assert!(l
             .admission(
                 DivergenceKind::Admission,
-                Side::FirecrawlOnly,
+                Side::UpstreamOnly,
                 "{origin}/s1/about?utm_source=x"
             )
             .is_some());
@@ -294,13 +294,13 @@ user_visible = "tracking-parameter variants are one page"
             )
             .is_none());
         assert!(l
-            .admission(DivergenceKind::Admission, Side::FirecrawlOnly, "{origin}/s1/x")
+            .admission(DivergenceKind::Admission, Side::UpstreamOnly, "{origin}/s1/x")
             .is_none());
     }
 
     #[test]
     fn validation_rejects_bad_entries() {
-        let no_side = SAMPLE.replace("side = \"firecrawl_only\"\n", "");
+        let no_side = SAMPLE.replace("side = \"upstream_only\"\n", "");
         assert!(Ledger::parse(&no_side).is_err());
         let dup = format!("{SAMPLE}{}", &SAMPLE[SAMPLE.find("[[divergence]]").unwrap()..]);
         assert!(Ledger::parse(&dup).is_err());

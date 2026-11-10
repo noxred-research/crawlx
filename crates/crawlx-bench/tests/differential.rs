@@ -1,12 +1,12 @@
 //! Differential runner against the committed exports and in-process crawlx runs of
 //! the same fixtures. `captures/s1.authored.json` is the authored sample of 2026-10-20 (kept for
-//! diffing); `captures/<family>.json` are black-box exports of the pinned Firecrawl. No
-//! Firecrawl, no Chromium, no network.
+//! diffing); `captures/<family>.json` are black-box exports of the pinned upstream. No
+//! upstream, no Chromium, no network.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crawlx_bench::differential::{
-    CrawlxRun, DifferentialRunner, DivergenceKind, FirecrawlExport, FixtureRun, Ledger, Report, Severity,
-    Side, Verdict,
+    CrawlxRun, DifferentialRunner, DivergenceKind, FixtureRun, Ledger, Report, Severity, Side,
+    UpstreamExport, Verdict,
 };
 use crawlx_bench::gym::fixtures::{self, FileDef};
 use crawlx_bench::gym::{GymHandle, GymServer};
@@ -20,8 +20,8 @@ fn repo_path(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(rel)
 }
 
-fn sample() -> FirecrawlExport {
-    FirecrawlExport::load(&repo_path("bench/differential/captures/s1.authored.json")).unwrap()
+fn sample() -> UpstreamExport {
+    UpstreamExport::load(&repo_path("bench/differential/captures/s1.authored.json")).unwrap()
 }
 
 fn ledger() -> Ledger {
@@ -159,7 +159,7 @@ async fn classify_run_diverges_on_tracking_variants_and_only_the_ledger_makes_it
     assert!(report
         .set_diffs
         .iter()
-        .all(|d| d.kind == DivergenceKind::Admission && d.side == Side::FirecrawlOnly));
+        .all(|d| d.kind == DivergenceKind::Admission && d.side == Side::UpstreamOnly));
 
     // documented by QRY-001: pass, exit 0, findings informational
     let report = DifferentialRunner::new(ledger()).compare(&sample(), &fc_origin, &run, &origin);
@@ -177,7 +177,7 @@ async fn classify_run_diverges_on_tracking_variants_and_only_the_ledger_makes_it
         .iter()
         .all(|f| f.documented.as_deref() == Some("QRY-001")));
     assert!(report.unused_entries.is_empty());
-    assert!(md.contains("| admission | firecrawl | `{origin}/s1/about?utm_source=newsletter` | QRY-001 |"));
+    assert!(md.contains("| admission | upstream | `{origin}/s1/about?utm_source=newsletter` | QRY-001 |"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -213,7 +213,7 @@ async fn a_cli_output_directory_is_a_valid_crawlx_side() {
     assert_eq!(loaded.pages, run.pages);
     assert!(loaded.frontier.is_empty());
     // without the frontier the failed and robots-blocked URLs are unknown on the crawlx side,
-    // which the scorecard reports as firecrawl-only admission and robots entries
+    // which the scorecard reports as upstream-only admission and robots entries
     let report = DifferentialRunner::new(ledger()).compare(
         &sample(),
         &Url::parse("http://gym.test").unwrap(),
@@ -254,7 +254,7 @@ fn family_run(doc: &serde_json::Value, f: &serde_json::Value, request: serde_jso
 
 /// Replay family `f` of `doc` (`families.json`): its committed capture against an in-process
 /// crawlx run of the same request under the ledger.
-async fn replay_family(doc: &serde_json::Value, f: &serde_json::Value) -> (Report, FirecrawlExport) {
+async fn replay_family(doc: &serde_json::Value, f: &serde_json::Value) -> (Report, UpstreamExport) {
     let id = f["id"].as_str().unwrap();
     let path = repo_path(&format!("bench/differential/captures/{id}.json"));
     let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -265,7 +265,7 @@ async fn replay_family(doc: &serde_json::Value, f: &serde_json::Value) -> (Repor
         "{id}"
     );
     assert_eq!(sample["family"], id);
-    let capture = FirecrawlExport::load(&path).unwrap();
+    let capture = UpstreamExport::load(&path).unwrap();
 
     let gym = capture_gym(f["fixture"].as_str().unwrap()).await;
     let dir = tempfile::tempdir().unwrap();
@@ -286,7 +286,7 @@ fn families_doc() -> serde_json::Value {
 }
 
 /// The families of `bench/differential/families.json`, replayed offline: every committed capture
-/// (a real run of Firecrawl `c31e88c07afe941bfd8aebde61684eeba042abb5`) is compared with an
+/// (a real run of upstream `c31e88c07afe941bfd8aebde61684eeba042abb5`) is compared with an
 /// in-process crawlx run of the same request under the ledger and must reach its `expect`ed
 /// verdict. A family with `open` set is a recorded residual: it must stay `block`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

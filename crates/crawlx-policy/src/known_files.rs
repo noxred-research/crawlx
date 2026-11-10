@@ -1,4 +1,4 @@
-//! Known-files seeding (`scope.knownFiles`, katana `-kf`).
+//! Known-files seeding (`scope.knownFiles`, compatibility flag `-kf`).
 //!
 //! `robots_paths` seeds every `Allow:` path of `robots.txt`; `Disallow:`
 //! paths are seeded only when robots are *not* respected under an

@@ -76,8 +76,8 @@ pub enum TenantEngine {
     /// crawlx serves the tenant (default).
     #[default]
     Crawlx,
-    /// Firecrawl serves the tenant; the facade refuses non-shadow creates.
-    Firecrawl,
+    /// The upstream service serves the tenant; the facade refuses non-shadow creates.
+    Upstream,
     /// Only mirrored (`X-Crawlx-Shadow: 1`) requests are accepted.
     Shadow,
 }
@@ -88,7 +88,7 @@ impl TenantEngine {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Crawlx => "crawlx",
-            Self::Firecrawl => "firecrawl",
+            Self::Upstream => "upstream",
             Self::Shadow => "shadow",
         }
     }
@@ -96,11 +96,11 @@ impl TenantEngine {
     /// Parse the stored spelling.
     ///
     /// # Errors
-    /// Returns [`StoreError::Serialization`] for anything but `crawlx`, `firecrawl`, `shadow`.
+    /// Returns [`StoreError::Serialization`] for anything but `crawlx`, `upstream`, `shadow`.
     pub fn parse(s: &str) -> Result<Self, StoreError> {
         match s {
             "crawlx" => Ok(Self::Crawlx),
-            "firecrawl" => Ok(Self::Firecrawl),
+            "upstream" => Ok(Self::Upstream),
             "shadow" => Ok(Self::Shadow),
             other => Err(StoreError::Serialization(format!("unknown engine {other:?}"))),
         }
@@ -1370,14 +1370,10 @@ mod tests {
 
     #[test]
     fn engine_round_trips() {
-        for e in [
-            TenantEngine::Crawlx,
-            TenantEngine::Firecrawl,
-            TenantEngine::Shadow,
-        ] {
+        for e in [TenantEngine::Crawlx, TenantEngine::Upstream, TenantEngine::Shadow] {
             assert_eq!(TenantEngine::parse(e.as_str()).unwrap(), e);
         }
-        assert!(TenantEngine::parse("katana").is_err());
+        assert!(TenantEngine::parse("unknown").is_err());
     }
 
     #[test]

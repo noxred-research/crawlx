@@ -8,6 +8,35 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed: neutral names (breaking)
+
+Features, identifiers, files, configuration and documentation now use neutral names. Every
+integration keeps working; only exact strings that existing clients or services send or expect
+(headers, the `fc-` key prefix, route shapes, MCP tool names, provider API fields) are unchanged.
+Rename these in deployments and scripts:
+
+| Area | Old | New |
+|---|---|---|
+| API mount | `/compat/<name>/v2` | `/compat/v2` |
+| Prefixed keys | `compat.<name>Keys`, `--<name>-keys`, `CRAWLX_COMPAT_<NAME>_KEYS` | `compat.prefixedKeys`, `--compat-keys`, `CRAWLX_COMPAT_KEYS` |
+| Tenant engine | `crawlx admin engine --set <name>` | `--set upstream` (migration `0045` rewrites stored rows) |
+| LLM settings | the provider-named `*_BASE_URL` and `*_API_KEY` variables, `MODEL_NAME`, `MODEL_EMBEDDING_NAME`, the local model server's `*_BASE_URL` | `CRAWLX_LLM_BASE_URL`, `CRAWLX_LLM_API_KEY`, `CRAWLX_LLM_MODEL`, `CRAWLX_EMBEDDING_MODEL`, `CRAWLX_LOCAL_LLM_BASE_URL` |
+| Transcription | the provider-named `*_TRANSCRIBE_ENDPOINT`, `TRANSCRIBE_MODEL_NAME` | `CRAWLX_TRANSCRIBE_ENDPOINT`, `CRAWLX_TRANSCRIBE_MODEL` |
+| Search | provider values for the metasearch and hosted search backends; their `*_ENDPOINT`/`*_ENGINES`/`*_CATEGORIES`/`*_API_KEY`/`*_ENGINE` variables | `metasearch`, `serp`; `CRAWLX_SEARCH_ENDPOINT`, `CRAWLX_SEARCH_ENGINES`, `CRAWLX_SEARCH_CATEGORIES`, `CRAWLX_SEARCH_API_KEY`, `CRAWLX_SEARCH_API_ENGINE` |
+| Captcha | provider value for the task-based solver | `task-api` |
+| Compatibility flags | `--<name>-defaults` / config key | `--compat-defaults` / `compat-defaults`; default wordlist directory `field_wordlists` |
+| Source import | product-named `source` ids | input-format ids: `python-spider`, `js-actor`, `py-actor`, `go-collector`, `compat-api`, `adaptive-py`, `llm-py`, `seedlist-batch`, `topology-stream`, `bean-config`, `browser-yaml`, `text-precision`, `news-article`, `surface-flags`; inventory row ids `TP-`, `NA-`, `SR-` |
+| Request identity / pacing dialects | product-named values | `js_actor_3_18`, `py_actor_1_11`, `python_spider_2_19`, `go_collector_2_2`; `latency-target-v1`, `adaptive-concurrency-v1` |
+| NLP capability | `punkt_model` | `sentence_model` |
+| Discovery connectors | provider-named values | `news_search`, `trends_search`, `web_archive_index` |
+| Delivery sinks | product-named `kind` values | `search_update`, `search_index`, `stream_rest_v2`, `queue_http_v1`, `object_json_upload` |
+| Secrets | `aws-sm://` references | `cloud-sm://` |
+| Object store | `CRAWLX_S3_SSE=aws_kms` | `cloud_kms` (`kms` and the S3 wire label stay accepted) |
+| Differential harness | product-named flags, env variables and files | `--upstream`, `--upstream-origin`, `UPSTREAM_*`, `CRAWLX_UPSTREAM_URL`, `bench/differential/*upstream*` |
+
+The extraction-import report no longer carries a `sourceUrl`. `ci/lint-public.sh` fails on
+third-party product names outside the documented exceptions.
+
 ### Changed
 
 - Dependencies moved to rand 0.10 / rand_chacha 0.10, sqlx 0.9, redis 1.8, quick-xml 0.42,
@@ -62,11 +91,11 @@ Production qualification is still in progress.
 - URL and content plane: scope and robots admission, URL canonicalization and
   query-parameter classification, static fetching with bounded acquisition (attempts,
   requests, bytes, deadline), content extraction to Markdown, metadata and links, and
-  Firecrawl-compatible scrape, crawl, map, search, extract and parse behavior over a
-  `/compat/firecrawl/v2` facade.
+  compatibility-API scrape, crawl, map, search, extract and parse behavior under
+  `/compat/v2`.
 - Bounded source discovery: HTML, RSS/Atom/JSON Feed, sitemaps, category pages and
   opt-in conventional paths and external providers, with offline development replay.
-- Katana-derived crawl options: scope fields, strategies, similarity filters, rate
+- Surface-discovery crawl options: scope fields, strategies, similarity filters, rate
   limits, custom field extraction, secret detection, JavaScript endpoint mining
   (`off|regex|ast|both`) and templated, JSONL and wordlist output.
 - Native response cache modes (`read_write`, `bypass`, `disabled`, `read_only`,
@@ -85,7 +114,7 @@ Production qualification is still in progress.
 - Persistence on PostgreSQL (migrations through `0044_artifact_custody_trigger_schema.sql`,
   tenant row-level security) and filesystem or S3-compatible artifact storage.
 - Encrypted artifact custody: retained Content and Sensitive artifacts are
-  sealed under per-artifact data keys wrapped by AWS KMS (`CRAWLX_ARTIFACT_KMS_KEY_ID`) or
+  sealed under per-artifact data keys wrapped by cloud KMS (`CRAWLX_ARTIFACT_KMS_KEY_ID`) or
   an operator key file (`CRAWLX_ARTIFACT_KEY_FILE`), and published only after an
   epoch-checked recheck against the run-wide secret registry. CAPTCHA tokens are
   registered run-wide before delivery to the page.
@@ -97,13 +126,13 @@ Production qualification is still in progress.
 - Scheduler and worker processes with leases, session actors, checkpoints and
   `crawlx worker --recover`; REST/SSE API with OpenAPI schemas and API-key scopes.
 - `crawlx` command-line interface: `crawl`, `serve`, `worker`, `migrate`, `inspect`,
-  `replay`, `replay-response`, `extract`, `authz`, `mcp` (Firecrawl MCP tools over
+  `replay`, `replay-response`, `extract`, `authz`, `mcp` (MCP tools over
   stdio), `healthcheck` and configuration checks.
 - Optional ONNX ranker support (`crawlx-model`, `onnx` feature), a typed-decision HTTP
   adapter for an external decision service, language identification, and
   OpenTelemetry/Prometheus telemetry.
 - Test and benchmark infrastructure: CrawlerGym fixtures, chaos and fault-injection
-  suites, fuzz targets, a Firecrawl differential harness, a Playwright/Patchright
+  suites, fuzz targets, an upstream differential harness, a reference-driver
   actionability oracle, and milestone gates.
 - Docker, Docker Compose, Helm, Kubernetes and systemd deployment files, alert rules
   and operations runbooks.
@@ -145,7 +174,7 @@ Production qualification is still in progress.
   its `pages/*.md`, `metadata.json` and `report.json` are the readable output, and the sealed
   objects under `artifacts/` are not readable after the process exits.
 - Browser background traffic: the stock pinned Chromium (Chrome-for-Testing
-  155.0.8059.84) attempts unsolicited Google background-service requests
+  155.0.8059.84) attempts unsolicited browser-vendor background-service requests
   (`accounts.google.com`, `redirector.gvt1.com`, `content-autofill.googleapis.com`,
   `android.clients.google.com`). Where the run's egress policy excludes them (a bounded scope
   or an operator blocklist entry) the egress proxy denies each one before any connection and

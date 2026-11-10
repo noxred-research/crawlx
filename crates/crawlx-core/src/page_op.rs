@@ -1,4 +1,4 @@
-//! Caller-driven page operations of the scrape engine: what the Firecrawl
+//! Caller-driven page operations of the scrape engine: what the compatibility API
 //! `actions[]`, `mobile`, `location`, `blockAds` and `screenshot`/`pdf` options need from a
 //! browser context beyond the journaled [`crate::BrowserAction`] vocabulary.
 //!
@@ -55,7 +55,7 @@ pub struct PdfSpec {
 ///
 /// Visibility requires a positive-width, positive-height layout box and computed
 /// `visibility` other than `hidden` or `collapse`. It does not require viewport intersection,
-/// opacity, hit testing, enabled state or stability. This is not full Playwright parity.
+/// opacity, hit testing, enabled state or stability. This is not full reference-driver parity.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]

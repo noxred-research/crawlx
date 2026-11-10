@@ -1,7 +1,6 @@
 //! Page-body normalization for similarity scoring.
 //!
-//! Ported from projectdiscovery/katana `pkg/similarity/normalize.go` at
-//! commit 9662cd7 (MIT).
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md.
 //!
 //! HTML bodies are reduced to the text of `main`/`[role=main]` (else every
 //! `article`, else `body`) with `script`/`style`/`noscript`/`svg`/`template`

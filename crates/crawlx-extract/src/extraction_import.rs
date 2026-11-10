@@ -218,8 +218,6 @@ pub fn authored_fixture_manifests() -> Result<Vec<AuthoredFixtureManifestV1>, Ex
 pub struct PinnedProfileFixtureV1 {
     /// Exact option/alias exercised in this fixture.
     pub option: &'static str,
-    /// Upstream immutable source provenance, not a content license.
-    pub source_url: &'static str,
     /// Exact release, never latest.
     pub source_release: &'static str,
     /// License of the original declarative fixture itself.
@@ -245,9 +243,9 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
     };
     use serde_json::json;
     let mut fixtures = Vec::new();
-    for source in [Source::Trafilatura, Source::Newspaper4k, Source::Katana] {
+    for source in [Source::PrecisionText, Source::NewsArticle, Source::SurfaceFlags] {
         for dialect in [Dialect::Library, Dialect::Cli, Dialect::Settings] {
-            if source == Source::Katana && dialect != Dialect::Cli {
+            if source == Source::SurfaceFlags && dialect != Dialect::Cli {
                 continue;
             }
             for &(option, category) in option_catalog(source, dialect) {
@@ -269,7 +267,7 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
                     "read_more_link" => json!("//a[@rel='next']"),
                     "author_blacklist" => json!(["Alex Example"]),
                     "strategy" => json!("breadth-first"),
-                    "output_format" => json!(if source == Source::Newspaper4k {
+                    "output_format" => json!(if source == Source::NewsArticle {
                         "json"
                     } else {
                         "markdown"
@@ -286,17 +284,19 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
                 };
                 let state = match category {
                     "proxy" | "cookies" | "headers" | "credentials" | "recorded_flow" => State::Rejected,
-                    "solver" | "google_news" | "trends" | "archived" | "punkt" => State::ExternalRequired,
+                    "solver" | "news_search" | "trends" | "archived" | "sentence_tokenizer" => {
+                        State::ExternalRequired
+                    }
                     "unavailable" | "requests_params" | "top_image_settings" | "date_params" => {
                         State::DecisionNeeded
                     }
-                    "source_mode" if source != Source::Trafilatura => State::Rejected,
-                    "output_format" if source == Source::Newspaper4k => State::Rejected,
+                    "source_mode" if source != Source::PrecisionText => State::Rejected,
+                    "output_format" if source == Source::NewsArticle => State::Rejected,
                     _ => State::Translated,
                 };
                 let seed_key = match (source, dialect) {
-                    (Source::Trafilatura, Dialect::Cli) => "URL",
-                    (Source::Katana, Dialect::Cli) => "u",
+                    (Source::PrecisionText, Dialect::Cli) => "URL",
+                    (Source::SurfaceFlags, Dialect::Cli) => "u",
                     _ => "url",
                 };
                 let mut options = serde_json::Map::new();
@@ -304,7 +304,7 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
                     options.insert(seed_key.into(), json!("https://fixture.test/article"));
                 }
                 options.insert(option.into(), value);
-                fixtures.push(PinnedProfileFixtureV1 { option, source_url: source.source_url(), source_release: source.release(),
+                fixtures.push(PinnedProfileFixtureV1 { option, source_release: source.release(),
                     fixture_license: "MIT", fixture_license_text: AUTHORED_FIXTURE_LICENSE, source_license: source.license(),
                     manifest: json!({"version":1,"source":source,"sourceVersion":source.release(),"dialect":dialect,"options":options}),
                     expected_option_state: state });
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn converted_request_reaches_real_shared_native_extractor_on_authored_fixture() {
         let bytes = profile(
-            ExtractionSourceV1::Trafilatura,
+            ExtractionSourceV1::PrecisionText,
             ExtractionDialectV1::Library,
             json!({"url":"https://fixture.test/article","include_comments":true,"include_tables":false,"include_images":false,"fast":true,"prune_xpath":"//aside","author_blacklist":["alex example"]}),
         );
@@ -371,7 +371,7 @@ mod tests {
             "//article[matches(., 'x')]",
         ] {
             let bytes = profile(
-                ExtractionSourceV1::Trafilatura,
+                ExtractionSourceV1::PrecisionText,
                 ExtractionDialectV1::Library,
                 json!({"url":"https://fixture.test/article","prune_xpath":expression}),
             );
@@ -419,7 +419,6 @@ mod tests {
         for fixture in fixtures {
             let (report, request) = inspect(&serde_json::to_vec(&fixture.manifest).unwrap()).unwrap();
             assert_eq!(report.source_version, fixture.source_release);
-            assert_eq!(report.source_url, fixture.source_url);
             assert_eq!(fixture.fixture_license, "MIT");
             let option = report
                 .dispositions
@@ -434,14 +433,14 @@ mod tests {
     fn output_formats_never_fall_back_silently_or_expand_into_filesystem_sinks() {
         for format in ["json", "text", "csv", "xml", "xmltei", "pickle"] {
             let bytes = profile(
-                ExtractionSourceV1::Trafilatura,
+                ExtractionSourceV1::PrecisionText,
                 ExtractionDialectV1::Library,
                 json!({"url":"https://fixture.test/article","output_format":format}),
             );
             assert!(matches!(convert(&bytes), Err(ExtractionImportError::Unavailable)));
         }
         let bytes = profile(
-            ExtractionSourceV1::Trafilatura,
+            ExtractionSourceV1::PrecisionText,
             ExtractionDialectV1::Library,
             json!({"url":"https://fixture.test/article","output_format":"html"}),
         );

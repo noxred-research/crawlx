@@ -16,7 +16,7 @@ const LOCAL_KEY_REF: &str = "env://CRAWLX_CAPTCHA_SOLVER_KEY";
 #[derive(Args, Debug, Clone, Default)]
 #[command(next_help_heading = "Captcha")]
 pub struct CaptchaArgs {
-    /// Solver provider (capsolver). Solving stays disabled unless explicitly configured.
+    /// Solver provider (task-api: a task-based captcha-solving HTTP API). Solving stays disabled unless explicitly configured.
     #[arg(
         long,
         value_name = "PROVIDER",
@@ -49,8 +49,8 @@ pub struct CaptchaArgs {
 
 fn parse_provider(value: &str) -> Result<CaptchaProvider, &'static str> {
     match value {
-        "capsolver" => Ok(CaptchaProvider::Capsolver),
-        _ => Err("unsupported captcha solver provider (expected capsolver)"),
+        "task-api" => Ok(CaptchaProvider::TaskApi),
+        _ => Err("unsupported captcha solver provider (expected task-api)"),
     }
 }
 
@@ -198,7 +198,7 @@ mod tests {
 
     fn configured() -> CaptchaArgs {
         CaptchaArgs {
-            captcha_solver_provider: Some(CaptchaProvider::Capsolver),
+            captcha_solver_provider: Some(CaptchaProvider::TaskApi),
             captcha_solver_key: Some(SecretOr::secret("captcha-key-canary".to_owned())),
             ..CaptchaArgs::default()
         }
@@ -222,7 +222,7 @@ mod tests {
         args.apply(&mut crawl).unwrap();
         let config = crawl.crawl.captcha.as_ref().unwrap();
         assert_eq!(config.key_ref.0, LOCAL_KEY_REF);
-        assert_eq!(config.endpoint.as_str(), "https://api.capsolver.com/");
+        assert_eq!(config.endpoint.as_str(), "https://api.capsolver.com/"); // wire-compat: default task-API service endpoint
         assert_eq!(config.timeout_seconds, 120);
         assert_eq!(config.poll_interval_ms, 1000);
         for text in [

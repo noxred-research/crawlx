@@ -85,7 +85,7 @@ pub enum NlpCapabilityV1 {
     #[default]
     UnicodeRulesV1,
     /// Requires a licensed worker-injected bundle; unavailable in this pure parser.
-    PunktModel,
+    SentenceModel,
     /// Disable keyword and summary generation.
     Off,
 }

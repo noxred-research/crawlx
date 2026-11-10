@@ -1,7 +1,8 @@
-//! Bounded, cancellation-aware CapSolver transport for explicit CAPTCHA opt-in.
+//! Bounded, cancellation-aware transport for a task-based captcha-solving HTTP API, used only on
+//! explicit CAPTCHA opt-in.
 //!
-//! Task names and token fields follow Katana's MIT-licensed CapSolver adapter:
-//! <https://github.com/projectdiscovery/katana/blob/main/pkg/engine/headless/captcha/capsolver/capsolver.go>.
+//! Task names and token fields follow the provider's documented task API (ported from an
+//! MIT-licensed upstream; see THIRD_PARTY_NOTICES.md).
 //! No provider text or underlying HTTP errors cross the secret boundary.
 
 use crawlx_core::captcha::{CaptchaChallenge, CaptchaConfig, CaptchaError, CaptchaKind, CaptchaProvider};
@@ -14,8 +15,8 @@ use url::Url;
 const MAX_RESPONSE_BYTES: usize = 65_536;
 const MAX_TOKEN_BYTES: usize = 16_384;
 
-/// CapSolver client. Debug never exposes keys, endpoints, task IDs, or tokens.
-pub struct CapsolverClient {
+/// Task-based captcha-solving client. Debug never exposes keys, endpoints, task IDs, or tokens.
+pub struct TaskCaptchaClient {
     http: reqwest::Client,
     create_url: Url,
     result_url: Url,
@@ -24,13 +25,13 @@ pub struct CapsolverClient {
     poll_interval: Duration,
 }
 
-impl std::fmt::Debug for CapsolverClient {
+impl std::fmt::Debug for TaskCaptchaClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CapsolverClient").finish_non_exhaustive()
+        f.debug_struct("TaskCaptchaClient").finish_non_exhaustive()
     }
 }
 
-impl CapsolverClient {
+impl TaskCaptchaClient {
     /// Build a client with redirects, HTTP retries, and ambient proxies disabled.
     /// Plain key inputs are promoted to secrets before storage.
     ///
@@ -39,7 +40,7 @@ impl CapsolverClient {
     /// or [`CaptchaError::Transport`] if the HTTP client cannot be initialized.
     pub fn new(config: &CaptchaConfig, key: SecretOr<String>) -> Result<Self, CaptchaError> {
         config.validate()?;
-        if config.provider != CaptchaProvider::Capsolver || key.expose().trim().is_empty() {
+        if config.provider != CaptchaProvider::TaskApi || key.expose().trim().is_empty() {
             return Err(CaptchaError::Configuration);
         }
         let key = match key {
@@ -144,10 +145,10 @@ impl CapsolverClient {
                 Some("processing" | "idle") => continue,
                 Some("ready") => {
                     let solution = result.solution.ok_or(CaptchaError::InvalidResponse)?;
-                    let token = if challenge.kind == CaptchaKind::Turnstile {
+                    let token = if challenge.kind == CaptchaKind::ChallengeWidgetT {
                         solution.token
                     } else {
-                        solution.g_recaptcha_response
+                        solution.response_token
                     }
                     .filter(|token| !token.trim().is_empty() && token.len() <= MAX_TOKEN_BYTES)
                     .ok_or(CaptchaError::InvalidResponse)?;
@@ -245,30 +246,30 @@ impl<'a> Task<'a> {
             return Err(CaptchaError::UnsupportedChallenge);
         }
         let task_type = match challenge.kind {
-            CaptchaKind::RecaptchaV2 => "ReCaptchaV2TaskProxyLess",
-            CaptchaKind::RecaptchaV3 => "ReCaptchaV3TaskProxyLess",
-            CaptchaKind::RecaptchaV2Enterprise => "ReCaptchaV2EnterpriseTaskProxyLess",
-            CaptchaKind::RecaptchaV3Enterprise => "ReCaptchaV3EnterpriseTaskProxyLess",
-            CaptchaKind::Turnstile => "AntiTurnstileTaskProxyLess",
-            CaptchaKind::Hcaptcha => "HCaptchaTaskProxyLess",
+            CaptchaKind::CheckboxV2 => "ReCaptchaV2TaskProxyLess", // wire-compat: provider task type
+            CaptchaKind::ScoreV3 => "ReCaptchaV3TaskProxyLess",    // wire-compat: provider task type
+            CaptchaKind::CheckboxV2Enterprise => "ReCaptchaV2EnterpriseTaskProxyLess", // wire-compat: provider task type
+            CaptchaKind::ScoreV3Enterprise => "ReCaptchaV3EnterpriseTaskProxyLess", // wire-compat: provider task type
+            CaptchaKind::ChallengeWidgetT => "AntiTurnstileTaskProxyLess", // wire-compat: provider task type
+            CaptchaKind::ChallengeWidgetH => "HCaptchaTaskProxyLess",      // wire-compat: provider task type
             _ => return Err(CaptchaError::UnsupportedChallenge),
         };
         let page_action = matches!(
             challenge.kind,
-            CaptchaKind::RecaptchaV3 | CaptchaKind::RecaptchaV3Enterprise
+            CaptchaKind::ScoreV3 | CaptchaKind::ScoreV3Enterprise
         )
         .then_some(challenge.action.as_deref())
         .flatten();
         let enterprise_payload = matches!(
             challenge.kind,
-            CaptchaKind::RecaptchaV2Enterprise | CaptchaKind::RecaptchaV3Enterprise
+            CaptchaKind::CheckboxV2Enterprise | CaptchaKind::ScoreV3Enterprise
         )
         .then_some(challenge.enterprise_payload.as_ref())
         .flatten();
         if enterprise_payload.is_some_and(|payload| !payload.is_object()) {
             return Err(CaptchaError::UnsupportedChallenge);
         }
-        let metadata = (challenge.kind == CaptchaKind::Turnstile).then_some(Metadata {
+        let metadata = (challenge.kind == CaptchaKind::ChallengeWidgetT).then_some(Metadata {
             action: challenge.action.as_deref(),
             cdata: challenge.data.as_deref(),
             chlpagedata: challenge.pagedata.as_deref(),
@@ -302,7 +303,7 @@ struct Polled {
 
 #[derive(Deserialize)]
 struct Solution {
-    #[serde(rename = "gRecaptchaResponse")]
-    g_recaptcha_response: Option<String>,
+    #[serde(rename = "gRecaptchaResponse")] // wire-compat: provider solution field
+    response_token: Option<String>,
     token: Option<String>,
 }

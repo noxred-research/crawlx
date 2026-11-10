@@ -29,8 +29,9 @@ use tokio_util::sync::CancellationToken;
 
 const KEY: &str = "actor-provider-key-secret-canary";
 const TOKEN: &str = "actor-delivered-token-secret-canary";
+// wire-compat: the widget marker class below is what the solver matches on target pages
 const PAGE: &str = r#"<!doctype html><html><head><title>Controlled challenge</title></head><body>
-<form id="danger" action="/destroy" method="post"><div class="g-recaptcha" data-sitekey="controlled-key" data-callback="accepted"></div></form>
+<form id="danger" action="/destroy" method="post"><div class="g-recaptcha" data-sitekey="controlled-key" data-callback="accepted"></div></form><!-- wire-compat -->
 <h1 id="result">Waiting</h1><output id="token"></output>
 <script>function accepted(token) {
  document.getElementById('result').textContent = 'Solved';
@@ -196,12 +197,13 @@ async fn actor_refuses_read_only_before_billing_and_commits_one_authorized_redac
                     "/getTaskResult",
                     post(|| async {
                         Json(json!({"errorId":0,"status":"ready","solution":{"gRecaptchaResponse":TOKEN}}))
+                        // wire-compat: provider API field
                     }),
                 ),
         )
         .await;
         let mut solver = CaptchaConfig::new(
-            CaptchaProvider::Capsolver,
+            CaptchaProvider::TaskApi,
             CredentialRef("env://ACTOR_CAPTCHA_FIXTURE".into()),
         );
         solver.endpoint = provider.base.clone();

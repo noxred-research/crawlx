@@ -116,7 +116,7 @@ pub struct Repos {
     pub api: Arc<dyn ApiStore>,
     /// Purge of a run's data across every store (erasure path).
     pub eraser: Arc<dyn Eraser>,
-    /// Jobs, monitors, checks and the usage ledger of the Firecrawl-compatible LLM products.
+    /// Jobs, monitors, checks and the usage ledger of the compatibility-API LLM products.
     pub intel: Arc<dyn crawlx_storage::IntelRepo>,
 }
 
@@ -329,7 +329,7 @@ pub struct Shared {
     /// Chooses the LLM of the `/extract` step between the default model and the extraction
     /// provider (`EXTRACTION_PROVIDER_*`); `None` answers it with [`Self::llm`].
     pub extraction: Option<Arc<ExtractionRouter>>,
-    /// Embedding ranking of the pages `/extract` reads (`MODEL_EMBEDDING_NAME`); `None` sends
+    /// Embedding ranking of the pages `/extract` reads (`CRAWLX_EMBEDDING_MODEL`); `None` sends
     /// every page in scrape order.
     pub embeddings: Option<Arc<PageRanker>>,
     /// Search backend, when one is configured.

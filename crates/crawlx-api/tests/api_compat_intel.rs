@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Firecrawl v2 compat endpoints backed by an LLM, a search provider and page tools:
+//! compat v2 compat endpoints backed by an LLM, a search provider and page tools:
 //! `/search` (+ feedback, categories), `/extract`, `/team/*`, `/feedback`,
 //! `/support/*`, health probes. Every backend is a mock or a wiremock server.
 
@@ -9,12 +9,12 @@ use axum::http::{Method, Request, StatusCode};
 use axum::Router;
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::config::IntelConfig;
+use crawlx_api::intel::metasearch::MetasearchProvider;
 use crawlx_api::intel::search::{
     MockSearch, NewsHit, SearchCategory, SearchError, SearchProvider, SearchQuery, SearchResults, WebHit,
 };
-use crawlx_api::intel::searxng::SearxngProvider;
 use crawlx_api::intel::tools::{MapLink, MockPageTools, ToolError};
-use crawlx_api::intel::webhook::{firecrawl_signature, JobWebhookSink};
+use crawlx_api::intel::webhook::{compat_signature, JobWebhookSink};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_api::{ApiConfig, AppState, Repos, Scope};
 use crawlx_core::TenantId;
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 
-const V2: &str = "/compat/firecrawl/v2";
+const V2: &str = "/compat/v2";
 const SECRET: &str = "whsec_test";
 
 #[derive(Default)]
@@ -188,12 +188,12 @@ impl T {
                         let sig = r
                             .headers
                             .iter()
-                            .find(|(k, _)| k == "X-Firecrawl-Signature")
+                            .find(|(k, _)| k == "X-Firecrawl-Signature") // wire-compat
                             .map(|(_, v)| v.clone())
                             .unwrap();
                         assert_eq!(
                             sig,
-                            firecrawl_signature(SECRET, &r.body),
+                            compat_signature(SECRET, &r.body),
                             "signature covers the raw body"
                         );
                         (r.headers.clone(), serde_json::from_slice(&r.body).unwrap())
@@ -286,7 +286,7 @@ async fn search_passes_categories_and_reports_validation_errors_together() {
     let (s, v) = t
         .post(
             "/search",
-            &json!({"query": "q", "categories": [{"type": "research"}, "pdf"], "sources": ["alexandria"]}),
+            &json!({"query": "q", "categories": [{"type": "research"}, "pdf"], "sources": ["alexandria"]}), // wire-compat
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -294,7 +294,7 @@ async fn search_passes_categories_and_reports_validation_errors_together() {
         mock.queries()[0].categories,
         [SearchCategory::Research, SearchCategory::Pdf]
     );
-    assert!(v["warning"].as_str().unwrap().contains("alexandria"), "{v}");
+    assert!(v["warning"].as_str().unwrap().contains("alexandria"), "{v}"); // wire-compat
 
     let (s, v) = t
         .post("/search", &json!({"limit": 0, "sources": ["video"], "includeDomains": ["a.com"], "excludeDomains": ["b.com"]}))
@@ -414,7 +414,7 @@ async fn search_scrape_options_merge_documents_and_record_failures() {
 }
 
 #[tokio::test]
-async fn searxng_end_to_end_through_the_route() {
+async fn metasearch_end_to_end_through_the_route() {
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
     let server = MockServer::start().await;
@@ -428,7 +428,7 @@ async fn searxng_end_to_end_through_the_route() {
         ]})))
         .mount(&server)
         .await;
-    let provider = Arc::new(SearxngProvider::new(&server.uri(), vec![], vec![]).unwrap());
+    let provider = Arc::new(MetasearchProvider::new(&server.uri(), vec![], vec![]).unwrap());
     let t = Setup::new().search(provider).build();
     let (s, v) = t
         .post(
@@ -956,7 +956,7 @@ fn docs_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("webhooks.md"),
-        "# Webhooks\n\nWebhook deliveries are signed: verify the X-Firecrawl-Signature header by recomputing the HMAC-SHA256 of the raw body with your secret.\n",
+        "# Webhooks\n\nWebhook deliveries are signed: verify the X-Firecrawl-Signature header by recomputing the HMAC-SHA256 of the raw body with your secret.\n", // wire-compat
     )
     .unwrap();
     std::fs::write(
@@ -1014,7 +1014,7 @@ async fn docs_search_answers_with_citations_with_and_without_an_llm() {
     );
     assert!(v["usage"]["totalTokens"].as_u64().unwrap() > 0);
     assert!(
-        llm.calls()[0].user.contains("X-Firecrawl-Signature"),
+        llm.calls()[0].user.contains("X-Firecrawl-Signature"), // wire-compat
         "retrieved passages reach the model, fenced"
     );
 }
@@ -1073,16 +1073,13 @@ async fn openapi_lists_the_intel_operations() {
     let (s, doc) = t.call(Method::GET, "/v1/openapi.json", None, None).await;
     assert_eq!(s, StatusCode::OK);
     for (m, p) in [
-        ("post", "/compat/firecrawl/v2/search"),
-        ("post", "/compat/firecrawl/v2/search/{jobId}/feedback"),
-        (
-            "get",
-            "/compat/firecrawl/v2/search/research/papers/{paperId}/similar",
-        ),
-        ("post", "/compat/firecrawl/v2/extract"),
-        ("get", "/compat/firecrawl/v2/extract/{id}"),
-        ("get", "/compat/firecrawl/v2/team/activity"),
-        ("post", "/compat/firecrawl/v2/support/docs-search"),
+        ("post", "/compat/v2/search"),
+        ("post", "/compat/v2/search/{jobId}/feedback"),
+        ("get", "/compat/v2/search/research/papers/{paperId}/similar"),
+        ("post", "/compat/v2/extract"),
+        ("get", "/compat/v2/extract/{id}"),
+        ("get", "/compat/v2/team/activity"),
+        ("post", "/compat/v2/support/docs-search"),
         ("get", "/v0/health/readiness"),
     ] {
         assert!(doc["paths"][p][m].is_object(), "missing {m} {p}");

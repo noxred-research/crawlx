@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Firecrawl compatibility facade: request translation, status mapping and warnings.
+//! The compat API compatibility facade: request translation, status mapping and warnings.
 mod common;
 
 use axum::http::{Method, StatusCode};
@@ -14,7 +14,7 @@ use crawlx_storage::testkit;
 use serde_json::{json, Value};
 
 #[tokio::test]
-async fn compat_create_maps_firecrawl_options() {
+async fn compat_create_maps_compat_options() {
     let e = env();
     let body = json!({
         "url": "https://docs.example.test/",
@@ -43,14 +43,14 @@ async fn compat_create_maps_firecrawl_options() {
         },
         "mystery": true,
     });
-    let (s, h, v) = e.post("/compat/firecrawl/v2/crawl", &body).await;
+    let (s, h, v) = e.post("/compat/v2/crawl", &body).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["success"], true);
     let id = v["id"].as_str().unwrap();
     assert!(v["url"]
         .as_str()
         .unwrap()
-        .ends_with(&format!("/compat/firecrawl/v2/crawl/{id}")));
+        .ends_with(&format!("/compat/v2/crawl/{id}")));
     assert!(h.contains_key("x-request-id"));
     let warnings: Vec<(&str, &str)> = v["warnings"]
         .as_array()
@@ -114,10 +114,7 @@ async fn compat_create_maps_firecrawl_options() {
 
     // the unset default keeps every query string distinct
     let (_, _, v) = e
-        .post(
-            "/compat/firecrawl/v2/crawl",
-            &json!({"url": "https://docs.example.test/"}),
-        )
+        .post("/compat/v2/crawl", &json!({"url": "https://docs.example.test/"}))
         .await;
     let run = e
         .store
@@ -128,13 +125,10 @@ async fn compat_create_maps_firecrawl_options() {
 }
 
 #[tokio::test]
-async fn compat_errors_use_the_firecrawl_shape_and_report_every_violation() {
+async fn compat_errors_use_the_compat_shape_and_report_every_violation() {
     let e = env();
     let (s, _, v) = e
-        .post(
-            "/compat/firecrawl/v2/crawl",
-            &json!({"limit": 0, "sitemap": "weird"}),
-        )
+        .post("/compat/v2/crawl", &json!({"limit": 0, "sitemap": "weird"}))
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     assert_eq!(v["success"], false);
@@ -144,20 +138,18 @@ async fn compat_errors_use_the_firecrawl_shape_and_report_every_violation() {
     assert!(v["requestId"].is_string());
 
     let (s, _, v) = e
-        .post("/compat/firecrawl/v2/crawl", &json!({"url": "http://localhost/"}))
+        .post("/compat/v2/crawl", &json!({"url": "http://localhost/"}))
         .await;
     assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
     assert_eq!(v["code"], "UNSUPPORTED_SITE", "{v}");
 
-    let (s, _, v) = e
-        .get(&format!("/compat/firecrawl/v2/crawl/{}", CrawlRunId::new()))
-        .await;
+    let (s, _, v) = e.get(&format!("/compat/v2/crawl/{}", CrawlRunId::new())).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert_eq!(v["success"], false);
     let (s, _, _) = e
         .send(
             Method::POST,
-            "/compat/firecrawl/v2/crawl",
+            "/compat/v2/crawl",
             None,
             &[],
             Some(&json!({"url": "https://a.example.test/"})),
@@ -171,15 +163,15 @@ async fn compat_status_cancel_errors_and_idempotency_alias() {
     let e = env();
     let h = [("x-idempotency-key", "fc-1")];
     let body = json!({"url": "https://docs.example.test/", "limit": 10});
-    let (s, _, v1) = e.post_with("/compat/firecrawl/v2/crawl", &h, &body).await;
+    let (s, _, v1) = e.post_with("/compat/v2/crawl", &h, &body).await;
     assert_eq!(s, StatusCode::OK, "{v1}");
-    let (s, h2, v2) = e.post_with("/compat/firecrawl/v2/crawl", &h, &body).await;
+    let (s, h2, v2) = e.post_with("/compat/v2/crawl", &h, &body).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(h2["idempotent-replayed"], "true");
     assert_eq!(v1["id"], v2["id"]);
     let id = v1["id"].as_str().unwrap().to_owned();
     let run_id: CrawlRunId = id.parse().unwrap();
-    let uri = format!("/compat/firecrawl/v2/crawl/{id}");
+    let uri = format!("/compat/v2/crawl/{id}");
 
     // queued -> scraping
     let (s, _, v) = e.get(&uri).await;
@@ -197,7 +189,7 @@ async fn compat_status_cancel_errors_and_idempotency_alias() {
     assert_eq!(v["terminalReason"], Value::Null);
     assert!(v["counters"]["urls"].is_object());
 
-    // pages show up as Firecrawl documents, with `next` pagination
+    // pages show up as the compat API documents, with `next` pagination
     e.store
         .set_status(run_id, RunStatus::Running, None)
         .await
@@ -249,7 +241,7 @@ async fn compat_status_cancel_errors_and_idempotency_alias() {
     );
     let next = v["next"].as_str().unwrap();
     assert!(
-        next.contains("/compat/firecrawl/v2/crawl/") && next.contains("cursor="),
+        next.contains("/compat/v2/crawl/") && next.contains("cursor="),
         "{next}"
     );
     let (_, _, v) = e.get(next).await;
@@ -333,14 +325,11 @@ async fn compat_status_cancel_errors_and_idempotency_alias() {
         (RunStatus::Failed, TerminalReason::FatalError, "failed"),
     ] {
         let (_, _, c) = e
-            .post(
-                "/compat/firecrawl/v2/crawl",
-                &json!({"url": "https://docs.example.test/"}),
-            )
+            .post("/compat/v2/crawl", &json!({"url": "https://docs.example.test/"}))
             .await;
         let rid: CrawlRunId = c["id"].as_str().unwrap().parse().unwrap();
         e.store.set_status(rid, st, Some(reason)).await.unwrap();
-        let (_, _, v) = e.get(&format!("/compat/firecrawl/v2/crawl/{rid}")).await;
+        let (_, _, v) = e.get(&format!("/compat/v2/crawl/{rid}")).await;
         assert_eq!(v["status"], want);
         assert_eq!(v["terminalReason"], reason.as_str());
     }
@@ -351,12 +340,12 @@ async fn compat_zdr_runs_return_no_data() {
     let e = env();
     let (_, _, c) = e
         .post(
-            "/compat/firecrawl/v2/crawl",
+            "/compat/v2/crawl",
             &json!({"url": "https://docs.example.test/", "zeroDataRetention": true}),
         )
         .await;
     let id = c["id"].as_str().unwrap();
-    let (s, _, v) = e.get(&format!("/compat/firecrawl/v2/crawl/{id}")).await;
+    let (s, _, v) = e.get(&format!("/compat/v2/crawl/{id}")).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(v["data"], json!([]));
 }

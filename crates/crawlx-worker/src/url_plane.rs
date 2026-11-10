@@ -3,7 +3,7 @@
 //! `(depth, id)` order and links are discovered in document order, so a rerun with the same
 //! seed against the same site yields the same page set.
 //!
-//! Runs that carry a Firecrawl scrape job (`CreateCrawl::scrape`, not a `map`) hand every
+//! Runs that carry a compatibility-API scrape job (`CreateCrawl::scrape`, not a `map`) hand every
 //! page to the [`ScrapeEngine`]; `scrape_plane` holds that variant of the page loop.
 
 #[path = "discovery.rs"]
@@ -12,7 +12,7 @@ mod protocol_plane;
 mod scrape_plane;
 
 /// The configuration the URL plane of a run executes with, which decides what the run's
-/// `robots.txt` gate honours (`safety.respectRobotsTxt` after the adaptation of Firecrawl's
+/// `robots.txt` gate honours (`safety.respectRobotsTxt` after the adaptation of the compatibility API's
 /// `scrape` and `batch` jobs, which fetch exactly the URLs they are given).
 pub(crate) fn effective_crawl(crawl: CreateCrawl) -> CreateCrawl {
     scrape_plane::adapt(crawl)
@@ -21,14 +21,14 @@ pub(crate) fn effective_crawl(crawl: CreateCrawl) -> CreateCrawl {
 use crate::authorization::AuthorizationGuard;
 use crate::counters::{Attempt, Plane, RunCounters};
 use crate::error::WorkerError;
-use crate::katana::form_ai::FormAi;
-use crate::katana::resume::{ResumeEntry, ResumeState};
-use crate::katana::traffic_export::{Exchange, TrafficExporter};
 use crate::robots_gate::{RobotsDecision, RobotsGate};
 use crate::routes::RouteLearner;
 use crate::run::RunContext;
 use crate::runtime::CpuPool;
 use crate::scrape::ScrapeEngine;
+use crate::surface::form_ai::FormAi;
+use crate::surface::resume::{ResumeEntry, ResumeState};
+use crate::surface::traffic_export::{Exchange, TrafficExporter};
 use crawlx_core::config::{
     CrawlMode, KnownFile, OutputFormat, PageType, QueryPolicy, RetentionMode, SimilarityMode, SitemapMode,
 };
@@ -241,7 +241,7 @@ pub enum DynamicSignal {
     ModuleScripts,
     /// Two or more `href="#/…"` / `href="#!/…"` links.
     HashRoutes,
-    /// Inline scripts issue several `fetch`/`XMLHttpRequest`/`axios`/`$.ajax` calls.
+    /// Inline scripts issue several `fetch`/`XMLHttpRequest`/`$.ajax` calls or use common HTTP client libraries.
     XhrHeavy,
     /// Many interactive controls relative to the amount of text (an application screen).
     InteractiveControlsHeavy,
@@ -310,7 +310,7 @@ static PATTERNS: std::sync::LazyLock<Option<SignalPatterns>> = std::sync::LazyLo
         external_script: Regex::new(r#"(?i)<script[^>]*\bsrc\s*=\s*["']?[^"'\s>]+"#).ok()?,
         module: Regex::new(r#"(?i)<script[^>]*\btype\s*=\s*["']?module\b"#).ok()?,
         hash: Regex::new(r##"(?i)\bhref\s*=\s*["']#!?/"##).ok()?,
-        xhr: Regex::new(r"(?i)\bfetch\s*\(|new\s+XMLHttpRequest\b|\baxios\s*[.(]|\$\.ajax\s*\(|\$\.(get|post)\s*\(")
+        xhr: Regex::new(r"(?i)\bfetch\s*\(|new\s+XMLHttpRequest\b|\baxios\s*[.(]|\$\.ajax\s*\(|\$\.(get|post)\s*\(") // wire-compat: script markers matched on target pages
             .ok()?,
         control: Regex::new(
             r#"(?i)<(button|select|textarea|input)\b|\brole\s*=\s*["']?(button|tab|menuitem|switch|checkbox|combobox)\b|\bonclick\s*=|\bcontenteditable\b"#,
@@ -419,7 +419,7 @@ impl DynamicClassifier {
     }
 }
 
-/// How a frontier URL was found (katana `Request.Tag/Attribute/Source`), kept in memory
+/// How a frontier URL was found (the request tag/attribute/source triple), kept in memory
 /// per frontier id and written to `pages.metadata.request` when the page is fetched.
 #[derive(Clone, Debug)]
 struct RequestSource {
@@ -528,7 +528,7 @@ pub struct UrlPlaneRunner {
     admission_browser: Option<crate::pool::BrowserPool>,
     /// Published only after its versioned decision has reached the event trail.
     admission_ceiling: std::sync::atomic::AtomicU32,
-    /// The scrape engine of a Firecrawl scrape job (`crawl`, `batch` or `scrape`); `None` for
+    /// The scrape engine of a compatibility-API scrape job (`crawl`, `batch` or `scrape`); `None` for
     /// every other run, whose pages are fetched and extracted as usual.
     pub(crate) scrape: Option<ScrapeEngine>,
     protocol_browser: Option<ScrapeEngine>,
@@ -604,7 +604,7 @@ impl UrlPlaneRunner {
         let scope = ScopePolicy::new(&crawl)?;
         let budget = Budget::new(&crawl.limits, deps.clock.now())
             .with_max_pages_per_host(crawl.scope.max_pages_per_host);
-        // one gate decides for this plane and, through `with_katana_services`, for the run's
+        // one gate decides for this plane and, through `with_surface_services`, for the run's
         // browser plane too
         let robots = RobotsGate::for_crawl(&crawl, Arc::clone(&fetcher), Arc::clone(&deps.clock));
         let custom_fields =
@@ -809,7 +809,7 @@ impl UrlPlaneRunner {
     /// Use the run's operator-level services: the traffic exporter, the form-field decider
     /// and the secret validators (replacing the embedded list, which lists no provider).
     #[must_use]
-    pub fn with_katana_services(mut self, rc: &RunContext) -> Self {
+    pub fn with_surface_services(mut self, rc: &RunContext) -> Self {
         self.traffic.clone_from(&rc.traffic_export);
         self.request_identity_key = rc.request_identity_key.clone();
         self.captcha_secrets = Some(rc.captcha_secrets.clone());
@@ -838,7 +838,7 @@ impl UrlPlaneRunner {
         self
     }
 
-    /// Continue a stopped run (katana `-resume`): the URLs in `state.visited` are never
+    /// Continue a stopped run (the `-resume` compatibility flag): the URLs in `state.visited` are never
     /// fetched or discovered again, and [`Self::seed`] discovers `state.pending` at its
     /// depths instead of enumerating sitemaps and robots paths again.
     pub fn seed_resume(&self, state: &ResumeState) {
@@ -3225,7 +3225,7 @@ impl UrlPlaneRunner {
         Ok(())
     }
 
-    /// `scope.pathClimb` (katana `-pc`): when `child` is in scope, also discover its parent
+    /// `scope.pathClimb` (the `-pc` compatibility flag): when `child` is in scope, also discover its parent
     /// directories (`/a/b/c.html` gives `/a/b/`, `/a/`, `/`) at the child's `depth`. Each
     /// parent passes scope, robots and dedupe like any other discovery.
     async fn climb(
@@ -3573,7 +3573,7 @@ impl UrlPlaneRunner {
     }
 
     /// `extract.formFill`: every static form of the page as the request a user would send
-    /// (katana `-aff`). Fields the deterministic filler could not resolve go to the
+    /// (the `-aff` compatibility flag). Fields the deterministic filler could not resolve go to the
     /// operator's [`FormAi`] when there is one, and the form is filled a second time with its
     /// answers. A GET form becomes a fetchable endpoint; any other method is only recorded.
     /// Field values are never logged.

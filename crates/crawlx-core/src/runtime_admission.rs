@@ -69,9 +69,11 @@ pub enum PacingDialectV1 {
     #[default]
     Native,
     /// Mean of old spacing and latency divided by advisory concurrency.
-    ScrapyAutothrottleV1,
+    #[serde(rename = "latency-target-v1")]
+    LatencyTargetThrottleV1,
     /// Coalesced two-second exponential 429 cooldown, capped at sixty seconds.
-    CrawleePythonThrottleV1,
+    #[serde(rename = "adaptive-concurrency-v1")]
+    AdaptiveConcurrencyThrottleV1,
 }
 /// Constant-size sample. Missing values are unknown, never zero load.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

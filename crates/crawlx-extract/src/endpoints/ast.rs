@@ -1,9 +1,9 @@
-//! JavaScript AST endpoint pass (katana `-jsl`, feature `js-ast`).
+//! JavaScript AST endpoint pass (compatibility flag `-jsl`, feature `js-ast`).
 //!
 //! The regex pass of [`super::script`] only sees quoted strings of a known
 //! shape. This pass parses the script with `oxc` and reads the request
-//! sites themselves, the way BishopFox's jsluice does (the matcher list is
-//! jsluice's; the implementation is independent):
+//! sites themselves, the way dedicated JavaScript request-site scanners do (the matcher list
+//! follows theirs; the implementation is independent):
 //!
 //! * `fetch(url, {method, headers, body})`, `new Request(url, opts)`;
 //! * `axios(cfg | url)`, `axios.<method>(url, data?, cfg?)`, `axios.request(cfg)`,
@@ -343,7 +343,7 @@ fn normalize(pattern: &str) -> Option<String> {
     Some(p.to_owned())
 }
 
-/// A string value that looks like a URL or path on its own (jsluice's
+/// A string value that looks like a URL or path on its own (the reference
 /// string-literal matcher, narrowed: no whitespace, no markup or code
 /// characters, something after the prefix).
 fn url_like(value: &str) -> bool {

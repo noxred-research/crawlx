@@ -1,4 +1,4 @@
-//! Monitor schedules: the Firecrawl `MonitorSchedule` request object (`{cron | text, timezone}`)
+//! Monitor schedules: the compatibility API's `MonitorSchedule` request object (`{cron | text, timezone}`)
 //! parsed into a [`Schedule`] that answers "when is the next run after this instant".
 //!
 //! # Request form

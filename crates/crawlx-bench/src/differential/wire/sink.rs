@@ -3,7 +3,7 @@
 //! order) per label and can answer the first deliveries of a label with an error status to
 //! observe retry behavior.
 //!
-//! The sink listens on a port the system can reach: for the Firecrawl containers
+//! The sink listens on a port the system can reach: for the upstream containers
 //! `0.0.0.0:PORT`, addressed as `http://gym.test:PORT/hook/<label>` (the compose alias of the
 //! host gateway), for an in-process facade `127.0.0.1:PORT`.
 

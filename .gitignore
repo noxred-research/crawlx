@@ -26,8 +26,8 @@ rustc-ice-*.txt
 .cargo/config.toml
 crawlx-artifacts/
 
-# differential harness: unmodified AGPL Firecrawl checkout and run output (bench/differential/README.md)
-bench/differential/.firecrawl-src/
+# differential harness: unmodified AGPL upstream checkout and run output (bench/differential/README.md)
+bench/differential/.upstream-src/
 bench/differential/out/
 
 # cargo-fuzz workspace: build output, crash artifacts and coverage; the seed

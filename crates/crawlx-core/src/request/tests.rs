@@ -85,7 +85,7 @@ fn exported_custom_key_is_opaque_authoritative_but_remains_principal_scoped() {
     let tenant = TenantId::new();
     let run = CrawlRunId::new();
     let mut request = RequestEnvelopeV1::get(url("https://example.test/one"), 0, None);
-    request.dialect = IdentityDialectV1::CrawleeJs3_18;
+    request.dialect = IdentityDialectV1::JsActor318;
     request.source_key = Some(Digest::keyed(&[7; 32], "test", b"custom-secret-key"));
     let one = request
         .identity(tenant, run, "anonymous", &BTreeMap::new(), 1)
@@ -153,7 +153,7 @@ fn pinned_dialects_are_distinct_repeatable_and_never_keep_raw_source_keys() {
 }
 #[test]
 fn python_always_enqueue_is_bounded_deterministic_and_conflicts_with_explicit_key() {
-    let mut source = json!({"version":1,"source":{"dialect":"crawlee_python_1_11","release":"1.11.0", "commit":import::SOURCE_PINS[1].2},
+    let mut source = json!({"version":1,"source":{"dialect":"py_actor_1_11","release":"1.11.0", "commit":import::SOURCE_PINS[1].2},
         "requests":[{"url":"https://example.test/","sourceKey":"same","alwaysEnqueue":true},
                     {"url":"https://example.test/","sourceKey":"same","alwaysEnqueue":true}]});
     let batch_id = Digest::keyed(&[1; 32], "test/import-batch", b"one");
@@ -176,7 +176,7 @@ fn importer_rejects_code_opaque_objects_unknown_keys_and_incorrect_pins() {
     for bytes in [b"pickle".as_slice(), b"import os", b"{\"callback\":\"eval\"}"] {
         assert!(import::decode_export(bytes, &[1; 32], batch_id, |raw| Ok(url(raw.as_str()))).is_err());
     }
-    let source = json!({"version":1,"source":{"dialect":"scrapy_2_19","release":"2.19.0","commit":"wrong"},"requests":[]});
+    let source = json!({"version":1,"source":{"dialect":"python_spider_2_19","release":"2.19.0","commit":"wrong"},"requests":[]});
     assert!(matches!(
         import::decode_export(&serde_json::to_vec(&source).unwrap(), &[1; 32], batch_id, |raw| {
             Ok(url(raw.as_str()))

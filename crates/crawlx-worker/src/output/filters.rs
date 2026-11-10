@@ -1,13 +1,13 @@
-//! Output filters (katana `-mr`, `-fr`, `-em`, `-ef`).
+//! Output filters (the `-mr`, `-fr`, `-em` and `-ef` compatibility flags).
 //!
-//! Semantics from katana `pkg/output/output.go` (`Write`, `matchOutput`, `filterOutput`) at
+//! Semantics from an MIT-licensed upstream (`Write`, `matchOutput`, `filterOutput`; see THIRD_PARTY_NOTICES.md) at
 //! commit `9662cd7b60ba1bc3a88232433ddefc4f48a65bfe` (MIT): the extension filter is checked
 //! on the URL path first; then the result is kept only when any match regex matches (when
-//! match regexes are given) and dropped when any filter regex matches. Katana tests its
+//! match regexes are given) and dropped when any filter regex matches. The upstream tests its
 //! regexes against the request URL; here they are tested against the URL and against the
 //! rendered line, so a filter can also select on a field or template value.
 //!
-//! A `-mdc` / `-fdc` condition ([`super::Dsl`]) joins the regexes exactly as in katana: a
+//! A `-mdc` / `-fdc` condition ([`super::Dsl`]) joins the regexes exactly as in the reference: a
 //! result matches when any match regex hits **or** the match condition holds (when neither
 //! is configured everything matches), and is filtered when any filter regex hits **or** the
 //! filter condition holds. [`OutputFilters::accept_with`] takes the evaluated conditions.
@@ -102,7 +102,7 @@ fn split_list(value: &str) -> Result<Vec<String>, FilterError> {
         .collect())
 }
 
-/// Expand `-mr` / `-fr` arguments the way katana's `goflags` file-or-list slice does: a
+/// Expand `-mr` / `-fr` arguments the way the reference tool's file-or-list slice does: a
 /// value naming an existing file stands for the file's lines (blank lines and `#` comment
 /// lines are skipped), any other value is split on commas outside quotes. A pattern that
 /// needs a literal comma is quoted (`'a{1,3}'`) or put in a file.
@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn conditions_join_the_regexes_like_katana() {
+    fn conditions_join_the_regexes_like_the_reference() {
         let u = url("https://e.com/a");
         // a match condition alone decides
         let f = OutputFilters::default();

@@ -1,5 +1,5 @@
-//! Record, replay and call-cap wrapper around any [`LlmExtractor`] (katana
-//! `-ai-record`, `-ai-replay`, `-ai-max-calls`).
+//! Record, replay and call-cap wrapper around any [`LlmExtractor`] (the `-ai-record`,
+//! `-ai-replay` and `-ai-max-calls` compatibility flags).
 //!
 //! [`RecordingLlm`] overrides only [`LlmExtractor::complete`], so every product method layered on
 //! it (`json`, `summary`, ...) is covered. It runs in one of three [`CacheMode`]s:
@@ -117,7 +117,7 @@ impl CallCap {
         }
     }
 
-    /// Katana's `-ai-max-calls` convention: `0` means unlimited, any other value is the limit.
+    /// The `-ai-max-calls` convention: `0` means unlimited, any other value is the limit.
     #[must_use]
     pub const fn from_flag(max_calls: u64) -> Self {
         if max_calls == 0 {

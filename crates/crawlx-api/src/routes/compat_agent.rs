@@ -1,4 +1,4 @@
-//! Firecrawl v2 `agent` endpoints of the compat facade: `POST /agent` starts a run
+//! compat v2 `agent` endpoints of the compat facade: `POST /agent` starts a run
 //! ([`crate::intel::agent`]), `GET /agent` lists the tenant's runs, `GET|DELETE /agent/{jobId}`
 //! report and cancel one, `GET /agent/{jobId}/trace` pages its execution events and
 //! `GET /agent/{jobId}/snapshots/{snapshotId}` returns a working artifact.
@@ -25,7 +25,7 @@ use crawlx_storage::{JobKind, JobPatch, JobRecord, JobStatus};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-/// Agents per page of `GET /agent` unless `limit` says otherwise (Firecrawl pages are fixed at 20).
+/// Agents per page of `GET /agent` unless `limit` says otherwise (the compat API pages are fixed at 20).
 pub const LIST_PAGE: u32 = 20;
 /// Most agents one `GET /agent` page returns.
 pub const LIST_MAX: u32 = 100;
@@ -38,64 +38,61 @@ pub const TRACE_MAX: u32 = 1000;
 pub const OPERATIONS: &[Operation] = &[
     (
         "post",
-        "/compat/firecrawl/v2/agent",
-        "firecrawlStartAgent",
-        "Firecrawl v2 agent: start a run (prompt, urls, schema, maxCredits, effort, webhook, threadId, exchange, zeroDataRetention)",
+        "/compat/v2/agent",
+        "compatStartAgent",
+        "compat v2 agent: start a run (prompt, urls, schema, maxCredits, effort, webhook, threadId, exchange, zeroDataRetention)",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/agent",
-        "firecrawlListAgents",
-        "Firecrawl v2 agent: list the tenant's runs, newest first (before, limit, skip)",
+        "/compat/v2/agent",
+        "compatListAgents",
+        "compat v2 agent: list the tenant's runs, newest first (before, limit, skip)",
         "crawls:read",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/agent/{jobId}",
-        "firecrawlGetAgent",
-        "Firecrawl v2 agent: run status, data, stopReason, creditsUsed, tokensUsed and expiresAt",
+        "/compat/v2/agent/{jobId}",
+        "compatGetAgent",
+        "compat v2 agent: run status, data, stopReason, creditsUsed, tokensUsed and expiresAt",
         "crawls:read",
         "200",
     ),
     (
         "delete",
-        "/compat/firecrawl/v2/agent/{jobId}",
-        "firecrawlCancelAgent",
-        "Firecrawl v2 agent: cancel a running run",
+        "/compat/v2/agent/{jobId}",
+        "compatCancelAgent",
+        "compat v2 agent: cancel a running run",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/agent/{jobId}/trace",
-        "firecrawlGetAgentTrace",
-        "Firecrawl v2 agent: execution trace events (after, limit)",
+        "/compat/v2/agent/{jobId}/trace",
+        "compatGetAgentTrace",
+        "compat v2 agent: execution trace events (after, limit)",
         "crawls:read",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/agent/{jobId}/snapshots/{snapshotId}",
-        "firecrawlGetAgentSnapshot",
-        "Firecrawl v2 agent: a snapshot of fetched or produced content",
+        "/compat/v2/agent/{jobId}/snapshots/{snapshotId}",
+        "compatGetAgentSnapshot",
+        "compat v2 agent: a snapshot of fetched or produced content",
         "crawls:read",
         "200",
     ),
 ];
 
-/// Routes of this module, mounted under `/compat/firecrawl/v2` behind authentication.
+/// Routes of this module, mounted under `/compat/v2` behind authentication.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/compat/firecrawl/v2/agent", get(list).post(start))
-        .route("/compat/firecrawl/v2/agent/{jobId}", get(status).delete(cancel))
-        .route("/compat/firecrawl/v2/agent/{jobId}/trace", get(trace))
-        .route(
-            "/compat/firecrawl/v2/agent/{jobId}/snapshots/{snapshotId}",
-            get(snapshot),
-        )
+        .route("/compat/v2/agent", get(list).post(start))
+        .route("/compat/v2/agent/{jobId}", get(status).delete(cancel))
+        .route("/compat/v2/agent/{jobId}/trace", get(trace))
+        .route("/compat/v2/agent/{jobId}/snapshots/{snapshotId}", get(snapshot))
 }
 
 fn origin(headers: &HeaderMap) -> String {
@@ -136,7 +133,7 @@ fn is_zdr(job: &JobRecord) -> bool {
     job.request.get("zeroDataRetention").and_then(Value::as_bool) == Some(true)
 }
 
-/// `POST /compat/firecrawl/v2/agent`: `{success, id, threadId, threadTurn, warnings?}` once the run
+/// `POST /compat/v2/agent`: `{success, id, threadId, threadTurn, warnings?}` once the run
 /// is admitted; it continues in the background.
 ///
 /// # Errors
@@ -193,7 +190,7 @@ fn number_param(params: &Params, key: &str, default: u32, min: u32, max: u32) ->
     }
 }
 
-/// `GET /compat/firecrawl/v2/agent`: the tenant's runs, newest first. `before` (unix milliseconds,
+/// `GET /compat/v2/agent`: the tenant's runs, newest first. `before` (unix milliseconds,
 /// the cursor of `next`), `limit` (default 20, at most 100) and `skip` page the list.
 ///
 /// # Errors
@@ -229,17 +226,13 @@ pub async fn list(
         }
         obj.insert(
             "next".to_owned(),
-            json!(format!(
-                "{}/compat/firecrawl/v2/agent?{}",
-                origin(&headers),
-                q.finish()
-            )),
+            json!(format!("{}/compat/v2/agent?{}", origin(&headers), q.finish())),
         );
     }
     Ok(json_response(StatusCode::OK, &out))
 }
 
-/// `GET /compat/firecrawl/v2/agent/{jobId}`.
+/// `GET /compat/v2/agent/{jobId}`.
 ///
 /// `status` is `processing`, `completed`, `failed` or `cancelled`. A run that stopped at its
 /// credit limit is `failed` with `stopReason: "credit_limit_reached"` and the best-effort
@@ -303,7 +296,7 @@ async fn thread_resolution(
     st.resolutions.get(approval).cloned()
 }
 
-/// `DELETE /compat/firecrawl/v2/agent/{jobId}`: cancel a running run. The run stops at its next
+/// `DELETE /compat/v2/agent/{jobId}`: cancel a running run. The run stops at its next
 /// await point, the job becomes `cancelled` and `agent.cancelled` is delivered.
 ///
 /// # Errors
@@ -379,7 +372,7 @@ fn cancel_orphan(state: &AppState, tenant: TenantId, row: &JobRecord) {
     });
 }
 
-/// `GET /compat/firecrawl/v2/agent/{jobId}/trace`: canonical execution events. `after` (a stored
+/// `GET /compat/v2/agent/{jobId}/trace`: canonical execution events. `after` (a stored
 /// sequence number, the `seq` of an event) and `limit` (default 200, at most 1000) page the
 /// stored steps; `nextAfter` is set when more remain.
 ///
@@ -427,7 +420,7 @@ pub async fn trace(
     Ok(json_response(StatusCode::OK, &out))
 }
 
-/// `GET /compat/firecrawl/v2/agent/{jobId}/snapshots/{snapshotId}`.
+/// `GET /compat/v2/agent/{jobId}/snapshots/{snapshotId}`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`, `400` for a malformed job or snapshot id, `404` for

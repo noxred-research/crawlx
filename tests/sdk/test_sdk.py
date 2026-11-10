@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Drives the official `firecrawl-py` SDK against a live crawlx facade.
+"""Drives the official upstream Python SDK (`firecrawl-py`) against a live crawlx facade.
 
 Run by `crates/crawlx-cli/tests/sdk_python.rs`, which starts the facade, a worker, a fixture
 site, a mock LLM and a mock search backend, installs `requirements.txt` with
 `pip install --target` and sets:
 
-    CRAWLX_SDK_FACADE_URL    http://127.0.0.1:P/compat/firecrawl   (the facade as mounted)
-    CRAWLX_SDK_REWRITE_URL   http://127.0.0.1:Q                    (a `/v2/*` -> `/compat/firecrawl/v2/*` rewrite)
+    CRAWLX_SDK_FACADE_URL    http://127.0.0.1:P/compat   (the facade as mounted)
+    CRAWLX_SDK_REWRITE_URL   http://127.0.0.1:Q            (a `/v2/*` -> `/compat/v2/*` rewrite)
     CRAWLX_SDK_API_KEY       fc-...
     CRAWLX_SDK_SITE          http://site.example.test:PORT         (the fixture site)
 
@@ -41,7 +41,7 @@ def emit(method, ok, detail, **extra):
 
 
 def status_of(exc):
-    """The HTTP status a failed SDK call saw (v2 `FirecrawlError`, v1 `requests.HTTPError`)."""
+    """The HTTP status a failed SDK call saw (the SDK's typed v2 error, v1 `requests.HTTPError`)."""
     code = getattr(exc, "status_code", None)
     if code is None:
         code = getattr(getattr(exc, "response", None), "status_code", None)
@@ -80,8 +80,8 @@ def main():
     emit("sdk_version", True, f"firecrawl-py {version}", version=version)
 
     # --- the base URL the task names: `api_url` with a path -------------------------------------
-    # firecrawl-py joins the rooted path `/v2/scrape` onto `api_url` with urllib.parse.urljoin, which
-    # replaces the `/compat/firecrawl` prefix: the request goes to `/v2/scrape` on the facade host.
+    # The SDK joins the rooted path `/v2/scrape` onto `api_url` with urllib.parse.urljoin, which
+    # replaces the `/compat` prefix: the request goes to `/v2/scrape` on the facade host.
     direct = Firecrawl(api_key=KEY, api_url=FACADE)
     row("scrape@prefix_base_url", lambda: ("scraped", doc_facts(direct.scrape(f"{SITE}/", formats=["markdown"]))))
 
@@ -248,9 +248,9 @@ def main():
 
     row("get_token_usage", token_usage)
 
-    # --- LangChain: langchain-firecrawl's FirecrawlLoader (`FireCrawlLoader` is its alias) -----------
-    # The loader builds `firecrawl.Firecrawl(api_key, api_url)` and calls scrape / crawl / map /
-    # extract / search with `integration="langchain"`, so it shares the SDK's URL rule (needs the
+    # --- Framework loader built on the SDK client ---------------------------------------------------
+    # The loader builds the SDK client (`api_key`, `api_url`) and calls scrape / crawl / map /
+    # extract / search with an `integration` marker in the request body, so it shares the SDK's URL rule (needs the
     # `/v2/*` rewrite) and sends one more body field than the plain SDK rows above.
     def loader_docs(mode, url=None, **kwargs):
         from langchain_firecrawl import FirecrawlLoader
@@ -258,12 +258,12 @@ def main():
         docs = FirecrawlLoader(url, api_key=KEY, api_url=REWRITE, mode=mode, **kwargs).load()
         return "loaded", {"docs": [{"page_content": d.page_content, "metadata": d.metadata} for d in docs]}
 
-    row("langchain.scrape", lambda: loader_docs("scrape", f"{SITE}/", params={"formats": ["markdown"]}))
-    row("langchain.crawl", lambda: loader_docs("crawl", f"{SITE}/", params={"limit": 3, "poll_interval": 1, "timeout": POLL_DEADLINE_S}))
-    row("langchain.map", lambda: loader_docs("map", f"{SITE}/"))
-    row("langchain.search", lambda: loader_docs("search", query="fixture", params={"limit": 5}))
+    row("loader.scrape", lambda: loader_docs("scrape", f"{SITE}/", params={"formats": ["markdown"]}))
+    row("loader.crawl", lambda: loader_docs("crawl", f"{SITE}/", params={"limit": 3, "poll_interval": 1, "timeout": POLL_DEADLINE_S}))
+    row("loader.map", lambda: loader_docs("map", f"{SITE}/"))
+    row("loader.search", lambda: loader_docs("search", query="fixture", params={"limit": 5}))
     row(
-        "langchain.extract",
+        "loader.extract",
         lambda: loader_docs(
             "extract",
             f"{SITE}/",
@@ -273,13 +273,13 @@ def main():
     )
 
     # --- v1 names ----------------------------------------------------------------------------------
-    # `FirecrawlApp` is an alias of the unified `Firecrawl` client in this release; the v1 methods
-    # live on `Firecrawl(...).v1` (`V1FirecrawlApp`). v1 URLs are `{api_url}/v1/...` with plain string
-    # concatenation, so with the facade `api_url` they land on `/compat/firecrawl/v1/...`, which the
+    # The v1 client name is an alias of the unified client in this release; the v1 methods
+    # live on the client's `.v1` attribute. v1 URLs are `{api_url}/v1/...` with plain string
+    # concatenation, so with the facade `api_url` they land on `/compat/v1/...`, which the
     # facade does not serve.
     from firecrawl import FirecrawlApp
 
-    emit("FirecrawlApp_alias", FirecrawlApp is Firecrawl, f"FirecrawlApp is Firecrawl: {FirecrawlApp is Firecrawl}")
+    emit("v1_client_alias", FirecrawlApp is Firecrawl, f"v1 client name is the unified client: {FirecrawlApp is Firecrawl}")
     v1 = Firecrawl(api_key=KEY, api_url=FACADE).v1
     row("v1.scrape_url", lambda: ("scraped", {"result": str(v1.scrape_url(f"{SITE}/", formats=["markdown"]))}))
     row("v1.crawl_url", lambda: ("crawled", {"result": str(v1.crawl_url(f"{SITE}/", limit=2, poll_interval=1))}))

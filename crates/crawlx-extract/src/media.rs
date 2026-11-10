@@ -1,4 +1,4 @@
-//! The media files a page references, for the Firecrawl `audio` and `video` formats.
+//! The media files a page references, for the compatibility API `audio` and `video` formats.
 //!
 //! [`media_refs`] reads `<audio src>`, `<video src>`, the `<source>` elements inside them, the
 //! Open Graph `og:audio` / `og:video` meta tags, `<link rel="alternate" type="audio/..|video/..">`

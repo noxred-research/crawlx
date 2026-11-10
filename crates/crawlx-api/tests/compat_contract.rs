@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! SDK wire-contract test for the Firecrawl facade (level C0).
+//! SDK wire-contract test for the compat facade (level C0).
 //!
-//! The published MIT `firecrawl` crate (2.21.6) declares no cargo features and depends on
+//! The published MIT reference SDK crate (2.21.6) declares no cargo features and depends on
 //! `reqwest` with its default features, which pull `openssl-sys`; `deny.toml` bans that
 //! crate, so this test does not link the SDK. Instead the SDK's wire shapes are reproduced
 //! here as *data*: the endpoint set, the idempotency header name, the `JobStatus`,
@@ -130,7 +130,7 @@ struct ErrorEnvelope {
     error: String,
 }
 
-const MOUNT: &str = "/compat/firecrawl";
+const MOUNT: &str = "/compat";
 
 fn de<T: for<'de> Deserialize<'de>>(v: &Value) -> T {
     serde_json::from_value(v.clone()).unwrap_or_else(|e| panic!("{e}: {v}"))

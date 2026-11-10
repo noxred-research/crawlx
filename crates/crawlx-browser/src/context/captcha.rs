@@ -24,12 +24,12 @@ struct Widget {
 impl Widget {
     fn challenge(&self) -> Result<CaptchaChallenge, BrowserError> {
         let kind = match self.kind.as_str() {
-            "recaptcha_v2" => CaptchaKind::RecaptchaV2,
-            "recaptcha_v3" => CaptchaKind::RecaptchaV3,
-            "recaptcha_v2_enterprise" => CaptchaKind::RecaptchaV2Enterprise,
-            "recaptcha_v3_enterprise" => CaptchaKind::RecaptchaV3Enterprise,
-            "turnstile" => CaptchaKind::Turnstile,
-            "hcaptcha" => CaptchaKind::Hcaptcha,
+            "checkbox_v2" => CaptchaKind::CheckboxV2,
+            "score_v3" => CaptchaKind::ScoreV3,
+            "checkbox_v2_enterprise" => CaptchaKind::CheckboxV2Enterprise,
+            "score_v3_enterprise" => CaptchaKind::ScoreV3Enterprise,
+            "widget_t" => CaptchaKind::ChallengeWidgetT,
+            "widget_h" => CaptchaKind::ChallengeWidgetH,
             _ => return Err(CaptchaError::UnsupportedChallenge.into()),
         };
         let mut challenge = CaptchaChallenge::new(kind, self.website_url.clone(), self.site_key.clone());
@@ -192,7 +192,7 @@ impl CdpContext {
             .captcha
             .as_ref()
             .ok_or(CaptchaError::Configuration)?;
-        let client = crate::captcha::CapsolverClient::new(&credentials.config, credentials.key.clone())?;
+        let client = crate::captcha::TaskCaptchaClient::new(&credentials.config, credentials.key.clone())?;
         let widgets = self.captcha_widgets().await?;
         if widgets.is_empty() {
             return Err(CaptchaError::UnsupportedChallenge.into());
