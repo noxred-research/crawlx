@@ -9,7 +9,7 @@ Contents: [bounded source discovery](#bounded-source-discovery) ·
 [MCP server](#mcp-server) · [compatibility clients](#compatibility-clients) ·
 [compatibility flags](#compatibility-crawl-flags) · [JavaScript endpoint mining](#javascript-endpoint-mining) ·
 [wordlists](#wordlists-and-stored-fields) · [captcha solving](#captcha-solving) ·
-[proxy tiers and the pool gateway](#deployment-proxy-tiers-and-the-pool-gateway)
+[proxy tiers and the ProxyX pool gateway](#deployment-proxy-tiers-and-the-proxyx-pool-gateway)
 
 ## Bounded source discovery
 
@@ -255,7 +255,7 @@ Supported widgets are checkbox (v2) and score-based (v3) widgets with their ente
 
 Tests use controlled fixtures, not a live provider: `cargo test -p crawlx-browser --test captcha_transport`, `cargo test -p crawlx-browser --test captcha_widgets` (needs the pinned Chromium) and `cargo test -p crawlx-safety --test captcha`. An authorized operator smoke command is `CAPTCHA_SOLVER_PROVIDER=task-api CAPTCHA_SOLVER_KEY=... crawlx crawl https://controlled.example.test/challenge --mode dynamic --profile test_environment --limit-urls 1`; it needs a real provider account and a controlled target you are authorized to test.
 
-## Deployment proxy tiers and the pool gateway
+## Deployment proxy tiers and the ProxyX pool gateway
 
 A scrape selects a proxy tier per job (`proxy: basic | enhanced | auto`). The operator decides
 what each tier is, in configuration, never in the request:

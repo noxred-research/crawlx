@@ -355,9 +355,8 @@ async fn read_reply(mut response: reqwest::Response) -> Reply {
 
 /// Does a response carry the marker of an anti-bot challenge page?
 ///
-/// Looked at only for `403`/`503` answers: a CDN's `cf-mitigated: challenge` header, a
-/// `/sorry/` redirect, or well-known challenge phrases in the first bytes of the body. The marker
-/// strings are exact page tokens the challenge vendors emit (detection-data).
+/// Looked at only for `403`/`503` answers: a `cf-mitigated: challenge` response header, a
+/// `/sorry/` redirect, or well-known challenge phrases in the first bytes of the body.
 #[must_use]
 pub fn is_challenge(headers: &HeaderMap, body: &[u8]) -> bool {
     const PREFIX: usize = 16 * 1024;
