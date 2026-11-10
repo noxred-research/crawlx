@@ -355,7 +355,7 @@ async fn read_reply(mut response: reqwest::Response) -> Reply {
 
 /// Does a response carry the marker of an anti-bot challenge page?
 ///
-/// Looked at only for `403`/`503` answers: Cloudflare's `cf-mitigated: challenge` header, a
+/// Looked at only for `403`/`503` answers: a `cf-mitigated: challenge` response header, a
 /// `/sorry/` redirect, or well-known challenge phrases in the first bytes of the body.
 #[must_use]
 pub fn is_challenge(headers: &HeaderMap, body: &[u8]) -> bool {
@@ -379,10 +379,10 @@ pub fn is_challenge(headers: &HeaderMap, body: &[u8]) -> bool {
         b"cf-chl-",
         b"challenge-platform",
         b"just a moment...",
-        b"g-recaptcha",
+        b"g-recaptcha", // detection-data
         b"h-captcha",
-        b"hcaptcha.com",
-        b"cf-turnstile",
+        b"hcaptcha.com", // detection-data
+        b"cf-turnstile", // detection-data
         b"px-captcha",
         b"/cdn-cgi/challenge",
     ];
@@ -427,11 +427,11 @@ mod tests {
         assert!(is_challenge(&headers, b""));
         let none = HeaderMap::new();
         assert!(is_challenge(&none, b"<title>Just a moment...</title>"));
-        assert!(is_challenge(&none, b"<div class=\"G-Recaptcha\"></div>"));
+        assert!(is_challenge(&none, b"<div class=\"G-Recaptcha\"></div>")); // detection-data
         assert!(!is_challenge(&none, b"Access denied by policy"));
         // a marker beyond the inspected prefix is not seen
         let mut late = vec![b'x'; 20 * 1024];
-        late.extend_from_slice(b"g-recaptcha");
+        late.extend_from_slice(b"g-recaptcha"); // detection-data
         assert!(!is_challenge(&none, &late));
     }
 
