@@ -1,6 +1,6 @@
 //! Per-origin politeness: a concurrency semaphore plus a
 //! minimum spacing between request starts, adapting to `429`/`503` answers,
-//! and the katana-style rate limits: a global and a per-host
+//! and the compatibility-flag rate limits: a global and a per-host
 //! requests-per-second / requests-per-minute bucket ([`GlobalBucket`],
 //! [`HostBucket`]) and a global in-flight cap (`maxConcurrency`).
 //!
@@ -831,8 +831,8 @@ impl OriginGovernor {
         let dialect = self.dialect.lock().0;
         match status {
             429 | 503 => {
-                let python = dialect == PacingDialectV1::CrawleePythonThrottleV1 && status == 429;
-                let delay = if python {
+                let adaptive = dialect == PacingDialectV1::AdaptiveConcurrencyThrottleV1 && status == 429;
+                let delay = if adaptive {
                     self.origin_cap
                         .note_cooldown(origin, retry_after.unwrap_or_default(), true)
                 } else {
@@ -852,7 +852,7 @@ impl OriginGovernor {
                     delay
                 };
                 let mut p = state.pacing.lock();
-                if !python {
+                if !adaptive {
                     p.delay = delay.max(p.floor);
                 }
                 p.ok_streak = 0;
@@ -860,7 +860,7 @@ impl OriginGovernor {
                     p.next_allowed = p.next_allowed.max(until);
                 }
             }
-            200 if dialect != PacingDialectV1::ScrapyAutothrottleV1 => {
+            200 if dialect != PacingDialectV1::LatencyTargetThrottleV1 => {
                 let mut p = state.pacing.lock();
                 p.ok_streak = p.ok_streak.saturating_add(1);
                 if p.ok_streak >= self.cfg.decay_after {
@@ -874,7 +874,7 @@ impl OriginGovernor {
 
     /// Apply measured header latency and publish 429/503 feedback across workers.
     ///
-    /// Scrapy uses `(old + latency / target) / 2`, clamped to configured spacing.
+    /// The latency-target policy uses `(old + latency / target) / 2`, clamped to configured spacing.
     /// Non-200 responses and explicit `dont_adjust_delay` never accelerate traffic.
     /// Retry-After is a floor, not jittered or capped by the ordinary delay maximum.
     ///
@@ -890,7 +890,7 @@ impl OriginGovernor {
     ) -> Result<(), StoreError> {
         self.on_response(origin, status, retry_after);
         let (dialect, target) = *self.dialect.lock();
-        if dialect == PacingDialectV1::ScrapyAutothrottleV1 && !dont_adjust_delay {
+        if dialect == PacingDialectV1::LatencyTargetThrottleV1 && !dont_adjust_delay {
             if let Some(latency) = latency {
                 let state = self.state(origin);
                 let mut p = state.pacing.lock();
@@ -903,13 +903,16 @@ impl OriginGovernor {
             }
         }
         if matches!(status, 429 | 503) || retry_after.is_some() {
-            let python = dialect == PacingDialectV1::CrawleePythonThrottleV1 && status == 429;
-            let minimum = if python {
+            let adaptive = dialect == PacingDialectV1::AdaptiveConcurrencyThrottleV1 && status == 429;
+            let minimum = if adaptive {
                 retry_after.unwrap_or_default()
             } else {
                 self.current_delay(origin).max(retry_after.unwrap_or_default())
             };
-            let remaining = self.origin_cap.publish_cooldown(origin, minimum, python).await?;
+            let remaining = self
+                .origin_cap
+                .publish_cooldown(origin, minimum, adaptive)
+                .await?;
             let state = self.state(origin);
             let mut p = state.pacing.lock();
             if let Some(until) = Instant::now().checked_add(remaining) {
@@ -1054,10 +1057,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn scrapy_latency_mean_never_accelerates_non_200_or_ignored_samples() {
+    async fn latency_target_mean_never_accelerates_non_200_or_ignored_samples() {
         let g = OriginGovernor::new(cfg());
-        let o = origin("https://scrapy.test");
-        g.set_pacing_dialect(PacingDialectV1::ScrapyAutothrottleV1, 2);
+        let o = origin("https://latency-target.test");
+        g.set_pacing_dialect(PacingDialectV1::LatencyTargetThrottleV1, 2);
         g.on_response_with_latency(&o, 200, None, Some(Duration::from_secs(1)), false)
             .await
             .unwrap();
@@ -1073,10 +1076,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn python_429_wave_coalesces_and_retry_after_is_never_shortened() {
+    async fn adaptive_429_wave_coalesces_and_retry_after_is_never_shortened() {
         let g = OriginGovernor::new(cfg());
-        let o = origin("https://python.test");
-        g.set_pacing_dialect(PacingDialectV1::CrawleePythonThrottleV1, 1);
+        let o = origin("https://adaptive.test");
+        g.set_pacing_dialect(PacingDialectV1::AdaptiveConcurrencyThrottleV1, 1);
         for _ in 0..20 {
             g.on_response_with_latency(&o, 429, None, None, false)
                 .await
@@ -1103,10 +1106,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn python_quiet_window_resets_the_next_wave_to_two_seconds() {
+    async fn adaptive_quiet_window_resets_the_next_wave_to_two_seconds() {
         let g = OriginGovernor::new(cfg());
         let o = origin("https://quiet.test");
-        g.set_pacing_dialect(PacingDialectV1::CrawleePythonThrottleV1, 1);
+        g.set_pacing_dialect(PacingDialectV1::AdaptiveConcurrencyThrottleV1, 1);
         g.on_response_with_latency(&o, 429, None, None, false)
             .await
             .unwrap();
@@ -1279,7 +1282,7 @@ mod tests {
             g.on_response(&o, 200, None);
         }
         assert_eq!(g.current_delay(&o), Duration::from_secs(3));
-        g.set_pacing_dialect(PacingDialectV1::ScrapyAutothrottleV1, 1);
+        g.set_pacing_dialect(PacingDialectV1::LatencyTargetThrottleV1, 1);
         g.on_response_with_latency(&o, 200, None, Some(Duration::ZERO), false)
             .await
             .unwrap();

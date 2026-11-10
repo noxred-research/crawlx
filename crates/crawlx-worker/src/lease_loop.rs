@@ -674,7 +674,7 @@ async fn slot_for<'a>(
                     )?
                     .with_cpu_pool(rc.cpu_pool.clone())
                     .with_route_learner(rc.routes.clone())
-                    .with_katana_services(&rc)
+                    .with_surface_services(&rc)
                     .with_scrape_services(&rc, cfg)
                     .with_authorization(authorization.clone())
                     .with_graceful_drain(cancel.clone(), None),

@@ -2,7 +2,7 @@
 //!
 //! Three shapes, chosen by extension (otherwise by content):
 //!
-//! * `.yaml`/`.yml`: katana's configuration file. Every key is the long name of a `crawl`
+//! * `.yaml`/`.yml`: the compatibility configuration file. Every key is the long name of a `crawl`
 //!   flag (`field-scope: rdn`, `rate-limit: 50`, `crawl-scope: [a, b]`). The file is read
 //!   through the same parser as the command line, so values are validated exactly like
 //!   flags, and the result is a flag layer that command-line flags override.
@@ -22,7 +22,7 @@ use std::path::Path;
 /// A parsed configuration file.
 #[derive(Debug)]
 pub(crate) enum ConfigLayer {
-    /// A flag layer (katana-style YAML).
+    /// A flag layer (compatibility-style YAML).
     Flags(Box<CrawlArgs>),
     /// A `CreateCrawl` body, validated: every key is known.
     Crawl(Value),
@@ -371,14 +371,14 @@ mod tests {
     #[test]
     fn captcha_body_uses_typed_reference_only_configuration() {
         let value = body(
-            r#"{"crawl":{"captcha":{"provider":"capsolver","key_ref":"env://CAPTCHA_KEY",
+            r#"{"crawl":{"captcha":{"provider":"task-api","key_ref":"env://CAPTCHA_KEY",
                  "endpoint":"http://127.0.0.1:12345/","timeout_seconds":30,"poll_interval_ms":50}}}"#,
         )
         .unwrap();
-        assert_eq!(value["crawl"]["captcha"]["provider"], "capsolver");
+        assert_eq!(value["crawl"]["captcha"]["provider"], "task-api");
         assert!(body(r#"{"crawl":{"captcha":{"provider":"unknown","key_ref":"env://KEY"}}}"#).is_err());
         assert!(body(
-            r#"{"crawl":{"captcha":{"provider":"capsolver","key_ref":"env://KEY","key":"literal"}}}"#
+            r#"{"crawl":{"captcha":{"provider":"task-api","key_ref":"env://KEY","key":"literal"}}}"#
         )
         .is_err());
     }
@@ -389,7 +389,7 @@ mod tests {
         let path = dir.path().join("captcha.toml");
         std::fs::write(
             &path,
-            "[crawl.crawl.captcha]\nprovider = \"capsolver\"\nkey_ref = \"env://CAPTCHA_KEY\"\ntimeout_seconds = 30\npoll_interval_ms = 50\n",
+            "[crawl.crawl.captcha]\nprovider = \"task-api\"\nkey_ref = \"env://CAPTCHA_KEY\"\ntimeout_seconds = 30\npoll_interval_ms = 50\n",
         )
         .unwrap();
         let ConfigLayer::Crawl(value) = load(&path).unwrap() else {

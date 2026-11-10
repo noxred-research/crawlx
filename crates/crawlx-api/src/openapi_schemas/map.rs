@@ -68,7 +68,7 @@ pub(super) struct MapResponse {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     match id {
-        "firecrawlMap" => Some(
+        "compatMap" => Some(
             Spec::new(&[400, 403, 408, 413, 422])
                 .json::<MapRequest>("The site and the map options.")
                 .reply::<MapResponse>("200", "The links of the site."),

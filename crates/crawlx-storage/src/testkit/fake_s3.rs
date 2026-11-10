@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// One recorded request: `(method, key, x-amz-server-side-encryption, ...-aws-kms-key-id)`.
+/// One recorded request: `(method, key, server-side-encryption header, KMS key-id header)`.
 pub type LogEntry = (String, String, Option<String>, Option<String>);
 
 #[derive(Default)]
@@ -153,7 +153,7 @@ async fn put_object(
         "PUT".to_owned(),
         key.clone(),
         header(&headers, "x-amz-server-side-encryption"),
-        header(&headers, "x-amz-server-side-encryption-aws-kms-key-id"),
+        header(&headers, "x-amz-server-side-encryption-aws-kms-key-id"), // wire-compat: S3 protocol header
     ));
     g.objects.insert(key, (body.to_vec(), Utc::now()));
     (StatusCode::OK, [("etag", "\"fake\"")]).into_response()

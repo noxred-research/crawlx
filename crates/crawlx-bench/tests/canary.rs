@@ -11,7 +11,7 @@
 //!
 //! The scan also exercises the production scrape pipeline with text and structured formats,
 //! raw HTML/base64, real browser action captures and nested JavaScript returns. A deterministic
-//! HTTP provider fixture receives the real OpenAI adapter's requests; the summary request is
+//! HTTP provider fixture receives the real chat-completions adapter's requests; the summary request is
 //! checked byte-for-byte, and every provider prompt is scanned before any output is accepted.
 //!
 //! The test installs the process-global `tracing` subscriber and must stay the only test in
@@ -681,8 +681,8 @@ async fn canary_credential_reaches_no_store_sink_export_or_log() {
 
 fn provider_debug_never_exposes_credentials() {
     use crawlx_model::decision_http::{DecisionHttpConfig, DecisionHttpEngine};
-    use crawlx_model::llm::embeddings::{EmbeddingsConfig, OpenAiEmbeddings};
-    use crawlx_model::llm::openai::{LlmConfig, OpenAiCompatible};
+    use crawlx_model::llm::chat_completions::{ChatCompletionsClient, LlmConfig};
+    use crawlx_model::llm::embeddings::{EmbeddingsConfig, HttpEmbeddings};
     use crawlx_model::{HttpPlanner, HttpPlannerConfig, ModelId};
 
     let endpoint = format!("https://user:{CANARY_PASSWORD}@example.test/v1?token={CANARY_QUERY}");
@@ -706,8 +706,8 @@ fn provider_debug_never_exposes_credentials() {
         format!("{embeddings:?}"),
         format!("{:?}", DecisionHttpEngine::new(decision).unwrap()),
         format!("{:?}", HttpPlanner::new(planner).unwrap()),
-        format!("{:?}", OpenAiCompatible::new(llm).unwrap()),
-        format!("{:?}", OpenAiEmbeddings::new(embeddings).unwrap()),
+        format!("{:?}", ChatCompletionsClient::new(llm).unwrap()),
+        format!("{:?}", HttpEmbeddings::new(embeddings).unwrap()),
     ];
     let mut hits = Vec::new();
     for value in debug {
@@ -721,7 +721,7 @@ async fn scrape_canary(fake_s3: &FakeS3, hits: &mut Vec<String>) {
     use crawlx_bench::worker_exec::{authorize_fixture, crawl_request_for_url, worker_config_with};
     use crawlx_core::repo::PageRepo;
     use crawlx_core::scrape::{JobKind, ScrapeDocument, ScrapeJob, ScrapeOptions};
-    use crawlx_model::llm::openai::{LlmConfig, OpenAiCompatible};
+    use crawlx_model::llm::chat_completions::{ChatCompletionsClient, LlmConfig};
 
     let captured = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
     let requests = Arc::clone(&captured);
@@ -750,7 +750,7 @@ async fn scrape_canary(fake_s3: &FakeS3, hits: &mut Vec<String>) {
                 let requests = Arc::clone(&requests);
                 async move {
                     requests.lock().push(body.to_vec());
-                    // Deterministic HTTP provider fixture; the real OpenAI adapter serializes
+                    // Deterministic HTTP provider fixture; the real chat-completions adapter serializes
                     // and sends every request, and parses every response.
                     let value = json!({
                         "summary": format!("safe summary {CANARY_PASSWORD}"),
@@ -817,7 +817,7 @@ async fn scrape_canary(fake_s3: &FakeS3, hits: &mut Vec<String>) {
         let mut cfg = worker_config_with(crawlx_url::TrailingSlash::Keep, dir.path()).unwrap();
         cfg.gates = crawlx_worker::Gates::from_status(crawlx_core::gates::GateStatus::ALL);
         cfg.llm = Some(Arc::new(
-            OpenAiCompatible::new(LlmConfig::new(&format!("{base}/v1"), "canary")).unwrap(),
+            ChatCompletionsClient::new(LlmConfig::new(&format!("{base}/v1"), "canary")).unwrap(),
         ));
         let memory = Arc::new(MemoryStore::new());
         let mut stores = Stores::over_memory(memory.clone(), dir.path()).await.unwrap();

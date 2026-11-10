@@ -1,4 +1,4 @@
-//! The Firecrawl `attributes` format: attribute values of the elements a CSS selector matches.
+//! The compatibility API `attributes` format: attribute values of the elements a CSS selector matches.
 //!
 //! [`attributes`] answers every requested `{selector, attribute}` pair with an
 //! [`AttributeResult`] whose `values` are the attribute values of the matching elements in

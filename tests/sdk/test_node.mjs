@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Drives the official Firecrawl Node SDK (`firecrawl` 4.51.0) and the `firecrawl` CLI
-// (`firecrawl-cli` 1.26.24, the tool the agent skills of `npx firecrawl-cli init` call) against a
+// Drives the official upstream Node SDK (npm package `firecrawl` 4.51.0) and its CLI
+// (npm package `firecrawl-cli` 1.26.24, the tool its agent skills call) against a
 // live crawlx facade. Run by crates/crawlx-cli/tests/sdk_python.rs after `npm ci` of package.json.
 //
-//   CRAWLX_SDK_FACADE_URL  http://127.0.0.1:P/compat/firecrawl   (the facade as mounted)
+//   CRAWLX_SDK_FACADE_URL  http://127.0.0.1:P/compat   (the facade as mounted)
 //   CRAWLX_SDK_API_KEY     fc-...
 //   CRAWLX_SDK_SITE        http://site.example.test:PORT         (the fixture site)
 //   CRAWLX_SDK_CLI         path of node_modules/firecrawl-cli/dist/index.js
 //
-// Unlike firecrawl-py, the Node SDK joins `/v2/...` onto `apiUrl` by string concatenation (axios
-// `baseURL`), so the `/compat/firecrawl` prefix survives and no rewrite is needed.
+// Unlike the Python SDK, the Node SDK joins `/v2/...` onto `apiUrl` by string concatenation (axios
+// `baseURL`), so the `/compat` prefix survives and no rewrite is needed.
 //
 // One JSON line per row on stdout: {"method", "ok", "detail", ...extra} (same shape as test_sdk.py).
 
@@ -111,39 +111,39 @@ await row("node.batchScrape", async () => {
   return [`batch ${job.status}`, { status: job.status, total: job.total, markdown: bySource(job.data) }];
 });
 
-// the `firecrawl` CLI: HOME and the current directory are throwaway (it keeps credentials in
-// `~/.config` and writes results to `.firecrawl/`), no browser login is attempted because an
+// the upstream CLI: HOME and the current directory are throwaway (it keeps credentials in
+// `~/.config` and writes its results to a dot directory), no browser login is attempted because an
 // explicit --api-key and --api-url are given
 const cli = (args) =>
   run(process.execPath, [CLI, "--api-url", FACADE, "--api-key", KEY, ...args], {
-    env: { ...process.env, FIRECRAWL_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
+    env: { ...process.env, FIRECRAWL_NO_UPDATE_CHECK: "1", NO_COLOR: "1" }, // wire-compat: env var read by the external CLI
     timeout: 180_000,
     maxBuffer: 16 * 1024 * 1024,
   });
 
 await row("cli.scrape", async () => {
   const { stdout } = await cli(["scrape", `${SITE}/`, "--format", "markdown,links", "--json"]);
-  return ["firecrawl scrape", { stdout }];
+  return ["cli scrape", { stdout }];
 });
 
 await row("cli.map", async () => {
   const { stdout } = await cli(["map", `${SITE}/`, "--json"]);
-  return ["firecrawl map", { stdout }];
+  return ["cli map", { stdout }];
 });
 
 await row("cli.search", async () => {
   const { stdout } = await cli(["search", "fixture", "--limit", "5", "--json"]);
-  return ["firecrawl search", { stdout }];
+  return ["cli search", { stdout }];
 });
 
 await row("cli.crawl", async () => {
   const { stdout } = await cli([
     "crawl", `${SITE}/`, "--limit", "3", "--wait", "--poll-interval", "1", "--timeout", "120",
   ]);
-  return ["firecrawl crawl --wait", { stdout }];
+  return ["cli crawl --wait", { stdout }];
 });
 
 await row("cli.credit-usage", async () => {
   const { stdout } = await cli(["credit-usage", "--json"]);
-  return ["firecrawl credit-usage", { stdout }];
+  return ["cli credit-usage", { stdout }];
 });

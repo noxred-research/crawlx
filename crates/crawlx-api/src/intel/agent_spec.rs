@@ -1,4 +1,4 @@
-//! Request model of the Firecrawl v2 `agent` product: the parsed and thread-resolved settings of
+//! Request model of the compat v2 `agent` product: the parsed and thread-resolved settings of
 //! one run ([`AgentSpec`]) and the persisted conversation state of a thread ([`ThreadState`]).
 //!
 //! [`RawRequest::parse`] reads the `POST /agent` body strictly (every violation is reported with a
@@ -556,7 +556,7 @@ fn warn(code: &str, path: &str, message: &str) -> Warning {
     Warning::new(code, path, message)
 }
 
-/// A fractional `maxCredits` (Firecrawl types it `number`) rounded down; `None` outside
+/// A fractional `maxCredits` (the compat API types it `number`) rounded down; `None` outside
 /// `1..=1e12`.
 #[allow(
     clippy::cast_possible_truncation,

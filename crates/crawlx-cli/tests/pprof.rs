@@ -1,4 +1,4 @@
-//! `--pprof-bind` (katana `-pprof-server`): the in-process listener, its CLI flags and its wiring
+//! `--pprof-bind` (compatibility `-pprof-server`): the in-process listener, its CLI flags and its wiring
 //! into the real `crawlx serve` / `crawlx worker` binary.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -649,11 +649,11 @@ async fn worker_runs_the_pprof_listener() {
             .env("CRAWLX_CHECKPOINT_KMS_KEY_ID", kms.key_id())
             .env("CRAWLX_ARTIFACT_KEY_FILE", &key_file)
             .env("CRAWLX_SECRET_REDIS_URL", &secret_redis)
-            .env("AWS_ENDPOINT_URL_KMS", kms.endpoint())
-            .env("AWS_REGION", "us-east-1")
-            .env("AWS_ACCESS_KEY_ID", "checkpoint-fixture-access-key")
-            .env("AWS_SECRET_ACCESS_KEY", "checkpoint-fixture-secret-key")
-            .env("AWS_EC2_METADATA_DISABLED", "true")
+            .env("AWS_ENDPOINT_URL_KMS", kms.endpoint()) // wire-compat: SDK environment variable
+            .env("AWS_REGION", "us-east-1") // wire-compat: SDK environment variable
+            .env("AWS_ACCESS_KEY_ID", "checkpoint-fixture-access-key") // wire-compat: SDK environment variable
+            .env("AWS_SECRET_ACCESS_KEY", "checkpoint-fixture-secret-key") // wire-compat: SDK environment variable
+            .env("AWS_EC2_METADATA_DISABLED", "true") // wire-compat: SDK environment variable
             .args([
                 "worker",
                 "--database-url",

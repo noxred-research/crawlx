@@ -222,7 +222,7 @@ pub struct FetchOptions {
     /// Shared remaining network requests of the parent acquisition, charged before every hop.
     /// A redirect or fallback never gets a fresh allowance.
     pub request_allowance: Option<Arc<std::sync::atomic::AtomicU32>>,
-    /// Skip Scrapy latency adjustment for this request; throttle cooldowns still apply.
+    /// Skip latency-target adjustment for this request; throttle cooldowns still apply.
     pub dont_adjust_delay: bool,
     /// Permanently suppress origin-bound credentials after a caller-managed origin change.
     pub suppress_credentials: bool,

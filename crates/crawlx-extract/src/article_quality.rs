@@ -85,7 +85,7 @@ pub(crate) fn evaluate(
     if partial {
         reasons.push(QualityReasonV1::ResourceLimit);
     }
-    let unavailable = policy.nlp == NlpCapabilityV1::PunktModel || metadata.language_model_unavailable;
+    let unavailable = policy.nlp == NlpCapabilityV1::SentenceModel || metadata.language_model_unavailable;
     if unavailable {
         reasons.push(QualityReasonV1::ModelUnavailable);
     }

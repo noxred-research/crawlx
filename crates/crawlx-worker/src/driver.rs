@@ -82,7 +82,7 @@ pub struct DriverConfig {
     /// opener.
     pub tab_step_budget: u32,
     /// Milliseconds an executed action waits before the page is observed again
-    /// (`dynamic.interactionSettleMs`, katana `-interaction-settle`); `0` keeps the readiness
+    /// (`dynamic.interactionSettleMs`, the `-interaction-settle` compatibility flag); `0` keeps the readiness
     /// preset of [`Self::settle`].
     pub interaction_settle_ms: u32,
     /// Opt-in shortlist dataset recording: `None` (the default) records nothing

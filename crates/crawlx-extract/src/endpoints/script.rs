@@ -1,10 +1,10 @@
 //! Regex-based endpoint mining of script text, script/stylesheet files and
-//! textual page bodies (katana `-jc`).
+//! textual page bodies (compatibility flag `-jc`).
 //!
-//! Ported from projectdiscovery/katana `pkg/utils/regex.go` at commit
-//! 9662cd7 (MIT); the patterns are verbatim except one deviation: the absolute
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md;
+//! the patterns are verbatim except one deviation: the absolute
 //! alternative of `pageBodyRegex` accepts an explicit `:port`, the same
-//! `(?:\:\d{1,5})?` group katana's `relativeEndpointsRegex` already has (an
+//! `(?:\:\d{1,5})?` group the reference `relativeEndpointsRegex` already has (an
 //! upstream `http://host:8080/x` in page text was otherwise missed). Both regexes
 //! compile once with explicit size limits so a pattern change can never blow up
 //! compilation memory, and a failed compile degrades to "no matches" instead of

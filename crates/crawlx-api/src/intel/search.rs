@@ -1,6 +1,6 @@
 //! The search provider seam: [`SearchProvider`] turns a [`SearchQuery`] into [`SearchResults`].
-//! Implementations: [`crate::intel::searxng::SearxngProvider`] (SearXNG JSON API) and
-//! [`crate::intel::searchapi::SearchApiProvider`] (SearchApi SERP API), built from the operator
+//! Implementations: [`crate::intel::metasearch::MetasearchProvider`] (metasearch JSON API) and
+//! [`crate::intel::serp::SerpProvider`] (hosted SERP API), built from the operator
 //! settings by [`from_settings`], plus [`MockSearch`] for tests.
 
 use async_trait::async_trait;
@@ -184,7 +184,7 @@ pub enum SearchError {
 /// A search backend. Object-safe.
 #[async_trait]
 pub trait SearchProvider: Send + Sync {
-    /// Short stable name (`searxng`, `searchapi`, `mock`) for logs and metrics.
+    /// Short stable name (`metasearch`, `serp`, `mock`) for logs and metrics.
     fn name(&self) -> &'static str;
 
     /// Run `query`.
@@ -251,24 +251,24 @@ pub fn from_settings(
 ) -> Result<std::sync::Arc<dyn SearchProvider>, ProviderBuildError> {
     use crate::config::SearchSettings;
     match settings {
-        SearchSettings::Searxng {
+        SearchSettings::Metasearch {
             endpoint,
             engines,
             categories,
-        } => Ok(std::sync::Arc::new(crate::intel::searxng::SearxngProvider::new(
-            endpoint,
-            engines.clone(),
-            categories.clone(),
-        )?)),
-        SearchSettings::SearchApi {
+        } => Ok(std::sync::Arc::new(
+            crate::intel::metasearch::MetasearchProvider::new(endpoint, engines.clone(), categories.clone())?,
+        )),
+        SearchSettings::Serp {
             api_key_ref,
             engine,
             endpoint,
         } => {
             let key = crate::config::resolve_secret_ref(api_key_ref)?;
-            Ok(std::sync::Arc::new(
-                crate::intel::searchapi::SearchApiProvider::new(&key, engine, endpoint.as_deref())?,
-            ))
+            Ok(std::sync::Arc::new(crate::intel::serp::SerpProvider::new(
+                &key,
+                engine,
+                endpoint.as_deref(),
+            )?))
         }
     }
 }

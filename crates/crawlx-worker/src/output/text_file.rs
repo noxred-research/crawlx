@@ -1,6 +1,6 @@
-//! The `-o FILE` output file and katana's `-ncb/-no-clobber` naming.
+//! The `-o FILE` output file and the reference `-ncb/-no-clobber` naming.
 //!
-//! Katana only applies `-no-clobber` to the `-store-response` directory
+//! The reference tool only applies `-no-clobber` to the `-store-response` directory
 //! (`pkg/output/output.go` `createDirNameNoClobber`): when the target exists and is not
 //! empty, the highest `<name><N>` sibling is found and `<name><N+1>` is used. The flag's help
 //! text says "do not overwrite output file", so crawlx applies the same rule to `-o FILE`,

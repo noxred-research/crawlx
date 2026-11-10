@@ -5,11 +5,10 @@
 //! stderr. The server exits 0 when stdin reaches end of file, after answering every
 //! request already received.
 //!
-//! The tools mirror the Firecrawl MCP server (`firecrawl_scrape`, `firecrawl_map`,
-//! `firecrawl_search`, `firecrawl_crawl`, `firecrawl_check_crawl_status`,
-//! `firecrawl_extract`, `firecrawl_extract_status`, `firecrawl_parse`, `firecrawl_agent`,
-//! `firecrawl_agent_status`). Each call is a thin HTTP client of a crawlx API's Firecrawl-v2
-//! facade (`<api-url>/compat/firecrawl/v2/...`) with `Authorization: Bearer <key>`:
+//! The tools mirror the drop-in MCP server's tool set (scrape, map, search, crawl,
+//! crawl status, extract, extract status, parse, agent, agent status; wire names in
+//! `tools::Tool::name`). Each call is a thin HTTP client of a crawlx API's compatibility API
+//! (`<api-url>/compat/v2/...`) with `Authorization: Bearer <key>`:
 //!
 //! * a successful call returns one text content item holding the pretty-printed JSON of the
 //!   API's `data` (with the API's `warning` beside it when there is one; the whole body,
@@ -60,12 +59,12 @@ const OUTBOX_DEPTH: usize = 64;
 /// Arguments of `crawlx mcp`.
 #[derive(Args, Clone)]
 pub struct McpArgs {
-    /// Base URL of the crawlx API whose `/compat/firecrawl/v2` facade the tools call.
-    /// Falls back to `FIRECRAWL_API_URL`, then `http://127.0.0.1:8080`.
+    /// Base URL of the crawlx API whose `/compat/v2` routes the tools call.
+    /// Falls back to the drop-in client's API-URL variable, then `http://127.0.0.1:8080`.
     #[arg(long, env = "CRAWLX_API_URL", value_name = "URL")]
     pub api_url: Option<String>,
     /// Bearer token sent to the API. Prefer the environment variable: command-line
-    /// arguments are visible to other users. Falls back to `FIRECRAWL_API_KEY`. Never logged.
+    /// arguments are visible to other users. Falls back to the drop-in client's API-key variable. Never logged.
     #[arg(long, env = "CRAWLX_API_KEY", hide_env_values = true, value_name = "KEY")]
     pub api_key: Option<String>,
     /// Timeout of every HTTP request to the API, in milliseconds.
@@ -108,12 +107,12 @@ impl fmt::Debug for McpArgs {
 }
 
 impl McpArgs {
-    /// Resolve flags, the `CRAWLX_*` variables clap already read, and the `FIRECRAWL_*`
+    /// Resolve flags, the `CRAWLX_*` variables clap already read, and the drop-in client variable
     /// fallbacks (looked up through `env`) into a client configuration.
     fn resolve(&self, env: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<Config> {
         let present = |value: Option<String>| value.filter(|text| !text.trim().is_empty());
         let url_text = present(self.api_url.clone())
-            .or_else(|| present(env("FIRECRAWL_API_URL")))
+            .or_else(|| present(env("FIRECRAWL_API_URL"))) // wire-compat: variable set by drop-in MCP client configs
             .unwrap_or_else(|| DEFAULT_API_URL.to_owned());
         // the text is not echoed: a URL may carry credentials
         let api_url = Url::parse(url_text.trim())
@@ -123,7 +122,7 @@ impl McpArgs {
             "the api url must be an absolute http or https URL"
         );
         let api_key = present(self.api_key.clone())
-            .or_else(|| present(env("FIRECRAWL_API_KEY")))
+            .or_else(|| present(env("FIRECRAWL_API_KEY"))) // wire-compat: variable set by drop-in MCP client configs
             .map(|key| key.trim().to_owned());
         Ok(Config {
             api_url,
@@ -346,10 +345,10 @@ fn initialize(params: Option<Value>) -> Result<Value, RpcError> {
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
         "serverInfo": { "name": "crawlx", "version": env!("CARGO_PKG_VERSION") },
-        "instructions": "Firecrawl-compatible web tools backed by a crawlx API. Use \
-            firecrawl_scrape for one page, firecrawl_map to find URLs, firecrawl_search to \
-            search, firecrawl_crawl for many pages, firecrawl_extract or firecrawl_agent for \
-            structured data, firecrawl_parse for local files.",
+        "instructions": "Compatibility web tools backed by a crawlx API. Use the scrape tool \
+            for one page, the map tool to find URLs, the search tool to \
+            search, the crawl tool for many pages, the extract or agent tool for \
+            structured data, the parse tool for local files.",
     }))
 }
 
@@ -775,7 +774,7 @@ mod tests {
                 tool.name()
             );
         }
-        assert_eq!(Tool::from_name("firecrawl_nope"), None);
+        assert_eq!(Tool::from_name("no_such_tool"), None);
     }
 
     #[tokio::test]
@@ -856,12 +855,12 @@ mod tests {
         let replies = converse(
             server,
             &[
-                call_message(1, "firecrawl_teleport", json!({})),
-                call_message(2, "firecrawl_scrape", json!({"url": "nope"})),
-                request(3, "tools/call", json!({"name": "firecrawl_map", "arguments": 4})),
+                call_message(1, "no_such_tool", json!({})),
+                call_message(2, Tool::Scrape.name(), json!({"url": "nope"})),
+                request(3, "tools/call", json!({"name": Tool::Map.name(), "arguments": 4})),
                 request(4, "tools/call", json!({"arguments": {}})),
                 request(5, "tools/call", Value::Null),
-                call_message(6, "firecrawl_map", json!(null)),
+                call_message(6, Tool::Map.name(), json!(null)),
             ],
         )
         .await;
@@ -874,7 +873,7 @@ mod tests {
         }
         assert_eq!(
             by_id(&replies, 1)["error"]["message"],
-            json!("unknown tool: firecrawl_teleport")
+            json!("unknown tool: no_such_tool")
         );
         assert_eq!(
             by_id(&replies, 2)["error"]["data"]["issues"],
@@ -898,7 +897,7 @@ mod tests {
         let replies = converse(
             server_for(&mock.uri()),
             &[
-                call_message(1, "firecrawl_scrape", json!({"url": "https://example.com"})),
+                call_message(1, Tool::Scrape.name(), json!({"url": "https://example.com"})),
                 json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 1}}),
                 request(2, "ping", json!({})),
             ],
@@ -917,7 +916,7 @@ mod tests {
             .await;
         let limit = i64::try_from(MAX_IN_FLIGHT).unwrap();
         let mut messages: Vec<Value> = (1..=limit + 1)
-            .map(|id| call_message(id, "firecrawl_scrape", json!({"url": "https://example.com"})))
+            .map(|id| call_message(id, Tool::Scrape.name(), json!({"url": "https://example.com"})))
             .collect();
         messages.extend((1..=limit).map(
             |id| json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": id}}),
@@ -1300,7 +1299,7 @@ mod tests {
     }
 
     #[test]
-    fn configuration_prefers_flags_then_firecrawl_variables_then_defaults() {
+    fn configuration_prefers_flags_then_dropin_variables_then_defaults() {
         let none = |_: &str| None;
         let config = args(None, None).resolve(&none).unwrap();
         assert_eq!(config.api_url.as_str(), "http://127.0.0.1:8080/");
@@ -1310,8 +1309,8 @@ mod tests {
         assert_eq!(config.poll_timeout, Duration::from_millis(400));
 
         let fallback = |name: &str| match name {
-            "FIRECRAWL_API_URL" => Some("https://fc.example.com/base".to_owned()),
-            "FIRECRAWL_API_KEY" => Some(" fc-key ".to_owned()),
+            "FIRECRAWL_API_URL" => Some("https://fc.example.com/base".to_owned()), // wire-compat: variable set by drop-in MCP client configs
+            "FIRECRAWL_API_KEY" => Some(" fc-key ".to_owned()), // wire-compat: variable set by drop-in MCP client configs
             _ => None,
         };
         let config = args(None, None).resolve(&fallback).unwrap();
@@ -1480,7 +1479,7 @@ mod tests {
             .unwrap_err();
         let text = api::describe(&garbled);
         assert!(
-            text.starts_with("response from /compat/firecrawl/v2/map is not valid json: "),
+            text.starts_with("response from /compat/v2/map is not valid json: "),
             "{text}"
         );
         assert_eq!(run_map(ResponseTemplate::new(200)).await.unwrap(), json!({}));
@@ -1494,18 +1493,15 @@ mod tests {
             .await
             .unwrap_err();
         let text = api::describe(&error);
-        assert!(
-            text.starts_with("request to /compat/firecrawl/v2/map failed: "),
-            "{text}"
-        );
-        assert!(text.len() > "request to /compat/firecrawl/v2/map failed: ".len());
+        assert!(text.starts_with("request to /compat/v2/map failed: "), "{text}");
+        assert!(text.len() > "request to /compat/v2/map failed: ".len());
     }
 
     #[tokio::test]
     async fn a_base_url_with_a_path_prefix_keeps_it() {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/gateway/compat/firecrawl/v2/map"))
+            .and(path("/gateway/compat/v2/map"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true, "links": []})))
             .expect(1)
             .mount(&mock)
@@ -1522,13 +1518,13 @@ mod tests {
     async fn jobs_are_polled_through_the_injected_sleep() {
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/compat/firecrawl/v2/extract"))
+            .and(path("/compat/v2/extract"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true, "id": "j1"})))
             .expect(1)
             .mount(&mock)
             .await;
         Mock::given(method("GET"))
-            .and(path("/compat/firecrawl/v2/extract/j1"))
+            .and(path("/compat/v2/extract/j1"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(json!({"success": true, "status": "processing"})),
             )
@@ -1537,7 +1533,7 @@ mod tests {
             .mount(&mock)
             .await;
         Mock::given(method("GET"))
-            .and(path("/compat/firecrawl/v2/extract/j1"))
+            .and(path("/compat/v2/extract/j1"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_json(json!({"success": true, "status": "completed", "data": {"n": 1}})),
@@ -1579,7 +1575,7 @@ mod tests {
             "{value}"
         );
         assert!(
-            value["note"].as_str().unwrap().contains("firecrawl_agent_status"),
+            value["note"].as_str().unwrap().contains("agent status tool"),
             "{value}"
         );
         assert_eq!(sleeps.lock().unwrap().len(), 5);

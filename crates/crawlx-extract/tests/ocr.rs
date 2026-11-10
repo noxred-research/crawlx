@@ -566,7 +566,7 @@ fn the_environment_selects_and_tunes_the_engine() {
     // CRAWLX_OCR_TESSDATA wins over TESSDATA_PREFIX
     let c = OcrConfig::from_env(&env(&[("CRAWLX_OCR_TESSDATA", "/a"), ("TESSDATA_PREFIX", "/b")])).unwrap();
     assert_eq!(c.tessdata_dir.as_deref(), Some(std::path::Path::new("/a")));
-    // Firecrawl's IMAGE_OCR_ENABLED picks Tesseract only when no backend is named
+    // The drop-in IMAGE_OCR_ENABLED picks Tesseract only when no backend is named
     let c = OcrConfig::from_env(&env(&[("IMAGE_OCR_ENABLED", "true")])).unwrap();
     assert_eq!(c.backend, OcrBackend::Tesseract);
     let c = OcrConfig::from_env(&env(&[

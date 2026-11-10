@@ -1,8 +1,8 @@
 //! Header parsers: `Content-Location`, `Link`, `Location`, `Refresh`.
 //!
-//! Ported from projectdiscovery/katana `pkg/engine/parser/parser.go`
-//! (`header*Parser`) and `pkg/utils/utils.go` (`ParseLinkTag`,
-//! `ParseRefreshTag`) at commit 9662cd7 (MIT).
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md
+//! (`header*Parser`, `ParseLinkTag`,
+//! `ParseRefreshTag`).
 
 use url::Url;
 

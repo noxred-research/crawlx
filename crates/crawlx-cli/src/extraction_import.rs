@@ -6,7 +6,7 @@
 //!
 //! Example declarative input for `crawlx source-import convert profile.json`:
 //! ```json
-//! {"version":1,"source":"trafilatura","sourceVersion":"2.3.1",
+//! {"version":1,"source":"text-precision","sourceVersion":"2.3.1",
 //!  "dialect":"library","options":{"url":"https://fixture.test/article",
 //!  "fast":true,"include_comments":false,"include_tables":true}}
 //! ```
@@ -14,8 +14,8 @@
 //! runnable native CreateCrawl only if all requested behavior maps. Otherwise it
 //! prints the same typed report and exits two. Omitted settings keep native defaults.
 //!
-//! Trafilatura and Newspaper profiles require `dialect=library|cli|settings`.
-//! Katana accepts only the pinned registered CLI dialect; Go SDK object import is
+//! Text-precision and news-article profiles require `dialect=library|cli|settings`.
+//! The surface-flags profile accepts only the pinned registered CLI dialect; Go SDK object import is
 //! unavailable. Every import reports all pinned inventory IDs and original ledger
 //! evidence. Whole-family `requiredInventory` requests remain decision-needed unless
 //! full semantics are established; one option never proves a whole source family.
@@ -73,7 +73,7 @@ mod tests {
     #[tokio::test]
     async fn adapter_prints_runnable_native_request_and_complete_pinned_report() {
         let bytes = serde_json::to_vec(
-            &json!({"version":1,"source":"trafilatura","sourceVersion":"2.3.1","dialect":"library",
+            &json!({"version":1,"source":"text-precision","sourceVersion":"2.3.1","dialect":"library",
             "options":{"url":"https://fixture.test/article","fast":true,"include_comments":false}}),
         )
         .unwrap();
@@ -101,31 +101,31 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|row| row["id"] == "TF-38"));
+            .any(|row| row["id"] == "TP-38"));
     }
     #[tokio::test]
     async fn unknown_unsafe_solver_and_incompatible_outputs_return_typed_report_not_config() {
         for (source, version, dialect, options) in [
             (
-                "newspaper4k",
+                "news-article",
                 "0.9.6.1",
                 "library",
                 json!({"url":"https://fixture.test","requests_params":{"proxies":{"https":"http://secret@proxy.test"}}}),
             ),
             (
-                "katana",
+                "surface-flags",
                 "1.8.0",
                 "cli",
                 json!({"u":"https://fixture.test","captcha-solver-key":"must-not-appear"}),
             ),
             (
-                "trafilatura",
+                "text-precision",
                 "2.3.1",
                 "library",
                 json!({"url":"https://fixture.test","output_format":"pickle"}),
             ),
             (
-                "trafilatura",
+                "text-precision",
                 "2.3.1",
                 "library",
                 json!({"url":"https://fixture.test","execute":"must-not-appear"}),
@@ -152,7 +152,7 @@ mod tests {
             json!({"url":"env://URL"}),
             json!({"url":"https://fixture.test","prune_xpath":"document('file:///etc/passwd')"}),
         ] {
-            let bytes = serde_json::to_vec(&json!({"version":1,"source":"trafilatura","sourceVersion":"2.3.1","dialect":"library","options":options})).unwrap();
+            let bytes = serde_json::to_vec(&json!({"version":1,"source":"text-precision","sourceVersion":"2.3.1","dialect":"library","options":options})).unwrap();
             let mut out = Vec::new();
             assert_eq!(
                 run_manifest(&bytes, true, &mut out).await.unwrap(),
@@ -168,7 +168,7 @@ mod tests {
     async fn registered_source_import_dispatch_reaches_extraction_profile_and_native_api() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("profile.json");
-        let bytes = serde_json::to_vec(&json!({"version":1,"source":"trafilatura","sourceVersion":"2.3.1","dialect":"library",
+        let bytes = serde_json::to_vec(&json!({"version":1,"source":"text-precision","sourceVersion":"2.3.1","dialect":"library",
             "options":{"url":"https://fixture.test/article","include_comments":false,"prune_xpath":"//aside"}})).unwrap();
         tokio::fs::write(&path, bytes).await.unwrap();
         let mut out = Vec::new();

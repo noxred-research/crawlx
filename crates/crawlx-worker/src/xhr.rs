@@ -1,5 +1,5 @@
-//! Browser-plane XHR and `fetch()` requests attached to page records (`extract.xhr`, katana
-//! `-xhr-extraction`, `xhr_requests` of the JSONL record).
+//! Browser-plane XHR and `fetch()` requests attached to page records (`extract.xhr`, the
+//! `-xhr-extraction` compatibility flag, `xhr_requests` of the JSONL record).
 //!
 //! The exploration driver drains the requests every page of its session issued
 //! ([`crawlx_core::BrowserContext::drain_xhr`]) into the run's [`XhrSink`], keyed by the

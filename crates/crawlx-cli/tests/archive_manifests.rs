@@ -7,10 +7,10 @@ use serde_json::{json, Value};
 use std::process::{Command, Output};
 
 const FAMILIES: [(&str, &str, &str, usize); 4] = [
-    ("nutch", "1.21", "NUT", 40),
-    ("stormcrawler", "3.5.1", "STC", 38),
-    ("heritrix", "3.18.0", "HER", 40),
-    ("browsertrix", "1.15.2", "BTR", 46),
+    ("seedlist-batch", "1.21", "NUT", 40),
+    ("topology-stream", "3.5.1", "STC", 38),
+    ("bean-config", "3.18.0", "HER", 40),
+    ("browser-yaml", "1.15.2", "BTR", 46),
 ];
 
 fn manifest(source: &str, version: &str, options: Value) -> Value {
@@ -59,10 +59,10 @@ fn every_archival_family_reports_every_pinned_inventory_row() {
 }
 
 #[test]
-fn browsertrix_depth_zero_converts_to_effective_seed_only_native_scope() {
+fn browser_yaml_depth_zero_converts_to_effective_seed_only_native_scope() {
     for seed_key in ["url", "seeds"] {
         let input = manifest(
-            "browsertrix",
+            "browser-yaml",
             "1.15.2",
             json!({(seed_key):["https://fixture.test/section/start"],"depth":0}),
         );
@@ -94,25 +94,25 @@ fn source_limits_and_runtime_options_refuse_without_disclosing_values() {
     let secret = "manifest-secret-canary";
     for (source, version, options, rejected) in [
         (
-            "nutch",
+            "seedlist-batch",
             "1.21",
             json!({"-s":"/not/read/seeds", "size-fetchlist":4,"http.proxy.password":secret}),
             "size-fetchlist",
         ),
         (
-            "stormcrawler",
+            "topology-stream",
             "3.5.1",
             json!({"fetcher.max.urls.in.queues":4,"http.protocol.implementation":secret}),
             "fetcher.max.urls.in.queues",
         ),
         (
-            "heritrix",
+            "bean-config",
             "3.18.0",
             json!({"maxDocumentsDownload":4,"textSource":secret,"groovy":secret}),
             "maxDocumentsDownload",
         ),
         (
-            "browsertrix",
+            "browser-yaml",
             "1.15.2",
             json!({"url":"https://fixture.test/","depth":0,"pageLimit":4,"customBehaviors":secret,
                 "redisStoreUrl":format!("redis://user:{secret}@private.test:6379")}),
@@ -135,7 +135,7 @@ fn source_limits_and_runtime_options_refuse_without_disclosing_values() {
 #[test]
 fn unknown_options_and_required_unmapped_rows_block_every_family() {
     for (source, version, prefix, _) in FAMILIES {
-        let options = if source == "browsertrix" {
+        let options = if source == "browser-yaml" {
             json!({"url":"https://fixture.test/","depth":0})
         } else {
             json!({})
@@ -171,7 +171,7 @@ fn unknown_options_and_required_unmapped_rows_block_every_family() {
 #[test]
 fn versions_unlimited_depth_scope_changes_and_alias_mixtures_fail_closed() {
     for (source, _, _, _) in FAMILIES {
-        let version = if source == "stormcrawler" {
+        let version = if source == "topology-stream" {
             "4.0.0-SNAPSHOT"
         } else {
             "0.0.0"
@@ -192,7 +192,7 @@ fn versions_unlimited_depth_scope_changes_and_alias_mixtures_fail_closed() {
         json!({"url":"https://user:manifest-secret-canary@fixture.test/","depth":0}),
         json!({"seeds":[{"url":"https://fixture.test/","auth":"manifest-secret-canary"}],"depth":0}),
     ] {
-        let output = cli("convert", &manifest("browsertrix", "1.15.2", options));
+        let output = cli("convert", &manifest("browser-yaml", "1.15.2", options));
         refused(&output);
         assert!(!String::from_utf8_lossy(&output.stdout).contains("manifest-secret-canary"));
         assert!(!String::from_utf8_lossy(&output.stderr).contains("manifest-secret-canary"));

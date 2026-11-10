@@ -1,4 +1,4 @@
-//! Output, filter and verbosity flags of `crawlx crawl` (katana's Output and Filter groups).
+//! Output, filter and verbosity flags of `crawlx crawl` (the compatibility Output and Filter groups).
 
 use crate::crawl::PageTypeArg;
 use crate::merge::fill_fields;
@@ -109,7 +109,7 @@ pub struct OutputArgs {
     )]
     pub store_fields: Option<PathBuf>,
     /// Store only these fields (comma separated, repeatable), independently of `--field`
-    /// and `--output-template`. Defaults to `DIR/katana_field` without `--store-fields`.
+    /// and `--output-template`. Defaults to `DIR/field_wordlists` without `--store-fields`.
     #[arg(long, value_name = "FIELDS", value_delimiter = ',', help_heading = "Output")]
     pub store_field: Vec<String>,
     /// Also write one request/response record per page as JSON lines.
@@ -207,7 +207,7 @@ impl OutputArgs {
     /// crawl starts, and open the files the streams share.
     ///
     /// `technologies_off` leaves the `technologies` field out of the JSONL records
-    /// (`--katana-defaults` without `--tech-detect`); `knowledge_base` adds the
+    /// (`--compat-defaults` without `--tech-detect`); `knowledge_base` adds the
     /// `response.knowledgebase` object (`--knowledge-base`).
     ///
     /// # Errors

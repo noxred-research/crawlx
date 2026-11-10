@@ -113,13 +113,13 @@ fn ground_truth_matches_the_catalog_numbers() {
     assert_eq!(db.controls.len(), 30);
     assert!(db.controls.iter().all(|c| c.mechanism == Mechanism::Cursor));
 
-    // G04 shadow-dom: 24 targets, 8 in closed roots (oracle gap for stock Playwright).
+    // G04 shadow-dom: 24 targets, 8 in closed roots (oracle gap for the stock reference driver).
     let g04 = m("g04");
     assert_eq!(g04.controls.len(), 24);
     let closed = g04
         .controls
         .iter()
-        .filter(|c| c.oracle.get("playwright") == Some(&ExpectedClass::OracleGap))
+        .filter(|c| c.oracle.get("reference") == Some(&ExpectedClass::OracleGap))
         .count();
     assert_eq!(closed, 8);
     assert_eq!(

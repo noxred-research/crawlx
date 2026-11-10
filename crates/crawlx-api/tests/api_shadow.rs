@@ -13,7 +13,7 @@ use crawlx_storage::TenantEngine;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const PATH: &str = "/compat/firecrawl/v2/crawl";
+const PATH: &str = "/compat/v2/crawl";
 
 fn env_sampling(percent: u8) -> Env {
     let config = ApiConfig {
@@ -148,7 +148,7 @@ async fn tenant_engine_flag_routes_compat_requests() {
     let (s, _, v) = e.post(PATH, &body()).await;
     assert_eq!(s, StatusCode::OK, "{v}");
 
-    e.api.set_tenant_engine(e.tenant, TenantEngine::Firecrawl);
+    e.api.set_tenant_engine(e.tenant, TenantEngine::Upstream);
     let (s, _, v) = e.post(PATH, &body()).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     assert_eq!(v["code"], "engine_mismatch");
@@ -165,7 +165,7 @@ async fn tenant_engine_flag_routes_compat_requests() {
 
     // existing runs stay readable whatever the flag (sticky per crawl id)
     let id = v["id"].as_str().unwrap();
-    e.api.set_tenant_engine(e.tenant, TenantEngine::Firecrawl);
+    e.api.set_tenant_engine(e.tenant, TenantEngine::Upstream);
     let (s, _, _) = e.get(&format!("{PATH}/{id}")).await;
     assert_eq!(s, StatusCode::OK);
 }

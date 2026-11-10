@@ -92,10 +92,10 @@ pub(super) struct ExtractStatus {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlExtract" => Spec::new(&[422, 503])
+        "compatExtract" => Spec::new(&[422, 503])
             .json::<ExtractRequest>("The URLs, the prompt or schema, and the options.")
             .reply::<ExtractCreated>("200", "The job was started."),
-        "firecrawlExtractStatus" => Spec::new(&[400, 404])
+        "compatExtractStatus" => Spec::new(&[400, 404])
             .path("id", "Id of the extract job.", Some("uuid"))
             .reply::<ExtractStatus>("200", "The job's status, data, usage and expiry."),
         _ => return None,

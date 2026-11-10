@@ -75,7 +75,7 @@ fn rejected_and_unavailable_outputs_have_distinct_exit_codes_and_keep_observed_t
     std::fs::write(&input, "<main><p>The report is a real document, even when its length fails the configured quality gate.</p></main>").unwrap();
     for (body, expected, status) in [
         (r#"{"version":1,"minMainChars":1000}"#, 2, "rejected"),
-        (r#"{"version":1,"nlp":"punkt_model"}"#, 3, "unavailable"),
+        (r#"{"version":1,"nlp":"sentence_model"}"#, 3, "unavailable"),
     ] {
         std::fs::write(&policy, body).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_crawlx"))

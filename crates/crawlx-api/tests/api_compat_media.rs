@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! The Firecrawl `audio` and `video` formats of the compat facade, run end to end through a REAL
+//! The compat `audio` and `video` formats of the compat facade, run end to end through a REAL
 //! worker lease loop (see `scrape_rig`): the worker downloads the media a page is or references
 //! into the artifact store, the API answers with a URL of the stored file and, when the LLM
 //! endpoint transcribes, the transcript. The fixture media routes are merged into the rig's site
@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-const V2: &str = "/compat/firecrawl/v2";
+const V2: &str = "/compat/v2";
 
 /// Deterministic payload of `len` bytes after `magic`.
 fn payload(magic: &[u8], len: usize) -> Vec<u8> {

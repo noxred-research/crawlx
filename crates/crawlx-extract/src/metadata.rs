@@ -150,7 +150,7 @@ pub struct Metadata {
     /// Parsed JSON-LD blocks.
     pub json_ld: Vec<Value>,
     /// Text of the first non-empty `<title>` (unlike `Document::title`, no `og:title` or `<h1>`
-    /// fallback; Firecrawl `metadata.title`).
+    /// fallback; compatibility API `metadata.title`).
     #[serde(default)]
     pub title_tag: Option<String>,
     /// Every non-empty `<meta name|property>` content in document order, keyed by lower-cased

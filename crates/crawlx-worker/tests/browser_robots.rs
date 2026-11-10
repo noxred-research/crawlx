@@ -36,7 +36,7 @@ enum Robots {
     Status(StatusCode),
 }
 
-/// `robots.txt` fixtures of the URL-plane tests (`url_plane.rs`, `katana_url_plane.rs`,
+/// `robots.txt` fixtures of the URL-plane tests (`url_plane.rs`, `surface_url_plane.rs`,
 /// `common/site.rs`): the broad rule, `Allow` precedence, everything disallowed, an empty file,
 /// a missing file and an unavailable one.
 const FIXTURES: [(&str, Robots); 6] = [

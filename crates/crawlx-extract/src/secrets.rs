@@ -2,8 +2,8 @@
 //! credential shapes in headers and bodies and records **only** the kind,
 //! the location and a keyed BLAKE3 hash of the value. The
 //! raw value is never stored, returned, formatted or logged; findings hold
-//! no reference to the scanned text. Katana delegates this to Praetorian's
-//! Titus engine (`pkg/knowledgebase/extractors/secrets`); crawlx ships a
+//! no reference to the scanned text. The reference implementation delegates this to a
+//! third-party scanning engine; crawlx ships a
 //! small fixed pattern table instead. It validates a credential online only
 //! through [`crate::secret_validation`], with validators an operator supplies.
 use std::sync::LazyLock;
@@ -22,19 +22,19 @@ pub const MAX_FINDINGS: usize = 256;
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SecretKind {
-    /// `AKIA…` style AWS access key id.
-    AwsAccessKeyId,
-    /// 40-character AWS secret in an `aws…secret…=` assignment.
-    AwsSecretAccessKey,
+    /// `AKIA…` style cloud access key id.
+    AwsAccessKeyId, // detection-data
+    /// 40-character cloud secret in a `…secret…=` assignment.
+    AwsSecretAccessKey, // detection-data
     /// `ghp_` / `gho_` / `ghu_` / `ghs_` / `ghr_` / `github_pat_` token.
     #[serde(rename = "github_token", alias = "git_hub_token")]
     GitHubToken,
-    /// `xox[baprs]-` Slack token.
-    SlackToken,
-    /// `sk_live_` / `sk_test_` / `rk_…` Stripe key.
-    StripeKey,
-    /// `AIza…` Google API key.
-    GoogleApiKey,
+    /// `xox[baprs]-` chat-platform token.
+    SlackToken, // detection-data
+    /// `sk_live_` / `sk_test_` / `rk_…` payment-platform key.
+    StripeKey, // detection-data
+    /// `AIza…` search-platform API key.
+    GoogleApiKey, // detection-data
     /// JSON Web Token with a JSON header and payload.
     Jwt,
     /// PEM private key block.
@@ -48,12 +48,12 @@ impl SecretKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::AwsAccessKeyId => "aws_access_key_id",
-            Self::AwsSecretAccessKey => "aws_secret_access_key",
+            Self::AwsAccessKeyId => "aws_access_key_id", // detection-data
+            Self::AwsSecretAccessKey => "aws_secret_access_key", // detection-data
             Self::GitHubToken => "github_token",
-            Self::SlackToken => "slack_token",
-            Self::StripeKey => "stripe_key",
-            Self::GoogleApiKey => "google_api_key",
+            Self::SlackToken => "slack_token",      // detection-data
+            Self::StripeKey => "stripe_key",        // detection-data
+            Self::GoogleApiKey => "google_api_key", // detection-data
             Self::Jwt => "jwt",
             Self::PrivateKey => "private_key",
             Self::GenericApiKey => "generic_api_key",
@@ -62,12 +62,12 @@ impl SecretKind {
 
     /// Every kind, in declaration order.
     pub const ALL: [Self; 9] = [
-        Self::AwsAccessKeyId,
-        Self::AwsSecretAccessKey,
+        Self::AwsAccessKeyId,     // detection-data
+        Self::AwsSecretAccessKey, // detection-data
         Self::GitHubToken,
-        Self::SlackToken,
-        Self::StripeKey,
-        Self::GoogleApiKey,
+        Self::SlackToken,   // detection-data
+        Self::StripeKey,    // detection-data
+        Self::GoogleApiKey, // detection-data
         Self::Jwt,
         Self::PrivateKey,
         Self::GenericApiKey,
@@ -127,7 +127,7 @@ const RULES: &[Rule] = &[
         group: 0,
     },
     Rule {
-        kind: SecretKind::AwsAccessKeyId,
+        kind: SecretKind::AwsAccessKeyId, // detection-data
         pattern: r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[A-Z0-9]{16}\b",
         group: 0,
     },
@@ -137,17 +137,17 @@ const RULES: &[Rule] = &[
         group: 0,
     },
     Rule {
-        kind: SecretKind::SlackToken,
+        kind: SecretKind::SlackToken, // detection-data
         pattern: r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b",
         group: 0,
     },
     Rule {
-        kind: SecretKind::StripeKey,
+        kind: SecretKind::StripeKey, // detection-data
         pattern: r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,99}\b",
         group: 0,
     },
     Rule {
-        kind: SecretKind::GoogleApiKey,
+        kind: SecretKind::GoogleApiKey, // detection-data
         pattern: r"\bAIza[0-9A-Za-z_-]{35}\b",
         group: 0,
     },
@@ -157,8 +157,8 @@ const RULES: &[Rule] = &[
         group: 0,
     },
     Rule {
-        kind: SecretKind::AwsSecretAccessKey,
-        pattern: r#"(?i:aws)[A-Za-z0-9_-]{0,24}(?i:secret)[A-Za-z0-9_-]{0,24}\s*[:=]\s*["']?([A-Za-z0-9/+]{40})(?:["'\s;,]|$)"#,
+        kind: SecretKind::AwsSecretAccessKey, // detection-data
+        pattern: r#"(?i:aws)[A-Za-z0-9_-]{0,24}(?i:secret)[A-Za-z0-9_-]{0,24}\s*[:=]\s*["']?([A-Za-z0-9/+]{40})(?:["'\s;,]|$)"#, // detection-data
         group: 1,
     },
     Rule {
@@ -277,7 +277,7 @@ pub fn detect(key: &[u8; 32], headers: &[(String, String)], body: &str) -> Vec<S
 }
 
 /// [`detect`] plus the matched value of every finding, for online
-/// validation (`extract.validateSecrets`, katana `-kb-validate-secrets`).
+/// validation (`extract.validateSecrets`, compatibility flag `-kb-validate-secrets`).
 /// Same findings in the same order as [`detect`]. The values are
 /// [`SecretToken`]s: hand them to
 /// [`SecretValidators::plan`](crate::secret_validation::SecretValidators::plan)

@@ -1,4 +1,4 @@
-//! Self-hosted equivalents of Firecrawl's hosted indexes, answered from the configured search
+//! Self-hosted equivalents of the compat API's hosted indexes, answered from the configured search
 //! backend (category `developer`/`github`, `gov`, `research`) and the page tools:
 //!
 //! * `/search/developer`: issues, pull requests, READMEs (GitHub hits classified by URL) and docs;
@@ -349,7 +349,7 @@ async fn developer(state: AppState, principal: Principal, p: IndexParams) -> Api
 
 const DEV_LISTS: [&str; 3] = ["types", "repos", "sources"];
 
-/// `GET /compat/firecrawl/v2/search/developer` (list parameters comma-separated).
+/// `GET /compat/v2/search/developer` (list parameters comma-separated).
 ///
 /// # Errors
 /// `403`, `422` (missing `query`, bad `k` or `types`), `503 search_not_configured`, `502/504`
@@ -367,7 +367,7 @@ pub async fn developer_get(
     .await
 }
 
-/// `POST /compat/firecrawl/v2/search/developer`.
+/// `POST /compat/v2/search/developer`.
 ///
 /// # Errors
 /// As [`developer_get`].
@@ -418,7 +418,7 @@ async fn gov(state: AppState, principal: Principal, p: IndexParams) -> ApiResult
     ))
 }
 
-/// `GET /compat/firecrawl/v2/search/gov`.
+/// `GET /compat/v2/search/gov`.
 ///
 /// # Errors
 /// `403`, `422`, `503 search_not_configured`, `502/504` backend failures.
@@ -430,7 +430,7 @@ pub async fn gov_get(
     gov(state, principal, IndexParams::from_query(&params, &[], 10, 100)?).await
 }
 
-/// `POST /compat/firecrawl/v2/search/gov`.
+/// `POST /compat/v2/search/gov`.
 ///
 /// # Errors
 /// As [`gov_get`].
@@ -493,7 +493,7 @@ fn paper_json(h: &WebHit) -> Value {
     })
 }
 
-/// `GET /compat/firecrawl/v2/search/research/papers`.
+/// `GET /compat/v2/search/research/papers`.
 ///
 /// # Errors
 /// `403`, `422` (missing `query`, `k` outside 1 to 500), `503 search_not_configured`, `502/504`.
@@ -640,7 +640,7 @@ fn rank_passages(markdown: &str, query: &str, k: usize) -> Vec<(String, f64)> {
     scored.into_iter().take(k).map(|(_, t, s)| (t, s)).collect()
 }
 
-/// `GET /compat/firecrawl/v2/search/research/papers/{paperId}`: metadata, or with `query` the
+/// `GET /compat/v2/search/research/papers/{paperId}`: metadata, or with `query` the
 /// best matching passages of the full text (`k`, default 4, at most 50).
 ///
 /// # Errors
@@ -712,7 +712,7 @@ pub async fn paper(
     Ok(json_response(StatusCode::OK, &body))
 }
 
-/// `GET /compat/firecrawl/v2/search/research/papers/{paperId}/similar` (`intent` required, `mode`
+/// `GET /compat/v2/search/research/papers/{paperId}/similar` (`intent` required, `mode`
 /// `similar|citers|references`, `k` up to 500, optional `anchor` text instead of the fetched title).
 ///
 /// # Errors

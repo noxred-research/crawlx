@@ -4,8 +4,8 @@
 //! `addEventListener` call on an element into a sink the adapter drains after each
 //! observation ([`DiscoverySink`]).
 //!
-//! Ported from projectdiscovery/katana `pkg/engine/headless/js/page-init.js`
-//! (`hookNavigatedLinkSinks`, `hookAddEventListener`) at commit 9662cd7 (MIT). Not part of this
+//! Ported from an MIT-licensed upstream (see THIRD_PARTY_NOTICES.md): its page-init script
+//! (`hookNavigatedLinkSinks`, `hookAddEventListener`). Not part of this
 //! discovery script, by decision: the `setTimeout`/`setInterval` speed-up, the
 //! `form.reset` and `window.close` overrides (they change application behaviour under test).
 //! They exist as the opt-in [`behavior_script`] (`dynamic.pageHookOptions`),
@@ -181,8 +181,8 @@ const BEHAVIOR_SCRIPT_TEMPLATE: &str = r#"(function crawlxPageBehavior(cfg) {
 })(__CRAWLX_BEHAVIOR_CONFIG__);"#;
 
 /// The opt-in behaviour script for `options` (`dynamic.pageHookOptions`): timer
-/// acceleration, `form.reset()` and `window.close()` prevention, katana's
-/// `page-init.js` behaviours. `None` when no option changes anything,
+/// acceleration, `form.reset()` and `window.close()` prevention, the upstream page-init
+/// behaviours. `None` when no option changes anything,
 /// so a default configuration installs nothing.
 #[must_use]
 pub fn behavior_script(options: PageHookOptions) -> Option<String> {

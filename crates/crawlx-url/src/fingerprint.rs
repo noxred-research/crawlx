@@ -1,7 +1,6 @@
 //! URL-shape fingerprints.
 //!
-//! Ported from projectdiscovery/katana `pkg/utils/urlfingerprint.go` and
-//! `pkg/utils/pathtrie.go` at commit 9662cd7 (MIT).
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md.
 //!
 //! Layer 1 replaces variable path segments by anchored placeholders
 //! (`{uuid}`, `{sha256}`, `{sha1}`, `{md5}`, `{oid}`, `{hex}`, `{date}`,
@@ -58,7 +57,7 @@ fn is_date(b: &[u8]) -> bool {
 }
 
 /// Placeholder for `segment` when it matches one of the anchored patterns,
-/// tested from most to least specific exactly as katana does.
+/// tested from most to least specific.
 #[must_use]
 pub fn segment_placeholder(segment: &str) -> Option<&'static str> {
     let b = segment.as_bytes();

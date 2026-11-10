@@ -238,7 +238,7 @@ pub(super) struct NativeArticleEnvelope {
     fields: JsonObject,
 }
 
-/// One scraped page (Firecrawl `Document`): the requested formats, `metadata` and `warning`.
+/// One scraped page (the compat API `Document`): the requested formats, `metadata` and `warning`.
 /// Only the formats that were requested and produced are present. Pages of a plain (non-scrape)
 /// run carry `markdown`, `html`, `rawHtml`, `links`, `screenshot` and `metadata` with the
 /// native `metadata.crawlx` block.

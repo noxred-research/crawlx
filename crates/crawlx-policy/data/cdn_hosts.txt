@@ -1,4 +1,4 @@
-# CDN and edge hostnames for `scope.excludeHosts: ["cdn"]` (katana `-exclude cdn`).
+# CDN and edge hostnames for `scope.excludeHosts: ["cdn"]` (compatibility flag `-exclude cdn`).
 #
 # One suffix per line, lowercase, no leading dot, no wildcard. A host matches when it equals a
 # suffix or is a subdomain of it (`d111.cloudfront.net` matches `cloudfront.net`;
@@ -6,7 +6,7 @@
 # Own list: delivery networks, public asset hosts and shared edge domains that serve other
 # people's content. Cloud storage and PaaS domains that host whole sites are left out.
 
-# Cloudflare
+# Edge network and stream hosts
 cdnjs.cloudflare.com
 cloudflare.net
 cloudflarestream.com

@@ -11,7 +11,7 @@ pub const DENIED_HEADER: &str = "x-crawlx-egress-denied";
 /// Placeholder written in place of a secret value; names are kept.
 pub const REDACTED: &str = "[redacted]";
 
-/// Host suffixes of the Google services the stock pinned Chrome-for-Testing `155.0.8059.84`
+/// Host suffixes of the browser vendor's services the stock pinned Chrome-for-Testing `155.0.8059.84`
 /// contacts on its own, unrelated to any crawled page (see `docs/design/data-and-secrets.md`).
 ///
 /// The egress proxy denies every such request before any foreign connection and logs it; the
@@ -20,15 +20,17 @@ pub const REDACTED: &str = "[redacted]";
 /// from a page-initiated out-of-scope attempt, which must still fail them. A host matches
 /// when it equals a suffix or is a subdomain of it; see [`is_browser_background_host`].
 ///
-/// Observed families: `accounts.google.com` (Gaia `AccountInvestigator`),
-/// `redirector.gvt1.com` and `update.googleapis.com` (`update_client` component updater),
-/// `content-autofill.googleapis.com` (Autofill crowdsourcing) and
-/// `android.clients.google.com` (GCM checkin).
-pub const BROWSER_BACKGROUND_HOST_SUFFIXES: [&str; 3] = ["google.com", "googleapis.com", "gvt1.com"];
+/// Observed families: the account-service host, the component-updater hosts, the
+/// autofill-crowdsourcing host and the push-checkin host.
+pub const BROWSER_BACKGROUND_HOST_SUFFIXES: [&str; 3] = [
+    "google.com",     // wire-compat: browser-owned background host suffix
+    "googleapis.com", // wire-compat: browser-owned background host suffix
+    "gvt1.com",       // wire-compat: browser-owned background host suffix
+];
 
 /// Is `host` a known browser-owned background service host
 /// ([`BROWSER_BACKGROUND_HOST_SUFFIXES`])? Exact suffix match on a label boundary, ASCII
-/// case-insensitive: `evilgoogle.com` does not match `google.com`.
+/// case-insensitive: a host that merely ends in the same letters as a suffix does not match.
 #[must_use]
 pub fn is_browser_background_host(host: &str) -> bool {
     let host = host.trim_end_matches('.');
@@ -181,19 +183,20 @@ mod tests {
 
     #[test]
     fn background_hosts_match_on_label_boundaries_only() {
+        // wire-compat: hostnames the stock browser contacts on its own
         for host in [
-            "accounts.google.com",
-            "android.clients.google.com",
-            "content-autofill.googleapis.com",
-            "redirector.gvt1.com",
-            "REDIRECTOR.GVT1.COM",
-            "google.com.",
+            "accounts.google.com",             // wire-compat: browser-owned background host
+            "android.clients.google.com",      // wire-compat: browser-owned background host
+            "content-autofill.googleapis.com", // wire-compat: browser-owned background host
+            "redirector.gvt1.com",             // wire-compat: browser-owned background host
+            "REDIRECTOR.GVT1.COM",             // wire-compat: browser-owned background host
+            "google.com.",                     // wire-compat: browser-owned background host
         ] {
             assert!(is_browser_background_host(host), "{host}");
         }
         for host in [
-            "evilgoogle.com",
-            "google.com.evil.test",
+            "evilgoogle.com",       // wire-compat: near-miss host
+            "google.com.evil.test", // wire-compat: near-miss host
             "127.0.0.1",
             "gvt1.com.cn",
             "",

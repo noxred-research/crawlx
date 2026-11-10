@@ -54,7 +54,7 @@ fn map_reqwest(e: reqwest::Error, after_ms: u64) -> SearchError {
     }
 }
 
-/// Coarse time range of a Firecrawl `tbs` value.
+/// Coarse time range of a compat `tbs` value.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TimeRange {
     /// `qdr:h`.

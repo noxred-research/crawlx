@@ -45,7 +45,7 @@ pub struct ExtractOptions {
     pub content_type: Option<String>,
     /// Crawl depth of the page; discovered endpoints are one deeper.
     pub depth: u32,
-    /// Run the katana-derived endpoint extractor (`Document::discovered_endpoints`).
+    /// Run the surface-discovery endpoint extractor (`Document::discovered_endpoints`).
     pub discover_endpoints: bool,
     /// JavaScript miners used when endpoint discovery is enabled.
     pub javascript_mode: crawlx_core::config::JavascriptMode,
@@ -58,7 +58,7 @@ pub struct ExtractOptions {
     /// Detect technologies from headers and markup (default true).
     pub technologies: bool,
     /// Keep `data:image/...` sources of `<img>` in the cleaned HTML and the Markdown (default
-    /// false: such images are dropped). Used when Firecrawl `removeBase64Images` is off; the
+    /// false: such images are dropped). Used when the compatibility API `removeBase64Images` is off; the
     /// URIs stay verbatim and [`crate::base64_images::strip_base64_images`] removes them again.
     pub keep_data_images: bool,
     /// Opt-in native article selection and quality policy; absent preserves legacy behavior.
@@ -164,7 +164,7 @@ pub struct Document {
     /// Typed declarative custom-field projection, evaluated on the original shared DOM.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<crawlx_core::selectors::ItemOutcomeV1>,
-    /// Katana-derived discovered endpoints (`ExtractOptions::discover_endpoints`).
+    /// Surface-discovery endpoints (`ExtractOptions::discover_endpoints`).
     #[serde(default)]
     pub discovered_endpoints: Vec<DiscoveredEndpoint>,
     /// Versioned article metadata. Content/PII, never unrestricted structural telemetry.

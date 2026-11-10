@@ -1,6 +1,6 @@
-//! Per-session driver diagnostics (`dynamic.enableDiagnostics`, katana `-enable-diagnostics`).
+//! Per-session driver diagnostics (`dynamic.enableDiagnostics`, the `-enable-diagnostics` compatibility flag).
 //!
-//! Katana's headless crawler logs every page state it explores to a diagnostics directory.
+//! The reference headless crawler logs every page state it explores to a diagnostics directory.
 //! crawlx keeps the equivalent in the run report instead: one [`SessionDiagnostics`] per
 //! browser-plane session, summarizing what the exploration driver did (rounds that executed an
 //! action, dropped actions, recovery ladder runs, popup-tab evictions, states persisted, why and

@@ -1,4 +1,4 @@
-//! The HTTP side of `crawlx mcp`: one thin client of the crawlx Firecrawl-v2 facade.
+//! The HTTP side of `crawlx mcp`: one thin client of the crawlx compatibility API (v2).
 //!
 //! Each tool call is a single request (or, for jobs the caller waits on, a start request
 //! plus status polls). The API key travels only in the `Authorization` header; it is never
@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
-/// Path prefix of the Firecrawl-v2 facade.
-const FACADE_PREFIX: [&str; 3] = ["compat", "firecrawl", "v2"];
+/// Path prefix of the compatibility API (v2).
+const FACADE_PREFIX: [&str; 2] = ["compat", "v2"];
 
 /// Largest response body read into memory. Larger bodies fail the call; smaller ones are
 /// cut to [`crate::mcp::MAX_RESULT_BYTES`] when rendered.
@@ -153,7 +153,7 @@ pub(crate) enum ApiError {
     },
 }
 
-/// Client of the Firecrawl-v2 facade.
+/// Client of the compatibility API (v2).
 pub(crate) struct Api {
     http: reqwest::Client,
     base: Url,
@@ -242,7 +242,7 @@ impl Api {
             "id": id,
             "status": status,
             "note": format!(
-                "the job is still running after {} status reads; read it again with firecrawl_{endpoint}_status",
+                "the job is still running after {} status reads; read it again with the {endpoint} status tool",
                 self.max_polls.saturating_add(1)
             ),
         }))

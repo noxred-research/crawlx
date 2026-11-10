@@ -3,15 +3,15 @@
 `crawlx-worker` is the crawl engine as a library: the lease loop, the URL plane (static fetch
 discovery), the browser plane, the Session Actors and the output layer. The `crawlx` CLI, the
 HTTP API and the test-suites all sit on the items below, so they are the supported embedding
-surface (katana's `types.Options` + `OnResult` equivalent).
+surface (the equivalent of a runner's options plus a per-result callback).
 
-| katana library | crawlx |
+| compatibility library | crawlx |
 |---|---|
-| `types.Options` | [`CreateCrawl`](https://docs.rs/crawlx-core) (what to crawl: scope, limits, fetch, extract, dynamic, output; the same JSON as `POST /v1/crawls`) plus [`WorkerConfig`] (operator-level: egress, launch options, artifacts directory, traffic export, form AI, secret validators) |
-| `runner.NewCrawlerRunner` / `ExecuteCrawling` | [`run_local_with`] over a [`LocalRun`] |
-| `OnResult(output.Result)` | the [`RunReport`] returned by the run (`pages`, `page_contents`, `failures`, `resume`) fed to an [`output::Exporter`], which renders katana's `-jsonl` records, `-f`/`-ot` text lines and applies every output filter |
+| options struct | [`CreateCrawl`](https://docs.rs/crawlx-core) (what to crawl: scope, limits, fetch, extract, dynamic, output; the same JSON as `POST /v1/crawls`) plus [`WorkerConfig`] (operator-level: egress, launch options, artifacts directory, traffic export, form AI, secret validators) |
+| crawler runner / execute | [`run_local_with`] over a [`LocalRun`] |
+| per-result callback | the [`RunReport`] returned by the run (`pages`, `page_contents`, `failures`, `resume`) fed to an [`output::Exporter`], which renders the `-jsonl` records, `-f`/`-ot` text lines and applies every output filter |
 | `-resume` | `RunReport::resume` and [`LocalRun::with_resume`] |
-| `KATANA_TRAFFIC_*` | [`katana::traffic_export`] |
+| `CRAWLX_TRAFFIC_*` | [`surface::traffic_export`] |
 
 ## Run a crawl
 
@@ -59,17 +59,17 @@ println!("{} pages, {} failed URLs", report.pages.len(), report.failures.len());
 A run that stops before its frontier is exhausted (page limit, duration limit, cancellation)
 returns `RunReport::resume: Option<ResumeState>`: the canonical URLs it visited and the
 admitted URLs it did not fetch. The state is deterministic JSON
-([`katana::resume::ResumeState::to_json`]); feed it back with `LocalRun::with_resume` and the
+([`surface::resume::ResumeState::to_json`]); feed it back with `LocalRun::with_resume` and the
 new run skips the visited URLs and starts from the pending ones. A finished run has
 `resume == None`.
 
-## Turn pages into output (`OnResult`)
+## Turn pages into output
 
 ```rust
 use crawlx_worker::output::{Dsl, ExportFormat, Exporter};
 use crawlx_worker::UrlFailure;
 
-// katana: `-jsonl -mdc 'status_code == 404'`
+// compatibility flags: `-jsonl -mdc 'status_code == 404'`
 let exporter = Exporter {
     format: ExportFormat::Jsonl,
     match_condition: Some(Dsl::parse("status_code == 404")?),
@@ -105,7 +105,7 @@ selection, wordlists retain the legacy requirement that at least one display lin
 
 ### The JSONL record
 
-One line per page, shaped like katana's `output.Result`:
+One line per page, shaped like the reference result type:
 
 ```text
 {"timestamp", "request": {method, endpoint, body, headers, tag, attribute, source,
@@ -116,11 +116,11 @@ One line per page, shaped like katana's `output.Result`:
  "error"}
 ```
 
-* `request.custom_fields` is where katana puts custom regex field values. crawlx also keeps
+* `request.custom_fields` is where the reference puts custom regex field values. crawlx also keeps
   them under `response.custom_fields` for existing consumers; both hold the same data.
 * `page_type` and `secrets` (kind, location and keyed hash, never a value; `validation` when
   secret validation ran) are crawlx's flat fields; `knowledgebase`
-  (`{PageType, Forms, secrets, endpoints}`) is the katana shape of the same data and is
+  (`{PageType, Forms, secrets, endpoints}`) is the reference shape of the same data and is
   present only with `Exporter::knowledge_base` (the `extract.knowledgeBase` setting).
 * `body` appears only with `Exporter::include_body` (the body is not part of the page row);
   `raw` only when the run captured it (`output.captureRaw`) and the caller supplied it.
@@ -128,11 +128,11 @@ One line per page, shaped like katana's `output.Result`:
   field named by [`output::field_names`] (the `-lof` list). A name that exists in `request`
   and `response` (`body`, `headers`, `raw`, `custom_fields`) is removed from both.
 * `error` is set on records of failed URLs ([`output::Exporter::export_failures`]).
-* `response.extra` is for embedders (katana's `Response.Extra`): crawlx never fills it.
+* `response.extra` is for embedders (the reference `Response.Extra`): crawlx never fills it.
 
 ### Filters
 
-Applied in this order, as in katana's `Write`: extension (`-em`, `-ef`), then match
+Applied in this order, as in the reference `Write`: extension (`-em`, `-ef`), then match
 (`-mr`, `-mdc`: kept when a match regex hits **or** the condition holds), then filter
 (`-fr`, `-fdc`: dropped when a filter regex hits **or** the condition holds), then
 `filter_page_types` (`-fpt`: the page type, compared case-insensitively, is dropped from the
@@ -141,7 +141,7 @@ output only; the page was still crawled and stored). `-mr`/`-fr` lists come from
 
 ### Conditions (`-mdc` / `-fdc`)
 
-[`output::Dsl`] parses katana's expression language over the JSONL record:
+[`output::Dsl`] parses the reference expression language over the JSONL record:
 
 ```rust
 use crawlx_worker::output::{Dsl, Record};
@@ -157,9 +157,9 @@ Literals `"text"`, `'text'`, numbers, `true`/`false`; operators `||`, `&&`, `==`
 infix `contains`, `<`, `<=`, `>`, `>=`, `!` and parentheses (`&&` binds tighter than `||`;
 both short-circuit); functions `contains`, `contains_any`, `contains_all`, `starts_with`,
 `ends_with`, `regex(pattern, input)`, `len`, `to_lower`, `to_upper`. Variables are dotted
-JSONL paths (`request.method`, `response.headers.content-type`) or katana's bare names
+JSONL paths (`request.method`, `response.headers.content-type`) or the reference bare names
 (`status_code`, `endpoint`, `url`, `technologies`, `page_type`, `content_type`). Regexes use
-the linear-time `regex` crate with a size bound. As in katana, a condition that cannot be
+the linear-time `regex` crate with a size bound. As in the reference, a condition that cannot be
 evaluated (unknown variable, type mismatch) is `false`: a match condition does not match, a
 filter condition does not filter. See the module documentation of `output::dsl` for the
 details.
@@ -168,7 +168,7 @@ details.
 
 * **`-o FILE` and `-ncb`**: [`output::TextFile::create(path, no_clobber)`]. With `no_clobber`
   an existing non-empty file is never touched; the next free `name<N>.ext` is used
-  (katana applies the same numbering rule to its `-srd` directory only).
+  (the reference applies the same numbering rule to its `-srd` directory only).
 * **`-sr` / `-srd`**: [`output::StoredResponses::new(dir, no_clobber)`] writes
   `<dir>/<host>/<sha1(url)>.txt` (URL, raw request, raw response) and one
   `<file> <url> (<status>)` line per file in `<dir>/index.txt`; set
@@ -178,13 +178,13 @@ details.
 * **`-elog`**: [`output::write_error_log(path, &report.failures, no_clobber)`] writes one JSON
   line per failed URL (`timestamp`, `endpoint`, `error`, `depth`, `status_code`).
 
-## Traffic export (`KATANA_TRAFFIC_*`)
+## Traffic export (`CRAWLX_TRAFFIC_*`)
 
 Set `WorkerConfig::traffic_export` and every URL-plane exchange (and, in a browser run, every
 browser-plane exchange) is POSTed to a collector as batched JSON:
 
 ```rust,no_run
-use crawlx_worker::katana::traffic_export::{TrafficExportConfig, TrafficExporter};
+use crawlx_worker::surface::traffic_export::{TrafficExportConfig, TrafficExporter};
 
 # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
 // CRAWLX_TRAFFIC_ENDPOINT, CRAWLX_TRAFFIC_TOKEN (both required), CRAWLX_TRAFFIC_ATTRIBUTES,
@@ -205,7 +205,7 @@ The endpoint must be `https` (plain `http` only to a loopback host or with
 a redirect or an `HTTP_PROXY`, and never printed by `Debug`; credential headers are dropped
 unless `INCLUDE_CREDENTIALS=1`. The sender batches on size or interval, retries `429`/`5xx`,
 and drops (and counts) events when its bounded queue is full. Details: module documentation of
-`katana::traffic_export`.
+`surface::traffic_export`.
 
 ## Stability
 
@@ -229,5 +229,5 @@ engine internals shared with the CLI and API and may change between releases.
 [`output::TextFile::create(path, no_clobber)`]: crate::output::TextFile::create
 [`output::StoredResponses::new(dir, no_clobber)`]: crate::output::StoredResponses::new
 [`output::write_error_log(path, &report.failures, no_clobber)`]: crate::output::write_error_log
-[`katana::traffic_export`]: crate::katana::traffic_export
-[`katana::resume::ResumeState::to_json`]: crate::katana::resume::ResumeState::to_json
+[`surface::traffic_export`]: crate::surface::traffic_export
+[`surface::resume::ResumeState::to_json`]: crate::surface::resume::ResumeState::to_json

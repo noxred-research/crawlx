@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Speech-to-text seam of the `audio`/`video` scrape formats: [`LlmExtractor::transcribe`] over an
-//! OpenAI-compatible `audio/transcriptions` endpoint, the scripted double and the wrappers.
+//! chat-completions compatible `audio/transcriptions` endpoint, the scripted double and the wrappers.
 
 use crawlx_core::secret::SecretOr;
-use crawlx_model::llm::{LlmConfig, LlmError, LlmExtractor, MockLlm, OpenAiCompatible};
+use crawlx_model::llm::{ChatCompletionsClient, LlmConfig, LlmError, LlmExtractor, MockLlm};
 use crawlx_model::llm_cache::{CallCap, Offline, RecordingLlm};
 use serde_json::json;
 use std::time::Duration;
@@ -30,7 +30,7 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 #[tokio::test]
-async fn transcribe_posts_the_openai_multipart_form_and_reads_text() {
+async fn transcribe_posts_the_multipart_form_and_reads_text() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/stt/v1/audio/transcriptions"))
@@ -42,7 +42,7 @@ async fn transcribe_posts_the_openai_multipart_form_and_reads_text() {
         .expect(1)
         .mount(&server)
         .await;
-    let llm = OpenAiCompatible::new(config(&server)).unwrap();
+    let llm = ChatCompletionsClient::new(config(&server)).unwrap();
     assert!(llm.can_transcribe());
     let bytes = audio();
     let done = llm.transcribe(&bytes, "talk.mp3", "audio/mpeg").await.unwrap();
@@ -61,7 +61,7 @@ async fn transcribe_posts_the_openai_multipart_form_and_reads_text() {
     assert!(text.starts_with(&format!("--{boundary}\r\n")), "{text}");
     assert!(text.ends_with(&format!("\r\n--{boundary}--\r\n")));
     assert!(
-        text.contains("name=\"model\"\r\n\r\nwhisper-1\r\n"),
+        text.contains("name=\"model\"\r\n\r\nwhisper-1\r\n"), // wire-compat: default hosted speech-to-text model id
         "default model"
     );
     assert!(text.contains("name=\"response_format\"\r\n\r\njson\r\n"));
@@ -91,7 +91,7 @@ async fn transcribe_uses_configured_model_full_url_and_hostile_names_are_neutral
     cfg.transcribe_endpoint = Some(format!("{}/audio/transcriptions", server.uri()));
     cfg.transcribe_model = Some("distil-large".to_owned());
     cfg.api_key = None;
-    let llm = OpenAiCompatible::new(cfg).unwrap();
+    let llm = ChatCompletionsClient::new(cfg).unwrap();
     let done = llm
         .transcribe(b"abc", "a\"b\r\nX-Evil: 1.mp3", "audio/x\r\nEvil: 1")
         .await
@@ -117,7 +117,7 @@ async fn transcribe_errors_are_typed() {
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
-    let llm = OpenAiCompatible::new(config(&server)).unwrap();
+    let llm = ChatCompletionsClient::new(config(&server)).unwrap();
     assert_eq!(
         llm.transcribe(b"abc", "a.mp3", "audio/mpeg").await,
         Err(LlmError::Status { status: 500 })
@@ -126,7 +126,7 @@ async fn transcribe_errors_are_typed() {
         llm.transcribe(b"", "a.mp3", "audio/mpeg").await,
         Err(LlmError::InvalidRequest(_))
     ));
-    let too_big = vec![0u8; crawlx_model::llm::openai::MAX_TRANSCRIBE_BYTES + 1];
+    let too_big = vec![0u8; crawlx_model::llm::chat_completions::MAX_TRANSCRIBE_BYTES + 1];
     assert!(matches!(
         llm.transcribe(&too_big, "a.mp3", "audio/mpeg").await,
         Err(LlmError::InvalidRequest(_))
@@ -142,7 +142,7 @@ async fn transcribe_errors_are_typed() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"words": []})))
         .mount(&bad_reply)
         .await;
-    let llm = OpenAiCompatible::new(config(&bad_reply)).unwrap();
+    let llm = ChatCompletionsClient::new(config(&bad_reply)).unwrap();
     assert!(matches!(
         llm.transcribe(b"abc", "a.mp3", "audio/mpeg").await,
         Err(LlmError::InvalidOutput(_))
@@ -151,7 +151,7 @@ async fn transcribe_errors_are_typed() {
 
 #[tokio::test]
 async fn transcribe_without_endpoint_is_not_configured() {
-    let llm = OpenAiCompatible::new(LlmConfig::new("http://127.0.0.1:1/v1", "m")).unwrap();
+    let llm = ChatCompletionsClient::new(LlmConfig::new("http://127.0.0.1:1/v1", "m")).unwrap();
     assert!(!llm.can_transcribe());
     assert_eq!(
         llm.transcribe(b"abc", "a.mp3", "audio/mpeg").await,
@@ -160,7 +160,7 @@ async fn transcribe_without_endpoint_is_not_configured() {
     let mut cfg = LlmConfig::new("http://127.0.0.1:1/v1", "m");
     cfg.transcribe_endpoint = Some("ftp://h".to_owned());
     assert!(matches!(
-        OpenAiCompatible::new(cfg),
+        ChatCompletionsClient::new(cfg),
         Err(LlmError::InvalidRequest(_))
     ));
     assert!(!Offline.can_transcribe());
@@ -173,17 +173,17 @@ async fn transcribe_without_endpoint_is_not_configured() {
 #[test]
 fn transcribe_environment_variables_are_read_with_the_llm_config() {
     let cfg = LlmConfig::from_lookup(|k| match k {
-        "OPENAI_API_KEY" => Some("sk-x".to_owned()),
-        "OPENAI_TRANSCRIBE_ENDPOINT" => Some(" http://whisper:8000/v1 ".to_owned()),
-        "TRANSCRIBE_MODEL_NAME" => Some("large-v3".to_owned()),
+        "CRAWLX_LLM_API_KEY" => Some("sk-x".to_owned()),
+        "CRAWLX_TRANSCRIBE_ENDPOINT" => Some(" http://speech:8000/v1 ".to_owned()),
+        "CRAWLX_TRANSCRIBE_MODEL" => Some("large-v3".to_owned()),
         _ => None,
     })
     .unwrap();
-    assert_eq!(cfg.transcribe_endpoint.as_deref(), Some("http://whisper:8000/v1"));
+    assert_eq!(cfg.transcribe_endpoint.as_deref(), Some("http://speech:8000/v1"));
     assert_eq!(cfg.transcribe_model.as_deref(), Some("large-v3"));
-    let plain = LlmConfig::from_lookup(|k| (k == "OPENAI_API_KEY").then(|| "sk-x".to_owned())).unwrap();
+    let plain = LlmConfig::from_lookup(|k| (k == "CRAWLX_LLM_API_KEY").then(|| "sk-x".to_owned())).unwrap();
     assert!(plain.transcribe_endpoint.is_none() && plain.transcribe_model.is_none());
-    let llm = OpenAiCompatible::new(plain).unwrap();
+    let llm = ChatCompletionsClient::new(plain).unwrap();
     assert!(!llm.can_transcribe());
 }
 

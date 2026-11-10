@@ -2,7 +2,7 @@
 //! events and the snapshot envelope.
 //!
 //! The engine stores one row per step in the trace (kinds `plan`, `search`, `map`, `scrape`,
-//! `extract`, `exchange`, `answer`, `error`); [`trace_events`] expands them into the Firecrawl
+//! `extract`, `exchange`, `answer`, `error`); [`trace_events`] expands them into the compat API
 //! `AgentTraceEvent` shapes (`reasoning.summary`, `tool_call.started`, `tool_call.finished`,
 //! `artifact.updated`, `error.occurred`, bracketed by `run.started` and `run.finished`). Every
 //! expanded event also carries `seq` (the stored sequence number, the `after` cursor of the trace

@@ -1,8 +1,7 @@
 //! Security-crawl-maze scorer (`crawl_maze_score`).
 //!
-//! Ported in spirit from projectdiscovery/katana `cmd/tools/crawl-maze-score/main.go`
-//! (MIT, commit 9662cd7): a run is scored by which expected endpoints were *requested*,
-//! taken from the gym's server-side ledger (what actually hit the server) or from any JSON
+//! Ported in spirit from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md: a run is
+//! scored by which expected endpoints were *requested*, taken from the gym's server-side ledger (what actually hit the server) or from any JSON
 //! run artifact (every string that parses as a URL or path). The expected list is the
 //! fixture manifest's `expected.crawl_maze` ([`MazeTarget`]); an endpoint counts as found
 //! when `prefix + target.path` equals a requested path, query string ignored.
@@ -66,7 +65,7 @@ impl MazeScore {
             .collect()
     }
 
-    /// Percentage found, rounded like katana's report.
+    /// Percentage found, rounded like the reference report.
     #[must_use]
     pub fn percent(&self) -> u32 {
         if self.expected == 0 {

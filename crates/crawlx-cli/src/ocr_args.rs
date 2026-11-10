@@ -1,6 +1,6 @@
 //! OCR flags of `crawlx serve` and `crawlx worker` (`--ocr-*`).
 //!
-//! Precedence, highest first: the flags, the `CRAWLX_OCR_*` variables (and Firecrawl's
+//! Precedence, highest first: the flags, the `CRAWLX_OCR_*` variables (and the compatibility API's
 //! `IMAGE_OCR_ENABLED`), the `[ocr]` table of `crawlx.toml` (`$CRAWLX_CONFIG`, else
 //! `./crawlx.toml` when present), the defaults (`backend = off`).
 
@@ -10,7 +10,7 @@ use crawlx_extract::parse::ocr::{Ocr, OcrBackend, OcrConfig, Rasterizer};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// OCR for scanned PDF pages and image files (Firecrawl `parsers`: `mode: ocr`, `image`).
+/// OCR for scanned PDF pages and image files (compatibility API `parsers`: `mode: ocr`, `image`).
 #[derive(Args, Debug, Clone, Default)]
 pub struct OcrArgs {
     /// OCR engine: `off` (default), `tesseract` (the `tesseract` binary) or `ocrs` (pure Rust,

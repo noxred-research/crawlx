@@ -14,7 +14,7 @@ const ATOM: &str = "http://www.w3.org/2005/Atom";
 const RSS1: &str = "http://purl.org/rss/1.0/";
 const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 const MEDIA: &str = "http://search.yahoo.com/mrss/";
-const TRENDS: &str = "https://trends.google.com/trending/rss";
+const TRENDS: &str = "https://trends.google.com/trending/rss"; // wire-compat: trends feed XML namespace
 const MAX_URL_BYTES: usize = 4096;
 const MAX_HINT_BYTES: usize = 2048;
 
@@ -584,9 +584,9 @@ pub struct ConnectorDocument {
 ///
 /// # Errors
 /// Returns typed unavailable when configuration is absent, or protocol/resource errors.
-/// Google News accepts RSS/Atom or the recorded `garturlres` batchexecute response.
+/// News search accepts RSS/Atom or the recorded `garturlres` batchexecute response.
 /// Trends accepts daily-trends JSON (including its anti-XSSI prefix) or trends RSS.
-/// Internet Archive accepts the CDX JSON table; no implicit archive replay is requested.
+/// Web-archive index accepts the CDX JSON table; no implicit archive replay is requested.
 pub fn parse_connector(
     provider: crawlx_core::discovery::DiscoveryProviderV1,
     configured: Option<&crawlx_core::discovery::DiscoveryConnectorV1>,
@@ -604,7 +604,7 @@ pub fn parse_connector(
     if bytes.len() > policy.max_feed_bytes {
         return Err(DiscoveryErrorV1::Limit("connector_bytes").into());
     }
-    if is_feed(None, bytes) && provider != DiscoveryProviderV1::InternetArchive {
+    if is_feed(None, bytes) && provider != DiscoveryProviderV1::WebArchiveIndex {
         let document = parse_feed(bytes, &connector.endpoint, policy)?;
         return Ok(ConnectorDocument {
             articles: document.entries.into_iter().map(|entry| entry.url).collect(),
@@ -627,10 +627,10 @@ pub fn parse_connector(
         truncated: false,
     };
     match provider {
-        DiscoveryProviderV1::GoogleNews => {
+        DiscoveryProviderV1::NewsSearch => {
             let rows = root
                 .as_array()
-                .ok_or_else(|| protocol("Google News batchexecute array absent"))?;
+                .ok_or_else(|| protocol("news-search batchexecute array absent"))?;
             for call in rows.iter().take(policy.max_entries) {
                 let Some(call) = call.as_array() else {
                     continue;
@@ -655,15 +655,15 @@ pub fn parse_connector(
                 }
             }
             if result.articles.is_empty() {
-                return Err(protocol("Google News decoded article response absent"));
+                return Err(protocol("news-search decoded article response absent"));
             }
             result.truncated = rows.len() > policy.max_entries;
         }
-        DiscoveryProviderV1::GoogleTrends => {
+        DiscoveryProviderV1::TrendsSearch => {
             let days = root
                 .pointer("/default/trendingSearchesDays")
                 .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| protocol("Google Trends daily-trends records absent"))?;
+                .ok_or_else(|| protocol("trends-search daily-trends records absent"))?;
             let mut count = 0usize;
             for day in days.iter().take(policy.max_entries) {
                 let Some(searches) = day.get("trendingSearches").and_then(serde_json::Value::as_array) else {
@@ -702,7 +702,7 @@ pub fn parse_connector(
                 }
             }
         }
-        DiscoveryProviderV1::InternetArchive => {
+        DiscoveryProviderV1::WebArchiveIndex => {
             let rows = root.as_array().ok_or_else(|| protocol("CDX table absent"))?;
             let header = rows
                 .first()
@@ -843,9 +843,9 @@ mod tests {
         let connector = |provider, archive_base: Option<&str>| -> DiscoveryConnectorV1 {
             serde_json::from_value(serde_json::json!({"provider":provider,"endpoint":"https://provider.test/query","archiveBase":archive_base})).unwrap()
         };
-        let news = connector("google_news", None);
+        let news = connector("news_search", None);
         let decoded = parse_connector(
-            DiscoveryProviderV1::GoogleNews,
+            DiscoveryProviderV1::NewsSearch,
             Some(&news),
             br#")]}'
 [["wrb.fr","Fbv4je","[\"garturlres\",\"https://publisher.test/story\"]",null]]"#,
@@ -853,13 +853,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(decoded.articles[0].as_str(), "https://publisher.test/story");
-        let trends = connector("google_trends", None);
-        let parsed = parse_connector(DiscoveryProviderV1::GoogleTrends, Some(&trends),
+        let trends = connector("trends_search", None);
+        let parsed = parse_connector(DiscoveryProviderV1::TrendsSearch, Some(&trends),
             br#"{"default":{"trendingSearchesDays":[{"trendingSearches":[{"title":{"query":"space mission"},"articles":[{"url":"https://publisher.test/mission"}]}]}]}}"#, &policy).unwrap();
         assert_eq!(parsed.terms, vec!["space mission"]);
         assert_eq!(parsed.articles.len(), 1);
-        let archive = connector("internet_archive", Some("https://archive.test/web/"));
-        let captures = parse_connector(DiscoveryProviderV1::InternetArchive, Some(&archive),
+        let archive = connector("web_archive_index", Some("https://archive.test/web/"));
+        let captures = parse_connector(DiscoveryProviderV1::WebArchiveIndex, Some(&archive),
             br#"[["timestamp","original","statuscode"],["20260101120000","https://publisher.test/story","404"],["20260102120000","https://publisher.test/other","-"]]"#, &policy).unwrap();
         assert_eq!(captures.captures[0].target_status, Some(404));
         assert_eq!(captures.captures[1].target_status, None);
@@ -869,9 +869,9 @@ mod tests {
         );
         assert_eq!(captures.captures[0].capture_time, "20260101120000");
         assert!(matches!(
-            parse_connector(DiscoveryProviderV1::GoogleNews, None, b"", &policy),
+            parse_connector(DiscoveryProviderV1::NewsSearch, None, b"", &policy),
             Err(FeedError::Policy(DiscoveryErrorV1::ProviderUnavailable(
-                DiscoveryProviderV1::GoogleNews
+                DiscoveryProviderV1::NewsSearch
             )))
         ));
     }

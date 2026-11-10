@@ -320,7 +320,7 @@ fn robots_user_agent_precedence() {
     let base = FetchConfig::default();
     assert_eq!(base.robots_user_agent(), format!("crawlx/{version}"));
     let mut fetch = Fetch {
-        user_agent: Some("Mozilla/5.0 custom".to_owned()),
+        user_agent: Some("Agent/5.0 custom".to_owned()),
         ..Fetch::default()
     };
     let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
@@ -328,14 +328,14 @@ fn robots_user_agent_precedence() {
         rt.block_on(RequestControls::resolve(&fetch, "a.test", None))
             .unwrap(),
     );
-    assert_eq!(with_ua.user_agent(), "Mozilla/5.0 custom");
-    assert_eq!(with_ua.robots_user_agent(), "Mozilla/5.0 custom");
+    assert_eq!(with_ua.user_agent(), "Agent/5.0 custom");
+    assert_eq!(with_ua.robots_user_agent(), "Agent/5.0 custom");
     fetch.robots_user_agent = Some("crawlx-bot".to_owned());
     let with_robots = FetchConfig::default().with_controls(
         rt.block_on(RequestControls::resolve(&fetch, "a.test", None))
             .unwrap(),
     );
-    assert_eq!(with_robots.user_agent(), "Mozilla/5.0 custom");
+    assert_eq!(with_robots.user_agent(), "Agent/5.0 custom");
     assert_eq!(with_robots.robots_user_agent(), "crawlx-bot");
 }
 

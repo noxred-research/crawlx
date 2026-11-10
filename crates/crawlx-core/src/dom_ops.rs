@@ -1,12 +1,12 @@
-//! Browser-plane operations of the katana headless parity set that need the
+//! Browser-plane operations of the surface-discovery headless parity set that need the
 //! document itself and are neither a journaled [`crate::BrowserAction`] nor a scrape
 //! [`crate::page_op::PageOp`]:
 //!
 //! * [`LazyScrollSpec`] / [`LazyScrollReport`]: reveal lazily loaded content
-//!   (`dynamic.maxScrollSteps`, katana `-max-scroll-steps`) through
+//!   (`dynamic.maxScrollSteps`, compatibility flag `-max-scroll-steps`) through
 //!   [`crate::BrowserContext::lazy_scroll`];
 //! * [`CssFilter`]: restrict interaction candidates by CSS (`dynamic.interactionSelector`,
-//!   `dynamic.interactionExclude`, katana `-interaction-selector` / `-interaction-exclude`)
+//!   `dynamic.interactionExclude`, compatibility flags `-interaction-selector` / `-interaction-exclude`)
 //!   through [`crate::BrowserContext::css_filter`].
 //!
 //! Neither operation clicks, types or submits anything. Contexts that cannot run them (the
@@ -33,7 +33,7 @@ pub struct LazyScrollSpec {
 }
 
 impl LazyScrollSpec {
-    /// Quiet window after each step used by `dynamic.maxScrollSteps` (katana waits 300 ms).
+    /// Quiet window after each step used by `dynamic.maxScrollSteps` (300 ms).
     pub const DEFAULT_SETTLE_MS: u32 = 300;
 
     /// `max_steps` steps with [`Self::DEFAULT_SETTLE_MS`].
@@ -70,7 +70,7 @@ pub struct CssFilter {
 }
 
 /// One XHR or `fetch()` request the page issued, as the browser observed it
-/// ([`crate::BrowserContext::drain_xhr`], `extract.xhr`, katana `-xhr-extraction`).
+/// ([`crate::BrowserContext::drain_xhr`], `extract.xhr`, compatibility flag `-xhr-extraction`).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct XhrRecord {
     /// URL of the page (main document) that issued the request.

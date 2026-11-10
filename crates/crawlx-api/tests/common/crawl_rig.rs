@@ -1,5 +1,5 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! A rig for the Firecrawl crawl, map and webhook tests: the API router and a REAL worker lease
+//! A rig for the compat crawl, map and webhook tests: the API router and a REAL worker lease
 //! loop over one `MemoryStore`, a fixture site served for several host names (the injected
 //! resolver maps them all to 127.0.0.1; admission denies literal loopback), a recording webhook
 //! transport and a [`WebhookSender`] over the same stores.
@@ -72,8 +72,8 @@ impl RequestCommitRepo for FailingPageCommits {
 pub struct RigConfig {
     /// Document LLM for the worker AND the API.
     pub llm: Option<Arc<dyn LlmExtractor>>,
-    /// `compat.firecrawlKeys`.
-    pub firecrawl_keys: bool,
+    /// `compat.prefixedKeys`.
+    pub prefixed_keys: bool,
     /// API settings.
     pub settings: Option<Settings>,
     /// The worker's atomic result store refuses pages whose URL contains this text.
@@ -429,7 +429,7 @@ impl Rig {
             rate_limit_per_minute: 0,
             webhook_secret: WEBHOOK_SECRET.to_owned(),
             compat: CompatConfig {
-                firecrawl_keys: cfg.firecrawl_keys,
+                prefixed_keys: cfg.prefixed_keys,
                 ..CompatConfig::default()
             },
             ..ApiConfig::default()
@@ -567,7 +567,7 @@ impl Rig {
 
     /// Poll the facade status of crawl `id` until it is no longer `scraping`; returns the body.
     pub async fn wait_crawl(&self, id: &str) -> Value {
-        let uri = format!("/compat/firecrawl/v2/crawl/{id}?limit=1000");
+        let uri = format!("/compat/v2/crawl/{id}?limit=1000");
         for _ in 0..600 {
             let (_, _, v) = self.env.get(&uri).await;
             if v["status"] != "scraping" {

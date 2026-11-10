@@ -1,4 +1,4 @@
-//! Services behind the Firecrawl-compatible LLM products: the search provider seam
+//! Services behind the compatibility-API LLM products: the search provider seam
 //! ([`search`]), the page tools seam over the scrape engine ([`tools`]), usage accounting
 //! ([`usage`]), job admission and background execution ([`jobs`]), job webhooks ([`webhook`]), embedding ranking of the pages
 //! `/extract` reads ([`rank`]) and shared route plumbing ([`common`]).
@@ -16,13 +16,13 @@ pub mod extract;
 pub mod feedback;
 pub mod indexes;
 pub mod jobs;
+pub mod metasearch;
 pub mod monitor;
 pub mod rank;
 pub mod request;
 pub mod search;
 pub mod search_http;
-pub mod searchapi;
-pub mod searxng;
+pub mod serp;
 pub mod tools;
 pub mod usage;
 pub mod webhook;
@@ -31,7 +31,7 @@ pub mod zdr_vault;
 use crate::config::IntelConfig;
 use crate::errors::ApiError;
 use crawlx_model::llm::{
-    EmbeddingsClient, ExtractionRouter, LlmExtractor, OpenAiCompatible, OpenAiEmbeddings,
+    ChatCompletionsClient, EmbeddingsClient, ExtractionRouter, HttpEmbeddings, LlmExtractor,
 };
 use rank::PageRanker;
 use search::SearchProvider;
@@ -48,7 +48,7 @@ pub struct Backends {
     /// Router of the `/extract` LLM step between the default model and the extraction provider
     /// (`EXTRACTION_PROVIDER_*`).
     pub extraction: Option<Arc<ExtractionRouter>>,
-    /// Embedding ranking of the pages `/extract` reads (`MODEL_EMBEDDING_NAME`).
+    /// Embedding ranking of the pages `/extract` reads (`CRAWLX_EMBEDDING_MODEL`).
     pub embeddings: Option<Arc<PageRanker>>,
 }
 
@@ -71,7 +71,8 @@ fn default_llm(cfg: &IntelConfig) -> Result<Option<Arc<dyn LlmExtractor>>, ApiEr
     let resolved = settings
         .resolve()
         .map_err(|e| ApiError::Config(format!("intel.llm: {e}")))?;
-    let client = OpenAiCompatible::new(resolved).map_err(|e| ApiError::Config(format!("intel.llm: {e}")))?;
+    let client =
+        ChatCompletionsClient::new(resolved).map_err(|e| ApiError::Config(format!("intel.llm: {e}")))?;
     Ok(Some(Arc::new(client)))
 }
 
@@ -87,7 +88,7 @@ fn extraction_router(
     let Some(default) = default else {
         return Err(ApiError::Config(
             "intel.extraction: the extraction provider falls back to the default LLM, which is not configured \
-             (set intel.llm or OPENAI_BASE_URL / MODEL_NAME / OPENAI_API_KEY)"
+             (set intel.llm or CRAWLX_LLM_BASE_URL / CRAWLX_LLM_MODEL / CRAWLX_LLM_API_KEY)"
                 .to_owned(),
         ));
     };
@@ -97,8 +98,8 @@ fn extraction_router(
     let resolved = settings
         .resolve()
         .map_err(|e| ApiError::Config(format!("intel.extraction: {e}")))?;
-    let provider =
-        OpenAiCompatible::new(resolved).map_err(|e| ApiError::Config(format!("intel.extraction: {e}")))?;
+    let provider = ChatCompletionsClient::new(resolved)
+        .map_err(|e| ApiError::Config(format!("intel.extraction: {e}")))?;
     Ok(Some(Arc::new(ExtractionRouter::new(
         Arc::clone(default),
         Arc::new(provider),
@@ -118,7 +119,7 @@ pub fn backends(cfg: &IntelConfig) -> Result<Backends, ApiError> {
             let resolved = settings
                 .resolve(cfg.llm.as_ref())
                 .map_err(|e| ApiError::Config(format!("intel.embeddings: {e}")))?;
-            let client = OpenAiEmbeddings::new(resolved)
+            let client = HttpEmbeddings::new(resolved)
                 .map_err(|e| ApiError::Config(format!("intel.embeddings: {e}")))?;
             Some(Arc::new(PageRanker::new(
                 Arc::new(client) as Arc<dyn EmbeddingsClient>,
@@ -153,7 +154,7 @@ pub fn worker_llm(cfg: &IntelConfig) -> Result<WorkerLlm, ApiError> {
             let resolved = settings
                 .resolve(cfg.llm.as_ref())
                 .map_err(|e| ApiError::Config(format!("intel.branding: {e}")))?;
-            let client = OpenAiCompatible::new(resolved)
+            let client = ChatCompletionsClient::new(resolved)
                 .map_err(|e| ApiError::Config(format!("intel.branding: {e}")))?;
             Some(Arc::new(client) as Arc<dyn LlmExtractor>)
         }

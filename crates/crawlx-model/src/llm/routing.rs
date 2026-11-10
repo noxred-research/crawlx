@@ -1,7 +1,7 @@
-//! Per-step provider routing of the `/extract` and `json` LLM step (Firecrawl self-host
-//! `EXTRACTION_PROVIDER_*`, `apps/api/src/lib/extraction-provider.ts`).
+//! Per-step provider routing of the `/extract` and `json` LLM step (`EXTRACTION_PROVIDER_*`).
 //!
-//! An operator can point the JSON-extraction step at a second OpenAI-compatible endpoint while
+//! An operator can point the JSON-extraction step at a second chat-completions compatible
+//! endpoint while
 //! every other LLM step (`summary`, `question`, `highlights`, `query`, crawl planning, the agent,
 //! monitor judging) keeps the default model. Which requests take the second endpoint is decided
 //! by [`ExtractionPolicy::route`], a port of upstream's `selectExtractionRoute`:

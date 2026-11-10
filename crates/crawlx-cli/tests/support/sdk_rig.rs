@@ -1,16 +1,16 @@
-//! In-process rig for `sdk_python.rs`: the Firecrawl facade on real TCP ports, a REAL worker lease
+//! In-process rig for `sdk_python.rs`: the compatibility API on real TCP ports, a REAL worker lease
 //! loop over the same `MemoryStore`, a fixture HTTP site reached through the host name
 //! `site.example.test` (an injected resolver maps it to 127.0.0.1; admission denies literal
-//! loopback), a `MockLlm` on both sides and a wiremock SearXNG endpoint wired through
+//! loopback), a `MockLlm` on both sides and a wiremock metasearch endpoint wired through
 //! `IntelConfig.search` (the way `crawlx serve` configures it).
 //!
 //! Two listeners serve the same router:
 //!
-//! * `facade`: the router as mounted, `/compat/firecrawl/v2/...`;
-//! * `rewritten`: the router behind a `/v2/*` to `/compat/firecrawl/v2/*` rewrite, which is what a
-//!   reverse proxy in front of the facade does. `firecrawl-py` needs it: its v2 client joins
+//! * `facade`: the router as mounted, `/compat/v2/...`;
+//! * `rewritten`: the router behind a `/v2/*` to `/compat/v2/*` rewrite, which is what a
+//!   reverse proxy in front of the compatibility API does. The Python SDK needs it: its v2 client joins
 //!   `/v2/scrape` onto `api_url` with `urllib.parse.urljoin`, and a rooted path replaces the
-//!   `/compat/firecrawl` prefix of `api_url`.
+//!   `/compat` prefix of `api_url`.
 
 use async_trait::async_trait;
 use axum::extract::{Request, State};
@@ -18,7 +18,7 @@ use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use crawlx_api::auth::{generate_firecrawl_key, key_record_for, tenant_id_for};
+use crawlx_api::auth::{generate_compat_key, key_record_for, tenant_id_for};
 use crawlx_api::config::{CompatConfig, IntelConfig, SearchSettings};
 use crawlx_api::{ApiConfig, AppState, Repos, Scope};
 use crawlx_core::counters::PlaneCounters;
@@ -201,14 +201,14 @@ impl RunRepo for PrivateNetworks {
     }
 }
 
-/// Forward `/v2/...` to `/compat/firecrawl/v2/...` of `api`; every other path is passed on as is.
+/// Forward `/v2/...` to `/compat/v2/...` of `api`; every other path is passed on as is.
 async fn rewrite_v2(State(api): State<Router>, mut req: Request) -> Response {
     if req.uri().path().starts_with("/v2/") {
         let pq = req
             .uri()
             .path_and_query()
             .map_or("/", axum::http::uri::PathAndQuery::as_str);
-        match format!("/compat/firecrawl{pq}").parse::<Uri>() {
+        match format!("/compat{pq}").parse::<Uri>() {
             Ok(uri) => *req.uri_mut() = uri,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         }
@@ -219,11 +219,11 @@ async fn rewrite_v2(State(api): State<Router>, mut req: Request) -> Response {
     }
 }
 
-/// The facade, a worker, a fixture site, a mock LLM and a mock SearXNG, wired to each other.
+/// The compatibility API, a worker, a fixture site, a mock LLM and a mock metasearch endpoint, wired to each other.
 pub struct SdkRig {
     /// The fixture site.
     pub site: Site,
-    /// `http://127.0.0.1:PORT`: the facade as mounted (`/compat/firecrawl/v2/...`).
+    /// `http://127.0.0.1:PORT`: the compatibility API as mounted (`/compat/v2/...`).
     pub facade_root: String,
     /// `http://127.0.0.1:PORT`: the same router behind the `/v2/*` rewrite.
     pub rewritten_root: String,
@@ -231,8 +231,8 @@ pub struct SdkRig {
     pub key: String,
     /// The document LLM of the worker and the API.
     pub llm: Arc<MockLlm>,
-    /// The SearXNG stand-in behind `IntelConfig.search`.
-    pub searxng: wiremock::MockServer,
+    /// The metasearch stand-in behind `IntelConfig.search`.
+    pub metasearch: wiremock::MockServer,
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
     _dir: tempfile::TempDir,
@@ -263,8 +263,8 @@ impl SdkRig {
             }
         }));
 
-        // a SearXNG-shaped endpoint: the same two hits on the fixture site for every page
-        let searxng = wiremock::MockServer::start().await;
+        // a metasearch-shaped endpoint: the same two hits on the fixture site for every page
+        let metasearch = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::path("/search"))
             .and(wiremock::matchers::query_param("format", "json"))
@@ -274,11 +274,11 @@ impl SdkRig {
                     {"url": site.url("/b"), "title": "Page B", "content": "the second hit"},
                 ]})),
             )
-            .mount(&searxng)
+            .mount(&metasearch)
             .await;
         let intel = IntelConfig {
-            search: Some(SearchSettings::Searxng {
-                endpoint: searxng.uri(),
+            search: Some(SearchSettings::Metasearch {
+                endpoint: metasearch.uri(),
                 engines: Vec::new(),
                 categories: Vec::new(),
             }),
@@ -289,7 +289,7 @@ impl SdkRig {
         let config = ApiConfig {
             rate_limit_per_minute: 0,
             compat: CompatConfig {
-                firecrawl_keys: true,
+                prefixed_keys: true,
                 ..CompatConfig::default()
             },
             intel,
@@ -306,7 +306,7 @@ impl SdkRig {
         let router = crawlx_api::router(state);
 
         // the `fc-` key, as `crawlx serve --api-key acme=fc-...` bootstraps it
-        let key = generate_firecrawl_key();
+        let key = generate_compat_key();
         let rec = key_record_for(&key, tenant_id_for("acme"), Scope::all_set(), true).unwrap();
         crawlx_api::ApiStore::key_insert(api.as_ref(), &rec, "acme")
             .await
@@ -353,7 +353,7 @@ impl SdkRig {
             rewritten_root,
             key,
             llm,
-            searxng,
+            metasearch,
             cancel,
             tasks,
             _dir: dir,

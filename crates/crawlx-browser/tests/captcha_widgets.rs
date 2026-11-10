@@ -1,7 +1,7 @@
 //! Controlled widgets exercise real CDP and real loopback provider HTTP, never a live provider.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod katana_p4_support;
+mod surface_support;
 
 use crawlx_core::browser::{BrowserContext as _, BrowserError};
 use crawlx_core::captcha::{CaptchaConfig, CaptchaCredentials, CaptchaError, CaptchaProvider};
@@ -9,22 +9,22 @@ use crawlx_core::observation::ObservationSpec;
 use crawlx_core::page_op::{PageOp, PageOpResult};
 use crawlx_core::secret::{CredentialRef, SecretOr};
 use crawlx_core::BrowserAction;
-use katana_p4_support::{canonical, context_config, launch, serve};
 use std::collections::BTreeMap;
+use surface_support::{canonical, context_config, launch, serve};
 
 const TOKEN: &str = "fixture-secret-captcha-token";
 
-async fn provider() -> katana_p4_support::Server {
+async fn provider() -> surface_support::Server {
     serve(BTreeMap::from([
         ("127.0.0.1/createTask".to_owned(), ("application/json", r#"{"errorId":0,"taskId":"local-task"}"#.to_owned())),
-        ("127.0.0.1/getTaskResult".to_owned(), ("application/json", format!(r#"{{"errorId":0,"status":"ready","solution":{{"gRecaptchaResponse":"{TOKEN}","token":"{TOKEN}"}}}}"#))),
+        ("127.0.0.1/getTaskResult".to_owned(), ("application/json", format!(r#"{{"errorId":0,"status":"ready","solution":{{"gRecaptchaResponse":"{TOKEN}","token":"{TOKEN}"}}}}"#))), // wire-compat: provider solution field
     ]), false).await
 }
 
 fn configured(port: u16) -> crawlx_core::ContextConfig {
     let mut cfg = context_config();
     let mut solver = CaptchaConfig::new(
-        CaptchaProvider::Capsolver,
+        CaptchaProvider::TaskApi,
         CredentialRef("env://UNUSED_TEST_KEY".to_owned()),
     );
     solver.endpoint = url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
@@ -39,12 +39,13 @@ fn configured(port: u16) -> crawlx_core::ContextConfig {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn widget_fields_and_callbacks_use_real_provider_tokens_without_persisting_them() {
     let provider = provider().await;
+    // wire-compat: the page fixtures below reproduce third-party widget markup and global APIs
     let page = r#"<!doctype html><html><body>
-<form id="danger" method="post" action="/destroy"><div class="g-recaptcha" data-sitekey="site-key" data-callback="accepted"></div></form>
+<form id="danger" method="post" action="/destroy"><div class="g-recaptcha" data-sitekey="site-key" data-callback="accepted"></div></form><!-- wire-compat: widget markup -->
 <h1 id="result">waiting</h1>
 <script>function accepted(token) {
  document.getElementById('result').textContent = token;
- document.body.dataset.accepted = String(document.querySelector('[name=g-recaptcha-response]').value === token);
+ document.body.dataset.accepted = String(document.querySelector('[name=g-recaptcha-response]').value === token); // wire-compat: widget field name
  try {document.getElementById('danger').submit();} catch (_) {document.body.dataset.submitBlocked = 'yes';}
  console.log(token);
 }</script></body></html>"#.to_owned();
@@ -95,20 +96,20 @@ async fn widget_fields_and_callbacks_use_real_provider_tokens_without_persisting
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn explicit_render_callbacks_and_v3_promises_receive_their_widget_token() {
     let provider = provider().await;
-    let page = r#"<!doctype html><html><body><div id="turnstile"></div><div class="h-captcha" data-sitekey="hkey" data-callback="hSolved"></div>
-<div class="g-recaptcha" data-sitekey="ent-v2-key" data-s="enterprise-s" data-callback="entV2Solved"></div><script src="/recaptcha/enterprise.js"></script>
+    let page = r#"<!doctype html><html><body><div id="widget-t"></div><div class="h-captcha" data-sitekey="hkey" data-callback="hSolved"></div><!-- wire-compat: widget markup -->
+<div class="g-recaptcha" data-sitekey="ent-v2-key" data-s="enterprise-s" data-callback="entV2Solved"></div><script src="/recaptcha/enterprise.js"></script><!-- wire-compat: widget markup -->
 <script>
- window.turnstile = {render: () => 'widget-0', getResponse: () => ''};
- turnstile.render(document.getElementById('turnstile'), {sitekey:'tkey', callback: token => {document.body.dataset.turnstile = token; document.body.dataset.widgetApi = String(turnstile.getResponse('widget-0') === token);}});
- function hSolved(token) {document.body.dataset.hcaptcha = token;}
+ window.turnstile = {render: () => 'widget-0', getResponse: () => ''}; // wire-compat: widget global API
+ turnstile.render(document.getElementById('widget-t'), {sitekey:'tkey', callback: token => {document.body.dataset.widgetT = token; document.body.dataset.widgetApi = String(turnstile.getResponse('widget-0') === token);}}); // wire-compat: widget global API
+ function hSolved(token) {document.body.dataset.widgetH = token;}
  function entV2Solved(token) {document.body.dataset.entv2 = token;}
- window.grecaptcha = {};
- grecaptcha.execute = () => Promise.reject(new Error('must use solver'));
- grecaptcha.enterprise = {};
- grecaptcha.enterprise.execute = () => Promise.reject(new Error('must use solver'));
- grecaptcha.execute('v3key', {action:'login'}).then(token => {document.body.dataset.v3 = token;});
- grecaptcha.enterprise.execute('entkey', {action:'verify'}).then(token => {document.body.dataset.enterprise = token;});
- grecaptcha.execute('noactionkey').then(token => {document.body.dataset.v3WithoutAction = token;});
+ window.grecaptcha = {}; // wire-compat: widget global API
+ grecaptcha.execute = () => Promise.reject(new Error('must use solver')); // wire-compat: widget global API
+ grecaptcha.enterprise = {}; // wire-compat: widget global API
+ grecaptcha.enterprise.execute = () => Promise.reject(new Error('must use solver')); // wire-compat: widget global API
+ grecaptcha.execute('v3key', {action:'login'}).then(token => {document.body.dataset.v3 = token;}); // wire-compat: widget global API
+ grecaptcha.enterprise.execute('entkey', {action:'verify'}).then(token => {document.body.dataset.enterprise = token;}); // wire-compat: widget global API
+ grecaptcha.execute('noactionkey').then(token => {document.body.dataset.v3WithoutAction = token;}); // wire-compat: widget global API
 </script></body></html>"#;
     let site = serve(
         BTreeMap::from([("app.test/".to_owned(), ("text/html", page.to_owned()))]),
@@ -122,8 +123,8 @@ async fn explicit_render_callbacks_and_v3_promises_receive_their_widget_token() 
     ctx.navigate(&canonical("http://app.test/")).await.unwrap();
     ctx.perform(BrowserAction::SolveCaptcha).await.unwrap();
     for name in [
-        "turnstile",
-        "hcaptcha",
+        "widgetT",
+        "widgetH",
         "v3",
         "enterprise",
         "entv2",
@@ -162,7 +163,7 @@ async fn ambiguous_provider_failure_cannot_bill_the_same_widget_twice() {
             "app.test/".to_owned(),
             (
                 "text/html",
-                "<div class=cf-turnstile data-sitekey=key></div>".to_owned(),
+                "<div class=cf-turnstile data-sitekey=key></div>".to_owned(), // wire-compat: widget markup
             ),
         )]),
         true,
@@ -190,7 +191,7 @@ async fn default_off_never_contacts_provider_and_unknown_widgets_fail_explicitly
     let site = serve(
         BTreeMap::from([(
             "app.test/".to_owned(),
-            ("text/html", "<div class=g-recaptcha></div>".to_owned()),
+            ("text/html", "<div class=g-recaptcha></div>".to_owned()), // wire-compat: widget markup
         )]),
         true,
     )

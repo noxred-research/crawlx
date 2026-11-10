@@ -2287,7 +2287,7 @@ async fn the_pages_option_returns_the_markdown_of_every_physical_page() {
 }
 
 #[tokio::test]
-async fn the_blocks_option_returns_typed_layout_blocks_in_the_firecrawl_shape() {
+async fn the_blocks_option_returns_typed_layout_blocks_in_the_compatibility_shape() {
     let (site, rig) = (start().await, Rig::new().await);
     let done = go(
         &rig,
@@ -2479,8 +2479,8 @@ async fn native_acquisition_validates_real_http_without_keyword_false_positives(
     let site = start().await;
     for (status, body, expected) in [
         (200, "<form id=challenge-form>Verify you are human</form>", "challenge"),
-        (200, "<article><h1>Cloudflare CAPTCHA research</h1><p>An ordinary article about challenge detection.</p></article>", "valid"),
-        (200, "<main><h1>Contact us</h1><form><div class=g-recaptcha></div></form></main>", "valid"),
+        (200, "<article><h1>Edge CAPTCHA research</h1><p>An ordinary article about challenge detection.</p></article>", "valid"),
+        (200, "<main><h1>Contact us</h1><form><div class=g-recaptcha></div></form></main>", "valid"), // wire-compat: widget marker
         (200, "<article>News</article><input type=password>", "valid"),
         (401, "<main>Authentication required</main>", "auth_required"),
         (429, "<form id=challenge-form>Verify you are human</form>", "rate_limited"),

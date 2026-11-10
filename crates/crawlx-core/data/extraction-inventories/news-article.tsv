@@ -1,0 +1,42 @@
+# Feature IDs of the news-article extraction profile 0.9.6.1 (MIT upstream; see THIRD_PARTY_NOTICES.md) recognised by extraction import.
+# Format: ID<TAB>upstream feature. Lines starting with '#' are comments.
+NA-01	`Article`, convenience `article`, `build_article` deprecated, `build`, `fulltext`, `languages`
+NA-02	Download/parse/NLP stages, `Article.build`, lifecycle state/errors
+NA-03	`fulltext(html,language)` explicitly no HTTP/title/author/date processing
+NA-04	Gravity scoring, stopword/link-density features, parent/grandparent propagation, likely-node bias, sibling complement
+NA-05	Title inference/override/max length
+NA-06	Multiple authors, max authors
+NA-07	Publication date from page/URL, datetime output
+NA-08	Meta language/detection, explicit language, supported-language listing and stopword/tokenizer selection
+NA-09	Meta description/site name/favicon/canonical/meta_data/meta_keywords/tags
+NA-10	`top_node`, complemented node, `doc`, cleaned DOM/article_html; deprecated `clean_doc`/`text_cleaned` aliases
+NA-11	`text`, `max_text`, HTML cleaning switch
+NA-12	`images`, `meta_img`, `top_image`, `movies` and media-news detection
+NA-13	`fetch_images=True` default; top_image min width 300/height 200/area 10000/retries 2
+NA-14	XPath `read_more_link`, union selectors; original_url vs current url, input_html can still fetch read-more
+NA-15	Quality `is_valid_url`, `is_valid_body`, min 300 words/7 sentences, title/media/type conditions
+NA-16	Keywords + scores, `meta_keywords` distinct, max keywords 35 library/10 CLI
+NA-17	Extractive summary, max 5 sentences/5000 chars; title overlap, length, position and keyword spacing/frequency
+NA-18	Sentence-tokenizer resource splitting, English tokenizer, auto-download if missing
+NA-19	to_json/as_string, equality, pickle save/restore and human display
+NA-20	Precision/recall/comment extraction/adaptive CSS selectors
+NA-21	`Source.build`, dry build, input_html, only_homepage, only_in_path
+NA-22	Category inference/cache; category_urls, brand/description/favicon/logo/domain/scheme
+NA-23	Feed inference and `/feed,/feeds,/rss` probes, category feeds; feeds_to_articles
+NA-24	Source download_categories/download_feeds/download_articles; parse_categories/parse_feeds/parse_articles; size and URL lists
+NA-25	URL dedupe including normalized scheme/www variants; post-parse normalized title+body SHA-256 dedupe
+NA-26	memorize_articles/memoize_articles, max_file_memo=20000, clean_memo_cache
+NA-27	Category cache TTL 24h, disable_category_cache, documentation mentions use_cached_categories
+NA-28	`mthreading.fetch_news` sources/articles/URLs, threads and thread timeout
+NA-29	HTTP session, pooling/reset, UA/headers/cookies/auth/cert/proxy/verify/timeouts; arbitrary requests_params
+NA-30	HTTP status policy, meta-refresh, redirects/history, binary detection, HEAD/Range probes
+NA-31	gzip/deflate/Brotli, HTML charset sanitization
+NA-32	Optional anti-bot transport automatically replaces all requests; protection keyword detector
+NA-33	SSRF 0.9.6.1 public-address/redirect checks, `allow_private_hosts=False`; release admits DNS check/connect rebinding gap
+NA-34	Robots opt-in `honor_robots_txt`, optional robots parser, registered before_request hook
+NA-35	before_request/after_response/on_error hooks; add/remove/clear/get/local hook APIs
+NA-36	News-aggregator source top/keyword/topic/location/site, country/language/period/date/max_results/exclude_websites; encoded links decoded via provider POST
+NA-37	`popular_urls`, `hot()` trending terms
+NA-38	Local `file://` and --html-from-file, supplied HTML can still trigger parse-image/read-more network
+NA-39	CLI full surface (below), JSON array/CSV/text/stdout/file overwrite
+NA-40	Configuration update kwargs, per-object config, legacy uppercase constants/aliases

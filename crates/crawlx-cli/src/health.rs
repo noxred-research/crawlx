@@ -1,4 +1,4 @@
-//! `crawlx crawl --health-check` (katana `-health-check`): what would stop a crawl from
+//! `crawlx crawl --health-check` (compatibility `-health-check`): what would stop a crawl from
 //! working on this machine, as a table.
 //!
 //! Checks: the crawlx build, the request the flags produce (admission), the browser

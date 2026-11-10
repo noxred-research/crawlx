@@ -1,6 +1,6 @@
-//! Output condition DSL (katana `-mdc/-match-condition`, `-fdc/-filter-condition`).
+//! Output condition DSL (the `-mdc/-match-condition` and `-fdc/-filter-condition` compatibility flags).
 //!
-//! Katana evaluates a `projectdiscovery/dsl` (govaluate) expression against the flattened
+//! The reference tool evaluates a govaluate-style expression against the flattened
 //! JSONL result (`pkg/output/output.go` `evalDslExpr`, `resultToMap`; README.md:1075-1115).
 //! This is an own implementation of the subset those expressions use, over the same record
 //! the JSONL writer produces:
@@ -11,12 +11,12 @@
 //!   `request.method`, `response.headers.content-type`, `error`). A bare name resolves in
 //!   this order: exact path, `url` (= `request.endpoint`), then the top level, `response.*`,
 //!   `request.*`, `response.headers.*` and `response.knowledgebase.*` with names compared in
-//!   `snake_case` (`content_type` = `content-type`, `page_type` = `PageType`), so katana's
+//!   `snake_case` (`content_type` = `content-type`, `page_type` = `PageType`), so the reference's
 //!   flattened names (`endpoint`, `technologies`, `status_code`) keep working. `response`
-//!   wins over `request` for names both have (`body`, `raw`), as in katana;
+//!   wins over `request` for names both have (`body`, `raw`), as in the reference;
 //! * operators, loosest first: `||`, `&&`, `==` `!=` and infix `contains`, `<` `<=` `>`
 //!   `>=`, unary `!`, parentheses. `&&`/`||` short-circuit;
-//! * functions (katana names): `contains(s, sub)`, `contains_any(s, sub...)`,
+//! * functions (reference names): `contains(s, sub)`, `contains_any(s, sub...)`,
 //!   `contains_all(s, sub...)`, `starts_with(s, prefix...)`, `ends_with(s, suffix...)`,
 //!   `regex(pattern, input)`, `len(x)` (list length, otherwise byte length), `to_lower(x)`,
 //!   `to_upper(x)`, `trim(s, cutset)`, `trim_left(s, cutset)`, `trim_right(s, cutset)`,
@@ -24,8 +24,8 @@
 //!   stringified; a list stringifies as `[a b]` with object elements shown by their `name`,
 //!   so `contains(to_lower(technologies), "php")` works.
 //!
-//! The trim family follows `projectdiscovery/dsl` v0.8.21 `dsl.go` (MIT), commit
-//! `30ca8489112bb70dd98c2c017ca5859d2fff2a67`, selected by Katana
+//! The trim family follows the pinned string-function semantics of an MIT-licensed upstream
+//! (see THIRD_PARTY_NOTICES.md), selected by the reference tool's
 //! `35267ac5c8ff1db9694a319d0eb466ed97b0969f` `go.mod`. Cutsets contain Unicode
 //! characters, not substrings; prefix/suffix removal happens only once. `trim_space`
 //! uses Unicode whitespace. Results never grow. Inputs over [`MAX_TRIM_INPUT_LEN`]
@@ -34,7 +34,7 @@
 //! environment access or additional record fields are available to these functions.
 //! Other function names remain explicit [`DslError::UnknownFunction`] parse errors.
 //!
-//! Evaluation never fails loudly: as in katana, a reference to an unknown variable, a type
+//! Evaluation never fails loudly: as in the reference, a reference to an unknown variable, a type
 //! mismatch (`!` of a string, `<` between a string and a number) or a non-boolean result
 //! makes the whole condition `false` (a match condition does not match, a filter condition
 //! does not filter). `==` between different types is `false`, `!=` is `true`.
@@ -1062,7 +1062,7 @@ mod tests {
 
     #[test]
     fn trim_family_matches_pinned_string_semantics() {
-        // projectdiscovery/dsl 30ca8489 dsl.go:295-312 delegates to Go strings.
+        // the pinned upstream string functions delegate to Go strings.
         let cases = [
             ("trim('abbaHelloaba', 'ab') == 'Hello'", true),
             ("trim_left('abbaHelloaba', 'ab') == 'Helloaba'", true),
@@ -1234,7 +1234,7 @@ mod tests {
             ("endpoint contains \"admin\"", true),
             ("endpoint contains \"nope\"", false),
             ("contains(to_lower(technologies), \"php\")", true),
-            ("contains(to_lower(technologies), \"cloudflare\")", false),
+            ("contains(to_lower(technologies), \"examplecdn\")", false),
             ("contains(technologies, \"Nginx\")", true),
             ("response.headers.content-type contains \"html\"", true),
             ("content_type contains \"html\"", true),

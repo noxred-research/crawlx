@@ -454,7 +454,7 @@ mod tests {
 
     fn report(fixtures: Vec<DiscoveredFixture>) -> DiscoveryReport {
         DiscoveryReport {
-            driver: "playwright".to_owned(),
+            driver: "reference".to_owned(),
             driver_version: "1.56.1".to_owned(),
             mode: "discovery".to_owned(),
             gym: "http://127.0.0.1:1".to_owned(),
@@ -594,7 +594,7 @@ mod tests {
         assert_eq!(back, job);
         let json = serde_json::to_string(&report(Vec::new())).unwrap();
         assert!(DiscoveryReport::parse(&json).is_ok());
-        assert!(DiscoveryReport::parse(&json.replace("playwright", "selenium")).is_err());
+        assert!(DiscoveryReport::parse(&json.replace("reference", "other")).is_err());
         assert!(DiscoveryReport::parse(&json.replace("\"discovery\"", "\"matrix\"")).is_err());
     }
 }

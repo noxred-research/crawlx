@@ -1,9 +1,9 @@
-//! Per-step provider settings of the LLM products, read from the Firecrawl self-host variables
-//! (`apps/api/.env.example`, `apps/api/src/config.ts` upstream):
+//! Per-step provider settings of the LLM products, read from the self-host environment
+//! variables existing deployments of the compatibility API already set:
 //!
-//! * [`EmbeddingSettings`]: `MODEL_EMBEDDING_NAME` (the embedding model of the page ranker, served
-//!   by the default LLM's OpenAI-compatible endpoint and key unless overridden);
-//! * [`ExtractionSettings`]: `EXTRACTION_PROVIDER_*` (a second OpenAI-compatible endpoint for the
+//! * [`EmbeddingSettings`]: `CRAWLX_EMBEDDING_MODEL` (the embedding model of the page ranker, served
+//!   by the default LLM's chat-completions compatible endpoint and key unless overridden);
+//! * [`ExtractionSettings`]: `EXTRACTION_PROVIDER_*` (a second chat-completions compatible endpoint for the
 //!   JSON-extraction step: `/extract` and the `json` format);
 //! * [`BrandingSettings`]: `BRANDING_LLM_*` and `BRANDING_JEV_TIMEOUT_MS` (the LLM that refines the
 //!   markup-derived `branding` profile).
@@ -13,8 +13,8 @@
 
 use super::{resolve_secret_ref_with, LlmSettings, SecretRefError};
 use crawlx_core::secret::SecretOr;
+use crawlx_model::llm::chat_completions::{LlmConfig, DEFAULT_ENDPOINT, DEFAULT_MODEL};
 use crawlx_model::llm::embeddings::EmbeddingsConfig;
-use crawlx_model::llm::openai::{LlmConfig, DEFAULT_ENDPOINT, DEFAULT_MODEL};
 use crawlx_model::llm::routing::{ExtractionPolicy, PolicyError, DEFAULT_MAX_INPUT_BYTES};
 use std::str::FromStr;
 use std::time::Duration;
@@ -27,12 +27,12 @@ pub const DEFAULT_TOP_N: usize = 10;
 /// (upstream default of the branding call).
 pub const DEFAULT_BRANDING_TIMEOUT_MS: u64 = 5_000;
 
-/// Firecrawl variables crawlx reads but cannot act on, with the reason (shown by
+/// Self-host variables of the reference service that crawlx reads but cannot act on, with the reason (shown by
 /// `crawlx config check` when one is set).
 pub const UNSUPPORTED_ENV: [(&str, &str); 6] = [
     (
-        "TYPESAFE_API_KEY",
-        "TypeSafe is a hosted classifier API (api.typesafe.ai) without a self-hostable endpoint; crawlx has no client for it",
+        "TYPESAFE_API_KEY", // wire-compat: variable name of the reference self-host configuration
+        "a hosted classifier API without a self-hostable endpoint; crawlx has no client for it",
     ),
     (
         "BRANDING_JEV",
@@ -75,13 +75,13 @@ pub enum EnvError {
 }
 
 /// The embedding model that ranks the pages of an `/extract` job against its prompt
-/// (`MODEL_EMBEDDING_NAME`).
+/// (`CRAWLX_EMBEDDING_MODEL`).
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EmbeddingSettings {
     /// Embedding model name.
     pub model: String,
-    /// OpenAI-compatible base URL; `None` uses the default LLM's endpoint.
+    /// chat-completions compatible base URL; `None` uses the default LLM's endpoint.
     #[serde(default)]
     pub endpoint: Option<String>,
     /// Reference to the API key (`env:NAME` or `file:/path`); `None` uses the default LLM's key.
@@ -138,11 +138,11 @@ impl EmbeddingSettings {
     }
 }
 
-/// A second OpenAI-compatible endpoint for the JSON-extraction step (`EXTRACTION_PROVIDER_*`).
+/// A second chat-completions compatible endpoint for the JSON-extraction step (`EXTRACTION_PROVIDER_*`).
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtractionSettings {
-    /// OpenAI-compatible base URL or full `chat/completions` URL (`EXTRACTION_PROVIDER_BASE_URL`).
+    /// chat-completions compatible base URL or full `chat/completions` URL (`EXTRACTION_PROVIDER_BASE_URL`).
     pub endpoint: String,
     /// Model name sent with every request (`EXTRACTION_PROVIDER_MODEL`).
     pub model: String,
@@ -213,7 +213,7 @@ impl ExtractionSettings {
 #[derive(Clone, PartialEq, Eq, Default, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrandingSettings {
-    /// OpenAI-compatible base URL (`BRANDING_LLM_BASE_URL`).
+    /// chat-completions compatible base URL (`BRANDING_LLM_BASE_URL`).
     #[serde(default)]
     pub endpoint: Option<String>,
     /// Model name (`BRANDING_LLM_MODEL`).
@@ -298,7 +298,7 @@ pub(super) fn fill(
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Result<(), EnvError> {
     if intel.embeddings.is_none() {
-        if let Some(model) = get("MODEL_EMBEDDING_NAME") {
+        if let Some(model) = get("CRAWLX_EMBEDDING_MODEL") {
             intel.embeddings = Some(EmbeddingSettings {
                 model,
                 endpoint: None,
@@ -380,12 +380,12 @@ mod tests {
 
     #[test]
     fn nothing_is_configured_without_the_variables() {
-        let cfg = intel(&[("OPENAI_API_KEY", "k"), ("MODEL_NAME", "m")]).unwrap();
+        let cfg = intel(&[("CRAWLX_LLM_API_KEY", "k"), ("CRAWLX_LLM_MODEL", "m")]).unwrap();
         assert!(cfg.embeddings.is_none() && cfg.extraction.is_none() && cfg.branding.is_none());
         // the model name alone (docker-compose passes empty values) is not a provider
         let cfg = intel(&[
             ("EXTRACTION_PROVIDER_BASE_URL", " "),
-            ("MODEL_EMBEDDING_NAME", ""),
+            ("CRAWLX_EMBEDDING_MODEL", ""),
         ])
         .unwrap();
         assert!(cfg.extraction.is_none() && cfg.embeddings.is_none());
@@ -393,21 +393,24 @@ mod tests {
 
     #[test]
     fn embedding_name_enables_ranking_with_the_default_top_n() {
-        let cfg = intel(&[("MODEL_EMBEDDING_NAME", "nomic-embed-text")]).unwrap();
+        let cfg = intel(&[("CRAWLX_EMBEDDING_MODEL", "embed-model")]).unwrap();
         assert_eq!(
             cfg.embeddings,
             Some(EmbeddingSettings {
-                model: "nomic-embed-text".to_owned(),
+                model: "embed-model".to_owned(),
                 endpoint: None,
                 api_key_ref: None,
                 timeout_ms: None,
                 top_n: DEFAULT_TOP_N,
             })
         );
-        let cfg = intel(&[("MODEL_EMBEDDING_NAME", "m"), ("EXTRACT_EMBEDDING_TOP_N", "3")]).unwrap();
+        let cfg = intel(&[("CRAWLX_EMBEDDING_MODEL", "m"), ("EXTRACT_EMBEDDING_TOP_N", "3")]).unwrap();
         assert_eq!(cfg.embeddings.unwrap().top_n, 3);
         assert!(matches!(
-            intel(&[("MODEL_EMBEDDING_NAME", "m"), ("EXTRACT_EMBEDDING_TOP_N", "many")]),
+            intel(&[
+                ("CRAWLX_EMBEDDING_MODEL", "m"),
+                ("EXTRACT_EMBEDDING_TOP_N", "many")
+            ]),
             Err(EnvError::Number {
                 var: "EXTRACT_EMBEDDING_TOP_N",
                 ..
@@ -418,18 +421,18 @@ mod tests {
     #[test]
     fn embeddings_inherit_the_default_endpoint_and_key() {
         let cfg = intel(&[
-            ("OPENAI_BASE_URL", "http://ollama:11434/v1"),
-            ("OPENAI_API_KEY", "sk-1"),
-            ("MODEL_EMBEDDING_NAME", "nomic-embed-text"),
+            ("CRAWLX_LLM_BASE_URL", "http://local-llm:11434/v1"),
+            ("CRAWLX_LLM_API_KEY", "sk-1"),
+            ("CRAWLX_EMBEDDING_MODEL", "embed-model"),
         ])
         .unwrap();
         let resolved = cfg
             .embeddings
             .unwrap()
-            .resolve_with(cfg.llm.as_ref(), env(&[("OPENAI_API_KEY", "sk-1")]))
+            .resolve_with(cfg.llm.as_ref(), env(&[("CRAWLX_LLM_API_KEY", "sk-1")]))
             .unwrap();
-        assert_eq!(resolved.endpoint, "http://ollama:11434/v1");
-        assert_eq!(resolved.model, "nomic-embed-text");
+        assert_eq!(resolved.endpoint, "http://local-llm:11434/v1");
+        assert_eq!(resolved.model, "embed-model");
         assert_eq!(resolved.api_key.unwrap().expose(), "sk-1");
         let own = EmbeddingSettings {
             model: "m".to_owned(),
@@ -446,17 +449,17 @@ mod tests {
 
     #[test]
     fn extraction_provider_variables_follow_upstream_names_and_defaults() {
-        let cfg = intel(&[("EXTRACTION_PROVIDER_BASE_URL", "http://vllm:8000/v1")]).unwrap();
+        let cfg = intel(&[("EXTRACTION_PROVIDER_BASE_URL", "http://llm-server:8000/v1")]).unwrap();
         let x = cfg.extraction.unwrap();
-        assert_eq!(x.endpoint, "http://vllm:8000/v1");
+        assert_eq!(x.endpoint, "http://llm-server:8000/v1");
         assert_eq!(x.model, "extraction-v1", "upstream default model");
         assert_eq!((x.rollout_percent, x.shadow_percent), (0, 0));
         assert_eq!(x.max_input_bytes, 400_000);
         assert!(x.api_key_ref.is_none() && x.team_ids.is_empty());
 
         let cfg = intel(&[
-            ("EXTRACTION_PROVIDER_BASE_URL", "http://vllm:8000/v1"),
-            ("EXTRACTION_PROVIDER_MODEL", "qwen3-extract"),
+            ("EXTRACTION_PROVIDER_BASE_URL", "http://llm-server:8000/v1"),
+            ("EXTRACTION_PROVIDER_MODEL", "extract-model"),
             ("EXTRACTION_PROVIDER_API_KEY", "ext-key"),
             ("EXTRACTION_PROVIDER_ROLLOUT_PERCENT", "25"),
             ("EXTRACTION_PROVIDER_SHADOW_PERCENT", "10"),
@@ -465,7 +468,7 @@ mod tests {
         ])
         .unwrap();
         let x = cfg.extraction.unwrap();
-        assert_eq!(x.model, "qwen3-extract");
+        assert_eq!(x.model, "extract-model");
         assert_eq!(x.api_key_ref.as_deref(), Some("env:EXTRACTION_PROVIDER_API_KEY"));
         assert_eq!(
             (x.rollout_percent, x.shadow_percent, x.max_input_bytes),
@@ -476,7 +479,7 @@ mod tests {
             .resolve_with(env(&[("EXTRACTION_PROVIDER_API_KEY", "ext-key")]))
             .unwrap();
         assert_eq!(resolved.api_key.unwrap().expose(), "ext-key");
-        assert_eq!(resolved.model, "qwen3-extract");
+        assert_eq!(resolved.model, "extract-model");
     }
 
     #[test]
@@ -516,20 +519,20 @@ mod tests {
     #[test]
     fn branding_llm_overrides_inherit_the_default_llm() {
         let cfg = intel(&[
-            ("OPENAI_BASE_URL", "http://ollama:11434/v1"),
-            ("OPENAI_API_KEY", "sk-1"),
-            ("MODEL_NAME", "qwen3"),
-            ("BRANDING_LLM_MODEL", "qwen3-vl"),
+            ("CRAWLX_LLM_BASE_URL", "http://local-llm:11434/v1"),
+            ("CRAWLX_LLM_API_KEY", "sk-1"),
+            ("CRAWLX_LLM_MODEL", "chat-model"),
+            ("BRANDING_LLM_MODEL", "vision-model"),
         ])
         .unwrap();
         let b = cfg.branding.clone().unwrap();
-        assert_eq!(b.model.as_deref(), Some("qwen3-vl"));
+        assert_eq!(b.model.as_deref(), Some("vision-model"));
         assert!(b.endpoint.is_none() && b.api_key_ref.is_none() && b.timeout_ms.is_none());
         let resolved = b
-            .resolve_with(cfg.llm.as_ref(), env(&[("OPENAI_API_KEY", "sk-1")]))
+            .resolve_with(cfg.llm.as_ref(), env(&[("CRAWLX_LLM_API_KEY", "sk-1")]))
             .unwrap();
-        assert_eq!(resolved.endpoint, "http://ollama:11434/v1");
-        assert_eq!(resolved.model, "qwen3-vl");
+        assert_eq!(resolved.endpoint, "http://local-llm:11434/v1");
+        assert_eq!(resolved.model, "vision-model");
         assert_eq!(resolved.api_key.unwrap().expose(), "sk-1");
         assert_eq!(
             resolved.timeout,
@@ -593,7 +596,7 @@ mod tests {
     #[test]
     fn unsupported_variables_name_their_reason() {
         let names: Vec<&str> = UNSUPPORTED_ENV.iter().map(|(n, _)| *n).collect();
-        assert!(names.contains(&"TYPESAFE_API_KEY") && names.contains(&"BRANDING_JEV"));
+        assert!(names.contains(&"TYPESAFE_API_KEY") && names.contains(&"BRANDING_JEV")); // wire-compat: reference self-host variable names
         assert!(UNSUPPORTED_ENV.iter().all(|(_, why)| !why.is_empty()));
     }
 }

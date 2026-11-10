@@ -1,4 +1,4 @@
-//! The `options` part of `POST /parse` (`ParseOptions` of the Firecrawl v2 OpenAPI) as a typed
+//! The `options` part of `POST /parse` (`ParseOptions` of the compat v2 OpenAPI) as a typed
 //! request: every violation is collected with its JSON pointer so one `400` lists them all, and
 //! options that are valid but meaningless for an upload are recorded so the route can answer a
 //! `warnings[]` entry instead of ignoring them silently.
@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-/// Longest `question` / `highlights.query` / `json.prompt` text (Firecrawl limit).
+/// Longest `question` / `highlights.query` / `json.prompt` text (the compat API limit).
 const MAX_PROMPT_CHARS: usize = 10_000;
 /// Default `timeout`, milliseconds.
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -44,7 +44,7 @@ const KNOWN_KEYS: &[&str] = &[
     "zeroDataRetention",
 ];
 
-/// Formats `/parse` does not produce although Firecrawl knows them.
+/// Formats `/parse` does not produce although the compat API knows them.
 const UNSUPPORTED_FORMATS: &[&str] = &[
     "rawBase64",
     "screenshot",
@@ -604,7 +604,7 @@ pub(super) fn parse_options(raw: Option<&Value>) -> Result<ParseRequest, HttpErr
         return Err(HttpError::bad_request(cx.details));
     }
 
-    // valid for Firecrawl's `/parse`, but nothing here can act on them
+    // valid for the compat API's `/parse`, but nothing here can act on them
     for (key, why) in [
         ("headers", "an upload makes no network requests"),
         ("skipTlsVerification", "an upload makes no network requests"),

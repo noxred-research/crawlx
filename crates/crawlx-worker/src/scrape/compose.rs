@@ -1,5 +1,5 @@
 //! Turns one fetched or rendered body into the content of a document: markdown, cleaned HTML,
-//! links, Firecrawl metadata and the pure formats (`images`, `attributes`).
+//! links, compatibility-API metadata and the pure formats (`images`, `attributes`).
 //!
 //! Everything here is synchronous and CPU-bound; the engine runs [`compose`] on the worker's
 //! CPU pool.
@@ -12,13 +12,13 @@ use crawlx_extract::parse::ocr::{Ocr, OcrError, PdfOcr};
 use crawlx_extract::parse::pdf::{extract_pdf, PdfOptions};
 use crawlx_extract::parse::ParseLimits;
 use crawlx_extract::ExtractOptions;
-use crawlx_extract::{base64_images, endpoints, firecrawl_meta};
+use crawlx_extract::{base64_images, compat_meta, endpoints};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use url::Url;
 
-/// Most pages of one PDF (Firecrawl's `maxPages` ceiling).
+/// Most pages of one PDF (the compatibility API's `maxPages` ceiling).
 const MAX_PDF_PAGES: usize = 10_000;
 
 /// What a body is, decided from its `Content-Type` and its first bytes.
@@ -57,7 +57,7 @@ pub(crate) fn classify(content_type: Option<&str>, body: &[u8], rendered: bool) 
     }
 }
 
-/// Raster image media types Firecrawl's `image` parser reads (SVG and HEIC are not among them).
+/// Raster image media types the compatibility API's `image` parser reads (SVG and HEIC are not among them).
 fn is_raster_image(media: &str) -> bool {
     matches!(
         media,
@@ -111,7 +111,7 @@ pub(crate) struct Composed {
     pub title: Option<String>,
     /// Absolute links of the whole document.
     pub links: Vec<Url>,
-    /// Firecrawl `metadata` keys.
+    /// Compatibility-API `metadata` keys.
     pub meta: BTreeMap<String, serde_json::Value>,
     /// PDF pages parsed.
     pub num_pages: Option<u32>,
@@ -398,7 +398,7 @@ fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
         ),
         _ => None,
     };
-    let mut meta = firecrawl_meta::firecrawl_meta(&doc);
+    let mut meta = compat_meta::compat_meta(&doc);
     // Only the compiled pipeline can populate this key. A page meta tag must
     // never masquerade as an accepted native item when no article was parsed.
     meta.remove("extensionItem");

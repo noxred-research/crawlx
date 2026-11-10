@@ -6,7 +6,7 @@
 //! the usage ledger and queues the webhook events. Nothing is persisted until every target has
 //! been processed, so a cancelled or timed-out check leaves baselines untouched.
 //!
-//! # Change detection (Firecrawl `changeTracking` semantics)
+//! # Change detection (the compat API `changeTracking` semantics)
 //!
 //! Pages are keyed by `(target id, URL)` in the baseline table (`Baseline.url` is
 //! `"{target id}|{url}"`), so two targets watching one URL with different options do not share a

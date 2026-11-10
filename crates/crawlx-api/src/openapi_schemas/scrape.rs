@@ -276,7 +276,7 @@ pub(super) enum ScrollDirection {
     Down,
 }
 
-/// Narrow first-match selector state; not full Playwright actionability.
+/// Narrow first-match selector state; not full automation-driver actionability.
 #[derive(Default, JsonSchema, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) enum SelectorState {
@@ -922,36 +922,36 @@ pub(super) struct BatchStatusQuery {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlScrape" => Spec::new(&[400, 403, 404, 408, 409, 413, 422, 503])
+        "compatScrape" => Spec::new(&[400, 403, 404, 408, 409, 413, 422, 503])
             .json::<ScrapeRequest>("The page and its scrape options.")
             .header(
                 "x-request-id",
                 "Replay key: 1 to 128 characters of letters, digits and `.` `_` `:` `-`. The same id with the same body replays the first response; with another body it is `409 duplicate_request`; while the first request still runs, `409 request_in_flight`. `Idempotency-Key` is read when this header is absent.",
             )
             .reply::<ScrapeResponse>("200", "The scraped page."),
-        "firecrawlGetScrape" => Spec::new(&[400, 404])
+        "compatGetScrape" => Spec::new(&[400, 404])
             .path(
                 "jobId",
                 "The run id of a scrape, or `{run}.{frontier}` for one page of a crawl or batch.",
                 None,
             )
             .reply::<ScrapeStatusResponse>("200", "The stored scrape, or `status: scraping` while it runs."),
-        "firecrawlBatchScrape" => Spec::new(&[400, 403, 409, 413, 422])
+        "compatBatchScrape" => Spec::new(&[400, 403, 409, 413, 422])
             .json::<BatchScrapeRequest>("The URLs and the scrape options every page uses.")
             .header(
                 "Idempotency-Key",
                 "Replays the first response for the same body; the same key with another body is `422 idempotency_key_reuse`.",
             )
             .reply::<BatchCreated>("200", "The batch was started."),
-        "firecrawlBatchScrapeStatus" => Spec::new(&[400, 404])
+        "compatBatchScrapeStatus" => Spec::new(&[400, 404])
             .path("id", "Id of the batch.", Some("uuid"))
             .query::<BatchStatusQuery>()
             .reply::<BatchStatus>("200", "Status and one page of documents.")
             .reply::<super::watch::WatchFrame>("101", super::watch::UPGRADE),
-        "firecrawlBatchScrapeCancel" => Spec::new(&[404, 409])
+        "compatBatchScrapeCancel" => Spec::new(&[404, 409])
             .path("id", "Id of the batch.", Some("uuid"))
             .reply::<BatchCancelled>("200", "The batch was cancelled."),
-        "firecrawlBatchScrapeErrors" => Spec::new(&[404])
+        "compatBatchScrapeErrors" => Spec::new(&[404])
             .path("id", "Id of the batch.", Some("uuid"))
             .reply::<BatchErrors>("200", "Failed pages and robots-blocked URLs."),
         _ => return None,

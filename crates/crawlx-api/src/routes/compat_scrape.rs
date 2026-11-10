@@ -1,9 +1,9 @@
-//! Firecrawl v2 scrape endpoints of the compat facade: `POST /scrape`,
+//! compat v2 scrape endpoints of the compat facade: `POST /scrape`,
 //! `GET /scrape/{jobId}` and the batch scrape family. The self-host health probes live in
 //! [`crate::routes::compat_team`].
 //!
 //! Every scrape is a normal run a worker executes ([`crate::scrape_service`]); these handlers
-//! only translate between Firecrawl's wire shapes and runs.
+//! only translate between the compat API's wire shapes and runs.
 
 use crate::auth::Principal;
 use crate::errors::{ApiResult, Detail, HttpError};
@@ -14,7 +14,7 @@ use crate::routes::compat::concurrency_limit;
 use crate::routes::crawls::{apply_verb, load_run, load_run_metadata, Verb};
 use crate::routes::pages::sorted_pages;
 use crate::scrape_service::{
-    base_url, create_scrape_run, credits_for, failure_index, firecrawl_document, first_page,
+    base_url, compat_document, create_scrape_run, credits_for, failure_index, first_page,
     parse_scrape_options_in, parse_target, record_run_usage, row_failure, run_failure, scrape_crawl,
     scrape_url, ParsedScrape,
 };
@@ -40,48 +40,48 @@ use url::Url;
 pub const OPERATIONS: &[Operation] = &[
     (
         "post",
-        "/compat/firecrawl/v2/scrape",
-        "firecrawlScrape",
-        "Scrape one URL synchronously (Firecrawl scrape options; x-request-id replays)",
+        "/compat/v2/scrape",
+        "compatScrape",
+        "Scrape one URL synchronously (the compat API scrape options; x-request-id replays)",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/scrape/{jobId}",
-        "firecrawlGetScrape",
+        "/compat/v2/scrape/{jobId}",
+        "compatGetScrape",
         "A stored scrape by job id (run id, or run.frontier for pages of crawls and batches)",
         "crawls:read",
         "200",
     ),
     (
         "post",
-        "/compat/firecrawl/v2/batch/scrape",
-        "firecrawlBatchScrape",
+        "/compat/v2/batch/scrape",
+        "compatBatchScrape",
         "Start a batch scrape (urls, ignoreInvalidURLs, maxConcurrency, webhook, scrape options)",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/batch/scrape/{id}",
-        "firecrawlBatchScrapeStatus",
+        "/compat/v2/batch/scrape/{id}",
+        "compatBatchScrapeStatus",
         "Status and documents of a batch scrape (skip/limit paging)",
         "crawls:read",
         "200",
     ),
     (
         "delete",
-        "/compat/firecrawl/v2/batch/scrape/{id}",
-        "firecrawlBatchScrapeCancel",
+        "/compat/v2/batch/scrape/{id}",
+        "compatBatchScrapeCancel",
         "Cancel a batch scrape",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/batch/scrape/{id}/errors",
-        "firecrawlBatchScrapeErrors",
+        "/compat/v2/batch/scrape/{id}/errors",
+        "compatBatchScrapeErrors",
         "Failed pages and robots-blocked URLs of a batch scrape",
         "crawls:read",
         "200",
@@ -91,17 +91,14 @@ pub const OPERATIONS: &[Operation] = &[
 /// The authenticated routes of this module, mounted behind the auth layer.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/compat/firecrawl/v2/scrape", axum::routing::post(scrape))
-        .route("/compat/firecrawl/v2/scrape/{job_id}", get(scrape_status))
+        .route("/compat/v2/scrape", axum::routing::post(scrape))
+        .route("/compat/v2/scrape/{job_id}", get(scrape_status))
+        .route("/compat/v2/batch/scrape", axum::routing::post(batch_create))
         .route(
-            "/compat/firecrawl/v2/batch/scrape",
-            axum::routing::post(batch_create),
-        )
-        .route(
-            "/compat/firecrawl/v2/batch/scrape/{id}",
+            "/compat/v2/batch/scrape/{id}",
             get(crate::routes::compat_ws::batch).delete(batch_cancel),
         )
-        .route("/compat/firecrawl/v2/batch/scrape/{id}/errors", get(batch_errors))
+        .route("/compat/v2/batch/scrape/{id}/errors", get(batch_errors))
 }
 
 fn body_object(body: &Value) -> Result<&Map<String, Value>, HttpError> {
@@ -114,7 +111,7 @@ fn body_object(body: &Value) -> Result<&Map<String, Value>, HttpError> {
     })
 }
 
-/// The idempotency key of a Firecrawl request: `x-request-id` (1..=128 of letters, digits, `.`,
+/// The idempotency key of a compat request: `x-request-id` (1..=128 of letters, digits, `.`,
 /// `_`, `:`, `-`), else `Idempotency-Key`. The flag tells which one it was.
 pub(crate) fn request_key(headers: &HeaderMap) -> ApiResult<(Option<String>, bool)> {
     if let Some(raw) = headers.get("x-request-id") {
@@ -136,7 +133,7 @@ pub(crate) fn request_key(headers: &HeaderMap) -> ApiResult<(Option<String>, boo
     Ok((idempotency_key(headers, true)?, false))
 }
 
-/// A reused `x-request-id` conflicts the way Firecrawl documents it (`409 duplicate_request`,
+/// A reused `x-request-id` conflicts the way the compat API documents it (`409 duplicate_request`,
 /// `409 request_in_flight`); the job the original request is about stays on the error.
 pub(crate) fn request_id_conflict(e: HttpError) -> HttpError {
     let mapped = match e.code {
@@ -157,13 +154,13 @@ fn with_warnings(mut body: Value, warnings: &[Warning]) -> Value {
     body
 }
 
-/// `POST /compat/firecrawl/v2/scrape`: scrape `url` with the Firecrawl scrape options of the
+/// `POST /compat/v2/scrape`: scrape `url` with the compat scrape options of the
 /// body and answer `{success, data}` once the worker finished. `x-request-id` (or
 /// `Idempotency-Key`) replays a completed request; the same id with another body is `409
 /// duplicate_request`, with the first still running `409 request_in_flight`.
 ///
 /// # Errors
-/// `403 scope_missing`; `400 BAD_REQUEST` for an invalid URL or option (Firecrawl's `details`);
+/// `403 scope_missing`; `400 BAD_REQUEST` for an invalid URL or option (the compat API's `details`);
 /// `403 UNSUPPORTED_SITE` for a target the egress policy denies; `404 SCRAPE_NO_CACHED_DATA` /
 /// `SCRAPE_LOCKDOWN_CACHE_MISS` for `minAge` / `lockdown` without a stored scrape; `408
 /// SCRAPE_TIMEOUT`; `409` for a reused request id; `413` for a body above the limit; `429
@@ -183,7 +180,7 @@ pub async fn scrape(
         &principal,
         key,
         "POST",
-        "/compat/firecrawl/v2/scrape",
+        "/compat/v2/scrape",
         &body,
         || async {
             let obj = body_object(&body)?;
@@ -229,11 +226,11 @@ pub async fn scrape(
     }
 }
 
-/// `GET /compat/firecrawl/v2/scrape/{jobId}`: the document of a stored scrape. `jobId` is the
+/// `GET /compat/v2/scrape/{jobId}`: the document of a stored scrape. `jobId` is the
 /// run id of a scrape run, or `{run}.{frontier}` for one page of a crawl or batch run.
 ///
 /// # Errors
-/// `403 scope_missing`; `404 not_found` for an unknown id or another tenant's run; the Firecrawl
+/// `403 scope_missing`; `404 not_found` for an unknown id or another tenant's run; the compat API
 /// failure of a page that failed.
 pub async fn scrape_status(
     State(state): State<AppState>,
@@ -266,7 +263,7 @@ pub async fn scrape_status(
             let Some(page) = first_page(&state, &run).await? else {
                 return Err(run_failure(&state, &run).await);
             };
-            let doc = firecrawl_document(&state, &run, &page, &base).await;
+            let doc = compat_document(&state, &run, &page, &base).await;
             Ok(json_response(
                 StatusCode::OK,
                 &json!({ "success": true, "data": doc }),
@@ -276,7 +273,7 @@ pub async fn scrape_status(
             let frontier: i64 = frontier.parse().map_err(|_| not_found())?;
             let pages = sorted_pages(&state, &run, None).await?;
             if let Some(page) = pages.iter().find(|p| p.frontier_id == frontier) {
-                let doc = firecrawl_document(&state, &run, page, &base).await;
+                let doc = compat_document(&state, &run, page, &base).await;
                 return Ok(json_response(
                     StatusCode::OK,
                     &json!({ "success": true, "data": doc }),
@@ -298,7 +295,7 @@ pub async fn scrape_status(
 const BATCH_KEYS: [&str; 4] = ["urls", "webhook", "maxConcurrency", "ignoreInvalidURLs"];
 const WEBHOOK_EVENTS: [&str; 4] = ["started", "page", "completed", "failed"];
 
-/// A batch webhook: the delivery target plus headers and metadata Firecrawl echoes.
+/// A batch webhook: the delivery target plus headers and metadata compat echoes.
 struct BatchWebhook {
     hook: Webhook,
     headers: std::collections::BTreeMap<String, String>,
@@ -442,7 +439,7 @@ fn split_urls(urls: &[Value], details: &mut Vec<Detail>, ignore_invalid: bool) -
     (valid, invalid)
 }
 
-/// `POST /compat/firecrawl/v2/batch/scrape`: start one run over `urls` (the first is the seed,
+/// `POST /compat/v2/batch/scrape`: start one run over `urls` (the first is the seed,
 /// the rest `scrape.urls`) with the scrape options, `maxConcurrency` and `webhook`. Invalid URLs
 /// are skipped and listed in `invalidURLs` unless `ignoreInvalidURLs` is false.
 ///
@@ -464,7 +461,7 @@ pub async fn batch_create(
         &principal,
         key,
         "POST",
-        "/compat/firecrawl/v2/batch/scrape",
+        "/compat/v2/batch/scrape",
         &body,
         || async {
             let obj = body_object(&body)?;
@@ -559,7 +556,7 @@ pub async fn batch_create(
             let mut out = json!({
                 "success": true,
                 "id": run.id,
-                "url": format!("{base}/compat/firecrawl/v2/batch/scrape/{}", run.id),
+                "url": format!("{base}/compat/v2/batch/scrape/{}", run.id),
             });
             if ignore_invalid {
                 out["invalidURLs"] = json!(invalid);
@@ -590,7 +587,7 @@ pub(crate) async fn load_batch(state: &AppState, principal: &Principal, id: &str
     }
 }
 
-/// Firecrawl's `total` of a batch scrape: the primary URL plus every further URL of the job.
+/// The compat API's `total` of a batch scrape: the primary URL plus every further URL of the job.
 pub(crate) fn batch_total(run: &CrawlRun) -> usize {
     1 + run.config.scrape.as_ref().map_or(0, |j| j.urls.len())
 }
@@ -606,7 +603,7 @@ pub(crate) fn batch_expires(run: &CrawlRun) -> crawlx_core::Timestamp {
     expires_at(run).unwrap_or(run.created_at + ChronoDuration::days(retention_days))
 }
 
-/// `GET /compat/firecrawl/v2/batch/scrape/{id}`: `status` (`scraping`, `completed`, `failed`,
+/// `GET /compat/v2/batch/scrape/{id}`: `status` (`scraping`, `completed`, `failed`,
 /// `cancelled`), `total`, `completed`, `creditsUsed`, `expiresAt` and the documents of this
 /// page of `data`; `?skip=` and `?limit=` page through them and `next` links to the next page.
 ///
@@ -657,12 +654,12 @@ pub async fn batch_status(
     let mut data = Vec::with_capacity(window.len());
     if let Some(live) = &live {
         for page in &window {
-            data.push(firecrawl_document(&state, live, page, &base).await);
+            data.push(compat_document(&state, live, page, &base).await);
         }
     }
     let next = if skip + window.len() < pages.len() {
         let mut link = format!(
-            "{base}/compat/firecrawl/v2/batch/scrape/{}?skip={}",
+            "{base}/compat/v2/batch/scrape/{}?skip={}",
             run.id,
             skip + window.len()
         );
@@ -704,7 +701,7 @@ pub async fn batch_status(
     Ok(json_response(StatusCode::OK, &body))
 }
 
-/// `DELETE /compat/firecrawl/v2/batch/scrape/{id}`: cancel the batch.
+/// `DELETE /compat/v2/batch/scrape/{id}`: cancel the batch.
 ///
 /// # Errors
 /// `403 scope_missing`; `404 not_found`; `409 invalid_state` when the batch already finished.
@@ -723,7 +720,7 @@ pub async fn batch_cancel(
     ))
 }
 
-/// `GET /compat/firecrawl/v2/batch/scrape/{id}/errors`: `errors[]` (`id`, `timestamp`, `url`,
+/// `GET /compat/v2/batch/scrape/{id}/errors`: `errors[]` (`id`, `timestamp`, `url`,
 /// `code`, `error`) for every page that failed and `robotsBlocked[]` for every URL robots.txt
 /// refused.
 ///

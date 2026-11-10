@@ -1,5 +1,5 @@
-//! `GET /v1/crawls/{id}/pages` (Firecrawl-compatible documents, `?field=`, `?format=jsonl`),
-//! `GET .../export` (katana-style text/JSONL output) and `GET .../errors`.
+//! `GET /v1/crawls/{id}/pages` (compatibility-API documents, `?field=`, `?format=jsonl`),
+//! `GET .../export` (text/JSONL output in the surface-discovery style) and `GET .../errors`.
 
 use crate::auth::Principal;
 use crate::errors::{ApiResult, HttpError};
@@ -139,7 +139,7 @@ pub(crate) async fn content(
     }
 }
 
-/// One Firecrawl-shaped document.
+/// One compat-shaped document.
 pub(crate) async fn page_doc(state: &AppState, run: &CrawlRun, p: &PageRecord, inc: &Include) -> Value {
     let (markdown, markdown_ref) = if inc.markdown {
         content(state, run, p.markdown.as_ref()).await
@@ -184,7 +184,7 @@ pub(crate) async fn page_doc(state: &AppState, run: &CrawlRun, p: &PageRecord, i
     })
 }
 
-/// Katana-style output options read from the query: `field`, `template`,
+/// Surface-discovery output options read from the query: `field`, `template`,
 /// `match`, `filter`, `extensionMatch`, `extensionFilter`, `exclude`; `include=html` attaches
 /// the stored HTML as the JSONL `response.body`.
 fn exporter_from_params(params: &Params, format: ExportFormat) -> Result<Exporter, HttpError> {

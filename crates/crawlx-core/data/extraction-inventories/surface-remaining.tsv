@@ -1,0 +1,46 @@
+# Feature IDs of the surface-discovery crawler flag set 1.8.0 (MIT upstream; see THIRD_PARTY_NOTICES.md); SR-G* are residual gap identifiers recognised by extraction import.
+# Format: ID<TAB>upstream feature. Lines starting with '#' are comments.
+SR-01	Input `-u/-list`, `-resume`, `-e/-exclude`, piped stdin
+SR-02	`-r/-resolvers`, `-d/-depth`, `-ct/-crawl-duration`, `-mdp/-max-domain-pages`
+SR-03	`-jc/-js-crawl`, `-jsl` (JavaScript AST URL mining)
+SR-04	`-kf/-known-files`, `-pc/-path-climb`, `-dr/-disable-redirects`
+SR-05	`-mrs/-max-response-size`, `-timeout`, `-time-stable`, `-retry`, `-proxy`, `-H/-headers`, `-tlsi/-tls-impersonate`
+SR-06	`-aff/-automatic-form-fill`, `-fx/-form-extraction`, `-fc/-form-config`
+SR-07	`-td/-tech-detect`, `-flc/-field-config`, `-kb`, `-kb-secrets`, `-kb-validate-secrets`, `-kb-endpoints`
+SR-08	`-config` YAML merge, `-s/-strategy`, `-iqp`, `-fsu`, `-fst`
+SR-09	Debug `-health-check/-hc`, `-elog/-error-log`, `-pprof-server`
+SR-10	Headless `-hl/-headless`, `-hh/-hybrid`
+SR-11	`-sc`, `-scp`, `-sb`, `-ho`, `-nos`, `-cdd`, `-noi`, `-cwu`
+SR-12	`-xhr`, `-mfc`, `-ed`, `-pls`, `-dwt`
+SR-13	`-csp`, `-csk`, CAPTCHA_SOLVER_PROVIDER/KEY
+SR-14	`-al/-auto-login`, AUTH_CREDENTIALS, `-rf/-recorded-flow`
+SR-15	Scope `-cs`, `-cos`, `-fs`, `-ns`, `-do`
+SR-16	Filters `-mr`, `-fr`, deprecated `-f`, `-sf`
+SR-17	`-em`, `-ef`, `-ndef`, `-mdc`, `-fdc`
+SR-18	`-duf`, `-pcs`, `-sdd`, `-pcsm`, `-pcsd`, `-pcst`, `-pcsn`, `-fpt`
+SR-19	Rate `-c`, `-p`, `-rd`, `-rl`, `-rlm`, `-hrl`, `-hrlm`
+SR-20	Update `-up`, `-duc`
+SR-21	Output `-o`, `-ot`, `-sr`, `-srd`, `-ncb`, `-sfd`
+SR-22	`-or`, `-ob`, `-lof`, `-eof`, `-j/-jsonl`
+SR-23	`-nc`, `-silent`, `-v`, `-debug`, `-version`, DEBUG=true/help
+SR-24	Public Options/CrawlerOptions, `NewCrawlerOptions`, standard/hybrid `New`, `Crawl`, `Close`, `OnResult`, `OnSkipURL`, parent Context, MaxOnclickLinks
+SR-25	Structural/header discovery: Content-Location/Link/Location/Refresh; anchors/ping, links, frames/srcdoc, scripts, image variants/srcset, media, applets, objects, SVG href, table background, cites, base, forms, meta-refresh, htmx
+SR-26	JS regex and AST mining: URL strings/concatenations, fetch/Request, client methods, xhr.open, navigation/location/history, event handler strings, external scripts
+SR-27	Browser hooks/history/hash/window.open/WebSocket/EventSource, listeners; timers/reset/window.close behavior; stealth/consent scripts
+SR-28	Browser load, popups, XHR, session state, auto/system Chrome, profile/attach/proxy
+SR-29	Knowledge-base page/form/field labels and probabilities from a trained classifier, secret detection/validation, technology detections
+SR-30	Request/response JSONL, forms, XHR, technologies, raw/body, stored path, KB, custom fields and `extra`; 14 URL fields/templates/wordlists
+SR-31	HTTP traffic exporter environment configuration; crawl-maze and crawl-bench tools
+SR-32	Passive/web-archive/threat-feed source flags
+SR-G1	Headless, no-scope and delay flag semantics
+SR-G10	Raw request/response record fidelity
+SR-G11	Traversal strategy ordering and scope-file inputs
+SR-G12	Newer-main AI, interactive and traffic features
+SR-G2	JavaScript URL-miner mode selection (regex, AST, both)
+SR-G3	Field-store selection and directory flags
+SR-G4	Recorded-flow login artifact custody
+SR-G5	Extension seed, precedence and field-DSL edges
+SR-G6	Page, form and field classifier label model
+SR-G7	Technology-detection and consent rule catalog breadth
+SR-G8	Secret-detection provider and form-helper DSL breadth
+SR-G9	Content-similarity filter switches and backends

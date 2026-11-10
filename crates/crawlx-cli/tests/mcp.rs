@@ -1,5 +1,5 @@
 //! `crawlx mcp` end to end: the real binary on stdio pipes against a wiremock stand-in for
-//! the crawlx API's Firecrawl-v2 facade.
+//! the crawlx API's compatibility API (v2).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use serde_json::{json, Value};
@@ -11,7 +11,17 @@ use tokio::task::JoinHandle;
 use wiremock::matchers::{body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const FACADE: &str = "/compat/firecrawl/v2";
+const FACADE: &str = "/compat/v2";
+const TOOL_SCRAPE: &str = "firecrawl_scrape"; // wire-compat: MCP tool name
+const TOOL_MAP: &str = "firecrawl_map"; // wire-compat: MCP tool name
+const TOOL_SEARCH: &str = "firecrawl_search"; // wire-compat: MCP tool name
+const TOOL_CRAWL: &str = "firecrawl_crawl"; // wire-compat: MCP tool name
+const TOOL_CRAWL_STATUS: &str = "firecrawl_check_crawl_status"; // wire-compat: MCP tool name
+const TOOL_EXTRACT: &str = "firecrawl_extract"; // wire-compat: MCP tool name
+const TOOL_EXTRACT_STATUS: &str = "firecrawl_extract_status"; // wire-compat: MCP tool name
+const TOOL_PARSE: &str = "firecrawl_parse"; // wire-compat: MCP tool name
+const TOOL_AGENT: &str = "firecrawl_agent"; // wire-compat: MCP tool name
+const TOOL_AGENT_STATUS: &str = "firecrawl_agent_status"; // wire-compat: MCP tool name
 const WAIT: Duration = Duration::from_secs(30);
 
 /// One `crawlx mcp` process with its pipes.
@@ -25,15 +35,15 @@ struct Session {
 
 impl Session {
     /// Spawn against `api_url` with the given extra flags and environment. The inherited
-    /// `CRAWLX_*`/`FIRECRAWL_*`/proxy variables are cleared so the run is hermetic.
+    /// `CRAWLX_*`/drop-in client/proxy variables are cleared so the run is hermetic.
     async fn spawn(args: &[&str], env: &[(&str, &str)]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_crawlx"));
         command.arg("mcp").args(args);
         for name in [
             "CRAWLX_API_URL",
             "CRAWLX_API_KEY",
-            "FIRECRAWL_API_URL",
-            "FIRECRAWL_API_KEY",
+            "FIRECRAWL_API_URL", // wire-compat: variable set by drop-in MCP client configs
+            "FIRECRAWL_API_KEY", // wire-compat: variable set by drop-in MCP client configs
             "HTTP_PROXY",
             "http_proxy",
             "HTTPS_PROXY",
@@ -220,7 +230,7 @@ async fn initialize_downgrades_to_the_client_revision_or_the_latest() {
 }
 
 #[tokio::test]
-async fn scrape_posts_the_firecrawl_body_with_a_bearer_token_and_returns_the_data() {
+async fn scrape_posts_the_compat_body_with_a_bearer_token_and_returns_the_data() {
     let server = MockServer::start().await;
     let document = json!({"markdown": "# Hello", "metadata": {"title": "Hello", "statusCode": 200}});
     Mock::given(method("POST"))
@@ -241,7 +251,7 @@ async fn scrape_posts_the_firecrawl_body_with_a_bearer_token_and_returns_the_dat
     mcp.initialize().await;
     let result = mcp
         .call(
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({
                 "url": "https://example.com/a",
                 "formats": ["markdown", "json"],
@@ -292,7 +302,7 @@ async fn search_returns_the_result_groups() {
     mcp.initialize().await;
     let result = mcp
         .call(
-            "firecrawl_search",
+            TOOL_SEARCH,
             json!({
                 "query": "rust mcp",
                 "limit": 3,
@@ -325,7 +335,7 @@ async fn map_returns_the_links() {
     mcp.initialize().await;
     let result = mcp
         .call(
-            "firecrawl_map",
+            TOOL_MAP,
             json!({"url": "https://example.com", "search": "docs", "limit": 10, "sitemap": "only"}),
         )
         .await;
@@ -350,7 +360,7 @@ async fn crawl_returns_the_id_and_the_status_tool_reads_it() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "success": true,
             "id": "crawl-1",
-            "url": "http://api/compat/firecrawl/v2/crawl/crawl-1",
+            "url": "http://api/compat/v2/crawl/crawl-1",
         })))
         .expect(1)
         .mount(&server)
@@ -374,7 +384,7 @@ async fn crawl_returns_the_id_and_the_status_tool_reads_it() {
     mcp.initialize().await;
     let started = mcp
         .call(
-            "firecrawl_crawl",
+            TOOL_CRAWL,
             json!({
                 "url": "https://example.com/blog/*",
                 "limit": 5,
@@ -388,9 +398,7 @@ async fn crawl_returns_the_id_and_the_status_tool_reads_it() {
         .await;
     let started = json_of(&started);
     assert_eq!(started["id"], json!("crawl-1"));
-    let status = mcp
-        .call("firecrawl_check_crawl_status", json!({"id": started["id"]}))
-        .await;
+    let status = mcp.call(TOOL_CRAWL_STATUS, json!({"id": started["id"]})).await;
     let status = json_of(&status);
     assert_eq!(status["status"], json!("completed"));
     assert_eq!(status["completed"], json!(1));
@@ -412,9 +420,7 @@ async fn crawl_status_path_encodes_the_id() {
         .await;
     let mut mcp = Session::start(&server.uri()).await;
     mcp.initialize().await;
-    let result = mcp
-        .call("firecrawl_check_crawl_status", json!({"id": "a/b c"}))
-        .await;
+    let result = mcp.call(TOOL_CRAWL_STATUS, json!({"id": "a/b c"})).await;
     assert_eq!(json_of(&result)["status"], json!("scraping"));
     mcp.finish().await;
 }
@@ -460,7 +466,7 @@ async fn extract_polls_until_the_job_completes() {
     mcp.initialize().await;
     let result = mcp
         .call(
-            "firecrawl_extract",
+            TOOL_EXTRACT,
             json!({
                 "urls": ["https://example.com/*"],
                 "prompt": "company name",
@@ -498,7 +504,7 @@ async fn extract_without_wait_returns_the_id_and_status_reads_the_job() {
     mcp.initialize().await;
     let started = mcp
         .call(
-            "firecrawl_extract",
+            TOOL_EXTRACT,
             json!({"urls": ["https://example.com"], "prompt": "x", "wait": false}),
         )
         .await;
@@ -508,7 +514,7 @@ async fn extract_without_wait_returns_the_id_and_status_reads_the_job() {
     let requests = server.received_requests().await.unwrap();
     let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert!(body.get("wait").is_none(), "{body}");
-    let status = mcp.call("firecrawl_extract_status", json!({"id": "job-2"})).await;
+    let status = mcp.call(TOOL_EXTRACT_STATUS, json!({"id": "job-2"})).await;
     assert_eq!(json_of(&status)["status"], json!("processing"));
     mcp.finish().await;
 }
@@ -534,7 +540,7 @@ async fn extract_job_that_fails_is_an_error_result_with_the_final_body() {
     mcp.initialize().await;
     let result = mcp
         .call(
-            "firecrawl_extract",
+            TOOL_EXTRACT,
             json!({"urls": ["https://example.com"], "prompt": "x"}),
         )
         .await;
@@ -578,16 +584,13 @@ async fn extract_that_outlives_the_poll_budget_reports_the_id() {
     .await;
     mcp.initialize().await;
     let result = mcp
-        .call("firecrawl_extract", json!({"urls": ["https://example.com"]}))
+        .call(TOOL_EXTRACT, json!({"urls": ["https://example.com"]}))
         .await;
     let pending = json_of(&result);
     assert_eq!(pending["id"], json!("job-4"));
     assert_eq!(pending["status"], json!("processing"));
     assert!(
-        pending["note"]
-            .as_str()
-            .unwrap()
-            .contains("firecrawl_extract_status"),
+        pending["note"].as_str().unwrap().contains("extract status tool"),
         "{pending}"
     );
     mcp.finish().await;
@@ -631,16 +634,16 @@ async fn agent_returns_the_job_id_and_status_reads_it_and_wait_polls() {
         "effort": "low",
         "maxCredits": 100,
     });
-    let started = json_of(&mcp.call("firecrawl_agent", arguments.clone()).await);
+    let started = json_of(&mcp.call(TOOL_AGENT, arguments.clone()).await);
     assert_eq!(started["id"], json!("agent-1"));
     assert_eq!(started["threadId"], json!("6f1c2d9e-2c1d-4f8a-9d3e-3f1d2c4b5a69"));
-    let status = json_of(&mcp.call("firecrawl_agent_status", json!({"id": "agent-1"})).await);
+    let status = json_of(&mcp.call(TOOL_AGENT_STATUS, json!({"id": "agent-1"})).await);
     assert_eq!(status["status"], json!("completed"));
     assert_eq!(status["data"]["founders"], json!(["A", "B"]));
 
     let mut waited = arguments;
     waited["wait"] = json!(true);
-    let waited = json_of(&mcp.call("firecrawl_agent", waited).await);
+    let waited = json_of(&mcp.call(TOOL_AGENT, waited).await);
     assert_eq!(waited["data"]["founders"], json!(["A", "B"]));
     mcp.finish().await;
 }
@@ -669,7 +672,7 @@ async fn parse_uploads_the_file_as_multipart() {
     mcp.initialize().await;
     let by_path = mcp
         .call(
-            "firecrawl_parse",
+            TOOL_PARSE,
             json!({"filePath": file.to_str().unwrap(), "formats": ["markdown"], "onlyMainContent": true}),
         )
         .await;
@@ -678,7 +681,7 @@ async fn parse_uploads_the_file_as_multipart() {
     use base64::Engine as _;
     let inline = mcp
         .call(
-            "firecrawl_parse",
+            TOOL_PARSE,
             json!({
                 "contentBase64": base64::engine::general_purpose::STANDARD.encode(&bytes),
                 "filename": "inline.pdf",
@@ -723,10 +726,7 @@ async fn parse_reports_unreadable_files_and_bad_combinations() {
     let mut mcp = Session::start(&server.uri()).await;
     mcp.initialize().await;
     let missing = mcp
-        .call(
-            "firecrawl_parse",
-            json!({"filePath": "/nonexistent/dir/missing.pdf"}),
-        )
+        .call(TOOL_PARSE, json!({"filePath": "/nonexistent/dir/missing.pdf"}))
         .await;
     assert_eq!(missing["isError"], json!(true), "{missing}");
     assert!(
@@ -749,7 +749,7 @@ async fn parse_reports_unreadable_files_and_bad_combinations() {
             "jsonOptions needs formats",
         ),
     ] {
-        let reply = mcp.call_raw("firecrawl_parse", arguments.clone()).await;
+        let reply = mcp.call_raw(TOOL_PARSE, arguments.clone()).await;
         assert_eq!(reply["error"]["code"], json!(-32602), "{arguments}: {reply}");
         assert!(
             reply["error"]["message"].as_str().unwrap().contains(fragment),
@@ -766,82 +766,74 @@ async fn unknown_tool_and_bad_arguments_are_invalid_params_and_the_server_keeps_
     let mut mcp = Session::start(&server.uri()).await;
     mcp.initialize().await;
 
-    let unknown = mcp.call_raw("firecrawl_teleport", json!({})).await;
+    let unknown = mcp.call_raw("no_such_tool", json!({})).await;
     assert_eq!(unknown["error"]["code"], json!(-32602), "{unknown}");
     assert!(unknown["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("unknown tool: firecrawl_teleport"));
+        .contains("unknown tool: no_such_tool"));
 
     let cases = [
-        ("firecrawl_scrape", json!({}), "arguments.url is required"),
+        (TOOL_SCRAPE, json!({}), "arguments.url is required"),
+        (TOOL_SCRAPE, json!({"url": 5}), "arguments.url must be a string"),
         (
-            "firecrawl_scrape",
-            json!({"url": 5}),
-            "arguments.url must be a string",
-        ),
-        (
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({"url": "ftp://example.com"}),
             "arguments.url must be an absolute http(s) URL",
         ),
         (
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({"url": "https://e.com", "formats": ["pdf"]}),
             "arguments.formats[0] must be one of",
         ),
         (
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({"url": "https://e.com", "waitFor": 1.5}),
             "arguments.waitFor must be an integer",
         ),
         (
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({"url": "https://e.com", "waitFor": -1}),
             "arguments.waitFor must be at least 0",
         ),
         (
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({"url": "https://e.com", "jsonOptions": {"prompt": "x"}}),
             "jsonOptions needs formats to include \"json\"",
         ),
         (
-            "firecrawl_search",
+            TOOL_SEARCH,
             json!({"query": ""}),
             "arguments.query must be at least 1 character(s) long",
         ),
         (
-            "firecrawl_search",
+            TOOL_SEARCH,
             json!({"query": "q", "limit": 500}),
             "arguments.limit must be at most 100",
         ),
         (
-            "firecrawl_search",
+            TOOL_SEARCH,
             json!({"query": "q", "includeDomains": ["a.com"], "excludeDomains": ["b.com"]}),
             "cannot both be set",
         ),
         (
-            "firecrawl_search",
+            TOOL_SEARCH,
             json!({"query": "q", "categories": ["gov", "pdf"]}),
             "cannot be combined",
         ),
         (
-            "firecrawl_extract",
+            TOOL_EXTRACT,
             json!({"urls": []}),
             "arguments.urls must have at least 1 item",
         ),
+        (TOOL_CRAWL_STATUS, json!({}), "arguments.id is required"),
         (
-            "firecrawl_check_crawl_status",
-            json!({}),
-            "arguments.id is required",
-        ),
-        (
-            "firecrawl_agent",
+            TOOL_AGENT,
             json!({"prompt": "p", "threadId": "not-a-uuid"}),
             "arguments.threadId must be a UUID",
         ),
         (
-            "firecrawl_agent",
+            TOOL_AGENT,
             json!({"prompt": "p", "effort": "extreme"}),
             "arguments.effort must be one of",
         ),
@@ -859,7 +851,7 @@ async fn unknown_tool_and_bad_arguments_are_invalid_params_and_the_server_keeps_
     }
     // `arguments` must be an object and `name` a string
     let wrong = mcp
-        .request("tools/call", json!({"name": "firecrawl_map", "arguments": [1]}))
+        .request("tools/call", json!({"name": TOOL_MAP, "arguments": [1]}))
         .await;
     assert_eq!(wrong["error"]["code"], json!(-32602), "{wrong}");
     let nameless = mcp.request("tools/call", json!({"arguments": {}})).await;
@@ -868,7 +860,7 @@ async fn unknown_tool_and_bad_arguments_are_invalid_params_and_the_server_keeps_
     // several problems are reported together
     let many = mcp
         .call_raw(
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({"url": 1, "formats": "markdown", "waitFor": "slow"}),
         )
         .await;
@@ -886,7 +878,7 @@ async fn unknown_tool_and_bad_arguments_are_invalid_params_and_the_server_keeps_
 }
 
 #[tokio::test]
-async fn api_failures_become_is_error_results_carrying_the_firecrawl_error_text() {
+async fn api_failures_become_is_error_results_carrying_the_compat_error_text() {
     let server = MockServer::start().await;
     for (endpoint, response) in [
         (
@@ -943,37 +935,37 @@ async fn api_failures_become_is_error_results_carrying_the_firecrawl_error_text(
     mcp.initialize().await;
     let cases = [
         (
-            "firecrawl_scrape",
+            TOOL_SCRAPE,
             json!({"url": "https://example.com"}),
             vec!["422", "Invalid URL: scheme not allowed", "BAD_REQUEST", "req-9"],
         ),
         (
-            "firecrawl_map",
+            TOOL_MAP,
             json!({"url": "https://example.com"}),
             vec!["500", "An unexpected error occurred on the server."],
         ),
         (
-            "firecrawl_search",
+            TOOL_SEARCH,
             json!({"query": "q"}),
             vec!["402", "Payment required to access this resource."],
         ),
         (
-            "firecrawl_crawl",
+            TOOL_CRAWL,
             json!({"url": "https://example.com"}),
             vec!["502", "Bad Gateway"],
         ),
         (
-            "firecrawl_extract",
+            TOOL_EXTRACT,
             json!({"urls": ["https://example.com"]}),
             vec!["extraction is not configured"],
         ),
         (
-            "firecrawl_agent",
+            TOOL_AGENT,
             json!({"prompt": "p"}),
             vec!["503", "no llm backend", "LLM_UNAVAILABLE"],
         ),
         (
-            "firecrawl_check_crawl_status",
+            TOOL_CRAWL_STATUS,
             json!({"id": "gone"}),
             vec!["404", "Job not found", "NOT_FOUND"],
         ),
@@ -1001,14 +993,9 @@ async fn an_unreachable_api_is_an_is_error_result() {
     // nothing listens on port 9 (discard) on loopback in the test environment
     let mut mcp = Session::spawn(&["--api-url", "http://127.0.0.1:9", "--timeout-ms", "5000"], &[]).await;
     mcp.initialize().await;
-    let result = mcp
-        .call("firecrawl_scrape", json!({"url": "https://example.com"}))
-        .await;
+    let result = mcp.call(TOOL_SCRAPE, json!({"url": "https://example.com"})).await;
     assert_eq!(result["isError"], json!(true), "{result}");
-    assert!(
-        text_of(&result).contains("/compat/firecrawl/v2/scrape"),
-        "{result}"
-    );
+    assert!(text_of(&result).contains("/compat/v2/scrape"), "{result}");
     mcp.finish().await;
 }
 
@@ -1027,9 +1014,7 @@ async fn a_slow_api_hits_the_per_call_timeout() {
     let mut mcp = Session::spawn(&["--api-url", &server.uri(), "--timeout-ms", "300"], &[]).await;
     mcp.initialize().await;
     let started = std::time::Instant::now();
-    let result = mcp
-        .call("firecrawl_scrape", json!({"url": "https://example.com"}))
-        .await;
+    let result = mcp.call(TOOL_SCRAPE, json!({"url": "https://example.com"})).await;
     assert!(
         started.elapsed() < Duration::from_secs(4),
         "the call outlived its timeout"
@@ -1051,9 +1036,7 @@ async fn oversized_results_are_cut_at_one_mebibyte_with_a_marker() {
     .await;
     let mut mcp = Session::start(&server.uri()).await;
     mcp.initialize().await;
-    let result = mcp
-        .call("firecrawl_scrape", json!({"url": "https://example.com"}))
-        .await;
+    let result = mcp.call(TOOL_SCRAPE, json!({"url": "https://example.com"})).await;
     assert_eq!(result["isError"], json!(false));
     let text = text_of(&result);
     assert!(
@@ -1145,7 +1128,7 @@ async fn end_of_input_answers_what_was_sent_and_exits_zero() {
         .await;
     mcp.send(&json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": {"name": "firecrawl_map", "arguments": {"url": "https://example.com"}},
+        "params": {"name": TOOL_MAP, "arguments": {"url": "https://example.com"}},
     }))
     .await;
     // the last line has no trailing newline
@@ -1181,7 +1164,7 @@ async fn a_cancelled_request_gets_no_reply_and_does_not_hold_the_server_up() {
     mcp.initialize().await;
     mcp.send(&json!({
         "jsonrpc": "2.0", "id": 100, "method": "tools/call",
-        "params": {"name": "firecrawl_scrape", "arguments": {"url": "https://example.com"}},
+        "params": {"name": TOOL_SCRAPE, "arguments": {"url": "https://example.com"}},
     }))
     .await;
     mcp.send(&json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 100, "reason": "user"}}))
@@ -1214,7 +1197,7 @@ async fn ping_is_answered_while_a_slow_call_is_in_flight() {
     mcp.initialize().await;
     mcp.send(&json!({
         "jsonrpc": "2.0", "id": 100, "method": "tools/call",
-        "params": {"name": "firecrawl_scrape", "arguments": {"url": "https://example.com"}},
+        "params": {"name": TOOL_SCRAPE, "arguments": {"url": "https://example.com"}},
     }))
     .await;
     mcp.send(&json!({"jsonrpc": "2.0", "id": 101, "method": "ping"}))
@@ -1232,11 +1215,11 @@ async fn ping_is_answered_while_a_slow_call_is_in_flight() {
 }
 
 #[tokio::test]
-async fn firecrawl_environment_variables_are_the_fallback_and_crawlx_ones_win() {
+async fn dropin_environment_variables_are_the_fallback_and_crawlx_ones_win() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path(facade("map")))
-        .and(header("authorization", "Bearer from-firecrawl-env"))
+        .and(header("authorization", "Bearer from-dropin-env"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true, "links": []})))
         .expect(1)
         .mount(&server)
@@ -1244,16 +1227,13 @@ async fn firecrawl_environment_variables_are_the_fallback_and_crawlx_ones_win() 
     let mut mcp = Session::spawn(
         &[],
         &[
-            ("FIRECRAWL_API_URL", &server.uri()),
-            ("FIRECRAWL_API_KEY", "from-firecrawl-env"),
+            ("FIRECRAWL_API_URL", &server.uri()), // wire-compat: variable set by drop-in MCP client configs
+            ("FIRECRAWL_API_KEY", "from-dropin-env"), // wire-compat: variable set by drop-in MCP client configs
         ],
     )
     .await;
     mcp.initialize().await;
-    json_of(
-        &mcp.call("firecrawl_map", json!({"url": "https://example.com"}))
-            .await,
-    );
+    json_of(&mcp.call(TOOL_MAP, json!({"url": "https://example.com"})).await);
     mcp.finish().await;
 
     let other = MockServer::start().await;
@@ -1269,16 +1249,13 @@ async fn firecrawl_environment_variables_are_the_fallback_and_crawlx_ones_win() 
         &[
             ("CRAWLX_API_URL", &other.uri()),
             ("CRAWLX_API_KEY", "from-crawlx-env"),
-            ("FIRECRAWL_API_URL", "http://127.0.0.1:9"),
-            ("FIRECRAWL_API_KEY", "from-firecrawl-env"),
+            ("FIRECRAWL_API_URL", "http://127.0.0.1:9"), // wire-compat: variable set by drop-in MCP client configs
+            ("FIRECRAWL_API_KEY", "from-dropin-env"), // wire-compat: variable set by drop-in MCP client configs
         ],
     )
     .await;
     mcp.initialize().await;
-    json_of(
-        &mcp.call("firecrawl_map", json!({"url": "https://example.com"}))
-            .await,
-    );
+    json_of(&mcp.call(TOOL_MAP, json!({"url": "https://example.com"})).await);
     mcp.finish().await;
 }
 
@@ -1288,10 +1265,7 @@ async fn without_a_key_no_authorization_header_is_sent() {
     ok_json(&server, "POST", "map", json!({"success": true, "links": []})).await;
     let mut mcp = Session::spawn(&["--api-url", &server.uri()], &[]).await;
     mcp.initialize().await;
-    json_of(
-        &mcp.call("firecrawl_map", json!({"url": "https://example.com"}))
-            .await,
-    );
+    json_of(&mcp.call(TOOL_MAP, json!({"url": "https://example.com"})).await);
     let requests = server.received_requests().await.unwrap();
     assert!(requests[0].headers.get("authorization").is_none());
     mcp.finish().await;
@@ -1312,9 +1286,7 @@ async fn the_api_key_never_appears_on_stdout_or_stderr() {
     .await;
     let init = mcp.initialize().await;
     assert!(!init.to_string().contains(secret));
-    let failed = mcp
-        .call("firecrawl_scrape", json!({"url": "https://example.com"}))
-        .await;
+    let failed = mcp.call(TOOL_SCRAPE, json!({"url": "https://example.com"})).await;
     assert_eq!(failed["isError"], json!(true));
     assert!(!failed.to_string().contains(secret));
     let (status, stderr) = mcp.finish().await;
@@ -1346,7 +1318,7 @@ async fn an_invalid_api_url_fails_at_startup_without_touching_stdout() {
     let output = Command::new(env!("CARGO_BIN_EXE_crawlx"))
         .args(["mcp", "--api-url", "not a url"])
         .env_remove("CRAWLX_API_URL")
-        .env_remove("FIRECRAWL_API_URL")
+        .env_remove("FIRECRAWL_API_URL") // wire-compat: variable set by drop-in MCP client configs
         .stdin(Stdio::null())
         .output()
         .await

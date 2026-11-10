@@ -1,4 +1,4 @@
-//! `crawl-bench` (katana `cmd/tools/crawl-bench` equivalent): the pure parts
+//! `crawl-bench` (equivalent of a reference crawl-bench tool): the pure parts
 //! (profiles, targets, percentiles, medians, aggregation, baseline comparison, table and JSON
 //! shapes), the recording proxy, a real crawl of gym fixtures through the URL plane, and the
 //! binary's exit status. Wall-clock numbers are measured, never asserted exactly.
@@ -85,14 +85,14 @@ mod crawl_bench {
     // ---- profiles and targets -----------------------------------------------------------------
 
     #[test]
-    fn every_profile_crawls_the_url_plane_and_katana_defaults_set_the_preset_values() {
+    fn every_profile_crawls_the_url_plane_and_compat_flag_defaults_set_the_preset_values() {
         for profile in Profile::ALL {
             let req = request(profile);
             assert_eq!(req.mode, CrawlMode::Static, "{profile}");
             assert!(!req.dynamic.enabled, "{profile}");
         }
 
-        let k = request(Profile::KatanaDefaults);
+        let k = request(Profile::CompatFlagDefaults);
         assert_eq!(k.scope.host_scope, HostScope::Rdn);
         assert_eq!(k.scope.max_discovery_depth, 3);
         assert_eq!(k.scope.strategy, CrawlStrategy::DepthFirst);
@@ -129,7 +129,7 @@ mod crawl_bench {
         }
         let err = Profile::parse("turbo").unwrap_err().to_string();
         assert!(
-            err.contains("turbo") && err.contains("katana-defaults") && err.contains("static"),
+            err.contains("turbo") && err.contains("compat-flag-defaults") && err.contains("static"),
             "{err}"
         );
 
@@ -416,7 +416,7 @@ mod crawl_bench {
             ),
             Row::new(
                 "gym:a",
-                Profile::KatanaDefaults,
+                Profile::CompatFlagDefaults,
                 vec![synth(1, 2, 1.0, 1, 10, &[9.0])],
             ),
         ];
@@ -431,7 +431,7 @@ mod crawl_bench {
                 .keys()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            ["katana-defaults", "static"]
+            ["compat-flag-defaults", "static"]
         );
 
         let agg = &report.aggregate["static"];
@@ -440,13 +440,13 @@ mod crawl_bench {
         assert!((agg.recall.unwrap() - 20.0 / 30.0).abs() < 1e-12);
         assert!((agg.seconds - 5.0).abs() < f64::EPSILON && (agg.rps - 12.0).abs() < 1e-9);
         assert!((agg.p50_ms - 2.0).abs() < f64::EPSILON && (agg.p95_ms - 4.0).abs() < f64::EPSILON);
-        assert_eq!(report.aggregate["katana-defaults"].pages, 1);
+        assert_eq!(report.aggregate["compat-flag-defaults"].pages, 1);
     }
 
     // ---- baseline comparison ------------------------------------------------------------------
 
     #[test]
-    fn delta_labels_follow_katana() {
+    fn delta_labels_follow_the_reference_report() {
         assert_eq!(delta_label(0.0, 0.0), "=");
         assert_eq!(delta_label(0.0, 3.0), "new");
         assert_eq!(delta_label(100.0, 110.0), "+10%");
@@ -544,7 +544,7 @@ mod crawl_bench {
         let current = report(
             &[
                 ("t", "static", doc(json!({"seconds": 4.0, "pages": 1}))),
-                ("t", "katana-defaults", doc(json!({"pages": 1}))),
+                ("t", "compat-flag-defaults", doc(json!({"pages": 1}))),
                 ("new-target", "static", doc(json!({"pages": 1}))),
                 (
                     "nogt",
@@ -570,7 +570,7 @@ mod crawl_bench {
             ("t", Metric::Seconds)
         );
 
-        // t/katana-defaults and new-target/static have no baseline cell, `gone` has no current
+        // t/compat-flag-defaults and new-target/static have no baseline cell, `gone` has no current
         // cell, nogt has no recall in the current run: only t/static compares, on pages and seconds
         let all = compare(&current, &baseline, 10.0, &Metric::gated()).unwrap();
         let cells: Vec<(&str, &str, Metric)> = all
@@ -649,7 +649,7 @@ mod crawl_bench {
                 ("gym:s1", "static", doc(json!({}))),
                 (
                     "gym:s1",
-                    "katana-defaults",
+                    "compat-flag-defaults",
                     doc(json!({"recall": 0.82, "pages": 23})),
                 ),
                 (
@@ -658,7 +658,10 @@ mod crawl_bench {
                     doc(json!({"recall": null, "known": null, "found": null})),
                 ),
             ],
-            &[("static", doc(json!({}))), ("katana-defaults", doc(json!({})))],
+            &[
+                ("static", doc(json!({}))),
+                ("compat-flag-defaults", doc(json!({}))),
+            ],
         );
         let table = rep.table(None);
         let lines: Vec<Vec<&str>> = table.lines().map(|l| l.split_whitespace().collect()).collect();
@@ -680,10 +683,10 @@ mod crawl_bench {
         );
         // header + 3 cells + 2 aggregates; targets sorted, then profiles sorted
         assert_eq!(lines.len(), 6, "{table}");
-        assert_eq!(&lines[1][..2], ["gym:s1", "katana-defaults"]);
+        assert_eq!(&lines[1][..2], ["gym:s1", "compat-flag-defaults"]);
         assert_eq!(&lines[2][..2], ["gym:s1", "static"]);
         assert_eq!(&lines[3][..2], ["gym:x", "static"]);
-        assert_eq!(&lines[4][..2], [AGGREGATE_LABEL, "katana-defaults"]);
+        assert_eq!(&lines[4][..2], [AGGREGATE_LABEL, "compat-flag-defaults"]);
         assert_eq!(&lines[5][..2], [AGGREGATE_LABEL, "static"]);
         // values: ints plain, recall as a percentage, `-` without ground truth, 2 decimals for time
         assert_eq!(
@@ -697,7 +700,7 @@ mod crawl_bench {
             .lines()
             .map(|l| {
                 l.find("static")
-                    .or_else(|| l.find("katana-defaults"))
+                    .or_else(|| l.find("compat-flag-defaults"))
                     .or_else(|| l.find("profile"))
                     .unwrap()
             })
@@ -961,23 +964,23 @@ mod crawl_bench {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_katana_defaults_profile_crawls_differently_from_the_static_profile() {
-        let cfg = bench(&["gym:s1"], &[Profile::Static, Profile::KatanaDefaults]);
+    async fn the_compat_flag_defaults_profile_crawls_differently_from_the_static_profile() {
+        let cfg = bench(&["gym:s1"], &[Profile::Static, Profile::CompatFlagDefaults]);
         let report = run(&cfg, |_| {}).await.unwrap();
         let s = &report.results["gym:s1"]["static"];
-        let k = &report.results["gym:s1"]["katana-defaults"];
-        // katana does not read the sitemap, so the five archive pages nothing links to are missed
+        let k = &report.results["gym:s1"]["compat-flag-defaults"];
+        // the compat flag defaults do not read the sitemap, so the five archive pages nothing links to are missed
         assert_eq!(s.recall, Some(1.0), "{s:?}");
         assert!(k.recall.unwrap() < s.recall.unwrap(), "{k:?}");
         assert!(k.found.unwrap() <= 28 - 5, "{k:?}");
-        let (static_set, katana_set) = (
+        let (static_set, compat_set) = (
             &report.endpoints["gym:s1"]["static"],
-            &report.endpoints["gym:s1"]["katana-defaults"],
+            &report.endpoints["gym:s1"]["compat-flag-defaults"],
         );
         assert!(static_set.iter().any(|p| p == "/s1/archive/y1"));
         assert!(
-            !katana_set.iter().any(|p| p.starts_with("/s1/archive")),
-            "{katana_set:?}"
+            !compat_set.iter().any(|p| p.starts_with("/s1/archive")),
+            "{compat_set:?}"
         );
         // both profiles still crawled the linked site
         assert!(k.pages >= 20, "{k:?}");
@@ -1004,14 +1007,14 @@ mod crawl_bench {
         let path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/baselines/crawl-bench.json");
         let baseline = Report::from_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        // the recording is not vacuous: katana's defaults cover less of the crawl maze than ours
+        // the recording is not vacuous: the compat flag defaults cover less of the crawl maze than ours
         assert_eq!(baseline.results["gym:s1"]["static"].recall, Some(1.0));
         let maze = &baseline.results["gym:g32"];
-        assert!(maze["katana-defaults"].recall.unwrap() < maze["static"].recall.unwrap());
+        assert!(maze["compat-flag-defaults"].recall.unwrap() < maze["static"].recall.unwrap());
 
         let cfg = bench(
             &["gym:s1", "gym:hybrid-mix"],
-            &[Profile::Static, Profile::KatanaDefaults],
+            &[Profile::Static, Profile::CompatFlagDefaults],
         );
         let report = run(&cfg, |_| {}).await.unwrap();
         let gate = [Metric::Pages, Metric::Endpoints, Metric::Recall];
@@ -1023,9 +1026,9 @@ mod crawl_bench {
         // those four cells exist on both sides, so the comparison was not vacuous
         for (target, profile) in [
             ("gym:s1", "static"),
-            ("gym:s1", "katana-defaults"),
+            ("gym:s1", "compat-flag-defaults"),
             ("gym:hybrid-mix", "static"),
-            ("gym:hybrid-mix", "katana-defaults"),
+            ("gym:hybrid-mix", "compat-flag-defaults"),
         ] {
             assert!(
                 baseline.results[target].contains_key(profile)
@@ -1057,7 +1060,7 @@ mod crawl_bench {
             "http(s)://",
             "PROFILES",
             "static",
-            "katana-defaults",
+            "compat-flag-defaults",
             "crawlx-defaults",
             "BASELINES",
             "--baseline",

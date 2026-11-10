@@ -42,14 +42,14 @@ fn check(format: &str, extra: &[(&str, &str)], strict: bool) -> Output {
 fn secret_env() -> Vec<(&'static str, &'static str)> {
     vec![
         (
-            "OPENAI_BASE_URL",
+            "CRAWLX_LLM_BASE_URL",
             "https://svc:hunter2@llm.internal:8443/v1?token=tokenInQuery",
         ),
-        ("OPENAI_API_KEY", SECRETS[0]),
-        ("MODEL_NAME", "qwen3"),
-        ("MODEL_EMBEDDING_NAME", "nomic-embed-text"),
+        ("CRAWLX_LLM_API_KEY", SECRETS[0]),
+        ("CRAWLX_LLM_MODEL", "qwen3"),
+        ("CRAWLX_EMBEDDING_MODEL", "nomic-embed-text"),
         ("EXTRACT_EMBEDDING_TOP_N", "4"),
-        ("EXTRACTION_PROVIDER_BASE_URL", "http://vllm:8000/v1"),
+        ("EXTRACTION_PROVIDER_BASE_URL", "http://llm-server:8000/v1"),
         ("EXTRACTION_PROVIDER_API_KEY", SECRETS[1]),
         ("EXTRACTION_PROVIDER_ROLLOUT_PERCENT", "25"),
         ("EXTRACTION_PROVIDER_SHADOW_PERCENT", "10"),
@@ -88,7 +88,7 @@ fn the_toml_report_prints_the_providers_and_redacts_every_secret() {
         "endpoint = \"https://<redacted>@llm.internal:8443/v1?<redacted>\"",
         "model = \"qwen3\"",
         "[intel.llm.apiKey]",
-        "ref = \"env:OPENAI_API_KEY\"",
+        "ref = \"env:CRAWLX_LLM_API_KEY\"",
         "status = \"present\"",
         "[intel.embeddings]",
         "model = \"nomic-embed-text\"",
@@ -167,7 +167,7 @@ fn a_bad_provider_setting_fails_the_check_without_echoing_the_text() {
     let out = check(
         "json",
         &[
-            ("OPENAI_BASE_URL", "http://x/v1"),
+            ("CRAWLX_LLM_BASE_URL", "http://x/v1"),
             ("EXTRACTION_PROVIDER_BASE_URL", "http://y/v1"),
             ("EXTRACTION_PROVIDER_ROLLOUT_PERCENT", "sk-pasted-the-key-here"),
         ],
@@ -196,7 +196,7 @@ fn a_set_key_variable_is_present_and_no_key_is_not_configured() {
     let out = check(
         "json",
         &[
-            ("OPENAI_BASE_URL", "http://x/v1"),
+            ("CRAWLX_LLM_BASE_URL", "http://x/v1"),
             ("EXTRACTION_PROVIDER_BASE_URL", "http://y/v1"),
             ("EXTRACTION_PROVIDER_API_KEY", SECRETS[1]),
         ],

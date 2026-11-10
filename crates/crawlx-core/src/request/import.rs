@@ -12,21 +12,25 @@ use url::Url;
 /// Exact source snapshots accepted by the clean-room importer.
 pub const SOURCE_PINS: [(&str, &str, &str); 4] = [
     (
-        "crawlee_js_3_18",
+        "js_actor_3_18",
         "3.18.2",
         "78da0622762e1b569b5cb0b56e8eb06a0a010d93",
     ),
     (
-        "crawlee_python_1_11",
+        "py_actor_1_11",
         "1.11.0",
         "c6695f149649807f14de43694fcc073a9b1bd4ca",
     ),
     (
-        "scrapy_2_19",
+        "python_spider_2_19",
         "2.19.0",
         "8026deeaac371a5d9a3edbe4886d58f61139d464",
     ),
-    ("colly_2_2", "2.2.0", "fe55a16e8d16a006df76b5edc57cfaf83ae0b3ea"),
+    (
+        "go_collector_2_2",
+        "2.2.0",
+        "fe55a16e8d16a006df76b5edc57cfaf83ae0b3ea",
+    ),
 ];
 
 #[derive(Deserialize)]
@@ -105,10 +109,10 @@ where
         return Err(ImportError::Limit);
     }
     let pin = match export.source.dialect {
-        IdentityDialectV1::CrawleeJs3_18 => SOURCE_PINS[0],
-        IdentityDialectV1::CrawleePython1_11 => SOURCE_PINS[1],
-        IdentityDialectV1::Scrapy2_19 => SOURCE_PINS[2],
-        IdentityDialectV1::Colly2_2 => SOURCE_PINS[3],
+        IdentityDialectV1::JsActor318 => SOURCE_PINS[0],
+        IdentityDialectV1::PyActor111 => SOURCE_PINS[1],
+        IdentityDialectV1::PythonSpider219 => SOURCE_PINS[2],
+        IdentityDialectV1::GoCollector22 => SOURCE_PINS[3],
         _ => return Err(ImportError::SourcePin),
     };
     if export.source.release != pin.1 || export.source.commit != pin.2 {
@@ -127,9 +131,9 @@ where
         {
             return Err(ImportError::Request);
         }
-        if (row.always_enqueue && export.source.dialect != IdentityDialectV1::CrawleePython1_11)
-            || (row.dont_filter && export.source.dialect != IdentityDialectV1::Scrapy2_19)
-            || (row.allow_url_revisit && export.source.dialect != IdentityDialectV1::Colly2_2)
+        if (row.always_enqueue && export.source.dialect != IdentityDialectV1::PyActor111)
+            || (row.dont_filter && export.source.dialect != IdentityDialectV1::PythonSpider219)
+            || (row.allow_url_revisit && export.source.dialect != IdentityDialectV1::GoCollector22)
             || (row.always_enqueue && row.explicit_key)
         {
             return Err(ImportError::DialectConflict);

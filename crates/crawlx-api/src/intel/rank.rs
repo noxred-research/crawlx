@@ -1,7 +1,7 @@
-//! Embedding ranking of the pages an `/extract` job read (`MODEL_EMBEDDING_NAME`).
+//! Embedding ranking of the pages an `/extract` job read (`CRAWLX_EMBEDDING_MODEL`).
 //!
-//! Firecrawl self-host ranks candidates by the cosine similarity between the request's text and
-//! each candidate's embedding (`apps/api/src/lib/ranker.ts`). `/extract` applies the same
+//! The compatibility API ranks candidates by the cosine similarity between the request's text
+//! and each candidate's embedding. `/extract` applies the same
 //! ranking to its scraped pages: the pages are ordered by similarity to the prompt (the schema
 //! when there is no prompt) and only the best [`PageRanker::top_n`] reach the LLM, so the model
 //! reads the most relevant pages first and spends its input budget on them.

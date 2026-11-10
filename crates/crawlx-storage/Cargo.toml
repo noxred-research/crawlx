@@ -14,7 +14,7 @@ chaos = []
 # `testkit::fake_s3`: an in-process S3-compatible server for the SDK code path of `S3Blobs`
 # (this crate's `tests/s3.rs` and the crawlx-bench canary scan). Test builds only.
 fake-s3 = ["dep:axum"]
-# Explicit test-only loopback AWS KMS protocol fixture; never auto-selected.
+# Explicit test-only loopback cloud KMS protocol fixture; never auto-selected.
 fake-kms = ["dep:axum", "dep:base64"]
 
 [dependencies]

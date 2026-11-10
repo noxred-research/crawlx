@@ -1,0 +1,40 @@
+# Feature IDs of the precision-oriented text extraction profile 2.3.1 (Apache-2.0 upstream; see THIRD_PARTY_NOTICES.md) recognised by extraction import.
+# Format: ID<TAB>upstream feature. Lines starting with '#' are comments.
+TP-01	`extract`, `bare_extraction`, `extract_with_metadata`; HTML element/bytes/string/response inputs, optional URL, `record_id`, `Document.as_dict`
+TP-02	`load_html`, `html2txt`, `baseline`
+TP-03	Rule extractor, content-density/boilerplate-removal comparisons, baseline rescue, short-result recall escalation
+TP-04	`fast` / `--fast` and deprecated `no_fallback`
+TP-05	`favor_precision`, `favor_recall`, `--precision`, `--recall`
+TP-06	`include_comments`, `--no-comments`, forum-post handling
+TP-07	Tables on by default, `include_tables`, `--no-tables`
+TP-08	`include_images`, `--images`; image alt/src/title
+TP-09	`include_links`, `include_formatting`; Markdown auto-formatting, JSON formatting caveat
+TP-10	Shared streaming JSON/JSONL/text/Markdown/HTML/CSV/XML/TEI article and collection serializers; actual CLI full local RELAX NG validation against BSD-2-Clause TEI P5 4.10.2, SHA-256 `95fa3f6e47cd196c353124e007bd5c4994989dba8a64496458442136293dafd0`; XML scalar preservation and CSV formula neutralization
+TP-11	Metadata title/author/date/site/categories/tags/description/image/type/license/hostname/fingerprint/filedate/ID
+TP-12	`extract_metadata`, `with_metadata`, `only_with_metadata` requiring title/URL/date
+TP-13	Date-detection library `date_extraction_params`, extensive search, maximum-date default derived from now
+TP-14	`target_language`, ISO 639-1 filter, optional language-identification model
+TP-15	`url_blacklist`, `author_blacklist`; CLI `--blacklist`
+TP-16	`prune_xpath` string/list
+TP-17	Deduplicate segments/documents, caller-scoped LRU; `--deduplicate`
+TP-18	Simhash/content fingerprint, bag-of-words hash and similarity helpers
+TP-19	Size/output/comment thresholds, maximum tree size, extraction timeout
+TP-20	Same parsed DOM feeds separate acquisition validation and article quality; unresolved media/read-more intents never fetch in the parser
+TP-21	HTTP connection pool, optional native-curl transport, DNS/TLS-session sharing
+TP-22	gzip/deflate plus optional Brotli/Zstandard support and charset detection
+TP-23	Retry status list, backoff/Retry-After cap 30s, separate transport status retry count
+TP-24	Download timeout 30s, 10..20,000,000 byte defaults, redirects max 2
+TP-25	`http_proxy` SOCKS, `PROXY_URL`, UA list, COOKIE
+TP-26	SSRF protection direct connections; insecure SSL retry enabled by default; proxy limitations
+TP-27	`add_to_compressed_dict`, `load_download_buffer`, `buffered_downloads`; domain throttling, parallel limit
+TP-28	`find_feed_urls`: RSS/Atom/JSON feeds, rel=alternate/anchor discovery, homepage fallback
+TP-29	Hidden news-aggregator fallback when feed search fails and language supplied
+TP-30	`sitemap_search`: robots declarations, guessed XML/gzip paths, nested indices, text sitemaps, hreflang/external filters
+TP-31	`focused_crawler`, navigation priority, `max_seen_urls=10`, `max_known_urls=100000`, todo/known resume, `is_still_navigation`
+TP-32	CLI `--feed`, `--sitemap`, `--crawl`, `--explore` (sitemap then crawl), `--probe`
+TP-33	CLI `--archived` web-archive fetch after failure
+TP-34	`--url-filter` substring patterns, target-language URL heuristics
+TP-35	URL, URL-list, HTML stdin, input-directory, parallel local processing
+TP-36	output-dir, backup-dir, keep-dirs, `--list`, verbosity/version/help, exit codes
+TP-37	`settingsfile`, config object, whole Extractor options; partial defaults overlay
+TP-38	CSS/adaptive selector learning

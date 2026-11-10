@@ -19,7 +19,7 @@ pub struct ApiKeyBootstrap {
     /// Tenant the key belongs to: a UUID, or a name mapped to a deterministic tenant id.
     pub tenant: String,
     /// The full key: `cx_live_<26 base32>`, or `fc-<16..=64 alphanumerics>` when
-    /// [`CompatConfig::firecrawl_keys`] is on.
+    /// [`CompatConfig::prefixed_keys`] is on.
     pub key: String,
 }
 
@@ -43,17 +43,17 @@ impl std::fmt::Debug for ApiKeyBootstrap {
     }
 }
 
-/// Settings of the Firecrawl-compatible facade (`/compat/firecrawl/v2`).
+/// Settings of the compatibility API (`/compat/v2`).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CompatConfig {
-    /// Accept Firecrawl-style `fc-...` bearer keys on the `/compat/` routes in addition to
+    /// Accept compat-style `fc-...` bearer keys on the `/compat/` routes in addition to
     /// `cx_live_...` keys (default off). Bootstrap keys may then be `fc-` keys too; an `fc-` key
     /// is never accepted outside `/compat/`.
     #[serde(default)]
-    pub firecrawl_keys: bool,
+    pub prefixed_keys: bool,
     /// The authorization record under which `ignoreRobotsTxt: true` lowers the robots.txt gate
-    /// of a facade crawl (`safety.respectRobotsTxt = false`; Firecrawl offers the option to
+    /// of a facade crawl (`safety.respectRobotsTxt = false`; the compat API offers the option to
     /// enterprise teams only). The record must belong to the caller's tenant, be active and
     /// verified (created through `POST /v1/authorizations`), cover the seed URL and carry
     /// `robotsOverrideAcknowledged`. Unset (the default): the option is refused with
@@ -64,7 +64,7 @@ pub struct CompatConfig {
 
 impl CompatConfig {
     /// Fill the unset settings from the environment variables `lookup` serves:
-    /// `CRAWLX_COMPAT_FIRECRAWL_KEYS` (`1`/`true`) and `CRAWLX_COMPAT_ROBOTS_AUTHORIZATION` (the
+    /// `CRAWLX_COMPAT_KEYS` (`1`/`true`) and `CRAWLX_COMPAT_ROBOTS_AUTHORIZATION` (the
     /// UUID of the authorization record behind `ignoreRobotsTxt`). A value that is already set
     /// wins.
     ///
@@ -72,8 +72,8 @@ impl CompatConfig {
     /// [`EnvError::Number`] when `CRAWLX_COMPAT_ROBOTS_AUTHORIZATION` is not a UUID.
     pub fn from_lookup(mut self, lookup: impl Fn(&str) -> Option<String>) -> Result<Self, EnvError> {
         let get = |k: &str| lookup(k).map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
-        if !self.firecrawl_keys {
-            self.firecrawl_keys = get("CRAWLX_COMPAT_FIRECRAWL_KEYS")
+        if !self.prefixed_keys {
+            self.prefixed_keys = get("CRAWLX_COMPAT_KEYS")
                 .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"));
         }
         if self.robots_authorization.is_none() {
@@ -118,10 +118,10 @@ pub struct ApiConfig {
     /// Optional second listener serving only `GET /metrics` without authentication; must be a
     /// loopback address (a sidecar scraper). `None` disables it.
     pub metrics_bind: Option<SocketAddr>,
-    /// LLM, search and docs settings of the Firecrawl-compatible LLM products; unset sections
+    /// LLM, search and docs settings of the compatibility-API LLM products; unset sections
     /// are filled from the self-host environment variables when the server starts.
     pub intel: IntelConfig,
-    /// Firecrawl-compatibility facade settings.
+    /// compatibility API settings.
     pub compat: CompatConfig,
     /// OCR for `POST /v2/parse` uploads (scanned PDFs, images). `backend: off` (the default)
     /// keeps images refused and scanned pages empty; the facade's scrape runs read the worker's
@@ -247,7 +247,7 @@ pub struct Settings {
     /// (default 5); `0` mirrors nothing, `100` everything. Requests
     /// with `zeroDataRetention: true` are never mirrored regardless.
     pub shadow_sample_percent: u8,
-    /// Resource limits of `POST /compat/firecrawl/v2/parse` uploads: input bytes (50 MiB
+    /// Resource limits of `POST /compat/v2/parse` uploads: input bytes (50 MiB
     /// default), decompressed bytes, archive entries, pages, sheets and rows.
     pub parse_limits: crawlx_extract::parse::ParseLimits,
 }
@@ -275,12 +275,12 @@ impl Default for Settings {
 
 /// LLM endpoint of the document products (`llm{endpoint, model, apiKeyRef, timeoutMs}`).
 ///
-/// When [`IntelConfig::llm`] is `None`, [`IntelConfig::from_lookup`] fills it from the Firecrawl
-/// self-host variables `OPENAI_BASE_URL`, `MODEL_NAME` and `OPENAI_API_KEY`.
+/// When [`IntelConfig::llm`] is `None`, [`IntelConfig::from_lookup`] fills it from the self-host
+/// variables `CRAWLX_LLM_BASE_URL`, `CRAWLX_LLM_MODEL` and `CRAWLX_LLM_API_KEY`.
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LlmSettings {
-    /// OpenAI-compatible base URL (`https://api.openai.com/v1`) or full `chat/completions` URL.
+    /// chat-completions compatible base URL (for example `https://llm.example.test/v1`) or full `chat/completions` URL.
     pub endpoint: String,
     /// Model name sent with every request.
     pub model: String,
@@ -291,14 +291,14 @@ pub struct LlmSettings {
     /// Time budget of one call, milliseconds.
     #[serde(default)]
     pub timeout_ms: Option<u64>,
-    /// Base URL of the speech-to-text endpoint of the `audio` / `video` formats (OpenAI-compatible
-    /// `audio/transcriptions`, e.g. a Whisper server), or its full URL. The same credential as
+    /// Base URL of the speech-to-text endpoint of the `audio` / `video` formats (chat-completions compatible
+    /// `audio/transcriptions`, e.g. a local speech-to-text server), or its full URL. The same credential as
     /// the chat endpoint is sent. `None`: those formats return the media without a transcript.
-    /// [`IntelConfig::from_lookup`] fills it from `OPENAI_TRANSCRIBE_ENDPOINT`.
+    /// [`IntelConfig::from_lookup`] fills it from `CRAWLX_TRANSCRIBE_ENDPOINT`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcribe_endpoint: Option<String>,
-    /// Model sent to the speech-to-text endpoint; `None` is `whisper-1`
-    /// (`TRANSCRIBE_MODEL_NAME`).
+    /// Model sent to the speech-to-text endpoint; `None` is the client default
+    /// (`CRAWLX_TRANSCRIBE_MODEL`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcribe_model: Option<String>,
 }
@@ -307,11 +307,11 @@ pub struct LlmSettings {
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "provider", rename_all = "camelCase", deny_unknown_fields)]
 pub enum SearchSettings {
-    /// A SearXNG instance queried with `format=json` (`SEARXNG_ENDPOINT`, `SEARXNG_ENGINES`,
-    /// `SEARXNG_CATEGORIES`).
+    /// A metasearch instance with a JSON API queried with `format=json` (`CRAWLX_SEARCH_ENDPOINT`, `CRAWLX_SEARCH_ENGINES`,
+    /// `CRAWLX_SEARCH_CATEGORIES`).
     #[serde(rename_all = "camelCase")]
-    Searxng {
-        /// Base URL of the instance (`http://searxng:8080`).
+    Metasearch {
+        /// Base URL of the instance (`http://metasearch:8080`).
         endpoint: String,
         /// Engines passed as `engines=` (empty = the instance default).
         #[serde(default)]
@@ -320,14 +320,14 @@ pub enum SearchSettings {
         #[serde(default)]
         categories: Vec<String>,
     },
-    /// A SearchApi-style hosted SERP API (`SEARCHAPI_API_KEY`, `SEARCHAPI_ENGINE`).
+    /// A hosted SERP API (`CRAWLX_SEARCH_API_KEY`, `CRAWLX_SEARCH_API_ENGINE`).
     #[serde(rename_all = "camelCase")]
-    SearchApi {
+    Serp {
         /// Reference to the API key (`env:NAME` or `file:/path`).
         api_key_ref: String,
-        /// Engine parameter (`google`, `bing`, ...).
+        /// Engine parameter of the hosted API (for example `engine-a`).
         engine: String,
-        /// Endpoint override; `None` is `https://www.searchapi.io/api/v1/search`.
+        /// Endpoint override; `None` is [`crate::intel::serp::DEFAULT_ENDPOINT`].
         #[serde(default)]
         endpoint: Option<String>,
     },
@@ -347,7 +347,7 @@ pub struct IntelConfig {
     #[serde(default)]
     pub docs_dir: Option<PathBuf>,
     /// Embedding model that ranks the pages of an `/extract` job against its prompt before the
-    /// LLM sees them (`MODEL_EMBEDDING_NAME`); `None` keeps the scrape order and sends every page.
+    /// LLM sees them (`CRAWLX_EMBEDDING_MODEL`); `None` keeps the scrape order and sends every page.
     #[serde(default)]
     pub embeddings: Option<EmbeddingSettings>,
     /// Second endpoint for the JSON-extraction step (`/extract`, the `json` format;
@@ -453,11 +453,11 @@ impl LlmSettings {
 }
 
 impl IntelConfig {
-    /// This config with every unset section filled from the Firecrawl self-host variables looked
-    /// up through `lookup`: `OPENAI_BASE_URL` (or `OLLAMA_BASE_URL`), `MODEL_NAME`, `OPENAI_API_KEY` (key kept as an
-    /// `env:OPENAI_API_KEY` reference), `SEARXNG_ENDPOINT`, `SEARXNG_ENGINES`,
-    /// `SEARXNG_CATEGORIES` (comma separated), `SEARCHAPI_API_KEY`, `SEARCHAPI_ENGINE`, and the
-    /// per-step provider variables `MODEL_EMBEDDING_NAME`, `EXTRACT_EMBEDDING_TOP_N`,
+    /// This config with every unset section filled from the compat self-host variables looked
+    /// up through `lookup`: `CRAWLX_LLM_BASE_URL` (or `CRAWLX_LOCAL_LLM_BASE_URL`), `CRAWLX_LLM_MODEL`, `CRAWLX_LLM_API_KEY` (key kept as an
+    /// `env:CRAWLX_LLM_API_KEY` reference), `CRAWLX_SEARCH_ENDPOINT`, `CRAWLX_SEARCH_ENGINES`,
+    /// `CRAWLX_SEARCH_CATEGORIES` (comma separated), `CRAWLX_SEARCH_API_KEY`, `CRAWLX_SEARCH_API_ENGINE`, and the
+    /// per-step provider variables `CRAWLX_EMBEDDING_MODEL`, `EXTRACT_EMBEDDING_TOP_N`,
     /// `EXTRACTION_PROVIDER_{BASE_URL,MODEL,API_KEY,ROLLOUT_PERCENT,SHADOW_PERCENT,TEAM_IDS,MAX_INPUT_BYTES}`,
     /// `BRANDING_LLM_{BASE_URL,MODEL,API_KEY}` and `BRANDING_JEV_TIMEOUT_MS` (see
     /// [`EmbeddingSettings`], [`ExtractionSettings`], [`BrandingSettings`]).
@@ -479,33 +479,35 @@ impl IntelConfig {
                 .unwrap_or_default()
         };
         if self.llm.is_none() {
-            // `OLLAMA_BASE_URL` (Firecrawl self-host) names the Ollama root; its OpenAI-compatible API is at `/v1`
-            let base = get("OPENAI_BASE_URL")
-                .or_else(|| get("OLLAMA_BASE_URL").map(|o| format!("{}/v1", o.trim_end_matches('/'))));
-            let key = get("OPENAI_API_KEY");
+            // `CRAWLX_LOCAL_LLM_BASE_URL` (self-host) names the root of a local model server; its chat-completions compatible API is at `/v1`
+            let base = get("CRAWLX_LLM_BASE_URL").or_else(|| {
+                get("CRAWLX_LOCAL_LLM_BASE_URL").map(|o| format!("{}/v1", o.trim_end_matches('/')))
+            });
+            let key = get("CRAWLX_LLM_API_KEY");
             if base.is_some() || key.is_some() {
                 self.llm = Some(LlmSettings {
-                    endpoint: base.unwrap_or_else(|| crawlx_model::llm::openai::DEFAULT_ENDPOINT.to_owned()),
-                    model: get("MODEL_NAME")
-                        .unwrap_or_else(|| crawlx_model::llm::openai::DEFAULT_MODEL.to_owned()),
-                    api_key_ref: key.map(|_| "env:OPENAI_API_KEY".to_owned()),
+                    endpoint: base
+                        .unwrap_or_else(|| crawlx_model::llm::chat_completions::DEFAULT_ENDPOINT.to_owned()),
+                    model: get("CRAWLX_LLM_MODEL")
+                        .unwrap_or_else(|| crawlx_model::llm::chat_completions::DEFAULT_MODEL.to_owned()),
+                    api_key_ref: key.map(|_| "env:CRAWLX_LLM_API_KEY".to_owned()),
                     timeout_ms: None,
-                    transcribe_endpoint: get("OPENAI_TRANSCRIBE_ENDPOINT"),
-                    transcribe_model: get("TRANSCRIBE_MODEL_NAME"),
+                    transcribe_endpoint: get("CRAWLX_TRANSCRIBE_ENDPOINT"),
+                    transcribe_model: get("CRAWLX_TRANSCRIBE_MODEL"),
                 });
             }
         }
         if self.search.is_none() {
-            if let Some(endpoint) = get("SEARXNG_ENDPOINT") {
-                self.search = Some(SearchSettings::Searxng {
+            if let Some(endpoint) = get("CRAWLX_SEARCH_ENDPOINT") {
+                self.search = Some(SearchSettings::Metasearch {
                     endpoint,
-                    engines: list("SEARXNG_ENGINES"),
-                    categories: list("SEARXNG_CATEGORIES"),
+                    engines: list("CRAWLX_SEARCH_ENGINES"),
+                    categories: list("CRAWLX_SEARCH_CATEGORIES"),
                 });
-            } else if get("SEARCHAPI_API_KEY").is_some() {
-                self.search = Some(SearchSettings::SearchApi {
-                    api_key_ref: "env:SEARCHAPI_API_KEY".to_owned(),
-                    engine: get("SEARCHAPI_ENGINE").unwrap_or_else(|| "google".to_owned()),
+            } else if get("CRAWLX_SEARCH_API_KEY").is_some() {
+                self.search = Some(SearchSettings::Serp {
+                    api_key_ref: "env:CRAWLX_SEARCH_API_KEY".to_owned(),
+                    engine: get("CRAWLX_SEARCH_API_ENGINE").unwrap_or_else(|| "google".to_owned()), // wire-compat: engine id of the hosted search API
                     endpoint: None,
                 });
             }
@@ -535,28 +537,28 @@ mod intel_tests {
     }
 
     #[test]
-    fn firecrawl_variables_fill_unset_sections() {
+    fn compat_variables_fill_unset_sections() {
         let cfg = IntelConfig::default()
             .from_lookup(env(&[
-                ("OPENAI_BASE_URL", "http://ollama:11434/v1"),
-                ("MODEL_NAME", "qwen3"),
-                ("SEARXNG_ENDPOINT", "http://sx:8080"),
-                ("SEARXNG_ENGINES", "google, bing,"),
-                ("SEARXNG_CATEGORIES", "general"),
+                ("CRAWLX_LLM_BASE_URL", "http://local-llm:11434/v1"),
+                ("CRAWLX_LLM_MODEL", "chat-model"),
+                ("CRAWLX_SEARCH_ENDPOINT", "http://sx:8080"),
+                ("CRAWLX_SEARCH_ENGINES", "engine-a, engine-b,"),
+                ("CRAWLX_SEARCH_CATEGORIES", "general"),
             ]))
             .unwrap();
         let llm = cfg.llm.unwrap();
         assert_eq!(
             (llm.endpoint.as_str(), llm.model.as_str()),
-            ("http://ollama:11434/v1", "qwen3")
+            ("http://local-llm:11434/v1", "chat-model")
         );
         assert_eq!(llm.api_key_ref, None);
         assert_eq!((llm.transcribe_endpoint, llm.transcribe_model), (None, None));
         assert_eq!(
             cfg.search,
-            Some(SearchSettings::Searxng {
+            Some(SearchSettings::Metasearch {
                 endpoint: "http://sx:8080".to_owned(),
-                engines: vec!["google".to_owned(), "bing".to_owned()],
+                engines: vec!["engine-a".to_owned(), "engine-b".to_owned()],
                 categories: vec!["general".to_owned()],
             })
         );
@@ -566,20 +568,17 @@ mod intel_tests {
     fn transcribe_variables_and_settings_reach_the_client_config() {
         let cfg = IntelConfig::default()
             .from_lookup(env(&[
-                ("OPENAI_BASE_URL", "http://ollama:11434/v1"),
-                ("OPENAI_TRANSCRIBE_ENDPOINT", "http://whisper:8000/v1"),
-                ("TRANSCRIBE_MODEL_NAME", "large-v3"),
+                ("CRAWLX_LLM_BASE_URL", "http://local-llm:11434/v1"),
+                ("CRAWLX_TRANSCRIBE_ENDPOINT", "http://stt:8000/v1"),
+                ("CRAWLX_TRANSCRIBE_MODEL", "stt-model"),
             ]))
             .unwrap();
         let llm = cfg.llm.unwrap();
-        assert_eq!(llm.transcribe_endpoint.as_deref(), Some("http://whisper:8000/v1"));
-        assert_eq!(llm.transcribe_model.as_deref(), Some("large-v3"));
+        assert_eq!(llm.transcribe_endpoint.as_deref(), Some("http://stt:8000/v1"));
+        assert_eq!(llm.transcribe_model.as_deref(), Some("stt-model"));
         let client = llm.resolve_with(env(&[])).unwrap();
-        assert_eq!(
-            client.transcribe_endpoint.as_deref(),
-            Some("http://whisper:8000/v1")
-        );
-        assert_eq!(client.transcribe_model.as_deref(), Some("large-v3"));
+        assert_eq!(client.transcribe_endpoint.as_deref(), Some("http://stt:8000/v1"));
+        assert_eq!(client.transcribe_model.as_deref(), Some("stt-model"));
         // camelCase in the config file; absent keys stay absent when written back
         let parsed: LlmSettings = serde_json::from_value(serde_json::json!({
             "endpoint": "http://h/v1", "model": "m", "transcribeEndpoint": "http://w/v1"
@@ -597,26 +596,26 @@ mod intel_tests {
     }
 
     #[test]
-    fn ollama_base_url_selects_its_openai_compatible_endpoint() {
+    fn local_llm_base_url_selects_its_chat_completions_endpoint() {
         let cfg = IntelConfig::default()
-            .from_lookup(env(&[("OLLAMA_BASE_URL", "http://ollama:11434/")]))
+            .from_lookup(env(&[("CRAWLX_LOCAL_LLM_BASE_URL", "http://local-llm:11434/")]))
             .unwrap();
-        assert_eq!(cfg.llm.unwrap().endpoint, "http://ollama:11434/v1");
+        assert_eq!(cfg.llm.unwrap().endpoint, "http://local-llm:11434/v1");
         let both = IntelConfig::default()
             .from_lookup(env(&[
-                ("OLLAMA_BASE_URL", "http://ollama:11434"),
-                ("OPENAI_BASE_URL", "http://other/v1"),
+                ("CRAWLX_LOCAL_LLM_BASE_URL", "http://local-llm:11434"),
+                ("CRAWLX_LLM_BASE_URL", "http://other/v1"),
             ]))
             .unwrap();
         assert_eq!(
             both.llm.unwrap().endpoint,
             "http://other/v1",
-            "OPENAI_BASE_URL wins"
+            "CRAWLX_LLM_BASE_URL wins"
         );
     }
 
     #[test]
-    fn explicit_settings_win_and_searchapi_is_second_choice() {
+    fn explicit_settings_win_and_serp_is_second_choice() {
         let explicit = IntelConfig {
             llm: Some(LlmSettings {
                 endpoint: "http://x/v1".to_owned(),
@@ -630,14 +629,17 @@ mod intel_tests {
         };
         let cfg = explicit
             .clone()
-            .from_lookup(env(&[("OPENAI_API_KEY", "k"), ("SEARCHAPI_API_KEY", "s")]))
+            .from_lookup(env(&[
+                ("CRAWLX_LLM_API_KEY", "k"),
+                ("CRAWLX_SEARCH_API_KEY", "s"),
+            ]))
             .unwrap();
         assert_eq!(cfg.llm, explicit.llm);
         assert_eq!(
             cfg.search,
-            Some(SearchSettings::SearchApi {
-                api_key_ref: "env:SEARCHAPI_API_KEY".to_owned(),
-                engine: "google".to_owned(),
+            Some(SearchSettings::Serp {
+                api_key_ref: "env:CRAWLX_SEARCH_API_KEY".to_owned(),
+                engine: "google".to_owned(), // wire-compat: engine id of the hosted search API
                 endpoint: None
             })
         );

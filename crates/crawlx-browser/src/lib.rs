@@ -8,7 +8,7 @@
 //! * [`launch`], [`profile`], [`egress`], [`pin`]: flags, launch profiles, proxy flags and
 //!   traffic redaction, `chromium-pin.toml`; `LaunchConfig::cdp_ws_url` attaches to a
 //!   running browser instead.
-//! * [`options`], [`health`], [`consent`]: validated operator launch options (katana `-sc`, `-scp`,
+//! * [`options`], [`health`], [`consent`]: validated operator launch options (compatibility flags `-sc`, `-scp`,
 //!   `-sb`, `-ho`, `-nos`, `-cdd`), the `-health-check` probe, and the cookie-consent banner
 //!   blocklist (`dynamic.blockConsentBanners`).
 //! * [`hooks`]: the opt-in page-hooks discovery sink (`dynamic.pageHooks`) and the

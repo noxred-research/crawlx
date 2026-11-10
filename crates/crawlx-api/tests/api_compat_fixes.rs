@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Firecrawl facade corrections: `ignoreRobotsTxt` under the facade's
-//! authorization record, `deduplicateSimilarURLs` on scrape-job crawls, Firecrawl's `400` for a
+//! The compat API facade corrections: `ignoreRobotsTxt` under the facade's
+//! authorization record, `deduplicateSimilarURLs` on scrape-job crawls, the compat API's `400` for a
 //! missing `url`, `excludePaths` beyond 100 patterns, the seed-vs-`includePaths` rule, `SCRAPE_*`
 //! codes on `GET /crawl/{id}/errors`, the `query` format's `answer`, `checkPromptInjection`,
 //! `redactPII`, `onlyCleanContent`, `changeTracking.visibility`, a sitemap that names a PDF and
@@ -27,8 +27,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-const CRAWL: &str = "/compat/firecrawl/v2/crawl";
-const SCRAPE: &str = "/compat/firecrawl/v2/scrape";
+const CRAWL: &str = "/compat/v2/crawl";
+const SCRAPE: &str = "/compat/v2/scrape";
 
 async fn start_crawl(rig: &Rig, body: &Value) -> String {
     let (s, _, v) = rig.env.post(CRAWL, body).await;
@@ -177,7 +177,7 @@ async fn ignore_robots_txt_needs_the_facade_record_and_then_lowers_the_gate() {
 }
 
 #[tokio::test]
-async fn missing_url_is_a_firecrawl_400_and_long_exclude_lists_are_admitted() {
+async fn missing_url_is_a_compat_400_and_long_exclude_lists_are_admitted() {
     let rig = Rig::start(RigConfig::default()).await;
     let (s, _, v) = rig.env.post(CRAWL, &json!({"limit": 2})).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
@@ -214,7 +214,7 @@ async fn missing_url_is_a_firecrawl_400_and_long_exclude_lists_are_admitted() {
 
 #[tokio::test]
 async fn a_seed_outside_include_paths_is_fetched_for_its_links_and_reported_as_a_crawl_denial() {
-    // Firecrawl: the start URL does not match includePaths, so it is no page of the crawl
+    // The compat API: the start URL does not match includePaths, so it is no page of the crawl
     // (errors[] CRAWL_DENIAL), but it is still fetched once to find the links that do match
     let rig = Rig::start(RigConfig::default()).await;
     let id = start_crawl(
@@ -321,7 +321,7 @@ async fn crawl_with_warnings(rig: &Rig, body: &Value) -> (Vec<(String, String)>,
 
 #[tokio::test]
 async fn deduplicate_similar_urls_does_not_drop_pages_of_one_url_shape() {
-    // Firecrawl's option is URL normalization: against the real pinned Firecrawl (2026-10-28)
+    // The compat API's option is URL normalization: against the real pinned the compat API (2026-10-28)
     // the default fetched every sibling page of one shape and `false` fetched one more, the
     // non-normalized variant of a URL. It must not act as a shape filter.
     let rig = Rig::start(RigConfig {

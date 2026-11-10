@@ -228,7 +228,7 @@ async fn zdr_pages_are_served_from_the_delivery_buffer_and_nothing_is_durable() 
     assert_eq!(v["data"][1]["html"], "<h1>2</h1>");
 
     // the compat facade lists the same pages
-    let (s, _, v) = r.env.get(&format!("/compat/firecrawl/v2/crawl/{id}")).await;
+    let (s, _, v) = r.env.get(&format!("/compat/v2/crawl/{id}")).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["data"].as_array().unwrap().len(), 2);
     assert_eq!(v["data"][0]["markdown"], "# one");
@@ -630,7 +630,7 @@ async fn virtual_rows_use_separate_zdr_rendition_and_expire_from_actual_api_cons
     let structural = serde_json::to_string(&persisted).unwrap();
     assert!(!structural.contains("historic-only ZDR row"));
     assert!(!structural.contains("C++"));
-    let (status, _, body) = r.env.get(&format!("/compat/firecrawl/v2/crawl/{id}")).await;
+    let (status, _, body) = r.env.get(&format!("/compat/v2/crawl/{id}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let entry = &body["data"][0]["actions"]["virtualRows"][0];
     assert_eq!(

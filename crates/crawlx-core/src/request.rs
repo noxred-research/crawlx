@@ -23,18 +23,18 @@ pub enum IdentityDialectV1 {
     /// Native, authority-scoped identity.
     #[default]
     NativeV1,
-    /// Crawlee JavaScript 3.18.2 exported request keys.
-    #[serde(rename = "crawlee_js_3_18")]
-    CrawleeJs3_18,
-    /// Crawlee Python 1.11.0 exported session-aware keys.
-    #[serde(rename = "crawlee_python_1_11")]
-    CrawleePython1_11,
-    /// Scrapy 2.19.0 exported fingerprints.
-    #[serde(rename = "scrapy_2_19")]
-    Scrapy2_19,
-    /// Colly 2.2.0 exported visited-request keys.
-    #[serde(rename = "colly_2_2")]
-    Colly2_2,
+    /// JavaScript actor framework 3.18.2 exported request keys.
+    #[serde(rename = "js_actor_3_18")]
+    JsActor318,
+    /// Python actor framework 1.11.0 exported session-aware keys.
+    #[serde(rename = "py_actor_1_11")]
+    PyActor111,
+    /// Python spider framework 2.19.0 exported fingerprints.
+    #[serde(rename = "python_spider_2_19")]
+    PythonSpider219,
+    /// Go collector framework 2.2.0 exported visited-request keys.
+    #[serde(rename = "go_collector_2_2")]
+    GoCollector22,
 }
 
 /// Replayable content reference. Contents never belong in queue JSON.

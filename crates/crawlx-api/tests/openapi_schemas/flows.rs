@@ -205,7 +205,7 @@ async fn worker_flows(c: &Covered, doc: &Value) {
     assert!(r.body["data"]["pages"].is_array(), "{}", r.body);
     api.post("/scrape", "/scrape", &json!({ "url": site("/status/404") }), 200)
         .await;
-    // a scrape that fails answers the Firecrawl error envelope
+    // a scrape that fails answers the compat error envelope
     let r = api.post("/scrape", "/scrape", &json!({}), 400).await;
     assert_eq!(r.body["success"], false);
 

@@ -1,5 +1,5 @@
-//! Upstream proxy chaining of the loopback egress proxy (katana
-//! `-proxy` / `-headless-options --proxy-server`, Firecrawl `proxy: basic` on rendered pages).
+//! Upstream proxy chaining of the loopback egress proxy (the `-proxy` and
+//! `-headless-options --proxy-server` compatibility flags, `proxy: basic` on rendered pages).
 //!
 //! Chromium is always pointed at the loopback [`crate::EgressProxy`], which applies the egress
 //! policy to every request. With an [`UpstreamProxy`] the proxy then reaches the target through
@@ -8,7 +8,7 @@
 //! * `http://` and `https://` proxies: `CONNECT host:port` tunnels (TLS stays end to end) and
 //!   absolute-form HTTP/1.1 forwarding for plain `http://` pages, both carrying
 //!   `Proxy-Authorization: Basic …` when the URL has credentials. An `https://` proxy is
-//!   reached over TLS validated against the bundled Mozilla roots.
+//!   reached over TLS validated against the bundled public CA roots.
 //! * `socks5://` (the target address the policy checked is sent) and `socks5h://` (the host
 //!   name is sent and the proxy resolves it), with RFC 1929 user/password authentication.
 //!
@@ -328,7 +328,7 @@ impl UpstreamProxy {
     }
 }
 
-/// Root store of the bundled Mozilla roots plus `extra`, and a TLS 1.2/1.3 client over it.
+/// Root store of the bundled public CA roots plus `extra`, and a TLS 1.2/1.3 client over it.
 fn tls_connector(extra: &[CertificateDer<'static>]) -> Result<TlsConnector, String> {
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());

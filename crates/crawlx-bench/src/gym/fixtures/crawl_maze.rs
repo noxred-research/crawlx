@@ -1,9 +1,9 @@
-//! Fixture `g32`: a reproduction of Google's security-crawl-maze.
+//! Fixture `g32`: a reproduction of a public security crawl-maze blueprint.
 //!
-//! The ground truth is katana's `cmd/tools/crawl-maze-score/main.go` `expectedResults`
-//! list (projectdiscovery/katana, MIT, commit 9662cd7), which mirrors the blueprint's
-//! `expected-results.json` (google/security-crawl-maze, Apache-2.0). The pages are
-//! re-implemented from that list, one construct per page, not copied. Two katana entries
+//! The ground truth is the `expectedResults` list of a scoring tool ported from an
+//! MIT-licensed upstream; see THIRD_PARTY_NOTICES.md. It mirrors the blueprint's
+//! `expected-results.json` (an Apache-2.0 blueprint). The pages are
+//! re-implemented from that list, one construct per page, not copied. Two list entries
 //! carry a stray `/test` prefix (`multi-step-request-event-listener-div{,-dom}`); they are
 //! normalized to the blueprint form here.
 //!
@@ -15,7 +15,7 @@
 //! gym serves for this fixture once a test calls `GymHandle::claim_origin("g32")`.
 //!
 //! Two deviations from the blueprint are deliberate: absolute URLs (`http://host:port/…`)
-//! are used where a construct is mined by katana's quoted-endpoint regex, because the gym
+//! are used where a construct is mined by the scoring tool's quoted-endpoint regex, because the gym
 //! runs on a random port and the ported regexes resolve dotted last segments only in the
 //! absolute form; and the automatic POST fires after 300 ms instead of 5 s.
 

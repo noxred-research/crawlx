@@ -1126,7 +1126,7 @@ async fn the_facade_robots_record_must_be_a_verified_record_and_writes_authoriza
         let crawl = json!({"url": format!("{APP}/"), "ignoreRobotsTxt": true, "limit": 1});
 
         // no such record yet: the override is refused
-        let (s, _, v) = h.post("/compat/firecrawl/v2/crawl", &crawl).await;
+        let (s, _, v) = h.post("/compat/v2/crawl", &crawl).await;
         assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
         assert_eq!(v["code"], "ROBOTS_OVERRIDE_NOT_AUTHORIZED");
 
@@ -1135,7 +1135,7 @@ async fn the_facade_robots_record_must_be_a_verified_record_and_writes_authoriza
         r.id = record_id;
         r.robots_override_acknowledged = true;
         create_dns(&h, &r).await;
-        let (s, _, v) = h.post("/compat/firecrawl/v2/crawl", &crawl).await;
+        let (s, _, v) = h.post("/compat/v2/crawl", &crawl).await;
         assert_eq!(s, StatusCode::OK, "{v}");
         let run_id: CrawlRunId = v["id"].as_str().unwrap().parse().unwrap();
         assert_eq!(
@@ -1153,7 +1153,7 @@ async fn the_facade_robots_record_must_be_a_verified_record_and_writes_authoriza
             .post_empty(&format!("/v1/authorizations/{record_id}/revoke"))
             .await;
         assert_eq!(s, StatusCode::OK);
-        let (s, _, v) = h.post("/compat/firecrawl/v2/crawl", &crawl).await;
+        let (s, _, v) = h.post("/compat/v2/crawl", &crawl).await;
         assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
         assert_eq!(v["code"], "ROBOTS_OVERRIDE_NOT_AUTHORIZED");
         assert!(v["error"].as_str().unwrap().contains("revoked"), "{v}");

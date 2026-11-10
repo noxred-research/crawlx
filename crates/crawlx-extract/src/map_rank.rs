@@ -1,6 +1,6 @@
 //! Relevance ordering of `/map` results for the `search` parameter.
 //!
-//! Firecrawl orders the links of a map by relevance to a search string; it never drops any.
+//! The compatibility API orders the links of a map by relevance to a search string; it never drops any.
 //! [`rank`] scores every item by how many distinct query words it contains and where: a word
 //! that is a whole token of the URL (host, path, query) counts most, then a title token, then
 //! a description token; a word that only occurs inside a longer token counts a little. The

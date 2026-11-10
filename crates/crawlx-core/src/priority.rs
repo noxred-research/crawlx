@@ -1,5 +1,5 @@
-//! The native `priority` frontier strategy, derived from newer-main Katana
-//! `pkg/engine/common/priority.go` (MIT), not Katana v1.8.0: every
+//! The native `priority` frontier strategy, derived from an MIT-licensed upstream
+//! implementation; see THIRD_PARTY_NOTICES.md. Every
 //! URL gets a *surface score* and is ordered by `depth - score`, so one score point is worth
 //! one level of depth and a promising link a level deeper still goes ahead of a plain one.
 //!

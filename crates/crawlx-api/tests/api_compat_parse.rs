@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! `POST /compat/firecrawl/v2/parse` and `GET /compat/firecrawl/v2/parse/formats`:
+//! `POST /compat/v2/parse` and `GET /compat/v2/parse/formats`:
 //! multipart uploads converted to Markdown/HTML/links/metadata, the LLM formats through a
 //! `MockLlm`, option warnings, error statuses (400/413/415/422/503/408/403), usage accounting.
 //!
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 
-const PARSE: &str = "/compat/firecrawl/v2/parse";
+const PARSE: &str = "/compat/v2/parse";
 const BOUNDARY: &str = "----crawlxparseboundary7MA4YWxkTrZu0gW";
 
 // ---- fixtures --------------------------------------------------------------------------------
@@ -323,7 +323,7 @@ const PAGE: &str = r#"<!doctype html><html lang="en"><head><title>Uploaded Page<
 #[tokio::test]
 async fn formats_lists_every_documented_extension_and_is_cacheable() {
     let t = rig();
-    let (s, h, v) = t.get(Some(&t.key), "/compat/firecrawl/v2/parse/formats").await;
+    let (s, h, v) = t.get(Some(&t.key), "/compat/v2/parse/formats").await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["success"], true);
     assert_eq!(h["cache-control"], "private, max-age=3600");
@@ -358,7 +358,7 @@ async fn formats_lists_every_documented_extension_and_is_cacheable() {
 #[tokio::test]
 async fn parse_routes_need_authentication_and_scopes() {
     let t = rig();
-    let (s, _, _) = t.get(None, "/compat/firecrawl/v2/parse/formats").await;
+    let (s, _, _) = t.get(None, "/compat/v2/parse/formats").await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     let (s, _, v) = t
         .upload_raw(None, multipart(&[("file", Some("a.txt"), None, b"x")]), false)
@@ -380,9 +380,7 @@ async fn parse_routes_need_authentication_and_scopes() {
         .await;
     assert_eq!(s, StatusCode::FORBIDDEN, "{v}");
     assert_eq!(v["code"], "scope_missing");
-    let (s, _, _) = t
-        .get(Some(&read_only), "/compat/firecrawl/v2/parse/formats")
-        .await;
+    let (s, _, _) = t.get(Some(&read_only), "/compat/v2/parse/formats").await;
     assert_eq!(s, StatusCode::OK);
 }
 
@@ -391,8 +389,8 @@ async fn openapi_lists_the_parse_operations() {
     let t = rig();
     let (s, _, v) = t.get(None, "/v1/openapi.json").await;
     assert_eq!(s, StatusCode::OK);
-    assert!(v["paths"]["/compat/firecrawl/v2/parse"]["post"].is_object());
-    assert!(v["paths"]["/compat/firecrawl/v2/parse/formats"]["get"].is_object());
+    assert!(v["paths"]["/compat/v2/parse"]["post"].is_object());
+    assert!(v["paths"]["/compat/v2/parse/formats"]["get"].is_object());
 }
 
 // ---- success ---------------------------------------------------------------------------------

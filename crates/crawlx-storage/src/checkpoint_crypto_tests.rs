@@ -1,4 +1,4 @@
-//! Native and real SDK loopback protocol regressions; no external AWS or network dependency.
+//! Native and real SDK loopback protocol regressions; no external cloud or network dependency.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;

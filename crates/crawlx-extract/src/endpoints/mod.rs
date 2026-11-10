@@ -3,10 +3,10 @@
 //! the JavaScript AST pass ([`ast`], feature `js-ast`) and regex mining of
 //! script text and textual bodies.
 //!
-//! Ported from projectdiscovery/katana `pkg/engine/parser/parser.go` at
-//! commit 9662cd7 (MIT), with two deliberate differences: relative
-//! references honour `<base href>` (katana resolves against the request URL
-//! only), and form bodies use fixed deterministic placeholder values (katana's
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md, with two
+//! deliberate differences: relative
+//! references honour `<base href>` (the reference resolves against the request URL
+//! only), and form bodies use fixed deterministic placeholder values (the reference's
 //! random `rand_*` fillers are not adopted).
 //!
 //! Every result is a typed [`DiscoveredEndpoint`]. Non-GET and body-bearing
@@ -104,7 +104,7 @@ impl DiscoveryOptions {
     }
 }
 
-/// Where an endpoint was found: katana's `tag` / `attribute` pair.
+/// Where an endpoint was found: the reference `tag` / `attribute` pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct EndpointSource {
     /// Element or pseudo-tag (`a`, `header`, `htmx`, `js`, `html`).
@@ -284,7 +284,7 @@ mod method_serde {
     }
 }
 
-/// Resolve a raw reference the katana way: skip `#…`, strip the fragment,
+/// Resolve a raw reference the reference way: skip `#…`, strip the fragment,
 /// refuse non-navigational schemes.
 #[must_use]
 pub fn resolve(base: &Url, raw: &str) -> Option<Url> {

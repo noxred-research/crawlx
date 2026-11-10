@@ -171,7 +171,7 @@ jobs:
 
   public-hygiene:
     # Public-tree hygiene: no internal-document references, no host paths, no secret shapes.
-    # ci/lint-public.sh is a deterministic `git grep` rule set; gitleaks scans the working tree.
+    # ci/lint-public.sh is a deterministic `git grep` rule set; a secret scanner scans the working tree.
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     runs-on: ubuntu-latest
@@ -399,7 +399,7 @@ jobs:
           cargo test -p crawlx-cli --features chaos --test chaos -- --nocapture
 
   oracle-actionability:
-    # Node oracle: playwright on PRs, both drivers nightly. After the runner's
+    # Node oracle: the reference driver on PRs, both drivers nightly. After the runner's
     # self-test, the AX-recall differential: the Rust test starts the
     # gym, has the driver enumerate G01–G30 (`runner.mjs --discover`), observes the same pages
     # with crawlx on the pinned Chromium and asserts recall >= 0.95 over >= 200 oracle-actionable
@@ -413,9 +413,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        driver: ${{ github.event_name == 'schedule' && fromJSON('["playwright","patchright"]') || fromJSON('["playwright"]') }}
+        driver: ${{ github.event_name == 'schedule' && fromJSON('["reference","hardened"]') || fromJSON('["reference"]') }}
     env:
       ORACLE_DRIVER: ${{ matrix.driver }}
+      ORACLE_PACKAGE: ${{ matrix.driver == 'hardened' && 'patchright' || 'playwright' }} # wire-compat: npm package names behind the driver ids
     steps:
       - name: Free runner disk space
         # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
@@ -428,7 +429,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - run: cd bench/browser-oracle && npm ci && npx "$ORACLE_DRIVER" install chromium && npm test
+      - run: cd bench/browser-oracle && npm ci && npx "$ORACLE_PACKAGE" install chromium && npm test
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
         with:
           toolchain: stable
@@ -450,7 +451,7 @@ jobs:
           path: bench/browser-oracle/out/
 
   differential-nightly:
-    # Firecrawl differential: unmodified pinned self-host in docker,
+    # Upstream differential: unmodified pinned self-host in docker,
     # gym fixture crawled through both systems, scored by crawlx-differential. Schedule only:
     # it needs network access for the pinned commit and its images. Optional (continue-on-error)
     # until the divergence ledger is complete. `run.sh all` runs every
@@ -478,13 +479,13 @@ jobs:
       - name: Check out the pinned, unmodified upstream for provenance
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: firecrawl/firecrawl
+          repository: firecrawl/firecrawl # wire-compat: pinned dependency checkout
           ref: c31e88c07afe941bfd8aebde61684eeba042abb5
-          path: bench/differential/.firecrawl-src
+          path: bench/differential/.upstream-src
           persist-credentials: false
       - name: Normalized source-shingle provenance gate
         env:
-          FIRECRAWL_TREE: bench/differential/.firecrawl-src
+          UPSTREAM_TREE: bench/differential/.upstream-src
         run: ci/shingle-scan.sh
       - run: bench/differential/run.sh all bench/differential/out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

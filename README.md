@@ -96,7 +96,7 @@ Details: [safety model](docs/design/safety-model.md) · [SECURITY.md](SECURITY.m
 | 🧾 **Audit and replay** | Intent journal with `unknown`-outcome reconciliation, a recorded safety verdict per action, fenced leases, checkpoints, seed-derived decisions and recorded-path replay |
 | 🔒 **Handling sensitive findings** | Zero-data-retention mode, secret redaction in logs and exports, encrypted artifact custody, tenant row-level security |
 | 📦 **Output** | JSONL, `metadata.json`, `links.json`, `report.json`, Markdown pages, templates, wordlists, bounded WARC/WACZ archives, a REST and SSE API |
-| 🔌 **Interoperability** | A Firecrawl-compatible API facade and Katana-style flags so existing tooling can plug in, plus an OpenAI-compatible provider interface |
+| 🔌 **Interoperability** | A compatibility API (`/compat`) and a short-flag CLI dialect so existing tooling can plug in, plus a chat-completions compatible provider interface |
 | 🚢 **Operations** | PostgreSQL and S3-compatible storage, Docker Compose, Helm chart, Prometheus metrics, OTLP, alert rules, [runbooks](docs/ops/runbooks.md) |
 
 ### AI/LLM-native, with a leash
@@ -108,8 +108,8 @@ kernel decides.**
 |---|---|---|
 | **LLM-guided planning** | A constrained planner DSL: the model returns a bounded plan (at most 20 steps) of candidate indexes and value references, never free-form selectors or URLs; the plan is validated before use | `--planner-endpoint`, `dynamic.llmPlanner` (`off`, `stalled_only`, `enabled`) |
 | **Typed-decision service and ONNX ranker** | Calibrated, abstaining rankings over a crawler-built shortlist of safe candidate actions; circuit-broken and time-boxed | `--model-endpoint`, `--system1-mode shadow\|advisory` (`advisory` needs a signed gate), `onnx` cargo feature |
-| **LLM-assisted form values** | An OpenAI-compatible model proposes values for fields the form filler cannot classify; call-capped (default 100) and recordable for offline replay | `--ai-url`, `--ai-model`, `--ai-record`, `--ai-replay` |
-| **Extract, agent and search endpoints** | The Firecrawl-compatible facade serves `/extract`, `/agent` and `/search` over an OpenAI-compatible provider you configure (and SearXNG for search) | `OPENAI_BASE_URL`, `MODEL_NAME`, `SEARXNG_ENDPOINT` |
+| **LLM-assisted form values** | A chat-completions compatible model proposes values for fields the form filler cannot classify; call-capped (default 100) and recordable for offline replay | `--ai-url`, `--ai-model`, `--ai-record`, `--ai-replay` |
+| **Extract, agent and search endpoints** | The compatibility API serves `/extract`, `/agent` and `/search` over a chat-completions compatible provider you configure (and a metasearch JSON API for search) | `CRAWLX_LLM_BASE_URL`, `CRAWLX_LLM_MODEL`, `CRAWLX_SEARCH_ENDPOINT` |
 | **LLM-ready output** | Clean Markdown, structured metadata and optional word-window chunks of extracted text | `extract.content.chunks` |
 | **MCP server** | Exposes crawl, scrape, map, search and extract tools to agent tooling over stdio | `crawlx mcp` |
 | **Understanding web apps** | The accessibility tree gives roles, names and states, so elements keep a stable identity across re-renders and layout changes | built in (`--mode dynamic`) |
@@ -239,25 +239,25 @@ The OpenAPI document is served at `/v1/openapi.json`. Without Compose, run `craw
 `crawlx serve` and `crawlx worker` against your own PostgreSQL; see the
 [walkthrough](docs/walkthrough.md) and [operations](docs/ops/README.md).
 
-### Tooling interoperability: Firecrawl-compatible API
+### Tooling interoperability: compatibility API
 
-So that existing tooling can plug in, the API serves Firecrawl's v2 endpoints under `/compat/firecrawl/v2`. With
+So that existing tooling can plug in, the API serves a compatibility layer with v2 scrape, crawl, map, search and extract routes under `/compat/v2`. With
 the stack above, the same key works there:
 
 ```
-curl -s http://127.0.0.1:8080/compat/firecrawl/v2/scrape -H "Authorization: Bearer $KEY" \
+curl -s http://127.0.0.1:8080/compat/v2/scrape -H "Authorization: Bearer $KEY" \
   -H 'content-type: application/json' \
   -d '{"url":"https://example.org","formats":["markdown","links"]}'
 ```
 
-The Node and Python SDKs, the `firecrawl` CLI and LangChain's loader are exercised against the facade by
-`cargo test -p crawlx-cli --test sdk_python`. To accept `fc-` keys, start the API with
-`crawlx serve --firecrawl-keys --api-key acme=fc-<32 hex>`. Base URLs per client, the endpoints each
+Node and Python client libraries, a command-line client and a document-loader integration are exercised against
+the compatibility API by `cargo test -p crawlx-cli --test sdk_python`. To accept `fc-` keys, start the API with
+`crawlx serve --compat-keys --api-key acme=fc-<32 hex>`. Base URLs per client, the endpoints each
 integration calls and what is not served: [docs/integrations.md](docs/integrations.md).
 
 ### MCP
 
-`crawlx mcp` exposes the Firecrawl MCP tools over stdio as a thin client of a crawlx API. The client
+`crawlx mcp` exposes MCP tools over stdio as a thin client of a crawlx API. The client
 configuration is in the [reference](docs/reference.md#mcp-server).
 
 ## Output
@@ -325,7 +325,7 @@ Native API responses are JSON. `GET /v1/crawls/{id}` returns (abbreviated):
   "coverage": { "unit": "ActionContextKey", "discovered": 0, "exercisedTrusted": 0 } }
 ```
 
-The facade's `POST /compat/firecrawl/v2/scrape` answers `{"success": true, "data": {"markdown": "...", ...}}`.
+The compatibility API's `POST /compat/v2/scrape` answers `{"success": true, "data": {"markdown": "...", ...}}`.
 
 ## How it works
 
@@ -334,7 +334,7 @@ flowchart LR
     subgraph C["Clients"]
         CLI["crawlx CLI"]
         REST["REST + SSE clients"]
-        SDK["Firecrawl SDKs · MCP"]
+        SDK["Client libraries · MCP"]
     end
     subgraph A["API process"]
         ADM["Admission · auth · idempotency"]
@@ -417,7 +417,7 @@ Read more: [architecture](docs/design/architecture.md) · [crawl model](docs/des
 | Output | `--output DIR`, `-j/--jsonl`, `-o/--output-file`, `--output-template`, `--field`, `--store-field`, `--store-response`, `--omit-raw`, `--list-output-fields`, `--silent`, `--verbose` |
 
 Behavior of the less obvious options (source discovery, response cache and replay, adaptive extraction,
-Katana-style flags, JavaScript endpoint mining, captcha solving) is in [docs/reference.md](docs/reference.md).
+the compatibility flag dialect, JavaScript endpoint mining, captcha solving) is in [docs/reference.md](docs/reference.md).
 
 </details>
 
@@ -443,7 +443,7 @@ Katana-style flags, JavaScript endpoint mining, captcha solving) is in [docs/ref
 Cargo.toml            workspace (21 crates under crates/)
 chromium-pin.toml     pinned Chromium build and CDP revision
 ci/                   layering and dependency lint, Chromium fetch/build scripts, gates
-bench/                benchmarks, Firecrawl differential harness, Playwright/Patchright oracle
+bench/                benchmarks, upstream differential harness, reference automation driver oracle
 deploy/               Helm chart, Kubernetes manifests, systemd units, alert rules, dashboard
 docker/               Dockerfiles, Compose stack, seccomp profile
 docs/                 design documentation, integrations, reference, operations

@@ -1,4 +1,4 @@
-//! Firecrawl v2 `POST /map`: the URLs of a site.
+//! compat v2 `POST /map`: the URLs of a site.
 //!
 //! A map is a normal run a worker executes: `scrape.kind = map`, static mode, `maxDiscoveryDepth`
 //! 0. The worker fetches the seed page and, per `sitemap`, reads the sitemaps; every URL it finds
@@ -10,7 +10,7 @@
 //! `search` is given ([`crawlx_extract::map_rank`]), cut to `limit`. The seed page is listed even
 //! under `sitemap: only` (a sitemap lists its site's root in practice). A map costs one credit.
 //!
-//! | Firecrawl | crawlx |
+//! | compat API | crawlx |
 //! |---|---|
 //! | `sitemap` | `scope.sitemap` |
 //! | `includeSubdomains` (default true) | `scope.hostScope` `rdn` (true) or `fqdn` |
@@ -65,16 +65,16 @@ use url::Url;
 /// OpenAPI rows of this module (`GET /v1/openapi.json`).
 pub const OPERATIONS: &[Operation] = &[(
     "post",
-    "/compat/firecrawl/v2/map",
-    "firecrawlMap",
-    "Firecrawl v2 map: the URLs of a site from its sitemap and the links of its start page",
+    "/compat/v2/map",
+    "compatMap",
+    "compat v2 map: the URLs of a site from its sitemap and the links of its start page",
     "crawls:write",
     "200",
 )];
 
 /// Routes of this module, mounted behind authentication.
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/compat/firecrawl/v2/map", post(map))
+    Router::new().route("/compat/v2/map", post(map))
 }
 
 /// Request keys of a map body; everything else warns.
@@ -90,7 +90,7 @@ const KNOWN: [&str; 9] = [
     "location",
 ];
 
-/// Request keys Firecrawl documents that crawlx does not apply.
+/// Request keys the compat API documents that crawlx does not apply.
 const UNSUPPORTED: [&str; 2] = ["auditMetadata", "threatProtection"];
 
 /// Default `limit` of a map.
@@ -499,7 +499,7 @@ fn merge_stored(
     (out, added)
 }
 
-/// Map `url` for `principal`'s tenant with the Firecrawl map `options` (an object; `url` in it
+/// Map `url` for `principal`'s tenant with the compat map `options` (an object; `url` in it
 /// is ignored) and return the listed links with the request's warnings. The usage ledger is
 /// charged one credit.
 async fn run_map(
@@ -532,7 +532,7 @@ async fn run_map(
         return Err(run_failure(state, &run).await);
     }
     if items.is_empty() {
-        // a seed that could not be fetched and a site without links: Firecrawl answers the failure
+        // a seed that could not be fetched and a site without links: the compat API answers the failure
         let seed_failed = frontier
             .iter()
             .any(|r| r.depth == 0 && !matches!(r.status, FrontierStatus::Succeeded));
@@ -590,12 +590,12 @@ async fn run_map(
     Ok((links, warnings))
 }
 
-/// Map `url` with Firecrawl map `options`; the body of [`crate::scrape_service::map_site`].
+/// Map `url` with the compat API map `options`; the body of [`crate::scrape_service::map_site`].
 ///
 /// # Errors
 /// `400 BAD_REQUEST` for an invalid URL or option, `403 UNSUPPORTED_SITE` for a target the egress
 /// policy denies, `429` above the active-run quota, `408 SCRAPE_TIMEOUT` when `timeout` passes
-/// before the run ends, the Firecrawl failure of the seed when nothing could be listed.
+/// before the run ends, the compat failure of the seed when nothing could be listed.
 pub async fn map_links(
     state: &AppState,
     principal: &Principal,
@@ -605,7 +605,7 @@ pub async fn map_links(
     Ok(run_map(state, principal, url, options).await?.0)
 }
 
-/// `POST /compat/firecrawl/v2/map`: `{success: true, links: [{url, title?, description?}]}`
+/// `POST /compat/v2/map`: `{success: true, links: [{url, title?, description?}]}`
 /// (plus the additive `warnings[]`: options that were not applied, `location_no_proxy` for a
 /// `location.country`, `map_cached_sources` when stored URLs were added).
 ///
@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_applies_the_firecrawl_defaults() {
+    fn parse_applies_the_compat_defaults() {
         let r = parse_request(
             "https://a.example.test",
             &json!({"url": "https://a.example.test"}),

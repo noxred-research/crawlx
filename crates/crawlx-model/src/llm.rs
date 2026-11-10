@@ -16,29 +16,29 @@
 //!
 //! # Document-level LLM seam
 //!
-//! The submodules [`extractor`], [`openai`] and [`mock_llm`] hold the Firecrawl-compatible
+//! The submodules [`extractor`], [`chat_completions`] and [`mock_llm`] hold the compatibility API's
 //! document LLM ([`LlmExtractor`]: `json`, `summary`, `answer`, `highlights`,
-//! `plan_crawl_options`, `extract`), its OpenAI-compatible HTTP client ([`OpenAiCompatible`]) and
-//! a scripted test double ([`MockLlm`]). [`embeddings`] holds the embeddings seam `/extract` ranks
-//! pages with (`MODEL_EMBEDDING_NAME`) and [`routing`] the per-step provider choice of the
-//! extraction step (`EXTRACTION_PROVIDER_*`). They are independent of the planner DSL above: their
-//! output is shaped into API responses, never into crawler actions.
+//! `plan_crawl_options`, `extract`), its chat-completions compatible HTTP client
+//! ([`ChatCompletionsClient`]) and a scripted test double ([`MockLlm`]). [`embeddings`] holds the
+//! embeddings seam `/extract` ranks pages with (`CRAWLX_EMBEDDING_MODEL`) and [`routing`] the
+//! per-step provider choice of the extraction step (`EXTRACTION_PROVIDER_*`). They are independent
+//! of the planner DSL above: their output is shaped into API responses, never into crawler actions.
 
+pub mod chat_completions;
 pub mod embeddings;
 pub mod extractor;
 pub mod mock_llm;
-pub mod openai;
 pub mod routing;
 
+pub use chat_completions::{ChatCompletionsClient, LlmConfig};
 pub use embeddings::{
     cosine_similarity, rank_by_cosine, rank_texts, Embedded, EmbeddingsClient, EmbeddingsConfig,
-    EmbeddingsError, MockEmbeddings, OpenAiEmbeddings, Ranked, Ranking,
+    EmbeddingsError, HttpEmbeddings, MockEmbeddings, Ranked, Ranking,
 };
 pub use extractor::{
     sanitize_crawl_options, Completion, ExtractDocument, LlmError, LlmExtractor, TokenUsage,
 };
 pub use mock_llm::{LlmCall, MockLlm, TranscribeCall};
-pub use openai::{LlmConfig, OpenAiCompatible};
 pub use routing::{cohort_bucket, ExtractionPolicy, ExtractionRouter, PolicyError, Route};
 
 use crate::error::ModelError;

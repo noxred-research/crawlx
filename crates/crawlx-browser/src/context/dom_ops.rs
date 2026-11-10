@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 const PIXEL_TOLERANCE: u64 = 2;
 /// Extra quiet windows a document that looks fully scrolled must survive before the scroll
 /// stops, so lazy-load responses that land after the first window are still revealed
-/// (katana `lazyScrollStableChecks`). They do not count as scroll steps.
+/// (the lazy-scroll stable-check count of the compatibility flags). They do not count as scroll steps.
 const STABLE_CHECKS: u8 = 2;
 
 /// Scroll position of the page: offset of the viewport top, document height and viewport

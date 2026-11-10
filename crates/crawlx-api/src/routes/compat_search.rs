@@ -1,5 +1,5 @@
-//! Firecrawl v2 `search` endpoints of the compat facade: `POST /search` over the
-//! operator-configured backend ([`crate::intel::search::SearchProvider`]: SearXNG or SearchApi),
+//! compat v2 `search` endpoints of the compat facade: `POST /search` over the
+//! operator-configured backend ([`crate::intel::search::SearchProvider`]: metasearch or hosted SERP API),
 //! optional scraping of the hits (`scrapeOptions`, through [`crate::intel::tools::PageTools`]),
 //! `POST /search/{jobId}/feedback`, and the category endpoints (`/search/developer`,
 //! `/search/gov`, `/search/research/papers*`, see [`crate::intel::indexes`]).
@@ -37,104 +37,95 @@ const MAX_TIMEOUT_MS: u64 = 300_000;
 pub const OPERATIONS: &[Operation] = &[
     (
         "post",
-        "/compat/firecrawl/v2/search",
-        "firecrawlSearch",
-        "Firecrawl v2 search: query the configured backend, optionally scrape the hits",
+        "/compat/v2/search",
+        "compatSearch",
+        "compat v2 search: query the configured backend, optionally scrape the hits",
         "crawls:write",
         "200",
     ),
     (
         "post",
-        "/compat/firecrawl/v2/search/{jobId}/feedback",
-        "firecrawlSearchFeedback",
-        "Firecrawl v2 search: rate the results of one search",
+        "/compat/v2/search/{jobId}/feedback",
+        "compatSearchFeedback",
+        "compat v2 search: rate the results of one search",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/search/developer",
-        "firecrawlSearchDeveloperGet",
-        "Firecrawl v2 developer search (issues, pull requests, READMEs, docs)",
+        "/compat/v2/search/developer",
+        "compatSearchDeveloperGet",
+        "compat v2 developer search (issues, pull requests, READMEs, docs)",
         "crawls:write",
         "200",
     ),
     (
         "post",
-        "/compat/firecrawl/v2/search/developer",
-        "firecrawlSearchDeveloper",
-        "Firecrawl v2 developer search (issues, pull requests, READMEs, docs)",
+        "/compat/v2/search/developer",
+        "compatSearchDeveloper",
+        "compat v2 developer search (issues, pull requests, READMEs, docs)",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/search/gov",
-        "firecrawlSearchGovGet",
-        "Firecrawl v2 government search",
+        "/compat/v2/search/gov",
+        "compatSearchGovGet",
+        "compat v2 government search",
         "crawls:write",
         "200",
     ),
     (
         "post",
-        "/compat/firecrawl/v2/search/gov",
-        "firecrawlSearchGov",
-        "Firecrawl v2 government search",
+        "/compat/v2/search/gov",
+        "compatSearchGov",
+        "compat v2 government search",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/search/research/papers",
-        "firecrawlResearchPapers",
-        "Firecrawl v2 research paper search",
+        "/compat/v2/search/research/papers",
+        "compatResearchPapers",
+        "compat v2 research paper search",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/search/research/papers/{paperId}",
-        "firecrawlResearchPaper",
-        "Firecrawl v2 research paper: metadata, or the passages matching `query`",
+        "/compat/v2/search/research/papers/{paperId}",
+        "compatResearchPaper",
+        "compat v2 research paper: metadata, or the passages matching `query`",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/search/research/papers/{paperId}/similar",
-        "firecrawlResearchSimilar",
-        "Firecrawl v2 research papers similar to, citing or cited by a paper",
+        "/compat/v2/search/research/papers/{paperId}/similar",
+        "compatResearchSimilar",
+        "compat v2 research papers similar to, citing or cited by a paper",
         "crawls:write",
         "200",
     ),
 ];
 
-/// Routes of this module, mounted under `/compat/firecrawl/v2` behind authentication.
+/// Routes of this module, mounted under `/compat/v2` behind authentication.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/compat/firecrawl/v2/search", post(search))
+        .route("/compat/v2/search", post(search))
+        .route("/compat/v2/search/{jobId}/feedback", post(search_feedback))
         .route(
-            "/compat/firecrawl/v2/search/{jobId}/feedback",
-            post(search_feedback),
-        )
-        .route(
-            "/compat/firecrawl/v2/search/developer",
+            "/compat/v2/search/developer",
             get(indexes::developer_get).post(indexes::developer_post),
         )
         .route(
-            "/compat/firecrawl/v2/search/gov",
+            "/compat/v2/search/gov",
             get(indexes::gov_get).post(indexes::gov_post),
         )
+        .route("/compat/v2/search/research/papers", get(indexes::papers))
+        .route("/compat/v2/search/research/papers/{paperId}", get(indexes::paper))
         .route(
-            "/compat/firecrawl/v2/search/research/papers",
-            get(indexes::papers),
-        )
-        .route(
-            "/compat/firecrawl/v2/search/research/papers/{paperId}",
-            get(indexes::paper),
-        )
-        .route(
-            "/compat/firecrawl/v2/search/research/papers/{paperId}/similar",
+            "/compat/v2/search/research/papers/{paperId}/similar",
             get(indexes::similar),
         )
 }
@@ -237,6 +228,7 @@ fn parse_request(body: &Value) -> ApiResult<Request> {
                         }
                     }
                     None if name == "alexandria" => warnings.push(
+                        // wire-compat: source value clients send
                         "source `alexandria` is a hosted data-provider index and is not available; ignored"
                             .to_owned(),
                     ),
@@ -269,7 +261,9 @@ fn parse_request(body: &Value) -> ApiResult<Request> {
     }
     for key in ["domainTools", "toolDetail"] {
         if b.raw(key).is_some() {
-            warnings.push(format!("{key} applies to the hosted Alexandria index; ignored"));
+            warnings.push(format!(
+                "{key} applies to the hosted data-provider index; ignored"
+            ));
         }
     }
     let unknown = b.unknown_keys(&KNOWN);
@@ -355,7 +349,7 @@ fn search_credits(n: usize) -> u64 {
         .saturating_mul(2)
 }
 
-/// Merge a scraped Firecrawl document into a result object (`markdown`, `html`, `links`, ...,
+/// Merge a scraped compat API document into a result object (`markdown`, `html`, `links`, ...,
 /// `metadata`), or record the failure in `metadata.error`.
 fn merge_scrape(hit: &mut Value, scraped: Result<crate::intel::tools::ScrapedPage, String>) -> u64 {
     match scraped {
@@ -484,7 +478,7 @@ fn data_json(results: &SearchResults, query: &SearchQuery, ignore_invalid: bool)
     data
 }
 
-/// `POST /compat/firecrawl/v2/search`.
+/// `POST /compat/v2/search`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:write`, `422` for an invalid body, `503
@@ -548,7 +542,7 @@ pub async fn search(
     ))
 }
 
-/// `POST /compat/firecrawl/v2/search/{jobId}/feedback`.
+/// `POST /compat/v2/search/{jobId}/feedback`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:write`, `404 not_found` for a search this tenant never
@@ -575,7 +569,7 @@ mod tests {
         let r = parse_request(&json!({
             "query": "rust",
             "limit": 3,
-            "sources": ["news", {"type": "web", "tbs": "qdr:w", "location": "Berlin"}, "alexandria"],
+            "sources": ["news", {"type": "web", "tbs": "qdr:w", "location": "Berlin"}, "alexandria"], // wire-compat
             "categories": [{"type": "research"}, "pdf"],
             "country": "DE",
             "timeout": 5000,

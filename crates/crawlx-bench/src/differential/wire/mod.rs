@@ -1,13 +1,13 @@
 //! Wire-level differential (families VAL, PREC, CLAMP, PERSIST, CANCEL, RESUME, LEASE, WH,
-//! ZDR): scenarios over the Firecrawl v2 HTTP surface, run against any API that speaks it.
+//! ZDR): scenarios over the upstream v2 HTTP surface, run against any API that speaks it.
 //!
 //! The crawl families of the parent module compare *what was crawled*; these compare *what the
 //! API does*: whether a request body is accepted, how a crawl ends after a cancel or a restart,
 //! which webhook events a sink receives. A [`WireSpec`] (`bench/differential/wire-scenarios.json`)
 //! names the scenarios; [`driver::run_family`] executes one family against a [`Target`] (the
-//! unmodified Firecrawl self-host, or the crawlx compat facade) and returns a [`WireCapture`] of
+//! unmodified upstream self-host, or the crawlx compat facade) and returns a [`WireCapture`] of
 //! raw exchanges; [`compare::compare`] derives observations from two captures and judges them
-//! under the divergence ledger. Captures of the real Firecrawl are committed data
+//! under the divergence ledger. Captures of the real upstream are committed data
 //! (`bench/differential/captures/<family>.json`), so the comparison replays offline.
 
 pub mod cli;
@@ -229,11 +229,11 @@ impl WireSpec {
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct WireProvenance {
-    /// `black_box_run` (the real Firecrawl) or `crawlx_facade`.
+    /// `black_box_run` (the real upstream) or `crawlx_facade`.
     pub provenance: String,
-    /// System name (`firecrawl`, `crawlx`).
+    /// System name (`upstream`, `crawlx`).
     pub system: String,
-    /// Pinned upstream commit, for the real Firecrawl.
+    /// Pinned upstream commit, for the real upstream.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_commit: Option<String>,
     /// API root the requests went to.
@@ -340,7 +340,7 @@ pub trait Hooks: Send + Sync {
     async fn restart(&self) -> Result<(), String>;
 }
 
-/// [`Hooks`] that run a shell command (`docker compose ... restart api` for the Firecrawl stack).
+/// [`Hooks`] that run a shell command (`docker compose ... restart api` for the upstream stack).
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ShellHooks {

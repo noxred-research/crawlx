@@ -1,22 +1,22 @@
-//! The `--ai-*` flags of `crawl` (katana `-ai-url`, `-ai-model`, `-ai-key`, `-ai-record`,
-//! `-ai-replay`, `-ai-max-calls`): an OpenAI-compatible model that decides values for form
+//! The `--ai-*` flags of `crawl` (compatibility flags `-ai-url`, `-ai-model`, `-ai-key`, `-ai-record`,
+//! `-ai-replay`, `-ai-max-calls`): a chat-completions compatible model that decides values for form
 //! fields the automatic form filler cannot classify.
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use crawlx_core::secret::SecretOr;
-use crawlx_model::llm::openai::{LlmConfig, OpenAiCompatible};
+use crawlx_model::llm::chat_completions::{ChatCompletionsClient, LlmConfig};
 use crawlx_model::llm::LlmExtractor;
 use crawlx_model::llm_cache::{CallCap, Offline, RecordingLlm};
-use crawlx_worker::katana::form_ai::{FormAi, LlmFormAi};
+use crawlx_worker::surface::form_ai::{FormAi, LlmFormAi};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Environment variable the API key is read from when `--ai-key-env` is not given (katana's
-/// `AI_API_KEY`).
-pub const DEFAULT_KEY_ENV: &str = "AI_API_KEY";
+/// Environment variable the API key is read from when `--ai-key-env` is not given (the
+/// compatibility flags' default).
+pub const DEFAULT_KEY_ENV: &str = "AI_API_KEY"; // wire-compat: environment variable existing scripts set
 
-/// Most model calls per crawl when `--ai-max-calls` is not given (katana's default); `0`
+/// Most model calls per crawl when `--ai-max-calls` is not given (the compatibility default); `0`
 /// lifts the limit.
 pub const DEFAULT_MAX_CALLS: u64 = 100;
 
@@ -24,7 +24,7 @@ pub const DEFAULT_MAX_CALLS: u64 = 100;
 #[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
 #[command(next_help_heading = "AI")]
 pub struct AiArgs {
-    /// OpenAI-compatible API base URL used to decide form field values
+    /// Chat-completions compatible API base URL used to decide form field values
     /// (e.g. http://127.0.0.1:11434/v1). Needs --ai-model.
     #[arg(long, value_name = "URL", env = "AI_URL")]
     pub ai_url: Option<String>,
@@ -67,7 +67,7 @@ impl AiArgs {
     /// The form decider these flags describe, or `None` when no AI flag is set.
     ///
     /// With `--ai-replay` answers come only from the file and no network is used (any URL,
-    /// model, key or call cap is ignored); otherwise the decider asks the OpenAI-compatible
+    /// model, key or call cap is ignored); otherwise the decider asks the chat-completions compatible
     /// endpoint, through a recording when `--ai-record` is set, and stops after
     /// `--ai-max-calls` calls. The API key is read from the environment variable named by
     /// `--ai-key-env` (default `AI_API_KEY`).
@@ -109,7 +109,7 @@ impl AiArgs {
         Ok(Some(Arc::new(LlmFormAi::new(llm))))
     }
 
-    fn client(&self, env: &dyn Fn(&str) -> Option<String>) -> Result<OpenAiCompatible> {
+    fn client(&self, env: &dyn Fn(&str) -> Option<String>) -> Result<ChatCompletionsClient> {
         let Some(url) = non_empty(self.ai_url.as_deref()) else {
             bail!("the --ai-* flags need --ai-url (or --ai-replay FILE to answer from a recording)");
         };
@@ -118,7 +118,7 @@ impl AiArgs {
         };
         let mut config = LlmConfig::new(url, model);
         config.api_key = self.api_key(env)?.map(SecretOr::secret);
-        OpenAiCompatible::new(config).context("--ai-url")
+        ChatCompletionsClient::new(config).context("--ai-url")
     }
 
     fn api_key(&self, env: &dyn Fn(&str) -> Option<String>) -> Result<Option<String>> {

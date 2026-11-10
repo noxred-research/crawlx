@@ -1,6 +1,6 @@
 //! Plumbing shared by the routes of the LLM products: backend accessors that answer a typed
 //! `503` when the operator has not configured the backend, and the mapping of backend failures
-//! to the Firecrawl-compat error envelope.
+//! to the compat error envelope.
 
 use crate::errors::{ApiResult, Detail, HttpError};
 use crate::intel::search::{SearchError, SearchProvider};
@@ -18,12 +18,12 @@ pub const JOB_TTL_HOURS: i64 = 24;
 /// The document LLM.
 ///
 /// # Errors
-/// `503 llm_not_configured` without `llm{endpoint, model}` settings (or `OPENAI_BASE_URL`).
+/// `503 llm_not_configured` without `llm{endpoint, model}` settings (or `CRAWLX_LLM_BASE_URL`).
 pub fn llm(state: &AppState) -> ApiResult<Arc<dyn LlmExtractor>> {
     state.llm.clone().ok_or_else(|| {
         HttpError::backend_unavailable(
             "llm_not_configured",
-            "no LLM endpoint is configured; set intel.llm or OPENAI_BASE_URL / MODEL_NAME / OPENAI_API_KEY",
+            "no LLM endpoint is configured; set intel.llm or CRAWLX_LLM_BASE_URL / CRAWLX_LLM_MODEL / CRAWLX_LLM_API_KEY",
         )
     })
 }
@@ -49,13 +49,13 @@ pub fn extraction_llm(
 /// The search backend.
 ///
 /// # Errors
-/// `503 search_not_configured` without `intel.search` settings (or `SEARXNG_ENDPOINT` /
-/// `SEARCHAPI_API_KEY`).
+/// `503 search_not_configured` without `intel.search` settings (or `CRAWLX_SEARCH_ENDPOINT` /
+/// `CRAWLX_SEARCH_API_KEY`).
 pub fn search(state: &AppState) -> ApiResult<Arc<dyn SearchProvider>> {
     state.search.clone().ok_or_else(|| {
         HttpError::backend_unavailable(
             "search_not_configured",
-            "no search backend is configured; set intel.search or SEARXNG_ENDPOINT / SEARCHAPI_API_KEY",
+            "no search backend is configured; set intel.search or CRAWLX_SEARCH_ENDPOINT / CRAWLX_SEARCH_API_KEY",
         )
     })
 }

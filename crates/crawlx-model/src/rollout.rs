@@ -6,7 +6,7 @@
 //! * [`Rollout::mode_for`] applies the rollout percentage: a deterministic hash
 //!   of `(crawl_seed, tenant)` decides whether a run is inside the share, so the
 //!   same run always makes the same choice and raising the percentage only adds
-//!   runs (the Firecrawl rollout-gauge pattern).
+//!   runs (the usual rollout-gauge pattern).
 //! * [`Mode`] capabilities say what a mode may influence; `off` is also the
 //!   effective mode while the breaker is open.
 

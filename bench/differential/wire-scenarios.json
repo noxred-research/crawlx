@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "comment": "Wire-level differential families (VAL, PREC, CLAMP, PERSIST, CANCEL, RESUME/LEASE, WH, ZDR). Each scenario is one request against POST /v2/crawl (or the path/method given), settled as `settle` says, optionally followed by `after` requests; the same file drives the real Firecrawl (run.sh, `crawlx-differential wire capture`) and the crawlx compat facade (crates/crawlx-bench/tests/wire_facade.rs). `{seed}` expands to the gym origin the system under test reaches plus the family's `seed_path`, `{origin}` to the origin, `{sink}` to the webhook sink URL of the scenario's `webhook.label`. Ledger entries (kind `behavior`) match `<scenario>/<observation>`; observations are derived by crawlx_bench::differential::wire::compare::observe. `expect` is the verdict the committed capture pair must reach with the ledger.",
+  "comment": "Wire-level differential families (VAL, PREC, CLAMP, PERSIST, CANCEL, RESUME/LEASE, WH, ZDR). Each scenario is one request against POST /v2/crawl (or the path/method given), settled as `settle` says, optionally followed by `after` requests; the same file drives the real upstream (run.sh, `crawlx-differential wire capture`) and the crawlx compat facade (crates/crawlx-bench/tests/wire_facade.rs). `{seed}` expands to the gym origin the system under test reaches plus the family's `seed_path`, `{origin}` to the origin, `{sink}` to the webhook sink URL of the scenario's `webhook.label`. Ledger entries (kind `behavior`) match `<scenario>/<observation>`; observations are derived by crawlx_bench::differential::wire::compare::observe. `expect` is the verdict the committed capture pair must reach with the ledger.",
   "families": [
     {
       "id": "wire-val",
@@ -19,7 +19,7 @@
         {"id": "url-number", "body": {"url": 5}},
         {"id": "url-empty", "body": {"url": ""}},
         {"id": "url-credentials", "body": {"url": "http://user:secret@gym.test/d2/tiny/"}},
-        {"id": "url-loopback", "description": "SSRF family: Firecrawl behavior recorded, not required to match", "body": {"url": "http://127.0.0.1/"}},
+        {"id": "url-loopback", "description": "SSRF family: upstream behavior recorded, not required to match", "body": {"url": "http://127.0.0.1/"}},
         {"id": "url-metadata-address", "description": "SSRF family: link-local metadata address", "body": {"url": "http://169.254.169.254/latest/meta-data/"}},
         {"id": "unknown-key", "body": {"url": "{seed}", "bogusKey": 1}},
         {"id": "valid-minimal", "body": {"url": "{seed}"}},

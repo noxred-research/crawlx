@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! The Firecrawl crawl facade end to end: crawls executed by a REAL worker lease
+//! The compat crawl facade end to end: crawls executed by a REAL worker lease
 //! loop over the fixture site, `GET /crawl/active`, `POST /crawl/params-preview`, `POST /map`,
-//! Firecrawl-shaped webhooks, `fc-` keys and Firecrawl's error codes.
+//! compat-shaped webhooks, `fc-` keys and the compat API's error codes.
 //!
 //! The rig (`common/crawl_rig.rs`) serves one site for several host names: the seed host, a
 //! subdomain and an external host of another registrable domain.
@@ -12,8 +12,8 @@ mod crawl_rig;
 use axum::http::{Method, StatusCode};
 use common::{env, env_with};
 use crawl_rig::{header_of, Receiver, Rig, RigConfig, WEBHOOK_SECRET};
-use crawlx_api::auth::{generate_firecrawl_key, generate_key, key_record_for, tenant_id_for};
-use crawlx_api::intel::webhook::firecrawl_signature;
+use crawlx_api::auth::{generate_compat_key, generate_key, key_record_for, tenant_id_for};
+use crawlx_api::intel::webhook::compat_signature;
 use crawlx_api::webhooks::WebhookSender;
 use crawlx_api::{ApiConfig, ApiKeyBootstrap, CompatConfig, Scope, Settings};
 use crawlx_core::config::SitemapMode;
@@ -27,8 +27,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-const CRAWL: &str = "/compat/firecrawl/v2/crawl";
-const MAP: &str = "/compat/firecrawl/v2/map";
+const CRAWL: &str = "/compat/v2/crawl";
+const MAP: &str = "/compat/v2/map";
 
 /// Start a crawl and return its id.
 async fn start_crawl(rig: &Rig, body: &Value) -> String {
@@ -122,7 +122,7 @@ async fn fixture_authorization_is_verified_stable_and_revocable() {
 }
 
 #[tokio::test]
-async fn crawl_with_scrape_options_returns_firecrawl_documents() {
+async fn crawl_with_scrape_options_returns_compat_documents() {
     let llm = Arc::new(MockLlm::from_fn(|_| Ok(json!({"headline": "Fixture Home"}))));
     let rig = Rig::start(RigConfig {
         llm: Some(llm),
@@ -792,7 +792,7 @@ async fn map_validates_its_request_and_reports_unapplied_options() {
 }
 
 #[tokio::test]
-async fn webhooks_deliver_signed_firecrawl_payloads() {
+async fn webhooks_deliver_signed_compat_payloads() {
     let rig = Rig::start(RigConfig::default()).await;
     let id = start_crawl(
         &rig,
@@ -800,7 +800,7 @@ async fn webhooks_deliver_signed_firecrawl_payloads() {
             "url": rig.url("/"), "sitemap": "skip", "limit": 3,
             "webhook": {
                 "url": "https://hooks.example.test/fc",
-                "headers": {"X-Auth-Token": "tok-123", "X-Firecrawl-Signature": "forged", "Content-Type": "text/plain"},
+                "headers": {"X-Auth-Token": "tok-123", "X-Firecrawl-Signature": "forged", "Content-Type": "text/plain"}, // wire-compat
                 "metadata": {"job": "nightly", "n": 7},
             },
         }),
@@ -836,8 +836,8 @@ async fn webhooks_deliver_signed_firecrawl_payloads() {
             "webhookId is unique per delivery"
         );
         // `sha256=<hex HMAC-SHA256(raw body, secret)>`
-        let sig = header_of(req, "X-Firecrawl-Signature").unwrap();
-        assert_eq!(sig, firecrawl_signature(WEBHOOK_SECRET, &req.body));
+        let sig = header_of(req, "X-Firecrawl-Signature").unwrap(); // wire-compat
+        assert_eq!(sig, compat_signature(WEBHOOK_SECRET, &req.body));
         assert!(sig.starts_with("sha256="));
         // the caller's headers are sent, but never override the signed envelope
         assert_eq!(header_of(req, "X-Auth-Token"), Some("tok-123"));
@@ -845,7 +845,7 @@ async fn webhooks_deliver_signed_firecrawl_payloads() {
         assert_eq!(
             req.headers
                 .iter()
-                .filter(|(k, _)| k.eq_ignore_ascii_case("x-firecrawl-signature"))
+                .filter(|(k, _)| k.eq_ignore_ascii_case("x-firecrawl-signature")) // wire-compat
                 .count(),
             1
         );
@@ -868,7 +868,7 @@ async fn webhooks_deliver_signed_firecrawl_payloads() {
         assert!(!shown.contains("tok-123") && !shown.contains("forged"), "{shown}");
     }
 
-    // `events` selects Firecrawl names, with or without the prefix
+    // `events` selects the compat API names, with or without the prefix
     rig.receiver.seen.lock().clear();
     let id = start_crawl(
         &rig,
@@ -1003,12 +1003,12 @@ async fn failed_pages_and_failed_crawls_are_delivered_as_failures() {
 
 #[tokio::test]
 async fn fc_keys_authenticate_the_compat_routes_only_when_enabled() {
-    let make_env = |firecrawl_keys: bool| {
+    let make_env = |prefixed_keys: bool| {
         env_with(
             ApiConfig {
                 rate_limit_per_minute: 0,
                 compat: CompatConfig {
-                    firecrawl_keys,
+                    prefixed_keys,
                     ..CompatConfig::default()
                 },
                 ..ApiConfig::default()
@@ -1019,7 +1019,7 @@ async fn fc_keys_authenticate_the_compat_routes_only_when_enabled() {
     };
     for enabled in [false, true] {
         let e = make_env(enabled);
-        let fc = generate_firecrawl_key();
+        let fc = generate_compat_key();
         let rec = key_record_for(&fc, tenant_id_for("acme"), Scope::all_set(), true).unwrap();
         crawlx_api::ApiStore::key_insert(e.api.as_ref(), &rec, "acme")
             .await
@@ -1067,7 +1067,7 @@ async fn fc_keys_authenticate_the_compat_routes_only_when_enabled() {
 #[tokio::test]
 async fn bootstrap_accepts_fc_keys_only_when_enabled() {
     let dir = tempfile::tempdir().unwrap();
-    let fc = generate_firecrawl_key();
+    let fc = generate_compat_key();
     let off = ApiConfig {
         bind: ([127, 0, 0, 1], 0).into(),
         artifacts_dir: dir.path().to_path_buf(),
@@ -1084,7 +1084,7 @@ async fn bootstrap_accepts_fc_keys_only_when_enabled() {
         artifacts_dir: dir.path().to_path_buf(),
         api_keys: vec![ApiKeyBootstrap::new("acme", &fc)],
         compat: CompatConfig {
-            firecrawl_keys: true,
+            prefixed_keys: true,
             ..CompatConfig::default()
         },
         ..ApiConfig::default()
@@ -1117,7 +1117,7 @@ async fn bootstrap_accepts_fc_keys_only_when_enabled() {
 }
 
 #[tokio::test]
-async fn firecrawl_error_codes() {
+async fn compat_error_codes() {
     let e = env();
     // invalid URL: 400 BAD_REQUEST; a missing url stays a validation failure
     for url in [
@@ -1133,7 +1133,7 @@ async fn firecrawl_error_codes() {
         assert_eq!(v["error"], "Bad Request");
         assert_eq!(v["details"][0]["path"], "/url");
     }
-    // a missing url is Firecrawl's 400, with every violation listed
+    // a missing url is the compat API's 400, with every violation listed
     let (s, _, v) = e.post(CRAWL, &json!({"limit": 3})).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     assert_eq!(v["code"], "BAD_REQUEST", "{v}");
@@ -1230,7 +1230,7 @@ async fn firecrawl_error_codes() {
     // batch runs are not crawls: the crawl routes do not know their ids
     let (s, _, b) = e
         .post(
-            "/compat/firecrawl/v2/batch/scrape",
+            "/compat/v2/batch/scrape",
             &json!({"urls": ["https://a.example.test/", "https://a.example.test/2"]}),
         )
         .await;
@@ -1246,7 +1246,7 @@ async fn firecrawl_error_codes() {
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
 
-const BATCH: &str = "/compat/firecrawl/v2/batch/scrape";
+const BATCH: &str = "/compat/v2/batch/scrape";
 
 /// Start a batch scrape and return its id.
 async fn start_batch(rig: &Rig, body: &Value) -> String {
@@ -1280,8 +1280,8 @@ fn check_deliveries(rig: &Rig, id: &str, metadata: &Value) {
             ids.insert(body["webhookId"].as_str().unwrap().to_owned()),
             "webhookId is unique"
         );
-        let sig = header_of(req, "X-Firecrawl-Signature").unwrap();
-        assert_eq!(sig, firecrawl_signature(WEBHOOK_SECRET, &req.body));
+        let sig = header_of(req, "X-Firecrawl-Signature").unwrap(); // wire-compat
+        assert_eq!(sig, compat_signature(WEBHOOK_SECRET, &req.body));
         assert!(sig.starts_with("sha256="));
     }
 }
@@ -1296,7 +1296,7 @@ async fn batch_scrape_webhooks_deliver_batch_scrape_events() {
             "urls": urls,
             "webhook": {
                 "url": "https://hooks.example.test/batch",
-                "headers": {"X-Batch-Token": "batch-tok", "X-Firecrawl-Signature": "forged"},
+                "headers": {"X-Batch-Token": "batch-tok", "X-Firecrawl-Signature": "forged"}, // wire-compat
                 "metadata": {"batch": "nightly", "n": 3},
             },
         }),
@@ -1334,7 +1334,7 @@ async fn batch_scrape_webhooks_deliver_batch_scrape_events() {
         assert_eq!(
             req.headers
                 .iter()
-                .filter(|(k, _)| k.eq_ignore_ascii_case("x-firecrawl-signature"))
+                .filter(|(k, _)| k.eq_ignore_ascii_case("x-firecrawl-signature")) // wire-compat
                 .count(),
             1,
             "the caller cannot replace the signature"

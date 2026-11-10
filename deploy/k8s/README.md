@@ -45,7 +45,7 @@ above carry them and the pods do not start usefully without them.
 - **Key provider** (API and workers, the same one): exactly one of `CRAWLX_ARTIFACT_KEY_FILE`
   (the manifests mount the `crawlx-artifact-key` Secret key `artifact_key`: exactly 64 hexadecimal
   characters, optional trailing LF; generate it once with `openssl rand -hex 32 > artifact-key.hex`)
-  or `CRAWLX_ARTIFACT_KMS_KEY_ID` (an AWS KMS key ID/ARN; replace the key-file env var and volume with it).
+  or `CRAWLX_ARTIFACT_KMS_KEY_ID` (a cloud KMS key ID/ARN; replace the key-file env var and volume with it).
   Setting both, or neither on a worker, is a startup error. The API only decrypts for reads: without a
   provider it starts and sealed artifacts fail with a clear error.
 - **Secret registry** (workers only): `CRAWLX_SECRET_REDIS_URL` from the `crawlx-secret-registry` Secret key

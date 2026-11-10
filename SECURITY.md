@@ -83,7 +83,7 @@ particular configuration. Examples:
   telemetry, artifacts or durable storage;
 - a zero-data-retention run that persists page content;
 - a way to read sealed artifacts without the key, or to publish content that bypasses custody checks;
-- authentication, scope or idempotency flaws in the API and the Firecrawl-compatible facade;
+- authentication, scope or idempotency flaws in the API and the compatibility API;
 - supply-chain weaknesses in the build, release or workflow configuration.
 
 **Out of scope:**

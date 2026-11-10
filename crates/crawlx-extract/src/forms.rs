@@ -1,8 +1,7 @@
-//! Static form extraction (`pages.forms[]`, katana `-fx`).
+//! Static form extraction (`pages.forms[]`, compatibility flag `-fx`).
 //!
-//! Shapes ported from projectdiscovery/katana `pkg/utils/formfields.go`
-//! (`ParseFormFields`) and `pkg/navigation/response.go` (`Form`) at commit
-//! 9662cd7 (MIT), extended with per-control type, value, `required` and
+//! Shapes ported from an MIT-licensed upstream (see THIRD_PARTY_NOTICES.md;
+//! `ParseFormFields` and `Form`), extended with per-control type, value, `required` and
 //! `<select>` options so the static plane exposes what the browser plane's
 //! form semantics would see.
 

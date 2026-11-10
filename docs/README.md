@@ -33,9 +33,9 @@ crawlx is pre-1.0. Production qualification is in progress; see the
 
 | Page | Covers |
 |---|---|
-| [Reference](reference.md) | Source discovery, response cache and replay, adaptive extraction, MCP, Katana-style flags, JavaScript endpoint mining, wordlists, captcha solving |
+| [Reference](reference.md) | Source discovery, response cache and replay, adaptive extraction, MCP, compatibility flags, JavaScript endpoint mining, wordlists, captcha solving |
 | [Walkthrough](walkthrough.md) | An end-to-end local run against the CrawlerGym fixture with PostgreSQL and Chromium, including a sample authorization record |
-| [Firecrawl clients and integrations](integrations.md) | Pointing Firecrawl's SDKs, CLI and third-party integrations at the compatibility facade, the endpoints served, operator protocol and acquisition-service boundary |
+| [Compatibility clients and integrations](integrations.md) | Pointing client libraries, command-line clients and third-party integrations at the compatibility API, the endpoints served, operator protocol and acquisition-service boundary |
 | [Operations](ops/README.md) | Provisioning and validation of optional operator capabilities |
 | [Operator runbooks](ops/runbooks.md) | Runbooks RB-01 to RB-12, alert cards, the `crawlx admin` command table, backup, restore and rollback |
 

@@ -23,18 +23,18 @@ fn build(args: &[&str]) -> CreateCrawl {
 }
 
 #[test]
-fn katana_short_single_dash_long_and_normal_flags_build_the_same_request() {
+fn compat_short_single_dash_long_and_normal_flags_build_the_same_request() {
     for (provider, key) in [
         ("-csp", "-csk"),
         ("-captcha-solver-provider", "-captcha-solver-key"),
         ("--captcha-solver-provider", "--captcha-solver-key"),
     ] {
-        let args = parse(&[provider, "capsolver", key, KEY]);
+        let args = parse(&[provider, "task-api", key, KEY]);
         let request = crawlx_cli::crawl::build_request(&args).unwrap();
         let config = request.crawl.captcha.as_ref().unwrap();
-        assert_eq!(config.provider, CaptchaProvider::Capsolver);
+        assert_eq!(config.provider, CaptchaProvider::TaskApi);
         assert_eq!(config.key_ref.0, "env://CRAWLX_CAPTCHA_SOLVER_KEY");
-        assert_eq!(config.endpoint.as_str(), "https://api.capsolver.com/");
+        assert_eq!(config.endpoint.as_str(), "https://api.capsolver.com/"); // wire-compat: default task-API service endpoint
         for text in [
             format!("{args:?}"),
             format!("{request:?}"),
@@ -43,7 +43,7 @@ fn katana_short_single_dash_long_and_normal_flags_build_the_same_request() {
             assert!(!text.contains(KEY), "{text}");
         }
     }
-    let request = build(&["-csp=capsolver", "-csk=captcha-cli-secret-canary"]);
+    let request = build(&["-csp=task-api", "-csk=captcha-cli-secret-canary"]);
     assert!(request.crawl.captcha.is_some());
 }
 
@@ -52,7 +52,7 @@ fn references_and_explicit_fixture_timing_reach_typed_configuration() {
     for reference in ["env://MY_CAPTCHA_KEY", "file:///run/secrets/captcha-key"] {
         let request = build(&[
             "--captcha-solver-provider",
-            "capsolver",
+            "task-api",
             "--captcha-solver-key-ref",
             reference,
             "--captcha-solver-endpoint",
@@ -80,10 +80,10 @@ fn unknown_provider_and_missing_or_literal_references_fail() {
         "unknown-service",
     ])
     .is_err());
-    assert!(crawlx_cli::crawl::build_request(&parse(&["--captcha-solver-provider", "capsolver",])).is_err());
+    assert!(crawlx_cli::crawl::build_request(&parse(&["--captcha-solver-provider", "task-api",])).is_err());
     let error = crawlx_cli::crawl::build_request(&parse(&[
         "--captcha-solver-provider",
-        "capsolver",
+        "task-api",
         "--captcha-solver-key-ref",
         KEY,
     ]))
@@ -98,7 +98,7 @@ fn yaml_flags_merge_below_cli_without_serializing_the_literal_key() {
     std::fs::write(
         &path,
         format!(
-            "captcha-solver-provider: capsolver\ncaptcha-solver-key: {KEY}\ncaptcha-solver-timeout-seconds: 30\ncaptcha-solver-poll-interval-ms: 50\n"
+            "captcha-solver-provider: task-api\ncaptcha-solver-key: {KEY}\ncaptcha-solver-timeout-seconds: 30\ncaptcha-solver-poll-interval-ms: 50\n"
         ),
     )
     .unwrap();
@@ -127,7 +127,7 @@ fn json_request_settings_merge_below_flags() {
     let path = dir.path().join("captcha.json");
     std::fs::write(
         &path,
-        r#"{"crawl":{"captcha":{"provider":"capsolver","key_ref":"env://JSON_KEY","timeout_seconds":30,"poll_interval_ms":50}}}"#,
+        r#"{"crawl":{"captcha":{"provider":"task-api","key_ref":"env://JSON_KEY","timeout_seconds":30,"poll_interval_ms":50}}}"#,
     )
     .unwrap();
     let request_path = dir.path().join("request.json");
@@ -165,7 +165,7 @@ fn environment_settings_are_parsed_without_parent_environment_mutation() {
                 if scenario == "unknown" {
                     "unknown-service"
                 } else {
-                    "capsolver"
+                    "task-api"
                 },
             );
         }
@@ -201,7 +201,7 @@ fn environment_parser_child() {
         assert!(request.crawl.captcha.is_none());
     } else {
         let config = request.crawl.captcha.as_ref().unwrap();
-        assert_eq!(config.provider, CaptchaProvider::Capsolver);
+        assert_eq!(config.provider, CaptchaProvider::TaskApi);
         assert_eq!(
             config.key_ref.0,
             if scenario == "reference_override" {
@@ -218,7 +218,7 @@ fn environment_parser_child() {
 fn help_never_prints_the_environment_key_value() {
     let output = Command::new(env!("CARGO_BIN_EXE_crawlx"))
         .args(["crawl", "--help"])
-        .env("CAPTCHA_SOLVER_PROVIDER", "capsolver")
+        .env("CAPTCHA_SOLVER_PROVIDER", "task-api")
         .env("CAPTCHA_SOLVER_KEY", KEY)
         .output()
         .unwrap();

@@ -203,7 +203,7 @@ impl RobotsTxt {
 
     /// As [`Self::evaluate`] for a crawler that also answers to the product tokens `aliases`
     /// (lowercase): a group naming any of them applies next to the groups naming `user_agent`'s
-    /// own token (Firecrawl's `FirecrawlAgent`).
+    /// own token (the compatibility API's product token).
     #[must_use]
     pub fn evaluate_as(&self, user_agent: &str, aliases: &[String], path_and_query: &str) -> Match {
         let groups = self.applicable(user_agent, aliases);
@@ -398,7 +398,7 @@ pub enum RobotsVerdict {
 pub struct RobotsConfig {
     /// User-agent string; its product token selects the group.
     pub user_agent: String,
-    /// Extra lowercase product tokens whose groups also apply (Firecrawl's `FirecrawlAgent` for
+    /// Extra lowercase product tokens whose groups also apply (the compatibility API's token for
     /// the facade's runs); empty by default.
     pub aliases: Vec<String>,
     /// Default and maximum cache lifetime.
@@ -1036,10 +1036,10 @@ mod tests {
 
     #[test]
     fn an_alias_token_selects_its_group_next_to_the_own_token() {
-        let body = "User-agent: FirecrawlAgent\nDisallow: /fc\n\nUser-agent: crawlx\nDisallow: /own\n\nUser-agent: *\nDisallow: /star\n";
+        let body = "User-agent: FirecrawlAgent\nDisallow: /fc\n\nUser-agent: crawlx\nDisallow: /own\n\nUser-agent: *\nDisallow: /star\n"; // wire-compat: robots product token sites write rules for
         let t = RobotsTxt::parse(body.as_bytes());
-        let alias = ["firecrawlagent".to_owned()];
-        // without the alias the `*` group applies only when no group names the token
+        let alias = ["firecrawlagent".to_owned()]; // wire-compat: lowercase robots product token
+                                                   // without the alias the `*` group applies only when no group names the token
         assert!(matches!(t.evaluate("crawlx", "/fc"), Match::Allowed));
         // with it both named groups apply and `*` does not
         assert!(matches!(
@@ -1052,7 +1052,7 @@ mod tests {
         ));
         assert!(matches!(t.evaluate_as("crawlx", &alias, "/star"), Match::Allowed));
         // an alias alone is enough when the robots.txt only names it
-        let only = RobotsTxt::parse(b"User-agent: FirecrawlAgent\nDisallow: /fc\nCrawl-delay: 3\n");
+        let only = RobotsTxt::parse(b"User-agent: FirecrawlAgent\nDisallow: /fc\nCrawl-delay: 3\n"); // wire-compat: robots product token
         assert!(matches!(
             only.evaluate_as("crawlx", &alias, "/fc"),
             Match::Disallowed(_)
@@ -1068,13 +1068,13 @@ mod tests {
     fn the_cache_applies_configured_aliases() {
         let clock = ManualClock::new(chrono::Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap());
         let cfg = RobotsConfig {
-            aliases: vec!["firecrawlagent".to_owned()],
+            aliases: vec!["firecrawlagent".to_owned()], // wire-compat: lowercase robots product token
             ..RobotsConfig::default()
         };
         let mut c = RobotsCache::with_config(Arc::new(clock), cfg);
         c.record_fetch(
             ORIGIN,
-            FetchStatus::Ok(b"User-agent: FirecrawlAgent\nDisallow: /fc\n".to_vec()),
+            FetchStatus::Ok(b"User-agent: FirecrawlAgent\nDisallow: /fc\n".to_vec()), // wire-compat: robots product token
         );
         assert!(matches!(c.evaluate(ORIGIN, "/fc"), RobotsVerdict::Disallowed(_)));
         assert_eq!(c.evaluate(ORIGIN, "/ok"), RobotsVerdict::Allowed);

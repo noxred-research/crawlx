@@ -103,7 +103,7 @@ pub struct ControlTruth {
     /// What a native click must conclude.
     #[serde(default)]
     pub expected: ExpectedClass,
-    /// Oracle expectation per driver (`playwright`, `patchright`, or `*`), overriding `expected`.
+    /// Oracle expectation per driver (`reference`, `hardened`, or `*`), overriding `expected`.
     #[serde(default)]
     pub oracle: BTreeMap<String, ExpectedClass>,
     /// Mechanism that should surface this control; per-mechanism precision/recall group by it.
@@ -590,7 +590,7 @@ mod tests {
         r##"{"id":"x1","url_path":"/x1/","controls":[
             {"id":"a","selector":"#a","role":"button"},
             {"id":"b","selector":"#b","role":"button","requires":["a"],"expected":"not_actionable",
-             "oracle":{"patchright":"actionable"}}]}"##
+             "oracle":{"hardened":"actionable"}}]}"##
     }
 
     #[test]
@@ -599,11 +599,11 @@ mod tests {
         assert_eq!(m.controls[0].expected, ExpectedClass::Actionable);
         assert_eq!(m.controls[0].frame, "main");
         assert_eq!(
-            m.controls[1].oracle_expected("patchright"),
+            m.controls[1].oracle_expected("hardened"),
             ExpectedClass::Actionable
         );
         assert_eq!(
-            m.controls[1].oracle_expected("playwright"),
+            m.controls[1].oracle_expected("reference"),
             ExpectedClass::NotActionable
         );
         assert_eq!(m.entry_url("http://h:1/"), "http://h:1/x1/");

@@ -2564,7 +2564,7 @@ fn default_build_info() -> BrowserBuildInfo {
         chromium_version,
         cdp_revision,
         user_agent: format!(
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36" // wire-compat: standard user-agent token
         ),
         pinned: pin.is_some(),
         launch_profile: LaunchProfile::Standard,

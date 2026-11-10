@@ -223,9 +223,9 @@ non-routable examples, not a ready-to-enable service):
 ```
 
 Replace endpoints/pins only after operator review; the credential file must contain the
-complete header value. Supported kinds are `stdout`, `local`, `s3`, `http`, `solr`,
-`opensearch`, `kafka_rest_v2`, `rabbitmq_management`, `gcs_json_upload`, and `ftp_service_v1`.
-These last producer protocols are explicit HTTP contracts, not native Kafka/AMQP/FTP
+complete header value. Supported kinds are `stdout`, `local`, `s3`, `http`, `search_update`,
+`search_index`, `stream_rest_v2`, `queue_http_v1`, `object_json_upload`, and `ftp_service_v1`.
+These last producer protocols are explicit HTTP contracts, not native stream/queue/FTP
 clients. S3 reuses the existing configured object sink and credential chain. Local roots
 must have an explicit writable mount; the overlays do not grant an arbitrary filesystem
 root. Unknown providers, missing destination IDs, unavailable references and malformed
@@ -288,9 +288,11 @@ the following command. This is a manual network operation, never a workload star
 ```sh
 bundle=/secure/approved/lid176-onnx-v1
 install -d -m 0755 "$bundle"
+# The manifest's `source` is the pinned revision's browse URL; weights are served under `/resolve/`.
+source=$(jq -r .source crates/crawlx-model/data/lid176-onnx-v1.json)
 for file in lid176.onnx config.json labels.json vocab.txt hs_tree.json README.md; do
   curl --fail --location --proto '=https' \
-    "https://huggingface.co/TigreGotico/lid176-onnx/resolve/64f7d31b705bc4a7424c82762b323c6ee8c68b94/$file" \
+    "${source/\/tree\//\/resolve\/}/$file" \
     --output "$bundle/$file"
 done
 chmod 0444 "$bundle"/lid176.onnx "$bundle"/config.json "$bundle"/labels.json \

@@ -9,9 +9,9 @@
 //! `SessionCommand::TypeCredential` (native input performed inside the actor, outside the
 //! kernel, exactly like the typing of `builtin:form`: the kernel classifies typing into a
 //! password field as `security_change` by design, so a credential fill can never be
-//! admitted). Step semantics follow projectdiscovery/katana
-//! `pkg/engine/headless/auth/replay.go` (`RunLoginSteps`, `waitVisible`, `submitForm`) and
-//! `session.go` (`SessionStateChanged`) at commit 9662cd7 (MIT): success is a cookie/storage
+//! admitted). Step semantics follow a reference automation driver's login replay
+//! (`RunLoginSteps`, `waitVisible`, `submitForm` and `SessionStateChanged` steps; MIT-licensed
+//! upstream, see THIRD_PARTY_NOTICES.md): success is a cookie/storage
 //! change or a satisfied terminal `waitvisible`; a failed flow falls back to `builtin:form`
 //! ([`login_session`]).
 
@@ -576,10 +576,10 @@ pub async fn run_login(
 
 /// Strategy name recorded on every journaled step of a recorded flow.
 pub const LOGIN_STRATEGY: &str = "login";
-/// Upper bound of a `wait` step (katana accepts any duration; the crawl's deadline must stay
+/// Upper bound of a `wait` step (the compatibility flow accepts any duration; the crawl's deadline must stay
 /// reachable).
 pub const MAX_WAIT_MS: u64 = 30_000;
-/// Polling interval of `waitvisible` (katana: 150 ms).
+/// Polling interval of `waitvisible` (the compatibility flow: 150 ms).
 const WAIT_VISIBLE_POLL_MS: u64 = 150;
 
 /// The forms-side selector as the browser-side one.
@@ -854,7 +854,7 @@ impl RecordedRunner<'_> {
             LoginStep::SubmitSelector {
                 selector: Some(selector),
             } => self.click(index, step, selector).await?,
-            // no submit control: Enter on the focused field (katana's `submitForm` fallback)
+            // no submit control: Enter on the focused field (the compatibility `submitForm` fallback)
             LoginStep::SubmitSelector { selector: None } => self.press(index, step, "Enter").await?,
             // `builtin:form` steps never appear in a recorded plan (`RecordedFlow` compiles
             // selector steps only); refuse rather than guess

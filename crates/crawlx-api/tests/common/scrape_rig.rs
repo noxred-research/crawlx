@@ -1,5 +1,5 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! A scrape rig for the Firecrawl facade tests: the API router and a REAL worker lease loop
+//! A scrape rig for the compat facade tests: the API router and a REAL worker lease loop
 //! over one `MemoryStore` and one artifact store, a fixture HTTP site reached through the host
 //! name `site.example.test` (an injected resolver maps it to 127.0.0.1; admission denies literal
 //! loopback), an optional `MockLlm` on both sides and an optional scripted `PageRenderer` (or

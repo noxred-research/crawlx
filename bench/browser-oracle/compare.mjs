@@ -2,7 +2,7 @@
 // Compares oracle result files with crawlx `revalidate` verdicts.
 // Refuses to merge files produced by different drivers.
 //
-// Usage: node compare.mjs --oracle results/g27.playwright.json [--oracle more.json] --crawlx out/revalidate.g27.json
+// Usage: node compare.mjs --oracle results/g27.reference.json [--oracle more.json] --crawlx out/revalidate.g27.json
 // crawlx file shape: { "verdicts": { "<control id>": "actionable" | "not_actionable" } }
 
 import { readFileSync } from "node:fs";

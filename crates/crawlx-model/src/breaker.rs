@@ -1,5 +1,5 @@
 //! Circuit breaker for model calls (the pattern
-//! follows the breaker of Firecrawl's typed-decision call).
+//! follows the breaker of a typed-decision call).
 //!
 //! The breaker opens after 5 consecutive failures or when at least 50 % of the
 //! last 20 calls failed. It stays open 30 s; each re-open after a failed probe

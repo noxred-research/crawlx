@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! `ExtractOptions::keep_data_images` (Firecrawl `removeBase64Images: false`) and its pairing
+//! `ExtractOptions::keep_data_images` (compatibility API `removeBase64Images: false`) and its pairing
 //! with `base64_images::strip_base64_images`.
 
 use crawlx_extract::base64_images::strip_base64_images;

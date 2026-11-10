@@ -88,9 +88,9 @@ impl UrlPlaneRunner {
             return Err(DiscoveryErrorV1::CapabilityUnavailable("protected source correlation key").into());
         }
         for (source, provider) in [
-            (DiscoverySourceV1::GoogleNews, DiscoveryProviderV1::GoogleNews),
-            (DiscoverySourceV1::GoogleTrends, DiscoveryProviderV1::GoogleTrends),
-            (DiscoverySourceV1::Archive, DiscoveryProviderV1::InternetArchive),
+            (DiscoverySourceV1::NewsSearch, DiscoveryProviderV1::NewsSearch),
+            (DiscoverySourceV1::TrendsSearch, DiscoveryProviderV1::TrendsSearch),
+            (DiscoverySourceV1::Archive, DiscoveryProviderV1::WebArchiveIndex),
         ] {
             if self.source_enabled(source) && self.crawl.cache_only() {
                 return Err(DiscoveryErrorV1::ProviderForbiddenInReplay(provider).into());
@@ -131,9 +131,9 @@ impl UrlPlaneRunner {
                 .iter()
                 .filter(|connector| {
                     self.source_enabled(match connector.provider {
-                        DiscoveryProviderV1::GoogleNews => DiscoverySourceV1::GoogleNews,
-                        DiscoveryProviderV1::GoogleTrends => DiscoverySourceV1::GoogleTrends,
-                        DiscoveryProviderV1::InternetArchive => DiscoverySourceV1::Archive,
+                        DiscoveryProviderV1::NewsSearch => DiscoverySourceV1::NewsSearch,
+                        DiscoveryProviderV1::TrendsSearch => DiscoverySourceV1::TrendsSearch,
+                        DiscoveryProviderV1::WebArchiveIndex => DiscoverySourceV1::Archive,
                         _ => return false,
                     })
                 })
@@ -322,9 +322,9 @@ impl UrlPlaneRunner {
         };
         let connector = policy.connectors.iter().find(|connector| {
             self.source_enabled(match connector.provider {
-                DiscoveryProviderV1::GoogleNews => DiscoverySourceV1::GoogleNews,
-                DiscoveryProviderV1::GoogleTrends => DiscoverySourceV1::GoogleTrends,
-                DiscoveryProviderV1::InternetArchive => DiscoverySourceV1::Archive,
+                DiscoveryProviderV1::NewsSearch => DiscoverySourceV1::NewsSearch,
+                DiscoveryProviderV1::TrendsSearch => DiscoverySourceV1::TrendsSearch,
+                DiscoveryProviderV1::WebArchiveIndex => DiscoverySourceV1::Archive,
                 _ => return false,
             }) && self
                 .canonicalize(&connector.endpoint)
@@ -378,7 +378,7 @@ impl UrlPlaneRunner {
                         "terms":document.terms,"captures":document.captures.iter().map(|capture| serde_json::json!({
                             "originalUrl":capture.original_url,"archiveUrl":capture.archive_url,
                             "captureTime":capture.capture_time,"recordedTargetStatus":capture.target_status})).collect::<Vec<_>>()});
-                    let candidates = if connector.provider == DiscoveryProviderV1::InternetArchive {
+                    let candidates = if connector.provider == DiscoveryProviderV1::WebArchiveIndex {
                         document.captures.into_iter().map(|capture| capture.archive_url).collect()
                     } else { document.articles };
                     (candidates, evidence, document.truncated, "connector")

@@ -143,7 +143,7 @@ impl Budget {
     }
 
     /// Move the deadline out by `spent`: wall time that is not charged to
-    /// `limits.durationSeconds` (katana `-crawl-duration` excludes login time). A negative
+    /// `limits.durationSeconds` (compatibility flag `-crawl-duration` excludes login time). A negative
     /// `spent` is ignored.
     pub fn credit_time(&mut self, spent: chrono::Duration) {
         if spent > chrono::Duration::zero() {

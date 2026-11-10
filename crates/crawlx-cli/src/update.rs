@@ -1,4 +1,4 @@
-//! Release check (katana `-update`, `-disable-update-check`).
+//! Release check (compatibility `-update`, `-disable-update-check`).
 //!
 //! crawlx never downloads or replaces its own binary. `--update` asks the release endpoint
 //! once and prints whether a newer version exists; with `CRAWLX_UPDATE_CHECK=1` the same

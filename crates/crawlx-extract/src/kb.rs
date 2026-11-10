@@ -1,11 +1,11 @@
 //! Knowledge base (`extract.knowledgeBase`, `-kb`, `-kb-endpoints`,
-//! `-kb-validate-secrets`): the structured facts katana attaches to each
+//! `-kb-validate-secrets`): the structured facts the reference implementation attaches to each
 //! response under `knowledgebase`.
 //!
-//! Katana classifies pages and forms with a trained model (`dit`) and
-//! endpoints with the heuristics of
-//! `pkg/knowledgebase/extractors/endpoints/endpoints.go` (MIT, commit
-//! 9662cd7). crawlx ships no model: the page type is the deterministic
+//! The reference implementation classifies pages and forms with a trained model and
+//! endpoints with heuristics ported from an MIT-licensed upstream (see
+//! THIRD_PARTY_NOTICES.md).
+//! crawlx ships no model: the page type is the deterministic
 //! [`PageType`] of [`crate::page_type`], forms are classified by structural
 //! rules ([`classify_form`]) and endpoints by [`classify_endpoint`], the same
 //! decision tree as `crawlx_observe::network::classify_endpoint` (class names
@@ -60,7 +60,7 @@ use crate::page_type::PageType;
 use crate::secret_validation::Validity;
 use crate::secrets::SecretFinding;
 
-/// Family of a request. Katana's "skip" outcome is [`Static`](Self::Static).
+/// Family of a request. The reference "skip" outcome is [`Static`](Self::Static).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -91,7 +91,7 @@ impl EndpointClass {
     }
 }
 
-/// Path substrings that suggest an API endpoint (katana `apiPathSegments`).
+/// Path substrings that suggest an API endpoint (the reference `apiPathSegments`).
 const API_PATH_SEGMENTS: &[&str] = &[
     "/api/",
     "/v1/",
@@ -185,7 +185,7 @@ pub fn classify_discovered(endpoint: &DiscoveredEndpoint) -> EndpointClass {
     )
 }
 
-/// One classified request as katana's endpoints extractor reports it.
+/// One classified request as the reference endpoints extractor reports it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct KbEndpoint {
@@ -323,7 +323,7 @@ impl KbSecret {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct KnowledgeBase {
-    /// Page classification (`PageType` in katana's output).
+    /// Page classification (`PageType` in the reference output).
     #[serde(rename = "PageType", default, skip_serializing_if = "Option::is_none")]
     pub page_type: Option<PageType>,
     /// Form classifications, in document order (`Forms`).
@@ -548,6 +548,7 @@ pub fn field_roles(form: &StaticForm, form_type: &str) -> BTreeMap<String, Strin
         let words = semantic::field_words(&format!("{} {}", input.name, input.id.as_deref().unwrap_or("")));
         let has = |ws: &[&str]| ws.iter().any(|w| words.contains(*w));
         let role: &str = if has(&["captcha", "recaptcha", "hcaptcha"]) {
+            // wire-compat: form-field words of common challenge widgets
             "captcha"
         } else if input.kind == "file" {
             "file"

@@ -123,12 +123,12 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/authorizations/{id}", get(authorizations::get))
         .route("/v1/authorizations/{id}/revoke", post(authorizations::revoke))
         .route("/v1/authorizations/{id}/verify", post(authorizations::verify))
-        .route("/compat/firecrawl/v2/crawl", post(compat::create))
+        .route("/compat/v2/crawl", post(compat::create))
         .route(
-            "/compat/firecrawl/v2/crawl/{id}",
+            "/compat/v2/crawl/{id}",
             get(compat_ws::crawl).delete(compat::cancel),
         )
-        .route("/compat/firecrawl/v2/crawl/{id}/errors", get(compat::errors))
+        .route("/compat/v2/crawl/{id}/errors", get(compat::errors))
         .merge(compat_search::routes())
         .merge(compat_crawl::routes())
         .merge(compat_map::routes())

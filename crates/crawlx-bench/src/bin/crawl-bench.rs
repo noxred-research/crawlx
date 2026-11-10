@@ -1,5 +1,5 @@
 //! `crawl-bench`: crawl coverage and throughput of the crawlx URL plane per target and crawl
-//! profile, with baseline comparison (katana `cmd/tools/crawl-bench` equivalent). The metrics,
+//! profile, with baseline comparison (equivalent of a reference crawl-bench tool). The metrics,
 //! profiles and baseline rules are documented in `crawlx_bench::crawl_bench`.
 
 use clap::Parser;
@@ -26,7 +26,7 @@ TARGETS
 PROFILES (every profile crawls with mode=static)
   static           the gym reference slice: crawlx defaults at the gym's pace (50 ms/origin)
   crawlx-defaults  the request defaults of `crawlx crawl`, production politeness (250 ms/origin)
-  katana-defaults  katana's flag defaults: host scope rdn, depth 3, depth-first, no JS endpoints,
+  compat-flag-defaults  the compatibility flag dialect's defaults: host scope rdn, depth 3, depth-first, no JS endpoints,
                    no known files or sitemap, robots.txt not obeyed, 4 MiB bodies, 150 req/s
 
 OUTPUT
@@ -48,11 +48,11 @@ EXIT STATUS
   0 success, 1 regression beyond --max-regress, 2 usage or runtime error.
 
 EXAMPLES
-  crawl-bench --target gym:s1 --target gym:g32 --profile static --profile katana-defaults
+  crawl-bench --target gym:s1 --target gym:g32 --profile static --profile compat-flag-defaults
   crawl-bench --target gym:s1 --repeat 5 --json new.json --baseline old.json --max-regress 10
   crawl-bench --target gym:s1 --target gym:g32 --target gym:hybrid-mix --profile static \\
       --baseline bench/baselines/crawl-bench.json --max-regress 0 --gate-metrics pages,endpoints,recall
-  crawl-bench --target http://127.0.0.1:4280/ --profile katana-defaults --duration-seconds 600";
+  crawl-bench --target http://127.0.0.1:4280/ --profile compat-flag-defaults --duration-seconds 600";
 
 #[derive(Parser, Debug)]
 #[command(name = "crawl-bench", version, about = "Crawl coverage and throughput benchmark of the crawlx URL plane", long_about = LONG_ABOUT)]
@@ -61,7 +61,7 @@ struct Cli {
     #[arg(long = "target", value_name = "TARGET", required = true, value_parser = parse_target)]
     targets: Vec<Target>,
 
-    /// Crawl profile: static, katana-defaults or crawlx-defaults; repeat for several profiles.
+    /// Crawl profile: static, compat-flag-defaults or crawlx-defaults; repeat for several profiles.
     #[arg(long = "profile", value_name = "PROFILE", default_value = "static", value_parser = parse_profile)]
     profiles: Vec<Profile>,
 

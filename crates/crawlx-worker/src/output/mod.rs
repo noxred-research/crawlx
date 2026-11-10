@@ -1,4 +1,4 @@
-//! Katana-style output of stored pages, shared by
+//! Compatibility-style output of stored pages, shared by
 //! `crawlx export`, `crawlx crawl` and the API's `/pages?field=` and `/export` routes.
 //!
 //! * [`fields`] – the field model (`url`, `qurl`, `key`, ... and custom regex fields).
@@ -158,7 +158,7 @@ pub struct Exporter {
     pub stored_responses: Option<StoredResponses>,
     /// JSONL fields to drop (`-eof`, names from [`field_names`]).
     pub exclude_fields: Vec<String>,
-    /// Include the response body in JSONL records. Katana includes it by default; here it is
+    /// Include the response body in JSONL records. The reference includes it by default; here it is
     /// opt-in because the body is not part of the page row.
     pub include_body: bool,
     /// `-or`: leave `request.raw` and `response.raw` out of JSONL records.
@@ -484,7 +484,7 @@ impl Exporter {
         Ok(stats)
     }
 
-    /// Export the URLs of a run that failed (`RunReport::failures`) the way katana emits
+    /// Export the URLs of a run that failed (`RunReport::failures`) the way the reference emits
     /// failed requests: JSONL records with `error` set, or the URL's field lines in text
     /// mode. The same extension/regex filters and conditions apply (a condition can read
     /// `error`, `status_code`, `url`); `-or/-ob/-eof` shape the records. There is no

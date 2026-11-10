@@ -1,7 +1,7 @@
 //! Normalization shared by both sides of a comparison and the similarity
 //! measures of the scorecard.
 //!
-//! Nothing here knows which side produced the text: Firecrawl and crawlx output go through
+//! Nothing here knows which side produced the text: upstream and crawlx output go through
 //! the same functions, so a systematic formatting choice on either side cancels out and only
 //! content differences remain.
 
@@ -54,7 +54,7 @@ fn same_origin(url: &Url, origin: &Url) -> bool {
 /// Canonical comparison key of a URL (C1): the fragment is dropped, a trailing
 /// slash is removed (both systems treat `/a` and `/a/` as one page in the fixtures, and the
 /// gym serves both), the query is kept with its pairs sorted by name when `keep_query`
-/// (crawlx canonicalizes parameter order; Firecrawl keeps document order) or additionally
+/// (crawlx canonicalizes parameter order; upstream keeps document order) or additionally
 /// stripped of tracking parameters otherwise, and the crawl origin is replaced by [`ORIGIN`].
 /// Other origins keep their full form. Unparseable input is returned trimmed, so it still
 /// diffs visibly.
@@ -549,9 +549,9 @@ mod tests {
     fn markdown_normalization_is_side_neutral() {
         let page = Url::parse("http://gym.test/s1/").unwrap();
         let o = origin();
-        let firecrawl = "Title\n=====\r\n\r\n* [About](/s1/about/?utm_source=a)  \n* __bold__ &amp; <http://gym.test/s1/x>\n\n\n| a |b|\n|--|:-:|\n";
+        let upstream = "Title\n=====\r\n\r\n* [About](/s1/about/?utm_source=a)  \n* __bold__ &amp; <http://gym.test/s1/x>\n\n\n| a |b|\n|--|:-:|\n";
         let crawlx = "# Title\n\n- [About](http://gym.test/s1/about/)\n- **bold** & [{origin}/s1/x](http://gym.test/s1/x/#frag)\n\n| a | b |\n| --- | --- |";
-        let a = normalize_markdown(firecrawl, &page, &o);
+        let a = normalize_markdown(upstream, &page, &o);
         let b = normalize_markdown(crawlx, &page, &o);
         assert_eq!(a, b, "\n{a}\n---\n{b}");
         assert!((token_jaccard(&a, &b) - 1.0).abs() < f64::EPSILON);

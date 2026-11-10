@@ -1,11 +1,11 @@
 //! Explicit loopback KMS protocol fixture, available only through `fake-kms`.
 //!
-//! This is not a production provider. It implements the AWS JSON wire operations
+//! This is not a production provider. It implements the cloud KMS JSON wire operations
 //! `GenerateDataKey` and `Decrypt` using real AES-256-GCM wrapping and random data
 //! keys. Each fixture owns a fresh OS-random root; retain one fixture across
 //! producer/recovery subprocesses. It accepts authored test credentials without
-//! verifying AWS signatures and binds only to loopback. Never route production
-//! AWS traffic here. No fixture endpoint is selected automatically.
+//! verifying request signatures and binds only to loopback. Never route production
+//! cloud traffic here. No fixture endpoint is selected automatically.
 
 use axum::{
     extract::{DefaultBodyLimit, State},
@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, io, sync::Arc};
 use zeroize::Zeroizing;
 
-const KEY_ID: &str = "arn:aws:kms:us-east-1:111122223333:key/crawlx-loopback-fixture";
+const KEY_ID: &str = "arn:aws:kms:us-east-1:111122223333:key/crawlx-loopback-fixture"; // wire-compat: key ARN shape
 
 struct Service {
     root: Zeroizing<[u8; 32]>,
@@ -39,7 +39,7 @@ struct Observations {
     last_data_key: Zeroizing<Vec<u8>>,
 }
 
-/// Test-only loopback AWS KMS protocol server with independent private key custody.
+/// Test-only loopback cloud KMS protocol server with independent private key custody.
 #[non_exhaustive]
 pub struct LoopbackKms {
     endpoint: String,
@@ -78,7 +78,7 @@ impl LoopbackKms {
         })
     }
 
-    /// Endpoint for the child-only `AWS_ENDPOINT_URL_KMS` setting.
+    /// Endpoint for the child-only SDK KMS endpoint-override environment variable.
     #[must_use]
     pub fn endpoint(&self) -> &str {
         &self.endpoint
@@ -127,7 +127,7 @@ async fn operation(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    // AWS JSON uses application/x-amz-json-1.1, not Axum's JSON media type.
+    // The KMS JSON protocol uses application/x-amz-json-1.1, not Axum's JSON media type.
     let result = serde_json::from_slice::<Value>(&body)
         .map_err(|_| ())
         .and_then(|request| execute(&service, &headers, &request));

@@ -4,17 +4,17 @@
 //! twin of these tests runs everywhere in `navigation_guard.rs`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-mod katana_p4_support;
+mod surface_support;
 
 use async_trait::async_trait;
 use crawlx_browser::{CdpContext, NavigationGuard, NavigationVerdict};
 use crawlx_core::browser::{BrowserContext, BrowserError, ContextConfig};
 use crawlx_core::observation::QuiescencePolicy;
-use katana_p4_support::{canonical, context_config, launch, serve};
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use surface_support::{canonical, context_config, launch, serve};
 use url::Url;
 
 /// Refuses every document under `/private/`; remembers every URL it was asked about.

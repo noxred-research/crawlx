@@ -11,13 +11,13 @@ use std::process::ExitCode;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    // `DEBUG=true` (katana's switch): print the whole error chain with a backtrace. anyhow records
+    // `DEBUG=true` (the compatibility switch): print the whole error chain with a backtrace. anyhow records
     // the backtrace when an error is created, so it is requested before anything runs.
     let debug = crawlx_cli::debug_enabled(&|key| std::env::var(key).ok());
     if debug && std::env::var_os("RUST_BACKTRACE").is_none() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
-    // katana's single-dash flags (`-mdc`, `-field-scope`) are rewritten to the `--long` flags first
+    // compatibility single-dash flags (`-mdc`, `-field-scope`) are rewritten to the `--long` flags first
     let cli = crawlx_cli::Cli::parse_from(crawlx_cli::normalize_args(std::env::args_os()));
     // one runtime built here, bounded blocking pool, no `#[tokio::main]`; it also
     // installs the parse-memory budget (`CRAWLX_PARSE_MEMORY_BYTES`)

@@ -1,7 +1,7 @@
 //! TF-IDF cosine and normalized BM25 over a bounded corpus of token vectors.
 //!
-//! Ported from projectdiscovery/katana `pkg/similarity/lexical.go` at commit
-//! 9662cd7 (MIT). Term maps are ordered so scores are reproducible to the bit.
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md. Term maps
+//! are ordered so scores are reproducible to the bit.
 
 use std::collections::{BTreeMap, VecDeque};
 

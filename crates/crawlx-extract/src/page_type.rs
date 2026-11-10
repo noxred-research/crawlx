@@ -41,17 +41,17 @@ pub const SHORT_PAGE_MAX_WORDS: usize = 200;
 pub const LISTING_MIN_CARDS: usize = 5;
 
 const CAPTCHA_CLASSES: &[&str] = &[
-    "g-recaptcha",
-    "h-captcha",
-    "cf-turnstile",
+    "g-recaptcha",  // wire-compat: page markup class of a checkbox widget (family A)
+    "h-captcha",    // wire-compat: page markup class of a challenge widget (family B)
+    "cf-turnstile", // wire-compat: page markup class of a challenge widget (family C)
     "cf-challenge",
     "captcha",
 ];
 const CAPTCHA_SCRIPTS: &[&str] = &[
-    "recaptcha/api.js",
-    "recaptcha/enterprise.js",
-    "hcaptcha.com/1/api.js",
-    "challenges.cloudflare.com/turnstile",
+    "recaptcha/api.js",                    // wire-compat: script URL of widget family A
+    "recaptcha/enterprise.js",             // wire-compat: script URL of widget family A (enterprise)
+    "hcaptcha.com/1/api.js",               // wire-compat: script URL of widget family B
+    "challenges.cloudflare.com/turnstile", // wire-compat: script URL of widget family C
     "/cdn-cgi/challenge-platform/",
 ];
 const CAPTCHA_PHRASES: &[&str] = &[
@@ -64,7 +64,7 @@ const CAPTCHA_PHRASES: &[&str] = &[
 const CAPTCHA_TITLES: &[&str] = &[
     "just a moment",
     "attention required",
-    "access denied | cloudflare",
+    "access denied | cloudflare", // wire-compat: page title served by a CDN vendor's block page
 ];
 const ERROR_TITLES: &[&str] = &[
     "404",

@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Firecrawl v2 scrape endpoints of the compat facade: `POST /scrape`,
+//! compat v2 scrape endpoints of the compat facade: `POST /scrape`,
 //! `GET /scrape/{jobId}`, the batch scrape family and the self-host health probes, run end to
 //! end through a REAL worker lease loop over the same store as the API (see `scrape_rig`).
 mod common;
@@ -24,7 +24,7 @@ use serde_json::{json as j, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
-const V2: &str = "/compat/firecrawl/v2";
+const V2: &str = "/compat/v2";
 
 async fn scrape(rig: &Rig, body: Value) -> (StatusCode, HeaderMap, Value) {
     rig.env.post(&format!("{V2}/scrape"), &body).await
@@ -51,7 +51,7 @@ async fn wait_batch(rig: &Rig, id: &str, want: &str) -> Value {
     panic!("batch {id} never reached {want}");
 }
 
-fn assert_firecrawl_error(v: &Value, code: &str) {
+fn assert_compat_error(v: &Value, code: &str) {
     assert_eq!(v["success"], false, "{v}");
     assert_eq!(v["code"], code, "{v}");
     assert!(v["error"].is_string(), "{v}");
@@ -77,7 +77,7 @@ fn llm_mock() -> Arc<MockLlm> {
 // ---- POST /scrape: documents ------------------------------------------------------------
 
 #[tokio::test]
-async fn scrape_returns_the_firecrawl_document_with_metadata_and_credits() {
+async fn scrape_returns_the_compat_document_with_metadata_and_credits() {
     let rig = Rig::start(RigConfig::default()).await;
     let url = rig.url("/");
     let data = scrape_ok(&rig, j!({ "url": url })).await;
@@ -482,7 +482,7 @@ async fn redirects_report_the_final_url_and_keep_the_source() {
 // ---- POST /scrape: errors -----------------------------------------------------------------
 
 #[tokio::test]
-async fn invalid_requests_are_firecrawl_400s_with_every_violation() {
+async fn invalid_requests_are_compat_400s_with_every_violation() {
     let rig = Rig::start(RigConfig::default()).await;
     let (s, _, v) = scrape(
         &rig,
@@ -490,7 +490,7 @@ async fn invalid_requests_are_firecrawl_400s_with_every_violation() {
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
-    assert_firecrawl_error(&v, "BAD_REQUEST");
+    assert_compat_error(&v, "BAD_REQUEST");
     assert_eq!(v["error"], "Bad Request");
     let paths: Vec<&str> = v["details"]
         .as_array()
@@ -529,7 +529,7 @@ async fn targets_the_egress_policy_denies_are_403_unsupported_site() {
     ] {
         let (s, _, v) = scrape(&rig, j!({ "url": url })).await;
         assert_eq!(s, StatusCode::FORBIDDEN, "{url}: {v}");
-        assert_firecrawl_error(&v, "UNSUPPORTED_SITE");
+        assert_compat_error(&v, "UNSUPPORTED_SITE");
     }
     rig.stop().await;
 }
@@ -565,7 +565,7 @@ async fn a_slow_site_times_out_with_408_and_the_run_does_not_stay_active() {
     let rig = Rig::start(RigConfig::default()).await;
     let (s, _, v) = scrape(&rig, j!({ "url": rig.url("/slow"), "timeout": 1000 })).await;
     assert_eq!(s, StatusCode::REQUEST_TIMEOUT, "{v}");
-    assert_firecrawl_error(&v, "SCRAPE_TIMEOUT");
+    assert_compat_error(&v, "SCRAPE_TIMEOUT");
     assert_eq!(
         rig.env
             .state
@@ -592,7 +592,7 @@ async fn quota_scope_and_body_limits_answer_429_403_413() {
     .await;
     let (s, _, v) = scrape(&rig, j!({ "url": rig.url("/") })).await;
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{v}");
-    assert_firecrawl_error(&v, "quota_exceeded");
+    assert_compat_error(&v, "quota_exceeded");
     rig.stop().await;
 
     let rig = Rig::start(RigConfig {
@@ -708,10 +708,10 @@ async fn min_age_and_lockdown_only_read_stored_scrapes() {
     let url = rig.url("/versioned");
     let (s, _, v) = scrape(&rig, j!({ "url": url, "minAge": 1 })).await;
     assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
-    assert_firecrawl_error(&v, "SCRAPE_NO_CACHED_DATA");
+    assert_compat_error(&v, "SCRAPE_NO_CACHED_DATA");
     let (s, _, v) = scrape(&rig, j!({ "url": url, "lockdown": true })).await;
     assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
-    assert_firecrawl_error(&v, "SCRAPE_LOCKDOWN_CACHE_MISS");
+    assert_compat_error(&v, "SCRAPE_LOCKDOWN_CACHE_MISS");
     assert_eq!(rig.site.hits("/versioned"), 0, "neither fetched");
     scrape_ok(&rig, j!({ "url": url })).await;
     let aged = scrape_ok(&rig, j!({ "url": url, "minAge": 1 })).await;
@@ -759,7 +759,7 @@ async fn x_request_id_replays_conflicts_and_detects_in_flight_requests() {
     assert_eq!(rig.site.hits("/versioned"), 1, "a replay does not scrape again");
     let (s3, _, v3) = post("req-1", &j!({ "url": url, "maxAge": 0, "formats": ["html"] })).await;
     assert_eq!(s3, StatusCode::CONFLICT, "{v3}");
-    assert_firecrawl_error(&v3, "duplicate_request");
+    assert_compat_error(&v3, "duplicate_request");
     let (s4, _, v4) = post("bad id!", &body).await;
     assert_eq!(s4, StatusCode::BAD_REQUEST, "{v4}");
     assert_eq!(v4["details"][0]["path"], "/headers/x-request-id");
@@ -770,7 +770,7 @@ async fn x_request_id_replays_conflicts_and_detects_in_flight_requests() {
         post("req-slow", &slow).await
     });
     assert_eq!(second.0, StatusCode::CONFLICT, "{}", second.2);
-    assert_firecrawl_error(&second.2, "request_in_flight");
+    assert_compat_error(&second.2, "request_in_flight");
     assert_eq!(first.0, StatusCode::REQUEST_TIMEOUT, "{}", first.2);
     rig.stop().await;
 }
@@ -793,7 +793,7 @@ async fn a_scrape_can_be_fetched_again_by_its_job_id() {
         .await;
     let (s, _, v) = rig.env.get_as(&other_key, &format!("{V2}/scrape/{id}")).await;
     assert_eq!(s, StatusCode::NOT_FOUND, "tenant scoped: {v}");
-    assert_firecrawl_error(&v, "not_found");
+    assert_compat_error(&v, "not_found");
     for bad in [
         uuid::Uuid::now_v7().to_string(),
         "nonsense".to_owned(),
@@ -874,7 +874,7 @@ async fn llm_formats_need_a_configured_llm_before_any_run_is_created() {
     ] {
         let (s, h, v) = scrape(&rig, j!({ "url": rig.url("/"), "formats": formats })).await;
         assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{v}");
-        assert_firecrawl_error(&v, "llm_not_configured");
+        assert_compat_error(&v, "llm_not_configured");
         assert!(h.get("retry-after").is_some());
     }
     assert_eq!(rig.site.hits("/"), 0);
@@ -907,7 +907,7 @@ async fn llm_formats_run_in_the_worker_and_are_priced() {
     assert_eq!(data["answer"], "forty-two");
     assert_eq!(
         data["highlights"], "The answer is forty-two.",
-        "Firecrawl documents highlights as one string"
+        "the compat API documents highlights as one string"
     );
     assert_eq!(
         data["metadata"]["creditsUsed"], 13,
@@ -1325,7 +1325,7 @@ async fn batch_errors_list_failed_pages_and_scrapes_do_not_consult_robots() {
             .contains("reason: dns_failed"),
         "{e}"
     );
-    // Firecrawl scrapes the URLs it is given: robots.txt is a crawl concern, so nothing is blocked
+    // The compat API scrapes the URLs it is given: robots.txt is a crawl concern, so nothing is blocked
     assert_eq!(e["robotsBlocked"], j!([]));
     assert_eq!(rig.site.hits("/robots.txt"), 0);
     assert_eq!(rig.site.hits("/private/x"), 1);
@@ -1565,7 +1565,7 @@ async fn stored_blobs_are_inlined_linked_or_base64_encoded() {
     page.metadata = j!({ "scrape": doc });
     PageRepo::put(env.store.as_ref(), &page).await.unwrap();
     let data =
-        crawlx_api::scrape_service::firecrawl_document(&env.state, &p.run, &page, "https://api.test").await;
+        crawlx_api::scrape_service::compat_document(&env.state, &p.run, &page, "https://api.test").await;
     assert_eq!(data["markdown"], "# Stored");
     assert_eq!(data["rawHtml"], "<p>raw</p>");
     assert_eq!(data["links"], j!(["https://stored.example.test/q"]));
@@ -1601,7 +1601,7 @@ async fn stored_blobs_are_inlined_linked_or_base64_encoded() {
     });
     let mut page = p.page.clone();
     page.metadata = j!({ "scrape": doc });
-    let data = crawlx_api::scrape_service::firecrawl_document(&env.state, &p.run, &page, "").await;
+    let data = crawlx_api::scrape_service::compat_document(&env.state, &p.run, &page, "").await;
     assert_eq!(data["rawBase64"], "AAEC");
     assert!(data.get("markdown").is_none(), "{data}");
 }
@@ -1628,7 +1628,7 @@ async fn content_above_the_inline_limit_is_linked_not_inlined() {
         |_, _| {},
     )
     .await;
-    let data = crawlx_api::scrape_service::firecrawl_document(&env.state, &p.run, &p.page, "").await;
+    let data = crawlx_api::scrape_service::compat_document(&env.state, &p.run, &p.page, "").await;
     assert_eq!(data["markdown"], Value::Null);
     let link = data["metadata"]["crawlx"]["markdownRef"].as_str().unwrap();
     assert!(link.contains("/artifacts/"), "{link}");
@@ -1706,7 +1706,7 @@ async fn every_optional_field_of_a_stored_document_is_rendered() {
         doc.actions = Some(ActionResults::default());
     })
     .await;
-    let data = crawlx_api::scrape_service::firecrawl_document(&env.state, &p.run, &p.page, "").await;
+    let data = crawlx_api::scrape_service::compat_document(&env.state, &p.run, &p.page, "").await;
     assert_eq!(data["images"], j!(["https://stored.example.test/i.png"]));
     assert_eq!(data["summary"], "sum");
     assert_eq!(data["json"], j!({ "k": 1 }));
@@ -1754,7 +1754,7 @@ async fn pages_of_runs_without_a_scrape_job_keep_the_native_document() {
         fetched_at: SystemClock.now(),
         lane: TrustLane::Diagnostic,
     };
-    let data = crawlx_api::scrape_service::firecrawl_document(&env.state, &run, &page, "").await;
+    let data = crawlx_api::scrape_service::compat_document(&env.state, &run, &page, "").await;
     assert_eq!(data["metadata"]["title"], "Plain");
     assert!(data["metadata"]["crawlx"].is_object(), "native shape: {data}");
     assert_eq!(crawlx_api::scrape_service::credits_for(&run, &page), 1);
@@ -1830,7 +1830,7 @@ async fn browser_options_reach_the_renderer_and_plain_scrapes_never_do() {
     assert!(!o.store_in_cache, "actions force storeInCache=false");
     assert!(
         o.skip_tls_verification,
-        "Firecrawl defaults skipTlsVerification to true"
+        "the compat API defaults skipTlsVerification to true"
     );
     rig.stop().await;
 }
@@ -1859,22 +1859,22 @@ async fn the_scrape_routes_are_authenticated_and_listed_in_the_openapi_document(
     let (_, _, doc) = env.get("/v1/openapi.json").await;
     let paths = &doc["paths"];
     for (method, path) in [
-        ("post", "/compat/firecrawl/v2/scrape"),
-        ("get", "/compat/firecrawl/v2/scrape/{jobId}"),
-        ("post", "/compat/firecrawl/v2/batch/scrape"),
-        ("get", "/compat/firecrawl/v2/batch/scrape/{id}"),
-        ("delete", "/compat/firecrawl/v2/batch/scrape/{id}"),
-        ("get", "/compat/firecrawl/v2/batch/scrape/{id}/errors"),
+        ("post", "/compat/v2/scrape"),
+        ("get", "/compat/v2/scrape/{jobId}"),
+        ("post", "/compat/v2/batch/scrape"),
+        ("get", "/compat/v2/batch/scrape/{id}"),
+        ("delete", "/compat/v2/batch/scrape/{id}"),
+        ("get", "/compat/v2/batch/scrape/{id}/errors"),
     ] {
         assert!(paths[path][method].is_object(), "{method} {path}");
     }
     assert_eq!(
-        paths["/compat/firecrawl/v2/scrape"]["post"]["security"][0]["bearerAuth"][0],
+        paths["/compat/v2/scrape"]["post"]["security"][0]["bearerAuth"][0],
         "crawls:write"
     );
 }
 
-/// A render failure, the response it must produce, the accepted Firecrawl codes and the worker's
+/// A render failure, the response it must produce, the accepted the compat API codes and the worker's
 /// reason the message names.
 type Case = (
     fn() -> crawlx_worker::scrape::render::RenderError,
@@ -1884,7 +1884,7 @@ type Case = (
 );
 
 #[tokio::test]
-async fn render_failures_and_unsupported_content_map_to_their_firecrawl_codes() {
+async fn render_failures_and_unsupported_content_map_to_their_compat_codes() {
     let cases: [Case; 4] = [
         (
             || crawlx_worker::scrape::render::RenderError::Action {
@@ -1937,7 +1937,7 @@ async fn render_failures_and_unsupported_content_map_to_their_firecrawl_codes() 
     let rig = Rig::start(RigConfig::default()).await;
     let (s, _, v) = scrape(&rig, j!({ "url": rig.url("/binary") })).await;
     assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR, "{v}");
-    assert_firecrawl_error(&v, "SCRAPE_UNSUPPORTED_FILE_ERROR");
+    assert_compat_error(&v, "SCRAPE_UNSUPPORTED_FILE_ERROR");
     rig.stop().await;
 }
 
@@ -2044,7 +2044,7 @@ async fn real_chromium_clicks_a_plain_button_and_still_refuses_a_delete_control(
     )
     .await;
     assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR, "{v}");
-    assert_firecrawl_error(&v, "SCRAPE_ACTION_ERROR");
+    assert_compat_error(&v, "SCRAPE_ACTION_ERROR");
     let msg = v["error"].as_str().unwrap();
     assert!(
         msg.contains("action_failed") && msg.contains("denied"),
@@ -2100,7 +2100,7 @@ async fn pdf_parsers_follow_the_openapi_options_end_to_end() {
     assert_eq!(pages[0]["pageNumber"], 1);
     assert!(pages[0]["markdown"].as_str().unwrap().contains("Alpha page one"));
     assert!(pages[1]["markdown"].as_str().unwrap().contains("Beta page two"));
-    // blocks: Firecrawl's per-page typed layout blocks
+    // blocks: the compat API's per-page typed layout blocks
     let data = scrape_ok(
         &rig,
         j!({ "url": url, "parsers": [{ "type": "pdf", "blocks": true }] }),
@@ -2165,7 +2165,7 @@ async fn stored_pdf_pages_and_blocks_are_rendered_verbatim() {
         doc.blocks = Some(blocks.clone());
     })
     .await;
-    let data = crawlx_api::scrape_service::firecrawl_document(&env.state, &p.run, &p.page, "").await;
+    let data = crawlx_api::scrape_service::compat_document(&env.state, &p.run, &p.page, "").await;
     assert_eq!(data["pages"], j!([{ "pageNumber": 1, "markdown": "Hello" }]));
     assert_eq!(data["blocks"], blocks);
 }
