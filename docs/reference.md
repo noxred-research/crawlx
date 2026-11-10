@@ -204,10 +204,10 @@ How a crawl uses the pool:
   returned in `X-ProxyX-Pool-Session` and `X-ProxyX-Exit-IP`), and `proxyUsed` as for any tier. The
   org key and the username are never stored.
 - **Refusals.** A refused tunnel is `HTTP/1.1 <status> <cause>`. `auth_required`, `org_disabled`,
-  `org_blocked`, `option_denied`, `port_not_allowed`, `destination_denied` and `org_budget` fail the
+  `org_blocked`, `option_denied`, `port_not_allowed`, `destination_denied`, `provider_auth` and `org_budget` fail the
   page as `proxy_refused` (HTTP 502, `SCRAPE_PROXY_REFUSED`); the other causes (`org_capacity`,
   `cache_empty`, `no_healthy_ip`, `cache_unavailable`, `source_limited`, `lease_timeout`,
-  `provider_timeout`, `provider_unavailable`, `provider_auth`, `upstream_error`) fail it as
+  `provider_timeout`, `provider_unavailable`, `upstream_error`) fail it as
   `unreachable`. `crawlx.proxyx.tunnel_refusals{reason}` counts them.
 - **Block feedback.** With a control URL, a `429`, a challenge (`cf-mitigated: challenge`, a
   `/sorry/` redirect or a known challenge page on a `403`/`503`), the second consecutive plain `403`

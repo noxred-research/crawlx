@@ -174,7 +174,8 @@ pub enum FailReason {
     /// The run was cancelled while the page was in flight; the row is abandoned, not failed.
     Cancelled,
     /// The ProxyX pool gateway refused the tunnel for a cause another attempt cannot clear (bad
-    /// or disabled org key, option denied, destination or port refused, daily budget spent), or
+    /// or disabled org key, option denied, destination or port refused, provider credential rejected,
+    /// daily budget spent), or
     /// the pool configuration is unusable. Transient pool refusals end as `unreachable`.
     ProxyRefused,
 }

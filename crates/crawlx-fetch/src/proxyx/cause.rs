@@ -132,8 +132,9 @@ impl PoolCause {
 
     /// Whether and how fast another attempt can succeed.
     ///
-    /// `org_budget` is terminal for the rest of the UTC day; `provider_auth` and the other
-    /// provider failures may clear when the gateway picks another unit or provider.
+    /// `org_budget` is terminal for the rest of the UTC day and `provider_auth` (the provider
+    /// rejected the rendered credential) is an operator-side fault a retry does not clear; the
+    /// other provider failures may clear when the gateway picks another unit or provider.
     #[must_use]
     pub const fn retryability(self) -> Retryability {
         match self {
@@ -143,17 +144,16 @@ impl PoolCause {
             | Self::OptionDenied
             | Self::PortNotAllowed
             | Self::DestinationDenied
+            | Self::ProviderAuth
             | Self::OrgBudget => Retryability::Terminal,
             Self::SourceLimited
             | Self::OrgCapacity
             | Self::CacheEmpty
             | Self::NoHealthyIp
             | Self::CacheUnavailable => Retryability::Backoff,
-            Self::LeaseTimeout
-            | Self::ProviderTimeout
-            | Self::ProviderUnavailable
-            | Self::ProviderAuth
-            | Self::UpstreamError => Retryability::Retry,
+            Self::LeaseTimeout | Self::ProviderTimeout | Self::ProviderUnavailable | Self::UpstreamError => {
+                Retryability::Retry
+            }
         }
     }
 
@@ -212,6 +212,7 @@ mod tests {
             (PoolCause::PortNotAllowed, Terminal),
             (PoolCause::DestinationDenied, Terminal),
             (PoolCause::OrgBudget, Terminal),
+            (PoolCause::ProviderAuth, Terminal),
             (PoolCause::SourceLimited, Backoff),
             (PoolCause::OrgCapacity, Backoff),
             (PoolCause::CacheEmpty, Backoff),
@@ -220,7 +221,6 @@ mod tests {
             (PoolCause::LeaseTimeout, Retry),
             (PoolCause::ProviderTimeout, Retry),
             (PoolCause::ProviderUnavailable, Retry),
-            (PoolCause::ProviderAuth, Retry),
             (PoolCause::UpstreamError, Retry),
         ];
         assert_eq!(expected.len(), PoolCause::ALL.len());
