@@ -29,29 +29,60 @@ pub const REFRESH: EndpointSource = EndpointSource {
     attribute: "refresh",
 };
 
-/// URL parts of an RFC 8288 `Link` header value: every `<…>` piece of every
-/// comma-separated member, parameters ignored.
+/// URL parts of an RFC 8288 `Link` header value: every `<…>` target of every
+/// member, parameters ignored. A target may contain commas and semicolons, and
+/// a quoted parameter may contain `<…>` text; neither splits a member.
 #[must_use]
 pub fn parse_link_header(value: &str) -> Vec<&str> {
+    let bytes = value.as_bytes();
     let mut urls = Vec::new();
-    for chunk in value.split(',') {
-        for piece in chunk.split(';') {
-            let piece = piece.trim_matches(' ');
-            if piece.len() >= 2 && piece.starts_with('<') && piece.ends_with('>') {
-                urls.push(piece.trim_matches(|c| c == '<' || c == '>'));
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'<' => {
+                let start = i + 1;
+                let Some(len) = value[start..].find('>') else {
+                    break;
+                };
+                urls.push(value[start..start + len].trim());
+                i = start + len + 1;
             }
+            b'"' => {
+                i += 1;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => i += 2,
+                        b'"' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            _ => i += 1,
         }
     }
     urls
 }
 
-/// URL of a `Refresh` header / `meta http-equiv=refresh` value
-/// (`5; url=/next`), `None` when there is no `url=` part.
+/// URL of a `Refresh` header / `meta http-equiv=refresh` value: a delay, a
+/// separator, then `url=<target>` or the bare target (`5; url=/next`,
+/// `0;/next`). `None` when no target follows the delay.
 #[must_use]
 pub fn parse_refresh(value: &str) -> Option<&str> {
-    let lower = value.to_ascii_lowercase();
-    let idx = lower.find("url=")?;
-    let rest = value[idx + 4..].trim_end_matches(';').trim();
+    let rest = value
+        .trim_start()
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.')
+        .trim_start_matches(|c: char| c.is_ascii_whitespace() || c == ';' || c == ',');
+    let rest = match rest.get(..3) {
+        Some(head) if head.eq_ignore_ascii_case("url") => rest[3..]
+            .trim_start()
+            .strip_prefix('=')
+            .map_or(rest, str::trim_start),
+        _ => rest,
+    };
+    let rest = rest.trim_end_matches(';').trim();
     let rest = rest.trim_matches(|c| c == '"' || c == '\'');
     (!rest.is_empty()).then_some(rest)
 }
@@ -119,5 +150,23 @@ mod tests {
         assert_eq!(parse_refresh("0;URL='/q';"), Some("/q"));
         assert_eq!(parse_refresh("5"), None);
         assert_eq!(parse_refresh("5; url="), None);
+    }
+
+    #[test]
+    fn link_targets_may_contain_commas_and_quoted_params_may_contain_brackets() {
+        let v = r#"</s?ids=1,2;3>; rel="next", <https://x.example/p>; title="a <b> c, d"; rel=prev, <unterminated"#;
+        assert_eq!(parse_link_header(v), vec!["/s?ids=1,2;3", "https://x.example/p"]);
+        assert_eq!(parse_link_header(r#"<a>; title="esc \" <q>""#), vec!["a"]);
+        assert!(parse_link_header("").is_empty());
+    }
+
+    #[test]
+    fn refresh_accepts_a_bare_target_and_spaced_url_keyword() {
+        assert_eq!(parse_refresh("0;/bare"), Some("/bare"));
+        assert_eq!(parse_refresh("0, /comma"), Some("/comma"));
+        assert_eq!(parse_refresh("2.5 ; URL = /spaced"), Some("/spaced"));
+        assert_eq!(parse_refresh("url=/no-delay"), Some("/no-delay"));
+        assert_eq!(parse_refresh(""), None);
+        assert_eq!(parse_refresh(";"), None);
     }
 }

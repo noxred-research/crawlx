@@ -1,0 +1,15 @@
+{
+  "construct": "form-post-urlencoded",
+  "body": [
+    "<form action='/login' method='post'><input name='user'><input type='password' name='pass'><input type='hidden' name='csrf' value='tok'><textarea name='note'></textarea></form>"
+  ],
+  "expected": [
+    {
+      "method": "POST",
+      "url": "https://matrix.test/login",
+      "source": "form/action",
+      "body": "user=crawlx&pass=crawlxP%40ssw0rd1&csrf=tok&note=crawlx",
+      "content_type": "application/x-www-form-urlencoded"
+    }
+  ]
+}

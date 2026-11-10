@@ -1,0 +1,28 @@
+{
+  "construct": "picture-source-srcset",
+  "body": [
+    "<picture><source srcset='/p/wide.webp 1200w, /p/narrow.webp 600w' type='image/webp'><source src='/p/plain-src.png'><img src='/p/fallback.jpg'></picture>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/p/wide.webp",
+      "source": "source/srcset"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/p/narrow.webp",
+      "source": "source/srcset"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/p/plain-src.png",
+      "source": "source/src"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/p/fallback.jpg",
+      "source": "img/src"
+    }
+  ]
+}

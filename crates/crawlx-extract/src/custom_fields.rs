@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
 
 pub use crawlx_core::config::CustomField as CustomFieldSpec;
 pub use crawlx_core::config::CustomFieldPart as Part;
@@ -22,8 +22,6 @@ pub const MAX_FIELDS: usize = 32;
 pub const MAX_PATTERN_LEN: usize = 512;
 /// Maximum values kept per field per page.
 pub const MAX_VALUES_PER_FIELD: usize = 1_000;
-/// Compiled-program size limit per pattern.
-const REGEX_SIZE_LIMIT: usize = 1 << 20;
 
 /// Why a custom field specification was rejected.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -62,6 +60,14 @@ pub enum CustomFieldError {
         name: String,
         /// Compiler message.
         reason: String,
+    },
+    /// A pattern uses a construct the linear-time engine does not support.
+    #[error("custom field `{name}`: unsupported regex construct: {construct}")]
+    UnsupportedPattern {
+        /// Field name.
+        name: String,
+        /// Rejected construct (`backreference` or `look-around`).
+        construct: &'static str,
     },
     /// `group` is larger than the capture-group count of a pattern.
     #[error("custom field `{name}`: group {group} exceeds the {groups} capture groups of a pattern")]
@@ -134,14 +140,20 @@ impl CustomField {
                     len: pattern.len(),
                 });
             }
-            let re = RegexBuilder::new(pattern)
-                .size_limit(REGEX_SIZE_LIMIT)
-                .dfa_size_limit(REGEX_SIZE_LIMIT)
-                .build()
-                .map_err(|e| CustomFieldError::InvalidPattern {
+            let re = crate::regex_builtins::compile_regex(pattern).map_err(|e| match e {
+                crate::regex_builtins::RegexError::Backreference => CustomFieldError::UnsupportedPattern {
                     name: name.clone(),
-                    reason: e.to_string(),
-                })?;
+                    construct: "backreference",
+                },
+                crate::regex_builtins::RegexError::Lookaround => CustomFieldError::UnsupportedPattern {
+                    name: name.clone(),
+                    construct: "look-around",
+                },
+                other => CustomFieldError::InvalidPattern {
+                    name: name.clone(),
+                    reason: other.to_string(),
+                },
+            })?;
             let groups = re.captures_len().saturating_sub(1);
             if group > groups {
                 return Err(CustomFieldError::GroupOutOfRange {

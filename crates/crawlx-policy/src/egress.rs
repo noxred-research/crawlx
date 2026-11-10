@@ -583,6 +583,26 @@ impl EgressPolicy {
         self
     }
 
+    /// Exempt private, CGNAT, unique-local and loopback ranges for exactly `networks` (the
+    /// authorized networks of an authorization record), and nothing else.
+    ///
+    /// This is the only way production admission grants private access: there is no boolean
+    /// that opens every private range. An empty list grants nothing, so a missing or empty
+    /// scope can never widen into "allow all private". Metadata and link-local addresses stay
+    /// denied, the resolved address (not the name) is checked on every connection, and the
+    /// deployment allowlist still bounds the result.
+    #[must_use]
+    pub fn with_authorized_private_networks(mut self, networks: Vec<IpNet>) -> Self {
+        if networks.is_empty() {
+            self.allow_private = false;
+            self.extra_allow.clear();
+        } else {
+            self.allow_private = true;
+            self.extra_allow = networks;
+        }
+        self
+    }
+
     /// Attach the live deployment lists.
     #[must_use]
     pub fn with_lists(mut self, lists: SharedEgressLists) -> Self {
@@ -974,6 +994,32 @@ mod tests {
         ] {
             assert!(p.check_ip(ip(a)).is_err(), "{a}");
         }
+    }
+
+    #[test]
+    fn private_access_is_granted_only_for_the_authorized_networks() {
+        let nets: Vec<IpNet> = vec!["10.20.0.0/16".parse().unwrap(), "fd12::/64".parse().unwrap()];
+        let p = EgressPolicy::new(false).with_authorized_private_networks(nets);
+        for a in ["10.20.3.4", "fd12::9"] {
+            assert!(p.check_ip(ip(a)).is_ok(), "{a}");
+        }
+        for a in [
+            "10.21.0.1",
+            "192.168.1.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "fd13::1",
+        ] {
+            assert!(p.check_ip(ip(a)).is_err(), "{a}");
+        }
+        // A name that resolves to an unauthorized private address is still refused.
+        assert!(p
+            .check_all("rebound.example.test", &[ip("93.184.216.34"), ip("10.99.0.1")])
+            .is_err());
+        // An empty scope grants nothing, even over a policy that started permissive.
+        let none = EgressPolicy::new(true).with_authorized_private_networks(Vec::new());
+        assert!(none.check_ip(ip("10.20.3.4")).is_err());
+        assert!(none.check_ip(ip("127.0.0.1")).is_err());
     }
 
     #[test]

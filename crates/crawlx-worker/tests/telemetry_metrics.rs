@@ -83,8 +83,27 @@ fn gauge(name: &str, labels: &[(&str, &str)]) -> Option<f64> {
     Metrics::global().gauge(name).get(labels)
 }
 
+/// Sum of every series of a counter family (0 when it was never written).
+fn counter_total(name: &str) -> u64 {
+    use crawlx_telemetry::metrics::SeriesValue;
+    Metrics::global()
+        .snapshot_family(name)
+        .unwrap_or_default()
+        .iter()
+        .map(|s| match s.value {
+            SeriesValue::Counter(n) => n,
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Explore `script` end to end through the driver (the rig drives the actor by hand).
 async fn explore(script: FakeScript) -> crawlx_worker::RunReport {
+    explore_with(script, |_| {}).await
+}
+
+/// [`explore`] with the request adjusted by `mutate`.
+async fn explore_with(script: FakeScript, mutate: impl FnOnce(&mut CreateCrawl)) -> crawlx_worker::RunReport {
     let dir = tempfile::tempdir().unwrap();
     let backend = Arc::new(FakeBackend::new(script));
     let store = Arc::new(MemoryStore::new());
@@ -94,6 +113,7 @@ async fn explore(script: FakeScript) -> crawlx_worker::RunReport {
     crawl.seed = Some(20_261_020);
     crawl.limits.interactions = 20;
     crawl.limits.states = 20;
+    mutate(&mut crawl);
     let cfg = WorkerConfig {
         artifacts_dir: dir.path().to_path_buf(),
         egress: EgressConfig {
@@ -392,5 +412,214 @@ async fn a_t1_failure_counts_a_journal_halt() {
         hist_count(names::JOURNAL_T1_DURATION),
         before.1 + 1,
         "the failed intent is timed too"
+    );
+}
+
+fn by_role(role: &str) -> [(&str, &str); 1] {
+    [("role", role)]
+}
+
+#[tokio::test]
+async fn a_fuzzy_reuse_under_a_drifted_name_counts_a_suspected_collision() {
+    let _serial = SERIAL.lock().await;
+    // the same control (same id) is renamed by another control: the matcher reuses the known
+    // identity although the accessible name differs materially
+    let script = FakeScript::new().page(
+        FakePage::new("https://example.test/")
+            .title("Editor")
+            .node(FakeAxSpec::button("save", "Save draft").attr("id", "save-btn"))
+            .node(FakeAxSpec::button("rename", "Rename").attr("id", "rename-btn"))
+            .on_click(
+                "rename",
+                vec![FakeEffect::SetName {
+                    key: "save".into(),
+                    name: "Save draft now".into(),
+                }],
+            ),
+    );
+    let role = by_role("anonymous");
+    let before = (
+        counter(names::IDENTITY_COLLISION_SUSPECTED, &role),
+        counter(names::IDENTITY_SPLITS, &role),
+    );
+    let report = explore_with(script, |c| c.safety.profile = SafetyProfile::TestEnvironment).await;
+    assert_eq!(
+        report.status,
+        RunStatus::Completed,
+        "{:?}",
+        report.terminal_reason
+    );
+    assert!(
+        counter(names::IDENTITY_COLLISION_SUSPECTED, &role) > before.0,
+        "a renamed control reused through a fuzzy match is a suspected collision"
+    );
+    assert_eq!(
+        counter(names::IDENTITY_SPLITS, &role),
+        before.1,
+        "no identity fell in the ambiguity band"
+    );
+}
+
+#[tokio::test]
+async fn an_identity_minted_in_the_ambiguity_band_counts_a_split() {
+    let _serial = SERIAL.lock().await;
+    // the same attribute-less control name in two differently named landmarks: the matcher
+    // mints a second identity and aliases it to the first
+    let page = |url: &str, title: &str, landmark: &str, next: Option<(&str, &str)>| {
+        let mut p = FakePage::new(url)
+            .title(title)
+            .node(FakeAxSpec::new("area", "region").name(landmark))
+            .node(FakeAxSpec::button("cart", "Add to cart").parent("area"));
+        if let Some((href, name)) = next {
+            p = p.node(FakeAxSpec::link("next", name, href));
+        }
+        p
+    };
+    let script = FakeScript::new()
+        .page(page(
+            "https://example.test/",
+            "Featured",
+            "Featured",
+            Some(("/clearance", "Clearance")),
+        ))
+        .page(page(
+            "https://example.test/clearance",
+            "Clearance",
+            "Clearance",
+            None,
+        ));
+    let role = by_role("anonymous");
+    let before = counter(names::IDENTITY_SPLITS, &role);
+    let report = explore(script).await;
+    assert_eq!(
+        report.status,
+        RunStatus::Completed,
+        "{:?}",
+        report.terminal_reason
+    );
+    assert!(
+        counter(names::IDENTITY_SPLITS, &role) > before,
+        "an aliased mint is a split"
+    );
+}
+
+#[tokio::test]
+async fn a_form_input_counts_under_its_value_partition() {
+    let _serial = SERIAL.lock().await;
+    let script = FakeScript::new().page(
+        FakePage::new("https://example.test/")
+            .title("Sign up")
+            .node(FakeAxSpec::textbox("email", "Email").attr("type", "email")),
+    );
+    let before = counter_total(names::FORM_SUBMISSIONS);
+    let email = counter(names::FORM_SUBMISSIONS, &[("partition", "email:valid_new_user")]);
+    let report = explore_with(script, |c| {
+        c.safety.profile = SafetyProfile::TestEnvironment;
+        c.limits.interactions = 30;
+    })
+    .await;
+    assert_eq!(
+        report.status,
+        RunStatus::Completed,
+        "{:?}",
+        report.terminal_reason
+    );
+    assert!(
+        counter_total(names::FORM_SUBMISSIONS) > before,
+        "an executed Type action counts under its partition"
+    );
+    assert!(
+        counter(names::FORM_SUBMISSIONS, &[("partition", "email:valid_new_user")]) > email,
+        "the valid email partition runs first"
+    );
+}
+
+#[tokio::test]
+async fn a_send_form_without_a_verified_sink_counts_a_denial() {
+    let _serial = SERIAL.lock().await;
+    const DESTINATION: &str = "https://example.test/invite?channel=test";
+    let script = FakeScript::new().page(
+        FakePage::new("https://example.test/")
+            .title("Invite")
+            .node(
+                FakeAxSpec::new("form", "form")
+                    .tag("form")
+                    .attr("id", "invite")
+                    .attr("action", DESTINATION),
+            )
+            .node(
+                FakeAxSpec::button("send", "Send invite")
+                    .attr("type", "submit")
+                    .attr("form", "invite")
+                    .attr("form-action", DESTINATION)
+                    .live_attr("form-action", DESTINATION),
+            ),
+    );
+    let before = counter(names::FORM_DENIED_NO_SINK, &[]);
+    let report = explore_with(script, |c| {
+        c.safety.profile = SafetyProfile::TestEnvironment;
+    })
+    .await;
+    assert_eq!(
+        report.status,
+        RunStatus::Completed,
+        "{:?}",
+        report.terminal_reason
+    );
+    assert!(
+        counter(names::FORM_DENIED_NO_SINK, &[]) > before,
+        "a denial that names the missing sink is counted"
+    );
+}
+
+/// A chain of `pages` states that all carry the same persistent "Delete account" control, which
+/// the read-only profile denies, so it is keyed on every page but never executed. Each page has
+/// a different set of headings (the bits of its number) so every page is its own cluster; only
+/// "Next" is actionable.
+fn help_chain(pages: u32) -> FakeScript {
+    let url = |i: u32| {
+        if i == 0 {
+            "https://example.test/".to_owned()
+        } else {
+            format!("https://example.test/p{i}")
+        }
+    };
+    let mut script = FakeScript::new();
+    for i in 0..pages {
+        let mut page = FakePage::new(&url(i))
+            .title(format!("Page {i}"))
+            .node(FakeAxSpec::button("delete", "Delete account").attr("id", "delete-btn"));
+        for bit in 0..7 {
+            if i & (1 << bit) != 0 {
+                page =
+                    page.node(FakeAxSpec::new(format!("h{bit}"), "heading").name(format!("Section {bit}")));
+            }
+        }
+        if i + 1 < pages {
+            page = page.node(FakeAxSpec::link("next", "Next", url(i + 1)));
+        }
+        script = script.page(page);
+    }
+    script
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_sixty_fifth_context_of_one_control_counts_a_coarsened_key() {
+    let _serial = SERIAL.lock().await;
+    let before = counter(names::KEYS_COARSENED, &[]);
+    let report = explore_with(help_chain(68), |c| {
+        c.limits.interactions = 400;
+        c.limits.states = 200;
+        c.politeness.delay_ms = 0;
+    })
+    .await;
+    assert!(
+        report.coverage.keys_total > 64,
+        "the chain must exceed the per-element context limit: {:?}",
+        report.coverage
+    );
+    assert!(
+        counter(names::KEYS_COARSENED, &[]) > before,
+        "the key past the per-element context limit is coarsened to route level"
     );
 }

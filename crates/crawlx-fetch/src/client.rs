@@ -8,11 +8,19 @@
 //! `Host` and SNI keep the original name because the URL is unchanged. After
 //! the response the connected peer is asserted against the checked set.
 
-use crate::body_limits::{read_capped, DEFAULT_MAX_BODY_BYTES};
+use crate::body_limits::DEFAULT_MAX_BODY_BYTES;
+use crate::certificate::{CertificateEvidence, CertificateUnavailable};
+use crate::charset::{self, CharsetEvidence, CharsetSource, DecodeError};
+use crate::codec::{
+    read_body, BodyLimitKind, BodyLimits, BodyRead, ContentEncoding, DEFAULT_MAX_EXPANSION_RATIO,
+};
 use crate::conditional::Validators;
+use crate::declaration::{ResponseDeclaration, StatusVerdict};
 use crate::egress::{capture_headers, protocol_of};
 use crate::error::FetchError;
+use crate::evidence::{BodyEvidence, FetchEvidence, EVIDENCE_HEADER};
 use crate::governor::{GlobalOriginCap, GovernorConfig, Origin, OriginGovernor};
+use crate::preflight::HeadPreflight;
 use crate::redirect::{is_redirect, location, strip_credentials, DEFAULT_MAX_REDIRECTS};
 use crate::resolver::Resolver;
 use crate::retry::{is_retryable_status, parse_retry_after, RetryPolicy};
@@ -33,6 +41,7 @@ use http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use parking_lot::Mutex;
 use rand_chacha::ChaCha8Rng;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -84,6 +93,18 @@ pub struct FetchConfig {
     /// `RequestControls::resolve`. Header values are sent only to the controls' scope domain
     /// (the seed's registrable domain); cookies only to hosts matching their own domain.
     pub controls: RequestControls,
+    /// Idle limit between received body chunks, separate from `request_timeout` (the whole
+    /// request) and `connect_timeout` (TCP and TLS establishment). `None` leaves only the
+    /// other two.
+    pub read_timeout: Option<Duration>,
+    /// Cap on bytes read from the transport, i.e. the compressed size of an encoded body.
+    /// `None` derives it from the decoded cap ([`BodyLimits::new`]). Independent of
+    /// `max_body_bytes`; neither can exceed [`crate::codec::HARD_MAX_BODY_BYTES`].
+    pub max_wire_bytes: Option<usize>,
+    /// Decoded bytes per wire byte above which an encoded body is refused as a decompression
+    /// bomb ([`FetchError::BodyLimit`]). Zero selects [`DEFAULT_MAX_EXPANSION_RATIO`]; the
+    /// ratio cannot be disabled.
+    pub max_expansion_ratio: u32,
 }
 
 impl std::fmt::Debug for FetchConfig {
@@ -113,6 +134,9 @@ impl Default for FetchConfig {
             shared_origin_cap: None,
             shared_governor: None,
             controls: RequestControls::default(),
+            read_timeout: None,
+            max_wire_bytes: None,
+            max_expansion_ratio: DEFAULT_MAX_EXPANSION_RATIO,
         }
     }
 }
@@ -200,6 +224,19 @@ fn host_of(url: &Url) -> Result<(String, Option<IpAddr>), FetchError> {
     }
 }
 
+/// What to do with a body larger than its cap.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OversizePolicy {
+    /// Return the bytes up to the cap and mark the response truncated (partial).
+    #[default]
+    Truncate,
+    /// Refuse with [`FetchError::BodyLimit`]: before any body byte is read when the response
+    /// declares a `Content-Length` above the cap, and when the stream crosses a cap
+    /// otherwise.
+    Reject,
+}
+
 /// Per-request options.
 #[derive(Clone, Debug)]
 pub struct FetchOptions {
@@ -228,6 +265,14 @@ pub struct FetchOptions {
     pub suppress_credentials: bool,
     /// Suppress all conditional validators after a caller-managed transition.
     pub suppress_validators: bool,
+    /// Cap on wire (compressed) bytes for this request; overrides `FetchConfig::max_wire_bytes`.
+    pub max_wire_bytes: Option<usize>,
+    /// Truncate or refuse a body that exceeds a cap.
+    pub oversize: OversizePolicy,
+    /// Declared MIME/encoding overrides and HTTP-error status sets.
+    pub declaration: ResponseDeclaration,
+    /// `HEAD` request before a `GET` (ignored for other methods).
+    pub preflight: Option<HeadPreflight>,
 }
 
 impl Default for FetchOptions {
@@ -244,6 +289,10 @@ impl Default for FetchOptions {
             dont_adjust_delay: false,
             suppress_credentials: false,
             suppress_validators: false,
+            max_wire_bytes: None,
+            oversize: OversizePolicy::Truncate,
+            declaration: ResponseDeclaration::default(),
+            preflight: None,
         }
     }
 }
@@ -327,6 +376,51 @@ impl FetchResponse {
     #[must_use]
     pub fn validators(&self) -> Validators {
         Validators::from_headers(&self.headers)
+    }
+
+    /// Facts the fetch plane observed about this response: peer certificate, body sizes and
+    /// limits, selected charset. `None` for a response not produced by a live fetch.
+    #[must_use]
+    pub fn evidence(&self) -> Option<FetchEvidence> {
+        FetchEvidence::from_headers(&self.headers)
+    }
+
+    /// Peer certificate evidence of the final response's own connection. Without recorded
+    /// evidence this is `Unavailable`, never a claim that a certificate was checked.
+    #[must_use]
+    pub fn certificate_evidence(&self) -> CertificateEvidence {
+        self.evidence().map_or(
+            CertificateEvidence::unavailable(CertificateUnavailable::NotReported),
+            |e| e.certificate,
+        )
+    }
+
+    fn charset_evidence(&self) -> CharsetEvidence {
+        self.evidence()
+            .and_then(|e| e.charset)
+            .or_else(|| charset::detect(self.content_type.as_deref(), &self.body, None))
+            .unwrap_or(CharsetEvidence {
+                label: "utf-8".to_owned(),
+                source: CharsetSource::Default,
+                declared: None,
+            })
+    }
+
+    /// The body as text in its selected encoding (override, byte-order mark, `Content-Type`,
+    /// `<meta>`/XML declaration, else UTF-8). Strict: bytes that are invalid in that encoding
+    /// are an error, never silently replaced.
+    ///
+    /// # Errors
+    /// [`DecodeError::Malformed`] when the body is not valid in the selected encoding.
+    pub fn text(&self) -> Result<Cow<'_, str>, DecodeError> {
+        charset::decode_strict(&self.body, &self.charset_evidence())
+    }
+
+    /// The body as text with invalid sequences replaced by U+FFFD; the flag reports whether
+    /// any were.
+    #[must_use]
+    pub fn text_lossy(&self) -> (Cow<'_, str>, bool) {
+        charset::decode_lossy(&self.body, &self.charset_evidence())
     }
 }
 
@@ -507,9 +601,14 @@ impl Fetcher {
                 .dns_resolver(Arc::clone(&pins))
                 .connect_timeout(cfg.connect_timeout)
                 .timeout(cfg.request_timeout)
-                .gzip(true)
-                .brotli(true)
+                // Bodies are decoded by `codec`, under independent wire/decoded/ratio limits.
+                .no_gzip()
+                .no_brotli()
+                .tls_info(true)
                 .danger_accept_invalid_certs(cfg.controls.skip_tls_verification());
+            if let Some(read) = cfg.read_timeout {
+                builder = builder.read_timeout(read);
+            }
             if let Some(p) = &cfg.proxy {
                 // Environment proxies stay disabled; only the checked proxy is used.
                 builder = builder.proxy(
@@ -898,7 +997,12 @@ impl Fetcher {
         Fut: Future<Output = Result<(), FetchError>> + Send,
     {
         let started = Instant::now();
-        let max_body = opts.max_body_bytes.unwrap_or(self.cfg.max_body_bytes);
+        opts.declaration.validate()?;
+        let controls = HopControls {
+            limits: self.body_limits(opts),
+            oversize: opts.oversize,
+            declaration: &opts.declaration,
+        };
         let max_redirects = opts.max_redirects.unwrap_or(self.cfg.max_redirects);
         let mut rng = self.cfg.seed.rng("fetch/retry", &[url.as_str().as_bytes()]);
         let mut headers = opts.headers.clone();
@@ -906,6 +1010,18 @@ impl Fetcher {
         let mut redirects: Vec<String> = Vec::new();
         let mut attempts: u32 = 0;
         let mut hops: Vec<FetchHop> = Vec::new();
+        if let Some(preflight) = opts.preflight.as_ref().filter(|_| opts.method == Method::GET) {
+            attempts = self
+                .run_preflight(
+                    url,
+                    opts,
+                    preflight,
+                    &controls.limits,
+                    max_retries,
+                    check_authority,
+                )
+                .await?;
+        }
 
         loop {
             if let Some(allowance) = &opts.request_allowance {
@@ -928,7 +1044,7 @@ impl Fetcher {
                     &opts.method,
                     &headers,
                     validators,
-                    max_body,
+                    &controls,
                     opts.follow_redirects && self.cfg.follow_redirects,
                     opts.capture,
                     opts.dont_adjust_delay,
@@ -988,6 +1104,45 @@ impl Fetcher {
         }
     }
 
+    /// Wire, decoded and expansion limits of one request.
+    fn body_limits(&self, opts: &FetchOptions) -> BodyLimits {
+        let mut limits = BodyLimits::new(opts.max_body_bytes.unwrap_or(self.cfg.max_body_bytes));
+        if let Some(wire) = opts.max_wire_bytes.or(self.cfg.max_wire_bytes) {
+            limits = limits.with_wire_cap(wire);
+        }
+        limits.with_max_expansion_ratio(self.cfg.max_expansion_ratio)
+    }
+
+    /// `HEAD` the URL before its `GET`. The `HEAD` is a complete fetch of its own: egress
+    /// re-check and governor admission on every hop, redirects followed with a re-check, one
+    /// request-allowance unit per hop. Returns the attempts it spent.
+    async fn run_preflight<F, Fut>(
+        &self,
+        url: &Url,
+        opts: &FetchOptions,
+        preflight: &HeadPreflight,
+        limits: &BodyLimits,
+        max_retries: u32,
+        check_authority: &F,
+    ) -> Result<u32, FetchError>
+    where
+        F: Fn() -> Fut + Sync,
+        Fut: Future<Output = Result<(), FetchError>> + Send,
+    {
+        let head = FetchOptions {
+            method: Method::HEAD,
+            validators: None,
+            preflight: None,
+            declaration: ResponseDeclaration::default(),
+            ..opts.clone()
+        };
+        let response = Box::pin(self.fetch_inner(url, &head, max_retries, check_authority)).await?;
+        preflight
+            .evaluate(response.status.as_u16(), &response.headers, limits)
+            .map_err(|refusal| FetchError::PreflightRefused { refusal })?;
+        Ok(response.attempts)
+    }
+
     /// Resolve and check `url`'s host; every address must pass.
     async fn resolve_checked(&self, url: &Url) -> Result<(String, Vec<IpAddr>), FetchError> {
         if let Err(denied) = self.policy.check_url(url) {
@@ -1043,7 +1198,7 @@ impl Fetcher {
         method: &Method,
         headers: &HeaderMap,
         validators: Option<&Validators>,
-        max_body: usize,
+        controls: &HopControls<'_>,
         follow_redirects: bool,
         capture: bool,
         dont_adjust_delay: bool,
@@ -1067,6 +1222,10 @@ impl Fetcher {
             let permit = self.governor.acquire(&origin).await?;
 
             let mut req_headers = self.request_headers(url, headers)?;
+            // Content codings are decoded here, under the body limits, not by the transport.
+            req_headers
+                .entry(header::ACCEPT_ENCODING)
+                .or_insert(HeaderValue::from_static("gzip, deflate, br"));
             if suppress_credentials {
                 strip_credentials(&mut req_headers);
             }
@@ -1141,8 +1300,18 @@ impl Fetcher {
                     .inc_by(1, &[("reason", reason)]);
             }
 
+            // The declaration's status verdict comes after governor feedback, so an allowed
+            // or denied `429`/`503` still holds the origin back for every later start.
+            let verdict = controls.declaration.statuses.verdict(status.as_u16());
+            if verdict == StatusVerdict::Deny {
+                self.emit_flow(flow, None);
+                return Err(FetchError::StatusDenied {
+                    status: status.as_u16(),
+                });
+            }
             if is_retryable_status(status.as_u16())
                 && attempt < max_retries
+                && verdict != StatusVerdict::Allow
                 && !(status.as_u16() == 429 && self.governor.defers_source_throttle())
             {
                 if let Some(wait) = self.cfg.retry.delay(attempt, retry_after, rng) {
@@ -1162,11 +1331,54 @@ impl Fetcher {
                     headers: resp_headers,
                 });
             }
-            let (body, truncated) = if method == Method::HEAD {
-                (Bytes::new(), false)
+            let encoding = ContentEncoding::from_headers(&resp_headers)?;
+            let coded = !encoding.codings().is_empty();
+            let declared_length = resp_headers
+                .get(header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            let certificate = if url.scheme() == "https" {
+                CertificateEvidence::from_der(resp.peer_certificate())
             } else {
-                read_capped(resp, max_body).await?
+                CertificateEvidence::unavailable(CertificateUnavailable::NotTls)
             };
+            let read = if method == Method::HEAD {
+                BodyRead {
+                    body: Bytes::new(),
+                    wire_bytes: 0,
+                    wire_digest: None,
+                    limit: None,
+                }
+            } else {
+                if controls.oversize == OversizePolicy::Reject {
+                    let cap = u64::try_from(if coded {
+                        controls.limits.wire()
+                    } else {
+                        controls.limits.decoded()
+                    })
+                    .unwrap_or(u64::MAX);
+                    if declared_length.is_some_and(|declared| declared > cap) {
+                        return Err(FetchError::BodyLimit {
+                            kind: BodyLimitKind::Declared,
+                            limit: cap,
+                        });
+                    }
+                }
+                let read = read_body(resp, encoding.codings(), &controls.limits).await?;
+                if let (OversizePolicy::Reject, Some(kind)) = (controls.oversize, read.limit) {
+                    let limit = match kind {
+                        BodyLimitKind::Wire => controls.limits.wire(),
+                        _ => controls.limits.decoded(),
+                    };
+                    return Err(FetchError::BodyLimit {
+                        kind,
+                        limit: u64::try_from(limit).unwrap_or(u64::MAX),
+                    });
+                }
+                read
+            };
+            let truncated = read.limit.is_some();
+            let body = read.body;
             if capture {
                 self.retain_response_body(url, &mut resp_headers, &body, truncated)
                     .await?;
@@ -1182,6 +1394,40 @@ impl Fetcher {
                 }
             }
             self.emit_flow(flow, Some(&body));
+            // The decoded body no longer matches the wire framing, like a transport decoder.
+            if coded {
+                resp_headers.remove(header::CONTENT_ENCODING);
+                resp_headers.remove(header::CONTENT_LENGTH);
+            }
+            // Declared overrides apply after retention and capture, which judge the wire type.
+            let wire_content_type = apply_declaration(&mut resp_headers, controls.declaration);
+            let content_type = resp_headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok());
+            let charset = charset::detect(content_type, &body, controls.declaration.charset.as_deref());
+            let evidence = FetchEvidence::new(
+                certificate,
+                BodyEvidence {
+                    content_encoding: match &encoding {
+                        ContentEncoding::Supported(codings) => {
+                            codings.iter().map(|c| c.name().to_owned()).collect()
+                        }
+                        ContentEncoding::Unsupported(token) => vec![token.clone()],
+                    },
+                    decoded: coded,
+                    wire_bytes: read.wire_bytes,
+                    wire_digest: read.wire_digest.clone(),
+                    decoded_bytes: u64::try_from(body.len()).unwrap_or(u64::MAX),
+                    declared_length,
+                    truncated,
+                    limit: read.limit,
+                },
+                charset,
+                wire_content_type,
+            );
+            if let Some(value) = evidence.to_header_value() {
+                resp_headers.insert(HeaderName::from_static(EVIDENCE_HEADER), value);
+            }
             return Ok(Hop::Final {
                 status,
                 headers: resp_headers,
@@ -1192,6 +1438,36 @@ impl Fetcher {
             });
         }
     }
+}
+
+/// Per-request body limits, overflow policy and declaration shared by every hop.
+struct HopControls<'a> {
+    limits: BodyLimits,
+    oversize: OversizePolicy,
+    declaration: &'a ResponseDeclaration,
+}
+
+/// Apply the declared MIME/encoding override to the effective `Content-Type`. Returns the
+/// sender's value when it was replaced.
+fn apply_declaration(headers: &mut HeaderMap, declaration: &ResponseDeclaration) -> Option<String> {
+    if declaration.content_type.is_none() && declaration.charset.is_none() {
+        return None;
+    }
+    let wire = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let mut effective = match (&declaration.content_type, &wire) {
+        (Some(mime), _) => mime.clone(),
+        (None, Some(wire)) => wire.clone(),
+        (None, None) => return None,
+    };
+    if let Some(label) = &declaration.charset {
+        effective = charset::with_charset(&effective, label);
+    }
+    let value = HeaderValue::from_str(&effective).ok()?;
+    headers.insert(header::CONTENT_TYPE, value);
+    wire
 }
 
 fn reserved_capture_header(name: &str) -> bool {

@@ -1,0 +1,13 @@
+{
+  "construct": "htmx-get",
+  "body": [
+    "<div hx-get='/h/fragment'>x</div>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/h/fragment",
+      "source": "htmx/hx-get"
+    }
+  ]
+}

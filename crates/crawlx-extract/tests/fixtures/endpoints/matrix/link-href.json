@@ -1,0 +1,18 @@
+{
+  "construct": "link-href",
+  "body": [
+    "<html><head><link rel='stylesheet' href='style.css'><link rel='icon' href='/favicon.ico'></head></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/style.css",
+      "source": "link/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/favicon.ico",
+      "source": "link/href"
+    }
+  ]
+}

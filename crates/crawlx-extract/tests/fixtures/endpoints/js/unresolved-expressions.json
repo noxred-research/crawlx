@@ -1,0 +1,581 @@
+[
+  {
+    "name": "identifier",
+    "js": "fetch(url);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "url"
+      }
+    ]
+  },
+  {
+    "name": "function-call",
+    "js": "fetch(getUrl());",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "call",
+        "source": "js/fetch",
+        "text": "getUrl()"
+      }
+    ]
+  },
+  {
+    "name": "awaited-call",
+    "js": "async function f(){ return fetch(await getUrl()); }",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "call",
+        "source": "js/fetch",
+        "text": "getUrl()"
+      }
+    ]
+  },
+  {
+    "name": "member",
+    "js": "fetch(cfg.url);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "member",
+        "source": "js/fetch",
+        "text": "cfg.url"
+      }
+    ]
+  },
+  {
+    "name": "computed-member",
+    "js": "fetch(routes['home']);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "member",
+        "source": "js/fetch",
+        "text": "routes['home']"
+      }
+    ]
+  },
+  {
+    "name": "computed-member-dynamic-key",
+    "js": "fetch(routes[k]);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "member",
+        "source": "js/fetch",
+        "text": "routes[k]"
+      }
+    ]
+  },
+  {
+    "name": "conditional-expression",
+    "js": "fetch(flag ? '/a/one' : '/b/two');",
+    "expected": [
+      {
+        "url": "/a/one",
+        "source": "js/string"
+      },
+      {
+        "url": "/b/two",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "expression",
+        "source": "js/fetch",
+        "text": "flag ? '/a/one' : '/b/two'"
+      }
+    ]
+  },
+  {
+    "name": "object-argument",
+    "js": "fetch({});",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "expression",
+        "source": "js/fetch",
+        "text": "{}"
+      }
+    ]
+  },
+  {
+    "name": "call-inside-concatenation",
+    "js": "fetch('/x' + getSuffix());",
+    "expected": [
+      {
+        "url": "/x:param",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "call",
+        "source": "js/fetch",
+        "text": "getSuffix()",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "reassigned-variable",
+    "js": "var u = '/a/first'; u = '/b/second'; fetch(u);",
+    "expected": [
+      {
+        "url": "/a/first",
+        "source": "js/string"
+      },
+      {
+        "url": "/b/second",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "u"
+      }
+    ]
+  },
+  {
+    "name": "redeclared-variable",
+    "js": "var u = '/a/first'; var u = '/b/second'; fetch(u);",
+    "expected": [
+      {
+        "url": "/a/first",
+        "source": "js/string"
+      },
+      {
+        "url": "/b/second",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "u"
+      }
+    ]
+  },
+  {
+    "name": "function-parameter",
+    "js": "function go(target){ fetch(target); }",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "target"
+      }
+    ]
+  },
+  {
+    "name": "constant-bound-to-call",
+    "js": "const u = makeUrl(); fetch(u);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "call",
+        "source": "js/fetch",
+        "text": "makeUrl()"
+      }
+    ]
+  },
+  {
+    "name": "constant-bound-to-member",
+    "js": "const u = cfg.api; fetch(u + '/items');",
+    "expected": [
+      {
+        "url": "/items",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "member",
+        "source": "js/fetch",
+        "text": "cfg.api",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "constant-chain-with-dynamic-leaf",
+    "js": "const a = b; const b2 = a; fetch(b2 + '/z/y');",
+    "expected": [
+      {
+        "url": "/z/y",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "b",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "cyclic-constants-terminate",
+    "js": "const a = b; const b = a; fetch(a);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "a"
+      }
+    ]
+  },
+  {
+    "name": "xhr-open-dynamic-url",
+    "js": "var x = new XMLHttpRequest(); x.open('GET', target);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/xhr",
+        "text": "target"
+      }
+    ]
+  },
+  {
+    "name": "xhr-open-dynamic-url-keeps-method",
+    "js": "var x = new XMLHttpRequest(); x.open('POST', cfg.save);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "member",
+        "source": "js/xhr",
+        "text": "cfg.save",
+        "method": "POST"
+      }
+    ]
+  },
+  {
+    "name": "xhr-open-unrelated-open-is-quiet",
+    "js": "db.open(name, mode);",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "generic-client-dynamic-is-quiet",
+    "js": "const v = cache.get(key); this.http.get(url);",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "generic-client-partial",
+    "js": "this.http.post('/api/' + kind, body);",
+    "expected": [
+      {
+        "url": "/api/:kind",
+        "source": "js/http",
+        "method": "POST"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/http",
+        "text": "kind",
+        "method": "POST",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "request-constructor",
+    "js": "new Request(input);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "input"
+      }
+    ]
+  },
+  {
+    "name": "request-with-options-url",
+    "js": "fetch(new Request(u, {method: 'POST'}));",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "u",
+        "method": "POST"
+      }
+    ]
+  },
+  {
+    "name": "axios-config-url",
+    "js": "axios({url: endpoint, method: 'put'});",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/axios",
+        "text": "endpoint",
+        "method": "PUT"
+      }
+    ]
+  },
+  {
+    "name": "axios-shorthand",
+    "js": "axios.delete(route);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/axios",
+        "text": "route",
+        "method": "DELETE"
+      }
+    ]
+  },
+  {
+    "name": "jquery-ajax-settings",
+    "js": "$.ajax({url: page + '/data.json', type: 'POST'});",
+    "expected": [
+      {
+        "url": "/data.json",
+        "source": "js/ajax",
+        "method": "POST"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/ajax",
+        "text": "page",
+        "method": "POST",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "jquery-get-dynamic",
+    "js": "$.get(path);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/ajax",
+        "text": "path"
+      }
+    ]
+  },
+  {
+    "name": "beacon-dynamic",
+    "js": "navigator.sendBeacon(endpoint, data);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/sendbeacon",
+        "text": "endpoint",
+        "method": "POST"
+      }
+    ]
+  },
+  {
+    "name": "location-assign-dynamic",
+    "js": "location.assign(next);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/location",
+        "text": "next"
+      }
+    ]
+  },
+  {
+    "name": "location-assignment-dynamic",
+    "js": "window.location.href = dest;",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/location",
+        "text": "dest"
+      }
+    ]
+  },
+  {
+    "name": "location-bare-assignment-dynamic",
+    "js": "location = getNext();",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "call",
+        "source": "js/location",
+        "text": "getNext()"
+      }
+    ]
+  },
+  {
+    "name": "history-push-state-dynamic",
+    "js": "history.pushState({}, '', route);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/history",
+        "text": "route"
+      }
+    ]
+  },
+  {
+    "name": "window-open-dynamic",
+    "js": "window.open(link, '_blank');",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/open",
+        "text": "link"
+      }
+    ]
+  },
+  {
+    "name": "websocket-dynamic",
+    "js": "new WebSocket(socketUrl);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/websocket",
+        "text": "socketUrl"
+      }
+    ]
+  },
+  {
+    "name": "eventsource-dynamic",
+    "js": "new EventSource(feed.url);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "member",
+        "source": "js/eventsource",
+        "text": "feed.url"
+      }
+    ]
+  },
+  {
+    "name": "new-url-dynamic-path",
+    "js": "new URL(path, 'https://other.test');",
+    "expected": [
+      {
+        "url": "https://other.test/",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/url",
+        "text": "path"
+      }
+    ]
+  },
+  {
+    "name": "new-url-dynamic-base",
+    "js": "new URL('/u/z', window.apiBase);",
+    "expected": [
+      {
+        "url": "/u/z",
+        "source": "js/url"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "member",
+        "source": "js/url",
+        "text": "window.apiBase",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "new-url-location-base-is-known",
+    "js": "new URL('/u/y', location.origin);",
+    "expected": [
+      {
+        "url": "/u/y",
+        "source": "js/url"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "resolved-sites-report-nothing",
+    "js": "fetch('/ok/path'); axios.get('/ok/axios'); location.href = '/ok/loc';",
+    "expected": [
+      {
+        "url": "/ok/path",
+        "source": "js/fetch"
+      },
+      {
+        "url": "/ok/axios",
+        "source": "js/axios"
+      },
+      {
+        "url": "/ok/loc",
+        "source": "js/location"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "fetch-options-with-dynamic-method-still-resolves",
+    "js": "fetch('/api/m', {method: verb});",
+    "expected": [
+      {
+        "url": "/api/m",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "spread-and-patterns-do-not-crash",
+    "js": "const {a, ...rest} = cfg; fetch(...args); fetch(`${a}`);",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "a"
+      }
+    ]
+  },
+  {
+    "name": "case-conversion-is-not-evaluated",
+    "js": "const p = '/Wrapped/Path'; fetch(p.toLowerCase());",
+    "expected": [
+      {
+        "url": "/Wrapped/Path",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "call",
+        "source": "js/fetch",
+        "text": "p.toLowerCase()"
+      }
+    ]
+  }
+]

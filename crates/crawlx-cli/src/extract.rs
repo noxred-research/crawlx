@@ -2,7 +2,8 @@
 //!
 //! Stdout is the default sink. An explicit output file uses exclusive creation.
 //! Image, read-more and schema references never authorize network acquisition.
-
+#[path = "extract_backup.rs"]
+mod backup;
 #[path = "extract_batch.rs"]
 mod batch;
 #[path = "extract_tei.rs"]
@@ -45,7 +46,7 @@ pub struct ExtractArgs {
     #[arg(long, value_name = "FILE", conflicts_with_all = ["request", "validate_tei", "format", "base_url", "max_file_bytes"])]
     pub tei_input: Option<PathBuf>,
     /// Absolute HTTP(S) resolution base only. Never fetched. Required for HTML extraction.
-    #[arg(long, value_name = "URL", required_unless_present = "tei_input")]
+    #[arg(long, value_name = "URL", required_unless_present_any = ["tei_input", "list"])]
     pub base_url: Option<Url>,
     /// JSON ExtractionPolicyV1 file, at most 64 KiB. Omit for legacy selection.
     #[arg(long, value_name = "POLICY")]
@@ -75,6 +76,21 @@ pub struct ExtractArgs {
     /// Aggregate input-byte allowance, including failed-read reservations.
     #[arg(long, requires = "input_dir", default_value_t = 67_108_864, value_parser = clap::value_parser!(u32).range(1..=67_108_864))]
     pub max_total_bytes: u32,
+    /// Discovery only: print one JSON line per admitted (`{"source", "bytes"}`) or refused
+    /// (`{"source", "refused"}`) entry of `--input-dir` and extract nothing. Exit 2 when an
+    /// entry was refused.
+    #[arg(long, requires = "input_dir", conflicts_with_all = ["output", "backup_dir", "request", "validate_tei", "base_url"])]
+    pub list: bool,
+    /// Copy every admitted input to this directory, which must not exist yet and lie outside the
+    /// source tree. Copies keep their relative paths, are created exclusively with owner-only
+    /// permissions, and never overwrite. An explicit operator disk-retention choice: refused
+    /// with `--zero-retention`.
+    #[arg(long, value_name = "NEW_DIR", conflicts_with_all = ["stdin_html", "tei_input", "list", "zero_retention"])]
+    pub backup_dir: Option<PathBuf>,
+    /// Declare zero retention: nothing derived from the input may be written to disk, so
+    /// `--output` and `--backup-dir` are refused and stdout is the only sink.
+    #[arg(long, conflicts_with_all = ["output", "backup_dir"])]
+    pub zero_retention: bool,
 }
 
 /// Shared article output modes.
@@ -249,12 +265,54 @@ async fn load_article_language(
     Ok(Some(ArticleLanguageHandle::new(std::sync::Arc::new(detector))))
 }
 
+/// `--list`: discovery only. One JSON line per admitted or refused entry; nothing is parsed,
+/// extracted, validated or written anywhere but `out`.
+async fn list_entries(
+    mut batch: batch::Batch,
+    out: &mut dyn Write,
+    cancel: &CancellationToken,
+) -> anyhow::Result<ExitCode> {
+    let mut code = 0_u8;
+    loop {
+        match batch.next(cancel).await {
+            Ok(Some(batch::Entry::Document { source, bytes })) => {
+                writeln!(
+                    out,
+                    "{}",
+                    serde_json::json!({"source": source, "bytes": bytes.len()})
+                )?;
+            }
+            Ok(Some(batch::Entry::Refused { source, reason })) => {
+                writeln!(
+                    out,
+                    "{}",
+                    serde_json::json!({"source": source, "refused": reason})
+                )?;
+                code = code.max(2);
+            }
+            Ok(None) => break,
+            Err(_) if cancel.is_cancelled() => bail!("offline extraction cancelled"),
+            Err(_) => {
+                batch_manifest("", Some("batch_traversal_limit_or_io"), None)?;
+                code = code.max(2);
+                break;
+            }
+        }
+    }
+    Ok(ExitCode::from(code))
+}
+
 async fn run_inner(
     args: &ExtractArgs,
     out: &mut dyn Write,
     cancel: &CancellationToken,
     batch: Option<batch::Batch>,
+    backup: Option<&backup::Backup>,
 ) -> anyhow::Result<ExitCode> {
+    if args.list {
+        let batch = batch.context("--list needs --input-dir")?;
+        return list_entries(batch, out, cancel).await;
+    }
     let validator = if args.validate_tei || args.tei_input.is_some() {
         Some(tei::Validator::prepare()?)
     } else {
@@ -331,6 +389,9 @@ async fn run_inner(
                     code = code.max(2);
                 }
                 batch::Entry::Document { source, bytes } => {
+                    if let Some(backup) = backup {
+                        backup.save(&source, &bytes)?;
+                    }
                     match extract(
                         bytes,
                         std::sync::Arc::clone(&base),
@@ -385,6 +446,13 @@ async fn run_inner(
             result = bounded_read(tokio::io::stdin(), usize::try_from(args.max_file_bytes)?.min(DEFAULT_MAX_INPUT_BYTES)) => bytes::Bytes::from(result?),
         }
     };
+    if let (Some(backup), Some(path)) = (backup, &args.input) {
+        let name = path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .context("the input file name must be UTF-8 to be backed up")?;
+        backup.save(name, &bytes)?;
+    }
     let document = extract(bytes, base, options, &pool, cancel).await?;
     if let Some(validator) = &validator {
         validate_document(&document, validator, cancel).await?;
@@ -404,6 +472,11 @@ pub async fn run(args: ExtractArgs, out: &mut dyn Write) -> anyhow::Result<ExitC
         .input_dir
         .as_deref()
         .map(|root| batch::Batch::open(root, &args))
+        .transpose()?;
+    let backup = args
+        .backup_dir
+        .as_deref()
+        .map(|dir| backup::Backup::create(dir, batch.as_ref().map(batch::Batch::canonical_root)))
         .transpose()?;
     let cancel = CancellationToken::new();
     let mut signals = tokio::task::JoinSet::new();
@@ -436,11 +509,11 @@ pub async fn run(args: ExtractArgs, out: &mut dyn Write) -> anyhow::Result<ExitC
         let mut file = output_options
             .open(path)
             .context("creating offline output without clobbering")?;
-        let result = run_inner(&args, &mut file, &cancel, batch).await;
+        let result = run_inner(&args, &mut file, &cancel, batch, backup.as_ref()).await;
         file.flush()?;
         result
     } else {
-        run_inner(&args, out, &cancel, batch).await
+        run_inner(&args, out, &cancel, batch, backup.as_ref()).await
     };
     signals.abort_all();
     while signals.join_next().await.is_some() {}

@@ -14,14 +14,18 @@ crawlx-policy = { path = "../crawlx-policy" }
 crawlx-url = { path = "../crawlx-url" }
 crawlx-telemetry = { path = "../crawlx-telemetry" }
 async-trait.workspace = true
+# Streaming, output-bounded gzip/deflate/brotli decoding (`codec`); same crate the HTTP transports use.
+async-compression = { version = "0.4.50", default-features = false, features = ["tokio", "gzip", "zlib", "deflate", "brotli"] }
 # Safe curve identifiers for wreq's synthetic ClientHello configuration (Apache-2.0, MSRV 1.80).
 boring2 = { version = "=4.15.15", default-features = false }
 base64.workspace = true
 bytes.workspace = true
 blake3.workspace = true
+encoding_rs.workspace = true
 chrono.workspace = true
 hickory-resolver.workspace = true
 http.workspace = true
+hex.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
@@ -35,6 +39,7 @@ regex.workspace = true
 rustix = { version = "1.1.5", features = ["fs"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 # TLS to an `https://` upstream proxy (`upstream`); the bundled public CA roots validate it
@@ -49,6 +54,8 @@ wreq.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 tracing-subscriber.workspace = true
+# The deployment-wide cooldown test runs two governors over one PostgreSQL origin store.
+crawlx-storage = { path = "../crawlx-storage" }
 wiremock.workspace = true
 
 [lints]

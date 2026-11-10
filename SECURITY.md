@@ -1,9 +1,9 @@
 # Security policy
 
-We take the security of crawlx and of the people who run it seriously. This page says which versions are
+We take the security of CrawlX and of the people who run it seriously. This page says which versions are
 supported, how to report a vulnerability, what you can expect from us, and what is in and out of scope.
 
-> **Intended use.** crawlx is built and intended for security research and authorized testing only: testing
+> **Intended use.** CrawlX is built and intended for security research and authorized testing only: testing
 > systems you own or have written authorization to test. It is not for unauthorized scraping, credential
 > attacks, evading a site's protections or any other abuse. See [Responsible use](#responsible-use).
 
@@ -14,7 +14,7 @@ supported, how to report a vulnerability, what you can expect from us, and what 
 | 0.1.x | Yes |
 | Earlier than 0.1.0 | No |
 
-crawlx is pre-1.0. Only the latest 0.1.x release receives security fixes. The distribution is the source
+CrawlX is pre-1.0. Only the latest 0.1.x release receives security fixes. The distribution is the source
 repository and tagged source releases; no binaries, container images, hosted service or crates.io packages
 are published, so there are no other artifacts to patch.
 
@@ -56,7 +56,7 @@ will tell you why.
 We consider security research carried out in good faith under this policy to be authorized, and we will not
 pursue or support legal action against you for it. Good faith means that you:
 
-- test only against your own deployment of crawlx or a local fixture, never against someone else's
+- test only against your own deployment of CrawlX or a local fixture, never against someone else's
   systems or data, and never against production data you do not own;
 - make a reasonable effort to avoid privacy violations, data destruction and interruption or degradation of
   services;
@@ -66,8 +66,8 @@ pursue or support legal action against you for it. Good faith means that you:
   until we have agreed a date or the 90-day target has passed without a response;
 - do not use social engineering, physical attacks, denial of service or spam.
 
-This safe harbor covers the crawlx project only. It does not authorize testing of third-party systems
-that crawlx may be pointed at, of the services of GitHub or other providers, or of anyone else's
+This safe harbor covers the CrawlX project only. It does not authorize testing of third-party systems
+that CrawlX may be pointed at, of the services of GitHub or other providers, or of anyone else's
 deployment; those have their own terms. If you are unsure whether an activity is covered, ask first,
 privately.
 
@@ -90,7 +90,7 @@ particular configuration. Examples:
 
 - vulnerabilities in third-party dependencies that have no crawlx-specific exploit path (report those
   upstream; dependency advisories are checked by `cargo deny`);
-- the behavior of crawled sites, and content a crawled site serves to crawlx;
+- the behavior of crawled sites, and content a crawled site serves to CrawlX;
 - findings that require an operator to deliberately grant an authorization, a profile or a secret to an
   attacker;
 - denial of service by volume against a deployment without the rate limits and resource limits the
@@ -99,18 +99,18 @@ particular configuration. Examples:
   (see [data and secrets](docs/design/data-and-secrets.md#chromium-background-traffic));
 - missing hardening that is documented as a known limitation in the [changelog](CHANGELOG.md);
 - reports from automated scanners without a demonstrated impact, and social engineering of maintainers;
-- reports that depend on running crawlx against a system you do not own and are not authorized to test.
-  Research on crawlx itself must use your own deployment or a local fixture (see [Safe harbor](#safe-harbor));
-- abuse of crawlx by third parties against systems you operate. We cannot act on deployments we do not run;
+- reports that depend on running CrawlX against a system you do not own and are not authorized to test.
+  Research on CrawlX itself must use your own deployment or a local fixture (see [Safe harbor](#safe-harbor));
+- abuse of CrawlX by third parties against systems you operate. We cannot act on deployments we do not run;
   report that activity to the operator or hosting provider concerned, and tell us if you believe a safety
-  control in crawlx failed to stop it, which is in scope.
+  control in CrawlX failed to stop it, which is in scope.
 
 ### Authorization records
 
-crawlx refuses requests that need elevated authority unless an authorization record covers them. The safety
+CrawlX refuses requests that need elevated authority unless an authorization record covers them. The safety
 profiles `test_environment` and `authorized_security_test`, private-network access
 (`--allow-private-networks`) and the robots override all require a record created by the operator. The
-record is evidence of the operator's stated authorization; crawlx does not verify legal permission to crawl a
+record is evidence of the operator's stated authorization; CrawlX does not verify legal permission to crawl a
 target. A path that performs one of those actions without a valid, unrevoked, in-scope record is a
 vulnerability. See the [safety model](docs/design/safety-model.md#authorization-records) for what is
 enforced and where.
@@ -130,7 +130,7 @@ The egress filter (SSRF protection) and the independent safety kernel (see the
 
 ## Responsible use
 
-crawlx is built and intended for **security research and authorized testing only**: testing systems you own,
+CrawlX is built and intended for **security research and authorized testing only**: testing systems you own,
 or systems you have written authorization to test. Do not use it for unauthorized scraping, credential
 attacks, evading a site's protections or any other abuse. This is the project's intended-use policy and a
 condition of support and community participation; the [AGPL-3.0-only](LICENSE) license itself is unchanged.
@@ -139,7 +139,7 @@ The project enforces this in code: privileged modes need an
 [authorization record](docs/design/safety-model.md#authorization-records), the default `read_only` profile
 cannot change server state, a hard safety kernel adjudicates every browser action, and a deny-first egress
 policy bounds every request. An authorization record states what you are authorized to do; it does not
-verify that you are. Misuse of crawlx against systems you are not authorized to test is not covered by this
+verify that you are. Misuse of CrawlX against systems you are not authorized to test is not covered by this
 policy, is not covered by the safe harbor above, and is your responsibility.
 
 ## Verifying a release

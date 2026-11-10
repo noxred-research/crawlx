@@ -114,7 +114,10 @@ impl DeliveryRegistry {
                     }
                     let config = crawlx_storage::s3::S3Config::from_env()?;
                     Arc::new(S3Destination::new(
-                        Arc::new(crawlx_storage::s3::S3Blobs::new(&config)),
+                        Arc::new(
+                            crawlx_storage::s3::S3Blobs::new(&config)
+                                .map_err(crawlx_core::StoreError::from)?,
+                        ),
                         spec.prefix
                             .ok_or(DeliveryError::Unavailable("s3_prefix_required"))?,
                     )?)

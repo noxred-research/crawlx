@@ -1,0 +1,28 @@
+{
+  "construct": "base-href",
+  "body": [
+    "<html><head><base href='/other/'></head><body><a href='rel.html'>x</a><img src='pic.png'><form action='go'><input name='q'></form></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/other/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/other/rel.html",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/other/pic.png",
+      "source": "img/src"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/other/go?q=crawlx",
+      "source": "form/action"
+    }
+  ]
+}

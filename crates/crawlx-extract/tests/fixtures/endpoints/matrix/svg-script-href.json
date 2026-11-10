@@ -1,0 +1,18 @@
+{
+  "construct": "svg-script-href",
+  "body": [
+    "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><script href='/s/one.js'></script><script xlink:href='/s/two.js'></script></svg>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/s/one.js",
+      "source": "svg/script-href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/s/two.js",
+      "source": "svg/script-href"
+    }
+  ]
+}

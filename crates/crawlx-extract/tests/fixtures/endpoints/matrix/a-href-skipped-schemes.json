@@ -1,0 +1,12 @@
+{
+  "construct": "a-href-skipped-schemes",
+  "body": [
+    "<a href='#top'>x</a>",
+    "<a href='mailto:a@b.test'>x</a>",
+    "<a href='javascript:void(0)'>x</a>",
+    "<a href='data:text/html,hi'>x</a>",
+    "<a href='tel:+100'>x</a>",
+    "<a href=''>x</a>"
+  ],
+  "expected": []
+}

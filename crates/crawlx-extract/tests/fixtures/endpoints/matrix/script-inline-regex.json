@@ -1,0 +1,15 @@
+{
+  "construct": "script-inline-regex",
+  "body": [
+    "<script>var u = \"/api/inline/list.json\";</script>"
+  ],
+  "javascript_mode": "regex",
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/inline/list.json",
+      "source": "script/text",
+      "confidence": "regex"
+    }
+  ]
+}

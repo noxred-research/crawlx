@@ -1,0 +1,99 @@
+[
+  {
+    "name": "inline-script-unresolved",
+    "html": "<html><body><script>fetch(u);</script></body></html>",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "u",
+        "origin": "inline_script",
+        "script_text": "fetch(u);"
+      }
+    ]
+  },
+  {
+    "name": "inline-script-resolved-against-page",
+    "html": "<html><body><script>fetch('api/x');</script></body></html>",
+    "expected": [
+      {
+        "url": "/app/api/x",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "event-handler-unresolved",
+    "html": "<button onclick=\"location.href=dest\">x</button>",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/location",
+        "text": "dest",
+        "origin": "event_handler",
+        "script_text": "location.href=dest"
+      }
+    ]
+  },
+  {
+    "name": "event-handler-partial",
+    "html": "<button onclick=\"fetch('/h/' + id)\">x</button>",
+    "expected": [
+      {
+        "url": "/h/:id",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "id",
+        "partial": true,
+        "origin": "event_handler",
+        "script_text": "fetch('/h/' + id)"
+      }
+    ]
+  },
+  {
+    "name": "event-handler-resolved",
+    "html": "<button onclick=\"window.open('/h/open')\">x</button>",
+    "expected": [
+      {
+        "url": "/h/open",
+        "source": "js/open"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "nested-handler-unresolved",
+    "html": "<button onclick=\"el.setAttribute('onmouseover', &quot;fetch(u)&quot;)\">x</button>",
+    "expected": [],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "u",
+        "origin": "nested_handler",
+        "script_text": "fetch(u)"
+      }
+    ]
+  },
+  {
+    "name": "handler-attribute-needs-ast-mode",
+    "html": "<button onclick=\"fetch('/h/ast-only')\">x</button>",
+    "mode": "regex",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "handler-without-code-is-ignored",
+    "html": "<button onclick=\"\" onmouseover=\"  \">x</button>",
+    "expected": [],
+    "unresolved": []
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "construct": "del-cite",
+  "body": [
+    "<del cite='/c/removed.html'>x</del>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/c/removed.html",
+      "source": "del/cite"
+    }
+  ]
+}

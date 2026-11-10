@@ -1,0 +1,38 @@
+{
+  "id": "m03-conflicting-title-sources",
+  "family": "metadata",
+  "note": "site suffix in the title element, repeated author tags and a time element",
+  "expectedText": "title=Valley Dairy Doubles Its Cheese Output\nauthors=Noor Haddad; Karl Berg\nlanguage=en\npublished=2026-01-20\ncanonical=https://corpus.test/business/valley-dairy\ndescription=The dairy added a second ripening cellar.",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 44
+    },
+    {
+      "label": "authors",
+      "start": 53,
+      "end": 75
+    },
+    {
+      "label": "language",
+      "start": 85,
+      "end": 87
+    },
+    {
+      "label": "published",
+      "start": 98,
+      "end": 108
+    },
+    {
+      "label": "canonical",
+      "start": 119,
+      "end": 160
+    },
+    {
+      "label": "description",
+      "start": 173,
+      "end": 214
+    }
+  ]
+}

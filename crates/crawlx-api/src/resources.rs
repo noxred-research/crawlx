@@ -121,6 +121,20 @@ pub(crate) fn metadata_expires_at(run: &RunMetadata) -> Option<crawlx_core::Time
     Some(run.finished_at? + ChronoDuration::days(days))
 }
 
+/// The compat status `expiresAt`: [`metadata_expires_at`] once the run finished, until then the
+/// deadline the run would have if it ended now (`created_at + retention.days`). The deadline moves
+/// to `finished_at + retention.days` when the run ends.
+pub(crate) fn status_expires_at(run: &RunMetadata) -> crawlx_core::Timestamp {
+    metadata_expires_at(run).unwrap_or_else(|| {
+        let days = if run.retention.mode == RetentionMode::Zdr {
+            0
+        } else {
+            i64::from(run.retention.days)
+        };
+        run.created_at + ChronoDuration::days(days)
+    })
+}
+
 /// The crawl resource returned by `POST /v1/crawls` and `GET /v1/crawls/{id}`.
 #[must_use]
 pub fn run_json(

@@ -1,0 +1,13 @@
+{
+  "construct": "ins-cite",
+  "body": [
+    "<ins cite='/c/added.html'>x</ins>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/c/added.html",
+      "source": "ins/cite"
+    }
+  ]
+}

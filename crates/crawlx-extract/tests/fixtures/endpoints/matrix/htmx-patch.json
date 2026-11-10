@@ -1,0 +1,13 @@
+{
+  "construct": "htmx-patch",
+  "body": [
+    "<button hx-patch='/h/modify'>x</button>"
+  ],
+  "expected": [
+    {
+      "method": "PATCH",
+      "url": "https://matrix.test/h/modify",
+      "source": "htmx/hx-patch"
+    }
+  ]
+}

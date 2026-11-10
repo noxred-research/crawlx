@@ -159,23 +159,71 @@ impl From<StrategyArg> for CrawlStrategy {
     }
 }
 
-/// `--known-files` (compatibility `-kf`).
+/// `--cache-mode`.
 #[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum KnownFileArg {
-    #[value(name = "robots_paths")]
-    /// `robots.txt` paths.
-    RobotsPaths,
-    #[value(name = "sitemap")]
-    /// Sitemaps.
-    Sitemap,
+pub enum CacheModeArg {
+    #[value(name = "read_write", alias = "read-write")]
+    /// Read matching fresh entries and write successful acquisitions.
+    ReadWrite,
+    #[value(name = "bypass")]
+    /// Never read; permit writes.
+    Bypass,
+    #[value(name = "disabled")]
+    /// Neither read nor write.
+    Disabled,
+    #[value(name = "read_only", alias = "read-only")]
+    /// Read only; a miss never dispatches a request.
+    ReadOnly,
+    #[value(name = "write_only", alias = "write-only")]
+    /// Never read; write successful acquisitions.
+    WriteOnly,
 }
 
-impl From<KnownFileArg> for KnownFile {
-    fn from(a: KnownFileArg) -> Self {
-        match a {
-            KnownFileArg::RobotsPaths => Self::RobotsPaths,
-            KnownFileArg::Sitemap => Self::Sitemap,
+impl From<CacheModeArg> for crawlx_core::cache::CacheModeV1 {
+    fn from(mode: CacheModeArg) -> Self {
+        match mode {
+            CacheModeArg::ReadWrite => Self::ReadWrite,
+            CacheModeArg::Bypass => Self::Bypass,
+            CacheModeArg::Disabled => Self::Disabled,
+            CacheModeArg::ReadOnly => Self::ReadOnly,
+            CacheModeArg::WriteOnly => Self::WriteOnly,
         }
+    }
+}
+
+/// `--known-files` (compatibility `-kf`). `all` names both files; the spellings of the
+/// compatibility flag (`robotstxt`, `sitemapxml`) are accepted next to the native ones.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum KnownFileArg {
+    #[value(name = "robots_paths", aliases = ["robotstxt", "robots-paths", "robots"])]
+    /// `robots.txt` paths.
+    RobotsPaths,
+    #[value(name = "sitemap", aliases = ["sitemapxml", "sitemap-xml", "sitemap_xml"])]
+    /// Sitemaps.
+    Sitemap,
+    #[value(name = "all")]
+    /// Both of the above.
+    All,
+}
+
+impl KnownFileArg {
+    /// The files the flag values stand for, each once, in first-named order, so a repeated or
+    /// overlapping value (`all,sitemap`) never makes the traversal visit a file twice.
+    pub(crate) fn expand(values: &[Self]) -> Vec<KnownFile> {
+        let mut out = Vec::with_capacity(2);
+        for value in values {
+            let files: &[KnownFile] = match value {
+                Self::RobotsPaths => &[KnownFile::RobotsPaths],
+                Self::Sitemap => &[KnownFile::Sitemap],
+                Self::All => &[KnownFile::RobotsPaths, KnownFile::Sitemap],
+            };
+            for file in files {
+                if !out.contains(file) {
+                    out.push(*file);
+                }
+            }
+        }
+        out
     }
 }
 
@@ -382,6 +430,15 @@ pub struct CrawlArgs {
     /// or `--request` value overrides the preset.
     #[arg(long)]
     pub compat_defaults: bool,
+    /// Print the effective per-run request (defaults, preset, `--config`, `--request` and flags
+    /// folded in order, after admission, secrets redacted) with its configuration digest as a
+    /// JSON array, one entry per seed, then exit. No crawl runs and nothing touches the network.
+    #[arg(long, help_heading = "Debug")]
+    pub print_config: bool,
+    /// Response-cache behavior of the run (`read_write`, `bypass`, `disabled`, `read_only`,
+    /// `write_only`); replaces the `cache.mode` of `--config`/`--request`.
+    #[arg(long, value_enum, value_name = "MODE", help_heading = "Fetch")]
+    pub cache_mode: Option<CacheModeArg>,
     /// Check the browser, the configuration and the network path to the seeds, print a table
     /// and exit non-zero when a check fails.
     #[arg(long, help_heading = "Debug")]
@@ -740,6 +797,8 @@ impl CrawlArgs {
             delay_seconds,
             crawl_duration,
             compat_defaults,
+            print_config,
+            cache_mode,
             health_check,
             update,
             disable_update_check,
@@ -848,6 +907,8 @@ impl CrawlArgs {
         fill(&mut self.delay_seconds, delay_seconds);
         fill(&mut self.crawl_duration, crawl_duration);
         fill(&mut self.compat_defaults, compat_defaults);
+        fill(&mut self.print_config, print_config);
+        fill(&mut self.cache_mode, cache_mode);
         fill(&mut self.health_check, health_check);
         fill(&mut self.update, update);
         fill(&mut self.disable_update_check, disable_update_check);
@@ -1142,6 +1203,12 @@ fn apply_flags(args: &CrawlArgs, crawl: &mut CreateCrawl) -> anyhow::Result<()> 
     if let Some(n) = args.limit_interactions {
         crawl.limits.interactions = n;
     }
+    if let Some(mode) = args.cache_mode {
+        crawl
+            .cache
+            .get_or_insert_with(crawlx_core::cache::CachePolicyV1::default)
+            .mode = mode.into();
+    }
     if let Some(d) = args.crawl_duration {
         crawl.limits.duration_seconds = crawl_duration_seconds(d)?;
     }
@@ -1225,7 +1292,7 @@ fn apply_scope(args: &CrawlArgs, scope: &mut Scope) -> anyhow::Result<()> {
         scope.max_pages_per_host = Some(n);
     }
     if !args.known_files.is_empty() {
-        scope.known_files = args.known_files.iter().map(|&k| k.into()).collect();
+        scope.known_files = KnownFileArg::expand(&args.known_files);
     }
     if !args.extension_match.is_empty() {
         scope.extension_match.clone_from(&args.extension_match);
@@ -1381,7 +1448,7 @@ fn apply_fetch(args: &CrawlArgs, f: &mut Fetch) -> anyhow::Result<()> {
         f.proxy = Some(p.clone());
     }
     if !args.resolvers.is_empty() {
-        f.resolvers = expand_file_values(&args.resolvers)?;
+        f.resolvers = crate::list_values::resolvers(&args.resolvers)?;
     }
     for raw in expand_file_values(&args.headers)? {
         let (name, value) = split_header(&raw)?;

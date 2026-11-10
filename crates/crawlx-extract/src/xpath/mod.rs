@@ -1,5 +1,6 @@
 //! XPath 1.0 on the existing scraper tree. No document resolver, sockets or extension callbacks.
 //! Evaluation, string work and DOM indexing share one hard operation counter.
+mod css;
 mod syntax;
 use crawlx_core::selectors::{SelectorPolicyV1, SelectorV1, MAX_OPERATIONS, MAX_SELECTED};
 use ego_tree::{NodeId, NodeRef};
@@ -33,6 +34,13 @@ pub enum SelectorError {
     /// Caller namespace differs from saved descriptor.
     #[error("adaptive selector scope mismatch")]
     ScopeMismatch,
+    /// Recognized but unsupported selector syntax, such as a pseudo-element other than
+    /// `::text` and `::attr(name)`, or one used where only elements are allowed.
+    #[error("unsupported selector syntax: {0}")]
+    Unsupported(&'static str),
+    /// A regex transform pattern was refused by the shared admission gate.
+    #[error(transparent)]
+    Regex(#[from] crate::regex_builtins::RegexError),
     /// Structural contract validation.
     #[error(transparent)]
     Policy(#[from] crawlx_core::CoreError),
@@ -54,11 +62,13 @@ pub enum XPathValue {
 #[derive(Debug, Clone)]
 pub struct CompiledSelector {
     expression: Compiled,
+    /// AST node count charged for evaluations rooted below the document node.
+    ast_nodes: usize,
 }
 #[derive(Debug, Clone)]
 enum Compiled {
     XPath(Expr),
-    Css(Selector),
+    Css(Vec<css::Part>),
 }
 impl CompiledSelector {
     /// Compile and reject excessive syntax or unknown functions before evaluation.
@@ -68,20 +78,23 @@ impl CompiledSelector {
         if spec.expression().len() > crawlx_core::selectors::MAX_EXPRESSION_BYTES {
             return Err(SelectorError::Budget("expression bytes"));
         }
-        Ok(Self {
-            expression: match spec {
-                SelectorV1::Xpath { expression } => Compiled::XPath(syntax::compile(expression)?),
-                SelectorV1::Css { expression } => Compiled::Css(compile_css(expression)?),
-                _ => return Err(SelectorError::Syntax),
-            },
-        })
+        match spec {
+            SelectorV1::Xpath { expression } => Self::xpath(expression),
+            SelectorV1::Css { expression } => Ok(Self {
+                expression: Compiled::Css(css::compile(expression)?),
+                ast_nodes: 1,
+            }),
+            _ => Err(SelectorError::Syntax),
+        }
     }
     /// Compile XPath directly.
     /// # Errors
     /// Same errors as `compile`.
     pub fn xpath(expression: &str) -> Result<Self, SelectorError> {
+        let (expr, ast_nodes) = syntax::compile(expression)?;
         Ok(Self {
-            expression: Compiled::XPath(syntax::compile(expression)?),
+            expression: Compiled::XPath(expr),
+            ast_nodes,
         })
     }
     /// Validate all static XPath prefix references without parsing or inspecting a document.
@@ -98,6 +111,11 @@ impl CompiledSelector {
 pub(crate) fn compile_css(source: &str) -> Result<Selector, SelectorError> {
     if source.len() > crawlx_core::selectors::MAX_EXPRESSION_BYTES {
         return Err(SelectorError::Budget("expression bytes"));
+    }
+    if css::has_pseudo_element(source) {
+        return Err(SelectorError::Unsupported(
+            "pseudo-element in an element selector",
+        ));
     }
     Selector::parse(source).map_err(|_| SelectorError::Syntax)
 }
@@ -290,37 +308,115 @@ impl<'a> SelectorDocument<'a> {
         selector: &CompiledSelector,
         namespaces: &BTreeMap<String, String>,
     ) -> Result<XPathValue, SelectorError> {
+        self.evaluate_in(selector, 0, namespaces)
+    }
+    /// Evaluate a compiled selector with `context` as the XPath context node and the CSS scope.
+    ///
+    /// Relative XPath paths start at `context`; absolute paths still start at the document root.
+    /// CSS selectors match descendants of `context` (the whole document for node zero).
+    /// # Errors
+    /// Returns typed evaluation or resource-limit errors, or `NodeSetRequired` for an unknown node.
+    pub fn evaluate_in(
+        &mut self,
+        selector: &CompiledSelector,
+        context: usize,
+        namespaces: &BTreeMap<String, String>,
+    ) -> Result<XPathValue, SelectorError> {
+        if context >= self.entries.len() {
+            return Err(SelectorError::NodeSetRequired);
+        }
         match &selector.expression {
             Compiled::XPath(expr) => {
-                self.charge(crawlx_core::selectors::MAX_AST_NODES)?;
+                self.charge(if context == 0 {
+                    crawlx_core::selectors::MAX_AST_NODES
+                } else {
+                    selector.ast_nodes
+                })?;
                 syntax::validate_namespaces(expr, namespaces)?;
                 self.eval(
                     expr,
                     Context {
-                        node: 0,
+                        node: context,
                         position: 1,
                         size: 1,
                     },
                     namespaces,
                 )
             }
-            Compiled::Css(selector) => {
-                // CSS matching can walk ancestors for each candidate. Reserve a conservative
-                // quadratic tree bound before invoking the library matcher.
-                let count = self.entries.len();
-                self.charge(count.saturating_mul(count))?;
-                let mut nodes = Vec::new();
-                for el in self.html.select(selector) {
-                    if let Some(id) = self.ids.get(&el.id()) {
-                        nodes.push(*id);
-                        if nodes.len() > MAX_SELECTED {
-                            return Err(SelectorError::Budget("selected nodes"));
+            Compiled::Css(parts) => self.evaluate_css(parts, context),
+        }
+    }
+    fn evaluate_css(&mut self, parts: &[css::Part], context: usize) -> Result<XPathValue, SelectorError> {
+        // CSS matching can walk ancestors for each candidate. Reserve a conservative
+        // quadratic bound over the scope and its ancestor chain before invoking the matcher.
+        let span = self.entries[context].end.saturating_sub(context);
+        let mut depth = 0usize;
+        let mut ancestor = self.entries[context].parent;
+        while let Some(i) = ancestor {
+            depth = depth.saturating_add(1);
+            ancestor = self.entries[i].parent;
+        }
+        self.charge(span.saturating_mul(span.saturating_add(depth)))?;
+        let html = self.html;
+        let scope = match self.entries[context].kind {
+            Kind::Root => None,
+            Kind::Element(_) => match self.element(context) {
+                Some(element) => Some(element),
+                None => return Ok(XPathValue::Nodes(Vec::new())),
+            },
+            _ => return Ok(XPathValue::Nodes(Vec::new())),
+        };
+        let mut nodes = Vec::new();
+        for part in parts {
+            if let Some(root) = scope {
+                for element in root.select(&part.selector) {
+                    self.css_project(element, &part.projection, &mut nodes)?;
+                }
+            } else {
+                for element in html.select(&part.selector) {
+                    self.css_project(element, &part.projection, &mut nodes)?;
+                }
+            }
+        }
+        if parts.len() > 1 {
+            self.normalize(&mut nodes)?;
+        }
+        Ok(XPathValue::Nodes(nodes))
+    }
+    fn css_project(
+        &mut self,
+        element: ElementRef<'a>,
+        projection: &css::Projection,
+        nodes: &mut Vec<usize>,
+    ) -> Result<(), SelectorError> {
+        let Some(&index) = self.ids.get(&element.id()) else {
+            return Ok(());
+        };
+        match projection {
+            css::Projection::Elements => nodes.push(index),
+            css::Projection::Text => {
+                self.charge(self.entries[index].children.len())?;
+                for &child in &self.entries[index].children {
+                    if matches!(self.entries[child].kind, Kind::Text(_)) {
+                        nodes.push(child);
+                    }
+                }
+            }
+            css::Projection::Attr(name) => {
+                self.charge(self.entries[index].attributes.len())?;
+                for &attribute in &self.entries[index].attributes {
+                    if let Kind::Attribute(local, _, _, _) = self.entries[attribute].kind {
+                        if local.eq_ignore_ascii_case(name) {
+                            nodes.push(attribute);
                         }
                     }
                 }
-                Ok(XPathValue::Nodes(nodes))
             }
         }
+        if nodes.len() > MAX_SELECTED {
+            return Err(SelectorError::Budget("selected nodes"));
+        }
+        Ok(())
     }
     /// Select policy elements, rejecting scalar and non-element pruning results.
     /// # Errors
@@ -358,6 +454,50 @@ impl<'a> SelectorDocument<'a> {
     #[must_use]
     pub fn native_id(&self, node: usize) -> Option<NodeId> {
         self.entries.get(node).and_then(|e| e.native)
+    }
+    /// Index of a native DOM node in this document, absent for nodes outside it.
+    #[must_use]
+    pub fn index_of(&self, id: NodeId) -> Option<usize> {
+        self.ids.get(&id).copied()
+    }
+    /// Parent of a native node (the document root for top-level nodes), absent for the root
+    /// and for virtual attribute/namespace nodes.
+    #[must_use]
+    pub fn parent_of(&self, node: usize) -> Option<usize> {
+        let entry = self.entries.get(node)?;
+        entry.native.and(entry.parent)
+    }
+    /// Element children of `node` in document order.
+    /// # Errors
+    /// Returns shared operation exhaustion.
+    pub fn element_children(&mut self, node: usize) -> Result<Vec<usize>, SelectorError> {
+        let entry = self.entries.get(node).ok_or(SelectorError::NodeSetRequired)?;
+        let count = entry.children.len();
+        self.charge(count.saturating_add(1))?;
+        Ok(self.entries[node]
+            .children
+            .iter()
+            .copied()
+            .filter(|child| matches!(self.entries[*child].kind, Kind::Element(_)))
+            .collect())
+    }
+    /// Descendant elements of `node` in document order, under the selected-node ceiling.
+    /// # Errors
+    /// Returns shared operation exhaustion or the selected-node ceiling.
+    pub fn descendant_elements(&mut self, node: usize) -> Result<Vec<usize>, SelectorError> {
+        let entry = self.entries.get(node).ok_or(SelectorError::NodeSetRequired)?;
+        let end = entry.end;
+        self.charge(end.saturating_sub(node))?;
+        let mut out = Vec::new();
+        for i in node + 1..end {
+            if matches!(self.entries[i].kind, Kind::Element(_)) {
+                if out.len() >= MAX_SELECTED {
+                    return Err(SelectorError::Budget("selected nodes"));
+                }
+                out.push(i);
+            }
+        }
+        Ok(out)
     }
     /// Borrow selected element for structural descriptors or attributes.
     #[must_use]

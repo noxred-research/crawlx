@@ -1,0 +1,286 @@
+[
+  {
+    "name": "string-literal-catch-all",
+    "js": "var a = '/api/v1/users';",
+    "expected": [
+      {
+        "url": "/api/v1/users",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "absolute-literal",
+    "js": "var a = 'https://other.test/a/b';",
+    "expected": [
+      {
+        "url": "https://other.test/a/b",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "relative-literals",
+    "js": "var a = './rel/x'; var b = '../up/y';",
+    "expected": [
+      {
+        "url": "/app/rel/x",
+        "source": "js/string"
+      },
+      {
+        "url": "/up/y",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "protocol-relative",
+    "js": "var a = '//cdn.test/lib.js';",
+    "expected": [
+      {
+        "url": "https://cdn.test/lib.js",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "non-url-strings-ignored",
+    "js": "var a = 'hello world'; var b = '/with space'; var c = 'a/b'; var d = '<div>'; var e = '/';",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "concatenation-of-literals",
+    "js": "fetch('/api/' + 'users');",
+    "expected": [
+      {
+        "url": "/api/users",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "const-chain-folds",
+    "js": "var a = 'https://h.test/'; var b = 'x'; fetch(a + b);",
+    "expected": [
+      {
+        "url": "https://h.test/",
+        "source": "js/string"
+      },
+      {
+        "url": "https://h.test/x",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "template-with-const",
+    "js": "const v = 'v2'; fetch(`/api/${v}/items`);",
+    "expected": [
+      {
+        "url": "/api/v2/items",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "template-with-dynamic",
+    "js": "fetch(`/api/${id}/items`);",
+    "expected": [
+      {
+        "url": "/api/:id/items",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "id",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "concatenation-with-dynamic",
+    "js": "fetch('/users/' + id);",
+    "expected": [
+      {
+        "url": "/users/:id",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "id",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "two-dynamic-parts",
+    "js": "fetch('/a/' + x + '/b/' + y);",
+    "expected": [
+      {
+        "url": "/a/:x/b/:y",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "x",
+        "partial": true
+      },
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "y",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "dynamic-prefix-dropped",
+    "js": "fetch(base + '/api/list');",
+    "expected": [
+      {
+        "url": "/api/list",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "base",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "dynamic-authority-dropped",
+    "js": "fetch('http://' + host + '/x/y');",
+    "expected": [
+      {
+        "url": "/x/y",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "host",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "uri-component-wrapper-is-transparent",
+    "js": "fetch('/s?q=' + encodeURIComponent(q));",
+    "expected": [
+      {
+        "url": "/s?q=:q",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "q",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "conversion-wrappers-are-transparent-for-strings-only",
+    "js": "fetch('/t/' + String(id) + '/' + n.toString() + '/' + encodeURIComponent(q));",
+    "expected": [
+      {
+        "url": "/t/:id/:n/:q",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": [
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "id",
+        "partial": true
+      },
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "n",
+        "partial": true
+      },
+      {
+        "kind": "variable",
+        "source": "js/fetch",
+        "text": "q",
+        "partial": true
+      }
+    ]
+  },
+  {
+    "name": "numeric-parts-fold",
+    "js": "fetch('/page/' + 2);",
+    "expected": [
+      {
+        "url": "/page/2",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "number-only-argument-is-not-an-endpoint",
+    "js": "fetch(123);",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "empty-string-argument-is-not-an-endpoint",
+    "js": "fetch('');",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "parenthesized-and-sequence",
+    "js": "fetch(('/a/b'));  fetch((0, '/c/d'));",
+    "expected": [
+      {
+        "url": "/a/b",
+        "source": "js/fetch"
+      },
+      {
+        "url": "/c/d",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "logical-left-operand",
+    "js": "fetch('/left/x' || other);",
+    "expected": [
+      {
+        "url": "/left/x",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  }
+]

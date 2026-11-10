@@ -1657,6 +1657,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
  "wiremock",
@@ -1869,6 +1870,7 @@ dependencies = [
  "chrono-tz",
  "crawlx-core",
  "crawlx-observe",
+ "crawlx-policy",
  "crawlx-url",
  "criterion",
  "ego-tree",
@@ -1895,6 +1897,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2 0.11.1",
  "similar",
  "tempfile",
  "thiserror 2.0.21",
@@ -1906,6 +1909,7 @@ dependencies = [
 name = "crawlx-fetch"
 version = "0.1.0"
 dependencies = [
+ "async-compression",
  "async-trait",
  "base64 0.23.1",
  "blake3",
@@ -1914,8 +1918,11 @@ dependencies = [
  "chrono",
  "crawlx-core",
  "crawlx-policy",
+ "crawlx-storage",
  "crawlx-telemetry",
  "crawlx-url",
+ "encoding_rs",
+ "hex",
  "hickory-resolver",
  "http",
  "http-body-util",
@@ -1931,6 +1938,7 @@ dependencies = [
  "rustix 1.1.6",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2113,6 +2121,7 @@ dependencies = [
  "crawlx-state",
  "crawlx-storage",
  "crawlx-telemetry",
+ "criterion",
  "flate2",
  "futures",
  "hex",
@@ -2190,6 +2199,7 @@ dependencies = [
 name = "crawlx-url"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "chrono",
  "crawlx-core",
  "criterion",

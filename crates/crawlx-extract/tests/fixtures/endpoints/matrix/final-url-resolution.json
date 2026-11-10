@@ -1,0 +1,29 @@
+{
+  "construct": "final-url-resolution",
+  "url": "https://matrix.test/static/js/app.js",
+  "content_type": "text/javascript",
+  "body": [
+    "fetch('../api/rel');",
+    "fetch('sibling/x');",
+    "fetch('/abs');"
+  ],
+  "javascript_mode": "ast",
+  "requires_ast": true,
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/static/api/rel",
+      "source": "js/fetch"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/static/js/sibling/x",
+      "source": "js/fetch"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/abs",
+      "source": "js/fetch"
+    }
+  ]
+}

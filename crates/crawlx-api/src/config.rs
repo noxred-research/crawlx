@@ -60,16 +60,76 @@ pub struct CompatConfig {
     /// `403 ROBOTS_OVERRIDE_NOT_AUTHORIZED`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub robots_authorization: Option<crawlx_core::AuthorizationRecordId>,
+    /// Defaults of the compat API (`compat.mode`): `strict` (the default) keeps what existing
+    /// clients rely on while they migrate, `native_defaults` moves them to the native behavior.
+    #[serde(default)]
+    pub mode: CompatMode,
+}
+
+/// `compat.mode`: how far the compatibility API follows the compatibility defaults.
+///
+/// * `strict` (default): a crawl that does not say `ignoreQueryParameters` keeps every query
+///   string as its own URL (`scope.queryPolicy = keep_all`), and every run of a native
+///   client's webhook is signed twice: `Crawlx-Signature` and the compat signature header, so
+///   receivers that verify the old header keep working while they move to `Crawlx-Signature`.
+/// * `native_defaults` (cutover): such a crawl takes the native query policy (`classify`:
+///   tracking and session parameters are dropped, resource-bearing ones are kept), and native
+///   webhooks carry `Crawlx-Signature` only.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CompatMode {
+    /// Compatibility defaults, dual-signed native webhooks (the default).
+    #[default]
+    Strict,
+    /// Native defaults, `Crawlx-Signature` only.
+    NativeDefaults,
+}
+
+impl CompatMode {
+    /// The configuration spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::NativeDefaults => "native_defaults",
+        }
+    }
+
+    /// Parse the configuration spelling (`strict`, `native_defaults`; `-` is read as `_`).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "strict" => Some(Self::Strict),
+            "native_defaults" => Some(Self::NativeDefaults),
+            _ => None,
+        }
+    }
+
+    /// Does a native run's webhook carry the compat signature next to `Crawlx-Signature`?
+    #[must_use]
+    pub const fn dual_signs_native_webhooks(self) -> bool {
+        matches!(self, Self::Strict)
+    }
+
+    /// Apply the mode to a translated crawl: under `native_defaults` a request that left
+    /// `ignoreQueryParameters` unset gets the native query policy instead of `keep_all`.
+    pub fn apply(self, crawl: &mut crawlx_core::config::CreateCrawl, query_policy_unset: bool) {
+        if self == Self::NativeDefaults && query_policy_unset {
+            crawl.scope.query_policy = crawlx_core::config::QueryPolicy::default();
+        }
+    }
 }
 
 impl CompatConfig {
     /// Fill the unset settings from the environment variables `lookup` serves:
-    /// `CRAWLX_COMPAT_KEYS` (`1`/`true`) and `CRAWLX_COMPAT_ROBOTS_AUTHORIZATION` (the
-    /// UUID of the authorization record behind `ignoreRobotsTxt`). A value that is already set
-    /// wins.
+    /// `CRAWLX_COMPAT_KEYS` (`1`/`true`), `CRAWLX_COMPAT_ROBOTS_AUTHORIZATION` (the
+    /// UUID of the authorization record behind `ignoreRobotsTxt`) and `CRAWLX_COMPAT_MODE`
+    /// (`strict` or `native_defaults`). A value that is already set wins.
     ///
     /// # Errors
-    /// [`EnvError::Number`] when `CRAWLX_COMPAT_ROBOTS_AUTHORIZATION` is not a UUID.
+    /// [`EnvError::Number`] when `CRAWLX_COMPAT_ROBOTS_AUTHORIZATION` is not a UUID or
+    /// `CRAWLX_COMPAT_MODE` is not a mode.
     pub fn from_lookup(mut self, lookup: impl Fn(&str) -> Option<String>) -> Result<Self, EnvError> {
         let get = |k: &str| lookup(k).map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
         if !self.prefixed_keys {
@@ -83,6 +143,14 @@ impl CompatConfig {
                     expected: "an authorization record UUID",
                 })?;
                 self.robots_authorization = Some(id);
+            }
+        }
+        if self.mode == CompatMode::Strict {
+            if let Some(v) = get("CRAWLX_COMPAT_MODE") {
+                self.mode = CompatMode::parse(&v).ok_or(EnvError::Number {
+                    var: "CRAWLX_COMPAT_MODE",
+                    expected: "strict or native_defaults",
+                })?;
             }
         }
         Ok(self)
@@ -243,6 +311,9 @@ pub struct Settings {
     pub sse_max_per_tenant: usize,
     /// Open SSE connections per run before `429 too_many_streams`.
     pub sse_max_per_run: usize,
+    /// Longest a WebSocket watcher waits for its client to accept one frame or ping before it
+    /// closes the connection (code 1008) and frees the stream slot.
+    pub ws_send_timeout: Duration,
     /// Share of `X-Crawlx-Shadow: 1` compat requests that are mirrored into a shadow run
     /// (default 5); `0` mirrors nothing, `100` everything. Requests
     /// with `zeroDataRetention: true` are never mirrored regardless.
@@ -267,6 +338,7 @@ impl Default for Settings {
             sse_batch: 200,
             sse_max_per_tenant: 50,
             sse_max_per_run: 5,
+            ws_send_timeout: Duration::from_secs(30),
             shadow_sample_percent: 5,
             parse_limits: crawlx_extract::parse::ParseLimits::default(),
         }

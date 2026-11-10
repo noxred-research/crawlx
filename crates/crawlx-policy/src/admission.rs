@@ -494,9 +494,7 @@ impl AdmissionPolicy {
                 }
             }
         }
-        policy.allow_private = true;
-        policy.extra_allow = record.authorized_networks.clone();
-        policy
+        policy.with_authorized_private_networks(record.authorized_networks.clone())
     }
     fn check_robots_override(
         crawl: &CreateCrawl,

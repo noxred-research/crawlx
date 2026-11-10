@@ -1,0 +1,92 @@
+# Unit tests for crawlx-rules.yaml. Run: promtool test rules deploy/alerts/crawlx-rules.test.yaml
+# (crates/crawlx-cli/tests/deploy_assets.rs checks that this file exists and exercises the
+# browser crash-loop alerts.)
+rule_files:
+  - crawlx-rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # One worker crashing once a minute (> 0.2/min) for 30 minutes: the per-worker alert fires
+  # after its 10 minute `for`; a quiet worker stays silent.
+  - name: browser crash loop on one worker
+    interval: 1m
+    input_series:
+      - series: 'crawlx_browser_crashes_total{instance="worker-a", reason="target_crashed"}'
+        values: "0+1x40"
+      - series: 'crawlx_browser_crashes_total{instance="worker-b", reason="target_crashed"}'
+        values: "0+0x40"
+      - series: 'up{job="crawlx-worker", instance="worker-a"}'
+        values: "1x40"
+      - series: 'up{job="crawlx-worker", instance="worker-b"}'
+        values: "1x40"
+      - series: 'up{job="crawlx-worker", instance="worker-c"}'
+        values: "1x40"
+      - series: 'up{job="crawlx-worker", instance="worker-d"}'
+        values: "1x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CrawlxBrowserCrashLoop
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CrawlxBrowserCrashLoop
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              runbook: RB-03
+              instance: worker-a
+            exp_annotations:
+              summary: "Browser crash rate above 0.2/min on a worker"
+      # 1 of 4 workers is 25 %, not more than 25 %: the fleet-wide page stays silent
+      - eval_time: 30m
+        alertname: CrawlxBrowserCrashLoopWide
+        exp_alerts: []
+
+  # Half of the fleet crash-looping pages once the 10 minute `for` has elapsed.
+  - name: browser crash loop across the fleet
+    interval: 1m
+    input_series:
+      - series: 'crawlx_browser_crashes_total{instance="worker-a", reason="disconnected"}'
+        values: "0+1x40"
+      - series: 'crawlx_browser_crashes_total{instance="worker-b", reason="target_crashed"}'
+        values: "0+1x40"
+      - series: 'crawlx_browser_crashes_total{instance="worker-c", reason="target_crashed"}'
+        values: "0+0x40"
+      - series: 'crawlx_browser_crashes_total{instance="worker-d", reason="target_crashed"}'
+        values: "0+0x40"
+      - series: 'up{job="crawlx-worker", instance="worker-a"}'
+        values: "1x40"
+      - series: 'up{job="crawlx-worker", instance="worker-b"}'
+        values: "1x40"
+      - series: 'up{job="crawlx-worker", instance="worker-c"}'
+        values: "1x40"
+      - series: 'up{job="crawlx-worker", instance="worker-d"}'
+        values: "1x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: CrawlxBrowserCrashLoopWide
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CrawlxBrowserCrashLoopWide
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              runbook: RB-03
+            exp_annotations:
+              summary: "More than 25 % of workers are crash-looping"
+
+  # A slow trickle (one crash every ten minutes, 0.1/min) is below the threshold.
+  - name: occasional browser crash does not alert
+    interval: 1m
+    input_series:
+      - series: 'crawlx_browser_crashes_total{instance="worker-a", reason="target_crashed"}'
+        values: "0+0x9 1+0x9 2+0x9 3+0x9"
+      - series: 'up{job="crawlx-worker", instance="worker-a"}'
+        values: "1x40"
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: CrawlxBrowserCrashLoop
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: CrawlxBrowserCrashLoopWide
+        exp_alerts: []

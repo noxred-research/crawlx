@@ -1,0 +1,18 @@
+{
+  "construct": "input-image-src",
+  "body": [
+    "<form action='/f'><input type='IMAGE' src='/btn.png' name='go'></form>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/f?go=crawlx",
+      "source": "form/action"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/btn.png",
+      "source": "input-image/src"
+    }
+  ]
+}

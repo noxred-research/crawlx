@@ -422,7 +422,7 @@ fn validate_function(name: &str, n: usize) -> Result<(), SelectorError> {
         Err(syntax())
     }
 }
-pub(super) fn compile(source: &str) -> Result<Expr, SelectorError> {
+pub(super) fn compile(source: &str) -> Result<(Expr, usize), SelectorError> {
     let mut parser = Parser {
         tokens: lex(source)?,
         pos: 0,
@@ -436,7 +436,7 @@ pub(super) fn compile(source: &str) -> Result<Expr, SelectorError> {
     // Left-associative operators form deep ASTs without deep parser recursion.
     // Validate before any recursive namespace walk or evaluation can use the tree.
     validate_ast_depth(&expression, 1)?;
-    Ok(expression)
+    Ok((expression, parser.nodes.max(1)))
 }
 
 fn validate_ast_depth(expression: &Expr, depth: usize) -> Result<(), SelectorError> {

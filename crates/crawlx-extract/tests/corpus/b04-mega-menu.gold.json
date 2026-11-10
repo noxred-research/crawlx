@@ -1,0 +1,268 @@
+{
+  "id": "b04-mega-menu",
+  "family": "boilerplate",
+  "note": "large navigation menu around a short article",
+  "expectedText": "Residents\nResidents overview\nResidents forms\nResidents news\nVisitors\nVisitors overview\nVisitors forms\nVisitors news\nBusinesses\nBusinesses overview\nBusinesses forms\nBusinesses news\nTransport\nTransport overview\nTransport forms\nTransport news\nParks\nParks overview\nParks forms\nParks news\nLibraries\nLibraries overview\nLibraries forms\nLibraries news\nPlanning\nPlanning overview\nPlanning forms\nPlanning news\nPermits\nPermits overview\nPermits forms\nPermits news\nWaste\nWaste overview\nWaste forms\nWaste news\nWater\nWater overview\nWater forms\nWater news\nElections\nElections overview\nElections forms\nElections news\nContact the council\nContact the council overview\nContact the council forms\nContact the council news\nTram Stop Renamed After the Old Cannery\nThe tram stop at the end of Dock Street will be renamed Old Cannery from the start of next month. Signs, maps and announcements will change on the same day.\nThe name recalls the fish cannery that stood on the site until the nineteen sixties. A local history group asked for the change after finding the original tram timetable in an attic.\nCity Council. Open Monday to Friday. Accessibility statement.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 9
+    },
+    {
+      "label": "boilerplate",
+      "start": 10,
+      "end": 28
+    },
+    {
+      "label": "boilerplate",
+      "start": 29,
+      "end": 44
+    },
+    {
+      "label": "boilerplate",
+      "start": 45,
+      "end": 59
+    },
+    {
+      "label": "boilerplate",
+      "start": 60,
+      "end": 68
+    },
+    {
+      "label": "boilerplate",
+      "start": 69,
+      "end": 86
+    },
+    {
+      "label": "boilerplate",
+      "start": 87,
+      "end": 101
+    },
+    {
+      "label": "boilerplate",
+      "start": 102,
+      "end": 115
+    },
+    {
+      "label": "boilerplate",
+      "start": 116,
+      "end": 126
+    },
+    {
+      "label": "boilerplate",
+      "start": 127,
+      "end": 146
+    },
+    {
+      "label": "boilerplate",
+      "start": 147,
+      "end": 163
+    },
+    {
+      "label": "boilerplate",
+      "start": 164,
+      "end": 179
+    },
+    {
+      "label": "boilerplate",
+      "start": 180,
+      "end": 189
+    },
+    {
+      "label": "boilerplate",
+      "start": 190,
+      "end": 208
+    },
+    {
+      "label": "boilerplate",
+      "start": 209,
+      "end": 224
+    },
+    {
+      "label": "boilerplate",
+      "start": 225,
+      "end": 239
+    },
+    {
+      "label": "boilerplate",
+      "start": 240,
+      "end": 245
+    },
+    {
+      "label": "boilerplate",
+      "start": 246,
+      "end": 260
+    },
+    {
+      "label": "boilerplate",
+      "start": 261,
+      "end": 272
+    },
+    {
+      "label": "boilerplate",
+      "start": 273,
+      "end": 283
+    },
+    {
+      "label": "boilerplate",
+      "start": 284,
+      "end": 293
+    },
+    {
+      "label": "boilerplate",
+      "start": 294,
+      "end": 312
+    },
+    {
+      "label": "boilerplate",
+      "start": 313,
+      "end": 328
+    },
+    {
+      "label": "boilerplate",
+      "start": 329,
+      "end": 343
+    },
+    {
+      "label": "boilerplate",
+      "start": 344,
+      "end": 352
+    },
+    {
+      "label": "boilerplate",
+      "start": 353,
+      "end": 370
+    },
+    {
+      "label": "boilerplate",
+      "start": 371,
+      "end": 385
+    },
+    {
+      "label": "boilerplate",
+      "start": 386,
+      "end": 399
+    },
+    {
+      "label": "boilerplate",
+      "start": 400,
+      "end": 407
+    },
+    {
+      "label": "boilerplate",
+      "start": 408,
+      "end": 424
+    },
+    {
+      "label": "boilerplate",
+      "start": 425,
+      "end": 438
+    },
+    {
+      "label": "boilerplate",
+      "start": 439,
+      "end": 451
+    },
+    {
+      "label": "boilerplate",
+      "start": 452,
+      "end": 457
+    },
+    {
+      "label": "boilerplate",
+      "start": 458,
+      "end": 472
+    },
+    {
+      "label": "boilerplate",
+      "start": 473,
+      "end": 484
+    },
+    {
+      "label": "boilerplate",
+      "start": 485,
+      "end": 495
+    },
+    {
+      "label": "boilerplate",
+      "start": 496,
+      "end": 501
+    },
+    {
+      "label": "boilerplate",
+      "start": 502,
+      "end": 516
+    },
+    {
+      "label": "boilerplate",
+      "start": 517,
+      "end": 528
+    },
+    {
+      "label": "boilerplate",
+      "start": 529,
+      "end": 539
+    },
+    {
+      "label": "boilerplate",
+      "start": 540,
+      "end": 549
+    },
+    {
+      "label": "boilerplate",
+      "start": 550,
+      "end": 568
+    },
+    {
+      "label": "boilerplate",
+      "start": 569,
+      "end": 584
+    },
+    {
+      "label": "boilerplate",
+      "start": 585,
+      "end": 599
+    },
+    {
+      "label": "boilerplate",
+      "start": 600,
+      "end": 619
+    },
+    {
+      "label": "boilerplate",
+      "start": 620,
+      "end": 648
+    },
+    {
+      "label": "boilerplate",
+      "start": 649,
+      "end": 674
+    },
+    {
+      "label": "boilerplate",
+      "start": 675,
+      "end": 699
+    },
+    {
+      "label": "body",
+      "start": 700,
+      "end": 739
+    },
+    {
+      "label": "body",
+      "start": 740,
+      "end": 896
+    },
+    {
+      "label": "body",
+      "start": 897,
+      "end": 1079
+    },
+    {
+      "label": "boilerplate",
+      "start": 1080,
+      "end": 1141
+    }
+  ]
+}

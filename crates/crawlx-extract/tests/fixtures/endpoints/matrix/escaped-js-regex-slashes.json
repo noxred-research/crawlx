@@ -1,0 +1,25 @@
+{
+  "construct": "escaped-js-regex-slashes",
+  "url": "https://matrix.test/static/js/app.js",
+  "content_type": "text/javascript",
+  "body": [
+    "var a = \"\\/api\\/slash\\/list.json\";",
+    "var b = \"\\u002fapi\\u002funi\\u002flist.json\";",
+    "var c = \"\\\\windows\\\\style\\\\path.json\";"
+  ],
+  "javascript_mode": "regex",
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/slash/list.json",
+      "source": "js/regex",
+      "confidence": "regex"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/uni/list.json",
+      "source": "js/regex",
+      "confidence": "regex"
+    }
+  ]
+}

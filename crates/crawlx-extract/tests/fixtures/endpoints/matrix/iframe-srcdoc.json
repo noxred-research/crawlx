@@ -1,0 +1,15 @@
+{
+  "construct": "iframe-srcdoc",
+  "body": [
+    "<iframe srcdoc=\"&lt;a href='/in-srcdoc.html'&gt;x&lt;/a&gt;\"></iframe>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/in-srcdoc.html",
+      "source": "iframe/srcdoc",
+      "confidence": "regex"
+    }
+  ],
+  "javascript_mode": "regex"
+}

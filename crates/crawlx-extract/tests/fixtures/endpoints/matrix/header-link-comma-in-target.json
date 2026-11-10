@@ -1,0 +1,22 @@
+{
+  "construct": "header-link-comma-in-target",
+  "headers": [
+    [
+      "Link",
+      "</search?ids=1,2,3>; rel=\"next\", <https://other.test/p>; title=\"a <b> c\"; rel=prev"
+    ]
+  ],
+  "body": [],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/search?ids=1,2,3",
+      "source": "header/link"
+    },
+    {
+      "method": "GET",
+      "url": "https://other.test/p",
+      "source": "header/link"
+    }
+  ]
+}

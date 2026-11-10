@@ -1,0 +1,18 @@
+{
+  "construct": "base-relative-href",
+  "body": [
+    "<html><head><base href='sub/'></head><body><a href='x.html'>x</a></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/sub/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/sub/x.html",
+      "source": "a/href"
+    }
+  ]
+}

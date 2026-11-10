@@ -1,0 +1,13 @@
+{
+  "construct": "blockquote-cite",
+  "body": [
+    "<blockquote cite='/c/quote.html'>x</blockquote>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/c/quote.html",
+      "source": "blockquote/cite"
+    }
+  ]
+}

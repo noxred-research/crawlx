@@ -1,0 +1,38 @@
+{
+  "id": "a07-japanese",
+  "family": "article_body",
+  "note": "Japanese text without word separators",
+  "expectedText": "ホーム ニュース 文化 お問い合わせ\n図書館で冬のランタン展が始まる\n市立図書館では土曜日から冬のランタン展が始まった。展示室には地元の子どもたちが作った紙のランタンが二百個ほど並んでいる。\n会場の担当者によると、材料は古い新聞紙と竹ひごで、制作には三週間かかった。夜になると館内の照明を落として、ランタンの光だけで本を読むことができる。\n展示は二月末まで続く。毎週日曜日には、作り方を教える小さな教室も開かれる予定だ。\n無断転載を禁じます。",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 48
+    },
+    {
+      "label": "body",
+      "start": 49,
+      "end": 94
+    },
+    {
+      "label": "body",
+      "start": 95,
+      "end": 275
+    },
+    {
+      "label": "body",
+      "start": 276,
+      "end": 495
+    },
+    {
+      "label": "body",
+      "start": 496,
+      "end": 616
+    },
+    {
+      "label": "boilerplate",
+      "start": 617,
+      "end": 647
+    }
+  ]
+}

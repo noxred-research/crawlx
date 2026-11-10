@@ -1,0 +1,8 @@
+{
+  "construct": "binary-declared-image-with-markup",
+  "content_type": "image/jpeg",
+  "body": [
+    "<a href='/not-mined'>x</a>"
+  ],
+  "expected": []
+}

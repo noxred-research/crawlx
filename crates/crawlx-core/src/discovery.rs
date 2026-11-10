@@ -34,6 +34,8 @@ pub enum DiscoverySourceV1 {
     TrendsSearch,
     /// Explicit web-archive CDX index connector.
     Archive,
+    /// Caller-supplied inline URL list ([`UrlListSourceV1`]); no network or file is read.
+    UrlList,
 }
 /// Whether to explore or measure actual extracted article sufficiency.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,6 +206,13 @@ pub struct SourceDiscoveryPolicyV1 {
     pub max_media_pixels: u64,
     /// Explicit external connectors; never auto-populated after feed failure.
     pub connectors: Vec<DiscoveryConnectorV1>,
+    /// Optional inline URL list; requires [`DiscoverySourceV1::UrlList`] in `scope.sources`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_list: Option<UrlListSourceV1>,
+    /// Optional target language whose URL evidence only orders discovered URLs
+    /// ([`url_language_evidence`]); never proof of content language, never a filter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_language_hint: Option<String>,
 }
 impl Default for SourceDiscoveryPolicyV1 {
     fn default() -> Self {
@@ -226,6 +235,8 @@ impl Default for SourceDiscoveryPolicyV1 {
             media_header_bytes: 64 * 1024,
             max_media_pixels: 40_000_000,
             connectors: Vec::new(),
+            url_list: None,
+            url_language_hint: None,
         }
     }
 }
@@ -237,6 +248,12 @@ impl SourceDiscoveryPolicyV1 {
     pub fn validate(&self) -> Result<(), CoreError> {
         if let Some(lastmod) = &self.sitemap_lastmod {
             lastmod.validate()?;
+        }
+        if let Some(list) = &self.url_list {
+            list.validate()?;
+        }
+        if let Some(hint) = &self.url_language_hint {
+            validate_language_hint(hint)?;
         }
         let valid = self.version == 1
             && (1..=64).contains(&self.max_source_documents)
@@ -283,6 +300,391 @@ fn safe_endpoint(url: &Url) -> bool {
         && url.password().is_none()
         && url.fragment().is_none()
         && url.as_str().len() <= 4096
+}
+
+impl SourceDiscoveryPolicyV1 {
+    /// Check that `sources` and the policy agree about list discovery: the list source is
+    /// enabled exactly when an inline list is present, and the list fits the lifetime
+    /// known-URL ceiling `max_known_urls`.
+    ///
+    /// # Errors
+    /// Returns `CoreError::Conflict` when only one of source and list is present, or
+    /// `CoreError::Invalid` when the list is invalid or larger than `max_known_urls`.
+    pub fn validate_sources(
+        &self,
+        sources: &[DiscoverySourceV1],
+        max_known_urls: u32,
+    ) -> Result<(), CoreError> {
+        let listed = sources.contains(&DiscoverySourceV1::UrlList);
+        match (&self.url_list, listed) {
+            (Some(list), true) => list.resolve(max_known_urls).map(|_| ()),
+            (None, false) => Ok(()),
+            _ => Err(CoreError::Conflict {
+                a: "scope.sources",
+                b: "scope.discovery.urlList",
+                reason: "the url_list source and an inline URL list must be configured together".to_owned(),
+            }),
+        }
+    }
+
+    /// Ranking adjustment of `url` from the optional language hint: positive when the URL
+    /// carries evidence for the hinted language, negative for evidence of another language,
+    /// zero without a hint or without evidence. It orders candidates only; it never admits,
+    /// denies, or labels the content language of a URL.
+    #[must_use]
+    pub fn language_rank(&self, url: &Url) -> i8 {
+        self.url_language_hint
+            .as_deref()
+            .map_or(0, |hint| url_language_evidence(url, hint).rank_delta())
+    }
+}
+
+/// Most URLs in one inline list.
+pub const MAX_LISTED_URLS: usize = 10_000;
+/// Longest accepted URL in an inline list, in bytes.
+pub const MAX_LISTED_URL_BYTES: usize = 4096;
+/// Largest total of URL bytes in one inline list.
+pub const MAX_LISTED_TOTAL_BYTES: usize = 4 * 1024 * 1024;
+
+/// Caller-supplied, inline URL list: the list-discovery source.
+///
+/// The type holds URL text only. Reading a file or standard input is the caller's job and
+/// happens before this value exists, so the core type carries no filesystem path and
+/// resolving it performs no I/O. Resolution bounds the count and bytes, rejects anything that
+/// is not a credential-free HTTP(S) URL, strips fragments and drops exact duplicates while
+/// keeping first-seen order. Every resolved URL is still only a candidate: the worker applies
+/// scope, robots, authorization and checked egress to each one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct UrlListSourceV1 {
+    /// URL text, one entry per URL. Entries carry no surrounding whitespace or control
+    /// characters; blank entries are rejected, not skipped.
+    pub urls: Vec<String>,
+}
+
+/// Deduplicated list: candidate URLs in first-seen order and the known-URL set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ResolvedUrlListV1 {
+    /// Unique URLs in first-seen order.
+    pub urls: Vec<Url>,
+    /// The same URLs as a sorted set of normalized strings, to seed the lifetime known-URL
+    /// check so rediscovering a listed URL is not queued twice.
+    pub known: std::collections::BTreeSet<String>,
+    /// Entries dropped as exact duplicates of an earlier entry.
+    pub duplicates: usize,
+}
+
+impl ResolvedUrlListV1 {
+    /// One discovery intent per unique URL, in list order. An intent is a candidate, never
+    /// permission to fetch.
+    #[must_use]
+    pub fn intents(&self) -> Vec<crate::extraction::DiscoveryIntentV1> {
+        self.urls
+            .iter()
+            .map(|url| {
+                crate::extraction::DiscoveryIntentV1::new(
+                    url.clone(),
+                    crate::extraction::DiscoveryPurposeV1::ListedUrl,
+                )
+            })
+            .collect()
+    }
+}
+
+impl UrlListSourceV1 {
+    /// Build a list from entries, validating it.
+    ///
+    /// # Errors
+    /// Same as [`UrlListSourceV1::validate`].
+    pub fn new(urls: Vec<String>) -> Result<Self, CoreError> {
+        let list = Self { urls };
+        list.validate()?;
+        Ok(list)
+    }
+
+    /// Check count, byte and per-entry bounds.
+    ///
+    /// # Errors
+    /// Returns `CoreError::Invalid` for an empty or oversized list, an oversized, blank,
+    /// whitespace-padded or non-HTTP(S) entry, an entry with credentials, or an unparseable URL.
+    pub fn validate(&self) -> Result<(), CoreError> {
+        self.resolve(u32::MAX).map(|_| ())
+    }
+
+    /// Parse, normalize and deduplicate the list without any I/O.
+    ///
+    /// `max_known_urls` is the crawl's lifetime known-URL ceiling; a list with more unique
+    /// URLs is refused rather than truncated.
+    ///
+    /// # Errors
+    /// Same as [`UrlListSourceV1::validate`], plus when the unique URL count exceeds
+    /// `max_known_urls`.
+    pub fn resolve(&self, max_known_urls: u32) -> Result<ResolvedUrlListV1, CoreError> {
+        let invalid = |reason: &str| CoreError::Invalid {
+            field: "scope.discovery.urlList",
+            reason: reason.to_owned(),
+        };
+        if self.urls.is_empty() {
+            return Err(invalid("a URL list needs at least one entry"));
+        }
+        if self.urls.len() > MAX_LISTED_URLS {
+            return Err(invalid("at most 10000 URLs"));
+        }
+        let total = self
+            .urls
+            .iter()
+            .fold(0usize, |sum, url| sum.saturating_add(url.len()));
+        if total > MAX_LISTED_TOTAL_BYTES {
+            return Err(invalid("at most 4 MiB of URL text"));
+        }
+        let ceiling = usize::try_from(max_known_urls).unwrap_or(usize::MAX);
+        let mut urls = Vec::new();
+        let mut known = std::collections::BTreeSet::new();
+        let mut duplicates = 0usize;
+        for entry in &self.urls {
+            if entry.is_empty() || entry.len() > MAX_LISTED_URL_BYTES {
+                return Err(invalid("each URL is between one and 4096 bytes"));
+            }
+            if entry.trim() != entry || entry.chars().any(char::is_control) {
+                return Err(invalid(
+                    "URLs carry no surrounding whitespace or control characters",
+                ));
+            }
+            let mut url = Url::parse(entry).map_err(|_| invalid("an entry is not an absolute URL"))?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                return Err(invalid("entries are credential-free HTTP(S) URLs"));
+            }
+            url.set_fragment(None);
+            if known.insert(url.as_str().to_owned()) {
+                if known.len() > ceiling {
+                    return Err(invalid("unique URLs exceed the known-URL ceiling"));
+                }
+                urls.push(url);
+            } else {
+                duplicates = duplicates.saturating_add(1);
+            }
+        }
+        Ok(ResolvedUrlListV1 {
+            urls,
+            known,
+            duplicates,
+        })
+    }
+}
+
+/// Most substrings in one filter.
+pub const MAX_URL_SUBSTRINGS: usize = 64;
+/// Longest substring, in bytes. Escaping at most doubles it, inside the 512-byte pattern bound.
+pub const MAX_URL_SUBSTRING_BYTES: usize = 256;
+
+/// Plain-substring URL include filter, the discovery form of the source `--url-filter`
+/// option.
+///
+/// A URL passes when its normalized text contains at least one substring (case-sensitive;
+/// normalized URLs have a lowercase scheme and host). The filter translates to
+/// `scope.urlInclude` through [`UrlSubstringFilterV1::include_patterns`], so it composes with
+/// the rest of scope exactly like any other include pattern:
+///
+/// * host scope, `excludeHosts`, `urlExclude`, `excludePaths`, robots, authorization and
+///   checked egress run unchanged; an explicit deny always wins and a substring match never
+///   re-admits a URL they refuse;
+/// * the substring filter only narrows: with it present, a candidate must match one substring
+///   in addition to passing every other scope rule;
+/// * the crawl seed is exempt from include patterns, as for every `urlInclude`: it is fetched
+///   once to start discovery.
+///
+/// A target-language hint is separate: see [`url_language_evidence`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UrlSubstringFilterV1 {
+    substrings: Vec<String>,
+}
+
+impl UrlSubstringFilterV1 {
+    /// Validate `substrings`: between one and 64 distinct, non-blank entries without control
+    /// characters, each at most 256 bytes. Exact duplicates are dropped, order is kept.
+    ///
+    /// # Errors
+    /// Returns `CoreError::Invalid` when a bound or character rule fails.
+    pub fn new(substrings: Vec<String>) -> Result<Self, CoreError> {
+        let invalid = |reason: &str| CoreError::Invalid {
+            field: "scope.urlInclude",
+            reason: reason.to_owned(),
+        };
+        if substrings.is_empty() || substrings.len() > MAX_URL_SUBSTRINGS {
+            return Err(invalid("between one and 64 substrings"));
+        }
+        let mut unique: Vec<String> = Vec::with_capacity(substrings.len());
+        for substring in substrings {
+            if substring.trim().is_empty()
+                || substring.len() > MAX_URL_SUBSTRING_BYTES
+                || substring.chars().any(char::is_control)
+            {
+                return Err(invalid(
+                    "substrings are non-blank, at most 256 bytes, without control characters",
+                ));
+            }
+            if !unique.contains(&substring) {
+                unique.push(substring);
+            }
+        }
+        Ok(Self { substrings: unique })
+    }
+
+    /// The substrings, in input order.
+    #[must_use]
+    pub fn substrings(&self) -> &[String] {
+        &self.substrings
+    }
+
+    /// Does `url` (normalized URL text) contain any substring?
+    #[must_use]
+    pub fn matches(&self, url: &str) -> bool {
+        self.substrings
+            .iter()
+            .any(|substring| url.contains(substring.as_str()))
+    }
+
+    /// Regex patterns for `scope.urlInclude`: each substring with every regex metacharacter
+    /// escaped, so the pattern matches the literal text anywhere in the URL.
+    #[must_use]
+    pub fn include_patterns(&self) -> Vec<String> {
+        self.substrings
+            .iter()
+            .map(|substring| regex::escape(substring))
+            .collect()
+    }
+}
+
+/// ISO 639-1 language codes, sorted for binary search.
+const ISO_639_1: [&str; 184] = [
+    "aa", "ab", "ae", "af", "ak", "am", "an", "ar", "as", "av", "ay", "az", "ba", "be", "bg", "bh", "bi",
+    "bm", "bn", "bo", "br", "bs", "ca", "ce", "ch", "co", "cr", "cs", "cu", "cv", "cy", "da", "de", "dv",
+    "dz", "ee", "el", "en", "eo", "es", "et", "eu", "fa", "ff", "fi", "fj", "fo", "fr", "fy", "ga", "gd",
+    "gl", "gn", "gu", "gv", "ha", "he", "hi", "ho", "hr", "ht", "hu", "hy", "hz", "ia", "id", "ie", "ig",
+    "ii", "ik", "io", "is", "it", "iu", "ja", "jv", "ka", "kg", "ki", "kj", "kk", "kl", "km", "kn", "ko",
+    "kr", "ks", "ku", "kv", "kw", "ky", "la", "lb", "lg", "li", "ln", "lo", "lt", "lu", "lv", "mg", "mh",
+    "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my", "na", "nb", "nd", "ne", "ng", "nl", "nn", "no", "nr",
+    "nv", "ny", "oc", "oj", "om", "or", "os", "pa", "pi", "pl", "ps", "pt", "qu", "rm", "rn", "ro", "ru",
+    "rw", "sa", "sc", "sd", "se", "sg", "si", "sk", "sl", "sm", "sn", "so", "sq", "sr", "ss", "st", "su",
+    "sv", "sw", "ta", "te", "tg", "th", "ti", "tk", "tl", "tn", "to", "tr", "ts", "tt", "tw", "ty", "ug",
+    "uk", "ur", "uz", "ve", "vi", "vo", "wa", "wo", "xh", "yi", "yo", "za", "zh", "zu",
+];
+
+/// Primary language subtag of an ISO 639-1 tag (`de`, `de-AT`, `pt_BR`, `es-419`), or `None`
+/// for anything else.
+fn primary_language(tag: &str) -> Option<&'static str> {
+    let (primary, region) = match tag.split_once(['-', '_']) {
+        Some((primary, region)) => (primary, Some(region)),
+        None => (tag, None),
+    };
+    if let Some(region) = region {
+        let alpha = region.len() == 2 && region.bytes().all(|b| b.is_ascii_alphabetic());
+        let numeric = region.len() == 3 && region.bytes().all(|b| b.is_ascii_digit());
+        if !(alpha || numeric) {
+            return None;
+        }
+    }
+    let bytes = primary.as_bytes();
+    if bytes.len() != 2 || !bytes.iter().all(u8::is_ascii_alphabetic) {
+        return None;
+    }
+    let lower = [bytes[0].to_ascii_lowercase(), bytes[1].to_ascii_lowercase()];
+    let lower = std::str::from_utf8(&lower).ok()?;
+    ISO_639_1.binary_search(&lower).ok().map(|index| ISO_639_1[index])
+}
+
+fn validate_language_hint(hint: &str) -> Result<(), CoreError> {
+    if primary_language(hint).is_some() {
+        Ok(())
+    } else {
+        Err(CoreError::Invalid {
+            field: "scope.discovery.urlLanguageHint",
+            reason: "an ISO 639-1 code, optionally with a region (`de`, `pt-BR`)".to_owned(),
+        })
+    }
+}
+
+/// What the URL itself says about a target language. It is a guess from URL shape, not a
+/// property of the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum UrlLanguageEvidenceV1 {
+    /// Every language marker in the URL names the target language.
+    Matches,
+    /// Every language marker in the URL names another language.
+    Conflicts,
+    /// No marker, or markers for both the target and another language.
+    Absent,
+}
+
+impl UrlLanguageEvidenceV1 {
+    /// Ranking adjustment: `1` for a match, `-1` for a conflict, `0` otherwise. A consumer may
+    /// add it to a priority; it is not a decision input.
+    #[must_use]
+    pub const fn rank_delta(self) -> i8 {
+        match self {
+            Self::Matches => 1,
+            Self::Conflicts => -1,
+            Self::Absent => 0,
+        }
+    }
+}
+
+/// Language evidence in the shape of `url`.
+///
+/// Markers are the first host label when the host has at least three labels
+/// (`de.example.test`), the first path segment (`/de/`, `/pt-BR/`), and the query values of
+/// `lang`, `language`, `hl`, `locale` and `lng`. Only ISO 639-1 codes, alone or with a region,
+/// count. The result is never proof of the language of the content behind the URL: a `/de/`
+/// page may be English, and an unmarked page may be German. Callers use it to order discovery
+/// candidates and must not use it to admit, deny or label content; language decisions stay
+/// with the extraction language policy.
+#[must_use]
+pub fn url_language_evidence(url: &Url, language: &str) -> UrlLanguageEvidenceV1 {
+    let Some(target) = primary_language(language) else {
+        return UrlLanguageEvidenceV1::Absent;
+    };
+    let mut equal = false;
+    let mut differs = false;
+    let mut observe = |candidate: &str| {
+        if let Some(code) = primary_language(candidate) {
+            if code == target {
+                equal = true;
+            } else {
+                differs = true;
+            }
+        }
+    };
+    if let Some(host) = url.host_str() {
+        if host.matches('.').count() >= 2 {
+            if let Some(label) = host.split('.').next() {
+                observe(label);
+            }
+        }
+    }
+    if let Some(segment) = url.path_segments().and_then(|mut segments| segments.next()) {
+        observe(segment);
+    }
+    for (key, value) in url.query_pairs() {
+        if matches!(
+            key.to_ascii_lowercase().as_str(),
+            "lang" | "language" | "hl" | "locale" | "lng"
+        ) {
+            observe(&value);
+        }
+    }
+    match (equal, differs) {
+        (true, false) => UrlLanguageEvidenceV1::Matches,
+        (false, true) => UrlLanguageEvidenceV1::Conflicts,
+        _ => UrlLanguageEvidenceV1::Absent,
+    }
 }
 /// Typed connector absence or protocol failure; never an empty-success substitute.
 #[derive(Debug, thiserror::Error)]
@@ -378,5 +780,254 @@ mod tests {
         policy.conventional_paths.clear();
         policy.max_nesting = usize::MAX;
         assert!(policy.validate().is_err());
+    }
+
+    fn list(entries: &[&str]) -> UrlListSourceV1 {
+        UrlListSourceV1 {
+            urls: entries.iter().map(|s| (*s).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn url_list_is_deduplicated_in_first_seen_order_with_a_sorted_known_set() {
+        let resolved = list(&[
+            "https://b.example.test/two",
+            "https://a.example.test/one#section",
+            "https://B.EXAMPLE.test/two",
+            "https://a.example.test/one",
+            "https://c.example.test:443/three",
+        ])
+        .resolve(100)
+        .unwrap();
+        let order: Vec<_> = resolved.urls.iter().map(Url::as_str).collect();
+        assert_eq!(
+            order,
+            [
+                "https://b.example.test/two",
+                "https://a.example.test/one",
+                "https://c.example.test/three"
+            ]
+        );
+        assert_eq!(resolved.duplicates, 2);
+        let known: Vec<_> = resolved.known.iter().map(String::as_str).collect();
+        assert_eq!(
+            known,
+            [
+                "https://a.example.test/one",
+                "https://b.example.test/two",
+                "https://c.example.test/three"
+            ]
+        );
+        let intents = resolved.intents();
+        assert_eq!(intents.len(), 3);
+        assert!(intents
+            .iter()
+            .all(|i| i.purpose == crate::extraction::DiscoveryPurposeV1::ListedUrl));
+        assert_eq!(intents[0].url.as_str(), "https://b.example.test/two");
+    }
+
+    #[test]
+    fn url_list_refuses_unbounded_blank_foreign_and_credentialed_entries() {
+        for entries in [
+            vec![],
+            vec![""],
+            vec![" https://a.example.test/"],
+            vec!["https://a.example.test/\n"],
+            vec!["ftp://a.example.test/file"],
+            vec!["file:///etc/passwd"],
+            vec!["/var/lib/urls.txt"],
+            vec!["urls.txt"],
+            vec!["https://user:secret@a.example.test/"],
+            vec!["https://user@a.example.test/"],
+            vec!["not a url"],
+        ] {
+            assert!(list(&entries).validate().is_err(), "{entries:?}");
+        }
+        let long = format!("https://a.example.test/{}", "x".repeat(MAX_LISTED_URL_BYTES));
+        assert!(list(&[long.as_str()]).validate().is_err());
+        let many: Vec<String> = (0..=MAX_LISTED_URLS)
+            .map(|n| format!("https://a.example.test/{n}"))
+            .collect();
+        assert!(UrlListSourceV1::new(many).is_err());
+        let at_limit: Vec<String> = (0..MAX_LISTED_URLS)
+            .map(|n| format!("https://a.example.test/{n}"))
+            .collect();
+        assert_eq!(
+            UrlListSourceV1::new(at_limit)
+                .unwrap()
+                .resolve(100_000)
+                .unwrap()
+                .urls
+                .len(),
+            MAX_LISTED_URLS
+        );
+        // The known-URL ceiling counts unique URLs and refuses instead of truncating.
+        let three = list(&[
+            "https://a.example.test/1",
+            "https://a.example.test/2",
+            "https://a.example.test/1",
+        ]);
+        assert!(three.resolve(2).is_ok());
+        assert!(three.resolve(1).is_err());
+        // Byte ceiling: a thousand maximum-size entries exceed the 4 MiB total before parsing.
+        let big: Vec<String> = (0..1100)
+            .map(|n| {
+                format!(
+                    "https://a.example.test/{n}/{}",
+                    "y".repeat(MAX_LISTED_URL_BYTES - 40)
+                )
+            })
+            .collect();
+        assert!(UrlListSourceV1::new(big).is_err());
+    }
+
+    #[test]
+    fn list_source_and_inline_list_must_be_configured_together() {
+        let mut policy = SourceDiscoveryPolicyV1::default();
+        assert!(policy.validate_sources(&[DiscoverySourceV1::Html], 10).is_ok());
+        assert!(policy
+            .validate_sources(&[DiscoverySourceV1::UrlList], 10)
+            .is_err());
+        policy.url_list = Some(list(&["https://a.example.test/"]));
+        assert!(policy.validate().is_ok());
+        assert!(policy.validate_sources(&[DiscoverySourceV1::Html], 10).is_err());
+        assert!(policy.validate_sources(&[DiscoverySourceV1::UrlList], 10).is_ok());
+        policy.url_list = Some(list(&["ftp://a.example.test/"]));
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn omitted_list_and_hint_keep_policy_serialization_unchanged() {
+        let encoded = serde_json::to_value(SourceDiscoveryPolicyV1::default()).unwrap();
+        let object = encoded.as_object().unwrap();
+        assert!(!object.contains_key("urlList") && !object.contains_key("urlLanguageHint"));
+        let with = SourceDiscoveryPolicyV1 {
+            url_list: Some(list(&["https://a.example.test/"])),
+            url_language_hint: Some("de".into()),
+            ..SourceDiscoveryPolicyV1::default()
+        };
+        let round: SourceDiscoveryPolicyV1 =
+            serde_json::from_value(serde_json::to_value(&with).unwrap()).unwrap();
+        assert_eq!(round, with);
+        assert_eq!(
+            serde_json::to_value(DiscoverySourceV1::UrlList).unwrap(),
+            "url_list"
+        );
+    }
+
+    #[test]
+    fn substring_filter_patterns_are_literal_and_agree_with_substring_matching() {
+        let filter = UrlSubstringFilterV1::new(vec![
+            "/blog/".into(),
+            "?id=1".into(),
+            "a.b".into(),
+            "/blog/".into(),
+        ])
+        .unwrap();
+        assert_eq!(filter.substrings().len(), 3);
+        let patterns = filter.include_patterns();
+        assert!(patterns.iter().all(|p| p.len() <= 2 * MAX_URL_SUBSTRING_BYTES));
+        let compiled: Vec<regex::Regex> = patterns.iter().map(|p| regex::Regex::new(p).unwrap()).collect();
+        for url in [
+            "https://example.test/blog/post",
+            "https://example.test/blogger/post",
+            "https://example.test/page?id=1&x=2",
+            "https://example.test/page?id=12",
+            "https://example.test/page?idx1",
+            "https://example.test/a.b",
+            "https://example.test/aXb",
+            "https://example.test/",
+        ] {
+            let by_regex = compiled.iter().any(|r| r.is_match(url));
+            assert_eq!(by_regex, filter.matches(url), "{url}");
+        }
+        assert!(!filter.matches("https://example.test/aXb"));
+    }
+
+    #[test]
+    fn substring_filter_rejects_empty_oversized_and_control_entries() {
+        assert!(UrlSubstringFilterV1::new(vec![]).is_err());
+        assert!(UrlSubstringFilterV1::new(vec!["  ".into()]).is_err());
+        assert!(UrlSubstringFilterV1::new(vec!["a\u{0}b".into()]).is_err());
+        assert!(UrlSubstringFilterV1::new(vec!["x".repeat(MAX_URL_SUBSTRING_BYTES + 1)]).is_err());
+        assert!(UrlSubstringFilterV1::new(vec!["x".repeat(MAX_URL_SUBSTRING_BYTES)]).is_ok());
+        assert!(
+            UrlSubstringFilterV1::new((0..=MAX_URL_SUBSTRINGS).map(|n| n.to_string()).collect()).is_err()
+        );
+    }
+
+    #[test]
+    fn language_evidence_orders_but_never_proves() {
+        let ev = |url: &str, lang: &str| url_language_evidence(&Url::parse(url).unwrap(), lang);
+        assert_eq!(
+            ev("https://example.test/de/news", "de"),
+            UrlLanguageEvidenceV1::Matches
+        );
+        assert_eq!(
+            ev("https://example.test/de-AT/news", "de"),
+            UrlLanguageEvidenceV1::Matches
+        );
+        assert_eq!(
+            ev("https://example.test/pt_BR/news", "pt-BR"),
+            UrlLanguageEvidenceV1::Matches
+        );
+        assert_eq!(
+            ev("https://de.example.test/news", "de"),
+            UrlLanguageEvidenceV1::Matches
+        );
+        assert_eq!(
+            ev("https://example.test/news?lang=DE", "de"),
+            UrlLanguageEvidenceV1::Matches
+        );
+        assert_eq!(
+            ev("https://example.test/fr/news", "de"),
+            UrlLanguageEvidenceV1::Conflicts
+        );
+        assert_eq!(
+            ev("https://example.test/news", "de"),
+            UrlLanguageEvidenceV1::Absent
+        );
+        // Two-label hosts and non-language segments carry no evidence.
+        assert_eq!(ev("https://de.test/news", "fr"), UrlLanguageEvidenceV1::Absent);
+        assert_eq!(
+            ev("https://example.test/xx/news", "de"),
+            UrlLanguageEvidenceV1::Absent
+        );
+        assert_eq!(
+            ev("https://example.test/german/news", "de"),
+            UrlLanguageEvidenceV1::Absent
+        );
+        // Markers for both the target and another language cancel out.
+        assert_eq!(
+            ev("https://fr.example.test/de/news", "de"),
+            UrlLanguageEvidenceV1::Absent
+        );
+        // A bad hint yields no evidence rather than a guess.
+        assert_eq!(
+            ev("https://example.test/de/news", "german"),
+            UrlLanguageEvidenceV1::Absent
+        );
+        assert_eq!(UrlLanguageEvidenceV1::Matches.rank_delta(), 1);
+        assert_eq!(UrlLanguageEvidenceV1::Conflicts.rank_delta(), -1);
+
+        let mut policy = SourceDiscoveryPolicyV1::default();
+        let page = Url::parse("https://example.test/de/news").unwrap();
+        assert_eq!(policy.language_rank(&page), 0);
+        policy.url_language_hint = Some("de".into());
+        assert_eq!(policy.language_rank(&page), 1);
+        assert_eq!(
+            policy.language_rank(&Url::parse("https://example.test/fr/news").unwrap()),
+            -1
+        );
+        policy.url_language_hint = Some("german".into());
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn language_code_table_is_sorted_and_unique() {
+        assert!(ISO_639_1.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(ISO_639_1
+            .iter()
+            .all(|code| code.len() == 2 && code.bytes().all(|b| b.is_ascii_lowercase())));
     }
 }

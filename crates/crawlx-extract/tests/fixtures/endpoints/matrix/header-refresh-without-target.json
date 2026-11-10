@@ -1,0 +1,11 @@
+{
+  "construct": "header-refresh-without-target",
+  "headers": [
+    [
+      "Refresh",
+      "5"
+    ]
+  ],
+  "body": [],
+  "expected": []
+}

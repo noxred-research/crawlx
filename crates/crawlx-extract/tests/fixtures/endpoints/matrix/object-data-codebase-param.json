@@ -1,0 +1,23 @@
+{
+  "construct": "object-data-codebase-param",
+  "body": [
+    "<object data='/o/movie.swf' codebase='/o/'><param name='movie' value='/o/param.swf'></object>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/o/movie.swf",
+      "source": "object/data"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/o/",
+      "source": "object/codebase"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/o/param.swf",
+      "source": "object/param-value"
+    }
+  ]
+}

@@ -12,7 +12,10 @@ sends and the other only sometimes. Stable scalar leaves (status codes, `success
 `total`, URLs with the two fixture origins made equal, ...) are also compared by value; volatile
 ones (ids, timestamps, durations, the status URL) are compared by shape only. The typed SDK
 results are compared as the SDK user sees them: a field that is set upstream and `null` on the
-facade, or the other way round. Standard library only.
+facade, or the other way round. Page bodies are scored too: for every page that both sides
+returned (paired by origin-independent `metadata.sourceURL`), the two `markdown` bodies are
+normalized (`markdown_metrics.py`) and compared by block-level F1 and by the ordered-subsequence
+ratio of their blocks; the report lists both per page and as an exchange mean. Standard library only.
 
 `--evidence-dir` additionally writes both captures there with every string over 2 KiB cut to its
 head plus a byte count and every long array of objects reduced to the elements of distinct shape
@@ -25,6 +28,9 @@ import os
 import re
 import sys
 from collections import Counter
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import markdown_metrics as mdm  # noqa: E402  (the sibling module; the path is set just above)
 
 ORIGIN_TOKEN = "<ORIGIN>"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -235,6 +241,47 @@ def label(exchange):
     return f"{exchange['method']} {template(exchange['path'])}"
 
 
+def pages_of(body):
+    """Every document of a wire body that carries a markdown string: `{source URL: markdown}`.
+    Finds `data` of a scrape and the `data[]` of a crawl status alike."""
+    found = {}
+
+    def walk(value):
+        if isinstance(value, dict):
+            meta = value.get("metadata")
+            markdown = value.get("markdown")
+            if isinstance(markdown, str) and isinstance(meta, dict) and isinstance(meta.get("sourceURL"), str):
+                found.setdefault(meta["sourceURL"], markdown)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(body)
+    return found
+
+
+def markdown_scores(up_body, cx_body, up_origin, cx_origin):
+    """Block-level F1 and ordered-subsequence ratio of every page both wires carry.
+    Pages are paired by their origin-independent URL key; unpaired pages are counted."""
+    up_pages = {mdm.url_key(u, up_origin): (u, md) for u, md in pages_of(up_body).items()}
+    cx_pages = {mdm.url_key(u, cx_origin): (u, md) for u, md in pages_of(cx_body).items()}
+    rows = []
+    for key in sorted(set(up_pages) & set(cx_pages)):
+        (up_url, up_md), (cx_url, cx_md) = up_pages[key], cx_pages[key]
+        metrics = mdm.page_metrics(up_md, up_url, up_origin, cx_md, cx_url, cx_origin)
+        rows.append({"page": key, **metrics})
+    ratios = [r["ordered_ratio"] for r in rows if r["ordered_ratio"] is not None]
+    return {
+        "pages": rows,
+        "only_upstream": len(set(up_pages) - set(cx_pages)),
+        "only_crawlx": len(set(cx_pages) - set(up_pages)),
+        "mean_block_f1": sum(r["block_f1"] for r in rows) / len(rows) if rows else None,
+        "mean_ordered_ratio": sum(ratios) / len(ratios) if ratios else None,
+    }
+
+
 def compare_exchange(up, cx, up_origin, cx_origin):
     """The difference of the i-th HTTP exchange of one call."""
     up_shape = shape_of(up["response"]) if up else Shape()
@@ -248,6 +295,9 @@ def compare_exchange(up, cx, up_origin, cx_origin):
         "up_shape": up_shape,
         "cx_shape": cx_shape,
         "values": value_diffs(up_shape, cx_shape, up_origin, cx_origin),
+        "markdown": markdown_scores(
+            (up or {}).get("response"), (cx or {}).get("response"), up_origin, cx_origin
+        ),
         "headers_only_upstream": [],
         "headers_only_crawlx": [],
     }
@@ -373,6 +423,53 @@ def render_exchange(ex):
     return lines
 
 
+def fmt_score(value):
+    return "n/a" if value is None else f"{value:.4f}"
+
+
+def render_markdown(ex):
+    """Markdown block-level F1 and ordered-subsequence ratio per paired page of one exchange."""
+    md = ex.get("markdown")
+    if ex["missing"] or md is None or not (md["pages"] or md["only_upstream"] or md["only_crawlx"]):
+        return []
+    lines = [
+        f"Markdown (normalized, {len(md['pages'])} page(s) on both sides; "
+        f"{md['only_upstream']} only upstream, {md['only_crawlx']} only crawlx): "
+        f"mean block F1 {fmt_score(md['mean_block_f1'])}, "
+        f"mean ordered-subsequence ratio {fmt_score(md['mean_ordered_ratio'])}.",
+        "",
+    ]
+    if md["pages"]:
+        lines += ["| page | blocks up / crawlx | block F1 | ordered-subsequence ratio |", "|---|---|---|---|"]
+        for row in md["pages"]:
+            lines.append(
+                f"| `{row['page']}` | {row['blocks'][0]} / {row['blocks'][1]} "
+                f"| {fmt_score(row['block_f1'])} | {fmt_score(row['ordered_ratio'])} |"
+            )
+        lines.append("")
+    return lines
+
+
+def markdown_summary(comparison):
+    """One row per exchange that carries pages on either side."""
+    lines = [
+        "| call | exchange | pages on both | only upstream | only crawlx | mean block F1 | mean ordered-subsequence ratio |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    rows = 0
+    for name, call in comparison.items():
+        for ex in call["exchanges"]:
+            md = ex.get("markdown")
+            if ex["missing"] or md is None or not (md["pages"] or md["only_upstream"] or md["only_crawlx"]):
+                continue
+            rows += 1
+            lines.append(
+                f"| `{name}` | {ex['label']} | {len(md['pages'])} | {md['only_upstream']} | {md['only_crawlx']} "
+                f"| {fmt_score(md['mean_block_f1'])} | {fmt_score(md['mean_ordered_ratio'])} |"
+            )
+    return lines if rows else ["No page bodies on both sides."]
+
+
 def render_typed(typed):
     if typed is None:
         return []
@@ -444,6 +541,11 @@ def render_report(upstream, crawlx, comparison, meta):
     lines += [f"| `{name}` | {CALL_DESCRIPTIONS.get(name, name)} |" for name in comparison]
     lines += ["", "## Summary", ""]
     lines += summary_table(comparison) + [""]
+    lines += ["## Markdown metrics", "",
+              "Per exchange, the pages both sides returned (paired by origin-independent `sourceURL`), "
+              "normalized and scored: block-level F1 (multiset of exactly equal blocks) and the "
+              "ordered-subsequence ratio (`2 * LCS / (|a| + |b|)` over the block order).", ""]
+    lines += markdown_summary(comparison) + [""]
     for name, call in comparison.items():
         lines += [f"## `{name}`", ""]
         if not all(call["present"]):
@@ -453,6 +555,7 @@ def render_report(upstream, crawlx, comparison, meta):
             lines += [f"Status polls until the answer: upstream {describe_polls(polls[0])}, crawlx {describe_polls(polls[1])}.", ""]
         for ex in call["exchanges"]:
             lines += render_exchange(ex)
+            lines += render_markdown(ex)
         lines += render_typed(call["typed"])
     for title, key in (
         ("Every path only upstream", "only_upstream"),

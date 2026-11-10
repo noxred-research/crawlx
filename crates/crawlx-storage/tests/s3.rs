@@ -1,6 +1,7 @@
 //! S3 backend: the SDK code path against the in-process fake S3 of
-//! `crawlx_storage::testkit::fake_s3` (always runs) and against MinIO started with docker
-//! (skips when docker or the image is unavailable).
+//! `crawlx_storage::testkit::fake_s3` (always runs) and against a self-hosted S3-compatible
+//! server started with docker (skips when docker or the image is unavailable). Profile
+//! behavior is in `s3_profiles.rs`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use chrono::Utc;
@@ -34,6 +35,7 @@ fn blobs(endpoint: &str, sse: Option<Sse>) -> S3Blobs {
             "crawlx-tests",
         ),
     )
+    .unwrap()
 }
 
 async fn memory_run(runs: &MemoryStore, tenant: TenantId) -> crawlx_core::CrawlRunId {
@@ -336,7 +338,7 @@ async fn unreachable_endpoint_is_reported_as_unavailable() {
     }
 }
 
-// ---- MinIO through docker ------------------------------------------------------
+// ---- self-hosted server through docker -------------------------------------------
 
 async fn docker(args: &[&str]) -> Result<String, String> {
     let out = tokio::process::Command::new("docker")
@@ -351,11 +353,11 @@ async fn docker(args: &[&str]) -> Result<String, String> {
     }
 }
 
-struct Minio {
+struct Container {
     id: String,
 }
 
-impl Drop for Minio {
+impl Drop for Container {
     fn drop(&mut self) {
         let _ = std::process::Command::new("docker")
             .args(["rm", "-f", &self.id])
@@ -363,31 +365,30 @@ impl Drop for Minio {
     }
 }
 
-/// MinIO reached at `CRAWLX_TEST_S3_ENDPOINT` (the `integration` CI job's service container;
+/// A server reached at `CRAWLX_TEST_S3_ENDPOINT` (the `integration` CI job's service container;
 /// credentials `CRAWLX_TEST_S3_ACCESS_KEY` / `CRAWLX_TEST_S3_SECRET_KEY`, default
 /// `crawlx` / `crawlx-secret`). Skips when the variable is unset.
 #[tokio::test]
-async fn minio_backend_contract_against_service_endpoint() {
+async fn service_endpoint_backend_contract() {
     let Ok(endpoint) = std::env::var("CRAWLX_TEST_S3_ENDPOINT") else {
         eprintln!("skipped: CRAWLX_TEST_S3_ENDPOINT is not set");
         return;
     };
     let access = std::env::var("CRAWLX_TEST_S3_ACCESS_KEY").unwrap_or_else(|_| "crawlx".to_owned());
     let secret = std::env::var("CRAWLX_TEST_S3_SECRET_KEY").unwrap_or_else(|_| "crawlx-secret".to_owned());
-    minio_contract(&endpoint, &access, &secret).await;
+    service_contract(&endpoint, &access, &secret).await;
 }
 
 #[tokio::test]
-async fn minio_backend_contract_when_docker_can_run_it() {
+async fn self_hosted_backend_contract_when_docker_can_run_it() {
     if docker(&["info"]).await.is_err() {
         eprintln!("skipped: docker daemon is not available");
         return;
     }
-    // `minio/minio` left Docker Hub in 2025; the bitnami legacy image still carries a MinIO
-    // server. Use whichever is present or pullable.
+    // A server image from a registry that is present or pullable; use whichever is present.
     const IMAGES: [(&str, &[&str]); 2] = [
-        ("minio/minio", &["server", "/data"]),
-        ("bitnamilegacy/minio", &[]),
+        ("minio/minio", &["server", "/data"]), // wire-compat: container image name
+        ("bitnamilegacy/minio", &[]),          // wire-compat: container image name
     ];
     let mut chosen = None;
     let mut reasons = Vec::new();
@@ -406,7 +407,7 @@ async fn minio_backend_contract_when_docker_can_run_it() {
     }
     let Some((image, args)) = chosen else {
         eprintln!(
-            "skipped: no MinIO image is present or pullable: {}",
+            "skipped: no server image is present or pullable: {}",
             reasons.join("; ")
         );
         return;
@@ -417,9 +418,9 @@ async fn minio_backend_contract_when_docker_can_run_it() {
         "-p",
         "127.0.0.1:0:9000",
         "-e",
-        "MINIO_ROOT_USER=crawlx",
+        "MINIO_ROOT_USER=crawlx", // wire-compat: server environment variable
         "-e",
-        "MINIO_ROOT_PASSWORD=crawlx-secret",
+        "MINIO_ROOT_PASSWORD=crawlx-secret", // wire-compat: server environment variable
         image,
     ];
     run_args.extend_from_slice(args);
@@ -430,8 +431,8 @@ async fn minio_backend_contract_when_docker_can_run_it() {
             return;
         }
     };
-    let minio = Minio { id };
-    let port_line = docker(&["port", &minio.id, "9000/tcp"])
+    let container = Container { id };
+    let port_line = docker(&["port", &container.id, "9000/tcp"])
         .await
         .expect("port mapping");
     let port = port_line
@@ -439,16 +440,16 @@ async fn minio_backend_contract_when_docker_can_run_it() {
         .find_map(|l| l.rsplit(':').next())
         .expect("host port")
         .to_owned();
-    minio_contract(&format!("http://127.0.0.1:{port}"), "crawlx", "crawlx-secret").await;
+    service_contract(&format!("http://127.0.0.1:{port}"), "crawlx", "crawlx-secret").await;
 }
 
-/// The backend contract plus the SSE-S3 passthrough against a MinIO server at `endpoint`.
-async fn minio_contract(endpoint: &str, access: &str, secret: &str) {
+/// The backend contract plus the SSE-S3 passthrough against a server at `endpoint`.
+async fn service_contract(endpoint: &str, access: &str, secret: &str) {
     let creds =
-        || aws_sdk_s3::config::Credentials::new(access.to_owned(), secret.to_owned(), None, None, "minio");
+        || aws_sdk_s3::config::Credentials::new(access.to_owned(), secret.to_owned(), None, None, "test");
     let mut cfg = S3Config::new("crawlx-artifacts", "us-east-1").with_endpoint(endpoint.to_owned());
     cfg.max_attempts = 3;
-    let b = S3Blobs::with_credentials(&cfg, creds());
+    let b = S3Blobs::with_credentials(&cfg, creds()).unwrap();
     // readiness: the bucket create succeeds once the server answers
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     loop {
@@ -464,13 +465,13 @@ async fn minio_contract(endpoint: &str, access: &str, secret: &str) {
                 tracing::debug!(error = %e, "minio not ready");
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
-            Err(e) => panic!("minio did not become ready: {e}"),
+            Err(e) => panic!("server did not become ready: {e}"),
         }
     }
     backend_contract(&b).await;
 
-    // SSE-S3 passthrough: MinIO without KMS accepts AES256 (SSE-S3) requests
-    let sse = S3Blobs::with_credentials(&cfg.clone().with_sse(Sse::Aes256), creds());
+    // SSE-S3 passthrough: a server without a key service accepts AES256 (SSE-S3) requests
+    let sse = S3Blobs::with_credentials(&cfg.clone().with_sse(Sse::Aes256), creds()).unwrap();
     match sse.put("content/sse/a/b", b"x").await {
         Ok(()) => {
             assert_eq!(
@@ -479,7 +480,7 @@ async fn minio_contract(endpoint: &str, access: &str, secret: &str) {
             );
             sse.delete("content/sse/a/b").await.unwrap();
         }
-        // a MinIO build without an SSE-S3 key rejects the header with a service error, not a crash
+        // a server build without an SSE-S3 key rejects the header with a service error, not a crash
         Err(crawlx_core::StoreError::Backend(msg)) => {
             assert!(msg.starts_with("s3 put content/sse/a/b"), "{msg}")
         }

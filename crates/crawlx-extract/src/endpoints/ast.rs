@@ -25,7 +25,10 @@
 //! placeholder (`"/users/" + id` → `/users/:id`, `` `/api/${v}/items` `` →
 //! `/api/:v/items`). A leading unknown prefix (`base + "/api"`, `"http://" +
 //! host + "/x"`) is dropped so the path resolves against the page. Values that
-//! are placeholders only are discarded.
+//! are placeholders only are discarded. Each placeholder, and each value that
+//! was discarded, is also reported as a typed
+//! [`UnresolvedEndpoint`](super::unresolved::UnresolvedEndpoint) (see
+//! [`discover_report`]); the script is never evaluated.
 //!
 //! Method comes from the options object (`method`/`type`) or the call name;
 //! header names from the `headers` object literal (names only, lower-cased);
@@ -35,8 +38,12 @@
 //! syntax errors yields nothing. The caller runs regex only in `regex`/`both`
 //! mode; `ast` mode never silently falls back.
 //!
-//! Bounds: scripts above [`MAX_AST_BYTES`] are skipped; regex still runs in
-//! `both` mode. Identifier inlining is depth-limited and cycle-safe.
+//! Bounds: scripts above [`MAX_AST_BYTES`] are skipped, and so are scripts that
+//! nest brackets, prefix operators or right-associative operators deeper than
+//! the lexical guard allows (a hostile `((((…` would overflow the parser's
+//! stack); regex still runs in `both` mode. Identifier inlining is
+//! depth-limited and cycle-safe, and the visitors stop descending past
+//! [`MAX_AST_DEPTH`].
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,16 +51,20 @@ use http::Method;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentExpression, AssignmentTarget, BinaryOperator, BindingIdentifier, BindingPattern,
-    CallExpression, Expression, NewExpression, ObjectExpression, ObjectPropertyKind, VariableDeclarator,
+    CallExpression, Expression, NewExpression, ObjectExpression, ObjectPropertyKind, Statement,
+    VariableDeclarator,
 };
 use oxc_ast_visit::{walk, Visit};
 use oxc_parser::{ParseOptions, Parser};
-use oxc_span::{GetSpan, SourceType};
+use oxc_span::{GetSpan, SourceType, Span};
 use url::Url;
 
 use super::body::{
     fill, JS_AJAX, JS_AXIOS, JS_BEACON, JS_EVENTSOURCE, JS_FETCH, JS_HISTORY, JS_HTTP, JS_LOCATION, JS_OPEN,
     JS_STRING, JS_URL, JS_WEBSOCKET, JS_XHR,
+};
+use super::unresolved::{
+    DiscoveryReport, ScriptOrigin, SourceSpan, UnresolvedEndpoint, UnresolvedKind, UnresolvedLog,
 };
 use super::{Confidence, DiscoveredEndpoint, EndpointSource};
 
@@ -76,15 +87,22 @@ const METHODS: &[&str] = &[
 /// Generic HTTP-client method names (`this.http.post(url, body)`).
 const CLIENT_METHODS: &[&str] = &["get", "post", "put", "patch", "delete", "head", "options"];
 
+/// An expression the pass could not reduce to text: where it sits and what it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Hole {
+    span: Span,
+    kind: UnresolvedKind,
+}
+
 /// One folded string piece.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Piece<'a> {
     /// Literal text.
     Lit(String),
     /// A reference to a binding, inlined when the binding is a known constant.
-    Ref(&'a str),
+    Ref(&'a str, Span),
     /// Anything else, rendered as `:name`.
-    Param(String),
+    Param(String, Hole),
 }
 
 /// How string-like a folded expression is.
@@ -98,20 +116,53 @@ enum Kind {
     Str,
 }
 
-fn param<'a>(out: &mut Vec<Piece<'a>>, name: &str) -> Kind {
-    out.push(Piece::Param(name.to_owned()));
+fn param<'a>(out: &mut Vec<Piece<'a>>, name: &str, span: Span, kind: UnresolvedKind) -> Kind {
+    out.push(Piece::Param(name.to_owned(), Hole { span, kind }));
     Kind::Maybe
+}
+
+/// Deepest expression, statement or pattern nesting the passes recurse into.
+/// The oxc visitors and [`fold`] recurse natively, so a hostile script
+/// (`a+a+a+…` repeated 100 000 times) would overflow a worker thread's stack;
+/// anything deeper is skipped and never reported.
+const MAX_AST_DEPTH: u16 = 512;
+
+/// Recursion counter of the visitors.
+#[derive(Debug, Default)]
+struct Depth(u16);
+
+impl Depth {
+    /// Enter one more level; `false` (and no change) at the bound.
+    fn enter(&mut self) -> bool {
+        if self.0 >= MAX_AST_DEPTH {
+            return false;
+        }
+        self.0 += 1;
+        true
+    }
+
+    fn leave(&mut self) {
+        self.0 = self.0.saturating_sub(1);
+    }
 }
 
 /// Fold `e` into pieces and report its kind.
 fn fold<'a>(e: &Expression<'a>, out: &mut Vec<Piece<'a>>) -> Kind {
+    fold_at(e, out, 0)
+}
+
+fn fold_at<'a>(e: &Expression<'a>, out: &mut Vec<Piece<'a>>, depth: u16) -> Kind {
+    if depth >= MAX_AST_DEPTH {
+        return param(out, "param", e.span(), UnresolvedKind::Expression);
+    }
+    let next = depth.saturating_add(1);
     match e {
         Expression::StringLiteral(s) => match s.value.as_str() {
             Some(v) => {
                 out.push(Piece::Lit(v.to_owned()));
                 Kind::Str
             }
-            None => param(out, "param"),
+            None => param(out, "param", s.span, UnresolvedKind::Expression),
         },
         Expression::NumericLiteral(n) => {
             out.push(Piece::Lit(
@@ -131,43 +182,57 @@ fn fold<'a>(e: &Expression<'a>, out: &mut Vec<Piece<'a>>) -> Kind {
                     out.push(Piece::Lit(text.to_owned()));
                 }
                 if let Some(x) = t.expressions.get(i) {
-                    fold(x, out);
+                    fold_at(x, out, next);
                 }
             }
             Kind::Str
         }
         Expression::BinaryExpression(b) if b.operator == BinaryOperator::Addition => {
-            let l = fold(&b.left, out);
-            let r = fold(&b.right, out);
+            let l = fold_at(&b.left, out, next);
+            let r = fold_at(&b.right, out, next);
             l.max(r)
         }
-        Expression::ParenthesizedExpression(p) => fold(&p.expression, out),
-        Expression::AwaitExpression(a) => fold(&a.argument, out),
+        Expression::ParenthesizedExpression(p) => fold_at(&p.expression, out, next),
+        Expression::AwaitExpression(a) => fold_at(&a.argument, out, next),
         Expression::SequenceExpression(s) => match s.expressions.last() {
-            Some(last) => fold(last, out),
-            None => param(out, "param"),
+            Some(last) => fold_at(last, out, next),
+            None => param(out, "param", s.span, UnresolvedKind::Expression),
         },
-        Expression::LogicalExpression(l) => fold(&l.left, out),
+        Expression::LogicalExpression(l) => fold_at(&l.left, out, next),
         Expression::Identifier(id) => {
-            out.push(Piece::Ref(id.name.as_str()));
+            out.push(Piece::Ref(id.name.as_str(), id.span));
             Kind::Maybe
         }
-        Expression::StaticMemberExpression(m) => param(out, m.property.name.as_str()),
+        Expression::StaticMemberExpression(m) => {
+            param(out, m.property.name.as_str(), m.span, UnresolvedKind::Member)
+        }
         Expression::ComputedMemberExpression(m) => match &m.expression {
-            Expression::StringLiteral(s) => param(out, s.value.as_str().unwrap_or("param")),
-            _ => param(out, "param"),
+            Expression::StringLiteral(s) => param(
+                out,
+                s.value.as_str().unwrap_or("param"),
+                m.span,
+                UnresolvedKind::Member,
+            ),
+            _ => param(out, "param", m.span, UnresolvedKind::Member),
         },
-        Expression::CallExpression(c) => fold_call(c, out),
+        Expression::CallExpression(c) => fold_call(c, out, next),
         _ => {
-            out.push(Piece::Param("param".to_owned()));
+            out.push(Piece::Param(
+                "param".to_owned(),
+                Hole {
+                    span: e.span(),
+                    kind: UnresolvedKind::Expression,
+                },
+            ));
             Kind::No
         }
     }
 }
 
-/// `encodeURIComponent(x)`, `String(x)`, `x.toString()`, `x.trim()` and the
-/// case conversions are transparent; any other call is a placeholder.
-fn fold_call<'a>(c: &CallExpression<'a>, out: &mut Vec<Piece<'a>>) -> Kind {
+/// `encodeURIComponent(x)`, `String(x)`, `x.toString()` and `x.trim()` are
+/// transparent; any other call (case conversions change the value) is an
+/// unresolved placeholder.
+fn fold_call<'a>(c: &CallExpression<'a>, out: &mut Vec<Piece<'a>>, depth: u16) -> Kind {
     let first = c.arguments.first().and_then(Argument::as_expression);
     match c.callee.without_parentheses() {
         Expression::Identifier(id)
@@ -177,21 +242,18 @@ fn fold_call<'a>(c: &CallExpression<'a>, out: &mut Vec<Piece<'a>>) -> Kind {
             ) =>
         {
             if let Some(a) = first {
-                return fold(a, out).max(Kind::Maybe);
+                return fold_at(a, out, depth).max(Kind::Maybe);
             }
         }
         Expression::StaticMemberExpression(m)
             if c.arguments.is_empty()
-                && matches!(
-                    m.property.name.as_str(),
-                    "toString" | "trim" | "toLowerCase" | "toUpperCase" | "valueOf"
-                ) =>
+                && matches!(m.property.name.as_str(), "toString" | "trim" | "valueOf") =>
         {
-            return fold(&m.object, out).max(Kind::Maybe);
+            return fold_at(&m.object, out, depth).max(Kind::Maybe);
         }
         _ => {}
     }
-    param(out, "param")
+    param(out, "param", c.span, UnresolvedKind::Call)
 }
 
 /// What pass one learned about a binding name.
@@ -209,9 +271,38 @@ struct Binding<'a> {
 #[derive(Default)]
 struct Bindings<'a> {
     names: BTreeMap<&'a str, Binding<'a>>,
+    depth: Depth,
 }
 
 impl<'a> Visit<'a> for Bindings<'a> {
+    fn visit_statement(&mut self, it: &Statement<'a>) {
+        if self.depth.enter() {
+            walk::walk_statement(self, it);
+            self.depth.leave();
+        }
+    }
+
+    fn visit_expression(&mut self, it: &Expression<'a>) {
+        if self.depth.enter() {
+            walk::walk_expression(self, it);
+            self.depth.leave();
+        }
+    }
+
+    fn visit_binding_pattern(&mut self, it: &BindingPattern<'a>) {
+        if self.depth.enter() {
+            walk::walk_binding_pattern(self, it);
+            self.depth.leave();
+        }
+    }
+
+    fn visit_assignment_target(&mut self, it: &AssignmentTarget<'a>) {
+        if self.depth.enter() {
+            walk::walk_assignment_target(self, it);
+            self.depth.leave();
+        }
+    }
+
     fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
         self.names.entry(it.name.as_str()).or_default().declared += 1;
     }
@@ -253,6 +344,8 @@ struct Rendered {
     literal: bool,
     /// Some `:name` placeholder was produced.
     placeholder: bool,
+    /// Every sub-expression that was rendered as a placeholder, in text order.
+    holes: Vec<Hole>,
 }
 
 fn render<'a>(
@@ -268,12 +361,13 @@ fn render<'a>(
                 r.text.push_str(s);
                 r.literal = true;
             }
-            Piece::Param(name) => {
+            Piece::Param(name, hole) => {
                 r.text.push(':');
                 r.text.push_str(name);
                 r.placeholder = true;
+                r.holes.push(*hole);
             }
-            Piece::Ref(name) => match consts.get(name) {
+            Piece::Ref(name, span) => match consts.get(name) {
                 Some(init) if depth < MAX_INLINE_DEPTH && !visiting.contains(name) => {
                     visiting.push(name);
                     render(init, consts, depth.saturating_add(1), visiting, r);
@@ -283,6 +377,10 @@ fn render<'a>(
                     r.text.push(':');
                     r.text.push_str(name);
                     r.placeholder = true;
+                    r.holes.push(Hole {
+                        span: *span,
+                        kind: UnresolvedKind::Variable,
+                    });
                 }
             },
         }
@@ -371,14 +469,26 @@ enum BodyKeys {
     Form(BTreeSet<String>),
 }
 
+/// What the URL position of a request site resolved to.
+#[derive(Debug, Default)]
+struct UrlResolution {
+    /// Route pattern, `None` when nothing usable was derived.
+    pattern: Option<String>,
+    /// Every sub-expression that could not be resolved.
+    holes: Vec<Hole>,
+}
+
 /// What an options object (`fetch` init, axios config, `$.ajax` settings) says.
 #[derive(Debug, Default)]
 struct Opts {
-    url: Option<String>,
+    url: Option<UrlResolution>,
     method: Option<Method>,
     headers: BTreeSet<String>,
     content_type: Option<String>,
     body: Option<BodyKeys>,
+    /// The matcher is only a likely request site (`x.open(…)` without a known
+    /// method): resolve it, but do not report what stays unresolved.
+    quiet: bool,
 }
 
 /// One request site before resolution.
@@ -405,6 +515,16 @@ impl Site {
     }
 }
 
+/// One unresolved sub-expression of a request site.
+#[derive(Debug)]
+struct Unres {
+    source: EndpointSource,
+    method: Method,
+    hole: Hole,
+    /// An endpoint was still emitted for the site.
+    partial: bool,
+}
+
 /// Pass two: request-site miner.
 struct Miner<'a> {
     consts: Consts<'a>,
@@ -414,6 +534,8 @@ struct Miner<'a> {
     /// Inside a folded concatenation: operands are not separate candidates.
     suppress: bool,
     sites: Vec<Site>,
+    depth: Depth,
+    unresolved: Vec<Unres>,
     /// JavaScript carried in strings (`el.setAttribute('onclick', "fetch('/x')")`),
     /// mined after this script at the next nesting level.
     nested: Vec<String>,
@@ -480,9 +602,20 @@ fn name_method(name: &str) -> Method {
     Method::from_bytes(name.to_ascii_uppercase().as_bytes()).unwrap_or(Method::GET)
 }
 
+/// Longest dotted chain read as a callee or assignment target.
+const MAX_CHAIN_SEGMENTS: u8 = 32;
+
 /// Dotted member chain (`window.location.href` → `["window", "location", "href"]`);
-/// `None` when the chain does not bottom out in an identifier or `this`.
+/// `false` when the chain does not bottom out in an identifier or `this`, or is
+/// longer than [`MAX_CHAIN_SEGMENTS`].
 fn chain<'a>(e: &Expression<'a>, out: &mut Vec<&'a str>) -> bool {
+    chain_at(e, out, 0)
+}
+
+fn chain_at<'a>(e: &Expression<'a>, out: &mut Vec<&'a str>, depth: u8) -> bool {
+    if depth >= MAX_CHAIN_SEGMENTS {
+        return false;
+    }
     match e.without_parentheses() {
         Expression::Identifier(id) => {
             out.push(id.name.as_str());
@@ -493,12 +626,12 @@ fn chain<'a>(e: &Expression<'a>, out: &mut Vec<&'a str>) -> bool {
             true
         }
         Expression::StaticMemberExpression(m) => {
-            let ok = chain(&m.object, out);
+            let ok = chain_at(&m.object, out, depth + 1);
             out.push(m.property.name.as_str());
             ok
         }
         Expression::ComputedMemberExpression(m) => {
-            let ok = chain(&m.object, out);
+            let ok = chain_at(&m.object, out, depth + 1);
             match &m.expression {
                 Expression::StringLiteral(s) => {
                     out.push(s.value.as_str().unwrap_or(""));
@@ -521,13 +654,46 @@ fn global_path(segs: &[&str]) -> String {
     segs[i..].join(".")
 }
 
+/// A `new URL(path, base)` base that is the page itself (`location`,
+/// `location.origin`, `document.baseURI`): resolving against the page is right.
+fn is_page_base(e: &Expression<'_>) -> bool {
+    let mut segs = Vec::new();
+    if !chain(e, &mut segs) {
+        return false;
+    }
+    let path = global_path(&segs);
+    path == "location" || path.starts_with("location.") || path == "baseURI"
+}
+
 impl<'a> Miner<'a> {
-    fn pattern(&self, e: &Expression<'a>) -> Option<String> {
+    /// Resolve a URL position: the route pattern (if any) and everything that
+    /// stayed unresolved on the way.
+    fn resolve_url(&self, e: &Expression<'a>) -> UrlResolution {
         let mut pieces = Vec::new();
-        if fold(e, &mut pieces) == Kind::No {
-            return None;
+        let kind = fold(e, &mut pieces);
+        let r = rendered(&pieces, &self.consts);
+        let pattern = if kind != Kind::No && r.literal {
+            normalize(&r.text)
+        } else {
+            None
+        };
+        UrlResolution {
+            pattern,
+            holes: r.holes,
         }
-        self.pattern_of(&pieces)
+    }
+
+    /// Remember each unresolved sub-expression of a request site.
+    fn record(&mut self, res: &UrlResolution, source: EndpointSource, method: &Method) {
+        let partial = res.pattern.is_some();
+        for hole in &res.holes {
+            self.unresolved.push(Unres {
+                source,
+                method: method.clone(),
+                hole: *hole,
+                partial,
+            });
+        }
     }
 
     fn pattern_of(&self, pieces: &[Piece<'a>]) -> Option<String> {
@@ -571,7 +737,7 @@ impl<'a> Miner<'a> {
             };
             match name.as_str().unwrap_or("").to_ascii_lowercase().as_str() {
                 "url" => {
-                    opts.url = self.pattern(&p.value);
+                    opts.url = Some(self.resolve_url(&p.value));
                     self.consumed.insert(p.value.span().start);
                 }
                 "method" | "type" => opts.method = self.method(&p.value),
@@ -606,19 +772,23 @@ impl<'a> Miner<'a> {
     }
 
     fn emit(&mut self, url: Option<&Expression<'a>>, source: EndpointSource, method: Method, opts: Opts) {
-        let pattern = match url {
+        let res = match url {
             Some(u) => {
                 self.consumed.insert(u.span().start);
-                self.pattern(u)
+                self.resolve_url(u)
             }
-            None => opts.url,
+            None => opts.url.unwrap_or_default(),
         };
-        let Some(pattern) = pattern else {
+        let method = opts.method.unwrap_or(method);
+        if !opts.quiet {
+            self.record(&res, source, &method);
+        }
+        let Some(pattern) = res.pattern else {
             return;
         };
         self.sites.push(Site {
             pattern,
-            method: opts.method.unwrap_or(method),
+            method,
             source,
             headers: opts.headers,
             content_type: opts.content_type,
@@ -704,9 +874,13 @@ impl<'a> Miner<'a> {
                 }
             }
             _ if last == "open" && c.arguments.len() >= 2 => {
-                // `xhr.open(method, url)`; an unknown method stays GET
+                // `xhr.open(method, url)`; an unknown method stays GET. Other `open`
+                // methods exist (`db.open(name, mode)`): unresolved URLs are only
+                // reported when the first argument is a known HTTP method.
+                let method = arg(0).and_then(|m| self.method(m));
                 let opts = Opts {
-                    method: arg(0).and_then(|m| self.method(m)),
+                    quiet: method.is_none(),
+                    method,
                     ..Opts::default()
                 };
                 self.emit(arg(1), JS_XHR, Method::GET, opts);
@@ -714,7 +888,7 @@ impl<'a> Miner<'a> {
             _ if CLIENT_METHODS.contains(&last) => {
                 // generic HTTP client (`this.http.post('/api', body)`): only URL-looking targets
                 let Some(u) = arg(0) else { return };
-                if !self.pattern(u).is_some_and(|p| url_like(&p)) {
+                if !self.resolve_url(u).pattern.is_some_and(|p| url_like(&p)) {
                     return;
                 }
                 let with_body = matches!(last, "post" | "put" | "patch");
@@ -738,17 +912,26 @@ impl<'a> Miner<'a> {
             "URL" => {
                 let Some(first) = arg(0) else { return };
                 self.consumed.insert(first.span().start);
-                let Some(mut pattern) = self.pattern(first) else {
+                let res = self.resolve_url(first);
+                self.record(&res, JS_URL, &Method::GET);
+                let Some(mut pattern) = res.pattern else {
                     return;
                 };
                 if let Some(b) = arg(1) {
                     self.consumed.insert(b.span().start);
-                    if let Some(joined) = self
+                    let joined = self
                         .literal(b)
                         .and_then(|b| Url::parse(&b).ok())
-                        .and_then(|b| b.join(&pattern).ok())
-                    {
+                        .and_then(|b| b.join(&pattern).ok());
+                    if let Some(joined) = joined {
                         pattern = joined.to_string();
+                    } else if !is_page_base(b) {
+                        // the base is dynamic: the URL stays relative to the page
+                        let base = UrlResolution {
+                            pattern: Some(pattern.clone()),
+                            holes: self.resolve_url(b).holes,
+                        };
+                        self.record(&base, JS_URL, &Method::GET);
                     }
                 }
                 self.sites.push(Site::get(pattern, JS_URL));
@@ -825,7 +1008,31 @@ impl<'a> Visit<'a> for Miner<'a> {
         walk::walk_assignment_expression(self, it);
     }
 
+    fn visit_statement(&mut self, it: &Statement<'a>) {
+        if self.depth.enter() {
+            walk::walk_statement(self, it);
+            self.depth.leave();
+        }
+    }
+
+    fn visit_binding_pattern(&mut self, it: &BindingPattern<'a>) {
+        if self.depth.enter() {
+            walk::walk_binding_pattern(self, it);
+            self.depth.leave();
+        }
+    }
+
+    fn visit_assignment_target(&mut self, it: &AssignmentTarget<'a>) {
+        if self.depth.enter() {
+            walk::walk_assignment_target(self, it);
+            self.depth.leave();
+        }
+    }
+
     fn visit_expression(&mut self, it: &Expression<'a>) {
+        if !self.depth.enter() {
+            return;
+        }
         if is_stringish(it) {
             if !self.suppress && !self.consumed.contains(&it.span().start) {
                 self.candidate(it);
@@ -837,6 +1044,7 @@ impl<'a> Visit<'a> for Miner<'a> {
         } else {
             walk::walk_expression(self, it);
         }
+        self.depth.leave();
     }
 }
 
@@ -881,10 +1089,19 @@ fn render_body(keys: &BodyKeys, content_type: Option<&str>) -> (String, String) 
 /// `onclick` attribute is level 2).
 const MAX_NESTING: u8 = 2;
 
+/// What one script yielded before resolution against the page URL.
+#[derive(Default)]
+struct Found {
+    sites: Vec<Site>,
+    /// Unresolved sub-expressions with the nesting level of the script text
+    /// their span indexes into (0 = the script itself).
+    unresolved: Vec<(u8, Unres)>,
+}
+
 /// Parse `js` and collect its request sites; handler strings are mined
 /// recursively up to [`MAX_NESTING`].
-fn sites(js: &str, level: u8, out: &mut Vec<Site>) {
-    if js.len() > MAX_AST_BYTES {
+fn sites(js: &str, level: u8, out: &mut Found) {
+    if js.len() > MAX_AST_BYTES || super::shape::too_deep(js) {
         return;
     }
     let allocator = Allocator::default();
@@ -904,10 +1121,14 @@ fn sites(js: &str, level: u8, out: &mut Vec<Site>) {
         consumed: BTreeSet::new(),
         suppress: false,
         sites: Vec::new(),
+        unresolved: Vec::new(),
+        depth: Depth::default(),
         nested: Vec::new(),
     };
     miner.visit_program(&parsed.program);
-    out.append(&mut miner.sites);
+    out.sites.append(&mut miner.sites);
+    out.unresolved
+        .extend(miner.unresolved.drain(..).map(|u| (level, u)));
     if level < MAX_NESTING {
         for code in &miner.nested {
             sites(code, level.saturating_add(1), out);
@@ -917,13 +1138,53 @@ fn sites(js: &str, level: u8, out: &mut Vec<Site>) {
 
 /// Mine `js` for request sites and resolve them against `base`; `depth` is
 /// the page's depth. Empty when the script has syntax errors or exceeds
-/// [`MAX_AST_BYTES`].
+/// [`MAX_AST_BYTES`]. Unresolved expressions are not reported here; see
+/// [`discover_report`].
 #[must_use]
 pub fn discover(js: &str, base: &Url, depth: u32) -> Vec<DiscoveredEndpoint> {
-    let mut found = Vec::new();
+    let mut out = Vec::new();
+    discover_into(
+        js,
+        base,
+        depth,
+        ScriptOrigin::ScriptFile,
+        &mut out,
+        &mut UnresolvedLog::new(0),
+    );
+    out
+}
+
+/// [`discover`] plus the unresolved URL expressions of the script: `origin`
+/// says what `js` is, `max_unresolved` bounds the listed outcomes (the rest are
+/// counted in [`DiscoveryReport::unresolved_dropped`]).
+#[must_use]
+pub fn discover_report(
+    js: &str,
+    base: &Url,
+    depth: u32,
+    origin: ScriptOrigin,
+    max_unresolved: usize,
+) -> DiscoveryReport {
+    let mut out = Vec::new();
+    let mut log = UnresolvedLog::new(max_unresolved);
+    discover_into(js, base, depth, origin, &mut out, &mut log);
+    log.finish(out)
+}
+
+/// Mine `js` into `out` and `log`; `origin` names the text `js` is (handler
+/// strings found inside it are [`ScriptOrigin::NestedHandler`]).
+pub(super) fn discover_into(
+    js: &str,
+    base: &Url,
+    depth: u32,
+    origin: ScriptOrigin,
+    out: &mut Vec<DiscoveredEndpoint>,
+    log: &mut UnresolvedLog,
+) {
+    let mut found = Found::default();
     sites(js, 0, &mut found);
-    let mut out = Vec::with_capacity(found.len());
-    for site in found {
+    let depth = depth.saturating_add(1);
+    for site in found.sites {
         let Some(url) = super::resolve(base, &site.pattern) else {
             continue;
         };
@@ -941,11 +1202,28 @@ pub fn discover(js: &str, base: &Url, depth: u32) -> Vec<DiscoveredEndpoint> {
             body,
             content_type,
             confidence: Confidence::Structural,
-            depth: depth.saturating_add(1),
+            depth,
             headers: site.headers.into_iter().collect(),
         });
     }
-    out
+    for (level, u) in found.unresolved {
+        log.push(UnresolvedEndpoint {
+            source: u.source,
+            method: u.method,
+            kind: u.hole.kind,
+            span: SourceSpan {
+                start: u.hole.span.start,
+                end: u.hole.span.end,
+            },
+            origin: if level == 0 {
+                origin
+            } else {
+                ScriptOrigin::NestedHandler
+            },
+            partial: u.partial,
+            depth,
+        });
+    }
 }
 
 #[cfg(test)]

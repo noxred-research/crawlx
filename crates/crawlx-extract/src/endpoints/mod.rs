@@ -19,7 +19,10 @@ pub mod ast;
 pub mod body;
 pub mod headers;
 pub mod script;
+#[cfg(feature = "js-ast")]
+mod shape;
 pub mod textual;
+pub mod unresolved;
 
 use std::collections::BTreeSet;
 
@@ -28,6 +31,9 @@ use http::Method;
 use scraper::Html;
 use serde::{Deserialize, Serialize};
 use url::Url;
+
+pub use unresolved::{DiscoveryReport, ScriptOrigin, SourceSpan, UnresolvedEndpoint, UnresolvedKind};
+use unresolved::{UnresolvedLog, DEFAULT_MAX_UNRESOLVED};
 
 use crate::metadata::effective_base;
 
@@ -63,6 +69,9 @@ pub struct DiscoveryOptions {
     /// Selected JavaScript miners. AST-only never falls back to regex on malformed
     /// or oversized scripts. Both always runs regex, even when AST parsing fails.
     pub javascript_mode: JavascriptMode,
+    /// Cap on the unresolved-expression outcomes listed by [`discover_report`];
+    /// further outcomes are only counted. Ignored by the endpoint-only entry points.
+    pub max_unresolved: usize,
 }
 
 impl Default for DiscoveryOptions {
@@ -70,6 +79,7 @@ impl Default for DiscoveryOptions {
         Self {
             max_results: DEFAULT_MAX_RESULTS,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            max_unresolved: DEFAULT_MAX_UNRESOLVED,
             javascript_mode: if cfg!(feature = "js-ast") {
                 JavascriptMode::Both
             } else {
@@ -350,8 +360,23 @@ pub fn discover_with(
     input: &DiscoveryInput<'_>,
     opts: &DiscoveryOptions,
 ) -> Result<Vec<DiscoveredEndpoint>, DiscoveryError> {
+    discover_report(input, opts).map(|r| r.endpoints)
+}
+
+/// [`discover_with`] plus the typed unresolved outcomes of the AST pass: URL
+/// expressions of request sites that could not be resolved statically
+/// (see [`UnresolvedEndpoint`]), bounded by [`DiscoveryOptions::max_unresolved`].
+/// The endpoints are exactly those of [`discover_with`].
+///
+/// # Errors
+/// The errors of [`discover_with`].
+pub fn discover_report(
+    input: &DiscoveryInput<'_>,
+    opts: &DiscoveryOptions,
+) -> Result<DiscoveryReport, DiscoveryError> {
     opts.validate()?;
     let mut out: Vec<DiscoveredEndpoint> = Vec::new();
+    let mut log = UnresolvedLog::new(opts.max_unresolved);
     headers::parse(input.headers, input.url, input.depth, &mut out);
 
     let body_bytes = &input.body[..input.body.len().min(opts.max_body_bytes)];
@@ -362,15 +387,30 @@ pub fn discover_with(
             .filter(|m| m != "application/octet-stream")
             .unwrap_or_else(|| textual::sniff(body_bytes).to_owned());
         let text = String::from_utf8_lossy(body_bytes);
+        let mined = if opts.javascript_mode.regex() {
+            script::decode_slash_escapes(&text)
+        } else {
+            std::borrow::Cow::Borrowed("")
+        };
+        // relative references in an HTML page resolve against its `<base>`
+        let mut html_base: Option<Url> = None;
         if is_script_like(&media, input.url.path()) {
             #[cfg(feature = "js-ast")]
             if opts.javascript_mode.ast() && is_javascript(&media, input.url.path()) {
-                out.extend(ast::discover(&text, input.url, input.depth));
+                ast::discover_into(
+                    &text,
+                    input.url,
+                    input.depth,
+                    ScriptOrigin::ScriptFile,
+                    &mut out,
+                    &mut log,
+                );
             }
             if opts.javascript_mode.regex() {
                 regex_pass(
                     input,
-                    script::extract_relative_endpoints(&text),
+                    input.url,
+                    script::extract_relative_endpoints(&mined),
                     body::JS_REGEX,
                     &mut out,
                 );
@@ -380,19 +420,29 @@ pub fn discover_with(
             let _charge = crate::parse_budget::charge(text.len())?;
             let doc = Html::parse_document(&text);
             let base = effective_base(&doc, input.url);
-            body::parse(&doc, &base, input.depth, opts.javascript_mode, &mut out);
+            body::parse(
+                &doc,
+                input.url,
+                &base,
+                input.depth,
+                opts.javascript_mode,
+                &mut out,
+                &mut log,
+            );
+            html_base = Some(base);
         }
         if opts.javascript_mode.regex() {
             regex_pass(
                 input,
-                script::extract_body_endpoints(&text),
+                html_base.as_ref().unwrap_or(input.url),
+                script::extract_body_endpoints(&mined),
                 body::HTML_REGEX,
                 &mut out,
             );
         }
     }
 
-    Ok(dedupe(out, opts.max_results))
+    Ok(log.finish(dedupe(out, opts.max_results)))
 }
 
 /// Discover endpoints in an HTML response that is already parsed (`doc`,
@@ -408,32 +458,58 @@ pub fn discover_html(
     input: &DiscoveryInput<'_>,
     opts: &DiscoveryOptions,
 ) -> Result<Vec<DiscoveredEndpoint>, DiscoveryError> {
+    discover_html_report(doc, base, input, opts).map(|r| r.endpoints)
+}
+
+/// [`discover_html`] plus the unresolved outcomes, like [`discover_report`].
+///
+/// # Errors
+/// The errors of [`discover_html`].
+pub fn discover_html_report(
+    doc: &Html,
+    base: &Url,
+    input: &DiscoveryInput<'_>,
+    opts: &DiscoveryOptions,
+) -> Result<DiscoveryReport, DiscoveryError> {
     opts.validate()?;
     let mut out: Vec<DiscoveredEndpoint> = Vec::new();
+    let mut log = UnresolvedLog::new(opts.max_unresolved);
     headers::parse(input.headers, input.url, input.depth, &mut out);
-    body::parse(doc, base, input.depth, opts.javascript_mode, &mut out);
+    body::parse(
+        doc,
+        input.url,
+        base,
+        input.depth,
+        opts.javascript_mode,
+        &mut out,
+        &mut log,
+    );
     let body_bytes = &input.body[..input.body.len().min(opts.max_body_bytes)];
     if opts.javascript_mode.regex() && textual::is_textual(input.content_type, body_bytes) {
         let text = String::from_utf8_lossy(body_bytes);
         regex_pass(
             input,
-            script::extract_body_endpoints(&text),
+            base,
+            script::extract_body_endpoints(&script::decode_slash_escapes(&text)),
             body::HTML_REGEX,
             &mut out,
         );
     }
-    Ok(dedupe(out, opts.max_results))
+    Ok(log.finish(dedupe(out, opts.max_results)))
 }
 
+/// Resolve regex-mined strings against `base` as GET endpoints; a match that
+/// still holds a backslash after the escape decoding is not a URL.
 fn regex_pass(
     input: &DiscoveryInput<'_>,
+    base: &Url,
     raws: Vec<&str>,
     source: EndpointSource,
     out: &mut Vec<DiscoveredEndpoint>,
 ) {
-    for raw in raws {
+    for raw in raws.into_iter().filter_map(script::mined_target) {
         out.extend(DiscoveredEndpoint::get(
-            input.url,
+            base,
             raw,
             source,
             Confidence::Regex,

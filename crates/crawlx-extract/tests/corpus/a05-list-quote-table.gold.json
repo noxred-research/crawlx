@@ -1,0 +1,68 @@
+{
+  "id": "a05-list-quote-table",
+  "family": "article_body",
+  "note": "list, quotation and table inside the article",
+  "expectedText": "Market News Traders Visit\nMarket Stall Fees Change in the New Season\nThe covered market will adjust its stall fees on the first of March, bringing the weekday rate closer to the weekend rate. Traders voted on the change during their autumn meeting.\nWeekday stalls: 9 euros per day\nWeekend stalls: 12 euros per day\nSeasonal pass: 180 euros for the quarter\n“The new rates are fairer to people who sell only a few days a week,\" said trader Tomas Brandt.\nStall type Old fee New fee\nWeekday 7 9\nWeekend 13 12\nTraders who already hold a seasonal pass keep their current price until the pass expires. The market office will mail updated receipts at the end of February.\nMarket News is a volunteer publication.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 25
+    },
+    {
+      "label": "body",
+      "start": 26,
+      "end": 68
+    },
+    {
+      "label": "body",
+      "start": 69,
+      "end": 248
+    },
+    {
+      "label": "body",
+      "start": 249,
+      "end": 280
+    },
+    {
+      "label": "body",
+      "start": 281,
+      "end": 313
+    },
+    {
+      "label": "body",
+      "start": 314,
+      "end": 354
+    },
+    {
+      "label": "body",
+      "start": 355,
+      "end": 452
+    },
+    {
+      "label": "body",
+      "start": 453,
+      "end": 479
+    },
+    {
+      "label": "body",
+      "start": 480,
+      "end": 491
+    },
+    {
+      "label": "body",
+      "start": 492,
+      "end": 505
+    },
+    {
+      "label": "body",
+      "start": 506,
+      "end": 664
+    },
+    {
+      "label": "boilerplate",
+      "start": 665,
+      "end": 704
+    }
+  ]
+}

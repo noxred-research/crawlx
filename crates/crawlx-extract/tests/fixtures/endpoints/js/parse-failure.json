@@ -1,0 +1,65 @@
+[
+  {
+    "name": "syntax-error-yields-nothing-in-ast-mode",
+    "js": "fetch('/api/list.json'",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "syntax-error-falls-back-to-regex-in-both-mode",
+    "js": "fetch('/api/list.json'",
+    "mode": "both",
+    "expected": [
+      {
+        "url": "/api/list.json",
+        "source": "js/regex",
+        "confidence": "regex"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "syntax-error-regex-only-mode",
+    "js": "fetch('/api/list.json'",
+    "mode": "regex",
+    "expected": [
+      {
+        "url": "/api/list.json",
+        "source": "js/regex",
+        "confidence": "regex"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "empty-script",
+    "js": "",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "comment-only-script",
+    "js": "// fetch('/commented/out');\n/* fetch('/block/commented'); */",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "unicode-escapes-in-urls",
+    "js": "fetch('\\u002fapi\\u002funi'); fetch('\\x2fapi\\x2fhex'); fetch(\"\\/api\\/slash\");",
+    "expected": [
+      {
+        "url": "/api/uni",
+        "source": "js/fetch"
+      },
+      {
+        "url": "/api/hex",
+        "source": "js/fetch"
+      },
+      {
+        "url": "/api/slash",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  }
+]

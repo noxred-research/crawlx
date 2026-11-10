@@ -12,6 +12,15 @@
 //! with the terminal status and totals before a normal close. A failure is an `error` frame and a
 //! close. The documents come from the run's event journal (`page` events of `crawl_events`, the
 //! feed behind SSE and webhooks), polled the way [`crate::routes::events`] does.
+//!
+//! Contract. A watcher speaks exactly these frames: `catchup`, `document`, `done` (status
+//! `completed`, `failed` or `cancelled`, so the run's `started`, `completed` and `failed`
+//! journal events show up as the stored pages and the final status) and `error`. A page that
+//! failed (including one whose content failed validation) and a page a cooldown of its origin
+//! defers have no frame: the first is listed by the crawl's `errors` route, the second only
+//! arrives later as a `document`. A client that does not accept a frame (or a keep-alive ping)
+//! within `Settings::ws_send_timeout` is closed with code 1008 and frees its stream slot; the
+//! run is unaffected and a reconnect starts with a fresh `catchup`.
 
 use crate::auth::{is_websocket_upgrade, websocket_key, Principal};
 use crate::errors::{ApiResult, HttpError};
@@ -263,6 +272,8 @@ enum Stop {
     ClientGone,
     /// The server is shutting down.
     Shutdown,
+    /// The client did not take a frame within `Settings::ws_send_timeout`.
+    SlowClient,
     /// The run could not be followed; the text goes to the client in an `error` frame.
     Failed(String),
 }
@@ -337,11 +348,21 @@ struct Watcher {
 }
 
 impl Watcher {
-    async fn send(&mut self, frame: Value) -> Result<(), Stop> {
+    /// Write one message; a client that takes more than `Settings::ws_send_timeout` to accept it
+    /// ends the watcher instead of holding its stream slot and the run's reads.
+    async fn write(&mut self, message: Message) -> Result<(), Stop> {
+        let limit = self.state.settings.ws_send_timeout;
         tokio::select! {
             () = self.state.shutdown.cancelled() => Err(Stop::Shutdown),
-            sent = self.socket.send(Message::Text(frame.to_string().into())) => Ok(sent?),
+            sent = tokio::time::timeout(limit, self.socket.send(message)) => match sent {
+                Ok(written) => Ok(written?),
+                Err(_) => Err(Stop::SlowClient),
+            },
         }
+    }
+
+    async fn send(&mut self, frame: Value) -> Result<(), Stop> {
+        self.write(Message::Text(frame.to_string().into())).await
     }
 
     /// Send the documents of `pages` the client has not seen.
@@ -377,7 +398,7 @@ impl Watcher {
                     Some(Ok(_)) => continue,
                 },
                 _ = self.ping.tick() => {
-                    self.socket.send(Message::Ping(Bytes::new())).await?;
+                    self.write(Message::Ping(Bytes::new())).await?;
                     continue;
                 }
                 polled = poll_run(&self.state, self.run, self.after) => polled?,
@@ -426,6 +447,7 @@ impl Watcher {
             Err(Stop::ClientGone) => return,
             Ok(()) => (None, close_code::NORMAL, ""),
             Err(Stop::Shutdown) => (None, close_code::AWAY, "server shutting down"),
+            Err(Stop::SlowClient) => (None, close_code::POLICY, "client too slow"),
             Err(Stop::Failed(message)) => (Some(message), close_code::ERROR, "watcher failed"),
         };
         let frame = CloseFrame {

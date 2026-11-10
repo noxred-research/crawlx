@@ -1,0 +1,19 @@
+{
+  "construct": "script-src",
+  "body": [
+    "<script src='/static/app.js'></script>",
+    "<script type='module' src='mod.js'></script>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/static/app.js",
+      "source": "script/src"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/mod.js",
+      "source": "script/src"
+    }
+  ]
+}

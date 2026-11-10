@@ -1,0 +1,48 @@
+{
+  "id": "a02-div-layout",
+  "family": "article_body",
+  "note": "no semantic elements; content found by text density",
+  "expectedText": "Eastgate Courier | Sign in | Subscribe\nEvents calendar\nWeather: light rain, 12 degrees\nEastgate Garden Replaces Leaking Compost Bins\nVolunteers at the Eastgate community garden finished a new compost system on Saturday, replacing three leaking bins with a row of cedar boxes. The boxes were built from donated boards and cost less than the old bins did to repair.\nGarden coordinator Mara Ellison said the system can handle all the kitchen scraps from the nearby apartment blocks. Residents drop scraps off on Tuesday and Friday mornings, and a rota of neighbors turns the piles twice a week.\nBy midsummer the first batch should be ready for the raised beds. The garden will give the surplus to the school next door, where students are planning a herb border along the playground fence.\nContact the newsroom. Advertise with us.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 38
+    },
+    {
+      "label": "boilerplate",
+      "start": 39,
+      "end": 54
+    },
+    {
+      "label": "boilerplate",
+      "start": 55,
+      "end": 86
+    },
+    {
+      "label": "body",
+      "start": 87,
+      "end": 132
+    },
+    {
+      "label": "body",
+      "start": 133,
+      "end": 363
+    },
+    {
+      "label": "body",
+      "start": 364,
+      "end": 591
+    },
+    {
+      "label": "body",
+      "start": 592,
+      "end": 785
+    },
+    {
+      "label": "boilerplate",
+      "start": 786,
+      "end": 826
+    }
+  ]
+}

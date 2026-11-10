@@ -7,6 +7,10 @@
 //! Article-only CSV/XML/TEI exports require the offline extraction serializer and
 //! cannot be silently substituted for `CreateCrawl.output.formats`.
 
+use crate::discovery::{
+    default_max_known_urls, DiscoverySourceV1, SourceDiscoveryPolicyV1, UrlListSourceV1,
+    UrlSubstringFilterV1, MAX_LISTED_URLS, MAX_LISTED_URL_BYTES,
+};
 use crate::{
     extraction::{
         ArticleAlgorithmV1, CommentPolicyV1, ContentFallbackV1, ContentFocusV1, ExtractionPolicyV1,
@@ -106,6 +110,10 @@ pub struct ExtractionManifestV1 {
     /// Explicit native retention-aware datasets, never Python cache paths.
     #[serde(default)]
     pub datasets: crate::dataset::DatasetConfigV1,
+    /// Explicit native inline URL list for list discovery. Callers resolve a file or standard
+    /// input to entries first; the importer reads no files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub url_list: Vec<String>,
 }
 /// Typed mapping state; unresolved requested behavior blocks conversion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +144,9 @@ pub struct ExtractionDispositionV1 {
     pub reason: &'static str,
     /// Supplied option or explicitly required inventory family.
     pub requested: bool,
+    /// Pinned inventory rows of the unmapped behavior, empty when the option maps natively.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub features: &'static [&'static str],
 }
 impl ExtractionDispositionV1 {
     /// Construct a requested rejection without exposing raw option values.
@@ -147,6 +158,7 @@ impl ExtractionDispositionV1 {
             target: Some(target),
             reason,
             requested: true,
+            features: &[],
         }
     }
 }
@@ -269,11 +281,37 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<ExtractionManifestV1, ExtractionIm
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(ExtractionImportError::Manifest("manifest exceeds one MiB"));
     }
-    let UniqueValue(value) = serde_json::from_slice(bytes)?;
+    let UniqueValue(mut value) = serde_json::from_slice(bytes)?;
+    let url_list = take_url_list(&mut value)?;
     validate_json(&value, 0)?;
-    let manifest: ExtractionManifestV1 = serde_json::from_value(value)?;
+    let mut manifest: ExtractionManifestV1 = serde_json::from_value(value)?;
+    manifest.url_list = url_list;
     validate_manifest(&manifest)?;
     Ok(manifest)
+}
+/// Detach and bound the inline URL list so the generic 256-entry array bound does not apply to
+/// it; the list carries its own bounds, checked again when it resolves.
+fn take_url_list(value: &mut Value) -> Result<Vec<String>, ExtractionImportError> {
+    let Some(entry) = value.as_object_mut().and_then(|map| map.remove("urlList")) else {
+        return Ok(Vec::new());
+    };
+    let Value::Array(items) = entry else {
+        return Err(ExtractionImportError::Manifest(
+            "urlList is an array of URL strings",
+        ));
+    };
+    if items.len() > MAX_LISTED_URLS {
+        return Err(ExtractionImportError::Manifest("urlList exceeds 10000 entries"));
+    }
+    items
+        .into_iter()
+        .map(|item| match item {
+            Value::String(text) if text.len() <= MAX_LISTED_URL_BYTES => Ok(text),
+            _ => Err(ExtractionImportError::Manifest(
+                "urlList entries are URL strings of at most 4096 bytes",
+            )),
+        })
+        .collect()
 }
 fn validate_json(value: &Value, depth: usize) -> Result<(), ExtractionImportError> {
     let mut nodes = 0;
@@ -381,6 +419,7 @@ impl Translation {
             target,
             reason,
             requested: true,
+            features: &[],
         });
     }
     fn translated(&mut self, id: &str, target: &'static str, valid: bool, reason: &'static str) {
@@ -505,7 +544,7 @@ pub fn inspect_manifest(
 ) -> Result<(ExtractionImportReportV1, Option<CreateCrawl>), ExtractionImportError> {
     validate_manifest(m)?;
     let mut t = Translation {
-        crawl: source_seed(m).map(CreateCrawl::new),
+        crawl: source_seed(m).or_else(|| list_seed(m)).map(CreateCrawl::new),
         policy: ExtractionPolicyV1::default(),
         dispositions: Vec::new(),
         targets: BTreeSet::new(),
@@ -522,6 +561,8 @@ pub fn inspect_manifest(
     for (key, value) in &m.options {
         translate_option(m.source, m.dialect, key, value, &mut t);
     }
+    translate_url_list(m, &mut t);
+    translate_language_hint(m, &mut t);
     if m.pipeline.configured() {
         t.record(
             "pipeline",
@@ -563,7 +604,7 @@ pub fn inspect_manifest(
     for id in &ids {
         t.dispositions.push(ExtractionDispositionV1 { id: id.clone(), state: ImportStateV1::DecisionNeeded, target: None,
             reason: "complete source-family equivalence is not established by one translated setting; see pinned inventory for exact residuals",
-            requested: m.required_inventory.contains(id) });
+            requested: m.required_inventory.contains(id), features: &[] });
     }
     for id in &m.required_inventory {
         if !ids.contains(id) {
@@ -879,12 +920,164 @@ fn translate_option(
             t.translated(key, target, boolean.is_some(),
                 "explicit native structural HTML/Markdown keep flag; canonical plain text and discovery authority stay unchanged; null/format-dependent auto mode is not silently inferred");
         }
+        "url_filter" => {
+            let filter = strings(value).and_then(|entries| UrlSubstringFilterV1::new(entries).ok());
+            if let (Some(filter), Some(crawl)) = (&filter, &mut t.crawl) {
+                crawl.scope.url_include = filter.include_patterns();
+            }
+            t.translated(key, "scope.urlInclude", filter.is_some(),
+                "plain case-sensitive substring include over the normalized URL, translated to escaped literal include patterns; explicit scope denies, excluded hosts and robots still win, the filter only narrows, and the seed is exempt; no regex syntax and no language inference");
+        }
+        "list_input" => {
+            t.unavailable(key, ImportStateV1::ExternalRequired, "file or standard-input URL lists are read by the caller, which supplies the entries as the manifest urlList; the importer reads no files and the native list type holds no path");
+        }
         "sentence_tokenizer" => t.unavailable(key, ImportStateV1::ExternalRequired, "licensed checksum-pinned compatible sentence-tokenizer resource required; no fake tokenizer or runtime model download"),
         _ => {
-            t.unavailable(key, ImportStateV1::DecisionNeeded, "advertised pinned option has no complete executable source-semantic mapping; it is not ignored or silently approximated");
+            t.unavailable(key, ImportStateV1::DecisionNeeded, "advertised pinned option has no complete executable source-semantic mapping; it is not ignored or silently approximated; the features field names the pinned inventory rows");
+        }
+    }
+    let features = option_features(source, key);
+    if !features.is_empty() {
+        if let Some(last) = t.dispositions.last_mut() {
+            if last.id == key && last.state != ImportStateV1::Translated {
+                last.features = features;
+            }
         }
     }
     report_nested(key, value, t);
+}
+/// First listed URL as the crawl seed, only when no option supplies a seed.
+fn list_seed(m: &ExtractionManifestV1) -> Option<url::Url> {
+    if m.url_list.is_empty()
+        || m.options
+            .keys()
+            .any(|key| canonical_key(m.source, m.dialect, key) == Some("url"))
+    {
+        return None;
+    }
+    UrlListSourceV1 {
+        urls: m.url_list.clone(),
+    }
+    .resolve(default_max_known_urls())
+    .ok()?
+    .urls
+    .into_iter()
+    .next()
+}
+/// Translate the explicit inline URL list into the native list-discovery source.
+fn translate_url_list(m: &ExtractionManifestV1, t: &mut Translation) {
+    if m.url_list.is_empty() {
+        return;
+    }
+    let target = "scope.discovery.urlList";
+    let Some(max_known) = t.crawl.as_ref().map(|crawl| crawl.scope.max_known_urls) else {
+        t.record(
+            "urlList",
+            ImportStateV1::Rejected,
+            Some(target),
+            "list discovery needs a valid native crawl: the supplied seed or list is invalid",
+        );
+        return;
+    };
+    let combined = t
+        .crawl
+        .as_ref()
+        .is_some_and(|crawl| !crawl.scope.sources.is_empty());
+    let list = UrlListSourceV1 {
+        urls: m.url_list.clone(),
+    };
+    if combined || list.resolve(max_known).is_err() {
+        t.record("urlList", ImportStateV1::Rejected, Some(target), "the list is empty, oversized, or has a non-HTTP(S), credentialed or padded entry, or another discovery mode is also requested; list discovery stands alone");
+        return;
+    }
+    if let Some(crawl) = &mut t.crawl {
+        crawl.scope.sources = vec![DiscoverySourceV1::UrlList];
+        crawl.scope.discovery = Some(SourceDiscoveryPolicyV1 {
+            url_list: Some(list),
+            ..SourceDiscoveryPolicyV1::default()
+        });
+    }
+    t.record("urlList", ImportStateV1::Translated, Some(target), "bounded inline URL list, deduplicated in stable order; every entry still passes native scope, robots, authorization and checked egress, so listing grants no fetch authority");
+}
+/// With a target language and a discovery policy, keep the language as a URL ranking hint.
+fn translate_language_hint(m: &ExtractionManifestV1, t: &mut Translation) {
+    if m.source != ExtractionSourceV1::PrecisionText {
+        return;
+    }
+    let Some(language) = t.policy.target_language.clone() else {
+        return;
+    };
+    let applied = t
+        .crawl
+        .as_mut()
+        .and_then(|crawl| crawl.scope.discovery.as_mut())
+        .is_some_and(|policy| {
+            policy.url_language_hint = Some(language);
+            let valid = policy.validate().is_ok();
+            if !valid {
+                policy.url_language_hint = None;
+            }
+            valid
+        });
+    if applied {
+        t.record("native.urlLanguageHint", ImportStateV1::Translated, Some("scope.discovery.urlLanguageHint"), "URL language markers only order discovered candidates; they never admit or deny a URL and are not evidence of content language, which stays with the target-language quality gate");
+    }
+}
+/// Pinned inventory rows behind an option that has no complete native mapping, so a refusal
+/// names the exact behavior. Empty for options that are not in the pinned ledger.
+#[must_use]
+pub fn option_features(source: ExtractionSourceV1, key: &str) -> &'static [&'static str] {
+    match source {
+        ExtractionSourceV1::PrecisionText => match key {
+            "record_id" => &["TP-01"],
+            "url_blacklist" | "blacklist" => &["TP-15"],
+            "deduplicate" | "MIN_DUPLCHECK_SIZE" | "MAX_REPETITIONS" => &["TP-17"],
+            "settingsfile" | "config" | "options" | "config-file" => &["TP-37"],
+            "tei_validation" | "csv" | "html" | "json" | "markdown" | "xml" | "xmltei" | "validate-tei" => {
+                &["TP-10"]
+            }
+            "date_extraction_params" | "EXTENSIVE_DATE_SEARCH" => &["TP-13"],
+            "MIN_FILE_SIZE" | "MAX_REDIRECTS" => &["TP-24"],
+            "USER_AGENTS" | "PROXY_URL" | "http_proxy" | "COOKIE" => &["TP-25"],
+            "MIN_EXTRACTED_SIZE"
+            | "MIN_OUTPUT_SIZE"
+            | "MIN_OUTPUT_COMM_SIZE"
+            | "MAX_TREE_SIZE"
+            | "EXTRACTION_TIMEOUT" => &["TP-19"],
+            "input-file" | "input-dir" | "i" => &["TP-35"],
+            "list" | "output-dir" | "backup-dir" | "keep-dirs" | "verbose" | "version" | "help" | "b"
+            | "o" | "v" => &["TP-36"],
+            "archived" => &["TP-33"],
+            "url-filter" => &["TP-34"],
+            _ => &[],
+        },
+        ExtractionSourceV1::NewsArticle => match key {
+            "min_word_count" | "min_sent_count" | "MIN_WORD_COUNT" | "MIN_SENT_COUNT" => &["NA-15"],
+            "max_title" | "MAX_TITLE" | "title" => &["NA-05"],
+            "max_authors" | "MAX_AUTHORS" | "authors" => &["NA-06"],
+            "max_file_memo" | "MAX_FILE_MEMO" | "memorize_articles" | "memoize_articles" => &["NA-26"],
+            "disable_category_cache" | "use_cached_categories" => &["NA-27"],
+            "clean_article_html" => &["NA-11"],
+            "http_success_only" | "allow_binary_content" | "ignored_content_types_defaults" => &["NA-30"],
+            "thread_timeout_seconds" => &["NA-28"],
+            "input_html" | "html-from-file" | "hf" => &["NA-38"],
+            "meta_lang" | "use_meta_language" => &["NA-08"],
+            "popular_urls" | "hot" => &["NA-37"],
+            "before_request" | "after_response" | "on_error" => &["NA-35"],
+            "cloudscraper" => &["NA-32"],
+            "save" | "pickle" => &["NA-19"],
+            "urls-from-file" | "urls-from-stdin" | "uf" | "us" | "output-file" | "o" | "help" | "verbose" => {
+                &["NA-39"]
+            }
+            "nlp" | "punkt" => &["NA-18"],
+            "google_news" => &["NA-36"],
+            "requests_params" | "proxies" | "headers" | "cookies" | "proxy" => &["NA-29"],
+            "top_image_settings" => &["NA-13"],
+            "only_homepage" | "only_in_path" | "dry" => &["NA-21"],
+            _ => &[],
+        },
+        ExtractionSourceV1::SurfaceFlags => &[],
+    }
 }
 fn report_nested(prefix: &str, value: &Value, t: &mut Translation) {
     match value {
@@ -970,7 +1163,7 @@ const PRECISION_TEXT_SETTINGS: &[(&str, &str)] = &[
 ];
 const PRECISION_TEXT_CLI: &[(&str, &str)] = &[
     ("URL", "url"),
-    ("input-file", "unavailable"),
+    ("input-file", "list_input"),
     ("input-dir", "unavailable"),
     ("parallel", "threads"),
     ("blacklist", "unavailable"),
@@ -984,7 +1177,7 @@ const PRECISION_TEXT_CLI: &[(&str, &str)] = &[
     ("explore", "source_mode"),
     ("probe", "source_mode"),
     ("archived", "archived"),
-    ("url-filter", "unavailable"),
+    ("url-filter", "url_filter"),
     ("fast", "fast"),
     ("formatting", "formatting"),
     ("links", "links"),
@@ -1010,7 +1203,7 @@ const PRECISION_TEXT_CLI: &[(&str, &str)] = &[
     ("version", "unavailable"),
     ("help", "unavailable"),
     ("u", "url"),
-    ("i", "unavailable"),
+    ("i", "list_input"),
     ("b", "unavailable"),
     ("o", "unavailable"),
     ("f", "fast"),
@@ -1083,8 +1276,8 @@ const NEWS_ARTICLE_LIBRARY: &[(&str, &str)] = &[
 ];
 const NEWS_ARTICLE_CLI: &[(&str, &str)] = &[
     ("url", "url"),
-    ("urls-from-file", "unavailable"),
-    ("urls-from-stdin", "unavailable"),
+    ("urls-from-file", "list_input"),
+    ("urls-from-stdin", "list_input"),
     ("html-from-file", "unavailable"),
     ("language", "language"),
     ("output-format", "output_format"),
@@ -1101,8 +1294,8 @@ const NEWS_ARTICLE_CLI: &[(&str, &str)] = &[
     ("skip-nlp", "skip_nlp"),
     ("help", "unavailable"),
     ("u", "url"),
-    ("uf", "unavailable"),
-    ("us", "unavailable"),
+    ("uf", "list_input"),
+    ("us", "list_input"),
     ("hf", "unavailable"),
     ("l", "language"),
     ("of", "output_format"),
@@ -1581,5 +1774,250 @@ mod tests {
         assert_eq!(source_milliseconds(&json!(u64::MAX), true, 50), None);
         m.options.insert("INSECURE_SSL_FALLBACK".into(), json!("on"));
         assert!(!inspect_manifest(&m).unwrap().0.convertible);
+    }
+    #[test]
+    fn url_filter_substrings_become_literal_include_patterns() {
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli);
+        m.options
+            .insert("url-filter".into(), json!(["/blog/", "?id=1", "a.b"]));
+        let (report, crawl) = inspect_manifest(&m).unwrap();
+        assert!(report.convertible);
+        let scope = crawl.unwrap().scope;
+        assert_eq!(scope.url_include, ["/blog/", r"\?id=1", r"a\.b"]);
+        assert!(scope.url_exclude.is_empty());
+        let disposition = report.dispositions.iter().find(|d| d.id == "url-filter").unwrap();
+        assert_eq!(disposition.state, ImportStateV1::Translated);
+        assert_eq!(disposition.target, Some("scope.urlInclude"));
+        // A single string is one substring.
+        m.options.insert("url-filter".into(), json!("news"));
+        assert_eq!(
+            inspect_manifest(&m).unwrap().1.unwrap().scope.url_include,
+            ["news"]
+        );
+        for invalid in [
+            json!([]),
+            json!(""),
+            json!([" "]),
+            json!(vec!["x"; 65]),
+            json!(["x".repeat(257)]),
+            json!(["a\u{0}b"]),
+            json!(42),
+            json!({"nested": "value"}),
+        ] {
+            m.options.insert("url-filter".into(), invalid);
+            let (report, crawl) = inspect_manifest(&m).unwrap();
+            assert!(!report.convertible && crawl.is_none());
+        }
+    }
+
+    #[test]
+    fn inline_url_list_translates_to_list_discovery_without_granting_authority() {
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
+        m.options.clear();
+        m.url_list = vec![
+            "https://a.example.test/one".into(),
+            "https://b.example.test/two#x".into(),
+            "https://a.example.test/one".into(),
+        ];
+        let (report, crawl) = inspect_manifest(&m).unwrap();
+        assert!(report.convertible);
+        let crawl = crawl.unwrap();
+        assert_eq!(crawl.seed_url.as_str(), "https://a.example.test/one");
+        assert_eq!(crawl.scope.sources, [DiscoverySourceV1::UrlList]);
+        let discovery = crawl.scope.discovery.as_ref().unwrap();
+        let resolved = discovery
+            .url_list
+            .as_ref()
+            .unwrap()
+            .resolve(crawl.scope.max_known_urls)
+            .unwrap();
+        assert_eq!(resolved.urls.len(), 2);
+        assert_eq!(resolved.duplicates, 1);
+        assert!(discovery.connectors.is_empty() && discovery.conventional_paths.is_empty());
+        discovery
+            .validate_sources(&crawl.scope.sources, crawl.scope.max_known_urls)
+            .unwrap();
+        let d = report.dispositions.iter().find(|d| d.id == "urlList").unwrap();
+        assert_eq!(d.state, ImportStateV1::Translated);
+
+        // An explicit seed option stays the seed.
+        let mut seeded = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
+        seeded.url_list = vec!["https://b.example.test/two".into()];
+        let crawl = inspect_manifest(&seeded).unwrap().1.unwrap();
+        assert_eq!(crawl.seed_url.as_str(), "https://fixture.test/story");
+        assert_eq!(crawl.scope.sources, [DiscoverySourceV1::UrlList]);
+    }
+
+    #[test]
+    fn url_list_rejects_invalid_entries_and_combined_discovery_modes() {
+        for entries in [
+            vec!["ftp://a.example.test/"],
+            vec!["https://user:pw@a.example.test/"],
+            vec![" https://a.example.test/"],
+            vec!["not a url"],
+        ] {
+            let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
+            m.url_list = entries.iter().map(|s| (*s).to_owned()).collect();
+            let (report, crawl) = inspect_manifest(&m).unwrap();
+            assert!(!report.convertible && crawl.is_none(), "{entries:?}");
+            assert!(report
+                .dispositions
+                .iter()
+                .any(|d| d.id == "urlList" && d.state == ImportStateV1::Rejected));
+        }
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli);
+        m.options.insert("feed".into(), json!(true));
+        m.url_list = vec!["https://a.example.test/".into()];
+        let (report, crawl) = inspect_manifest(&m).unwrap();
+        assert!(!report.convertible && crawl.is_none());
+    }
+
+    #[test]
+    fn url_list_field_is_parsed_with_its_own_bounds_and_stays_out_of_the_option_digest() {
+        let entries: Vec<String> = (0..300).map(|n| format!("https://a.example.test/{n}")).collect();
+        let document = |list: Value| {
+            serde_json::to_vec(&json!({"version":1,"source":"text-precision","sourceVersion":"2.3.1","dialect":"library","options":{},"urlList":list}))
+                .unwrap()
+        };
+        let manifest = parse_manifest(&document(json!(entries))).unwrap();
+        assert_eq!(manifest.url_list.len(), 300);
+        let (report, crawl) = inspect_manifest(&manifest).unwrap();
+        assert!(report.convertible);
+        assert_eq!(
+            crawl
+                .unwrap()
+                .scope
+                .discovery
+                .unwrap()
+                .url_list
+                .unwrap()
+                .urls
+                .len(),
+            300
+        );
+        let over: Vec<String> = (0..=MAX_LISTED_URLS)
+            .map(|n| format!("https://a.example.test/{n}"))
+            .collect();
+        assert!(parse_manifest(&document(json!(over))).is_err());
+        assert!(parse_manifest(&document(json!("https://a.example.test/"))).is_err());
+        assert!(parse_manifest(&document(json!([1, 2]))).is_err());
+        let plain = manifest_without_list();
+        assert!(plain.url_list.is_empty());
+        assert!(!serde_json::to_string(&plain).unwrap().contains("urlList"));
+    }
+
+    fn manifest_without_list() -> ExtractionManifestV1 {
+        manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library)
+    }
+
+    #[test]
+    fn language_hint_ranks_urls_only_when_discovery_exists() {
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli);
+        m.options.extend([
+            ("feed".into(), json!(true)),
+            ("target-language".into(), json!("de")),
+        ]);
+        let (report, crawl) = inspect_manifest(&m).unwrap();
+        assert!(report.convertible);
+        let crawl = crawl.unwrap();
+        let discovery = crawl.scope.discovery.as_ref().unwrap();
+        assert_eq!(discovery.url_language_hint.as_deref(), Some("de"));
+        assert_eq!(
+            crawl.extract.content.as_ref().unwrap().target_language.as_deref(),
+            Some("de")
+        );
+        let page = url::Url::parse("https://example.test/de/story").unwrap();
+        let other = url::Url::parse("https://example.test/fr/story").unwrap();
+        assert_eq!(discovery.language_rank(&page), 1);
+        assert_eq!(discovery.language_rank(&other), -1);
+        // The hint adds no scope rule: no include or exclude pattern is introduced.
+        assert!(crawl.scope.url_include.is_empty() && crawl.scope.url_exclude.is_empty());
+        assert!(report
+            .dispositions
+            .iter()
+            .any(|d| d.id == "native.urlLanguageHint" && d.state == ImportStateV1::Translated));
+
+        // Without a discovery mode there is nothing to rank, so no hint exists.
+        let mut single = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli);
+        single.options.insert("target-language".into(), json!("de"));
+        let crawl = inspect_manifest(&single).unwrap().1.unwrap();
+        assert!(crawl.scope.discovery.is_none());
+        // A language outside the code table keeps the strict quality target but sets no hint.
+        let mut unknown = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli);
+        unknown.options.extend([
+            ("feed".into(), json!(true)),
+            ("target-language".into(), json!("zz")),
+        ]);
+        let crawl = inspect_manifest(&unknown).unwrap().1.unwrap();
+        assert_eq!(crawl.scope.discovery.unwrap().url_language_hint, None);
+    }
+
+    #[test]
+    fn every_unmapped_option_names_existing_inventory_rows() {
+        for source in [ExtractionSourceV1::PrecisionText, ExtractionSourceV1::NewsArticle] {
+            let ids = inventory_ids(source);
+            for dialect in [
+                ExtractionDialectV1::Library,
+                ExtractionDialectV1::Cli,
+                ExtractionDialectV1::Settings,
+            ] {
+                for &(key, canonical) in option_catalog(source, dialect) {
+                    let unmapped = matches!(
+                        canonical,
+                        "unavailable"
+                            | "list_input"
+                            | "date_params"
+                            | "requests_params"
+                            | "top_image_settings"
+                            | "sentence_tokenizer"
+                            | "news_search"
+                            | "trends"
+                            | "archived"
+                            | "proxy"
+                            | "cookies"
+                            | "headers"
+                    );
+                    if !unmapped {
+                        continue;
+                    }
+                    let features = option_features(source, key);
+                    assert!(!features.is_empty(), "{source:?} {key}");
+                    assert!(features.iter().all(|id| ids.contains(*id)), "{source:?} {key}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn refused_options_carry_feature_ids_and_translated_options_do_not() {
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Settings);
+        m.options.insert("MAX_TREE_SIZE".into(), json!(10_000));
+        m.options.insert("DOWNLOAD_TIMEOUT".into(), json!(30));
+        let (report, crawl) = inspect_manifest(&m).unwrap();
+        assert!(!report.convertible && crawl.is_none());
+        let refused = report
+            .dispositions
+            .iter()
+            .find(|d| d.id == "MAX_TREE_SIZE")
+            .unwrap();
+        assert_eq!(refused.state, ImportStateV1::DecisionNeeded);
+        assert_eq!(refused.features, ["TP-19"]);
+        let encoded = serde_json::to_value(&report).unwrap();
+        let rows = encoded["dispositions"].as_array().unwrap();
+        let by_id = |id: &str| rows.iter().find(|row| row["id"] == id).unwrap();
+        assert_eq!(by_id("MAX_TREE_SIZE")["features"], json!(["TP-19"]));
+        assert!(by_id("DOWNLOAD_TIMEOUT").get("features").is_none());
+
+        let mut cli = manifest(ExtractionSourceV1::NewsArticle, ExtractionDialectV1::Cli);
+        cli.options.insert("urls-from-file".into(), json!("urls.txt"));
+        let (report, _) = inspect_manifest(&cli).unwrap();
+        let d = report
+            .dispositions
+            .iter()
+            .find(|d| d.id == "urls-from-file")
+            .unwrap();
+        assert_eq!(d.state, ImportStateV1::ExternalRequired);
+        assert_eq!(d.features, ["NA-39"]);
+        assert!(!report.convertible);
     }
 }

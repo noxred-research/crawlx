@@ -1,0 +1,13 @@
+{
+  "construct": "htmx-post",
+  "body": [
+    "<button hx-post='/h/create'>x</button>"
+  ],
+  "expected": [
+    {
+      "method": "POST",
+      "url": "https://matrix.test/h/create",
+      "source": "htmx/hx-post"
+    }
+  ]
+}

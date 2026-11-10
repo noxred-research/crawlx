@@ -1,0 +1,10 @@
+{
+  "construct": "mined-backslash-host-switch-is-rejected",
+  "url": "https://matrix.test/static/js/app.js",
+  "content_type": "text/javascript",
+  "body": [
+    "var a = '\\\\evil.test\\path\\x.json';"
+  ],
+  "javascript_mode": "regex",
+  "expected": []
+}

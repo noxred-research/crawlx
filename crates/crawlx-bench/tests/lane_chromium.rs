@@ -1,6 +1,6 @@
 //! G1 lane regressions through real Chromium: a default worker run of the link fixtures G06 (cards
-//! with `open-N` links) and G07 (the self-filling feed with header links) executes every action on
-//! the trusted lane. Skipped (with a message) without a Chromium
+//! with `open-N` links) and G07 (the self-filling feed with header links) follows links with the
+//! trusted browser-native click. Skipped (with a message) without a Chromium
 //! executable; set `CRAWLX_CHROMIUM_PATH`.
 //!
 //! Two defects put scripted `Navigate` actions on the diagnostic lane here: the live `href` of an
@@ -8,6 +8,16 @@
 //! dropped the first click on every relative link (`confirm.identity_changed`) and the lane-blind
 //! arbiter then picked the `url_plane` navigation to the same destination; and `url_plane` raced
 //! the trusted click in the greedy phase. Both are asserted away below.
+//!
+//! The `url_plane` strategy is the recovery phases' fallback once the trusted clicks are
+//! exhausted (`crawlx-strategies`, `url_plane`), so a run that exhausts them, as G06 does after
+//! its four control families, legitimately ends with scripted navigations to destinations no click
+//! reached. The assertions therefore state the contract, not a share: a scripted navigation never
+//! precedes the trusted click on its own link, and every other action ran on the trusted lane.
+//! The run ends on its interaction budget or an exhausted frontier, never on the clock: a
+//! wall-clock end decided how many actions ran (and whether the greedy phase was left at all), so
+//! the same build passed or failed with the speed of the machine, and it could leave an admitted
+//! action unexecuted at the cut.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crawlx_bench::ablation;
@@ -17,7 +27,9 @@ use crawlx_bench::scorecard::Scorecard;
 use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, rows_from_report, worker_config};
 use crawlx_browser::launch::find_executable;
 use crawlx_core::config::SafetyProfile;
-use crawlx_core::counters::ActionStatus;
+use crawlx_core::counters::{ActionStatus, TerminalReason};
+use crawlx_core::identity::ActionKind;
+use crawlx_core::repo::ActionRecord;
 use crawlx_core::traffic::TrustLane;
 use crawlx_storage::MemoryStore;
 use crawlx_worker::{run_local_with, DriverConfig, LocalRun, RunReport, Stores};
@@ -25,6 +37,13 @@ use std::sync::Arc;
 
 const SEED: u64 = 7;
 const VARIANT: &str = "A4";
+/// The scripted-navigation strategy: a diagnostic-lane fallback, never a rival of the trusted click.
+const URL_PLANE: &str = "url_plane";
+/// Interaction budget; the run ends here, never on the clock.
+const INTERACTIONS: u32 = 40;
+/// Wall-clock limit, far above what [`INTERACTIONS`] actions need on a slow machine, so that the
+/// interaction budget ends the run.
+const DURATION_SECONDS: u32 = 900;
 
 async fn crawl(gym: &GymHandle, id: &str) -> (FixtureManifest, RunReport) {
     let manifest = FixtureManifest::embedded(id).unwrap();
@@ -32,7 +51,8 @@ async fn crawl(gym: &GymHandle, id: &str) -> (FixtureManifest, RunReport) {
     gym.reset(SEED);
     let mut req = crawl_request(&manifest, &gym.base_url, SEED, SafetyProfile::TestEnvironment).unwrap();
     variant.apply(&mut req);
-    req.limits.interactions = 40;
+    req.limits.interactions = INTERACTIONS;
+    req.limits.duration_seconds = DURATION_SECONDS;
     req.limits.urls = 200;
     let dir = tempfile::tempdir().unwrap();
     let mut cfg = worker_config(&manifest, dir.path()).unwrap();
@@ -50,6 +70,24 @@ async fn crawl(gym: &GymHandle, id: &str) -> (FixtureManifest, RunReport) {
     (manifest, report)
 }
 
+fn describe(actions: &[&ActionRecord]) -> Vec<String> {
+    actions
+        .iter()
+        .map(|a| {
+            format!(
+                "{} {} {:?} {:?} {:?} {:?} {}",
+                a.seq,
+                a.strategy,
+                a.status,
+                a.fidelity,
+                a.key.action_kind,
+                a.key.element,
+                a.key.route_template.0
+            )
+        })
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn link_fixtures_run_entirely_on_the_trusted_lane() {
     if find_executable().is_none() {
@@ -59,28 +97,57 @@ async fn link_fixtures_run_entirely_on_the_trusted_lane() {
     let gym = GymServer::start("127.0.0.1:0".parse().unwrap()).await.unwrap();
     for id in ["g06", "g07"] {
         let (manifest, report) = crawl(&gym, id).await;
-        assert!(!report.actions.is_empty(), "{id}: the run executed nothing");
-        let detail = || {
-            report
-                .actions
-                .iter()
-                .map(|a| format!("{} {:?} {:?} {:?}", a.seq, a.strategy, a.status, a.fidelity))
-                .collect::<Vec<_>>()
-        };
+        let mut actions: Vec<&ActionRecord> = report.actions.iter().collect();
+        actions.sort_by_key(|a| a.seq);
+        let detail = || describe(&actions);
+        assert!(!actions.is_empty(), "{id}: the run executed nothing");
+        // the run ended on its own terms (the interaction budget, or nothing left to do), never
+        // on the clock: a deadline would make how far the run got a race with machine speed
+        assert!(
+            matches!(
+                report.terminal_reason,
+                Some(TerminalReason::LimitReached | TerminalReason::FrontierExhausted)
+            ),
+            "{id}: the run ended on {:?}: {:#?}",
+            report.terminal_reason,
+            detail()
+        );
         // a click dropped at confirmation never ran: a relative link must confirm like any other
         assert!(
-            report.actions.iter().all(|a| a.status != ActionStatus::Proposed),
+            actions.iter().all(|a| a.status != ActionStatus::Proposed),
             "{id}: an admitted action was dropped before it ran: {:#?}",
             detail()
         );
+        // every action of the click-driven strategies ran on the trusted lane
         assert!(
-            report
-                .actions
+            actions
                 .iter()
+                .filter(|a| a.strategy != URL_PLANE)
                 .all(|a| a.lane == Some(TrustLane::TrustedUi)),
-            "{id}: an action ran on the diagnostic lane: {:#?}",
+            "{id}: a click-driven action ran on the diagnostic lane: {:#?}",
             detail()
         );
+        // url_plane never races the trusted click: a scripted navigation to a link comes only
+        // after the trusted click on that very link
+        for (i, a) in actions
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.strategy == URL_PLANE)
+        {
+            let clicked_first = actions[..i].iter().any(|b| {
+                b.strategy != URL_PLANE
+                    && b.lane == Some(TrustLane::TrustedUi)
+                    && b.key.action_kind == ActionKind::Click
+                    && b.key.route_template == a.key.route_template
+                    && b.key.element == a.key.element
+            });
+            assert!(
+                clicked_first,
+                "{id}: url_plane navigated before the trusted click on its link (action {}): {:#?}",
+                a.seq,
+                detail()
+            );
+        }
         let rows = rows_from_report(
             &report,
             &manifest,
@@ -91,10 +158,11 @@ async fn link_fixtures_run_entirely_on_the_trusted_lane() {
         );
         let card = Scorecard::compute(&manifest, &rows, &gym.ledger());
         let lanes = card.lanes.expect("the run recorded lanes");
-        assert_eq!(lanes.diagnostic, 0, "{id}: {lanes:?}");
+        let scripted = u64::try_from(actions.iter().filter(|a| a.strategy == URL_PLANE).count()).unwrap();
+        assert!(lanes.trusted > 0, "{id}: no trusted action ran: {lanes:?}");
         assert!(
-            (lanes.trusted_share - 1.0).abs() < f64::EPSILON,
-            "{id}: {lanes:?}"
+            lanes.diagnostic <= scripted,
+            "{id}: only the url_plane fallback may use the diagnostic lane: {lanes:?}"
         );
     }
     gym.shutdown().await;

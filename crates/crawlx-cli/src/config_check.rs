@@ -82,6 +82,12 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_S3_REGION",
     "CRAWLX_S3_PATH_STYLE",
     "CRAWLX_S3_SSE",
+    "CRAWLX_S3_PROFILE",
+    "CRAWLX_S3_CHECKSUM",
+    "CRAWLX_S3_OBJECT_LOCK",
+    "CRAWLX_S3_ALLOW_HTTP",
+    "CRAWLX_S3_ALLOW_KMS",
+    "CRAWLX_S3_KMS_KEY_ID",
     "CRAWLX_MODEL_BUNDLE",
     "CRAWLX_PARITY_VECTORS",
     "CRAWLX_MODEL_BUNDLE_URL",
@@ -551,7 +557,14 @@ pub struct ConfigArgs {
 pub enum ConfigCommand {
     /// Load `crawlx.toml` + `CRAWLX_*` overrides, validate, print the effective values.
     Check(ConfigCheckArgs),
+    /// Print the versioned feature manifest of the `crawl` flag set: per row the baseline
+    /// release, the flags and compatibility spellings, the policy (including intentional
+    /// deviations) and the tests that exercise it. JSON on stdout.
+    Features,
 }
+
+/// The feature manifest embedded in the binary (`data/feature-manifest.json`).
+pub const FEATURE_MANIFEST: &str = include_str!("../data/feature-manifest.json");
 
 /// Arguments of `crawlx config check`.
 #[derive(Args, Debug)]
@@ -1438,6 +1451,10 @@ fn redacted_passthrough(p: &BTreeMap<String, String>) -> BTreeMap<String, String
 pub(crate) async fn run(args: ConfigArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     match args.command {
         ConfigCommand::Check(args) => check(&args, out).await,
+        ConfigCommand::Features => {
+            out.write_all(FEATURE_MANIFEST.as_bytes())?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 

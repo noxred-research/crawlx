@@ -1,0 +1,88 @@
+{
+  "id": "b01-cookie-newsletter-related",
+  "family": "boilerplate",
+  "note": "cookie banner, breadcrumbs, newsletter box, related list and legal footer",
+  "expectedText": "We use cookies to improve your visit. Accept all cookies or manage your settings.\nHarborline Daily\nFront Business Shipping Weather Opinion Jobs\nHome / Business / Shipping\nFerry Timetable Changes on the Northern Route\nThe northern ferry route will run a revised timetable from the second week of April, with the first departure moving from half past six to a quarter to seven. The operator said the change matches the new tide tables published by the harbor authority.\nTwo evening sailings will be added on Fridays, a response to requests from restaurant owners on the island. The last boat back from the mainland will leave at ten forty, giving diners enough time to finish their meals.\nPassengers with monthly tickets do not need to change anything. Printed timetables will be available at the terminal kiosk from the first of April.\nGet our morning briefing\nJoin thirty thousand readers. Enter your email address to subscribe.\nYou may also like\nTide tables explained\nIsland restaurants extend hours\nHarbor fees rise again\nHarborline Daily is owned by Northern Press Group.\nCareers Advertise Terms of use Cookie policy Accessibility",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 81
+    },
+    {
+      "label": "boilerplate",
+      "start": 82,
+      "end": 98
+    },
+    {
+      "label": "boilerplate",
+      "start": 99,
+      "end": 143
+    },
+    {
+      "label": "boilerplate",
+      "start": 144,
+      "end": 170
+    },
+    {
+      "label": "body",
+      "start": 171,
+      "end": 216
+    },
+    {
+      "label": "body",
+      "start": 217,
+      "end": 467
+    },
+    {
+      "label": "body",
+      "start": 468,
+      "end": 686
+    },
+    {
+      "label": "body",
+      "start": 687,
+      "end": 834
+    },
+    {
+      "label": "boilerplate",
+      "start": 835,
+      "end": 859
+    },
+    {
+      "label": "boilerplate",
+      "start": 860,
+      "end": 928
+    },
+    {
+      "label": "boilerplate",
+      "start": 929,
+      "end": 946
+    },
+    {
+      "label": "boilerplate",
+      "start": 947,
+      "end": 968
+    },
+    {
+      "label": "boilerplate",
+      "start": 969,
+      "end": 1000
+    },
+    {
+      "label": "boilerplate",
+      "start": 1001,
+      "end": 1023
+    },
+    {
+      "label": "boilerplate",
+      "start": 1024,
+      "end": 1074
+    },
+    {
+      "label": "boilerplate",
+      "start": 1075,
+      "end": 1133
+    }
+  ]
+}

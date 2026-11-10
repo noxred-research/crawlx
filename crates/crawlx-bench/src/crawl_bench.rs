@@ -39,13 +39,23 @@
 //!
 //! # Profiles
 //!
-//! All profiles crawl with `mode = static` (the URL plane); they differ in the request.
+//! The URL-plane profiles crawl with `mode = static`; they differ in the request. The
+//! browser-plane profiles add Chromium and need one (`CRAWLX_CHROMIUM_PATH`, see
+//! [`browser_available`]); the harness skips them with a message when there is none.
 //!
 //! | profile | request |
 //! |---|---|
 //! | `static` | the gym's reference slice: crawlx request defaults at the gym's pace (the 50 ms per-origin delay floor) |
 //! | `crawlx-defaults` | the request defaults of `crawlx crawl` including the production politeness (250 ms per-origin delay) |
 //! | `compat-flag-defaults` | the compatibility flag dialect's defaults mapped onto the request, see [`Profile::apply`] |
+//! | `hybrid` | the `static` request with `mode = hybrid`, page hooks and a [`BROWSER_INTERACTIONS`] interaction budget: URL plane plus browser plane |
+//! | `browser-only` | the same with `mode = dynamic`: the browser plane alone (its `pages` are the distinct documents the browser's states observed) |
+//!
+//! `pps` (`pages / seconds`) is the page throughput; `interactions` counts the browser
+//! interactions the crawl attempted. [`Report::ratio_table`] prints every profile's `pps`
+//! next to `static`'s on the same target (`2.00x` = twice as many pages per second); the ratio
+//! is reported, never gated: gate a browser profile through `--baseline`/`--max-regress` like
+//! any other.
 //!
 //! # Baselines
 //!
@@ -74,10 +84,12 @@ use crate::gym::manifest::{FixtureManifest, MazePlane};
 use crate::gym::{GymHandle, GymServer};
 use crate::urlplane::trailing_slash;
 use crate::worker_exec::{authorize_fixture, crawl_request_for_url, worker_config_with};
+use crawlx_browser::launch::find_executable;
 use crawlx_core::config::{
     CrawlMode, CrawlStrategy, CreateCrawl, HostScope, Politeness, QueryPolicy, SafetyProfile, SitemapMode,
 };
 use crawlx_core::counters::RunStatus;
+use crawlx_core::gates::GateStatus;
 use crawlx_core::repo::PageRecord;
 use crawlx_policy::robots::Match;
 use crawlx_policy::RobotsTxt;
@@ -102,6 +114,17 @@ pub const AGGREGATE_LABEL: &str = "(all)";
 
 // ---- profiles -------------------------------------------------------------------------------
 
+/// Interaction budget of the browser-plane profiles (`limits.interactions`): the run ends on
+/// this count, not on the clock, so repeats do the same browser work.
+pub const BROWSER_INTERACTIONS: u32 = 40;
+
+/// Whether a Chromium executable is available (`CRAWLX_CHROMIUM_PATH`, a system install or the
+/// browser cache), the precondition of the profiles that [`Profile::needs_browser`].
+#[must_use]
+pub fn browser_available() -> bool {
+    find_executable().is_some()
+}
+
 /// A named crawl configuration.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 #[non_exhaustive]
@@ -112,11 +135,30 @@ pub enum Profile {
     CompatFlagDefaults,
     /// The request defaults of `crawlx crawl`, production politeness included.
     CrawlxDefaults,
+    /// The `static` slice with the browser plane on (`mode = hybrid`, page hooks, a fixed
+    /// interaction budget). Needs Chromium.
+    Hybrid,
+    /// The browser plane alone (`mode = dynamic`, page hooks, the same interaction budget),
+    /// seeded by the entry URL. Needs Chromium. Its `pages` are the distinct documents the
+    /// browser's states observed (the URL plane fetches none).
+    BrowserOnly,
 }
 
 impl Profile {
     /// Every profile, in table order.
-    pub const ALL: [Self; 3] = [Self::Static, Self::CompatFlagDefaults, Self::CrawlxDefaults];
+    pub const ALL: [Self; 5] = [
+        Self::Static,
+        Self::CompatFlagDefaults,
+        Self::CrawlxDefaults,
+        Self::Hybrid,
+        Self::BrowserOnly,
+    ];
+
+    /// Whether the profile runs the browser plane, so a crawl under it needs Chromium.
+    #[must_use]
+    pub const fn needs_browser(self) -> bool {
+        matches!(self, Self::Hybrid | Self::BrowserOnly)
+    }
 
     /// Name used on the command line and as the JSON key.
     #[must_use]
@@ -125,6 +167,8 @@ impl Profile {
             Self::Static => "static",
             Self::CompatFlagDefaults => "compat-flag-defaults",
             Self::CrawlxDefaults => "crawlx-defaults",
+            Self::Hybrid => "hybrid",
+            Self::BrowserOnly => "browser-only",
         }
     }
 
@@ -139,9 +183,12 @@ impl Profile {
         })
     }
 
-    /// Configure `req` (a [`crawl_request_for_url`] request) for this profile. Every profile
-    /// forces `mode = static` and leaves the harness-owned parts (seed, safety profile,
-    /// authorization, `limits.urls` and `limits.durationSeconds`) alone.
+    /// Configure `req` (a [`crawl_request_for_url`] request) for this profile. The URL-plane
+    /// profiles force `mode = static`; `hybrid` and `browser-only` switch the browser plane on
+    /// (`dynamic.enabled`, `dynamic.pageHooks`, `limits.interactions =`
+    /// [`BROWSER_INTERACTIONS`]) and otherwise keep the `static` request, so the two differ by
+    /// the browser plane only. The harness-owned parts (seed, safety profile, authorization,
+    /// `limits.urls` and `limits.durationSeconds`) stay alone.
     ///
     /// `compat-flag-defaults` maps the compatibility flag dialect's defaults like this:
     ///
@@ -161,6 +208,16 @@ impl Profile {
         req.dynamic.enabled = false;
         match self {
             Self::Static => {}
+            Self::Hybrid | Self::BrowserOnly => {
+                req.mode = if self == Self::Hybrid {
+                    CrawlMode::Hybrid
+                } else {
+                    CrawlMode::Dynamic
+                };
+                req.dynamic.enabled = true;
+                req.dynamic.page_hooks = true;
+                req.limits.interactions = BROWSER_INTERACTIONS;
+            }
             Self::CrawlxDefaults => req.politeness = Politeness::default(),
             Self::CompatFlagDefaults => {
                 req.scope.host_scope = HostScope::Rdn;
@@ -383,10 +440,18 @@ pub struct Metrics {
     pub requests: u64,
     /// Requests the target answered with `5xx`.
     pub errors: u64,
+    /// Browser interactions the crawl attempted (`counters.interactions.attempted`); `0` under
+    /// the URL-plane profiles. Informational: it has no better or worse direction.
+    #[serde(default)]
+    pub interactions: u64,
     /// Wall time of the crawl in seconds.
     pub seconds: f64,
     /// `requests / seconds`.
     pub rps: f64,
+    /// `pages / seconds`: the crawl's page throughput. Records written before this metric
+    /// existed read as `0`, which no run is worse than.
+    #[serde(default)]
+    pub pps: f64,
     /// Median latency of the successful `GET`s in milliseconds.
     pub p50_ms: f64,
     /// 95th percentile latency of the successful `GET`s in milliseconds.
@@ -490,8 +555,10 @@ pub fn summarize(
         recall: known_n.zip(found_n).and_then(|(k, f)| ratio(f, k)),
         requests,
         errors,
+        interactions: 0,
         seconds,
         rps: per_second(requests, seconds),
+        pps: per_second(pages, seconds),
         p50_ms: percentile(&latencies_ms, 50),
         p95_ms: percentile(&latencies_ms, 95),
     };
@@ -528,21 +595,24 @@ fn pooled(samples: &[Sample]) -> Vec<f64> {
 pub fn combine(samples: &[Sample]) -> Metrics {
     let ints =
         |get: fn(&Metrics) -> u64| median(samples.iter().map(|s| get(&s.metrics)).collect()).unwrap_or(0);
+    let pages = ints(|m| m.pages);
     let requests = ints(|m| m.requests);
     let seconds = median_f64(samples.iter().map(|s| s.metrics.seconds).collect());
     let known = samples.first().and_then(|s| s.metrics.known);
     let found = known.and_then(|_| median(samples.iter().filter_map(|s| s.metrics.found).collect()));
     let latencies = pooled(samples);
     Metrics {
-        pages: ints(|m| m.pages),
+        pages,
         endpoints: ints(|m| m.endpoints),
         known,
         found,
         recall: known.zip(found).and_then(|(k, f)| ratio(f, k)),
         requests,
         errors: ints(|m| m.errors),
+        interactions: ints(|m| m.interactions),
         seconds,
         rps: per_second(requests, seconds),
+        pps: per_second(pages, seconds),
         p50_ms: percentile(&latencies, 50),
         p95_ms: percentile(&latencies, 95),
     }
@@ -553,20 +623,23 @@ pub fn combine(samples: &[Sample]) -> Metrics {
 fn aggregate_rows(rows: &[Metrics], latencies: &[f64]) -> Metrics {
     let sum = |get: fn(&Metrics) -> u64| rows.iter().fold(0u64, |a, m| a.saturating_add(get(m)));
     let sum_opt = |get: fn(&Metrics) -> Option<u64>| rows.iter().filter_map(get).reduce(u64::saturating_add);
+    let pages = sum(|m| m.pages);
     let requests = sum(|m| m.requests);
     let seconds: f64 = rows.iter().map(|m| m.seconds).sum();
     let known = sum_opt(|m| m.known);
     let found = sum_opt(|m| m.found);
     Metrics {
-        pages: sum(|m| m.pages),
+        pages,
         endpoints: sum(|m| m.endpoints),
         known,
         found,
         recall: known.zip(found).and_then(|(k, f)| ratio(f, k)),
         requests,
         errors: sum(|m| m.errors),
+        interactions: sum(|m| m.interactions),
         seconds,
         rps: per_second(requests, seconds),
+        pps: per_second(pages, seconds),
         p50_ms: percentile(latencies, 50),
         p95_ms: percentile(latencies, 95),
     }
@@ -732,6 +805,69 @@ impl Report {
         }
         render(&rows)
     }
+
+    /// Page throughput (`pps`) of every other profile relative to [`Profile::Static`], by
+    /// target (the aggregate rows under [`AGGREGATE_LABEL`]) and profile name. A cell is
+    /// present only when the target was crawled under `static` with a measured throughput and
+    /// under the other profile too. `2.0` means the profile fetched twice as many pages per
+    /// second as the URL plane alone.
+    #[must_use]
+    pub fn throughput_ratios(&self) -> BTreeMap<String, BTreeMap<String, f64>> {
+        let static_name = Profile::Static.name();
+        let mut out: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
+        let mut cells = |target: &str, profiles: &BTreeMap<String, Metrics>| {
+            let Some(base) = profiles.get(static_name).filter(|m| m.pps > 0.0) else {
+                return;
+            };
+            for (profile, m) in profiles.iter().filter(|(p, _)| p.as_str() != static_name) {
+                out.entry(target.to_owned())
+                    .or_default()
+                    .insert(profile.clone(), m.pps / base.pps);
+            }
+        };
+        for (target, profiles) in &self.results {
+            cells(target, profiles);
+        }
+        cells(AGGREGATE_LABEL, &self.aggregate);
+        out
+    }
+
+    /// [`Self::throughput_ratios`] as an aligned table (`target`, `profile`, the profile's
+    /// `pps`, the `static` `pps`, their ratio); empty when no profile has a `static`
+    /// counterpart.
+    #[must_use]
+    pub fn ratio_table(&self) -> String {
+        let ratios = self.throughput_ratios();
+        if ratios.is_empty() {
+            return String::new();
+        }
+        let static_name = Profile::Static.name();
+        let mut rows = vec![vec![
+            "target".to_owned(),
+            "profile".to_owned(),
+            "pps".to_owned(),
+            "static_pps".to_owned(),
+            "ratio".to_owned(),
+        ]];
+        for (target, profiles) in &ratios {
+            let cells = if target == AGGREGATE_LABEL {
+                &self.aggregate
+            } else {
+                &self.results[target]
+            };
+            let base = cells[static_name].pps;
+            for (profile, ratio) in profiles {
+                rows.push(vec![
+                    target.clone(),
+                    profile.clone(),
+                    format!("{:.1}", cells[profile].pps),
+                    format!("{base:.1}"),
+                    format!("{ratio:.2}x"),
+                ]);
+            }
+        }
+        render(&rows)
+    }
 }
 
 /// Left-aligned columns separated by two spaces.
@@ -807,10 +943,14 @@ pub enum Metric {
     Requests,
     /// [`Metrics::errors`].
     Errors,
+    /// [`Metrics::interactions`].
+    Interactions,
     /// [`Metrics::seconds`].
     Seconds,
     /// [`Metrics::rps`].
     Rps,
+    /// [`Metrics::pps`].
+    Pps,
     /// [`Metrics::p50_ms`].
     P50Ms,
     /// [`Metrics::p95_ms`].
@@ -819,14 +959,16 @@ pub enum Metric {
 
 impl Metric {
     /// Every metric, in table order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Pages,
         Self::Endpoints,
         Self::Recall,
         Self::Requests,
         Self::Errors,
+        Self::Interactions,
         Self::Seconds,
         Self::Rps,
+        Self::Pps,
         Self::P50Ms,
         Self::P95Ms,
     ];
@@ -840,8 +982,10 @@ impl Metric {
             Self::Recall => "recall",
             Self::Requests => "requests",
             Self::Errors => "errors",
+            Self::Interactions => "interactions",
             Self::Seconds => "seconds",
             Self::Rps => "rps",
+            Self::Pps => "pps",
             Self::P50Ms => "p50_ms",
             Self::P95Ms => "p95_ms",
         }
@@ -863,9 +1007,11 @@ impl Metric {
     #[must_use]
     pub const fn direction(self) -> Option<Direction> {
         match self {
-            Self::Pages | Self::Endpoints | Self::Recall | Self::Rps => Some(Direction::HigherIsBetter),
+            Self::Pages | Self::Endpoints | Self::Recall | Self::Rps | Self::Pps => {
+                Some(Direction::HigherIsBetter)
+            }
             Self::Errors | Self::Seconds | Self::P50Ms | Self::P95Ms => Some(Direction::LowerIsBetter),
-            Self::Requests => None,
+            Self::Requests | Self::Interactions => None,
         }
     }
 
@@ -888,8 +1034,10 @@ impl Metric {
             Self::Recall => m.recall?,
             Self::Requests => m.requests as f64,
             Self::Errors => m.errors as f64,
+            Self::Interactions => m.interactions as f64,
             Self::Seconds => m.seconds,
             Self::Rps => m.rps,
+            Self::Pps => m.pps,
             Self::P50Ms => m.p50_ms,
             Self::P95Ms => m.p95_ms,
         })
@@ -900,7 +1048,7 @@ impl Metric {
             (_, None) => "-".to_owned(),
             (Self::Recall, Some(v)) => format!("{:.1}%", v * 100.0),
             (Self::Seconds | Self::P50Ms | Self::P95Ms, Some(v)) => format!("{v:.2}"),
-            (Self::Rps, Some(v)) => format!("{v:.1}"),
+            (Self::Rps | Self::Pps, Some(v)) => format!("{v:.1}"),
             (_, Some(v)) => format!("{v}"),
         }
     }
@@ -1132,6 +1280,13 @@ static SCRATCH: AtomicU64 = AtomicU64::new(0);
 /// ([`BenchError::UnknownFixture`], [`BenchError::Url`]).
 pub async fn run(cfg: &BenchConfig, mut progress: impl FnMut(&Progress<'_>)) -> Result<Report, BenchError> {
     cfg.validate()?;
+    if let Some(profile) = cfg.profiles.iter().find(|p| p.needs_browser()) {
+        if !browser_available() {
+            return Err(BenchError::CrawlBench(format!(
+                "profile `{profile}` needs a Chromium executable (set CRAWLX_CHROMIUM_PATH)"
+            )));
+        }
+    }
     let gym = if cfg.targets.iter().any(|t| matches!(t, Target::Gym(_))) {
         Some(GymServer::start(SocketAddr::from(([127, 0, 0, 1], 0))).await?)
     } else {
@@ -1200,14 +1355,21 @@ async fn crawl_once(
             prepared.name, report.status, report.terminal_reason
         )));
     }
-    let discovered = discovered_endpoints(&report.pages, &origin);
-    Ok(summarize(
-        report.counters.urls.succeeded,
-        discovered,
-        prepared.known.as_ref(),
-        &hits,
-        seconds,
-    ))
+    // The URL plane records fetched pages; a browser-only run fetches none, so its pages are the
+    // distinct documents its states observed.
+    let (pages, discovered) = if profile == Profile::BrowserOnly {
+        let urls: BTreeSet<&str> = report.states.iter().map(|s| s.url.url.as_str()).collect();
+        let keys = urls.iter().filter_map(|u| endpoint_key(u, &origin)).collect();
+        (count(urls.len()), keys)
+    } else {
+        (
+            report.counters.urls.succeeded,
+            discovered_endpoints(&report.pages, &origin),
+        )
+    };
+    let mut sample = summarize(pages, discovered, prepared.known.as_ref(), &hits, seconds);
+    sample.metrics.interactions = report.counters.interactions.attempted;
+    Ok(sample)
 }
 
 async fn crawl_behind(
@@ -1229,7 +1391,14 @@ async fn crawl_behind(
         SCRATCH.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&scratch).map_err(|e| BenchError::io(&scratch, e))?;
-    let worker = worker_config_with(prepared.trailing, &scratch);
+    let worker = worker_config_with(prepared.trailing, &scratch).map(|mut worker| {
+        if profile.needs_browser() {
+            // An authored fixture run of the gated browser strategies; it claims no G1/G3
+            // promotion (the browser-plane tests of this crate do the same).
+            worker.gates = crawlx_worker::Gates::from_status(GateStatus::ALL);
+        }
+        worker
+    });
     let result = match worker {
         Ok(worker) => {
             let started = Instant::now();

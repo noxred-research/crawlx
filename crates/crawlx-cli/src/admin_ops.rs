@@ -18,10 +18,12 @@ use crawlx_storage::{
 };
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
+use std::future::Future;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// Connection and operator identity shared by every operator command.
 #[derive(Args, Debug)]
@@ -181,7 +183,9 @@ pub struct StoreArgs {
         conflicts_with = "s3_bucket"
     )]
     pub artifacts_dir: PathBuf,
-    /// S3-compatible bucket instead (`CRAWLX_S3_*` for region/endpoint/path style).
+    /// S3-compatible bucket instead. `CRAWLX_S3_PROFILE` (standard, compatible, edge,
+    /// self-hosted) and the other `CRAWLX_S3_*` variables choose region, endpoint, path style
+    /// and encryption; see docs/ops/object-storage.md.
     #[arg(long, value_name = "BUCKET")]
     pub s3_bucket: Option<String>,
 }
@@ -189,7 +193,7 @@ pub struct StoreArgs {
 impl StoreArgs {
     async fn blobs(&self) -> anyhow::Result<Arc<dyn ArtifactBlobs>> {
         if let Some(bucket) = &self.s3_bucket {
-            return Ok(Arc::new(S3Blobs::new(&s3_config(bucket)?)));
+            return Ok(Arc::new(S3Blobs::new(&s3_config(bucket)?)?));
         }
         Ok(Arc::new(FsBlobs::open(&self.artifacts_dir).await.with_context(
             || format!("opening {}", self.artifacts_dir.display()),
@@ -198,15 +202,7 @@ impl StoreArgs {
 }
 
 fn s3_config(bucket: &str) -> anyhow::Result<S3Config> {
-    let mut cfg = match S3Config::from_env() {
-        Ok(cfg) => cfg,
-        Err(_) => S3Config::new(
-            bucket.to_owned(),
-            std::env::var("CRAWLX_S3_REGION").unwrap_or_else(|_| "us-east-1".to_owned()),
-        ),
-    };
-    cfg.bucket = bucket.to_owned();
-    Ok(cfg)
+    Ok(S3Config::from_env_for_bucket(bucket)?)
 }
 
 /// `crawlx admin verify-artifacts` (RB-06 step 6).
@@ -245,6 +241,14 @@ pub struct SweepRetentionArgs {
     /// Also collect orphan objects older than this many seconds.
     #[arg(long, value_name = "SECONDS")]
     pub orphan_grace_s: Option<u64>,
+    /// Keep running: sweep now, then every DURATION (`30s`, `5m`, `1h`; at least 1s) until
+    /// SIGINT or SIGTERM. Passes never overlap; a failed pass is logged and retried on the next
+    /// tick. Not with `--mode zdr`.
+    #[arg(long, value_name = "DURATION", value_parser = crate::duration::parse_duration)]
+    pub every: Option<std::time::Duration>,
+    /// With `--every`: stop after this many passes instead of running until signalled.
+    #[arg(long, value_name = "N", requires = "every", value_parser = clap::value_parser!(u64).range(1..))]
+    pub passes: Option<u64>,
     #[command(flatten)]
     /// Store.
     pub store: StoreArgs,
@@ -586,13 +590,92 @@ fn report_runs(out: &mut dyn Write, verb: &str, runs: &[CrawlRunId]) -> anyhow::
     Ok(ExitCode::SUCCESS)
 }
 
+fn write_sweep_report(out: &mut dyn Write, r: &crawlx_storage::SweepReport) -> std::io::Result<()> {
+    writeln!(
+        out,
+        "swept: {} artifact use(s), {} orphan(s), {} page(s), {} run(s) purged ({} rows)",
+        r.artifacts_deleted, r.orphans_collected, r.pages_deleted, r.runs_purged, r.rows_deleted
+    )
+}
+
+/// Cancel `cancel` on SIGINT or, on Unix, SIGTERM (the container stop signal).
+fn cancel_on_shutdown_signal(cancel: &CancellationToken) -> tokio::task::JoinHandle<()> {
+    let cancel = cancel.clone();
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            if let Ok(mut term) = signal(SignalKind::terminate()) {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+                cancel.cancel();
+                return;
+            }
+        }
+        if tokio::signal::ctrl_c().await.is_ok() {
+            cancel.cancel();
+        }
+    })
+}
+
+/// `sweep-retention --every`: [`RetentionSweeper::run_loop`] writing one line per pass to `out`
+/// until `cancel` fires or `passes` pass have finished. Exit 1 when a bounded run saw a failed pass.
+pub(crate) async fn scheduled_sweep<F, Fut>(
+    every: std::time::Duration,
+    passes: Option<u64>,
+    cancel: &CancellationToken,
+    out: &mut dyn Write,
+    pass: F,
+) -> anyhow::Result<ExitCode>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<crawlx_storage::SweepReport, crawlx_core::StoreError>>,
+{
+    let mut config = crawlx_storage::retention::SweepLoopConfig::every(every);
+    if let Some(n) = passes {
+        config = config.with_max_passes(n);
+    }
+    let mut write_error = None;
+    let summary = crawlx_storage::retention::run_sweep_loop(config, cancel, pass, |pass, result| {
+        let line = match result {
+            Ok(report) => write!(out, "pass {pass} ").and_then(|()| write_sweep_report(out, report)),
+            Err(_) => writeln!(
+                out,
+                "pass {pass} failed (see the log); retrying at the next interval"
+            ),
+        };
+        if let Err(e) = line.and_then(|()| out.flush()) {
+            write_error.get_or_insert(e);
+        }
+    })
+    .await;
+    if let Some(e) = write_error {
+        return Err(e).context("writing the sweep report");
+    }
+    writeln!(
+        out,
+        "stopped after {} pass(es), {} failed",
+        summary.passes, summary.failures
+    )?;
+    Ok(if passes.is_some() && summary.failures > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
 async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    if a.every.is_some() && a.mode == SweepMode::Zdr {
+        bail!("--every cannot be combined with --mode zdr: a forced ZDR sweep is a one-time, confirmed operation");
+    }
     let (pg, op) = a.common.ops().await?;
     let clock = Arc::new(SystemClock);
     let runs: Arc<dyn crawlx_core::repo::RunRepo> = Arc::new(pg.clone());
     let reaper: Arc<dyn crawlx_storage::ArtifactReaper> = match &a.store.s3_bucket {
         Some(bucket) => Arc::new(
-            S3ArtifactStore::new(S3Blobs::new(&s3_config(bucket)?), runs, clock)
+            S3ArtifactStore::new(S3Blobs::new(&s3_config(bucket)?)?, runs, clock)
                 .with_index(Arc::new(pg.clone())),
         ),
         None => Arc::new(
@@ -605,15 +688,22 @@ async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::
     if let Some(secs) = a.orphan_grace_s {
         sweeper = sweeper.with_orphan_grace(chrono::Duration::seconds(i64::try_from(secs)?));
     }
+    if let Some(every) = a.every {
+        let cancel = CancellationToken::new();
+        let signals = cancel_on_shutdown_signal(&cancel);
+        let code = scheduled_sweep(every, a.passes, &cancel, out, || async {
+            let now = pg.db_now().await?;
+            sweeper.sweep(now).await
+        })
+        .await;
+        signals.abort();
+        return code;
+    }
     let now = pg.db_now().await?;
     match a.mode {
         SweepMode::All => {
             let r = sweeper.sweep(now).await?;
-            writeln!(
-                out,
-                "swept: {} artifact use(s), {} orphan(s), {} page(s), {} run(s) purged ({} rows)",
-                r.artifacts_deleted, r.orphans_collected, r.pages_deleted, r.runs_purged, r.rows_deleted
-            )?;
+            write_sweep_report(out, &r)?;
         }
         SweepMode::Zdr => {
             if !a.force {
@@ -739,5 +829,221 @@ mod tests {
             "postgres://worker@localhost/crawlx",
         ])
         .is_err());
+    }
+
+    fn sweep_args(extra: &[&str]) -> Result<SweepRetentionArgs, clap::Error> {
+        let mut argv = vec!["crawlx", "admin", "sweep-retention"];
+        argv.extend_from_slice(extra);
+        let parsed = crate::Cli::try_parse_from(argv)?;
+        let crate::Command::Admin(admin) = parsed.command else {
+            panic!("expected admin");
+        };
+        let crate::AdminCommand::Ops(OpsCommand::SweepRetention(args)) = admin.command else {
+            panic!("expected sweep-retention");
+        };
+        Ok(args)
+    }
+
+    #[test]
+    fn every_and_passes_parse_with_duration_units_and_passes_needs_every() {
+        let a = sweep_args(&["--every", "5m", "--passes", "3"]).unwrap();
+        assert_eq!(a.every, Some(std::time::Duration::from_secs(300)));
+        assert_eq!(a.passes, Some(3));
+        assert!(sweep_args(&[]).unwrap().every.is_none());
+        assert!(sweep_args(&["--passes", "3"]).is_err());
+        assert!(sweep_args(&["--every", "5m", "--passes", "0"]).is_err());
+        assert!(sweep_args(&["--every", "soon"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn every_cannot_drive_a_forced_zdr_sweep() {
+        let args = sweep_args(&["--every", "1m", "--mode", "zdr", "--force"]).unwrap();
+        let mut out = Vec::new();
+        let error = sweep_retention(args, &mut out).await.unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("--every cannot be combined with --mode zdr"));
+        assert!(out.is_empty());
+    }
+
+    fn report(rows: u64) -> crawlx_storage::SweepReport {
+        crawlx_storage::SweepReport {
+            rows_deleted: rows,
+            ..crawlx_storage::SweepReport::default()
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn loop_sweeps_immediately_then_every_interval_until_cancelled() {
+        let cancel = CancellationToken::new();
+        let passes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = Arc::clone(&passes);
+        let mut out = Vec::new();
+        let stopper = cancel.clone();
+        let driver = async move {
+            tokio::time::sleep(std::time::Duration::from_secs(125)).await;
+            stopper.cancel();
+        };
+        let (code, ()) = tokio::join!(
+            scheduled_sweep(
+                std::time::Duration::from_secs(60),
+                None,
+                &cancel,
+                &mut out,
+                move || {
+                    let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    async move { Ok(report(n)) }
+                }
+            ),
+            driver
+        );
+        assert_eq!(code.unwrap(), ExitCode::SUCCESS);
+        // t = 0, 60 and 120; none after the cancellation at 125
+        assert_eq!(passes.load(std::sync::atomic::Ordering::SeqCst), 3);
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains(
+                "pass 1 swept: 0 artifact use(s), 0 orphan(s), 0 page(s), 0 run(s) purged (1 rows)"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("pass 3 swept:"), "{text}");
+        assert!(text.ends_with("stopped after 3 pass(es), 0 failed\n"), "{text}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_drops_a_running_pass_without_waiting_for_it() {
+        struct Flag(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let guard_flag = Arc::clone(&dropped);
+        let cancel = CancellationToken::new();
+        let stopper = cancel.clone();
+        let mut out = Vec::new();
+        let started = tokio::time::Instant::now();
+        let driver = async move {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            stopper.cancel();
+        };
+        let (code, ()) = tokio::join!(
+            scheduled_sweep(
+                std::time::Duration::from_secs(60),
+                None,
+                &cancel,
+                &mut out,
+                move || {
+                    let guard = Flag(Arc::clone(&guard_flag));
+                    async move {
+                        let _guard = guard;
+                        tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
+                        Ok(report(0))
+                    }
+                }
+            ),
+            driver
+        );
+        assert_eq!(code.unwrap(), ExitCode::SUCCESS);
+        assert!(
+            dropped.load(std::sync::atomic::Ordering::SeqCst),
+            "the in-flight pass was dropped"
+        );
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(10));
+        assert!(String::from_utf8(out)
+            .unwrap()
+            .ends_with("stopped after 0 pass(es), 0 failed\n"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_pass_delays_the_next_one_instead_of_bursting() {
+        let cancel = CancellationToken::new();
+        let started = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = Arc::clone(&started);
+        let stopper = cancel.clone();
+        let mut out = Vec::new();
+        let driver = async move {
+            tokio::time::sleep(std::time::Duration::from_secs(170)).await;
+            stopper.cancel();
+        };
+        let (code, ()) = tokio::join!(
+            scheduled_sweep(
+                std::time::Duration::from_secs(60),
+                None,
+                &cancel,
+                &mut out,
+                move || {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_secs(150)).await;
+                        Ok(report(0))
+                    }
+                }
+            ),
+            driver
+        );
+        assert_eq!(code.unwrap(), ExitCode::SUCCESS);
+        // started at 0 and 150 (the overdue ticks at 60 and 120 are not replayed); the second
+        // was still running at 170 and is dropped, so exactly one pass finished
+        assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(String::from_utf8(out)
+            .unwrap()
+            .ends_with("stopped after 1 pass(es), 0 failed\n"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_passes_are_retried_and_a_bounded_run_exits_one() {
+        let cancel = CancellationToken::new();
+        let mut out = Vec::new();
+        let mut calls = 0_u32;
+        let code = scheduled_sweep(
+            std::time::Duration::from_secs(30),
+            Some(3),
+            &cancel,
+            &mut out,
+            || {
+                calls += 1;
+                let ok = calls == 2;
+                async move {
+                    if ok {
+                        Ok(report(7))
+                    } else {
+                        Err(crawlx_core::StoreError::Backend("deliberate".to_owned()))
+                    }
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, ExitCode::from(1));
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("pass 1 failed (see the log)"), "{text}");
+        assert!(text.contains("pass 2 swept:"), "{text}");
+        assert!(text.contains("pass 3 failed"), "{text}");
+        assert!(
+            !text.contains("deliberate"),
+            "error text goes to the log, not the report: {text}"
+        );
+        assert!(text.ends_with("stopped after 3 pass(es), 2 failed\n"), "{text}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_interval_has_a_one_second_floor() {
+        let cancel = CancellationToken::new();
+        let mut out = Vec::new();
+        let started = tokio::time::Instant::now();
+        let code = scheduled_sweep(std::time::Duration::ZERO, Some(3), &cancel, &mut out, || async {
+            Ok(report(0))
+        })
+        .await
+        .unwrap();
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(
+            started.elapsed(),
+            std::time::Duration::from_secs(2),
+            "three passes, two 1s gaps"
+        );
     }
 }

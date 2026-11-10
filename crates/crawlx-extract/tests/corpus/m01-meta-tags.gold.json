@@ -1,0 +1,38 @@
+{
+  "id": "m01-meta-tags",
+  "family": "metadata",
+  "note": "plain meta tags, canonical link and article publication time",
+  "expectedText": "title=Quarry Road Reopens After Flood Repairs\nauthors=Rosa Venn\nlanguage=en\npublished=2026-03-04\ncanonical=https://corpus.test/news/quarry-road-reopens\ndescription=Crews finished the flood repairs and the quarry road opens on Monday.",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 45
+    },
+    {
+      "label": "authors",
+      "start": 54,
+      "end": 63
+    },
+    {
+      "label": "language",
+      "start": 73,
+      "end": 75
+    },
+    {
+      "label": "published",
+      "start": 86,
+      "end": 96
+    },
+    {
+      "label": "canonical",
+      "start": 107,
+      "end": 151
+    },
+    {
+      "label": "description",
+      "start": 164,
+      "end": 233
+    }
+  ]
+}

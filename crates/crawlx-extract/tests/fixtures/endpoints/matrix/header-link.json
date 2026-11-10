@@ -1,0 +1,27 @@
+{
+  "construct": "header-link",
+  "headers": [
+    [
+      "Link",
+      "</next.html>; rel=\"next\", <https://cdn.matrix.test/a.css>; rel=preload; as=style, <up/>; rel=up"
+    ]
+  ],
+  "body": [],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/next.html",
+      "source": "header/link"
+    },
+    {
+      "method": "GET",
+      "url": "https://cdn.matrix.test/a.css",
+      "source": "header/link"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/up/",
+      "source": "header/link"
+    }
+  ]
+}

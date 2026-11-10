@@ -1,0 +1,13 @@
+{
+  "construct": "form-get",
+  "body": [
+    "<form action='/search' method='get'><input name='q'><input type='email' name='mail'><select name='k'><option value='a'>A</option><option value='b' selected>B</option></select><input type='number' name='n' min='2' max='9'></form>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/search?q=crawlx&mail=crawlx%40example.org&k=b&n=3",
+      "source": "form/action"
+    }
+  ]
+}

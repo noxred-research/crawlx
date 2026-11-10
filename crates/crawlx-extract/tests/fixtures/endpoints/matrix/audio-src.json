@@ -1,0 +1,13 @@
+{
+  "construct": "audio-src",
+  "body": [
+    "<audio src='/a/clip.mp3'></audio>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/a/clip.mp3",
+      "source": "audio/src"
+    }
+  ]
+}

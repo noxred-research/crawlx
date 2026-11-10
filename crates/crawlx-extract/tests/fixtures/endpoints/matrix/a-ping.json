@@ -1,0 +1,23 @@
+{
+  "construct": "a-ping",
+  "body": [
+    "<a href='#' ping='/ping-a /ping-b\thttps://beacon.test/c'>x</a>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/ping-a",
+      "source": "a/ping"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/ping-b",
+      "source": "a/ping"
+    },
+    {
+      "method": "GET",
+      "url": "https://beacon.test/c",
+      "source": "a/ping"
+    }
+  ]
+}

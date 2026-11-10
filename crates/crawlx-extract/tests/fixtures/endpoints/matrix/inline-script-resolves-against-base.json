@@ -1,0 +1,20 @@
+{
+  "construct": "inline-script-resolves-against-base",
+  "body": [
+    "<html><head><base href='/app/'></head><body><script>fetch('api/items');</script></body></html>"
+  ],
+  "javascript_mode": "ast",
+  "requires_ast": true,
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/app/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/app/api/items",
+      "source": "js/fetch"
+    }
+  ]
+}

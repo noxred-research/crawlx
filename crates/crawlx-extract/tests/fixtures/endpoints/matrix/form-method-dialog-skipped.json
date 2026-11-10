@@ -1,0 +1,7 @@
+{
+  "construct": "form-method-dialog-skipped",
+  "body": [
+    "<form method='dialog'><button>close</button></form>"
+  ],
+  "expected": []
+}

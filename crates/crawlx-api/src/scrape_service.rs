@@ -35,8 +35,14 @@ use crawlx_worker::scrape::cache;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::Duration;
+use tracing::Instrument as _;
 use url::Url;
 use uuid::Uuid;
+
+/// Name of the span around the admission of a scrape, batch, crawl or map run (field
+/// `crawl_id`); the worker's `fetch`, `extract` and `persist` spans
+/// ([`crawlx_worker::scrape::span`]) follow it for each page.
+pub const ADMISSION_SPAN: &str = "admission";
 
 /// Read-only bridge from the API artifact source to the shared cache reader.
 struct CacheArtifacts<'a>(&'a dyn crate::store::ArtifactSource);
@@ -190,6 +196,7 @@ pub(crate) async fn create_scrape_run_as(
         warnings.retain(|w| w.code != "ocr_unavailable");
     }
     let created = create_run_as(state, principal, crawl, Vec::new(), std::mem::take(warnings), id)
+        .instrument(tracing::info_span!(ADMISSION_SPAN, crawl_id = %id))
         .await
         .map_err(admission_error)?;
     *warnings = created.warnings;

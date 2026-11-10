@@ -171,12 +171,20 @@ pub enum ArticleWriteError {
     /// XML 1.0 cannot represent a caller/document scalar. No record bytes were written.
     #[error("article XML contains a forbidden scalar")]
     InvalidXmlScalar,
+    /// A CSV cell starts with a spreadsheet formula trigger and the formula policy is `Reject`.
+    #[error("item CSV cell starts with a formula trigger")]
+    CsvFormula,
     /// Chunk ranges no longer describe the finalized canonical text.
     #[error("article chunk source failed validation: {0}")]
     WordChunks(#[from] crawlx_core::extraction::WordChunkErrorV1),
 }
 
 fn xml_text(out: &mut dyn std::io::Write, value: &str) -> std::io::Result<()> {
+    xml_text_with(out, value, false)
+}
+
+/// Entity-escape `value`; forbidden XML 1.0 scalars are an error, or U+FFFD when `replace`.
+pub(crate) fn xml_text_with(out: &mut dyn std::io::Write, value: &str, replace: bool) -> std::io::Result<()> {
     for ch in value.chars() {
         match ch {
             '&' => out.write_all(b"&amp;")?,
@@ -191,6 +199,7 @@ fn xml_text(out: &mut dyn std::io::Write, value: &str) -> std::io::Result<()> {
             '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}' => {
                 out.write_all(ch.encode_utf8(&mut [0; 4]).as_bytes())?;
             }
+            _ if replace => out.write_all("\u{fffd}".as_bytes())?,
             _ => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -201,14 +210,18 @@ fn xml_text(out: &mut dyn std::io::Write, value: &str) -> std::io::Result<()> {
     }
     Ok(())
 }
-fn csv_field(out: &mut dyn std::io::Write, value: &str) -> std::io::Result<()> {
-    out.write_all(b"\"")?;
-    // Spreadsheet importers may discard leading whitespace, controls or a BOM.
-    if value
+/// Whether a spreadsheet would evaluate `value` as a formula after dropping leading whitespace,
+/// controls or a BOM.
+pub(crate) fn csv_formula_trigger(value: &str) -> bool {
+    value
         .trim_start_matches(|ch: char| ch.is_whitespace() || ch.is_control() || ch == '\u{feff}')
         .starts_with(['=', '+', '-', '@'])
         || value.starts_with(['\t', '\r'])
-    {
+}
+
+pub(crate) fn csv_field(out: &mut dyn std::io::Write, value: &str) -> std::io::Result<()> {
+    out.write_all(b"\"")?;
+    if csv_formula_trigger(value) {
         out.write_all(b"'")?;
     }
     for part in value.split_inclusive('"') {
@@ -229,7 +242,7 @@ struct ArticleContent<'a> {
     item: Option<&'a crawlx_core::selectors::ItemOutcomeV1>,
 }
 
-fn valid_xml_scalars(value: &str) -> bool {
+pub(crate) fn valid_xml_scalars(value: &str) -> bool {
     value.chars().all(|ch| matches!(ch, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}'))
 }
 
@@ -511,67 +524,12 @@ pub enum ItemFormat {
     Xml,
 }
 
-fn item_xml(out: &mut dyn std::io::Write, value: &serde_json::Value, depth: u16) -> std::io::Result<()> {
-    if depth > 32 {
-        return Err(std::io::Error::other("item XML depth limit"));
-    }
-    match value {
-        serde_json::Value::Object(fields) => {
-            out.write_all(b"<object>")?;
-            let mut fields: Vec<_> = fields.iter().collect();
-            fields.sort_unstable_by_key(|(name, _)| *name);
-            for (name, value) in fields {
-                out.write_all(b"<field name=\"")?;
-                xml_text(out, name)?;
-                out.write_all(b"\">")?;
-                item_xml(out, value, depth.saturating_add(1))?;
-                out.write_all(b"</field>")?;
-            }
-            out.write_all(b"</object>")
-        }
-        serde_json::Value::Array(items) => {
-            out.write_all(b"<array>")?;
-            for item in items {
-                out.write_all(b"<entry>")?;
-                item_xml(out, item, depth.saturating_add(1))?;
-                out.write_all(b"</entry>")?;
-            }
-            out.write_all(b"</array>")
-        }
-        serde_json::Value::String(value) => {
-            out.write_all(b"<string>")?;
-            xml_text(out, value)?;
-            out.write_all(b"</string>")
-        }
-        serde_json::Value::Number(value) => write!(out, "<number>{value}</number>"),
-        serde_json::Value::Bool(value) => write!(out, "<boolean>{value}</boolean>"),
-        serde_json::Value::Null => out.write_all(b"<null/>"),
-    }
-}
-
-struct CsvJson<'a>(&'a mut dyn std::io::Write);
-impl std::io::Write for CsvJson<'_> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let mut start = 0;
-        for (index, byte) in bytes.iter().enumerate() {
-            if *byte == b'"' {
-                self.0.write_all(&bytes[start..=index])?;
-                self.0.write_all(b"\"")?;
-                start = index.saturating_add(1);
-            }
-        }
-        self.0.write_all(&bytes[start..])?;
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
-    }
-}
-
 /// Stream an approved generic item with bounded depth and deterministic field order.
 ///
-/// Nested CSV cells contain quoted JSON values; XML uses typed elements rather than
-/// treating target-controlled keys as element names. TEI is deliberately article-only.
+/// Equivalent to [`crate::item_export::write_item_with`] with default options: nested CSV cells
+/// contain quoted JSON values, spreadsheet formula cells are prefix-escaped, and XML uses typed
+/// elements with escaped text rather than treating target-controlled keys as element names.
+/// TEI is deliberately article-only.
 ///
 /// # Errors
 /// Returns output/JSON errors or a non-object, field-count or nesting bound violation.
@@ -580,116 +538,10 @@ pub fn write_item(
     item: &serde_json::Value,
     format: ItemFormat,
 ) -> Result<(), ArticleWriteError> {
-    let fields = item
-        .as_object()
-        .ok_or_else(|| std::io::Error::other("item serializer requires an object"))?;
-    if fields.len() > 256 {
-        return Err(std::io::Error::other("item serializer field limit").into());
-    }
-    let mut nodes = 0;
-    validate_item(item, 0, &mut nodes, matches!(format, ItemFormat::Xml))?;
-    let mut bounded = ItemOutput {
+    crate::item_export::write_item_with(
         out,
-        remaining: 16 * 1024 * 1024,
-    };
-    let out: &mut dyn std::io::Write = &mut bounded;
-    match format {
-        ItemFormat::Json | ItemFormat::Jsonl => serde_json::to_writer(&mut *out, item)?,
-        ItemFormat::Csv => {
-            let mut fields: Vec<_> = fields.iter().collect();
-            fields.sort_unstable_by_key(|(name, _)| *name);
-            for (index, (name, _)) in fields.iter().enumerate() {
-                if index > 0 {
-                    out.write_all(b",")?;
-                }
-                csv_field(out, name)?;
-            }
-            out.write_all(b"\n")?;
-            for (index, (_, value)) in fields.iter().enumerate() {
-                if index > 0 {
-                    out.write_all(b",")?;
-                }
-                if let serde_json::Value::String(value) = value {
-                    csv_field(out, value)?;
-                } else {
-                    out.write_all(b"\"")?;
-                    serde_json::to_writer(CsvJson(&mut *out), value)?;
-                    out.write_all(b"\"")?;
-                }
-            }
-        }
-        ItemFormat::Xml => {
-            out.write_all(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<item version=\"1\">")?;
-            item_xml(out, item, 0)?;
-            out.write_all(b"</item>")?;
-        }
-    }
-    out.write_all(b"\n")?;
-    Ok(())
-}
-
-fn validate_item(
-    value: &serde_json::Value,
-    depth: u8,
-    nodes: &mut u32,
-    xml: bool,
-) -> Result<(), ArticleWriteError> {
-    *nodes = nodes
-        .checked_add(1)
-        .ok_or_else(|| std::io::Error::other("item node limit"))?;
-    if depth > 32 || *nodes > 100_000 {
-        return Err(std::io::Error::other("item structural limit").into());
-    }
-    match value {
-        serde_json::Value::Object(fields) => {
-            if fields.len() > 256 {
-                return Err(std::io::Error::other("item field limit").into());
-            }
-            for (name, value) in fields {
-                if name.len() > 16 * 1024 * 1024 {
-                    return Err(std::io::Error::other("item key byte limit").into());
-                }
-                if xml && !valid_xml_scalars(name) {
-                    return Err(ArticleWriteError::InvalidXmlScalar);
-                }
-                validate_item(value, depth.saturating_add(1), nodes, xml)?;
-            }
-        }
-        serde_json::Value::Array(items) => {
-            if items.len() > 100_000 {
-                return Err(std::io::Error::other("item array limit").into());
-            }
-            for value in items {
-                validate_item(value, depth.saturating_add(1), nodes, xml)?;
-            }
-        }
-        serde_json::Value::String(value) => {
-            if value.len() > 16 * 1024 * 1024 {
-                return Err(std::io::Error::other("item string limit").into());
-            }
-            if xml && !valid_xml_scalars(value) {
-                return Err(ArticleWriteError::InvalidXmlScalar);
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-struct ItemOutput<'a> {
-    out: &'a mut dyn std::io::Write,
-    remaining: usize,
-}
-impl std::io::Write for ItemOutput<'_> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.remaining = self
-            .remaining
-            .checked_sub(bytes.len())
-            .ok_or_else(|| std::io::Error::other("item output byte limit"))?;
-        self.out.write_all(bytes)?;
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.out.flush()
-    }
+        item,
+        format,
+        &crate::item_export::ItemExportOptions::default(),
+    )
 }

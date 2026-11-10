@@ -257,8 +257,25 @@ jobs:
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
         with:
           tool: cargo-nextest,cargo-llvm-cov
+      - name: Build flake-report
+        run: cargo build -q -p crawlx-bench --bin flake-report
+      - name: Restore the flake history
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bench/out/flake-history.json
+          key: flake-history-${{ github.run_id }}
+          restore-keys: flake-history-
       - name: Unit and integration tests with coverage (nextest under cargo-llvm-cov)
-        run: cargo llvm-cov nextest --no-fail-fast --workspace --exclude crawlx-bench --lcov --output-path lcov.info
+        env:
+          FLAKE_REPORT: target/debug/flake-report
+        run: |
+          cargo llvm-cov nextest --profile ci --no-fail-fast --workspace --exclude crawlx-bench \
+            -E "$(ci/flake-gate.sh filter)" --lcov --output-path lcov.info
+      - name: Keep the unit junit (the coverage build is deleted next)
+        if: always()
+        run: |
+          mkdir -p bench/out
+          cp "$(find target -path '*/nextest/ci/junit.xml' | head -n1)" bench/out/junit-unit.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-lcov
@@ -270,7 +287,25 @@ jobs:
           cargo llvm-cov clean --workspace
           rm -rf target/llvm-cov-target
           df -h /
-      - run: cargo nextest run --no-fail-fast -p crawlx-bench -E 'not test(/browser_/)'
+      - name: Bench tests (quarantine excluded)
+        env:
+          FLAKE_REPORT: target/debug/flake-report
+        run: cargo nextest run --profile ci --no-fail-fast -p crawlx-bench -E "($(ci/flake-gate.sh filter)) & not test(/browser_/)"
+      - name: Record the PR-suite flake history
+        if: always()
+        env:
+          FLAKE_REPORT: target/debug/flake-report
+        run: ci/flake-gate.sh record pr bench/out/junit-unit.xml target/nextest/ci/junit.xml
+      - name: Save the flake history
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bench/out/flake-history.json
+          key: flake-history-${{ github.run_id }}
+      - name: Identity version gates (V2 names; dual-mode version pairs in memory and PostgreSQL)
+        run: |
+          cargo test -p crawlx-elements -- v2_
+          cargo test -p crawlx-worker --test replay_hybrid -- dual_mode
 
   schema-snapshot:
     # Storage fault drills and the previous-release schema snapshot: the
@@ -388,7 +423,21 @@ jobs:
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
       - name: Chromium sandbox preflight (sandbox stays on; unprivileged user namespaces)
         run: ci/chromium-sandbox.sh
-      - run: cargo test -p crawlx-bench -- browser_ --test-threads 1
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: cargo-nextest
+      - run: cargo build -q -p crawlx-bench --bin flake-report
+      - name: Browser tests and the lane regression (nextest, one rerun to classify)
+        env:
+          FLAKE_REPORT: target/debug/flake-report
+        run: |
+          F="$(ci/flake-gate.sh filter)"
+          cargo nextest run --profile ci --no-fail-fast -p crawlx-bench -j 1 -E "($F) & (test(/browser_/) | binary(lane_chromium))"
+      - name: Record the browser flake history
+        if: always()
+        env:
+          FLAKE_REPORT: target/debug/flake-report
+        run: ci/flake-gate.sh record pr target/nextest/ci/junit.xml
       - name: CDP surface against the pinned build
         run: cargo test -p crawlx-browser --test cdp_surface
       - name: Golden trace on the pinned build must be clean
@@ -1014,6 +1063,7 @@ jobs:
           fi
           grep -F 'artifactCustody.secretRedis.existingSecret is required' <<< "$refused"
           docker run --rm -v "$PWD:/src" -w /src --entrypoint promtool prom/prometheus:v3.1.0 check rules deploy/alerts/crawlx-rules.yaml
+          docker run --rm -v "$PWD:/src" -w /src --entrypoint promtool prom/prometheus:v3.1.0 test rules deploy/alerts/crawlx-rules.test.yaml
       - name: SBOM (syft)
         run: |
           mkdir -p sbom
@@ -1037,6 +1087,34 @@ jobs:
           path: |
             sbom/
             scan/
+
+  # Release-gate checklist computed from the evidence in bench/out (docs/ops/release-gates.md).
+  # On demand it blocks (an unmeasured or failing item exits 1); the weekly run only reports.
+  release-checklist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: authorize
+    if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
+    permissions:
+      contents: read
+    continue-on-error: ${{ github.event_name == 'schedule' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Release-gate checklist
+        run: ci/release-gate.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: release-checklist
+          path: |
+            bench/out/release-checklist.json
+            bench/out/release-checklist.md
 
   # The one check the default-branch ruleset requires. A job skipped by `if:` counts as
   # passed for a required check, so the gated jobs themselves cannot be required: a pull

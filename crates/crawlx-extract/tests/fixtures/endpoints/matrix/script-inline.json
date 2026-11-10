@@ -1,0 +1,15 @@
+{
+  "construct": "script-inline",
+  "body": [
+    "<script>fetch('/api/items');</script>"
+  ],
+  "javascript_mode": "ast",
+  "requires_ast": true,
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/items",
+      "source": "js/fetch"
+    }
+  ]
+}

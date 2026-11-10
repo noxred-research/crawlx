@@ -13,7 +13,8 @@ use scraper::{ElementRef, Html};
 use url::Url;
 
 use super::headers::parse_refresh;
-use super::script::extract_relative_endpoints;
+use super::script::{decode_slash_escapes, extract_relative_endpoints, mined_target};
+use super::unresolved::UnresolvedLog;
 use super::{Confidence, DiscoveredEndpoint, EndpointSource};
 use crate::dom::{srcset_urls, walk};
 
@@ -172,10 +173,15 @@ pub(super) mod fill {
 pub const MULTIPART_BOUNDARY: &str = "crawlx-form-boundary";
 
 struct Ctx<'a> {
+    /// URL of the document: a `<base href>` resolves against it, never against itself.
+    page: &'a Url,
+    /// Effective base URL: relative references resolve against it.
     base: &'a Url,
     depth: u32,
     javascript_mode: JavascriptMode,
     out: &'a mut Vec<DiscoveredEndpoint>,
+    /// Unresolved URL expressions of the AST pass (inline scripts, handlers).
+    unresolved: &'a mut UnresolvedLog,
 }
 
 impl Ctx<'_> {
@@ -195,6 +201,24 @@ impl Ctx<'_> {
         }
     }
 
+    /// Whitespace-separated URL list attribute (`ping`).
+    fn attr_urls(&mut self, el: ElementRef<'_>, name: &str, source: EndpointSource) {
+        if let Some(v) = attr_local(el, name) {
+            for u in v.split_ascii_whitespace() {
+                self.get(u, source);
+            }
+        }
+    }
+
+    /// Comma-separated URL list attribute (`applet archive`).
+    fn attr_csv(&mut self, el: ElementRef<'_>, name: &str, source: EndpointSource) {
+        if let Some(v) = attr_local(el, name) {
+            for u in v.split(',') {
+                self.get(u, source);
+            }
+        }
+    }
+
     fn srcset(&mut self, el: ElementRef<'_>, source: EndpointSource) {
         if let Some(v) = el.value().attr("srcset") {
             for u in srcset_urls(v) {
@@ -208,7 +232,14 @@ impl Ctx<'_> {
     fn script(&mut self, text: &str, source: EndpointSource) {
         #[cfg(feature = "js-ast")]
         if self.javascript_mode.ast() {
-            self.out.extend(super::ast::discover(text, self.base, self.depth));
+            super::ast::discover_into(
+                text,
+                self.base,
+                self.depth,
+                super::unresolved::ScriptOrigin::InlineScript,
+                self.out,
+                self.unresolved,
+            );
         }
         self.regex(text, source);
     }
@@ -217,12 +248,29 @@ impl Ctx<'_> {
         if !self.javascript_mode.regex() {
             return;
         }
-        for raw in extract_relative_endpoints(text) {
+        let decoded = decode_slash_escapes(text);
+        for raw in extract_relative_endpoints(&decoded)
+            .into_iter()
+            .filter_map(mined_target)
+        {
             self.out.extend(DiscoveredEndpoint::get(
                 self.base,
                 raw,
                 source,
                 Confidence::Regex,
+                self.depth,
+            ));
+        }
+    }
+
+    /// `<base href>`, resolved against the document URL.
+    fn base_href(&mut self, el: ElementRef<'_>) {
+        if let Some(raw) = attr_local(el, "href") {
+            self.out.extend(DiscoveredEndpoint::get(
+                self.page,
+                raw,
+                BASE_HREF,
+                Confidence::Structural,
                 self.depth,
             ));
         }
@@ -238,8 +286,14 @@ impl Ctx<'_> {
         for (name, value) in &el.value().attrs {
             let local = &*name.local;
             if local.len() > 2 && local.starts_with("on") && !value.is_empty() {
-                self.out
-                    .extend(super::ast::discover(value, self.base, self.depth));
+                super::ast::discover_into(
+                    value,
+                    self.base,
+                    self.depth,
+                    super::unresolved::ScriptOrigin::EventHandler,
+                    self.out,
+                    self.unresolved,
+                );
             }
         }
     }
@@ -281,19 +335,24 @@ fn in_svg(el: ElementRef<'_>) -> bool {
     &*el.value().name.ns == "http://www.w3.org/2000/svg"
 }
 
-/// Run every body parser over `doc`, resolving against `base`.
+/// Run every body parser over `doc` (the document at `page`), resolving
+/// relative references against `base`.
 pub(super) fn parse(
     doc: &Html,
+    page: &Url,
     base: &Url,
     depth: u32,
     javascript_mode: JavascriptMode,
     out: &mut Vec<DiscoveredEndpoint>,
+    unresolved: &mut UnresolvedLog,
 ) {
     let mut cx = Ctx {
+        page,
         base,
         depth,
         javascript_mode,
         out,
+        unresolved,
     };
     doctype(doc, &mut cx);
     walk(doc.tree.root(), |el| {
@@ -319,11 +378,11 @@ fn element(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
     match v.name() {
         "a" => {
             cx.attr(el, "href", A_HREF);
-            cx.attr(el, "ping", A_PING);
+            cx.attr_urls(el, "ping", A_PING);
         }
         "area" => {
             cx.attr(el, "href", AREA_HREF);
-            cx.attr(el, "ping", AREA_PING);
+            cx.attr_urls(el, "ping", AREA_PING);
         }
         "link" => cx.attr(el, "href", LINK_HREF),
         "embed" => cx.attr(el, "src", EMBED_SRC),
@@ -364,7 +423,7 @@ fn element(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
             }
         }
         "applet" => {
-            cx.attr(el, "archive", APPLET_ARCHIVE);
+            cx.attr_csv(el, "archive", APPLET_ARCHIVE);
             cx.attr(el, "codebase", APPLET_CODEBASE);
         }
         "img" => {
@@ -409,9 +468,9 @@ fn element(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
         "q" => cx.attr(el, "cite", Q_CITE),
         "del" => cx.attr(el, "cite", DEL_CITE),
         "ins" => cx.attr(el, "cite", INS_CITE),
-        "base" => cx.attr(el, "href", BASE_HREF),
+        "base" => cx.base_href(el),
         "import" => cx.attr(el, "implementation", IMPORT_IMPLEMENTATION),
-        "button" => cx.attr(el, "formaction", BUTTON_FORMACTION),
+        "button" => button(el, cx),
         "html" => cx.attr(el, "manifest", HTML_MANIFEST),
         "form" => form(el, cx),
         "meta" => meta(el, cx),
@@ -438,11 +497,37 @@ fn meta(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
 }
 
 fn htmx(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
-    // `hx-delete` is deliberately excluded (the reference does the same).
-    cx.method(el, "hx-get", Method::GET, HTMX_GET);
-    cx.method(el, "hx-post", Method::POST, HTMX_POST);
-    cx.method(el, "hx-put", Method::PUT, HTMX_PUT);
-    cx.method(el, "hx-patch", Method::PATCH, HTMX_PATCH);
+    // `hx-delete` is deliberately excluded (the reference does the same). The
+    // `data-` prefixed spelling is equivalent.
+    for (plain, prefixed, method, source) in [
+        ("hx-get", "data-hx-get", Method::GET, HTMX_GET),
+        ("hx-post", "data-hx-post", Method::POST, HTMX_POST),
+        ("hx-put", "data-hx-put", Method::PUT, HTMX_PUT),
+        ("hx-patch", "data-hx-patch", Method::PATCH, HTMX_PATCH),
+    ] {
+        cx.method(el, plain, method.clone(), source);
+        cx.method(el, prefixed, method, source);
+    }
+}
+
+/// `button formaction`: a submit button's own target. `formmethod` decides the
+/// method; anything but GET is recorded as metadata only, like a form, and
+/// `formmethod=dialog` navigates nowhere.
+fn button(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
+    let method = match el
+        .value()
+        .attr("formmethod")
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    {
+        None => Method::GET,
+        Some(m) if m.eq_ignore_ascii_case("dialog") => return,
+        Some(m) => match Method::from_bytes(m.to_ascii_uppercase().as_bytes()) {
+            Ok(method) => method,
+            Err(_) => return,
+        },
+    };
+    cx.method(el, "formaction", method, BUTTON_FORMACTION);
 }
 
 /// Insertion-ordered `name → value` with set-overwrites-in-place semantics
@@ -576,6 +661,9 @@ fn form(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
         .filter(|e| !e.is_empty())
         .unwrap_or("application/x-www-form-urlencoded");
     let method_raw = v.attr("method").filter(|m| !m.is_empty()).unwrap_or("GET");
+    if method_raw.trim().eq_ignore_ascii_case("dialog") {
+        return; // `method=dialog` closes a dialog; it navigates nowhere
+    }
     let Ok(method) = Method::from_bytes(method_raw.trim().to_ascii_uppercase().as_bytes()) else {
         return;
     };

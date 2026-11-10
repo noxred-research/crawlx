@@ -1,0 +1,18 @@
+{
+  "construct": "header-location",
+  "status": 302,
+  "headers": [
+    [
+      "Location",
+      "../moved/target?x=1#frag"
+    ]
+  ],
+  "body": [],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/moved/target?x=1",
+      "source": "header/location"
+    }
+  ]
+}

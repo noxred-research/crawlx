@@ -1,4 +1,4 @@
-# crawlx Kubernetes manifests
+# CrawlX Kubernetes manifests
 
 Plain manifests mirroring the Helm chart in `deploy/helm/crawlx` for clusters that do not use Helm.
 Apply in this order:

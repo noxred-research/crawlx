@@ -604,6 +604,85 @@ impl RobotsCache {
     }
 }
 
+/// What a fetch is for. Every kind is decided by the same robots rules as a page: a media
+/// file, feed or "read more" target is not exempt because a parser found it inside a page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum HopKind {
+    /// A page the crawl visits.
+    Page,
+    /// An image, video or other media file referenced by a page.
+    Media,
+    /// A syndication feed referenced by a page.
+    Feed,
+    /// A continuation ("read more", next page, full-article link) of a page.
+    ReadMore,
+    /// One redirect target of any of the above.
+    Redirect,
+}
+
+impl HopKind {
+    /// Stable label for denial codes and bounded metric dimensions.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::Media => "media",
+            Self::Feed => "feed",
+            Self::ReadMore => "read_more",
+            Self::Redirect => "redirect",
+        }
+    }
+}
+
+/// Decision for one hop, from [`RobotsCache::evaluate_hop`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[non_exhaustive]
+pub enum HopVerdict {
+    /// The hop may be fetched.
+    Allowed,
+    /// The hop must not be fetched; no request is made for it.
+    Denied {
+        /// What the hop was for.
+        kind: HopKind,
+        /// Why.
+        by: DisallowedBy,
+    },
+    /// No fresh `robots.txt` entry: fetch it for `origin`, `record_fetch`, then decide again.
+    NeedsRobots {
+        /// Origin whose `robots.txt` is missing or stale.
+        origin: String,
+    },
+}
+
+impl HopVerdict {
+    /// The hop may be fetched.
+    #[must_use]
+    pub const fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allowed)
+    }
+}
+
+impl RobotsCache {
+    /// One decision for `url` as a `kind` hop. The only difference between kinds is the
+    /// label on a denial: media, feed, read-more and redirect hops get no looser a verdict
+    /// than a page, and an unknown origin is never treated as allowed.
+    #[must_use]
+    pub fn evaluate_hop(&self, kind: HopKind, url: &url::Url) -> HopVerdict {
+        let origin = crate::authorization::origin_string(url);
+        let mut target = url.path().to_owned();
+        if let Some(query) = url.query() {
+            target.push('?');
+            target.push_str(query);
+        }
+        match self.evaluate(&origin, &target) {
+            RobotsVerdict::Allowed => HopVerdict::Allowed,
+            RobotsVerdict::Disallowed(by) => HopVerdict::Denied { kind, by },
+            RobotsVerdict::Unknown => HopVerdict::NeedsRobots { origin },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -1078,5 +1157,64 @@ mod tests {
         );
         assert!(matches!(c.evaluate(ORIGIN, "/fc"), RobotsVerdict::Disallowed(_)));
         assert_eq!(c.evaluate(ORIGIN, "/ok"), RobotsVerdict::Allowed);
+    }
+
+    #[test]
+    fn every_hop_kind_gets_the_page_verdict_and_unknown_origins_are_not_allowed() {
+        let clock = Arc::new(ManualClock::new(
+            chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        ));
+        let mut cache = RobotsCache::with_config(
+            clock,
+            RobotsConfig {
+                user_agent: UA.to_owned(),
+                ..RobotsConfig::default()
+            },
+        );
+        let url = |s: &str| url::Url::parse(s).unwrap();
+        let image = url("https://example.test/private/photo.jpg");
+        assert_eq!(
+            cache.evaluate_hop(HopKind::Media, &image),
+            HopVerdict::NeedsRobots {
+                origin: "https://example.test".to_owned()
+            }
+        );
+        cache.record_fetch(
+            "https://example.test",
+            FetchStatus::Ok(
+                b"User-agent: *\nDisallow: /private/\nDisallow: /*.rss$\nDisallow: /more?\n".to_vec(),
+            ),
+        );
+        for kind in [
+            HopKind::Page,
+            HopKind::Media,
+            HopKind::Feed,
+            HopKind::ReadMore,
+            HopKind::Redirect,
+        ] {
+            let verdict = cache.evaluate_hop(kind, &image);
+            assert!(
+                matches!(&verdict, HopVerdict::Denied { kind: k, .. } if *k == kind),
+                "{kind:?}"
+            );
+            assert!(!verdict.is_allowed());
+        }
+        assert!(!cache
+            .evaluate_hop(HopKind::Feed, &url("https://example.test/news.rss"))
+            .is_allowed());
+        assert!(!cache
+            .evaluate_hop(HopKind::ReadMore, &url("https://example.test/more?id=2"))
+            .is_allowed());
+        assert!(cache
+            .evaluate_hop(HopKind::Media, &url("https://example.test/public/photo.jpg"))
+            .is_allowed());
+        // A redirect that leaves the origin is a different origin with its own entry.
+        assert!(matches!(
+            cache.evaluate_hop(
+                HopKind::Redirect,
+                &url("https://cdn.example.test/private/photo.jpg")
+            ),
+            HopVerdict::NeedsRobots { .. }
+        ));
     }
 }

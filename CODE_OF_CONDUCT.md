@@ -30,12 +30,12 @@ Examples of unacceptable behavior include:
   permission
 * Other conduct which could reasonably be considered inappropriate in a professional setting
 
-In addition, crawlx is built and intended for security research and authorized testing only, and it can act on
+In addition, CrawlX is built and intended for security research and authorized testing only, and it can act on
 other people's systems. Therefore:
 
 * Do not use project spaces to plan, request help with, or advertise unauthorized scraping, credential
   attacks, or probing or attacking systems you do not own or have written authorization to test.
-* Do not ask for, or share, ways to evade a site's protections or to weaken or bypass crawlx's safety kernel,
+* Do not ask for, or share, ways to evade a site's protections or to weaken or bypass CrawlX's safety kernel,
   egress policy or authorization-record checks.
 * Do not post credentials, personal data or captured third-party content in issues, pull requests or
   discussions, including findings from systems you were not authorized to test.

@@ -1,0 +1,17 @@
+{
+  "construct": "header-refresh",
+  "headers": [
+    [
+      "Refresh",
+      "5; url=/refreshed"
+    ]
+  ],
+  "body": [],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/refreshed",
+      "source": "header/refresh"
+    }
+  ]
+}

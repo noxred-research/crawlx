@@ -1,0 +1,19 @@
+{
+  "construct": "img-src",
+  "body": [
+    "<img src='/img/a.png'>",
+    "<img src='rel.png'>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/img/a.png",
+      "source": "img/src"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/rel.png",
+      "source": "img/src"
+    }
+  ]
+}

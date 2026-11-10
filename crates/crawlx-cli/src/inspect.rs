@@ -86,7 +86,9 @@ pub struct InspectArgs {
         conflicts_with = "s3_bucket"
     )]
     pub artifacts_dir: PathBuf,
-    /// `trail`: S3-compatible artifact bucket; region/endpoint/path style use CRAWLX_S3_*.
+    /// `trail`: S3-compatible artifact bucket; `CRAWLX_S3_PROFILE` (standard, compatible, edge,
+    /// self-hosted) and the other `CRAWLX_S3_*` variables choose region, endpoint and path style
+    /// (docs/ops/object-storage.md).
     #[arg(long, env = "CRAWLX_S3_BUCKET", value_name = "BUCKET")]
     pub s3_bucket: Option<String>,
     /// Print JSON lines instead of `key=value` text.
@@ -413,17 +415,12 @@ async fn page_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
         .collect())
 }
 
-fn trail_s3_config(bucket: &str, getenv: &dyn Fn(&str) -> Option<String>) -> S3Config {
-    let var = |key| getenv(key).filter(|value| !value.trim().is_empty());
-    let mut config = S3Config::new(
-        bucket,
-        var("CRAWLX_S3_REGION").unwrap_or_else(|| "us-east-1".to_owned()),
-    );
-    config.endpoint = var("CRAWLX_S3_ENDPOINT");
-    config.path_style = var("CRAWLX_S3_PATH_STYLE")
-        .is_some_and(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"));
+fn trail_s3_config(
+    bucket: &str,
+    getenv: &dyn Fn(&str) -> Option<String>,
+) -> Result<S3Config, crawlx_storage::s3::S3ConfigError> {
     // Inspection only reads objects; writer-only SSE settings do not change GETs.
-    config
+    S3Config::from_lookup_for_bucket(bucket, getenv)
 }
 
 async fn trail_artifacts(
@@ -443,8 +440,8 @@ async fn trail_artifacts(
         crawlx_worker::config::read_only_custody_from_lookup(pg, &|key| std::env::var(key).ok()).await?;
     let writes = crawlx_storage::CustodyWrites::ReadOnly;
     if let Some(bucket) = &args.s3_bucket {
-        let config = trail_s3_config(bucket, &|key| std::env::var(key).ok());
-        let store = S3ArtifactStore::new(S3Blobs::new(&config), runs, clock)
+        let config = trail_s3_config(bucket, &|key| std::env::var(key).ok())?;
+        let store = S3ArtifactStore::new(S3Blobs::new(&config)?, runs, clock)
             .with_custody(custody, keys, writes)
             .with_read_scope(run.tenant, run.id);
         Ok(Some(Arc::new(store)))
@@ -633,8 +630,10 @@ mod tests {
             "CRAWLX_S3_REGION" => Some("test-region".to_owned()),
             "CRAWLX_S3_ENDPOINT" => Some("http://127.0.0.1:9000".to_owned()),
             "CRAWLX_S3_PATH_STYLE" => Some("true".to_owned()),
+            "CRAWLX_S3_ALLOW_HTTP" => Some("true".to_owned()),
             _ => None,
-        });
+        })
+        .unwrap();
         assert_eq!(config.bucket, "configured-bucket");
         assert_eq!(config.region, "test-region");
         assert_eq!(config.endpoint.as_deref(), Some("http://127.0.0.1:9000"));

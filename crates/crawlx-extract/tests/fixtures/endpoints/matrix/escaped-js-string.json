@@ -1,0 +1,35 @@
+{
+  "construct": "escaped-js-string",
+  "url": "https://matrix.test/static/js/app.js",
+  "content_type": "text/javascript",
+  "body": [
+    "fetch(\"\\/api\\/slash\");",
+    "fetch('\\u002fapi\\u002funicode');",
+    "fetch('\\x2fapi\\x2fhex');",
+    "fetch(`\\/api\\/template`);"
+  ],
+  "javascript_mode": "ast",
+  "requires_ast": true,
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/slash",
+      "source": "js/fetch"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/unicode",
+      "source": "js/fetch"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/hex",
+      "source": "js/fetch"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/template",
+      "source": "js/fetch"
+    }
+  ]
+}

@@ -192,12 +192,14 @@ mod tests {
                 category: "html".into(),
                 plane: MazePlane::Static,
                 page: String::new(),
+                deferred_reason: None,
             },
             MazeTarget {
                 path: "/javascript/interactive/js-post.found".into(),
                 category: "javascript".into(),
                 plane: MazePlane::Browser,
                 page: String::new(),
+                deferred_reason: None,
             },
         ]
     }

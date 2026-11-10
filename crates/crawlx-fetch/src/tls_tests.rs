@@ -420,6 +420,95 @@ async fn certificate_verification_stays_secure_and_skip_remains_explicit() {
     }
 }
 
+/// SHA-256 of `tests/fixtures/selfsigned.crt` (`openssl x509 -fingerprint -sha256`).
+const FIXTURE_SHA256: &str = "1bb0682e7256efceefe2d64c65a6af436cfcc6431d967774f1048d71e043d947";
+
+#[tokio::test]
+async fn certificate_evidence_is_observed_from_the_requests_own_connection_in_both_transports() {
+    for mode in [TlsImpersonation::Off, TlsImpersonation::Randomized] {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let target = Url::parse(&format!("https://localhost:{port}/")).unwrap();
+        let mut config = randomized_config(7);
+        config.tls_impersonation = mode;
+        config.controls = RequestControls::resolve(
+            &Fetch {
+                skip_tls_verification: true,
+                ..Fetch::default()
+            },
+            "localhost",
+            None,
+        )
+        .await
+        .unwrap();
+        let client = fetcher(
+            config,
+            allowed_policy(&[port]),
+            StaticResolver::new().with("localhost", [LOOPBACK]),
+        );
+        // The server accepts exactly one connection: observing the certificate cannot have
+        // opened a second socket (it would never be accepted and the fetch would time out).
+        let server = async {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut tls = fixture_acceptor().accept(stream).await?;
+            read_headers(&mut tls).await;
+            tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await?;
+            tls.flush().await?;
+            Ok::<_, io::Error>(())
+        };
+        let options = FetchOptions::default();
+        let (server_result, result) = tokio::time::timeout(DEADLINE, async {
+            tokio::join!(server, client.fetch(&target, &options))
+        })
+        .await
+        .unwrap();
+        server_result.unwrap();
+        let response = result.unwrap();
+        let evidence = response.certificate_evidence();
+        let certificate = evidence
+            .observed()
+            .unwrap_or_else(|| panic!("{mode:?}: {evidence:?}"));
+        assert_eq!(certificate.sha256, FIXTURE_SHA256, "{mode:?}");
+        assert!(certificate.self_issued);
+        assert_eq!(certificate.not_before.to_rfc3339(), "2026-10-27T18:43:27+00:00");
+        assert_eq!(certificate.not_after.to_rfc3339(), "2126-10-03T18:43:27+00:00");
+        // Observation is not verification: this run skipped verification, and said so.
+        assert!(response.evidence().unwrap().certificate.observed().is_some());
+    }
+}
+
+#[tokio::test]
+async fn a_plain_text_response_reports_unavailable_never_a_certificate() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let target = Url::parse(&format!("http://localhost:{port}/")).unwrap();
+    let client = fetcher(
+        randomized_config(7),
+        allowed_policy(&[port]),
+        StaticResolver::new().with("localhost", [LOOPBACK]),
+    );
+    let server = async {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        read_headers(&mut stream).await;
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            .await
+            .unwrap();
+    };
+    let options = FetchOptions::default();
+    let (_, result) = tokio::time::timeout(DEADLINE, async {
+        tokio::join!(server, client.fetch(&target, &options))
+    })
+    .await
+    .unwrap();
+    let response = result.unwrap();
+    assert_eq!(
+        response.certificate_evidence(),
+        crate::CertificateEvidence::unavailable(crate::CertificateUnavailable::NotTls)
+    );
+}
+
 #[tokio::test]
 async fn randomized_transport_negotiates_each_supported_tls_version() {
     for (supported, negotiated) in [

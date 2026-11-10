@@ -336,6 +336,39 @@ fn strip(text: String, on: bool) -> String {
     }
 }
 
+/// The `html` format: the cleaned `content` inside a document skeleton, as clients of the
+/// compatibility API read it: `<!DOCTYPE html><html lang="…">`, a newline, the `<body>` (the
+/// content when it already is one, else wrapped around it) and the closing tags. The language is
+/// the page's declared one when it is a plain language tag; without one the root has no `lang`.
+fn document_skeleton(content: &str, language: Option<&str>) -> String {
+    let lang = language.map(str::trim).filter(|l| {
+        !l.is_empty()
+            && l.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    });
+    let mut out = String::with_capacity(content.len() + 64);
+    out.push_str("<!DOCTYPE html><html");
+    if let Some(lang) = lang {
+        out.push_str(" lang=\"");
+        out.push_str(lang);
+        out.push('"');
+    }
+    out.push_str(">\n");
+    let body = content
+        .trim_start()
+        .get(..5)
+        .is_some_and(|head| head.eq_ignore_ascii_case("<body"));
+    if body {
+        out.push_str(content);
+        out.push_str("\n</html>");
+    } else {
+        out.push_str("<body>\n");
+        out.push_str(content);
+        out.push_str("\n</body>\n</html>");
+    }
+    out
+}
+
 fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
     let options = &*input.options;
     let extract = ExtractOptions {
@@ -453,12 +486,16 @@ fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
             "extension document envelope unavailable".into(),
         ));
     }
+    let html = document_skeleton(
+        &strip(doc.html, options.remove_base64_images),
+        doc.language.as_deref(),
+    );
     Ok(Composed {
         meta,
         links: doc.links.iter().map(|l| l.url.clone()).collect(),
         title: doc.title,
         markdown: Some(strip(doc.markdown, options.remove_base64_images)),
-        html: Some(strip(doc.html, options.remove_base64_images)),
+        html: Some(html),
         images,
         attributes,
         article_text: doc.article.is_some().then_some(doc.text),
@@ -655,6 +692,44 @@ mod tests {
         assert!(
             !c.html.unwrap().contains("base64"),
             "removeBase64Images is on by default"
+        );
+    }
+
+    #[test]
+    fn html_is_a_document_with_doctype_and_language() {
+        let page = br#"<!doctype html><html lang="en-GB"><head><title>T</title></head><body><main><h1>Hi</h1></main></body></html>"#;
+        let html = compose(&mut input(BodyKind::Html, page, ScrapeOptions::default()))
+            .ok()
+            .unwrap()
+            .html
+            .unwrap();
+        assert!(
+            html.starts_with("<!DOCTYPE html><html lang=\"en-GB\">\n<body>\n<main>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<h1>Hi</h1>") && html.ends_with("</body>\n</html>"),
+            "{html}"
+        );
+        let no_lang = br#"<html><body><main>x</main></body></html>"#;
+        let html = compose(&mut input(BodyKind::Html, no_lang, ScrapeOptions::default()))
+            .ok()
+            .unwrap()
+            .html
+            .unwrap();
+        assert!(html.starts_with("<!DOCTYPE html><html>\n<body>"), "{html}");
+    }
+
+    #[test]
+    fn a_body_is_not_wrapped_in_another_body() {
+        assert_eq!(
+            document_skeleton("<body><p>x</p></body>", Some("de")),
+            "<!DOCTYPE html><html lang=\"de\">\n<body><p>x</p></body>\n</html>"
+        );
+        assert_eq!(
+            document_skeleton("<main>x</main>", Some("\"><script>")),
+            "<!DOCTYPE html><html>\n<body>\n<main>x</main>\n</body>\n</html>",
+            "an odd language value never reaches the markup"
         );
     }
 

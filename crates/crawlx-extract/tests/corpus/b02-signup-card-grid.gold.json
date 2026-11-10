@@ -1,0 +1,63 @@
+{
+  "id": "b02-signup-card-grid",
+  "family": "boilerplate",
+  "note": "signup strip and card grid after the article",
+  "expectedText": "Crumb and Crust\nRecipes Guides Shop About\nHow to Keep a Sourdough Starter Alive on Holiday\nA sourdough starter can wait for you in the refrigerator for up to three weeks if you feed it well on the day you leave. Stir in equal weights of flour and water, close the jar loosely and put it on the coldest shelf.\nWhen you come back, pour off any dark liquid on top and feed the starter twice at room temperature before baking. It may smell sharp at first, which is normal, and it should bubble again within a day.\nIf you will be away longer, spread a thin layer of starter on baking paper and let it dry. The flakes keep for months and wake up after a warm bath of flour and water.\nNever miss a loaf. Subscribe for weekly recipes and baking notes.\nSeeded rye in twelve steps\nThe tangy overnight boule\nFlour storage tips\nCrumb and Crust. Privacy. Sitemap. Follow us on every network.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "boilerplate",
+      "start": 16,
+      "end": 41
+    },
+    {
+      "label": "body",
+      "start": 42,
+      "end": 90
+    },
+    {
+      "label": "body",
+      "start": 91,
+      "end": 308
+    },
+    {
+      "label": "body",
+      "start": 309,
+      "end": 509
+    },
+    {
+      "label": "body",
+      "start": 510,
+      "end": 677
+    },
+    {
+      "label": "boilerplate",
+      "start": 678,
+      "end": 743
+    },
+    {
+      "label": "boilerplate",
+      "start": 744,
+      "end": 770
+    },
+    {
+      "label": "boilerplate",
+      "start": 771,
+      "end": 796
+    },
+    {
+      "label": "boilerplate",
+      "start": 797,
+      "end": 815
+    },
+    {
+      "label": "boilerplate",
+      "start": 816,
+      "end": 878
+    }
+  ]
+}

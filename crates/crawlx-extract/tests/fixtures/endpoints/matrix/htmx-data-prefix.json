@@ -1,0 +1,18 @@
+{
+  "construct": "htmx-data-prefix",
+  "body": [
+    "<div data-hx-get='/h/prefixed'>x</div><button data-hx-post='/h/prefixed-post'>x</button>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/h/prefixed",
+      "source": "htmx/hx-get"
+    },
+    {
+      "method": "POST",
+      "url": "https://matrix.test/h/prefixed-post",
+      "source": "htmx/hx-post"
+    }
+  ]
+}

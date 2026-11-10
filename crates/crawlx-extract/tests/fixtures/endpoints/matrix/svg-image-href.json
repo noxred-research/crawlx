@@ -1,0 +1,18 @@
+{
+  "construct": "svg-image-href",
+  "body": [
+    "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><image href='/s/plain.png'/><image xlink:href='/s/xlink.png'/></svg>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/s/plain.png",
+      "source": "svg/image-href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/s/xlink.png",
+      "source": "svg/image-href"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
-  <img alt="crawlx: next-generation AI/LLM-native crawler for authorized security research" src="docs/assets/banner-light.svg" width="100%">
+  <img alt="CrawlX: next-generation AI/LLM-native crawler for authorized security research" src="docs/assets/banner-light.svg" width="100%">
 </picture>
 
 **Next-generation AI/LLM-native crawler for authorized security research.**
@@ -11,12 +11,12 @@ Map the real attack surface of modern web applications, on systems you own or ar
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE) [![CI](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/noxred-research/crawlx/actions/workflows/ci.yml) [![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-informational)](CHANGELOG.md) [![Rust 1.97.1](https://img.shields.io/badge/rust-1.97.1-orange?logo=rust)](rust-toolchain.toml) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md) [![Security policy](https://img.shields.io/badge/security-policy-informational?logo=github)](SECURITY.md)
 
-[Why crawlx](#why-crawlx) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) · [CLI](#command-line-overview) · [Responsible use](#responsible-use) · [Security](#security) · [Docs](docs/README.md)
+[Why CrawlX](#why-crawlx) · [Features](#features) · [Install](#install) · [Quick start](#quick-start) · [Output](#output) · [How it works](#how-it-works) · [CLI](#command-line-overview) · [Responsible use](#responsible-use) · [Security](#security) · [Docs](docs/README.md)
 
 </div>
 
 > [!IMPORTANT]
-> **Security research and authorized testing only.** crawlx is built for testing systems you own or have
+> **Security research and authorized testing only.** CrawlX is built for testing systems you own or have
 > written authorization to test. It is not for unauthorized scraping, credential attacks, evading a site's
 > protections, or any other abuse. Privileged modes require an [authorization record](docs/design/safety-model.md#authorization-records),
 > and a hard safety kernel refuses actions outside the run's profile. See [Responsible use](#responsible-use).
@@ -27,11 +27,11 @@ Map the real attack surface of modern web applications, on systems you own or ar
 
 <p align="center"><sub>Two real <code>crawlx crawl</code> runs against the bundled CrawlerGym fixture (browser log lines condensed).<br>The second run shows the egress policy refusing the cloud metadata address.</sub></p>
 
-## Why crawlx
+## Why CrawlX
 
 Security testing of modern applications has two problems. Plain HTTP crawlers miss everything that only
 exists after JavaScript runs: routes, endpoints, forms and state behind clicks. Browser automation sees it,
-but is slow, fragile and one careless click away from "Delete account". crawlx treats both as engineering
+but is slow, fragile and one careless click away from "Delete account". CrawlX treats both as engineering
 problems under one set of rules.
 
 - **It maps the surface you cannot see from the HTML.** A URL plane for documents plus a browser plane that
@@ -48,11 +48,11 @@ problems under one set of rules.
 
 ## Responsible use
 
-crawlx is built and intended for **security research and authorized testing only**: testing systems you own,
+CrawlX is built and intended for **security research and authorized testing only**: testing systems you own,
 or systems you have **written authorization** to test. This is the project's intended-use policy and a
 condition of community participation and support; the [AGPL-3.0-only](LICENSE) license itself is unchanged.
 
-Do not use crawlx for unauthorized scraping, credential attacks, evading a site's protections, or any
+Do not use CrawlX for unauthorized scraping, credential attacks, evading a site's protections, or any
 other abuse. You are responsible for your use.
 
 How the project enforces this in code, not just in words:
@@ -257,7 +257,7 @@ integration calls and what is not served: [docs/integrations.md](docs/integratio
 
 ### MCP
 
-`crawlx mcp` exposes MCP tools over stdio as a thin client of a crawlx API. The client
+`crawlx mcp` exposes MCP tools over stdio as a thin client of a CrawlX API. The client
 configuration is in the [reference](docs/reference.md#mcp-server).
 
 ## Output
@@ -378,7 +378,7 @@ against the live page before performing it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
-  <img alt="crawlx architecture: clients, API process, worker process, state and the web" src="docs/assets/architecture-light.svg">
+  <img alt="CrawlX architecture: clients, API process, worker process, state and the web" src="docs/assets/architecture-light.svg">
 </picture>
 
 </details>
@@ -464,7 +464,7 @@ when unset. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 
-Report vulnerabilities in crawlx privately through GitHub private vulnerability reporting, never in a public
+Report vulnerabilities in CrawlX privately through GitHub private vulnerability reporting, never in a public
 issue. [SECURITY.md](SECURITY.md) has the supported versions, response times, safe-harbor terms, scope and the
 intended-use statement.
 
@@ -488,22 +488,22 @@ review flow. The [roadmap](docs/roadmap.md) lists open work that is a good place
 
 ## Support the project
 
-If crawlx saves you time, a star helps others find it.
+If CrawlX saves you time, a star helps others find it.
 
-[![Star crawlx on GitHub](https://img.shields.io/badge/star-crawlx-yellow?logo=github&style=social)](https://github.com/noxred-research/crawlx)
+[![Star CrawlX on GitHub](https://img.shields.io/badge/star-crawlx-yellow?logo=github&style=social)](https://github.com/noxred-research/crawlx)
 
 ## License
 
-crawlx is licensed under the [GNU AGPL version 3 only](LICENSE) (`AGPL-3.0-only`), not “version 3 or
+CrawlX is licensed under the [GNU AGPL version 3 only](LICENSE) (`AGPL-3.0-only`), not “version 3 or
 later.” Third-party dependencies, vendored sources and embedded resources keep their own licenses and
 notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-crawlx is built and intended for security research and authorized testing only (see
+CrawlX is built and intended for security research and authorized testing only (see
 [Responsible use](#responsible-use)); this is a project policy and does not change the license.
 
 ### Project owners
 
-crawlx is owned and maintained by:
+CrawlX is owned and maintained by:
 
 - [Noxtica](https://noxtica.com)
 - [NoxRed Security Research](https://noxred.ai)

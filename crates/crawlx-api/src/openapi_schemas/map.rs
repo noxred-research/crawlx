@@ -61,6 +61,8 @@ pub(super) struct MapResponse {
     success: bool,
     /// The URLs of the site in discovery order (by relevance with `search`), cut to `limit`.
     links: Vec<MapLink>,
+    /// Identifier of the run that produced the map.
+    id: String,
     /// Options that were not applied, and `map_cached_sources` / `location_no_proxy`.
     #[serde(skip_serializing_if = "Option::is_none")]
     warnings: Option<Vec<Warning>>,

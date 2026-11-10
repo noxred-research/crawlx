@@ -1,0 +1,32 @@
+{
+  "construct": "escaped-entities",
+  "body": [
+    "<a href='/q?a=1&amp;b=2&#38;c=3'>x</a>",
+    "<a href='&#47;numeric&#x2F;entity'>x</a>",
+    "<a href='/caf&eacute;'>x</a>",
+    "<img src='/&quot;quoted&quot;.png'>"
+  ],
+  "javascript_mode": "off",
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/q?a=1&b=2&c=3",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/numeric/entity",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/caf%C3%A9",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/%22quoted%22.png",
+      "source": "img/src"
+    }
+  ]
+}

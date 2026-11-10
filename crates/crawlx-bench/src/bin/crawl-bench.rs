@@ -3,19 +3,22 @@
 //! profiles and baseline rules are documented in `crawlx_bench::crawl_bench`.
 
 use clap::Parser;
-use crawlx_bench::crawl_bench::{compare, run, BenchConfig, Metric, Profile, Report, Target, DEFAULT_SEED};
+use crawlx_bench::crawl_bench::{
+    browser_available, compare, run, BenchConfig, Metric, Profile, Report, Target, DEFAULT_SEED,
+};
 use crawlx_bench::error::chain;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const LONG_ABOUT: &str = "\
 Crawl each target under each crawl profile, repeat N times, and report per-target and
-aggregate metrics: pages fetched, distinct endpoints discovered, recall against the target's
-known endpoint list (gym fixtures that ship one), requests/second, wall time and the p50/p95
-latency of served pages. Every target sits behind a recording reverse proxy, so what the target
-received (requests, 5xx answers, latency) is measured server-side; the crawl itself runs
-through the real URL plane (crawlx_worker::run_local_with). Repeats are combined by the
-per-field median; latency percentiles are taken over all requests of all repeats.
+aggregate metrics: pages fetched, pages/second, browser interactions, distinct endpoints
+discovered, recall against the target's known endpoint list (gym fixtures that ship one),
+requests/second, wall time and the p50/p95 latency of served pages. Every target sits behind a
+recording reverse proxy, so what the target received (requests, 5xx answers, latency) is
+measured server-side; the crawl itself runs through the real worker
+(crawlx_worker::run_local_with). Repeats are combined by the per-field median; latency
+percentiles are taken over all requests of all repeats.
 
 TARGETS
   gym:<fixture>   a CrawlerGym fixture served by an in-process gym (gym:s1, gym:g32,
@@ -23,11 +26,18 @@ TARGETS
   http(s)://...   an application you run (DVWA, Juice Shop, a staging site). The proxy forwards
                   to it without the crawl egress policy: name only targets you may test.
 
-PROFILES (every profile crawls with mode=static)
-  static           the gym reference slice: crawlx defaults at the gym's pace (50 ms/origin)
+PROFILES
+  static           the gym reference slice (mode=static): crawlx defaults at the gym's pace (50 ms/origin)
   crawlx-defaults  the request defaults of `crawlx crawl`, production politeness (250 ms/origin)
   compat-flag-defaults  the compatibility flag dialect's defaults: host scope rdn, depth 3, depth-first, no JS endpoints,
                    no known files or sitemap, robots.txt not obeyed, 4 MiB bodies, 150 req/s
+  hybrid           the static request plus the browser plane (mode=hybrid, page hooks, 40 interactions)
+  browser-only     the browser plane alone (mode=dynamic, same budget)
+  hybrid and browser-only need a Chromium executable (CRAWLX_CHROMIUM_PATH); without one they are
+  skipped with a message on stderr (exit status 2 when no runnable profile is left).
+  pps is pages/second and interactions the browser interactions attempted. After the table a
+  second table lists every profile's pps relative to static on the same target (`2.00x` = twice
+  the pages per second); the ratio is reported, never gated.
 
 OUTPUT
   A table on stdout (one row per target and profile, then the aggregate rows `(all)`), progress
@@ -37,8 +47,8 @@ OUTPUT
 BASELINES
   --baseline FILE compares against a report written by an earlier --json: every cell shows its
   change. With --max-regress PCT the exit status is 1 when a gated metric got worse by more
-  than PCT percent. Higher is better for pages, endpoints, recall, rps; lower is better for
-  errors, seconds, p50_ms, p95_ms. requests is informational. Only targets and profiles present
+  than PCT percent. Higher is better for pages, endpoints, recall, rps, pps; lower is better for
+  errors, seconds, p50_ms, p95_ms. requests and interactions are informational. Only targets and profiles present
   in both files are compared; the (all) rows only when both files cover the same targets.
   Timing metrics are noisy across machines: narrow the gate with
   --gate-metrics pages,endpoints,recall to the deterministic coverage numbers.
@@ -61,7 +71,8 @@ struct Cli {
     #[arg(long = "target", value_name = "TARGET", required = true, value_parser = parse_target)]
     targets: Vec<Target>,
 
-    /// Crawl profile: static, compat-flag-defaults or crawlx-defaults; repeat for several profiles.
+    /// Crawl profile: static, compat-flag-defaults, crawlx-defaults, hybrid or browser-only
+    /// (the last two need Chromium and are skipped without it); repeat for several profiles.
     #[arg(long = "profile", value_name = "PROFILE", default_value = "static", value_parser = parse_profile)]
     profiles: Vec<Profile>,
 
@@ -128,8 +139,20 @@ async fn execute(cli: Cli) -> Result<ExitCode, String> {
     // Read the baseline first so a bad path fails before minutes of crawling.
     let baseline = cli.baseline.as_deref().map(read_baseline).transpose()?;
 
+    let (runnable, skipped): (Vec<Profile>, Vec<Profile>) = cli
+        .profiles
+        .into_iter()
+        .partition(|p| !p.needs_browser() || browser_available());
+    for profile in &skipped {
+        eprintln!("crawl-bench: skipping profile {profile}: no Chromium executable found (set CRAWLX_CHROMIUM_PATH)");
+    }
+    if runnable.is_empty() {
+        return Err(
+            "every requested profile needs Chromium and none was found (set CRAWLX_CHROMIUM_PATH)".to_owned(),
+        );
+    }
     let mut cfg = BenchConfig::new(cli.targets);
-    cfg.profiles = cli.profiles;
+    cfg.profiles = runnable;
     cfg.repeat = cli.repeat;
     cfg.seed = cli.seed;
     cfg.duration_seconds = cli.duration_seconds;
@@ -146,6 +169,10 @@ async fn execute(cli: Cli) -> Result<ExitCode, String> {
         eprintln!("crawl-bench: wrote {}", path.display());
     }
     print!("{}", report.table(baseline.as_ref()));
+    let ratios = report.ratio_table();
+    if !ratios.is_empty() {
+        print!("\npage throughput relative to static\n{ratios}");
+    }
 
     if let (Some(base), Some(pct)) = (&baseline, cli.max_regress) {
         let gate = if cli.gate_metrics.is_empty() {

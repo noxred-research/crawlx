@@ -278,6 +278,11 @@ impl Classify for WorkerError {
                 | FetchError::InvalidRedirect { .. }
                 | FetchError::TooManyRedirects { .. }
                 | FetchError::InvalidHeader { .. }
+                | FetchError::BodyDecode { .. }
+                | FetchError::BodyLimit { .. }
+                | FetchError::StatusDenied { .. }
+                | FetchError::PreflightRefused { .. }
+                | FetchError::InvalidDeclaration { .. }
                 | FetchError::ClientBuild(_) => ErrorClass::Terminal,
                 FetchError::Io(e) => e.class(),
             },

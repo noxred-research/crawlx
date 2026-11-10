@@ -1,0 +1,384 @@
+[
+  {
+    "name": "fetch-plain",
+    "js": "fetch('/api/data');",
+    "expected": [
+      {
+        "url": "/api/data",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "fetch-post-with-headers-and-json-body",
+    "js": "fetch('/api/p', {method: 'POST', headers: {'X-Token': 't', 'Content-Type': 'application/json'}, body: JSON.stringify({a: 1, b: 2})});",
+    "expected": [
+      {
+        "url": "/api/p",
+        "source": "js/fetch",
+        "method": "POST",
+        "headers": [
+          "content-type",
+          "x-token"
+        ],
+        "body": "{\"a\":\"crawlx\",\"b\":\"crawlx\"}",
+        "content_type": "application/json"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "fetch-form-body",
+    "js": "fetch('/api/f', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: new URLSearchParams({user: 'u', pass: 'p'})});",
+    "expected": [
+      {
+        "url": "/api/f",
+        "source": "js/fetch",
+        "method": "POST",
+        "headers": [
+          "content-type"
+        ],
+        "body": "pass=crawlx&user=crawlx",
+        "content_type": "application/x-www-form-urlencoded"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "request-constructor-put",
+    "js": "new Request('/req/item', {method: 'PUT'});",
+    "expected": [
+      {
+        "url": "/req/item",
+        "source": "js/fetch",
+        "method": "PUT"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "fetch-of-request-reads-the-inner-url-once",
+    "js": "fetch(new Request('/inner/item'));",
+    "expected": [
+      {
+        "url": "/inner/item",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "global-object-prefixes",
+    "js": "window.fetch('/w/a'); globalThis.fetch('/w/b'); self.fetch('/w/c');",
+    "expected": [
+      {
+        "url": "/w/a",
+        "source": "js/fetch"
+      },
+      {
+        "url": "/w/b",
+        "source": "js/fetch"
+      },
+      {
+        "url": "/w/c",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "headers-constructor",
+    "js": "fetch('/api/h', {headers: new Headers({'Authorization': 'x'})});",
+    "expected": [
+      {
+        "url": "/api/h",
+        "source": "js/fetch",
+        "headers": [
+          "authorization"
+        ]
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "axios-calls",
+    "js": "axios('/ax/str'); axios({url: '/ax/cfg', method: 'delete'}); axios.get('/ax/get'); axios.post('/ax/post', {u: 1}); axios.request({url: '/ax/req'});",
+    "expected": [
+      {
+        "url": "/ax/str",
+        "source": "js/axios"
+      },
+      {
+        "url": "/ax/cfg",
+        "source": "js/axios",
+        "method": "DELETE"
+      },
+      {
+        "url": "/ax/get",
+        "source": "js/axios"
+      },
+      {
+        "url": "/ax/post",
+        "source": "js/axios",
+        "method": "POST",
+        "body": "{\"u\":\"crawlx\"}",
+        "content_type": "application/json"
+      },
+      {
+        "url": "/ax/req",
+        "source": "js/axios"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "jquery-calls",
+    "js": "$.ajax({url: '/jq/ajax', type: 'POST', data: {k: 1}}); $.get('/jq/get'); $.post('/jq/post', {z: 1}); $.getJSON('/jq/json');",
+    "expected": [
+      {
+        "url": "/jq/ajax",
+        "source": "js/ajax",
+        "method": "POST",
+        "body": "k=crawlx",
+        "content_type": "application/x-www-form-urlencoded"
+      },
+      {
+        "url": "/jq/get",
+        "source": "js/ajax"
+      },
+      {
+        "url": "/jq/post",
+        "source": "js/ajax",
+        "method": "POST",
+        "body": "z=crawlx",
+        "content_type": "application/x-www-form-urlencoded"
+      },
+      {
+        "url": "/jq/json",
+        "source": "js/ajax"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "generic-client-methods",
+    "js": "this.http.post('/ng/items', {n: 1}); this.http.get('/ng/list'); client.delete('/ng/gone');",
+    "expected": [
+      {
+        "url": "/ng/items",
+        "source": "js/http",
+        "method": "POST",
+        "body": "{\"n\":\"crawlx\"}",
+        "content_type": "application/json"
+      },
+      {
+        "url": "/ng/list",
+        "source": "js/http"
+      },
+      {
+        "url": "/ng/gone",
+        "source": "js/http",
+        "method": "DELETE"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "generic-client-non-url-argument-ignored",
+    "js": "map.get('key'); cache.post('name');",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "xhr-open",
+    "js": "var x = new XMLHttpRequest(); x.open('POST', '/xhr/save'); x.open('GET', '/xhr/load');",
+    "expected": [
+      {
+        "url": "/xhr/save",
+        "source": "js/xhr",
+        "method": "POST"
+      },
+      {
+        "url": "/xhr/load",
+        "source": "js/xhr"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "xhr-open-with-dynamic-method",
+    "js": "x.open(verb, '/xhr/any');",
+    "expected": [
+      {
+        "url": "/xhr/any",
+        "source": "js/xhr"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "send-beacon",
+    "js": "navigator.sendBeacon('/beacon/hit', {id: 1});",
+    "expected": [
+      {
+        "url": "/beacon/hit",
+        "source": "js/sendbeacon",
+        "method": "POST",
+        "body": "{\"id\":\"crawlx\"}",
+        "content_type": "application/json"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "location-assignments",
+    "js": "location.href = '/nav/a'; window.location = '/nav/b'; document.location.href = '/nav/f'; top.location = '/nav/g';",
+    "expected": [
+      {
+        "url": "/nav/a",
+        "source": "js/location"
+      },
+      {
+        "url": "/nav/b",
+        "source": "js/location"
+      },
+      {
+        "url": "/nav/f",
+        "source": "js/location"
+      },
+      {
+        "url": "/nav/g",
+        "source": "js/location"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "location-methods",
+    "js": "location.assign('/nav/c'); window.location.replace('/nav/d');",
+    "expected": [
+      {
+        "url": "/nav/c",
+        "source": "js/location"
+      },
+      {
+        "url": "/nav/d",
+        "source": "js/location"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "history-api",
+    "js": "history.pushState({}, '', '/nav/h'); window.history.replaceState(null, '', '/nav/i');",
+    "expected": [
+      {
+        "url": "/nav/h",
+        "source": "js/history"
+      },
+      {
+        "url": "/nav/i",
+        "source": "js/history"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "window-open",
+    "js": "window.open('/nav/e', '_blank');",
+    "expected": [
+      {
+        "url": "/nav/e",
+        "source": "js/open"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "websocket-schemes-map-to-http",
+    "js": "new WebSocket('wss://vec.test/ws/secure'); new WebSocket('ws://vec.test/ws/plain');",
+    "expected": [
+      {
+        "url": "https://vec.test/ws/secure",
+        "source": "js/websocket"
+      },
+      {
+        "url": "http://vec.test/ws/plain",
+        "source": "js/websocket"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "event-source",
+    "js": "new EventSource('/events/stream');",
+    "expected": [
+      {
+        "url": "/events/stream",
+        "source": "js/eventsource"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "new-url-with-base",
+    "js": "new URL('/u/x', 'https://other.test');",
+    "expected": [
+      {
+        "url": "https://other.test/u/x",
+        "source": "js/url"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "dynamic-import-and-require-paths",
+    "js": "import('./dyn-module.js'); require('./cjs-mod');",
+    "expected": [
+      {
+        "url": "/app/dyn-module.js",
+        "source": "js/string"
+      },
+      {
+        "url": "/app/cjs-mod",
+        "source": "js/string"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "set-attribute-handler-string",
+    "js": "el.setAttribute('onclick', \"fetch('/h/set')\");",
+    "expected": [
+      {
+        "url": "/h/set",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "set-attribute-non-handler-ignored",
+    "js": "el.setAttribute('data-x', \"fetch('/h/ignored')\");",
+    "expected": [],
+    "unresolved": []
+  },
+  {
+    "name": "nested-handler-two-levels",
+    "js": "el.setAttribute('onclick', \"el.setAttribute('onmouseover', \\\"fetch('/h/deep')\\\")\");",
+    "expected": [
+      {
+        "url": "/h/deep",
+        "source": "js/fetch"
+      }
+    ],
+    "unresolved": []
+  },
+  {
+    "name": "nested-handler-beyond-bound-is-not-mined",
+    "js": "a.setAttribute('onclick', \"b.setAttribute('onclick', \\\"c.setAttribute('onclick', \\\\\\\"fetch('/h/too-deep')\\\\\\\")\\\")\");",
+    "expected": [],
+    "unresolved": []
+  }
+]

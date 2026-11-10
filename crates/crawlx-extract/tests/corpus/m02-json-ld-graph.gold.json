@@ -1,0 +1,33 @@
+{
+  "id": "m02-json-ld-graph",
+  "family": "metadata",
+  "note": "article facts inside a JSON-LD graph next to an unrelated site node",
+  "expectedText": "title=Council Approves Riverside Lighting Plan\nauthors=Elif Aydin; Pieter Moll\nlanguage=en-GB\npublished=2026-02-11\ncanonical=https://corpus.test/news/riverside-lighting",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 46
+    },
+    {
+      "label": "authors",
+      "start": 55,
+      "end": 78
+    },
+    {
+      "label": "language",
+      "start": 88,
+      "end": 93
+    },
+    {
+      "label": "published",
+      "start": 104,
+      "end": 114
+    },
+    {
+      "label": "canonical",
+      "start": 125,
+      "end": 168
+    }
+  ]
+}

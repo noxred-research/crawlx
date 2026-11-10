@@ -1,0 +1,37 @@
+{
+  "construct": "a-href",
+  "body": [
+    "<a href='/plain'>x</a>",
+    "<a href='rel/page.html?x=1&amp;y=2#frag'>x</a>",
+    "<a href='  /trim  '>x</a>",
+    "<a href='//cdn.matrix.test/proto-relative'>x</a>",
+    "<a href='../up'>x</a>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/plain",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/rel/page.html?x=1&y=2",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/trim",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://cdn.matrix.test/proto-relative",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/up",
+      "source": "a/href"
+    }
+  ]
+}

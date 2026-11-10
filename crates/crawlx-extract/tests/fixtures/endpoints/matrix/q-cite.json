@@ -1,0 +1,13 @@
+{
+  "construct": "q-cite",
+  "body": [
+    "<q cite='/c/inline.html'>x</q>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/c/inline.html",
+      "source": "q/cite"
+    }
+  ]
+}

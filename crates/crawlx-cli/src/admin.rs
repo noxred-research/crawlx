@@ -56,9 +56,11 @@ pub struct AuditExportArgs {
         conflicts_with = "s3_bucket"
     )]
     pub audit_dir: PathBuf,
-    /// S3-compatible audit bucket instead of a directory. Region, endpoint, path style and
-    /// SSE come from `CRAWLX_S3_*`; credentials from the SDK environment. Point this at
-    /// an object-lock (WORM) bucket in production.
+    /// S3-compatible audit bucket instead of a directory. `CRAWLX_S3_PROFILE` (standard,
+    /// compatible, edge, self-hosted) and the other `CRAWLX_S3_*` variables choose region,
+    /// endpoint, path style and encryption (docs/ops/object-storage.md); credentials come from
+    /// the SDK environment. Point this at an object-lock (WORM) bucket in production where the
+    /// profile supports it.
     #[arg(long, value_name = "BUCKET")]
     pub s3_bucket: Option<String>,
     #[arg(long, env = "CRAWLX_DATABASE_URL")]
@@ -76,15 +78,8 @@ pub(crate) async fn run(args: AdminArgs, out: &mut dyn Write) -> anyhow::Result<
 /// The audit bucket named by the arguments.
 async fn audit_blobs(args: &AuditExportArgs) -> anyhow::Result<Arc<dyn ArtifactBlobs>> {
     if let Some(bucket) = &args.s3_bucket {
-        let mut cfg = match S3Config::from_env() {
-            Ok(cfg) => cfg,
-            Err(_) => S3Config::new(
-                bucket.clone(),
-                std::env::var("CRAWLX_S3_REGION").unwrap_or_else(|_| "us-east-1".to_owned()),
-            ),
-        };
-        cfg.bucket.clone_from(bucket);
-        return Ok(Arc::new(S3Blobs::new(&cfg)));
+        let cfg = S3Config::from_env_for_bucket(bucket)?;
+        return Ok(Arc::new(S3Blobs::new(&cfg)?));
     }
     let fs = FsBlobs::open(&args.audit_dir)
         .await

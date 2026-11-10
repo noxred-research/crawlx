@@ -142,6 +142,8 @@ impl SourceDialectV1 {
             (Self::PyActor, "max_crawl_depth") => Some(("scope.maxDiscoveryDepth", "CP01")), // wire-compat: source option name
             (Self::PythonSpider, "DEPTH_LIMIT") => Some(("scope.maxDiscoveryDepth", "SC01")), // wire-compat: source option name
             (Self::GoCollector, "MaxDepth") => Some(("scope.maxDiscoveryDepth", "CO05")), // wire-compat: source option name
+            (Self::GoCollector, "UserAgent") => Some(("fetch.userAgent", "CO01")), // wire-compat: source option name
+            (Self::GoCollector, "MaxBodySize") => Some(("fetch.maxResponseBytes", "CO15")), // wire-compat: source option name
             // Pinned browser-yaml CLI options [B5] and crawl scope [B7].
             // Positive depths need prefix/www/scheme/redirect semantics which
             // native scope does not implement; only explicit depth zero maps.
@@ -163,6 +165,11 @@ pub struct SourceManifestV1 {
     pub source_version: String,
     /// Literal exported source options. Every key gets a disposition.
     pub options: BTreeMap<String, Value>,
+    /// Exported process environment of the source run (full variable names to text values) for
+    /// dialects that read configuration from it. Programmatic `options` override it, as in the
+    /// source's own construction order.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
     /// Explicit inventory behaviors required in addition to supplied options.
     #[serde(default)]
     pub required_inventory: Vec<String>,
@@ -198,8 +205,199 @@ pub struct ImportReportV1 {
     pub sdk_abi_compatible: bool,
     /// Every supplied option and every source inventory row.
     pub dispositions: Vec<ImportDispositionV1>,
+    /// For a dialect with environment configuration: every supported variable with its effective
+    /// source, whether supplied or not, plus every supplied variable the release does not read.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<EnvDispositionV1>,
+    /// Digest (hex) of the redacted, normalized native request: present only when
+    /// the import is convertible, so a digest always names a config that was actually validated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_digest: Option<String>,
     /// All requested behavior has an executable native contract.
     pub convertible: bool,
+}
+/// One supported environment variable of the pinned collector release, reported whether or not
+/// it is supplied.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvDispositionV1 {
+    /// Full variable name as supplied or supported.
+    pub key: String,
+    /// Inventory row the variable belongs to (empty for a variable the release does not read).
+    pub inventory: &'static str,
+    /// native, translated, decision_needed or rejected.
+    pub state: &'static str,
+    /// Exact native field, if executable.
+    pub target: Option<&'static str>,
+    /// Where the effective value comes from: `env`, `options` (a programmatic option for the same
+    /// setting overrides the variable) or `unset`.
+    pub source: &'static str,
+    /// Conservative source-semantic difference or failure cause; never a value.
+    pub reason: &'static str,
+    /// True when the variable was supplied.
+    pub requested: bool,
+}
+impl EnvDispositionV1 {
+    fn new(
+        key: String,
+        inventory: &'static str,
+        state: &'static str,
+        source: &'static str,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            key,
+            inventory,
+            state,
+            target: None,
+            source,
+            reason,
+            requested: false,
+        }
+    }
+}
+/// What a supported environment variable becomes.
+enum EnvMap {
+    /// A native request field.
+    Native(&'static str),
+    /// The switch that would disable robots.txt: only the safe value is accepted.
+    RobotsSwitch,
+    /// No native counterpart; supplying it is reported and refused.
+    Unmapped(&'static str),
+}
+struct EnvEntry {
+    suffix: &'static str,
+    inventory: &'static str,
+    map: EnvMap,
+}
+/// Prefix of the environment variables the pinned collector release reads.
+const COLLECTOR_ENV_PREFIX: &str = "COLLY_"; // wire-compat: environment variable prefix of the pinned release
+/// Every variable of the pinned release, in report order.
+const COLLECTOR_ENV: &[EnvEntry] = &[
+    EnvEntry {
+        suffix: "ALLOWED_DOMAINS",
+        inventory: "CO05",
+        map: EnvMap::Unmapped(
+            "a literal domain list is not translated: native host scope is a typed rule, not an allow list",
+        ),
+    },
+    EnvEntry {
+        suffix: "CACHE_DIR",
+        inventory: "CO27",
+        map: EnvMap::Unmapped(
+            "a collector cache directory has no native counterpart; use the native cache policy",
+        ),
+    },
+    EnvEntry {
+        suffix: "DETECT_CHARSET",
+        inventory: "CO16",
+        map: EnvMap::Unmapped("charset detection is native and always bounded; there is no switch"),
+    },
+    EnvEntry {
+        suffix: "DISABLE_COOKIES",
+        inventory: "CO22",
+        map: EnvMap::Unmapped("cookies are bound to authorized sessions natively; there is no global switch"),
+    },
+    EnvEntry {
+        suffix: "DISALLOWED_DOMAINS",
+        inventory: "CO05",
+        map: EnvMap::Unmapped(
+            "a literal domain list is not translated: native host scope is a typed rule, not a deny list",
+        ),
+    },
+    EnvEntry {
+        suffix: "FOLLOW_REDIRECTS",
+        inventory: "CO21",
+        map: EnvMap::Native("fetch.followRedirects"),
+    },
+    EnvEntry {
+        suffix: "IGNORE_ROBOTSTXT",
+        inventory: "CO28",
+        map: EnvMap::RobotsSwitch,
+    },
+    EnvEntry {
+        suffix: "MAX_BODY_SIZE",
+        inventory: "CO15",
+        map: EnvMap::Native("fetch.maxResponseBytes"),
+    },
+    EnvEntry {
+        suffix: "MAX_DEPTH",
+        inventory: "CO05",
+        map: EnvMap::Native("scope.maxDiscoveryDepth"),
+    },
+    EnvEntry {
+        suffix: "MAX_REQUESTS",
+        inventory: "CO05",
+        map: EnvMap::Native("limits.urls"),
+    },
+    EnvEntry {
+        suffix: "PARSE_HTTP_ERROR_RESPONSE",
+        inventory: "CO17",
+        map: EnvMap::Unmapped(
+            "error-status bodies are handled by the native acquisition policy; there is no switch",
+        ),
+    },
+    EnvEntry {
+        suffix: "TRACE_HTTP",
+        inventory: "CO33",
+        map: EnvMap::Unmapped("request tracing is native telemetry, not a collector switch"),
+    },
+    EnvEntry {
+        suffix: "USER_AGENT",
+        inventory: "CO01",
+        map: EnvMap::Native("fetch.userAgent"),
+    },
+];
+/// The booleans the source language's parser accepts.
+fn go_bool(raw: &str) -> Option<bool> {
+    match raw {
+        "1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
+        "0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
+        _ => None,
+    }
+}
+/// A variable's text as the literal of its native target; `None` when it does not parse.
+fn env_value(target: &str, raw: &str) -> Option<Value> {
+    match target {
+        "limits.urls" | "scope.maxDiscoveryDepth" | "fetch.maxResponseBytes" => {
+            raw.parse::<u64>().ok().map(Value::from)
+        }
+        "fetch.followRedirects" => go_bool(raw).map(Value::Bool),
+        "fetch.userAgent" => Some(Value::String(raw.to_owned())),
+        _ => None,
+    }
+}
+/// Whether `value` is a bounded literal the native `target` field can hold exactly. Unlimited
+/// source values (`0` for a limit) and values the request would silently clamp are refused.
+fn literal_valid(source: SourceDialectV1, target: &str, value: &Value) -> bool {
+    match target {
+        "seedUrl" => value
+            .as_str()
+            .or_else(|| {
+                value
+                    .as_array()
+                    .filter(|a| a.len() == 1)
+                    .and_then(|a| a.first())
+                    .and_then(Value::as_str)
+            })
+            .and_then(|s| url::Url::parse(s).ok())
+            .is_some_and(|u| {
+                matches!(u.scheme(), "http" | "https") && u.username().is_empty() && u.password().is_none()
+            }),
+        "limits.urls" => value.as_u64().is_some_and(|n| (1..=1_000_000).contains(&n)),
+        "scope.maxDiscoveryDepth" if matches!(source, SourceDialectV1::BrowserYaml) => {
+            value.as_u64() == Some(0)
+        }
+        "scope.maxDiscoveryDepth" => value.as_u64().is_some_and(|n| (1..=100).contains(&n)),
+        "fetch.userAgent" => value
+            .as_str()
+            .is_some_and(|s| !s.is_empty() && s.len() <= 256 && !s.chars().any(char::is_control)),
+        "fetch.maxResponseBytes" => value
+            .as_u64()
+            .is_some_and(|n| (1_024..=64 * 1_024 * 1_024).contains(&n)),
+        "fetch.followRedirects" => value.is_boolean(),
+        _ => false,
+    }
 }
 /// Inspect every option without evaluating code or returning option values.
 ///
@@ -221,7 +419,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
     manifest.datasets.validate()?;
     let mut dispositions = Vec::new();
     let mut mapped = BTreeMap::new();
-    let mut fields = BTreeMap::<&str, &Value>::new();
+    let mut fields = BTreeMap::<&str, Value>::new();
     let mut valid = true;
     if manifest.pipeline.configured() {
         dispositions.push(ImportDispositionV1 { id:"pipeline".into(), state:"native",
@@ -275,29 +473,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             });
             continue;
         };
-        let value_valid = match target {
-            "seedUrl" => value
-                .as_str()
-                .or_else(|| {
-                    value
-                        .as_array()
-                        .filter(|a| a.len() == 1)
-                        .and_then(|a| a.first())
-                        .and_then(Value::as_str)
-                })
-                .and_then(|s| url::Url::parse(s).ok())
-                .is_some_and(|u| {
-                    matches!(u.scheme(), "http" | "https")
-                        && u.username().is_empty()
-                        && u.password().is_none()
-                }),
-            "limits.urls" => value.as_u64().is_some_and(|n| (1..=1_000_000).contains(&n)),
-            "scope.maxDiscoveryDepth" if matches!(manifest.source, SourceDialectV1::BrowserYaml) => {
-                value.as_u64() == Some(0)
-            }
-            "scope.maxDiscoveryDepth" => value.as_u64().is_some_and(|n| (1..=100).contains(&n)),
-            _ => false,
-        };
+        let value_valid = literal_valid(manifest.source, target, value);
         if !value_valid {
             valid = false;
             dispositions.push(ImportDispositionV1 {
@@ -321,10 +497,105 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             });
             continue;
         }
-        fields.insert(target, value);
+        fields.insert(target, value.clone());
         mapped.insert(inventory, target);
         dispositions.push(ImportDispositionV1 { id: key.clone(), state: "translated", target: Some(target),
             reason: "bounded native declarative contract; native safety/admission remains authoritative, not SDK equivalence", requested: true });
+    }
+    // Environment configuration (programmatic options already won above: construction reads
+    // the environment first, then applies explicit options over it).
+    if manifest.env.len() > 64
+        || manifest.env.keys().any(|k| {
+            k.is_empty() || k.len() > 128 || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+    {
+        bail!("invalid source environment identifier or too many variables");
+    }
+    let mut env_rows = Vec::new();
+    if matches!(manifest.source, SourceDialectV1::GoCollector) {
+        for entry in COLLECTOR_ENV {
+            let key = format!("{COLLECTOR_ENV_PREFIX}{}", entry.suffix);
+            let Some(raw) = manifest.env.get(&key) else {
+                env_rows.push(EnvDispositionV1::new(
+                    key,
+                    entry.inventory,
+                    "decision_needed",
+                    "unset",
+                    "not supplied; the native default applies",
+                ));
+                continue;
+            };
+            let mut row = EnvDispositionV1::new(key, entry.inventory, "rejected", "env", "");
+            row.requested = true;
+            match entry.map {
+                EnvMap::Unmapped(reason) => {
+                    row.reason = reason;
+                    valid = false;
+                }
+                EnvMap::RobotsSwitch => match go_bool(raw) {
+                    Some(false) => {
+                        row.state = "native";
+                        row.reason = "robots.txt is always honored natively; false keeps that";
+                    }
+                    Some(true) => {
+                        row.reason = "ignoring robots.txt is never imported; a native request needs an authorization record for that";
+                        valid = false;
+                    }
+                    None => {
+                        row.reason = "value is not a boolean literal";
+                        valid = false;
+                    }
+                },
+                EnvMap::Native(target) => {
+                    row.target = Some(target);
+                    match env_value(target, raw).filter(|v| literal_valid(manifest.source, target, v)) {
+                        None => {
+                            row.reason =
+                                "value is unlimited, out of range or not a literal of the expected type";
+                            valid = false;
+                        }
+                        Some(_) if fields.contains_key(target) => {
+                            row.state = "translated";
+                            row.source = "options";
+                            row.reason = "overridden by the programmatic option for the same setting";
+                        }
+                        Some(value) => {
+                            fields.insert(target, value);
+                            mapped.insert(entry.inventory, target);
+                            row.state = "translated";
+                            row.reason = "bounded native declarative contract; native safety/admission remains authoritative";
+                        }
+                    }
+                }
+            }
+            env_rows.push(row);
+        }
+        for key in manifest.env.keys() {
+            if !COLLECTOR_ENV
+                .iter()
+                .any(|e| key.strip_prefix(COLLECTOR_ENV_PREFIX) == Some(e.suffix))
+            {
+                let mut row = EnvDispositionV1::new(
+                    key.clone(),
+                    "",
+                    "rejected",
+                    "env",
+                    "not a variable of the pinned release; only the listed variables are read",
+                );
+                row.requested = true;
+                valid = false;
+                env_rows.push(row);
+            }
+        }
+    } else if !manifest.env.is_empty() {
+        valid = false;
+        dispositions.push(ImportDispositionV1 {
+            id: "env".into(),
+            state: "rejected",
+            target: None,
+            reason: "this source dialect defines no environment configuration",
+            requested: true,
+        });
     }
     let seed = fields.get("seedUrl").and_then(|v| {
         v.as_str().or_else(|| {
@@ -376,6 +647,15 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             } else {
                 valid = false;
             }
+        }
+        if let Some(s) = fields.get("fetch.userAgent").and_then(Value::as_str) {
+            crawl.fetch.user_agent = Some(s.to_owned());
+        }
+        if let Some(n) = fields.get("fetch.maxResponseBytes").and_then(Value::as_u64) {
+            crawl.fetch.max_response_bytes = n;
+        }
+        if let Some(b) = fields.get("fetch.followRedirects").and_then(Value::as_bool) {
+            crawl.fetch.follow_redirects = b;
         }
         if matches!(manifest.source, SourceDialectV1::BrowserYaml) {
             // Omitted depth means unlimited upstream; never substitute native ten.
@@ -448,11 +728,23 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             });
         }
     }
+    // Over the redacted form, so no value of a header or cookie can influence it; present only
+    // for a conversion that will actually be produced.
+    let config_digest = if valid {
+        crawl
+            .as_ref()
+            .and_then(|c| c.redacted().digest().ok())
+            .map(|d| d.to_string())
+    } else {
+        None
+    };
     Ok((
         ImportReportV1 {
             version: 1,
             sdk_abi_compatible: false,
             dispositions,
+            env: env_rows,
+            config_digest,
             convertible: valid,
         },
         if valid { crawl } else { None },
@@ -598,5 +890,178 @@ mod tests {
             "sourceVersion":"2.19.0","options":{},"pythonModule":"evil"}))
             .is_err()
         );
+    }
+
+    fn collector(options: serde_json::Value, env: serde_json::Value) -> SourceManifestV1 {
+        serde_json::from_value(
+            json!({"version":1,"source":"go-collector","sourceVersion":"2.2.0",
+            "options":options,"env":env}),
+        )
+        .unwrap()
+    }
+    /// An exported environment: every key is a supported suffix under the release's prefix.
+    fn env(pairs: &[(&str, &str)]) -> serde_json::Value {
+        serde_json::Value::Object(
+            pairs
+                .iter()
+                .map(|(suffix, value)| (format!("{COLLECTOR_ENV_PREFIX}{suffix}"), json!(value)))
+                .collect(),
+        )
+    }
+    fn env_row<'a>(report: &'a ImportReportV1, suffix: &str) -> &'a EnvDispositionV1 {
+        let key = format!("{COLLECTOR_ENV_PREFIX}{suffix}");
+        report.env.iter().find(|row| row.key == key).unwrap()
+    }
+
+    #[test]
+    fn report_lists_every_supported_env_key_even_when_none_is_supplied() {
+        let (report, crawl) = inspect(&collector(json!({"URL":"https://fixture.test/"}), json!({}))).unwrap();
+        assert!(report.convertible && crawl.is_some());
+        assert_eq!(report.env.len(), 13);
+        for entry in COLLECTOR_ENV {
+            let row = env_row(&report, entry.suffix);
+            assert_eq!((row.source, row.requested), ("unset", false), "{}", entry.suffix);
+        }
+    }
+
+    #[test]
+    fn env_values_translate_and_a_programmatic_option_overrides_them() {
+        let manifest = collector(
+            json!({"URL":"https://fixture.test/","MaxDepth":4}),
+            env(&[
+                ("MAX_DEPTH", "9"),
+                ("MAX_REQUESTS", "25"),
+                ("USER_AGENT", "fixture-agent/1"),
+                ("MAX_BODY_SIZE", "65536"),
+                ("FOLLOW_REDIRECTS", "false"),
+                ("IGNORE_ROBOTSTXT", "false"),
+            ]),
+        );
+        let (report, crawl) = inspect(&manifest).unwrap();
+        assert!(report.convertible, "{:?}", report.env);
+        let crawl = crawl.unwrap();
+        assert_eq!(
+            crawl.scope.max_discovery_depth, 4,
+            "the option beats the environment"
+        );
+        assert_eq!(crawl.limits.urls, 25);
+        assert_eq!(crawl.fetch.user_agent.as_deref(), Some("fixture-agent/1"));
+        assert_eq!(crawl.fetch.max_response_bytes, 65_536);
+        assert!(!crawl.fetch.follow_redirects);
+        assert_eq!(env_row(&report, "MAX_DEPTH").source, "options");
+        assert_eq!(env_row(&report, "MAX_REQUESTS").source, "env");
+        assert_eq!(env_row(&report, "MAX_REQUESTS").state, "translated");
+        assert_eq!(env_row(&report, "IGNORE_ROBOTSTXT").state, "native");
+        // the report carries no values
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(!text.contains("fixture-agent"), "{text}");
+    }
+
+    #[test]
+    fn unsafe_unlimited_unparsable_and_unmapped_env_values_are_rejected_with_a_complete_report() {
+        for (suffix, value) in [
+            ("IGNORE_ROBOTSTXT", "true"),
+            ("MAX_DEPTH", "0"),
+            ("MAX_REQUESTS", "0"),
+            ("MAX_BODY_SIZE", "0"),
+            ("MAX_BODY_SIZE", "1099511627776"),
+            ("MAX_DEPTH", "deep"),
+            ("FOLLOW_REDIRECTS", "maybe"),
+            ("CACHE_DIR", "/tmp/cache"),
+            ("TRACE_HTTP", "true"),
+            ("NO_SUCH_KEY", "1"),
+        ] {
+            let (report, crawl) = inspect(&collector(
+                json!({"URL":"https://fixture.test/"}),
+                env(&[(suffix, value)]),
+            ))
+            .unwrap();
+            assert!(!report.convertible, "{suffix}={value}");
+            assert!(
+                crawl.is_none() && report.config_digest.is_none(),
+                "{suffix}={value}"
+            );
+            assert_eq!(env_row(&report, suffix).state, "rejected", "{suffix}={value}");
+            assert!(report.env.len() >= 13, "every supported key is still listed");
+            if value.len() > 4 {
+                assert!(
+                    !serde_json::to_string(&report).unwrap().contains(value),
+                    "{suffix}: value echoed"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_variable_outside_the_pinned_prefix_is_rejected() {
+        let manifest = collector(
+            json!({"URL":"https://fixture.test/"}),
+            json!({"OTHER_MAX_DEPTH":"3"}),
+        );
+        let (report, crawl) = inspect(&manifest).unwrap();
+        assert!(!report.convertible && crawl.is_none());
+        let row = report.env.iter().find(|r| r.key == "OTHER_MAX_DEPTH").unwrap();
+        assert_eq!((row.state, row.requested), ("rejected", true));
+    }
+
+    #[test]
+    fn env_is_refused_for_dialects_that_have_none() {
+        let manifest: SourceManifestV1 = serde_json::from_value(json!({"version":1,"source":"python-spider",
+            "sourceVersion":"2.19.0","options":{"start_urls":["https://fixture.test/"]},
+            "env":env(&[("MAX_DEPTH", "2")])}))
+        .unwrap();
+        let (report, _) = inspect(&manifest).unwrap();
+        assert!(!report.convertible);
+        assert!(report.env.is_empty());
+        assert!(report
+            .dispositions
+            .iter()
+            .any(|d| d.id == "env" && d.state == "rejected"));
+    }
+
+    #[test]
+    fn convertible_imports_carry_a_stable_config_digest_that_follows_the_effective_config() {
+        let base = |extra: serde_json::Value| {
+            let mut options = json!({"URL":"https://fixture.test/","MaxRequests":4});
+            options
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            inspect(&collector(options, json!({}))).unwrap().0
+        };
+        let a = base(json!({}));
+        let b = base(json!({}));
+        let c = base(json!({"MaxDepth":2}));
+        let digest = a.config_digest.clone().unwrap();
+        assert_eq!(digest.len(), 64);
+        assert_eq!(Some(&digest), b.config_digest.as_ref());
+        assert_ne!(Some(&digest), c.config_digest.as_ref());
+        // the same effective config reached through the environment has the same digest
+        let via_env = inspect(&collector(
+            json!({"URL":"https://fixture.test/"}),
+            env(&[("MAX_REQUESTS", "4")]),
+        ))
+        .unwrap()
+        .0;
+        assert_eq!(via_env.config_digest.as_deref(), Some(digest.as_str()));
+    }
+
+    #[test]
+    fn every_unknown_option_is_reported_not_just_the_first() {
+        let (report, crawl) = inspect(&collector(
+            json!({"URL":"https://fixture.test/","OnResponse":"cb","WithTransport":"t","MaxDepth":0}),
+            json!({}),
+        ))
+        .unwrap();
+        assert!(!report.convertible && crawl.is_none() && report.config_digest.is_none());
+        for id in ["OnResponse", "WithTransport", "MaxDepth"] {
+            assert!(
+                report
+                    .dispositions
+                    .iter()
+                    .any(|d| d.id == id && d.state == "rejected"),
+                "{id}"
+            );
+        }
     }
 }

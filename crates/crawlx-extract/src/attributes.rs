@@ -40,10 +40,12 @@ fn compile(selectors: &[AttributeSelector]) -> Result<Vec<Selector>, ExtractErro
         .iter()
         .map(|s| {
             crate::xpath::compile_css(&s.selector).map_err(|error| match error {
-                crate::xpath::SelectorError::Syntax => ExtractError::InvalidSelector {
-                    selector: s.selector.clone(),
-                    reason: error.to_string(),
-                },
+                crate::xpath::SelectorError::Syntax | crate::xpath::SelectorError::Unsupported(_) => {
+                    ExtractError::InvalidSelector {
+                        selector: s.selector.clone(),
+                        reason: error.to_string(),
+                    }
+                }
                 other => ExtractError::Selector(other),
             })
         })

@@ -1,0 +1,23 @@
+{
+  "construct": "applet-archive-codebase",
+  "body": [
+    "<applet archive='/j/one.jar, two.jar' codebase='/j/'></applet>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/j/one.jar",
+      "source": "applet/archive"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/two.jar",
+      "source": "applet/archive"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/j/",
+      "source": "applet/codebase"
+    }
+  ]
+}

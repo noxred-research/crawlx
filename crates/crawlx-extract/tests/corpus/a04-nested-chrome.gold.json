@@ -1,0 +1,53 @@
+{
+  "id": "a04-nested-chrome",
+  "family": "article_body",
+  "note": "share widget and related box nested inside the article element",
+  "expectedText": "Front page Sport\nChess Club Reopens in the Old Post Office\nThe Millbrook chess club has reopened in the old post office, where members found a hall large enough for twelve boards and a demonstration wall. The club had met in a church basement for nine years before the landlord sold the building.\nShare this story: Mail Link Print\nMembership is free for anyone under eighteen, and beginners can borrow sets from the front desk. Coach Idris Vale runs an open lesson at six each Wednesday that covers one opening idea and one endgame trick.\nRead next\nLibrary trivia night returns\nThe club plans a spring tournament with prizes donated by local shops. Organizers are still looking for volunteers to keep time and record scores.\nMillbrook Ledger, Market Square",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 16
+    },
+    {
+      "label": "body",
+      "start": 17,
+      "end": 58
+    },
+    {
+      "label": "body",
+      "start": 59,
+      "end": 296
+    },
+    {
+      "label": "boilerplate",
+      "start": 297,
+      "end": 330
+    },
+    {
+      "label": "body",
+      "start": 331,
+      "end": 538
+    },
+    {
+      "label": "boilerplate",
+      "start": 539,
+      "end": 548
+    },
+    {
+      "label": "boilerplate",
+      "start": 549,
+      "end": 577
+    },
+    {
+      "label": "body",
+      "start": 578,
+      "end": 724
+    },
+    {
+      "label": "boilerplate",
+      "start": 725,
+      "end": 756
+    }
+  ]
+}

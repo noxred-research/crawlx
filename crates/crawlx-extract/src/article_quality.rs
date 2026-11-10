@@ -100,3 +100,13 @@ pub(crate) fn evaluate(
     };
     QualityOutcomeV1::new(status, reasons, chars, blocks, operations)
 }
+
+/// Content-dedupe stage: the normalized title and body were already admitted in this cache
+/// scope. Only an otherwise accepted document reaches this call; it becomes rejected for
+/// ingestion while its counts and the acquisition stay recorded.
+pub(crate) fn mark_duplicate_main(outcome: &mut QualityOutcomeV1) {
+    if !outcome.reasons.contains(&QualityReasonV1::DuplicateMain) {
+        outcome.reasons.push(QualityReasonV1::DuplicateMain);
+    }
+    outcome.status = QualityStatusV1::Rejected;
+}

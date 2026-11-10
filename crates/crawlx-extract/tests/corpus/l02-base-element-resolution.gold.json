@@ -1,0 +1,33 @@
+{
+  "id": "l02-base-element-resolution",
+  "family": "link_discovery",
+  "note": "links resolve against the base element, protocol-relative and parent-relative forms",
+  "expectedText": "https://cdn.corpus.test/downloads/manual.html\nhttps://corpus.test/docs/v1/intro\nhttps://corpus.test/docs/v2/intro\nhttps://corpus.test/docs/v2/topics/index.html\nhttps://corpus.test/status",
+  "spans": [
+    {
+      "label": "link",
+      "start": 0,
+      "end": 45
+    },
+    {
+      "label": "link",
+      "start": 46,
+      "end": 79
+    },
+    {
+      "label": "link",
+      "start": 80,
+      "end": 113
+    },
+    {
+      "label": "link",
+      "start": 114,
+      "end": 159
+    },
+    {
+      "label": "link",
+      "start": 160,
+      "end": 186
+    }
+  ]
+}

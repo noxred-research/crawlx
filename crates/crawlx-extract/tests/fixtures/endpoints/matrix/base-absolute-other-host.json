@@ -1,0 +1,23 @@
+{
+  "construct": "base-absolute-other-host",
+  "body": [
+    "<html><head><base href='https://cdn.matrix.test/lib/'></head><body><a href='x.html'>x</a><script src='app.js'></script></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://cdn.matrix.test/lib/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://cdn.matrix.test/lib/x.html",
+      "source": "a/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://cdn.matrix.test/lib/app.js",
+      "source": "script/src"
+    }
+  ]
+}

@@ -53,7 +53,7 @@ use crawlx_core::config::{CrawlMode, CreateCrawl, HostScope, OutputFormat, Query
 use crawlx_core::counters::RunStatus;
 use crawlx_core::repo::{FrontierEntry, FrontierStatus, KnownPage, PageRecord};
 use crawlx_core::scrape::{JobKind, Location, ScrapeJob, ScrapeOptions};
-use crawlx_core::TenantId;
+use crawlx_core::{CrawlRunId, TenantId};
 use crawlx_extract::map_rank::{rank, MapItem};
 use crawlx_policy::{DenialReason, ScopePolicy, ScopeVerdict};
 use crawlx_worker::scrape::render::locale;
@@ -340,15 +340,11 @@ fn dedupe_key(url: &Url, ignore_query: bool) -> String {
     s
 }
 
-/// The listed URL: the stored canonical URL without fragment (and without query under
-/// `ignoreQueryParameters`).
+/// The listed URL: the stored canonical URL without fragment, without query under
+/// `ignoreQueryParameters` and, like the sitemap entries a reference deployment lists, without the
+/// trailing slash of a non-root path ([`dedupe_key`] spells it the same way).
 fn listed_url(url: &Url, ignore_query: bool) -> String {
-    let mut u = url.clone();
-    u.set_fragment(None);
-    if ignore_query {
-        u.set_query(None);
-    }
-    u.to_string()
+    dedupe_key(url, ignore_query)
 }
 
 /// One entry of a map: the listed URL with its title and description (blank ones are dropped).
@@ -507,7 +503,7 @@ async fn run_map(
     principal: &Principal,
     url: &str,
     options: &Value,
-) -> ApiResult<(Vec<MapEntry>, Vec<Warning>)> {
+) -> ApiResult<(Vec<MapEntry>, Vec<Warning>, CrawlRunId)> {
     let req = parse_request(url, options)?;
     let mut warnings = req.warnings.clone();
     let crawl = map_crawl(&req)?;
@@ -587,7 +583,7 @@ async fn run_map(
         Cost::credits(1),
     )
     .await;
-    Ok((links, warnings))
+    Ok((links, warnings, run.id))
 }
 
 /// Map `url` with the compat API map `options`; the body of [`crate::scrape_service::map_site`].
@@ -631,7 +627,7 @@ pub async fn map(
             "url is required",
         )]));
     };
-    let (links, warnings) = run_map(&state, &principal, url, &body).await?;
+    let (links, warnings, id) = run_map(&state, &principal, url, &body).await?;
     let links: Vec<Value> = links
         .into_iter()
         .map(|l| {
@@ -646,7 +642,7 @@ pub async fn map(
             Value::Object(o)
         })
         .collect();
-    let mut out = json!({ "success": true, "links": links });
+    let mut out = json!({ "success": true, "links": links, "id": id });
     if let (false, Some(o)) = (warnings.is_empty(), out.as_object_mut()) {
         o.insert("warnings".to_owned(), json!(warnings));
     }

@@ -1,0 +1,30 @@
+{
+  "construct": "page-body-regex",
+  "url": "https://matrix.test/docs/readme.txt",
+  "content_type": "text/plain",
+  "body": [
+    "see ./guide/start and https://matrix.test:8443/x/y.php for more",
+    "or /static/site.css"
+  ],
+  "javascript_mode": "regex",
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/docs/guide/start",
+      "source": "html/regex",
+      "confidence": "regex"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test:8443/x/y.php",
+      "source": "html/regex",
+      "confidence": "regex"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/static/site.css",
+      "source": "html/regex",
+      "confidence": "regex"
+    }
+  ]
+}

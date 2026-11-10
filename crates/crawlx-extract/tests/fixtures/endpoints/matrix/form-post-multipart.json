@@ -1,0 +1,15 @@
+{
+  "construct": "form-post-multipart",
+  "body": [
+    "<form action='/upload' method='POST' enctype='multipart/form-data'><input name='a'><input type='file' name='f'></form>"
+  ],
+  "expected": [
+    {
+      "method": "POST",
+      "url": "https://matrix.test/upload",
+      "source": "form/action",
+      "body": "--crawlx-form-boundary\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\ncrawlx\r\n--crawlx-form-boundary\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\ncrawlx\r\n--crawlx-form-boundary--\r\n",
+      "content_type": "multipart/form-data; boundary=crawlx-form-boundary"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "construct": "img-legacy-attributes",
+  "body": [
+    "<img lowsrc='/low.png' dynsrc='/dyn.avi' longdesc='/long.html'>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dyn.avi",
+      "source": "img/dynsrc"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/long.html",
+      "source": "img/longdesc"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/low.png",
+      "source": "img/lowsrc"
+    }
+  ]
+}

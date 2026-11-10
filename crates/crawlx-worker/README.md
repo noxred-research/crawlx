@@ -5,7 +5,7 @@ discovery), the browser plane, the Session Actors and the output layer. The `cra
 HTTP API and the test-suites all sit on the items below, so they are the supported embedding
 surface (the equivalent of a runner's options plus a per-result callback).
 
-| compatibility library | crawlx |
+| compatibility library | CrawlX |
 |---|---|
 | options struct | [`CreateCrawl`](https://docs.rs/crawlx-core) (what to crawl: scope, limits, fetch, extract, dynamic, output; the same JSON as `POST /v1/crawls`) plus [`WorkerConfig`] (operator-level: egress, launch options, artifacts directory, traffic export, form AI, secret validators) |
 | crawler runner / execute | [`run_local_with`] over a [`LocalRun`] |
@@ -116,10 +116,10 @@ One line per page, shaped like the reference result type:
  "error"}
 ```
 
-* `request.custom_fields` is where the reference puts custom regex field values. crawlx also keeps
+* `request.custom_fields` is where the reference puts custom regex field values. CrawlX also keeps
   them under `response.custom_fields` for existing consumers; both hold the same data.
 * `page_type` and `secrets` (kind, location and keyed hash, never a value; `validation` when
-  secret validation ran) are crawlx's flat fields; `knowledgebase`
+  secret validation ran) are CrawlX's flat fields; `knowledgebase`
   (`{PageType, Forms, secrets, endpoints}`) is the reference shape of the same data and is
   present only with `Exporter::knowledge_base` (the `extract.knowledgeBase` setting).
 * `body` appears only with `Exporter::include_body` (the body is not part of the page row);
@@ -128,7 +128,7 @@ One line per page, shaped like the reference result type:
   field named by [`output::field_names`] (the `-lof` list). A name that exists in `request`
   and `response` (`body`, `headers`, `raw`, `custom_fields`) is removed from both.
 * `error` is set on records of failed URLs ([`output::Exporter::export_failures`]).
-* `response.extra` is for embedders (the reference `Response.Extra`): crawlx never fills it.
+* `response.extra` is for embedders (the reference `Response.Extra`): CrawlX never fills it.
 
 ### Filters
 

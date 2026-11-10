@@ -10,6 +10,7 @@
 //! compilation memory, and a failed compile degrades to "no matches" instead of
 //! panicking.
 
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use regex::{Regex, RegexBuilder};
@@ -58,6 +59,29 @@ static RELATIVE_RE: LazyLock<Option<Regex>> = LazyLock::new(|| compile(RELATIVE_
 #[must_use]
 pub fn patterns_compiled() -> bool {
     PAGE_BODY_RE.is_some() && RELATIVE_RE.is_some()
+}
+
+/// `text` with the slash escapes of JSON and JavaScript strings decoded
+/// (`\/`, `\u002f`, `\x2f` become `/`), so an escaped absolute URL matches the
+/// patterns as the URL it spells. Borrowed when the text has no backslash.
+#[must_use]
+pub fn decode_slash_escapes(text: &str) -> Cow<'_, str> {
+    if !text.contains('\\') {
+        return Cow::Borrowed(text);
+    }
+    let mut out = text.replace("\\/", "/");
+    for escape in ["\\u002f", "\\u002F", "\\x2f", "\\x2F"] {
+        out = out.replace(escape, "/");
+    }
+    Cow::Owned(out)
+}
+
+/// A mined match as a URL reference. A backslash left in it (a Windows path, an
+/// unknown escape) rejects the match: URL parsing reads `\` as `/` and
+/// `\\host\x` would switch the host.
+#[must_use]
+pub fn mined_target(raw: &str) -> Option<&str> {
+    (!raw.contains('\\')).then_some(raw)
 }
 
 fn unique_group1<'a>(re: &Regex, data: &'a str) -> Vec<&'a str> {

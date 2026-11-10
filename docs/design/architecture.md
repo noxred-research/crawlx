@@ -1,6 +1,6 @@
 # Architecture
 
-crawlx is a Cargo workspace of 21 crates that implements two cooperating crawl planes behind one API,
+CrawlX is a Cargo workspace of 21 crates that implements two cooperating crawl planes behind one API,
 one scheduler and one safety boundary. This page describes the crates, the processes they form and
 how data moves through them. The [crawl model](crawl-model.md) describes how a dynamic crawl decides
 what to do, the [safety model](safety-model.md) what it is allowed to do, and
@@ -27,7 +27,7 @@ workspace forbids `unsafe`.
 
 | Crate | Responsibility |
 |---|---|
-| `crawlx-core` | Shared IDs, value types, configuration, typed errors and the repository and service traits every other crate implements or consumes. Depends on no other crawlx crate and performs no I/O. |
+| `crawlx-core` | Shared IDs, value types, configuration, typed errors and the repository and service traits every other crate implements or consumes. Depends on no other CrawlX crate and performs no I/O. |
 | `crawlx-url` | Canonicalization, query-parameter classification, sitemaps, link discovery, URL-shape fingerprints, extension and content-similarity filters, the in-memory frontier. Pure and deterministic. |
 | `crawlx-policy` | Scope, robots (RFC 9309), egress/SSRF deny tables, admission policy, authorization records and operator attestation, run budgets. Pure logic, no sockets. |
 | `crawlx-fetch` | The HTTP fetch plane: DNS behind a trait, per-address egress checks and pinning, per-origin politeness, bounded retries, manual redirects with a re-check per hop, conditional requests, streaming body caps, and the loopback egress proxy used by the browser plane. |
@@ -58,7 +58,7 @@ hash or an ordering. Callers pass timestamps in; randomness comes from a seed.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/architecture-dark.svg">
-  <img alt="crawlx architecture: clients, API process, worker process with URL plane, Session Actors, safety kernel, egress proxy and Chromium, state stores, and the web" src="../assets/architecture-light.svg">
+  <img alt="CrawlX architecture: clients, API process, worker process with URL plane, Session Actors, safety kernel, egress proxy and Chromium, state stores, and the web" src="../assets/architecture-light.svg">
 </picture>
 
 - **API process.** Stateless. It validates a request, runs admission, persists the run in `queued`

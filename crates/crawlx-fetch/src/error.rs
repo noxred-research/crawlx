@@ -1,5 +1,7 @@
 //! Typed errors of the fetch plane.
 
+use crate::codec::BodyLimitKind;
+use crate::preflight::PreflightRefusal;
 use crawlx_policy::egress::EgressDenied;
 use thiserror::Error;
 
@@ -112,6 +114,42 @@ pub enum FetchError {
     /// Local socket or listener failure (egress proxy).
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// The response body is not a valid stream of its content coding, or stacks more codings
+    /// than are decoded. Never retried: the same bytes would fail again.
+    #[error("response body is not valid {encoding}: {reason}")]
+    BodyDecode {
+        /// Content coding (`gzip`, `deflate`, `br`, `stacked`).
+        encoding: &'static str,
+        /// Decoder message.
+        reason: String,
+    },
+    /// A body limit refused the response: an oversize declared length under
+    /// [`crate::OversizePolicy::Reject`], or a decompression bomb (expansion ratio).
+    #[error("response body exceeds the {} limit of {limit}", .kind.as_str())]
+    BodyLimit {
+        /// Which limit.
+        kind: BodyLimitKind,
+        /// Its value (bytes, or decoded bytes per wire byte for the ratio).
+        limit: u64,
+    },
+    /// The request's declaration denies this HTTP status.
+    #[error("response status {status} is denied by the request declaration")]
+    StatusDenied {
+        /// The refused status.
+        status: u16,
+    },
+    /// The `HEAD` preflight refused the `GET`; no `GET` was sent.
+    #[error("head preflight refused the request: {refusal}")]
+    PreflightRefused {
+        /// Why.
+        refusal: PreflightRefusal,
+    },
+    /// A request declaration (MIME, encoding, status sets) is malformed; no request was sent.
+    #[error("request declaration field {field} is invalid")]
+    InvalidDeclaration {
+        /// The offending field.
+        field: &'static str,
+    },
 }
 
 impl FetchError {
@@ -138,6 +176,11 @@ impl FetchError {
             Self::ClientBuild(_) => "client_build",
             Self::InvalidHeader { .. } => "invalid_header",
             Self::Io(_) => "io",
+            Self::BodyDecode { .. } => "body_decode",
+            Self::BodyLimit { .. } => "body_limit",
+            Self::StatusDenied { .. } => "status_denied",
+            Self::PreflightRefused { .. } => "preflight_refused",
+            Self::InvalidDeclaration { .. } => "invalid_declaration",
         }
     }
 

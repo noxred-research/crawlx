@@ -12,14 +12,17 @@
 //! rates are the output; the target is a p95 under 150 ms for the metadata routes.
 
 use crate::error::BenchError;
+use crate::netfault::{AppliedFault, FaultSchedule, Proxy, ProxyStats};
 use crate::stats::quantile;
 use crawlx_core::seed::CrawlSeed;
 use rand::RngExt as _;
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 /// Routes the generator drives. Names are the `route` label of the report.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -213,6 +216,35 @@ fn ratio(num: u64, den: u64) -> f64 {
     }
 }
 
+/// What the fault proxy did during a [`run_faulted`] run and how the samples split around it.
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct FaultReport {
+    /// The schedule in its canonical text form (`latency=50ms@0ms..10000ms,...`).
+    pub schedule: String,
+    /// Seed the schedule was generated from; `None` for an explicit schedule.
+    pub seed: Option<u64>,
+    /// The schedule only adds latency: no connection is broken.
+    pub latency_only: bool,
+    /// Proxy counters at the end of the run.
+    pub proxy: ProxyStats,
+    /// Faults the proxy applied, with the offsets they really switched on and off.
+    pub applied: Vec<AppliedFault>,
+    /// `[start, end + tail]` (ms from the first request) of every fault; a request that
+    /// overlaps one is counted in `in_fault`.
+    pub fault_windows_ms: Vec<(u64, u64)>,
+    /// The same for the faults that break connections (blackhole, refuse, reset).
+    pub disruption_windows_ms: Vec<(u64, u64)>,
+    /// Per-route statistics of the requests that overlapped a fault window.
+    pub in_fault: BTreeMap<String, RouteStats>,
+    /// Per-route statistics of the requests that did not.
+    pub out_of_fault: BTreeMap<String, RouteStats>,
+    /// Failed requests that overlapped a disruptive window.
+    pub errors_in_disruption: u64,
+    /// Failed requests that did not.
+    pub errors_outside_disruption: u64,
+}
+
 /// Output of [`run`].
 #[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
@@ -231,6 +263,9 @@ pub struct LoadReport {
     pub dropped: u64,
     /// Per-route statistics, keyed by [`Route::label`].
     pub routes: BTreeMap<String, RouteStats>,
+    /// Fault-proxy results; present for [`run_faulted`] reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fault: Option<FaultReport>,
 }
 
 impl LoadReport {
@@ -252,6 +287,56 @@ impl LoadReport {
         ratio(errors, requests)
     }
 
+    /// Failures of the run's gate, one line each; empty when the run passes.
+    ///
+    /// Without a fault schedule, or with one that only adds latency, every route's p99 must stay
+    /// at or under `max_p99_ms` and no request may fail. With faults that break connections the
+    /// p99 gate applies to the requests outside every fault window, and errors are judged by
+    /// `allow_errors_during_fault`: when it is set, failures are tolerated for requests that
+    /// overlapped a disruptive window and none may occur outside them; when it is not set,
+    /// any failure fails the run.
+    #[must_use]
+    pub fn gate_failures(&self, max_p99_ms: f64, allow_errors_during_fault: bool) -> Vec<String> {
+        let mut failures = Vec::new();
+        let p99 = |routes: &BTreeMap<String, RouteStats>, failures: &mut Vec<String>| {
+            for (route, r) in routes {
+                if r.p99_ms > max_p99_ms {
+                    failures.push(format!(
+                        "{route}: p99 {:.1} ms above {max_p99_ms:.1} ms",
+                        r.p99_ms
+                    ));
+                }
+            }
+        };
+        let any_error = |failures: &mut Vec<String>| {
+            for (route, r) in &self.routes {
+                if r.error_rate() > 0.0 {
+                    failures.push(format!("{route}: error rate {:.4}", r.error_rate()));
+                }
+            }
+        };
+        match &self.fault {
+            Some(f) if !f.latency_only && !f.disruption_windows_ms.is_empty() => {
+                p99(&f.out_of_fault, &mut failures);
+                if allow_errors_during_fault {
+                    if f.errors_outside_disruption > 0 {
+                        failures.push(format!(
+                            "{} requests failed outside the fault windows",
+                            f.errors_outside_disruption
+                        ));
+                    }
+                } else {
+                    any_error(&mut failures);
+                }
+            }
+            _ => {
+                p99(&self.routes, &mut failures);
+                any_error(&mut failures);
+            }
+        }
+        failures
+    }
+
     /// Markdown table of the report.
     #[must_use]
     pub fn markdown(&self) -> String {
@@ -271,6 +356,33 @@ impl LoadReport {
                 r.max_ms
             ));
         }
+        if let Some(f) = &self.fault {
+            s.push_str(&format!(
+                "\n## faults: `{}`\n\nproxy: {} accepted, {} refused, {} reset, {} bytes up, {} bytes down; {} faults applied; errors in disruption windows {}, outside {}\n\n| route | in-fault requests | in-fault errors | out-of-fault requests | out-of-fault errors | out-of-fault p99 ms |\n|---|---|---|---|---|---|\n",
+                f.schedule,
+                f.proxy.accepted,
+                f.proxy.refused,
+                f.proxy.resets,
+                f.proxy.bytes_up,
+                f.proxy.bytes_down,
+                f.applied.len(),
+                f.errors_in_disruption,
+                f.errors_outside_disruption
+            ));
+            for route in self.routes.keys() {
+                let inside = f.in_fault.get(route);
+                let outside = f.out_of_fault.get(route);
+                let errors = |r: Option<&RouteStats>| r.map_or(0, |r| r.transport_errors + r.http_errors);
+                s.push_str(&format!(
+                    "| `{route}` | {} | {} | {} | {} | {:.1} |\n",
+                    inside.map_or(0, |r| r.requests),
+                    errors(inside),
+                    outside.map_or(0, |r| r.requests),
+                    errors(outside),
+                    outside.map_or(0.0, |r| r.p99_ms)
+                ));
+            }
+        }
         s
     }
 }
@@ -278,13 +390,22 @@ impl LoadReport {
 #[derive(Clone, Copy)]
 struct Sample {
     route: Route,
+    /// Start of the request, from the start of the request clock.
+    offset: Duration,
     latency: Duration,
     /// `None` for a transport failure (no usable response).
     status: Option<u16>,
 }
 
+impl Sample {
+    /// Transport failure or a status outside `2xx`.
+    fn is_error(&self) -> bool {
+        self.status.is_none_or(|code| !(200..300).contains(&code))
+    }
+}
+
 /// `POST /v1/crawls`; the created id and the sample.
-async fn create_run(client: &reqwest::Client, cfg: &LoadConfig) -> (Option<String>, Sample) {
+async fn create_run(client: &reqwest::Client, cfg: &LoadConfig, origin: Instant) -> (Option<String>, Sample) {
     let started = Instant::now();
     let body = serde_json::json!({ "seedUrl": cfg.seed_url, "seed": cfg.seed });
     let res = client
@@ -309,6 +430,7 @@ async fn create_run(client: &reqwest::Client, cfg: &LoadConfig) -> (Option<Strin
         id,
         Sample {
             route: Route::Create,
+            offset: started.saturating_duration_since(origin),
             latency: started.elapsed(),
             status,
         },
@@ -319,6 +441,8 @@ struct Shared {
     client: reqwest::Client,
     cfg: LoadConfig,
     runs: Vec<String>,
+    /// Start of the request clock; sample offsets count from here.
+    origin: Instant,
     samples: parking_lot::Mutex<Vec<Sample>>,
     sse_slots: Semaphore,
 }
@@ -327,6 +451,7 @@ impl Shared {
     fn record(&self, route: Route, started: Instant, status: Option<u16>) {
         self.samples.lock().push(Sample {
             route,
+            offset: started.saturating_duration_since(self.origin),
             latency: started.elapsed(),
             status,
         });
@@ -394,7 +519,7 @@ impl Shared {
         let id = &self.runs[run_index];
         match route {
             Route::Create | Route::Cancel => {
-                let (created, sample) = create_run(&self.client, &self.cfg).await;
+                let (created, sample) = create_run(&self.client, &self.cfg, self.origin).await;
                 self.samples.lock().push(sample);
                 if let Some(created) = created {
                     self.cancel(&created).await;
@@ -424,6 +549,112 @@ impl Shared {
 /// [`BenchError::Ablation`] when the HTTP client cannot be built, the run pool cannot be
 /// created, or `cfg.rps`/`cfg.runs` is zero.
 pub async fn run(cfg: &LoadConfig) -> Result<LoadReport, BenchError> {
+    run_inner(cfg, || {}).await.map(|(report, _)| report)
+}
+
+/// Time after the end of a fault during which a request that was in flight when the fault
+/// ended can still fail because of it.
+pub const FAULT_TAIL: Duration = Duration::from_secs(1);
+
+/// Drive the API through an in-process fault proxy that applies `schedule` from the moment
+/// the request clock starts (the run pool is created before, unfaulted), and summarise.
+///
+/// `cfg.base_url` must be an `http://` URL; the proxy listens on an ephemeral loopback port in
+/// front of it. The report splits every route's samples by whether the request overlapped a
+/// fault window (plus [`FAULT_TAIL`]) and carries the proxy counters; `seed` is recorded when
+/// the schedule was generated from one. Judge the result with [`LoadReport::gate_failures`].
+///
+/// # Errors
+/// [`BenchError::Ablation`] when the base URL is not a resolvable `http://` URL or as for
+/// [`run`]; [`BenchError::Bind`] / [`BenchError::LocalAddr`] when the proxy cannot listen.
+pub async fn run_faulted(
+    cfg: &LoadConfig,
+    schedule: &FaultSchedule,
+    seed: Option<u64>,
+) -> Result<LoadReport, BenchError> {
+    let bad_base =
+        |why: &str| BenchError::Ablation(format!("load: --fault needs an http:// base URL: {why}"));
+    let url = url::Url::parse(&cfg.base_url).map_err(|e| bad_base(&e.to_string()))?;
+    if url.scheme() != "http" {
+        return Err(bad_base(&format!("`{}` is {}", cfg.base_url, url.scheme())));
+    }
+    let host = url.host_str().ok_or_else(|| bad_base("no host"))?;
+    let port = url.port_or_known_default().ok_or_else(|| bad_base("no port"))?;
+    let upstream: SocketAddr = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| bad_base(&format!("resolve {host}:{port}: {e}")))?
+        .next()
+        .ok_or_else(|| bad_base(&format!("{host}:{port} does not resolve")))?;
+    let proxy = Proxy::start(upstream).await?;
+    let mut through = cfg.clone();
+    through.base_url = format!("http://{}", proxy.addr());
+
+    let (go_tx, go_rx) = tokio::sync::oneshot::channel::<()>();
+    let cancel = CancellationToken::new();
+    let driver = async {
+        if go_rx.await.is_ok() {
+            proxy.run_schedule(schedule, cancel.clone()).await
+        } else {
+            Vec::new()
+        }
+    };
+    let load = async {
+        let result = run_inner(&through, move || {
+            let _ = go_tx.send(());
+        })
+        .await;
+        cancel.cancel();
+        result
+    };
+    let (result, applied) = tokio::join!(load, driver);
+    let proxy_stats = proxy.stats();
+    proxy.shutdown().await;
+    let (mut report, samples) = result?;
+
+    let fault_windows = schedule.windows(FAULT_TAIL, |_| true);
+    let disruption = schedule.windows(FAULT_TAIL, crate::netfault::Fault::kills_connections);
+    let (inside, outside): (Vec<Sample>, Vec<Sample>) =
+        samples.iter().copied().partition(|s| overlaps(&fault_windows, s));
+    let errors = |disrupted: bool| {
+        let n = samples
+            .iter()
+            .filter(|s| s.is_error() && overlaps(&disruption, s) == disrupted)
+            .count();
+        u64::try_from(n).unwrap_or(u64::MAX)
+    };
+    let in_disruption = errors(true);
+    let outside_disruption = errors(false);
+    let millis = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+    let to_ms = |ws: &[(Duration, Duration)]| -> Vec<(u64, u64)> {
+        ws.iter().map(|(a, b)| (millis(*a), millis(*b))).collect()
+    };
+    report.base_url.clone_from(&cfg.base_url);
+    report.fault = Some(FaultReport {
+        schedule: schedule.to_string(),
+        seed,
+        latency_only: schedule.latency_only(),
+        proxy: proxy_stats,
+        applied,
+        fault_windows_ms: to_ms(&fault_windows),
+        disruption_windows_ms: to_ms(&disruption),
+        in_fault: route_stats(&inside),
+        out_of_fault: route_stats(&outside),
+        errors_in_disruption: in_disruption,
+        errors_outside_disruption: outside_disruption,
+    });
+    Ok(report)
+}
+
+/// Did the request overlap any of the `windows` (offsets from the start of the run)?
+fn overlaps(windows: &[(Duration, Duration)], s: &Sample) -> bool {
+    let (from, to) = (s.offset, s.offset.saturating_add(s.latency));
+    windows.iter().any(|(start, end)| from <= *end && to >= *start)
+}
+
+async fn run_inner(
+    cfg: &LoadConfig,
+    on_clock_start: impl FnOnce(),
+) -> Result<(LoadReport, Vec<Sample>), BenchError> {
     if cfg.rps <= 0.0 || !cfg.rps.is_finite() || cfg.runs == 0 {
         return Err(BenchError::Ablation(
             "load: rps and runs must be positive".to_owned(),
@@ -436,7 +667,7 @@ pub async fn run(cfg: &LoadConfig) -> Result<LoadReport, BenchError> {
         .map_err(|e| BenchError::Ablation(format!("load: http client: {e}")))?;
     let mut runs = Vec::with_capacity(cfg.runs);
     for _ in 0..cfg.runs {
-        let (id, sample) = create_run(&client, cfg).await;
+        let (id, sample) = create_run(&client, cfg, Instant::now()).await;
         let id = id.ok_or_else(|| {
             BenchError::Ablation(format!(
                 "load: could not create the run pool (status {:?})",
@@ -445,15 +676,6 @@ pub async fn run(cfg: &LoadConfig) -> Result<LoadReport, BenchError> {
         })?;
         runs.push(id);
     }
-    let shared = Arc::new(Shared {
-        client,
-        cfg: cfg.clone(),
-        runs,
-        samples: parking_lot::Mutex::new(Vec::new()),
-        // 5 SSE streams per run; keep one spare per run
-        sse_slots: Semaphore::new(cfg.runs * 4),
-    });
-
     let in_flight = Arc::new(Semaphore::new(cfg.max_in_flight));
     let mut rng = CrawlSeed(cfg.seed).rng("load", &[]);
     let total = cfg.mix.total();
@@ -464,6 +686,16 @@ pub async fn run(cfg: &LoadConfig) -> Result<LoadReport, BenchError> {
     let mut tasks = JoinSet::new();
     let mut dropped = 0u64;
     let start = Instant::now();
+    let shared = Arc::new(Shared {
+        client,
+        cfg: cfg.clone(),
+        runs,
+        origin: start,
+        samples: parking_lot::Mutex::new(Vec::new()),
+        // 5 SSE streams per run; keep one spare per run
+        sse_slots: Semaphore::new(cfg.runs * 4),
+    });
+    on_clock_start();
     for i in 0..ticks {
         tokio::time::sleep_until((start + interval * i).into()).await;
         let route = cfg.mix.pick(rng.random_range(0..total));
@@ -490,10 +722,11 @@ pub async fn run(cfg: &LoadConfig) -> Result<LoadReport, BenchError> {
     }
     let elapsed = start.elapsed();
     let samples = std::mem::take(&mut *shared.samples.lock());
-    Ok(summarise(cfg, &samples, elapsed, dropped))
+    let report = summarise(cfg, &samples, elapsed, dropped);
+    Ok((report, samples))
 }
 
-fn summarise(cfg: &LoadConfig, samples: &[Sample], elapsed: Duration, dropped: u64) -> LoadReport {
+fn route_stats(samples: &[Sample]) -> BTreeMap<String, RouteStats> {
     let mut by_route: BTreeMap<Route, Vec<Sample>> = BTreeMap::new();
     for s in samples {
         by_route.entry(s.route).or_default().push(*s);
@@ -525,6 +758,10 @@ fn summarise(cfg: &LoadConfig, samples: &[Sample], elapsed: Duration, dropped: u
         stats.max_ms = ms.last().copied().unwrap_or(0.0);
         routes.insert(route.label().to_owned(), stats);
     }
+    routes
+}
+
+fn summarise(cfg: &LoadConfig, samples: &[Sample], elapsed: Duration, dropped: u64) -> LoadReport {
     let completed = u64::try_from(samples.len()).unwrap_or(u64::MAX);
     LoadReport {
         base_url: cfg.base_url.clone(),
@@ -537,6 +774,169 @@ fn summarise(cfg: &LoadConfig, samples: &[Sample], elapsed: Duration, dropped: u
         elapsed_s: elapsed.as_secs_f64(),
         mix: cfg.mix,
         dropped,
-        routes,
+        routes: route_stats(samples),
+        fault: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    fn route(requests: u64, errors: u64, p99_ms: f64) -> RouteStats {
+        RouteStats {
+            requests,
+            transport_errors: errors,
+            p99_ms,
+            ..RouteStats::default()
+        }
+    }
+
+    fn routes(r: RouteStats) -> BTreeMap<String, RouteStats> {
+        BTreeMap::from([("GET /v1/crawls/{id}".to_owned(), r)])
+    }
+
+    fn fault(
+        latency_only: bool,
+        disruptive: bool,
+        out_of_fault: RouteStats,
+        errors_in: u64,
+        errors_out: u64,
+    ) -> FaultReport {
+        FaultReport {
+            schedule: "refuse@1ms..2ms".to_owned(),
+            seed: None,
+            latency_only,
+            proxy: ProxyStats::default(),
+            applied: Vec::new(),
+            fault_windows_ms: vec![(1, 2)],
+            disruption_windows_ms: if disruptive { vec![(1, 2)] } else { Vec::new() },
+            in_fault: BTreeMap::new(),
+            out_of_fault: routes(out_of_fault),
+            errors_in_disruption: errors_in,
+            errors_outside_disruption: errors_out,
+        }
+    }
+
+    fn report(all: RouteStats, fault: Option<FaultReport>) -> LoadReport {
+        LoadReport {
+            base_url: "http://x".to_owned(),
+            target_rps: 1.0,
+            achieved_rps: 1.0,
+            elapsed_s: 1.0,
+            mix: Mix::default(),
+            dropped: 0,
+            routes: routes(all),
+            fault,
+        }
+    }
+
+    #[test]
+    fn without_a_fault_any_error_or_slow_route_fails() {
+        assert!(report(route(100, 0, 150.0), None)
+            .gate_failures(150.0, false)
+            .is_empty());
+        let slow = report(route(100, 0, 150.1), None).gate_failures(150.0, false);
+        assert_eq!(slow.len(), 1, "{slow:?}");
+        assert!(slow[0].contains("p99"));
+        let errors = report(route(100, 1, 10.0), None).gate_failures(150.0, false);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("error rate"));
+        // the flag changes nothing without a fault
+        assert_eq!(
+            report(route(100, 1, 10.0), None).gate_failures(150.0, true).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn latency_only_schedules_keep_the_p99_gate_and_zero_errors_even_with_the_flag() {
+        let clean = report(
+            route(100, 0, 90.0),
+            Some(fault(true, false, route(10, 0, 10.0), 0, 0)),
+        );
+        assert!(clean.gate_failures(150.0, true).is_empty());
+        // the p99 gate covers the in-window requests too: all routes, not only out-of-fault ones
+        let slow = report(
+            route(100, 0, 400.0),
+            Some(fault(true, false, route(10, 0, 10.0), 0, 0)),
+        );
+        assert_eq!(slow.gate_failures(150.0, true).len(), 1);
+        // errors are never tolerated: nothing in the schedule breaks a connection
+        let errors = report(
+            route(100, 3, 90.0),
+            Some(fault(true, false, route(10, 0, 10.0), 3, 0)),
+        );
+        assert_eq!(errors.gate_failures(150.0, true).len(), 1);
+        assert_eq!(errors.gate_failures(150.0, false).len(), 1);
+    }
+
+    #[test]
+    fn connection_kills_allow_errors_only_inside_their_windows_and_only_with_the_flag() {
+        let inside = report(
+            route(100, 4, 5000.0),
+            Some(fault(false, true, route(60, 0, 20.0), 4, 0)),
+        );
+        // failures inside the window, slow in-window requests: tolerated with the flag
+        assert!(
+            inside.gate_failures(150.0, true).is_empty(),
+            "{:?}",
+            inside.gate_failures(150.0, true)
+        );
+        // without the flag any failure fails
+        let strict = inside.gate_failures(150.0, false);
+        assert_eq!(strict.len(), 1, "{strict:?}");
+        assert!(strict[0].contains("error rate"));
+
+        // a failure outside every window fails even with the flag
+        let outside = report(
+            route(100, 5, 80.0),
+            Some(fault(false, true, route(60, 1, 20.0), 4, 1)),
+        );
+        let failures = outside.gate_failures(150.0, true);
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].contains("outside the fault windows"));
+
+        // the p99 gate judges the out-of-fault requests
+        let slow_outside = report(
+            route(100, 0, 90.0),
+            Some(fault(false, true, route(60, 0, 400.0), 0, 0)),
+        );
+        assert_eq!(slow_outside.gate_failures(150.0, true).len(), 1);
+    }
+
+    #[test]
+    fn a_request_belongs_to_a_window_when_its_lifetime_touches_it() {
+        let ms = Duration::from_millis;
+        let sample = Sample {
+            route: Route::Get,
+            offset: ms(100),
+            latency: ms(50),
+            status: Some(200),
+        };
+        assert!(
+            overlaps(&[(ms(0), ms(100))], &sample),
+            "ends exactly when the request starts"
+        );
+        assert!(
+            overlaps(&[(ms(150), ms(200))], &sample),
+            "starts exactly when it finishes"
+        );
+        assert!(overlaps(&[(ms(120), ms(130))], &sample), "inside the request");
+        assert!(!overlaps(&[(ms(0), ms(99))], &sample));
+        assert!(!overlaps(&[(ms(151), ms(200))], &sample));
+        assert!(!overlaps(&[], &sample));
+        assert!(!sample.is_error());
+        assert!(Sample {
+            status: None,
+            ..sample
+        }
+        .is_error());
+        assert!(Sample {
+            status: Some(503),
+            ..sample
+        }
+        .is_error());
     }
 }
