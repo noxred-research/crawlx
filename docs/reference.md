@@ -6,13 +6,10 @@ Detailed behavior of options that the [README](../README.md) only summarizes. Ru
 Contents: [bounded source discovery](#bounded-source-discovery) ·
 [response cache and development replay](#native-response-cache-and-development-replay) ·
 [adaptive extraction descriptors](#scoped-adaptive-extraction-descriptors) ·
-[MCP server](#mcp-server) · [Firecrawl-compatible clients](#firecrawl-compatible-clients) ·
-[Katana-style flags](#katana-style-crawl-flags) · [JavaScript endpoint mining](#javascript-endpoint-mining) ·
-[wordlists](#wordlists-and-stored-fields) · [captcha solving](#captcha-solving) ·
-[proxy tiers and the ProxyX pool gateway](#deployment-proxy-tiers-and-the-proxyx-pool-gateway)
 [MCP server](#mcp-server) · [compatibility clients](#compatibility-clients) ·
 [compatibility flags](#compatibility-crawl-flags) · [JavaScript endpoint mining](#javascript-endpoint-mining) ·
-[wordlists](#wordlists-and-stored-fields) · [captcha solving](#captcha-solving)
+[wordlists](#wordlists-and-stored-fields) · [captcha solving](#captcha-solving) ·
+[proxy tiers and the ProxyX pool gateway](#deployment-proxy-tiers-and-the-proxyx-pool-gateway)
 
 ## Bounded source discovery
 
@@ -141,7 +138,7 @@ Captcha configuration requires an enabled browser plane; static-only crawls reje
 
 Supported widgets are checkbox (v2) and score-based (v3) widgets with their enterprise variants, and two further challenge-widget families (A and B). The browser fills each detected widget's response fields and invokes only its recorded callback or v3 promise resolver; it does not submit a form. Direct form submission during callback delivery is refused. Each widget gets at most one billed attempt per document, including ambiguous failures. Callback delivery has a separate ten-second bound and observes crawl cancellation. Keys and tokens are redacted from observations, console output, traffic metadata, page HTML/JSON, and storage exports. Full response-body capture, screenshots, PDFs, and raw DOM artifacts are refused with solving enabled because binary or opaque content cannot be safely redacted.
 
-Tests use controlled fixtures, not a live provider: `cargo test -p crawlx-browser --test captcha_transport`, `cargo test -p crawlx-browser --test captcha_widgets` (needs the pinned Chromium) and `cargo test -p crawlx-safety --test captcha`. An authorized operator smoke command is `CAPTCHA_SOLVER_PROVIDER=capsolver CAPTCHA_SOLVER_KEY=... crawlx crawl https://controlled.example.test/challenge --mode dynamic --profile test_environment --limit-urls 1`; it needs a real provider account and a controlled target you are authorized to test.
+Tests use controlled fixtures, not a live provider: `cargo test -p crawlx-browser --test captcha_transport`, `cargo test -p crawlx-browser --test captcha_widgets` (needs the pinned Chromium) and `cargo test -p crawlx-safety --test captcha`. An authorized operator smoke command is `CAPTCHA_SOLVER_PROVIDER=task-api CAPTCHA_SOLVER_KEY=... crawlx crawl https://controlled.example.test/challenge --mode dynamic --profile test_environment --limit-urls 1`; it needs a real provider account and a controlled target you are authorized to test.
 
 ## Deployment proxy tiers and the ProxyX pool gateway
 
