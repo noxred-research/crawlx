@@ -7,7 +7,7 @@ use crate::authorization::{
     AuthorizationGuard, AuthorizationSource, AuthorizationStop, StaticAuthorizationSource,
 };
 use crate::capture::{ProxyCapture, FLOW_CHANNEL};
-use crate::config::WorkerConfig;
+use crate::config::{TierRoute, WorkerConfig};
 use crate::counters::RunCounters;
 use crate::diagnostics::{DiagnosticsSink, SessionDiagnostics};
 use crate::driver::{DriverConfig, DriverEnd, ExplorationDriver};
@@ -673,19 +673,21 @@ pub(crate) async fn default_secrets(secrets: Option<Arc<dyn SecretResolver>>) ->
 
 /// Build a run fetcher using the same governor as its browser actors.
 /// `controls` (see [`resolve_controls`]) set headers, cookies, `User-Agent`
-/// and TLS verification of every request.
+/// and TLS verification of every request. `run` keys the sticky identity of a ProxyX pool
+/// route.
 ///
 /// # Errors
 /// Fails when a storage, browser or network operation it depends on fails.
 pub fn build_fetcher(
     crawl: &CreateCrawl,
+    run: CrawlRunId,
     seed: CrawlSeed,
     cfg: &WorkerConfig,
     controls: RequestControls,
     record: Option<&crawlx_policy::AuthorizationRecord>,
     origin_governor: Arc<crawlx_fetch::OriginGovernor>,
 ) -> Result<(Arc<Fetcher>, Arc<dyn Resolver>), WorkerError> {
-    build_fetcher_with_capture(crawl, seed, cfg, controls, record, None, origin_governor)
+    build_fetcher_with_capture(crawl, run, seed, cfg, controls, record, None, origin_governor)
 }
 
 /// [`build_fetcher`] reporting every fetch-plane response on `capture` (unified
@@ -696,6 +698,7 @@ pub fn build_fetcher(
 #[allow(clippy::too_many_arguments)]
 pub fn build_fetcher_with_capture(
     crawl: &CreateCrawl,
+    run: CrawlRunId,
     seed: CrawlSeed,
     cfg: &WorkerConfig,
     controls: RequestControls,
@@ -705,16 +708,19 @@ pub fn build_fetcher_with_capture(
 ) -> Result<(Arc<Fetcher>, Arc<dyn Resolver>), WorkerError> {
     let resolver = cfg.egress.resolver_for(crawl)?;
     let policy = Arc::new(cfg.egress.policy_for_run(crawl, record));
+    let route = cfg.egress.route_for(crawl)?;
+    let pool = route.bind(run, Some((Arc::clone(&policy), Arc::clone(&resolver))))?;
     let fetch_cfg = FetchConfig {
         contact: cfg.egress.contact.clone(),
         governor: GovernorConfig::from_politeness(&crawl.politeness, seed),
         seed,
         shared_governor: Some(origin_governor),
-        proxy: cfg.egress.proxy_for(crawl)?.cloned(),
+        proxy: route.url().cloned(),
+        pool,
         ..FetchConfig::from_request(&crawl.fetch)
     }
     .with_controls(controls);
-    let mut fetcher = Fetcher::new(fetch_cfg, policy, Arc::clone(&resolver))?;
+    let mut fetcher = Fetcher::new(fetch_cfg, Arc::clone(&policy), Arc::clone(&resolver))?;
     if let Some(tx) = capture {
         fetcher = fetcher.with_capture(tx);
     }
@@ -724,8 +730,14 @@ pub fn build_fetcher_with_capture(
             .as_ref()
             .is_some_and(|job| job.options.proxy == crawlx_core::scrape::ProxyMode::Auto)
     {
-        if let Some(proxy) = &cfg.egress.proxy_routes.enhanced {
-            fetcher = fetcher.with_enhanced_proxy(proxy)?;
+        match cfg.egress.enhanced_route() {
+            Some(TierRoute::Url(proxy)) => fetcher = fetcher.with_enhanced_proxy(proxy)?,
+            Some(enhanced @ TierRoute::Pool(..)) => {
+                if let Some(binding) = enhanced.bind(run, Some((policy, Arc::clone(&resolver))))? {
+                    fetcher = fetcher.with_enhanced_pool(binding)?;
+                }
+            }
+            _ => {}
         }
     }
     Ok((Arc::new(fetcher), resolver))
@@ -914,6 +926,7 @@ impl RunContext {
         }
         let (robots_fetcher, delivery_resolver) = build_fetcher(
             &crawl,
+            run.id,
             run.seed,
             cfg,
             controls.clone(),
@@ -1252,10 +1265,7 @@ impl RunContext {
             Digest::keyed(
                 &self.seed.derive("session-egress", &[]),
                 "crawlx/session-egress/v1",
-                self.egress
-                    .proxy_for(&self.crawl)?
-                    .map_or("direct", url::Url::as_str)
-                    .as_bytes(),
+                self.egress.route_for(&self.crawl)?.identity().as_bytes(),
             ),
             metadata.config_digest,
             self.crawl
@@ -2067,6 +2077,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     }
     let (fetcher, resolver) = build_fetcher_with_capture(
         &crawl,
+        run.id,
         run.seed,
         &cfg,
         controls.clone(),
@@ -2083,6 +2094,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             cfg.egress
                 .serve_proxy(
                     &crawl,
+                    run.id,
                     authz.as_ref().map(|g| g.record()),
                     Arc::clone(&resolver),
                     options,

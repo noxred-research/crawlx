@@ -8,8 +8,9 @@ use crate::runtime::CpuPool;
 use crate::scrape::PageRenderer;
 use crawlx_browser::LaunchConfig;
 use crawlx_core::config::System1Mode;
-use crawlx_core::{CreateCrawl, SafetyProfile, WorkerId};
+use crawlx_core::{CrawlRunId, CreateCrawl, SafetyProfile, WorkerId};
 use crawlx_extract::secret_validation::SecretValidators;
+use crawlx_fetch::proxyx::{PoolBinding, PoolTier, ProxyxRoute};
 use crawlx_fetch::{
     EgressOptions, EgressProxy, EgressProxyHandle, GlobalOriginCap, HickoryResolver, Resolver, UpstreamProxy,
 };
@@ -65,29 +66,129 @@ impl fmt::Debug for EgressConfig {
     }
 }
 
+/// The deployment route a run's traffic takes.
+#[derive(Clone, Copy)]
+#[non_exhaustive]
+pub enum TierRoute<'a> {
+    /// No proxy.
+    Direct,
+    /// A proxy URL: the deployment's tier route or the request's `fetch.proxy`.
+    Url(&'a url::Url),
+    /// A ProxyX pool route and the tier it serves.
+    Pool(&'a ProxyxRoute, PoolTier),
+}
+
+impl fmt::Debug for TierRoute<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Direct => f.write_str("Direct"),
+            Self::Url(_) => f.write_str("Url([configured])"),
+            Self::Pool(route, tier) => write!(f, "Pool({route:?}, {tier:?})"),
+        }
+    }
+}
+
+impl<'a> TierRoute<'a> {
+    /// The proxy URL of a plain route.
+    #[must_use]
+    pub const fn url(&self) -> Option<&'a url::Url> {
+        match self {
+            Self::Url(url) => Some(url),
+            Self::Direct | Self::Pool(..) => None,
+        }
+    }
+
+    /// The pool route and tier.
+    #[must_use]
+    pub const fn pool(&self) -> Option<(&'a ProxyxRoute, PoolTier)> {
+        match self {
+            Self::Pool(route, tier) => Some((route, *tier)),
+            Self::Direct | Self::Url(_) => None,
+        }
+    }
+
+    /// A stable name of the route for identity digests: `direct`, the proxy URL as configured, or
+    /// the credential-free pool identity (gateway and selector).
+    #[must_use]
+    pub fn identity(&self) -> String {
+        match self {
+            Self::Direct => "direct".to_owned(),
+            Self::Url(url) => url.as_str().to_owned(),
+            Self::Pool(route, _) => route.identity(),
+        }
+    }
+
+    /// The upstream run `run` binds for this route: the pool binding of a pool route, `None`
+    /// otherwise. `report` carries the run's egress policy and resolver when block signals should
+    /// be reported (the fetch plane).
+    ///
+    /// # Errors
+    /// [`WorkerError::Fetch`] when the selector does not fit the username budget.
+    pub fn bind(
+        &self,
+        run: CrawlRunId,
+        report: Option<(Arc<EgressPolicy>, Arc<dyn Resolver>)>,
+    ) -> Result<Option<Arc<PoolBinding>>, WorkerError> {
+        let Some((route, tier)) = self.pool() else {
+            return Ok(None);
+        };
+        let binding = route
+            .bind(tier, &run.0.simple().to_string(), report)
+            .map_err(crawlx_fetch::FetchError::from)?;
+        Ok(Some(binding))
+    }
+}
+
 impl EgressConfig {
     /// Resolve a scrape's deployment tier without exposing proxy credentials.
     ///
+    /// A tier is a proxy URL or a ProxyX pool route; a pool route wins when both could apply
+    /// (configuration refuses setting both on one tier).
+    ///
     /// # Errors
     /// Fails when explicit enhanced mode, or legacy automatic escalation, lacks its route.
-    pub fn proxy_for<'a>(&'a self, crawl: &'a CreateCrawl) -> Result<Option<&'a url::Url>, WorkerError> {
+    pub fn route_for<'a>(&'a self, crawl: &'a CreateCrawl) -> Result<TierRoute<'a>, WorkerError> {
         use crawlx_core::scrape::ProxyMode;
-        let Some(job) = &crawl.scrape else {
-            return Ok(crawl.fetch.proxy.as_ref());
+        let request = || {
+            crawl
+                .fetch
+                .proxy
+                .as_ref()
+                .map_or(TierRoute::Direct, TierRoute::Url)
         };
+        let Some(job) = &crawl.scrape else {
+            return Ok(request());
+        };
+        let enhanced = self.enhanced_route();
         // An explicit native policy replaces facade Auto escalation with its bounded
         // backend plan. Native Auto stays on basic; it never silently rotates identity.
         let requires_enhanced = job.options.proxy == ProxyMode::Enhanced
             || (job.options.proxy == ProxyMode::Auto && crawl.acquisition.is_none());
-        if requires_enhanced && self.proxy_routes.enhanced.is_none() {
+        if requires_enhanced && enhanced.is_none() {
             return Err(WorkerError::Config(
-                "enhanced proxy requested but fetch.enhanced_proxy_url is not configured".to_owned(),
+                "enhanced proxy requested but neither fetch.enhanced_proxy_url nor fetch.proxyx.enhanced is configured"
+                    .to_owned(),
             ));
         }
+        let routes = &self.proxy_routes;
         Ok(match job.options.proxy {
-            ProxyMode::Enhanced => self.proxy_routes.enhanced.as_ref(),
-            _ => self.proxy_routes.basic.as_ref().or(crawl.fetch.proxy.as_ref()),
+            ProxyMode::Enhanced => enhanced.unwrap_or(TierRoute::Direct),
+            _ => match (&routes.basic_pool, &routes.basic) {
+                (Some(route), _) => TierRoute::Pool(route, PoolTier::Basic),
+                (None, Some(url)) => TierRoute::Url(url),
+                (None, None) => request(),
+            },
         })
+    }
+
+    /// The enhanced route a scrape escalates to, `None` when none is configured.
+    #[must_use]
+    pub fn enhanced_route(&self) -> Option<TierRoute<'_>> {
+        match (&self.proxy_routes.enhanced_pool, &self.proxy_routes.enhanced) {
+            (Some(route), _) => Some(TierRoute::Pool(route, PoolTier::Enhanced)),
+            (None, Some(url)) => Some(TierRoute::Url(url)),
+            (None, None) => None,
+        }
     }
 
     /// The egress policy of `crawl` when it runs without an authorization record. See
@@ -173,21 +274,28 @@ impl EgressConfig {
     /// `resolver`, plus whatever `options` carry (flow capture, request controls). With
     /// `fetch.proxy` set (katana `-proxy`, Firecrawl `proxy: basic`) every request the policy
     /// admits is chained to that proxy, so rendered pages leave through it like URL-plane
-    /// fetches do.
+    /// fetches do. A ProxyX pool route chains through the pool gateway with the run's sticky
+    /// identity (`run` keys the sticky id), `CONNECT` only.
     ///
     /// # Errors
-    /// [`WorkerError::Fetch`] when `fetch.proxy` is not a usable upstream proxy URL or the
-    /// loopback listener cannot be bound.
+    /// [`WorkerError::Fetch`] when `fetch.proxy` is not a usable upstream proxy URL, the pool
+    /// selector does not fit, or the loopback listener cannot be bound.
     pub async fn serve_proxy(
         &self,
         crawl: &CreateCrawl,
+        run: CrawlRunId,
         record: Option<&AuthorizationRecord>,
         resolver: Arc<dyn Resolver>,
         options: EgressOptions,
     ) -> Result<EgressProxyHandle, WorkerError> {
-        let options = match self.proxy_for(crawl)? {
-            Some(url) => options.with_upstream(UpstreamProxy::from_url(url)?),
-            None => options,
+        let route = self.route_for(crawl)?;
+        let options = match route {
+            TierRoute::Direct => options,
+            TierRoute::Url(url) => options.with_upstream(UpstreamProxy::from_url(url)?),
+            TierRoute::Pool(..) => match route.bind(run, None)? {
+                Some(binding) => options.with_upstream(binding.upstream().clone()),
+                None => options,
+            },
         };
         Ok(EgressProxy::serve_with(Arc::new(self.policy_for_run(crawl, record)), resolver, options).await?)
     }
@@ -855,6 +963,7 @@ impl WorkerConfig {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use crawlx_fetch::proxyx::PoolTier;
 
     #[test]
     fn native_budget_auto_keeps_basic_while_legacy_auto_and_explicit_enhanced_fail_closed() {
@@ -866,26 +975,96 @@ mod tests {
         };
         crawl.scrape = Some(ScrapeJob::new(JobKind::Scrape, options));
         let mut egress = EgressConfig::default();
-        assert!(egress.proxy_for(&crawl).is_err());
+        assert!(egress.route_for(&crawl).is_err());
         crawl.acquisition = Some(crawlx_core::acquisition::AcquisitionPolicyV1::default());
-        assert!(egress.proxy_for(&crawl).unwrap().is_none());
+        assert!(egress.route_for(&crawl).unwrap().url().is_none());
         egress.proxy_routes.basic = Some("http://basic.fixture:8080".parse().unwrap());
         assert_eq!(
-            egress.proxy_for(&crawl).unwrap(),
+            egress.route_for(&crawl).unwrap().url(),
             egress.proxy_routes.basic.as_ref()
         );
         crawl.scrape.as_mut().unwrap().options.proxy = ProxyMode::Enhanced;
-        assert!(egress.proxy_for(&crawl).is_err());
+        assert!(egress.route_for(&crawl).is_err());
         egress.proxy_routes.enhanced = Some("http://enhanced.fixture:8080".parse().unwrap());
         assert_eq!(
-            egress.proxy_for(&crawl).unwrap(),
+            egress.route_for(&crawl).unwrap().url(),
             egress.proxy_routes.enhanced.as_ref()
         );
         crawl.scrape.as_mut().unwrap().options.proxy = ProxyMode::Auto;
         assert_eq!(
-            egress.proxy_for(&crawl).unwrap(),
+            egress.route_for(&crawl).unwrap().url(),
             egress.proxy_routes.basic.as_ref()
         );
+    }
+
+    fn pool_route(selector: &str) -> ProxyxRoute {
+        ProxyxRoute::new(
+            &"http://pool.fixture:8080".parse().unwrap(),
+            None,
+            crawlx_core::secret::SecretOr::secret("ak_fixture-key".to_owned()),
+            crawlx_fetch::proxyx::PoolSelector::from_spec(selector).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn pool_routes_serve_their_tier_and_replace_the_url_of_the_tier() {
+        use crawlx_core::scrape::{JobKind, ProxyMode, ScrapeJob, ScrapeOptions};
+        let mut crawl = CreateCrawl::new("https://fixture.example.test/".parse().unwrap());
+        crawl.fetch.proxy = Some("http://request.fixture:3128".parse().unwrap());
+        let mut options = ScrapeOptions::default();
+        crawl.scrape = Some(ScrapeJob::new(JobKind::Scrape, options.clone()));
+        let mut egress = EgressConfig::default();
+        egress.proxy_routes.basic_pool = Some(pool_route("cc=fr"));
+        egress.proxy_routes.enhanced_pool = Some(pool_route("kind=static"));
+
+        let basic = egress.route_for(&crawl).unwrap();
+        assert!(matches!(basic.pool(), Some((_, PoolTier::Basic))));
+        assert!(basic.url().is_none());
+        assert_eq!(basic.identity(), "proxyx://pool.fixture:8080?cc=fr");
+
+        options.proxy = ProxyMode::Enhanced;
+        crawl.scrape = Some(ScrapeJob::new(JobKind::Scrape, options.clone()));
+        let enhanced = egress.route_for(&crawl).unwrap();
+        assert!(matches!(enhanced.pool(), Some((_, PoolTier::Enhanced))));
+        assert_eq!(enhanced.identity(), "proxyx://pool.fixture:8080?kind=static");
+
+        // Auto starts on the basic pool and may escalate to the enhanced pool
+        options.proxy = ProxyMode::Auto;
+        crawl.scrape = Some(ScrapeJob::new(JobKind::Scrape, options));
+        assert!(matches!(
+            egress.route_for(&crawl).unwrap().pool(),
+            Some((_, PoolTier::Basic))
+        ));
+        assert!(matches!(
+            egress.enhanced_route().unwrap().pool(),
+            Some((_, PoolTier::Enhanced))
+        ));
+
+        // without a scrape job only the request's own proxy applies, as for plain tier routes
+        crawl.scrape = None;
+        assert_eq!(
+            egress.route_for(&crawl).unwrap().url().map(url::Url::as_str),
+            Some("http://request.fixture:3128/")
+        );
+    }
+
+    #[test]
+    fn missing_enhanced_pool_still_fails_closed_and_debug_hides_credentials() {
+        use crawlx_core::scrape::{JobKind, ProxyMode, ScrapeJob, ScrapeOptions};
+        let mut crawl = CreateCrawl::new("https://fixture.example.test/".parse().unwrap());
+        let options = ScrapeOptions {
+            proxy: ProxyMode::Enhanced,
+            ..ScrapeOptions::default()
+        };
+        crawl.scrape = Some(ScrapeJob::new(JobKind::Scrape, options));
+        let mut egress = EgressConfig::default();
+        egress.proxy_routes.basic_pool = Some(pool_route(""));
+        let error = egress.route_for(&crawl).unwrap_err().to_string();
+        assert!(error.contains("fetch.proxyx.enhanced"), "{error}");
+        let shown = format!("{egress:?}");
+        assert!(!shown.contains("ak_fixture-key"), "{shown}");
+        assert!(shown.contains("[configured]"));
     }
 
     #[test]

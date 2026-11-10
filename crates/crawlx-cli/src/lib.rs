@@ -49,6 +49,7 @@ mod output_args;
 pub mod pprof;
 pub mod profiles;
 pub mod protocol;
+pub mod proxyx_config;
 pub mod response_replay;
 mod resume_file;
 mod style;

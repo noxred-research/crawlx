@@ -621,8 +621,16 @@ pub struct ConnectionEvidenceV1 {
     pub peer: Option<std::net::IpAddr>,
     /// Actual peer matched the checked set; absent when the peer was not observed.
     pub peer_checked: Option<bool>,
-    /// Approved route class, never a credential-bearing proxy URL.
+    /// Approved route class (`direct`, `configured_proxy`, `proxyx_pool`), never a
+    /// credential-bearing proxy URL.
     pub proxy_route: Option<String>,
+    /// Pool session id the ProxyX gateway named for the tunnel that carried the request.
+    /// Identifies the exit identity, never a credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_session: Option<String>,
+    /// Exit IP the ProxyX gateway named for that tunnel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_exit_ip: Option<std::net::IpAddr>,
     /// Effective TLS verification configuration, independent of certificate capture.
     pub tls_verification: Option<String>,
     /// Observed certificate material is unavailable in these native adapters.

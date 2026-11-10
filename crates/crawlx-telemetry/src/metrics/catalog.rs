@@ -205,6 +205,8 @@ catalog! {
     FETCH_RESPONSES = Counter "crawlx.fetch.responses" None ["outcome"] &[], "Fetch responses by outcome class";
     FETCH_THROTTLES = Counter "crawlx.fetch.throttles" None ["reason"] &[], "Fetches throttled (429/503)";
     FETCH_POLITENESS_VIOLATIONS = Counter "crawlx.fetch.politeness_violations" None [] &[], "Per-origin politeness violations";
+    PROXYX_BLOCK_SIGNALS = Counter "crawlx.proxyx.block_signals" None ["outcome"] &[], "Block signals reported to the ProxyX pool gateway (outcome = sent | ignored | dropped | failed)";
+    PROXYX_TUNNEL_REFUSALS = Counter "crawlx.proxyx.tunnel_refusals" None ["reason"] &[], "Tunnels the ProxyX pool gateway refused (reason = the gateway cause code)";
     BROWSER_SESSIONS = Gauge "crawlx.browser.sessions" None [] &[], "Live browser sessions";
     BROWSER_LAUNCH_DURATION = Histogram "crawlx.browser.launch.duration" Seconds [] SLOW_BUCKETS, "Browser launch duration";
     CRAWLS_ACTIVE = Gauge "crawlx.crawls.active" None [] &[], "Crawls currently running";

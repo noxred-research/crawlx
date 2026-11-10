@@ -281,7 +281,7 @@ const fn fc(reason: &'static str, status: u16, code: &'static str, text: &'stati
 }
 
 /// The reported error of every worker failure reason (see [`FailureCode`]).
-pub const FAILURE_CODES: [FailureCode; 21] = [
+pub const FAILURE_CODES: [FailureCode; 22] = [
     fc("scrape_timeout", 408, "SCRAPE_TIMEOUT", "Scrape timed out"),
     fc(
         "unreachable",
@@ -379,6 +379,12 @@ pub const FAILURE_CODES: [FailureCode; 21] = [
         503,
         "CACHE_IDENTITY_UNAVAILABLE",
         "Credential-bearing cache identity requires an operator key",
+    ),
+    fc(
+        "proxy_refused",
+        502,
+        "SCRAPE_PROXY_REFUSED",
+        "The proxy pool refused the request and retrying the same request cannot help",
     ),
     fc(
         "run_stopped",

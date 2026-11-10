@@ -263,7 +263,7 @@ Scheduler {
 /// cannot echo a rejected URL, including its credentials.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(transparent)]
-pub struct ProxyUrl(String);
+pub struct ProxyUrl(pub(crate) String);
 
 impl std::fmt::Debug for ProxyUrl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -278,7 +278,7 @@ impl Serialize for ProxyUrl {
 }
 
 impl ProxyUrl {
-    fn parse(&self) -> anyhow::Result<url::Url> {
+    pub(crate) fn parse(&self) -> anyhow::Result<url::Url> {
         let url = url::Url::parse(&self.0).context("invalid proxy URL")?;
         if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h") {
             bail!("proxy scheme must be http, https, socks5 or socks5h");
@@ -290,7 +290,7 @@ impl ProxyUrl {
     }
 }
 
-fn proxy_url_arg(value: &str) -> Result<ProxyUrl, std::convert::Infallible> {
+pub(crate) fn proxy_url_arg(value: &str) -> Result<ProxyUrl, std::convert::Infallible> {
     Ok(ProxyUrl(value.to_owned()))
 }
 
@@ -303,38 +303,49 @@ pub struct ProxyArgs {
     /// Enhanced deployment proxy URL; overrides CRAWLX_FETCH_ENHANCED_PROXY_URL and [fetch].enhanced_proxy_url.
     #[arg(long, value_name = "URL", value_parser = proxy_url_arg, help_heading = "Deployment")]
     pub fetch_enhanced_proxy_url: Option<ProxyUrl>,
+    /// ProxyX pool gateway as the upstream of the basic and/or enhanced tier.
+    #[command(flatten)]
+    pub proxyx: crate::proxyx_config::ProxyxArgs,
 }
 
 impl ProxyArgs {
     /// Resolve deployment routes from flags, environment and `crawlx.toml`, in that order.
     ///
     /// # Errors
-    /// Fails on unreadable or malformed configuration, an invalid proxy URL or unsupported scheme.
+    /// Fails on unreadable or malformed configuration, an invalid proxy URL or unsupported scheme,
+    /// or an invalid ProxyX pool route (`[fetch.proxyx]`).
     pub fn routes(
         &self,
         getenv: &dyn Fn(&str) -> Option<String>,
     ) -> anyhow::Result<crawlx_fetch::ProxyRoutes> {
-        let vars = [
+        let mut names: Vec<String> = [
             BASIC_PROXY_URL_ENV,
             ENHANCED_PROXY_URL_ENV,
             "CRAWLX_FETCH__BASIC_PROXY_URL",
             "CRAWLX_FETCH__ENHANCED_PROXY_URL",
         ]
         .into_iter()
-        .filter_map(|name| getenv(name).map(|value| (name.to_owned(), value)))
-        .collect::<Vec<_>>();
+        .map(str::to_owned)
+        .collect();
+        names.extend(crate::proxyx_config::env_names());
+        let vars = names
+            .into_iter()
+            .filter_map(|name| getenv(&name).map(|value| (name, value)))
+            .collect::<Vec<_>>();
         let file = getenv(CONFIG_ENV)
             .filter(|p| !p.trim().is_empty())
             .map(PathBuf::from);
         let fetch = load_from(file.as_deref(), &vars)?.config.fetch;
-        parse_proxy_routes(
+        let mut routes = parse_proxy_routes(
             self.fetch_basic_proxy_url
                 .as_ref()
                 .or(fetch.basic_proxy_url.as_ref()),
             self.fetch_enhanced_proxy_url
                 .as_ref()
                 .or(fetch.enhanced_proxy_url.as_ref()),
-        )
+        )?;
+        crate::proxyx_config::apply(&fetch.proxyx, &self.proxyx, getenv, &mut routes)?;
+        Ok(routes)
     }
 }
 
@@ -348,15 +359,29 @@ Fetch {
     basic_proxy_url: Option<ProxyUrl> = None,
     /// Deployment-owned enhanced upstream; required for enhanced and auto proxy modes.
     enhanced_proxy_url: Option<ProxyUrl> = None,
+    /// ProxyX pool gateway as the upstream of the basic and/or enhanced tier (`[fetch.proxyx]`).
+    proxyx: crate::proxyx_config::Proxyx = crate::proxyx_config::Proxyx::default(),
 });
 
 impl Fetch {
-    /// Parse configured routes without exposing URLs or credentials in errors.
+    /// Parse configured routes without exposing URLs or credentials in errors. The ProxyX org key
+    /// reference is resolved through `getenv` (`env://`) or the file system (`file://`).
     ///
     /// # Errors
-    /// Fails when either route has an invalid URL, unsupported scheme or missing host.
-    pub fn proxy_routes(&self) -> anyhow::Result<crawlx_fetch::ProxyRoutes> {
-        parse_proxy_routes(self.basic_proxy_url.as_ref(), self.enhanced_proxy_url.as_ref())
+    /// Fails when either route has an invalid URL, unsupported scheme or missing host, or the
+    /// pool route is incomplete or invalid.
+    pub fn proxy_routes(
+        &self,
+        getenv: &dyn Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<crawlx_fetch::ProxyRoutes> {
+        let mut routes = parse_proxy_routes(self.basic_proxy_url.as_ref(), self.enhanced_proxy_url.as_ref())?;
+        crate::proxyx_config::apply(
+            &self.proxyx,
+            &crate::proxyx_config::ProxyxArgs::default(),
+            getenv,
+            &mut routes,
+        )?;
+        Ok(routes)
     }
 }
 
@@ -652,7 +677,9 @@ pub fn load_from(file: Option<&Path>, vars: &[(String, String)]) -> anyhow::Resu
     let mut env_vars: Vec<&(String, String)> = vars.iter().collect();
     env_vars.sort();
     for (name, value) in env_vars {
-        if PASSTHROUGH_ENV.contains(&name.as_str()) {
+        if PASSTHROUGH_ENV.contains(&name.as_str())
+            || crate::proxyx_config::SELECTOR_ENV.contains(&name.as_str())
+        {
             passthrough.insert(name.clone(), value.clone());
             let secret_path = match name.as_str() {
                 "CRAWLX_DATABASE_URL_FILE" => Some(vec!["database".to_owned(), "url_file".to_owned()]),
@@ -672,13 +699,16 @@ pub fn load_from(file: Option<&Path>, vars: &[(String, String)]) -> anyhow::Resu
         let Some(rest) = name.strip_prefix(ENV_PREFIX) else {
             continue;
         };
-        let proxy_key = match name.as_str() {
-            BASIC_PROXY_URL_ENV => Some("basic_proxy_url"),
-            ENHANCED_PROXY_URL_ENV => Some("enhanced_proxy_url"),
-            _ => None,
+        let proxy_key: Option<Vec<&str>> = match name.as_str() {
+            BASIC_PROXY_URL_ENV => Some(vec!["fetch", "basic_proxy_url"]),
+            ENHANCED_PROXY_URL_ENV => Some(vec!["fetch", "enhanced_proxy_url"]),
+            other => crate::proxyx_config::FLAT_KEY_ENV
+                .iter()
+                .find(|(env, _)| *env == other)
+                .map(|(_, key)| vec!["fetch", "proxyx", *key]),
         };
-        if let Some(key) = proxy_key {
-            let path = ["fetch".to_owned(), key.to_owned()];
+        if let Some(path) = proxy_key {
+            let path: Vec<String> = path.into_iter().map(str::to_owned).collect();
             set_override(&mut doc, &path, value, name)?;
             sources.insert(path.join("."), Source::Env);
             continue;
@@ -921,6 +951,13 @@ pub fn validate(loaded: &Loaded) -> (Vec<Finding>, Vec<SecretStatus>) {
                 f.push(finding(key, format!("{error:#}"), true));
             }
         }
+    }
+    for (key, message) in crate::proxyx_config::check(
+        &c.fetch.proxyx,
+        c.fetch.basic_proxy_url.is_some(),
+        c.fetch.enhanced_proxy_url.is_some(),
+    ) {
+        f.push(finding(key, message, true));
     }
     for (i, p) in c.browser.launch_profile_allowed.iter().enumerate() {
         if !matches!(p.as_str(), "standard" | "stealth") {
@@ -2321,7 +2358,7 @@ mod tests {
             .unwrap()
             .config
             .fetch
-            .proxy_routes()
+            .proxy_routes(&|_| None)
             .unwrap();
         assert_eq!(file_routes.basic.unwrap().password(), Some("file-secret"));
         let env_routes = ProxyArgs::default().routes(&lookup).unwrap();
@@ -2348,12 +2385,12 @@ mod tests {
             ]),
         )
         .unwrap();
-        let routes = loaded.config.fetch.proxy_routes().unwrap();
+        let routes = loaded.config.fetch.proxy_routes(&|_| None).unwrap();
         assert_eq!(routes.basic.unwrap().host_str(), Some("nested.test"));
         assert_eq!(routes.enhanced.unwrap().host_str(), Some("enhanced-env.test"));
         assert_eq!(loaded.sources["fetch.basic_proxy_url"], Source::Env);
         assert_eq!(loaded.sources["fetch.enhanced_proxy_url"], Source::Env);
-        let defaults = Fetch::default().proxy_routes().unwrap();
+        let defaults = Fetch::default().proxy_routes(&|_| None).unwrap();
         assert!(defaults.basic.is_none() && defaults.enhanced.is_none());
     }
 
@@ -2384,7 +2421,7 @@ mod tests {
             toml::to_string_pretty(&loaded.config).unwrap(),
             format!("{loaded:?}"),
             format!("{findings:?}"),
-            format!("{:#}", loaded.config.fetch.proxy_routes().unwrap_err()),
+            format!("{:#}", loaded.config.fetch.proxy_routes(&|_| None).unwrap_err()),
         ] {
             for secret in [
                 "secret-user",
