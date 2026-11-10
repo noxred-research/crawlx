@@ -82,7 +82,7 @@ and whose serialization writes `"[REDACTED]"`. Typed secret values are never log
 
 **References, not values.** Configuration holds references. The worker's resolver chain supports
 `env://VAR`, `file:///abs/path` (refused if world-readable; 64 KiB cap), `vault://mount/path#key`
-(KV v2), `aws-sm://id[#json-key]` and `totp://<base32>`. Resolution happens immediately before use
+(KV v2), `cloud-sm://id[#json-key]` and `totp://<base32>`. Resolution happens immediately before use
 and errors never carry the value. Captcha keys accept `env://` and `file://` on the command line.
 
 **Redaction.** One redactor is used by logging, traffic capture and exports:
@@ -115,8 +115,8 @@ from a regular file that is not group- or world-writable. The key is never gener
 those features are unavailable (`cache_identity_unavailable`) rather than falling back to unkeyed
 hashes.
 
-**Secret detection.** `--detect-secrets` finds nine kinds of secret in fetched content (AWS key id
-and secret, GitHub, Slack, Stripe and Google tokens, JWT, private keys, generic API keys) and reports
+**Secret detection.** `--detect-secrets` finds nine kinds of secret in fetched content (cloud access key id
+and secret, source-host, chat-platform, payment-platform and search-platform tokens, JWT, private keys, generic API keys) and reports
 kind, location and a keyed hash only, never the value. Live validation of a finding against a
 provider is opt-in and needs an operator-supplied validator file; without one, findings stay
 `unknown`.
@@ -129,7 +129,7 @@ Retained `content` and `sensitive` artifacts are sealed before they reach the ob
   authenticated terminal frame. The additional authenticated data binds the domain, the header, the
   tenant, run and artifact ids, the frame index and the frame kind, so a ciphertext cannot be moved
   to another artifact or truncated.
-- **Keys.** Each artifact has its own data key, wrapped by exactly one provider: AWS KMS
+- **Keys.** Each artifact has its own data key, wrapped by exactly one provider: cloud KMS
   (`CRAWLX_ARTIFACT_KMS_KEY_ID`, `GenerateDataKey`/`Decrypt` with an encryption context of tenant,
   run and artifact) or an operator key file (`CRAWLX_ARTIFACT_KEY_FILE`, 64 hex characters, wrapping
   data keys under AES-256-GCM bound to tenant, run and artifact). Setting both is a startup error.
@@ -197,7 +197,7 @@ per input byte at the 16 MiB input cap) plus margin, and is enforced by the
 ## Chromium background traffic
 
 Stock Chrome for Testing (the pinned 155.0.8059.84 build) attempts unsolicited background requests to
-Google services (`accounts.google.com`, `redirector.gvt1.com`, `update.googleapis.com`,
+the browser vendor's services (`accounts.google.com`, `redirector.gvt1.com`, `update.googleapis.com`,
 `content-autofill.googleapis.com`, `android.clients.google.com`) and a time-service query at startup.
 
 What crawlx does:
@@ -236,8 +236,8 @@ Production deployments pass secrets as files: `CRAWLX_DATABASE_URL_FILE`,
 `CRAWLX_REQUEST_IDENTITY_KEY_FILE`, `CRAWLX_AUTHZ_OPERATOR_KEYS_FILE`, `CRAWLX_GATE_KEYS_FILE` and
 `CRAWLX_PROFILE_KEY_FILE`. `crawlx config check` warns in staging and production when a database URL
 or webhook secret is passed inline, and shows secret-bearing environment values as `<redacted>`.
-Webhooks are signed `Crawlx-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "{t}.{body}">` (the Firecrawl
-facade also sends `X-Firecrawl-Signature: sha256=<hex>`). The Helm chart fails to render if both or
+Webhooks are signed `Crawlx-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "{t}.{body}">` (the compatibility
+API also sends `X-Firecrawl-Signature: sha256=<hex>` so existing receivers keep verifying). The Helm chart fails to render if both or <!-- wire-compat -->
 neither artifact key providers are configured.
 
 ## Known limitations

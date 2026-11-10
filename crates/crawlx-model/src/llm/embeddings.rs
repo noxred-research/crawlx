@@ -1,13 +1,13 @@
-//! Text embeddings for ranking: the [`EmbeddingsClient`] seam, its OpenAI-compatible HTTP client
-//! ([`OpenAiEmbeddings`], `POST {base}/embeddings`), a deterministic test double
+//! Text embeddings for ranking: the [`EmbeddingsClient`] seam, its chat-completions-compatible
+//! HTTP client ([`HttpEmbeddings`], `POST {base}/embeddings`), a deterministic test double
 //! ([`MockEmbeddings`]) and the cosine ranking the `/extract` engine applies to scraped pages
 //! before the LLM sees them ([`rank_texts`], [`rank_by_cosine`]).
 //!
-//! Firecrawl self-host reads `MODEL_EMBEDDING_NAME` to pick the embedding model of its link
-//! ranker (`apps/api/src/lib/ranker.ts`: cosine similarity between the search query and each
-//! candidate, equal scores keep their original order). The model is served by the same
-//! OpenAI-compatible endpoint and key as the chat model, so [`OpenAiEmbeddings`] is configured
-//! like [`OpenAiCompatible`](super::OpenAiCompatible).
+//! `CRAWLX_EMBEDDING_MODEL` picks the embedding model of the link ranker (cosine similarity
+//! between the search query and each candidate, equal scores keep their original order). The
+//! model is served by the same chat-completions compatible endpoint and key as the chat model,
+//! so [`HttpEmbeddings`] is configured like
+//! [`ChatCompletionsClient`](super::ChatCompletionsClient).
 //!
 //! Bounds: at most [`MAX_INPUTS`] texts per [`EmbeddingsClient::embed`] call, sent to the
 //! endpoint in batches of `max_batch`, each text cut to `max_input_chars`; the response is
@@ -30,7 +30,7 @@ use thiserror::Error;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default texts per HTTP request.
 pub const DEFAULT_MAX_BATCH: usize = 32;
-/// Largest `max_batch` accepted (the OpenAI request limit is 2048; 256 keeps bodies small).
+/// Largest `max_batch` accepted (the hosted request limit is 2048; 256 keeps bodies small).
 pub const MAX_BATCH: usize = 256;
 /// Most texts one [`EmbeddingsClient::embed`] call accepts.
 pub const MAX_INPUTS: usize = 512;
@@ -86,13 +86,13 @@ pub trait EmbeddingsClient: Send + Sync {
     async fn embed(&self, texts: &[String]) -> Result<Embedded, EmbeddingsError>;
 }
 
-/// Settings of an [`OpenAiEmbeddings`] client.
+/// Settings of an [`HttpEmbeddings`] client.
 #[derive(Clone)]
 pub struct EmbeddingsConfig {
-    /// Base URL (`https://api.openai.com/v1`) or a full `.../embeddings` or `.../chat/completions`
+    /// Base URL (`https://host/v1`) or a full `.../embeddings` or `.../chat/completions`
     /// URL of the same API.
     pub endpoint: String,
-    /// Embedding model name (`MODEL_EMBEDDING_NAME`).
+    /// Embedding model name (`CRAWLX_EMBEDDING_MODEL`).
     pub model: String,
     /// Bearer credential, if the endpoint needs one.
     pub api_key: Option<SecretOr<String>>,
@@ -132,8 +132,8 @@ impl EmbeddingsConfig {
     }
 }
 
-/// OpenAI-compatible embeddings client (OpenAI, Ollama `/v1`, vLLM, LiteLLM, ...).
-pub struct OpenAiEmbeddings {
+/// Chat-completions-compatible embeddings client (hosted gateways, local model servers, ...).
+pub struct HttpEmbeddings {
     client: reqwest::Client,
     url: reqwest::Url,
     model: String,
@@ -143,9 +143,9 @@ pub struct OpenAiEmbeddings {
     max_input: usize,
 }
 
-impl std::fmt::Debug for OpenAiEmbeddings {
+impl std::fmt::Debug for HttpEmbeddings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenAiEmbeddings")
+        f.debug_struct("HttpEmbeddings")
             .field("url", &"[REDACTED]")
             .field("model", &self.model)
             .field("api_key", &self.api_key)
@@ -192,7 +192,7 @@ struct Usage {
     total_tokens: u64,
 }
 
-impl OpenAiEmbeddings {
+impl HttpEmbeddings {
     /// Build the client.
     ///
     /// # Errors
@@ -319,7 +319,7 @@ fn check_vectors(vectors: &[Vec<f32>], dims: &mut Option<usize>) -> Result<(), E
 }
 
 #[async_trait]
-impl EmbeddingsClient for OpenAiEmbeddings {
+impl EmbeddingsClient for HttpEmbeddings {
     async fn embed(&self, texts: &[String]) -> Result<Embedded, EmbeddingsError> {
         check_inputs(texts)?;
         let mut out = Embedded {
@@ -545,12 +545,12 @@ mod tests {
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-    fn client(server: &MockServer, tweak: impl FnOnce(&mut EmbeddingsConfig)) -> OpenAiEmbeddings {
+    fn client(server: &MockServer, tweak: impl FnOnce(&mut EmbeddingsConfig)) -> HttpEmbeddings {
         let mut cfg = EmbeddingsConfig::new(&format!("{}/v1", server.uri()), "embed-test");
         cfg.api_key = Some(SecretOr::secret("sk-secret".to_owned()));
         cfg.timeout = Duration::from_secs(5);
         tweak(&mut cfg);
-        OpenAiEmbeddings::new(cfg).unwrap()
+        HttpEmbeddings::new(cfg).unwrap()
     }
 
     fn texts(items: &[&str]) -> Vec<String> {
@@ -609,14 +609,14 @@ mod tests {
     fn construction_rejects_unusable_settings() {
         let bad_model = EmbeddingsConfig::new("http://h/v1", " ");
         assert!(matches!(
-            OpenAiEmbeddings::new(bad_model),
+            HttpEmbeddings::new(bad_model),
             Err(EmbeddingsError::InvalidRequest(m)) if m.contains("model")
         ));
         for batch in [0, MAX_BATCH + 1] {
             let mut cfg = EmbeddingsConfig::new("http://h/v1", "m");
             cfg.max_batch = batch;
             assert!(matches!(
-                OpenAiEmbeddings::new(cfg),
+                HttpEmbeddings::new(cfg),
                 Err(EmbeddingsError::InvalidRequest(m)) if m.contains("max_batch")
             ));
         }
@@ -708,7 +708,7 @@ mod tests {
             c.embed(&texts(&["a"])).await,
             Err(EmbeddingsError::Status { status: 429 })
         );
-        let dead = OpenAiEmbeddings::new(EmbeddingsConfig::new("http://127.0.0.1:1/v1", "m")).unwrap();
+        let dead = HttpEmbeddings::new(EmbeddingsConfig::new("http://127.0.0.1:1/v1", "m")).unwrap();
         assert!(matches!(
             dead.embed(&texts(&["a"])).await,
             Err(EmbeddingsError::Transport(_))

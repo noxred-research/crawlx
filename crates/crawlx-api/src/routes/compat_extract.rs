@@ -1,4 +1,4 @@
-//! Firecrawl v2 `extract` endpoints of the compat facade: `POST /extract` starts an
+//! compat v2 `extract` endpoints of the compat facade: `POST /extract` starts an
 //! asynchronous job ([`crate::intel::extract`]), `GET /extract/{id}` reports it.
 
 use crate::auth::Principal;
@@ -20,30 +20,30 @@ use serde_json::{json, Value};
 pub const OPERATIONS: &[Operation] = &[
     (
         "post",
-        "/compat/firecrawl/v2/extract",
-        "firecrawlExtract",
-        "Firecrawl v2 extract: structured data from URLs (globs), prompt and schema",
+        "/compat/v2/extract",
+        "compatExtract",
+        "compat v2 extract: structured data from URLs (globs), prompt and schema",
         "crawls:write",
         "200",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/extract/{id}",
-        "firecrawlExtractStatus",
-        "Firecrawl v2 extract: job status, data, tokensUsed and expiresAt",
+        "/compat/v2/extract/{id}",
+        "compatExtractStatus",
+        "compat v2 extract: job status, data, tokensUsed and expiresAt",
         "crawls:read",
         "200",
     ),
 ];
 
-/// Routes of this module, mounted under `/compat/firecrawl/v2` behind authentication.
+/// Routes of this module, mounted under `/compat/v2` behind authentication.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/compat/firecrawl/v2/extract", post(create))
-        .route("/compat/firecrawl/v2/extract/{id}", get(status))
+        .route("/compat/v2/extract", post(create))
+        .route("/compat/v2/extract/{id}", get(status))
 }
 
-/// `POST /compat/firecrawl/v2/extract`.
+/// `POST /compat/v2/extract`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:write`, `422` for an invalid body, `503
@@ -65,7 +65,7 @@ pub async fn create(
     Ok(json_response(StatusCode::OK, &out))
 }
 
-/// `GET /compat/firecrawl/v2/extract/{id}`.
+/// `GET /compat/v2/extract/{id}`.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`, `404 not_found` for an unknown, expired or foreign job.

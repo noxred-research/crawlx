@@ -1,5 +1,5 @@
-//! The Firecrawl SDK's WebSocket watcher (`Watcher` of `apps/js-sdk/firecrawl/src/v2/watcher.ts`):
-//! `GET /compat/firecrawl/v2/crawl/{id}` and `GET /compat/firecrawl/v2/batch/scrape/{id}` with
+//! The reference SDK's WebSocket watcher (`Watcher` of the JS SDK `v2/watcher.ts`):
+//! `GET /compat/v2/crawl/{id}` and `GET /compat/v2/batch/scrape/{id}` with
 //! `Upgrade: websocket` stream the job instead of returning its status (a plain `GET` still
 //! answers the status JSON). `.../crawl/{id}/ws` and `.../batch/scrape/{id}/ws` are siblings with
 //! the same behaviour.
@@ -20,7 +20,7 @@ use crate::resources::expires_at;
 use crate::routes::compat::{crawl_pages, crawl_total, facade_status, load_crawl};
 use crate::routes::compat_scrape::{batch_expires, batch_status_name, batch_total, load_batch};
 use crate::routes::pages::sorted_pages;
-use crate::scrape_service::{base_url, credits_for, firecrawl_document, record_run_usage};
+use crate::scrape_service::{base_url, compat_document, credits_for, record_run_usage};
 use crate::state::AppState;
 use crate::store::Scope;
 use crate::streams::StreamPermit;
@@ -50,16 +50,16 @@ const MIN_KEEPALIVE: Duration = Duration::from_millis(1);
 pub const OPERATIONS: &[Operation] = &[
     (
         "get",
-        "/compat/firecrawl/v2/crawl/{id}/ws",
-        "firecrawlCrawlWatch",
+        "/compat/v2/crawl/{id}/ws",
+        "compatCrawlWatch",
         "WebSocket watcher of a crawl (the key may be the Sec-WebSocket-Protocol; catchup, document and done frames); the crawl status path upgrades too",
         "crawls:read",
         "101",
     ),
     (
         "get",
-        "/compat/firecrawl/v2/batch/scrape/{id}/ws",
-        "firecrawlBatchScrapeWatch",
+        "/compat/v2/batch/scrape/{id}/ws",
+        "compatBatchScrapeWatch",
         "WebSocket watcher of a batch scrape (catchup, document and done frames); the batch status path upgrades too",
         "crawls:read",
         "101",
@@ -70,8 +70,8 @@ pub const OPERATIONS: &[Operation] = &[
 /// upgrading `GET` of the two status paths is [`crawl`] and [`batch`] in their own route tables.
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/compat/firecrawl/v2/crawl/{id}/ws", get(crawl))
-        .route("/compat/firecrawl/v2/batch/scrape/{id}/ws", get(batch))
+        .route("/compat/v2/crawl/{id}/ws", get(crawl))
+        .route("/compat/v2/batch/scrape/{id}/ws", get(batch))
 }
 
 /// What a watcher follows.
@@ -181,7 +181,7 @@ fn document_frame(document: Value) -> Value {
 /// The extraction result of the WebSocket upgrade; it is a rejection for a plain `GET`.
 type Upgrade = Result<WebSocketUpgrade, WebSocketUpgradeRejection>;
 
-/// `GET /compat/firecrawl/v2/crawl/{id}` and `GET /compat/firecrawl/v2/crawl/{id}/ws`: with
+/// `GET /compat/v2/crawl/{id}` and `GET /compat/v2/crawl/{id}/ws`: with
 /// `Upgrade: websocket` the crawl watcher, otherwise [`crate::routes::compat::status`].
 ///
 /// # Errors
@@ -204,7 +204,7 @@ pub async fn crawl(
     upgrade(state, &principal, Kind::Crawl, &id, &headers, ws).await
 }
 
-/// `GET /compat/firecrawl/v2/batch/scrape/{id}` and `GET /compat/firecrawl/v2/batch/scrape/{id}/ws`:
+/// `GET /compat/v2/batch/scrape/{id}` and `GET /compat/v2/batch/scrape/{id}/ws`:
 /// with `Upgrade: websocket` the batch watcher, otherwise
 /// [`crate::routes::compat_scrape::batch_status`].
 ///
@@ -247,7 +247,7 @@ async fn upgrade(
     let permit = state.streams.acquire(principal.tenant, run.id)?;
     let base = base_url(headers);
     // a client that offered its key as the subprotocol needs it echoed, or it drops the socket
-    let ws = match websocket_key(headers, state.config.compat.firecrawl_keys) {
+    let ws = match websocket_key(headers, state.config.compat.prefixed_keys) {
         Some(key) => ws.protocols([key.to_owned()]),
         None => ws,
     };
@@ -348,7 +348,7 @@ impl Watcher {
     async fn send_documents(&mut self, run: &CrawlRun, pages: &[&PageRecord]) -> Result<(), Stop> {
         for page in pages {
             if self.sent.insert(page.frontier_id) {
-                let document = firecrawl_document(&self.state, run, page, &self.base).await;
+                let document = compat_document(&self.state, run, page, &self.base).await;
                 self.send(document_frame(document)).await?;
             }
         }
@@ -362,7 +362,7 @@ impl Watcher {
         let mut documents = Vec::with_capacity(snapshot.pages.len());
         for page in &snapshot.pages {
             self.sent.insert(page.frontier_id);
-            documents.push(firecrawl_document(&self.state, &run, page, &self.base).await);
+            documents.push(compat_document(&self.state, &run, page, &self.base).await);
         }
         self.send(catchup_frame(&snapshot.counts, documents)).await?;
         if run.status.is_terminal() {

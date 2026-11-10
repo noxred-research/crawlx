@@ -159,8 +159,8 @@
       "name": "Save Vault A",
       "logical_id": "c1-1",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     },
     {
@@ -170,8 +170,8 @@
       "name": "Cancel Vault A",
       "logical_id": "c1-2",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     },
     {
@@ -181,8 +181,8 @@
       "name": "Publish Vault A",
       "logical_id": "c1-3",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     },
     {
@@ -192,8 +192,8 @@
       "name": "Archive Vault A",
       "logical_id": "c1-4",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     },
     {
@@ -203,8 +203,8 @@
       "name": "Save Vault B",
       "logical_id": "c2-1",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     },
     {
@@ -214,8 +214,8 @@
       "name": "Cancel Vault B",
       "logical_id": "c2-2",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     },
     {
@@ -225,8 +225,8 @@
       "name": "Publish Vault B",
       "logical_id": "c2-3",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     },
     {
@@ -236,8 +236,8 @@
       "name": "Archive Vault B",
       "logical_id": "c2-4",
       "oracle": {
-        "playwright": "oracle_gap",
-        "patchright": "actionable"
+        "reference": "oracle_gap",
+        "hardened": "actionable"
       }
     }
   ],

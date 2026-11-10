@@ -329,7 +329,7 @@ fn helm_configuration_passes_the_real_config_parser_and_validation() {
 /// Required custody values of the chart: it refuses to render without them.
 const HELM_KEY_FILE: &str = "artifactCustody.keyFileSecret=crawlx-artifact-key";
 const HELM_SECRET_REDIS: &str = "artifactCustody.secretRedis.existingSecret=crawlx-secret-registry";
-const HELM_KMS: &str = "artifactCustody.kmsKeyId=arn:aws:kms:us-east-1:123456789012:key/operator-canary";
+const HELM_KMS: &str = "artifactCustody.kmsKeyId=arn:aws:kms:us-east-1:123456789012:key/operator-canary"; // wire-compat: key ARN shape
 
 /// `helm template custody deploy/helm/crawlx --set …`; `None` when helm is not installed.
 fn helm_template(sets: &[&str]) -> Option<std::process::Output> {
@@ -494,7 +494,8 @@ fn helm_chart_wires_artifact_custody_into_api_worker_and_config_check() {
         let workload = named(&documents, kind, name).unwrap();
         let env = container_env(workload);
         assert_eq!(
-            env["CRAWLX_ARTIFACT_KMS_KEY_ID"], "arn:aws:kms:us-east-1:123456789012:key/operator-canary",
+            env["CRAWLX_ARTIFACT_KMS_KEY_ID"],
+            "arn:aws:kms:us-east-1:123456789012:key/operator-canary", // wire-compat: key ARN shape
             "{name}"
         );
         assert!(!env.contains_key("CRAWLX_ARTIFACT_KEY_FILE"), "{name}");
@@ -839,9 +840,10 @@ fn compose_environment_keeps_credentials_in_mounted_secrets_and_worker_paths_on_
                 }
                 // read by `S3Blobs::new` through the SDK's environment credentials provider
                 "AWS_ACCESS_KEY_ID" | "AWS_SECRET_ACCESS_KEY" => {
+                    // wire-compat: SDK credential variables
                     assert_eq!(
                         name, "admin",
-                        "AWS credentials belong to the object-store admin runner"
+                        "object-store credentials belong to the object-store admin runner"
                     );
                 }
                 _ => {
@@ -1465,7 +1467,7 @@ fn checkpoint_kms_deployment_setting_is_opt_in_without_a_default_key() {
     assert!(service(&absent, "worker")["environment"]
         .get(setting)
         .is_none_or(Value::is_null));
-    let key_id = "arn:aws:kms:us-east-1:123456789012:key/operator-canary";
+    let key_id = "arn:aws:kms:us-east-1:123456789012:key/operator-canary"; // wire-compat: key ARN shape
     let configured = docker_compose(&arguments, &[(setting, key_id)]).unwrap();
     assert!(
         configured.status.success(),

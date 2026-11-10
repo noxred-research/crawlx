@@ -77,7 +77,7 @@ pub struct HttpError {
     pub details: Vec<Detail>,
     /// Seconds for the `Retry-After` header on `429`/`503` responses.
     pub retry_after: Option<u64>,
-    /// The job a conflict is about: the `id` of the Firecrawl error body of a reused
+    /// The job a conflict is about: the `id` of the compat error body of a reused
     /// `x-request-id` (`request_in_flight`, `duplicate_request`).
     pub job_id: Option<String>,
 }
@@ -114,7 +114,7 @@ impl HttpError {
         self
     }
 
-    /// `409 request_in_flight` (Firecrawl): a request with this `x-request-id` or
+    /// `409 request_in_flight` (the compat API): a request with this `x-request-id` or
     /// `Idempotency-Key` is still being processed.
     #[must_use]
     pub fn request_in_flight() -> Self {
@@ -126,7 +126,7 @@ impl HttpError {
         )
     }
 
-    /// `409 duplicate_request` (Firecrawl): this `x-request-id` was already used with different
+    /// `409 duplicate_request` (the compat API): this `x-request-id` was already used with different
     /// parameters.
     #[must_use]
     pub fn duplicate_request() -> Self {
@@ -195,7 +195,7 @@ impl HttpError {
     }
 
     /// `409 engine_mismatch`: the tenant's `engine` flag routes this request elsewhere
-    /// (the strangler gateway); the gateway must send it to Firecrawl or mirror it as a shadow.
+    /// (the strangler gateway); the gateway must send it to the compat API or mirror it as a shadow.
     #[must_use]
     pub fn engine_mismatch(engine: &str, shadow: bool) -> Self {
         Self::new(
@@ -395,14 +395,14 @@ impl HttpError {
         e
     }
 
-    /// `<status> <code>` for a Firecrawl-compat condition without a dedicated constructor
+    /// `<status> <code>` for a compat condition without a dedicated constructor
     /// (`unsupported_content_type`, `zdr_unsupported`, ...).
     #[must_use]
     pub fn compat(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
         Self::new(status, code, message, false)
     }
 
-    /// `400 BAD_REQUEST` carrying every violation: Firecrawl's validation failure
+    /// `400 BAD_REQUEST` carrying every violation: the compat API's validation failure
     /// (`{success:false, error:"Bad Request", code:"BAD_REQUEST", details[]}` on the facade).
     #[must_use]
     pub fn bad_request(details: Vec<Detail>) -> Self {
@@ -423,7 +423,7 @@ impl HttpError {
         }})
     }
 
-    /// Firecrawl-facade shape: `{success:false, error:"<message>", code, details, requestId}`,
+    /// compat-facade shape: `{success:false, error:"<message>", code, details, requestId}`,
     /// plus `id` (the job the conflict is about) for a reused request id.
     #[must_use]
     pub fn compat_envelope(&self, request_id: &str) -> Value {

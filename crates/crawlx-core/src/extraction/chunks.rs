@@ -1,7 +1,7 @@
 //! Native Unicode-whitespace word windows over finalized privacy-approved text.
 //!
 //! These ranges preserve internal whitespace. They do not claim Python splitting,
-//! Punkt, regex capture, TextTiling, or model-backed tokenizer equivalence.
+//! sentence-tokenizer-model, regex capture, TextTiling, or model-backed tokenizer equivalence.
 use super::SourceRangeV1;
 use crate::hash::Digest;
 use serde::{Deserialize, Serialize};

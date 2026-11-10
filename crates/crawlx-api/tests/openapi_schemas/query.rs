@@ -64,14 +64,14 @@ fn query_literals(src: &str) -> BTreeSet<String> {
 fn documented_query_parameters_are_the_ones_the_handlers_read() {
     let doc = doc();
     let handlers: [(&str, &[&str]); 5] = [
-        (include_str!("../../src/routes/compat.rs"), &["firecrawlGetCrawl"]),
+        (include_str!("../../src/routes/compat.rs"), &["compatGetCrawl"]),
         (
             include_str!("../../src/routes/compat_scrape.rs"),
-            &["firecrawlBatchScrapeStatus"],
+            &["compatBatchScrapeStatus"],
         ),
         (
             include_str!("../../src/routes/compat_agent.rs"),
-            &["firecrawlListAgents", "firecrawlGetAgentTrace"],
+            &["compatListAgents", "compatGetAgentTrace"],
         ),
         (
             include_str!("../../src/routes/compat_monitor.rs"),
@@ -79,7 +79,7 @@ fn documented_query_parameters_are_the_ones_the_handlers_read() {
         ),
         (
             include_str!("../../src/routes/compat_team.rs"),
-            &["firecrawlActivity"],
+            &["compatActivity"],
         ),
     ];
     for (src, ids) in handlers {
@@ -158,7 +158,7 @@ async fn query_parameters_of_the_search_indexes_are_read() {
         "sources"
     );
     mark(
-        "firecrawlSearchDeveloperGet",
+        "compatSearchDeveloperGet",
         &[
             "query",
             "k",
@@ -196,7 +196,7 @@ async fn query_parameters_of_the_search_indexes_are_read() {
         "domain"
     );
     mark(
-        "firecrawlSearchGovGet",
+        "compatSearchGovGet",
         &[
             "query",
             "k",
@@ -224,7 +224,7 @@ async fn query_parameters_of_the_search_indexes_are_read() {
         assert!(warning.contains(k), "{k} in {warning}");
     }
     mark(
-        "firecrawlResearchPapers",
+        "compatResearchPapers",
         &["query", "k", "authors", "categories", "from", "to"],
     );
 
@@ -239,7 +239,7 @@ async fn query_parameters_of_the_search_indexes_are_read() {
         .get("/search/research/papers/arxiv:2401.00001?query=attention&k=0")
         .await;
     assert!(detail_paths(&r).contains(&"/k".to_owned()), "{}", r.body);
-    mark("firecrawlResearchPaper", &["query", "k"]);
+    mark("compatResearchPaper", &["query", "k"]);
 
     // similar papers
     let r = t.get("/search/research/papers/arxiv:2401.00001/similar").await;
@@ -263,7 +263,7 @@ async fn query_parameters_of_the_search_indexes_are_read() {
     );
     assert!(r.body["note"].as_str().unwrap().contains("rerank"), "{}", r.body);
     mark(
-        "firecrawlResearchSimilar",
+        "compatResearchSimilar",
         &["intent", "mode", "k", "anchor", "rerank"],
     );
 

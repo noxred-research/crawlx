@@ -1,7 +1,7 @@
-# Firecrawl differential harness
+# Upstream differential harness
 
-Firecrawl is a black box that produces data; crawlx
-is compared against that data. Nothing here links, vendors or translates Firecrawl source.
+Upstream is a black box that produces data; crawlx
+is compared against that data. Nothing here links, vendors or translates upstream source.
 
 ## Pieces
 
@@ -10,17 +10,17 @@ is compared against that data. Nothing here links, vendors or translates Firecra
 | `crates/crawlx-bench/src/differential/` | the runner library: export shapes, crawlx run reduction, normalization (incl. block-level F1), the gym access log (`access.rs`), ledger, comparator, scorecard, and the wire-level scenarios (`wire/`: driver, webhook sink, comparator) |
 | `crates/crawlx-bench/src/bin/crawlx-differential.rs` | the CLI (`cargo run -p crawlx-bench --bin crawlx-differential -- --help`; `... -- wire --help` for the wire subcommands) |
 | `divergences.toml` | the divergence ledger; schema in the file header; entries may be scoped to families |
-| `families.json` | the crawl families: fixture, host, seed path, Firecrawl request, comparison mode, expected verdict, recorded residuals |
+| `families.json` | the crawl families: fixture, host, seed path, upstream request, comparison mode, expected verdict, recorded residuals |
 | `wire-scenarios.json` | the wire families (VAL, PREC, CLAMP, PERSIST, CANCEL, RESUME/LEASE, WH, ZDR): scenarios, how each crawl is settled, the expected verdict |
-| `captures/<family>.json` | the black-box Firecrawl captures (`provenance: black_box_run`, pinned commit): a v2 export for a crawl family, the raw exchanges of the scenarios for a `wire-*` family; `s1.authored.json` is the authored sample of 2026-10-20, kept for diffing only |
-| `docker-compose.firecrawl.yaml`, `firecrawl.env` | the override file and the compose environment for the unmodified pinned Firecrawl self-host (upstream's own `docker-compose.yaml` is the first `-f` file) |
-| `firecrawl_export.py` | crawl one family through a running Firecrawl v2 API and write the export, with the gym's access log (stdlib only) |
-| `run.sh`, `run-wire.sh` | start the stack, run every crawl family (resp. wire family) against Firecrawl and crawlx, score; `all` or one family |
-| `sdk_shape_capture.py`, `sdk_shape_diff.py`, `tests/` | the SDK-in-the-loop shape diff (below): the official `firecrawl-py` calls captured against one API, the field-by-field diff of two captures, and its offline unit tests |
+| `captures/<family>.json` | the black-box upstream captures (`provenance: black_box_run`, pinned commit): a v2 export for a crawl family, the raw exchanges of the scenarios for a `wire-*` family; `s1.authored.json` is the authored sample of 2026-10-20, kept for diffing only |
+| `docker-compose.upstream.yaml`, `upstream.env` | the override file and the compose environment for the unmodified pinned upstream self-host (upstream's own `docker-compose.yaml` is the first `-f` file) |
+| `upstream_export.py` | crawl one family through a running upstream v2 API and write the export, with the gym's access log (stdlib only) |
+| `run.sh`, `run-wire.sh` | start the stack, run every crawl family (resp. wire family) against upstream and crawlx, score; `all` or one family |
+| `sdk_shape_capture.py`, `sdk_shape_diff.py`, `tests/` | the SDK-in-the-loop shape diff (below): the official Python SDK's calls (pinned in `tests/sdk/requirements.txt`) captured against one API, the field-by-field diff of two captures, and its offline unit tests |
 
 ## Export format
 
-The Firecrawl side is the `GET /v2/crawl/{id}` body with every `next` page merged into `data[]`
+The upstream side is the `GET /v2/crawl/{id}` body with every `next` page merged into `data[]`
 and the `GET /v2/crawl/{id}/errors` body stored under `errors`:
 
 ```json
@@ -39,9 +39,9 @@ only).
 ## What is compared
 
 - **C1 admission.** The set of URLs each system attempted (documents plus error entries on the
-  Firecrawl side; `succeeded`, `failed` and `unreachable` frontier rows plus the entry URL an
+  upstream side; `succeeded`, `failed` and `unreachable` frontier rows plus the entry URL an
   include filter refused as a page but crawlx fetched for its links, a depth-0 `policy_blocked` row
-  `not_included`/`url_not_included`, on the crawlx side; Firecrawl lists that URL in `errors[]` as
+  `not_included`/`url_not_included`, on the crawlx side; upstream lists that URL in `errors[]` as
   `CRAWL_DENIAL`) and the
   robots-blocked sets. URLs are reduced to origin-independent keys (`{origin}/path?query`, fragment
   dropped, trailing slash removed), so the two systems may crawl the fixture on different hosts or
@@ -77,7 +77,7 @@ rows, blank-line runs collapsed.
 ## Capture provenance
 
 `captures/<family>.json` are real exports (`crawlxSample.provenance: black_box_run`, with the pinned
-`upstreamCommit`, the job id, the request and the status-page count) of Firecrawl
+`upstreamCommit`, the job id, the request and the status-page count) of upstream
 `c31e88c07afe941bfd8aebde61684eeba042abb5` crawling a CrawlerGym fixture (the 13 families of 2026-10-28; the `d2` families and the wire families of
 2026-10-29). A crawl capture of 2026-10-29 also
 carries `accessLog`, the gym's rows of that crawl. `rawHtml` is stored as its SHA-256 and byte
@@ -85,7 +85,7 @@ length, not as bytes. A `wire-*` capture (`wireSample.provenance: black_box_run`
 exchanges of every scenario (documents reduced to `sourceURL` and `statusCode`), the webhook sink's
 deliveries and the quiet-window request counts. `captures/s1.authored.json` was written from the `s1` fixture semantics and is
 **not** a capture; it differs from the real one (HTTP-error pages are documents upstream), the runner
-tests still use it as a synthetic export. Firecrawl's own fixtures are not used (R7).
+tests still use it as a synthetic export. Upstream's own fixtures are not used (R7).
 
 The captures pin the upstream commit and request, but do not record a digest of the authored gym
 source. The gym snapshot digest covers the seed, not the fixture files. Historical input therefore
@@ -108,7 +108,7 @@ entry. Future source changes require an explicit provenance review, not automati
 normalization. All other files, resource-identifying queries, admission comparisons, ledger entries
 and thresholds remain unchanged. The historical file is authored input, not a new upstream
 measurement; `captures/g12.json` remains untouched. Ordinary gym listeners, including the G12
-privacy test, retain the current canary. The command-line gym and `SKIP_FIRECRAWL=1` shell runner
+privacy test, retain the current canary. The command-line gym and `SKIP_UPSTREAM=1` shell runner
 still use the current catalog; unlike the Rust replay, their G12 comparison is not a like-for-like
 replay of this historical entry.
 
@@ -117,22 +117,22 @@ replay of this historical entry.
 ```sh
 # offline replay of the committed captures against in-process crawlx runs (what the tests do)
 cargo test -p crawlx-bench --test differential
-SKIP_FIRECRAWL=1 GYM_PORT=4101 bench/differential/run.sh all /tmp/replay
+SKIP_UPSTREAM=1 GYM_PORT=4101 bench/differential/run.sh all /tmp/replay
 
 # one capture by hand
-cargo run -p crawlx-bench --bin crawlx-differential -- --firecrawl bench/differential/captures/s1.json \
-  --firecrawl-origin http://gym.test:4101 --fixture s1 --request @bench/differential/captures/s1.json \
+cargo run -p crawlx-bench --bin crawlx-differential -- --upstream bench/differential/captures/s1.json \
+  --upstream-origin http://gym.test:4101 --fixture s1 --request @bench/differential/captures/s1.json \
   --trailing-slash keep --label s1 --out /tmp/scorecard.md
 
-# a real run: Firecrawl at the pin, built from a checkout outside the repository
-FIRECRAWL_SRC=$HOME/.cache/firecrawl-upstream FIRECRAWL_PORT=3102 GYM_PORT=4101 PROMOTE=1 \
+# a real run: upstream at the pin, built from a checkout outside the repository
+UPSTREAM_SRC=$HOME/.cache/upstream-checkout UPSTREAM_PORT=3102 GYM_PORT=4101 PROMOTE=1 \
   bench/differential/run.sh all bench/differential/out
-FIRECRAWL_URL=http://127.0.0.1:3102 bench/differential/run.sh s1   # an already running stack
+UPSTREAM_URL=http://127.0.0.1:3102 bench/differential/run.sh s1   # an already running stack
 ```
 
-`run.sh` checks the pinned commit out (default `.firecrawl-src/`, git-ignored; `FIRECRAWL_SRC` for another
+`run.sh` checks the pinned commit out (default `.upstream-src/`, git-ignored; `UPSTREAM_SRC` for another
 path), builds and starts only `api` and its dependencies with
-`docker compose -p crawlx-differential --env-file firecrawl.env -f <checkout>/docker-compose.yaml -f docker-compose.firecrawl.yaml`,
+`docker compose -p crawlx-differential --env-file upstream.env -f <checkout>/docker-compose.yaml -f docker-compose.upstream.yaml`,
 starts a fresh gym on `0.0.0.0:$GYM_PORT` per family (its `robots.txt` belongs to the fixture that claims the origin:
 `claim_origin` in `families.json`), posts the family's request with `maxConcurrency: 1` and formats `markdown`,
 `links`, `rawHtml`, follows `next`, fetches `/errors` and the gym's access log (`/__gym/ledger`), and scores with
@@ -141,39 +141,39 @@ starts a fresh gym on `0.0.0.0:$GYM_PORT` per family (its `robots.txt` belongs t
 `x-idempotency-key` (the API process exits), and it fetches the gym only because `ALLOW_LOCAL_WEBHOOKS=true` is set on the API container.
 
 The `d2` families fetch the gym under several host names (`fixture_hosts` in `families.json`, mapped to the host
-gateway by `docker-compose.firecrawl.yaml` and to 127.0.0.1 by the crawlx run's resolver).
+gateway by `docker-compose.upstream.yaml` and to 127.0.0.1 by the crawlx run's resolver).
 
 ```sh
-# the wire families: scenarios against the real Firecrawl, the same scenarios against the in-process facade
-FIRECRAWL_URL=http://127.0.0.1:3102 FIRECRAWL_SRC=$HOME/.cache/firecrawl-upstream FIRECRAWL_PORT=3102 \
+# the wire families: scenarios against the real upstream, the same scenarios against the in-process facade
+UPSTREAM_URL=http://127.0.0.1:3102 UPSTREAM_SRC=$HOME/.cache/upstream-checkout UPSTREAM_PORT=3102 \
   GYM_PORT=4101 PROMOTE=1 bench/differential/run-wire.sh all bench/differential/out
-SKIP_FIRECRAWL=1 bench/differential/run-wire.sh all /tmp/wire   # offline: committed captures vs the facade
+SKIP_UPSTREAM=1 bench/differential/run-wire.sh all /tmp/wire   # offline: committed captures vs the facade
 cargo test -p crawlx-bench --test wire_facade                  # the same, as tests
 ```
 
-`run-wire.sh` restarts the Firecrawl API container (`RESTART_CMD`) for the PERSIST and RESUME scenarios and runs
+`run-wire.sh` restarts the upstream API container (`RESTART_CMD`) for the PERSIST and RESUME scenarios and runs
 a webhook sink on a free port, addressed from the containers as `http://gym.test:<port>/hook/<label>`.
 
 ## CI
 
 `ci.yml` job `differential-nightly` runs `run.sh` on the schedule only; `run-wire.sh` is run by hand and is not wired into CI yet. The runner tests (`cargo test -p crawlx-bench --test differential --test wire_facade`)
-run on every PR without Firecrawl.
+run on every PR without upstream.
 
 ## SDK shape diff
 
-The question is what the official SDK sees from the real Firecrawl and from the crawlx compat facade
+The question is what the official SDK sees from the real upstream and from the crawlx compat facade
 for the same calls on the same fixture. `sdk_shape_capture.py` runs `scrape` (the entry page, a 404, a
 500, a robots-disallowed page), `map`, `start_crawl` + `get_crawl_status` + `get_crawl_errors`, the
-`crawl` waiter and `cancel_crawl` through `firecrawl-py`, records each typed result and the raw wire
+`crawl` waiter and `cancel_crawl` through the official Python SDK, records each typed result and the raw wire
 exchange of the same request, and `sdk_shape_diff.py` flattens both wires to JSON path to type and
 writes the markdown report (paths only upstream, only crawlx, type and presence differences, stable
 values, response headers). The gated test `crates/crawlx-cli/tests/sdk_upstream_shape.rs` runs both
-captures (the facade in-process through `support/sdk_rig.rs`, the real Firecrawl at
-`CRAWLX_UPSTREAM_FIRECRAWL_URL`) and the diff; without the variable it prints `skipping: ...`.
+captures (the facade in-process through `support/sdk_rig.rs`, the real upstream at
+`CRAWLX_UPSTREAM_URL`) and the diff; without the variable it prints `skipping: ...`.
 The report and the raw captures are written to `bench/out/sdk-shape/` (git-ignored) unless the test is
 given another output directory.
 
 ```sh
 python3 -B -m unittest discover -s bench/differential/tests   # offline
-CRAWLX_UPSTREAM_FIRECRAWL_URL=http://127.0.0.1:3102 cargo test -p crawlx-cli --test sdk_upstream_shape -- --nocapture
+CRAWLX_UPSTREAM_URL=http://127.0.0.1:3102 cargo test -p crawlx-cli --test sdk_upstream_shape -- --nocapture
 ```

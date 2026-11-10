@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Firecrawl v2 `POST /map`, the request fields that read the store and the request headers:
+//! compat v2 `POST /map`, the request fields that read the store and the request headers:
 //! `ignoreCache` (the live results are extended with the URLs earlier
 //! crawls and scrapes of the same tenant stored for the site, unless it is true) and
 //! `location{country, languages}` (the `Accept-Language` the fixture site receives), end to end
@@ -23,9 +23,9 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-const MAP: &str = "/compat/firecrawl/v2/map";
-const CRAWL: &str = "/compat/firecrawl/v2/crawl";
-const SCRAPE: &str = "/compat/firecrawl/v2/scrape";
+const MAP: &str = "/compat/v2/map";
+const CRAWL: &str = "/compat/v2/crawl";
+const SCRAPE: &str = "/compat/v2/scrape";
 
 /// The `url` of every link of a map body, in order.
 fn links(v: &Value) -> Vec<String> {

@@ -254,12 +254,36 @@ mod tests {
     #[test]
     fn labeled_negative_controls_and_status_precedence() {
         let fixtures = [
-            (200, "<article><h1>CAPTCHA and Cloudflare research</h1><p>How anti-bot detection works.</p></article>", Category::Valid),
-            (200, "<main><h1>Contact</h1><form><div class='g-recaptcha'></div></form></main>", Category::Valid),
-            (200, "<article>News</article><form><input type=password></form>", Category::Valid),
-            (200, "<form id=challenge-form>Verify you are human</form>", Category::Challenge),
-            (200, "<main><form id=challenge-form>Verify you are human</form></main>", Category::Challenge),
-            (429, "<form id=challenge-form>Verify you are human</form>", Category::RateLimited),
+            (
+                200,
+                "<article><h1>CAPTCHA and CDN research</h1><p>How anti-bot detection works.</p></article>",
+                Category::Valid,
+            ),
+            (
+                200, // wire-compat: page markup class of a checkbox widget (next line)
+                "<main><h1>Contact</h1><form><div class='g-recaptcha'></div></form></main>",
+                Category::Valid,
+            ), // wire-compat: page markup class of a checkbox widget
+            (
+                200,
+                "<article>News</article><form><input type=password></form>",
+                Category::Valid,
+            ),
+            (
+                200,
+                "<form id=challenge-form>Verify you are human</form>",
+                Category::Challenge,
+            ),
+            (
+                200,
+                "<main><form id=challenge-form>Verify you are human</form></main>",
+                Category::Challenge,
+            ),
+            (
+                429,
+                "<form id=challenge-form>Verify you are human</form>",
+                Category::RateLimited,
+            ),
             (401, "<main>Sign in</main>", Category::AuthRequired),
             (503, "<main>Unavailable</main>", Category::TargetError),
             (204, "", Category::Valid),

@@ -1,6 +1,6 @@
 //! `crawlx browser install`: download the pinned Chromium ahead of time.
 //!
-//! katana downloads a browser by default; crawlx does it only when asked, either here or with
+//! The compatibility flags download a browser by default; crawlx does it only when asked, either here or with
 //! `--auto-download-chromium` on `crawl` and `worker`. The archive is the Chrome-for-Testing
 //! build `chromium-pin.toml` names, unpacked only after its SHA-256 equals the pinned digest, into
 //! the layout `ci/fetch-chromium.sh` writes (`<cache>/<version>/chrome-linux64/chrome`).

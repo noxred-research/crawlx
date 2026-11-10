@@ -1,4 +1,4 @@
-//! Persistence for the Firecrawl-parity LLM products: asynchronous `extract` and
+//! Persistence for the compatibility API's LLM products: asynchronous `extract` and
 //! `agent` jobs with their trace, snapshots and conversation threads, scheduled monitors with
 //! their checks and per-page baselines, the usage ledger behind `/team/*`, and per-tenant
 //! settings (`threat-protection`).

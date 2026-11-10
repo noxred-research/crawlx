@@ -1,7 +1,7 @@
 //! Deterministic local TCP contracts; no external provider account or network is used.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use crawlx_browser::captcha::CapsolverClient;
+use crawlx_browser::captcha::TaskCaptchaClient;
 use crawlx_core::captcha::{CaptchaChallenge, CaptchaConfig, CaptchaError, CaptchaKind, CaptchaProvider};
 use crawlx_core::secret::{CredentialRef, SecretOr};
 use serde_json::{json, Value};
@@ -65,8 +65,7 @@ impl Fixture {
                 }
             }
         });
-        let mut config =
-            CaptchaConfig::new(CaptchaProvider::Capsolver, CredentialRef("env://TEST_KEY".into()));
+        let mut config = CaptchaConfig::new(CaptchaProvider::TaskApi, CredentialRef("env://TEST_KEY".into()));
         config.endpoint = format!("http://{address}/").parse().unwrap();
         config.poll_interval_ms = 1;
         config.timeout_seconds = 2;
@@ -79,8 +78,8 @@ impl Fixture {
         }
     }
 
-    fn client(&self) -> CapsolverClient {
-        CapsolverClient::new(&self.config, SecretOr::secret("private-service-key".into())).unwrap()
+    fn client(&self) -> TaskCaptchaClient {
+        TaskCaptchaClient::new(&self.config, SecretOr::secret("private-service-key".into())).unwrap()
     }
 
     async fn finish(mut self) {
@@ -189,10 +188,10 @@ fn created() -> Reply {
 }
 
 fn ready(kind: CaptchaKind) -> Reply {
-    let solution = if kind == CaptchaKind::Turnstile {
+    let solution = if kind == CaptchaKind::ChallengeWidgetT {
         json!({"token": "private-solved-token"})
     } else {
-        json!({"gRecaptchaResponse": "private-solved-token"})
+        json!({"gRecaptchaResponse": "private-solved-token"}) // wire-compat: provider solution field
     };
     Reply::Json(json!({"errorId": 0, "status": "ready", "solution": solution}))
 }
@@ -200,18 +199,18 @@ fn ready(kind: CaptchaKind) -> Reply {
 #[tokio::test]
 async fn maps_all_challenge_tasks_and_returns_secret_ready_tokens() {
     for (kind, task_type) in [
-        (CaptchaKind::RecaptchaV2, "ReCaptchaV2TaskProxyLess"),
-        (CaptchaKind::RecaptchaV3, "ReCaptchaV3TaskProxyLess"),
+        (CaptchaKind::CheckboxV2, "ReCaptchaV2TaskProxyLess"), // wire-compat: provider task type
+        (CaptchaKind::ScoreV3, "ReCaptchaV3TaskProxyLess"),    // wire-compat: provider task type
         (
-            CaptchaKind::RecaptchaV2Enterprise,
-            "ReCaptchaV2EnterpriseTaskProxyLess",
+            CaptchaKind::CheckboxV2Enterprise,
+            "ReCaptchaV2EnterpriseTaskProxyLess", // wire-compat: provider task type
         ),
         (
-            CaptchaKind::RecaptchaV3Enterprise,
-            "ReCaptchaV3EnterpriseTaskProxyLess",
+            CaptchaKind::ScoreV3Enterprise,
+            "ReCaptchaV3EnterpriseTaskProxyLess", // wire-compat: provider task type
         ),
-        (CaptchaKind::Turnstile, "AntiTurnstileTaskProxyLess"),
-        (CaptchaKind::Hcaptcha, "HCaptchaTaskProxyLess"),
+        (CaptchaKind::ChallengeWidgetT, "AntiTurnstileTaskProxyLess"), // wire-compat: provider task type
+        (CaptchaKind::ChallengeWidgetH, "HCaptchaTaskProxyLess"),      // wire-compat: provider task type
     ] {
         let fixture = Fixture::new(vec![
             created(),
@@ -222,8 +221,8 @@ async fn maps_all_challenge_tasks_and_returns_secret_ready_tokens() {
         let mut challenge = challenge(kind);
         challenge.action = Some("login".into());
         challenge.enterprise_payload = Some(json!({"s": "enterprise-data"}));
-        challenge.data = Some("turnstile-data".into());
-        challenge.pagedata = Some("turnstile-page-data".into());
+        challenge.data = Some("challenge-data".into());
+        challenge.pagedata = Some("challenge-page-data".into());
         let client = fixture.client();
         assert!(!format!("{client:?}").contains("private-service-key"));
         let token = client.solve(&challenge, &CancellationToken::new()).await.unwrap();
@@ -239,23 +238,20 @@ async fn maps_all_challenge_tasks_and_returns_secret_ready_tokens() {
             assert_eq!(task["type"], task_type);
             assert_eq!(task["websiteURL"], "https://example.test/challenge");
             assert_eq!(task["websiteKey"], "public-site-key");
-            let v3 = matches!(
-                kind,
-                CaptchaKind::RecaptchaV3 | CaptchaKind::RecaptchaV3Enterprise
-            );
+            let v3 = matches!(kind, CaptchaKind::ScoreV3 | CaptchaKind::ScoreV3Enterprise);
             assert_eq!(task.get("pageAction"), v3.then_some(&json!("login")));
             let enterprise = matches!(
                 kind,
-                CaptchaKind::RecaptchaV2Enterprise | CaptchaKind::RecaptchaV3Enterprise
+                CaptchaKind::CheckboxV2Enterprise | CaptchaKind::ScoreV3Enterprise
             );
             assert_eq!(
                 task.get("enterprisePayload"),
                 enterprise.then_some(&json!({"s":"enterprise-data"}))
             );
-            if kind == CaptchaKind::Turnstile {
+            if kind == CaptchaKind::ChallengeWidgetT {
                 assert_eq!(
                     task["metadata"],
-                    json!({"action":"login","cdata":"turnstile-data","chlpagedata":"turnstile-page-data"})
+                    json!({"action":"login","cdata":"challenge-data","chlpagedata":"challenge-page-data"}) // wire-compat: provider metadata fields
                 );
             } else {
                 assert!(task.get("metadata").is_none());
@@ -286,7 +282,7 @@ async fn provider_errors_are_bounded_and_secret_free() {
         let fixture = Fixture::new(replies).await;
         let error = fixture
             .client()
-            .solve(&challenge(CaptchaKind::RecaptchaV2), &CancellationToken::new())
+            .solve(&challenge(CaptchaKind::CheckboxV2), &CancellationToken::new())
             .await
             .unwrap_err();
         assert_eq!(error, CaptchaError::Service);
@@ -306,7 +302,7 @@ async fn complete_deadline_bounds_create_headers_and_response_body() {
         fixture.config.timeout_seconds = 1;
         let error = fixture
             .client()
-            .solve(&challenge(CaptchaKind::RecaptchaV2), &CancellationToken::new())
+            .solve(&challenge(CaptchaKind::CheckboxV2), &CancellationToken::new())
             .await
             .unwrap_err();
         assert_eq!(error, CaptchaError::Timeout);
@@ -330,7 +326,7 @@ async fn cancellation_interrupts_inflight_create_and_poll_body() {
             }
         };
         let client = fixture.client();
-        let challenge = challenge(CaptchaKind::Turnstile);
+        let challenge = challenge(CaptchaKind::ChallengeWidgetT);
         let (result, ()) = tokio::join!(client.solve(&challenge, &cancel), stop);
         assert_eq!(result.unwrap_err(), CaptchaError::Cancelled);
         fixture.finish().await;
@@ -344,7 +340,7 @@ async fn pre_cancelled_solve_sends_no_create() {
     cancel.cancel();
     let error = fixture
         .client()
-        .solve(&challenge(CaptchaKind::Hcaptcha), &cancel)
+        .solve(&challenge(CaptchaKind::ChallengeWidgetH), &cancel)
         .await
         .unwrap_err();
     assert_eq!(error, CaptchaError::Cancelled);
@@ -370,16 +366,16 @@ async fn rejects_malformed_unknown_missing_and_oversized_responses() {
         ],
         vec![
             created(),
-            Reply::Json(json!({"errorId":0,"status":"ready","solution":{"gRecaptchaResponse":""}})),
+            Reply::Json(json!({"errorId":0,"status":"ready","solution":{"gRecaptchaResponse":""}})), // wire-compat: provider solution field
         ],
         vec![
             created(),
-            Reply::Json(json!({"errorId":0,"status":"ready","solution":{"gRecaptchaResponse":123}})),
+            Reply::Json(json!({"errorId":0,"status":"ready","solution":{"gRecaptchaResponse":123}})), // wire-compat: provider solution field
         ],
         vec![
             created(),
             Reply::Json(
-                json!({"errorId":0,"status":"ready","solution":{"gRecaptchaResponse":"x".repeat(16_385)}}),
+                json!({"errorId":0,"status":"ready","solution":{"gRecaptchaResponse":"x".repeat(16_385)}}), // wire-compat: provider solution field
             ),
         ],
         vec![Reply::Raw("x".repeat(65_537))],
@@ -388,7 +384,7 @@ async fn rejects_malformed_unknown_missing_and_oversized_responses() {
         let fixture = Fixture::new(replies).await;
         let error = fixture
             .client()
-            .solve(&challenge(CaptchaKind::RecaptchaV2), &CancellationToken::new())
+            .solve(&challenge(CaptchaKind::CheckboxV2), &CancellationToken::new())
             .await
             .unwrap_err();
         assert_eq!(error, CaptchaError::InvalidResponse);
@@ -402,7 +398,7 @@ async fn ambiguous_create_disconnect_is_never_retried() {
     let fixture = Fixture::new(vec![Reply::Disconnect]).await;
     let error = fixture
         .client()
-        .solve(&challenge(CaptchaKind::RecaptchaV2), &CancellationToken::new())
+        .solve(&challenge(CaptchaKind::CheckboxV2), &CancellationToken::new())
         .await
         .unwrap_err();
     assert_eq!(error, CaptchaError::Transport);
@@ -415,7 +411,7 @@ async fn redirects_are_not_followed_or_retried() {
     let fixture = Fixture::new(vec![Reply::Redirect]).await;
     let error = fixture
         .client()
-        .solve(&challenge(CaptchaKind::RecaptchaV2), &CancellationToken::new())
+        .solve(&challenge(CaptchaKind::CheckboxV2), &CancellationToken::new())
         .await
         .unwrap_err();
     assert_eq!(error, CaptchaError::Service);
@@ -429,7 +425,7 @@ async fn cancellation_interrupts_poll_delay() {
     fixture.config.poll_interval_ms = 1000;
     let cancel = CancellationToken::new();
     let client = fixture.client();
-    let challenge = challenge(CaptchaKind::RecaptchaV2);
+    let challenge = challenge(CaptchaKind::CheckboxV2);
     let stop = async {
         fixture.seen.notified().await;
         // Let createTask complete, then cancel while the solver sleeps.

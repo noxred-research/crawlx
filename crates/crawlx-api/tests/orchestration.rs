@@ -87,7 +87,7 @@ async fn caller_cannot_supply_authority_unknown_methods_or_scope_escape() {
 #[tokio::test]
 async fn pinned_import_requires_operator_key_and_hashes_raw_unique_keys() {
     let source = json!({"producerEpoch":1,"export":{"version":1,
-        "source":{"dialect":"crawlee_js_3_18","release":"3.18.2","commit":"78da0622762e1b569b5cb0b56e8eb06a0a010d93"},
+        "source":{"dialect":"js_actor_3_18","release":"3.18.2","commit":"78da0622762e1b569b5cb0b56e8eb06a0a010d93"},
         "requests":[{"url":"https://app.example.test/imported","sourceKey":"private-canary-unique-key"}]}});
     let absent = env();
     let id = absent.create_run(&simple_body()).await;

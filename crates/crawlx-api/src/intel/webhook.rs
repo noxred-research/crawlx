@@ -2,7 +2,7 @@
 //!
 //! A job request carries `webhook` as a URL string or `{url, headers, metadata, events}`. Each
 //! event is POSTed as `{success, type, id, data, metadata, error?}` with
-//! `X-Firecrawl-Signature: sha256=<hex HMAC-SHA256(secret, body)>` (the compat header; the
+//! [`SIGNATURE_HEADER`]`: sha256=<hex HMAC-SHA256(secret, body)>` (the compat header; the
 //! native `Crawlx-*` headers ride along). Delivery runs in the background: three attempts
 //! (immediately, after 1 s, after 5 s); a `410` or an egress denial stops at once. Failures are
 //! logged, never surfaced to the job.
@@ -165,9 +165,12 @@ pub struct JobEvent<'a> {
     pub error: Option<&'a str>,
 }
 
-/// `sha256=<hex>` of `HMAC-SHA256(secret, body)`, the `X-Firecrawl-Signature` value.
+/// Header that carries the delivery signature.
+pub const SIGNATURE_HEADER: &str = "X-Firecrawl-Signature"; // wire-compat: header existing receivers verify
+
+/// `sha256=<hex>` of `HMAC-SHA256(secret, body)`, the [`SIGNATURE_HEADER`] value.
 #[must_use]
-pub fn firecrawl_signature(secret: &str, body: &[u8]) -> String {
+pub fn compat_signature(secret: &str, body: &[u8]) -> String {
     // HMAC accepts keys of any length, so construction cannot fail.
     let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(secret.as_bytes()) else {
         return String::new();
@@ -230,10 +233,7 @@ impl JobWebhookSink {
         let mut headers = vec![
             ("Content-Type".to_owned(), "application/json".to_owned()),
             ("Crawlx-Event".to_owned(), format!("{kind}.{event}")),
-            (
-                "X-Firecrawl-Signature".to_owned(),
-                firecrawl_signature(&self.secret, &body),
-            ),
+            (SIGNATURE_HEADER.to_owned(), compat_signature(&self.secret, &body)),
         ];
         for (k, v) in &hook.headers {
             headers.push((k.clone(), v.clone()));
@@ -322,10 +322,10 @@ mod tests {
 
     #[test]
     fn signature_is_sha256_hmac_of_body() {
-        let a = firecrawl_signature("s", b"{}");
+        let a = compat_signature("s", b"{}");
         assert!(a.starts_with("sha256="));
         assert_eq!(a.len(), "sha256=".len() + 64);
-        assert_eq!(a, firecrawl_signature("s", b"{}"));
-        assert_ne!(a, firecrawl_signature("t", b"{}"));
+        assert_eq!(a, compat_signature("s", b"{}"));
+        assert_ne!(a, compat_signature("t", b"{}"));
     }
 }

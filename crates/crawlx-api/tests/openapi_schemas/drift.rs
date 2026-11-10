@@ -602,7 +602,7 @@ fn scrape_case() -> Case {
             ex(with(base, &o))
         })
         .collect();
-    let mut c = case("firecrawlScrape", Target::Scrape, examples);
+    let mut c = case("compatScrape", Target::Scrape, examples);
     c.silent = SCRAPE_SILENT;
     c.reports_unknown = true;
     c
@@ -627,7 +627,7 @@ fn batch_case() -> Case {
             ex(with(base, &o))
         })
         .collect();
-    let mut c = case("firecrawlBatchScrape", Target::Batch, examples);
+    let mut c = case("compatBatchScrape", Target::Batch, examples);
     c.reports_unknown = true;
     c.silent = &[
         "/extract/schema",
@@ -688,7 +688,7 @@ fn crawl_case() -> Case {
     examples.push(ex(
         json!({ "url": "https://docs.example.test/", "sitemap": "only" }),
     ));
-    let mut c = case("firecrawlCreateCrawl", Target::Crawl, examples);
+    let mut c = case("compatCreateCrawl", Target::Crawl, examples);
     c.reports_unknown = true;
     c.silent = &[
         "/integration",
@@ -721,7 +721,7 @@ fn map_case(site: &str) -> Case {
     }))];
     examples.push(ex(json!({ "url": site, "sitemap": "skip" })));
     examples.push(ex(json!({ "url": site, "sitemap": "only" })));
-    let mut c = case("firecrawlMap", Target::Map, examples);
+    let mut c = case("compatMap", Target::Map, examples);
     c.reports_unknown = true;
     // `location.country` is accepted and reported (no geo-located proxy)
     c.unsupported_ok = &["/location/country"];
@@ -730,13 +730,13 @@ fn map_case(site: &str) -> Case {
 
 fn search_case() -> Case {
     let mut c = case(
-        "firecrawlSearch",
+        "compatSearch",
         Target::Search,
         vec![
             ex(json!({
                 "query": "rust",
                 "limit": 5,
-                "sources": ["web", "news", "images", "alexandria",
+                "sources": ["web", "news", "images", "alexandria", // wire-compat
                             { "type": "web", "tbs": "qdr:w", "location": "Berlin" }, { "type": "news" }],
                 "categories": ["github", "developer", "research", "pdf", "gov"],
                 "tbs": "qdr:d",
@@ -766,7 +766,7 @@ fn search_case() -> Case {
         // read leniently: a source object's `tbs` and `location` are used when they are strings
         "/sources[]/tbs",
         "/sources[]/location",
-        // accepted for Firecrawl compatibility and reported as ignored
+        // accepted for the compat API compatibility and reported as ignored
         "/domainTools",
         "/toolDetail",
         "/integration",
@@ -777,7 +777,7 @@ fn search_case() -> Case {
 
 fn extract_case() -> Case {
     let mut c = case(
-        "firecrawlExtract",
+        "compatExtract",
         Target::Extract,
         vec![ex(json!({
             "urls": ["https://example.com/*", "https://example.com/about"],
@@ -809,7 +809,7 @@ fn extract_case() -> Case {
 fn agent_case() -> Case {
     let approval = "0198a3c2-0000-7000-8000-000000000001";
     let mut c = case(
-        "firecrawlStartAgent",
+        "compatStartAgent",
         Target::Agent,
         vec![
             ex(json!({
@@ -875,7 +875,7 @@ fn agent_case() -> Case {
 
 fn parse_case() -> Case {
     let mut c = case(
-        "firecrawlParse",
+        "compatParse",
         Target::Parse,
         vec![
             ex(json!({
@@ -1034,17 +1034,17 @@ async fn feedback_cases(rigs: &Rigs) -> Vec<Case> {
             json!({ "endpoint": endpoint, "jobId": job, "rating": "bad", "note": "n" }),
         ));
     }
-    let mut a = case("firecrawlSearchFeedback", Target::SearchFeedback, search);
+    let mut a = case("compatSearchFeedback", Target::SearchFeedback, search);
     // the page numbers are counted, not read one by one
     a.silent = &["/pageNumbers"];
-    let mut b = case("firecrawlFeedback", Target::Feedback, general);
+    let mut b = case("compatFeedback", Target::Feedback, general);
     b.silent = &["/pageNumbers"];
     vec![a, b]
 }
 
 fn index_cases() -> Vec<Case> {
     let mut dev = case(
-        "firecrawlSearchDeveloper",
+        "compatSearchDeveloper",
         Target::DeveloperPost,
         vec![ex(json!({
             "query": "tokio",
@@ -1087,7 +1087,7 @@ fn index_cases() -> Vec<Case> {
         "/fork",
     ];
     let mut gov = case(
-        "firecrawlSearchGov",
+        "compatSearchGov",
         Target::GovPost,
         vec![ex(json!({
             "query": "tax",
@@ -1106,19 +1106,19 @@ fn index_cases() -> Vec<Case> {
 
 fn other_cases() -> Vec<Case> {
     let preview = case(
-        "firecrawlCrawlParamsPreview",
+        "compatCrawlParamsPreview",
         Target::ParamsPreview,
         vec![ex(
             json!({ "url": "https://docs.example.test/", "prompt": "crawl the docs" }),
         )],
     );
     let docs = case(
-        "firecrawlSupportDocsSearch",
+        "compatSupportDocsSearch",
         Target::DocsSearch,
         vec![ex(json!({ "question": "How do I crawl a site?" }))],
     );
     let mut ask = case(
-        "firecrawlSupportAsk",
+        "compatSupportAsk",
         Target::SupportAsk,
         vec![ex(
             json!({ "question": "Why did my scrape fail?", "rationale": "it timed out" }),
@@ -1223,7 +1223,7 @@ async fn accepted_request_headers_are_volatile_and_recovered_only_for_execution(
 fn native_content_policy_schema_matches_parser_and_extraction_behavior() {
     use crawlx_core::extraction::QualityStatusV1;
     let document = doc();
-    let schema = case_schema(&document, "firecrawlScrape");
+    let schema = case_schema(&document, "compatScrape");
     let validate = validator(&document, &schema);
     let base = url::Url::parse("https://fixture.example.test/article").unwrap();
     let html = b"<html><body><article><h1>Native policy fixture</h1><p>This local article paragraph has enough ordinary words to select meaningful content without making any network request.</p></article></body></html>";

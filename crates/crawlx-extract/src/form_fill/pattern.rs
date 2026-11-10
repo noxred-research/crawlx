@@ -1,8 +1,8 @@
 //! The HTML `pattern` attribute: test a candidate value and, when it does
 //! not conform, generate one that does.
 //!
-//! Katana (`pkg/utils/formsemantic.go`, `matchPattern`) anchors the pattern as
-//! `^(?:pattern)$`, keeps a conforming value and otherwise asks gofakeit's
+//! The reference implementation (`matchPattern`) anchors the pattern as
+//! `^(?:pattern)$`, keeps a conforming value and otherwise asks a fake-data
 //! regex generator for one, ignoring patterns its engine cannot parse. This
 //! module does the same with the `regex` crate for matching and a bounded
 //! walk of the pattern's HIR for generation, drawing from a seeded stream so

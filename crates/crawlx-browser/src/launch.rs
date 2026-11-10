@@ -11,7 +11,7 @@
 //!   [`LaunchConfig::executable`] explicitly, see [`crate::options`]).
 //! * `CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI=1` (also `true`/`yes`): the only way `--no-sandbox` is passed.
 //!   It is for CI containers that cannot create user namespaces and must never be set in
-//!   production; katana's `-no-sandbox` is accepted only while it is set
+//!   production; the compatibility `-no-sandbox` flag is accepted only while it is set
 //!   ([`LaunchConfig::request_no_sandbox`]).
 //! * `CRAWLX_ALLOW_UNPINNED=1`: run a Chromium build that differs from `chromium-pin.toml`.
 //! * [`LaunchConfig::headless`]`= false` shows the browser window (`-show-browser`),
@@ -40,7 +40,7 @@ pub const UNSAFE_NO_SANDBOX_ENV: &str = "CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI";
 pub const EXECUTABLE_CANDIDATES: [&str; 3] = [
     "/usr/bin/chromium-browser",
     "/usr/bin/chromium",
-    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome", // wire-compat: installed browser path
 ];
 
 /// The Chromium executable to use: `CRAWLX_CHROMIUM_PATH` if set (and then nothing else), else
@@ -92,7 +92,7 @@ pub struct LaunchConfig {
     /// driver (default [`crate::cdp::COMMAND_QUEUE`]); callers wait when it is full.
     pub cdp_queue: usize,
     /// Attach to a running browser's DevTools endpoint
-    /// (`ws://127.0.0.1:<port>/devtools/browser/<id>`, katana `-chrome-ws-url`)
+    /// (`ws://127.0.0.1:<port>/devtools/browser/<id>`, compatibility flag `-chrome-ws-url`)
     /// instead of launching one. Nothing is spawned, no flag above applies,
     /// the pin cannot be verified (`pinned = false`, `attached = true`) and `close` leaves the
     /// browser running. Policy-gated: `test_environment` / `authorized_security_test` only.

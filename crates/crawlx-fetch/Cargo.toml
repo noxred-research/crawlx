@@ -37,7 +37,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-# TLS to an `https://` upstream proxy (`upstream`); the Mozilla roots validate it
+# TLS to an `https://` upstream proxy (`upstream`); the bundled public CA roots validate it
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio-util.workspace = true
 tracing.workspace = true

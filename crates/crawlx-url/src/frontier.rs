@@ -217,7 +217,7 @@ impl Frontier {
         self
     }
 
-    /// Exact-content dedupe on or off (`scope.disableUniqueFilter`, katana `-duf`; default on).
+    /// Exact-content dedupe on or off (`scope.disableUniqueFilter`, compatibility flag `-duf`; default on).
     /// Off, [`Self::note_content`] reports every body as new and keeps no digests, so pages
     /// with byte-identical bodies are all kept. The URL-level dedupe (canonical key,
     /// fingerprint budget) and the content-similarity index are unaffected.
@@ -310,7 +310,7 @@ impl Frontier {
                 inverse_priority: 0,
                 seq: u64::MAX - seq,
             },
-            // lowest `depth - surface score` first, breadth-first tie-breaks (katana `priority`)
+            // lowest `depth - surface score` first, breadth-first tie-breaks (compatibility `priority`)
             CrawlStrategy::Priority => SortKey {
                 depth: crawlx_core::priority::priority_depth(&url.url, depth, true),
                 rank: source.rank(),

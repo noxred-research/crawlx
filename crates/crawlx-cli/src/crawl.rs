@@ -1,18 +1,18 @@
 //! `crawlx crawl`: the flags and the request they build.
 //!
 //! [`build_request`] is the one place flags become a [`CreateCrawl`]. The layers, lowest
-//! first: crawlx's defaults, `--katana-defaults`, a JSON/TOML `--config` body, the
+//! first: crawlx's defaults, `--compat-defaults`, a JSON/TOML `--config` body, the
 //! `--request` file, then the flags. A YAML `--config` file is read as a flag layer under the
 //! command line, so a flag given on the command line always wins over the file.
 //!
 //! The run itself (seeds, parallelism, resume, outputs) is in `crawl_run`.
 
 use crate::ai_args::AiArgs;
+use crate::compat_flag_defaults;
 use crate::config_file::{self, ConfigLayer};
 use crate::duration::parse_duration;
 use crate::headless_args::HeadlessArgs;
 use crate::input::{self, InputArgs};
-use crate::katana_defaults;
 use crate::merge::fill;
 use crate::model_args::ModelArgs;
 use crate::output_args::OutputArgs;
@@ -108,7 +108,7 @@ pub enum TrailingArg {
     Add,
 }
 
-/// `--field-scope` (katana `-fs`): a pre-defined scope or a host-name regex.
+/// `--field-scope` (compatibility `-fs`): a pre-defined scope or a host-name regex.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldScopeArg {
     /// `fqdn`, `rdn`, `dn` or `none`.
@@ -135,7 +135,7 @@ fn parse_field_scope(raw: &str) -> Result<FieldScopeArg, String> {
     }
 }
 
-/// `--strategy` (katana `-strategy`).
+/// `--strategy` (compatibility `-strategy`).
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum StrategyArg {
     #[value(name = "breadth-first")]
@@ -159,7 +159,7 @@ impl From<StrategyArg> for CrawlStrategy {
     }
 }
 
-/// `--known-files` (katana `-kf`).
+/// `--known-files` (compatibility `-kf`).
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum KnownFileArg {
     #[value(name = "robots_paths")]
@@ -179,7 +179,7 @@ impl From<KnownFileArg> for KnownFile {
     }
 }
 
-/// Native `--content-similar` and Katana's separate `--page-content-similar-mode`.
+/// Native `--content-similar` and the compatibility flags' separate `--page-content-similar-mode`.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum SimilarityArg {
     #[value(name = "off")]
@@ -207,7 +207,7 @@ impl From<SimilarityArg> for SimilarityMode {
     }
 }
 
-/// `--filter-page-type` / `--no-expand-page-type` (katana `-filter-page-type`).
+/// `--filter-page-type` / `--no-expand-page-type` (compatibility `-filter-page-type`).
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum PageTypeArg {
     #[value(name = "login")]
@@ -255,7 +255,7 @@ impl From<PageTypeArg> for PageType {
     }
 }
 
-/// `--page-load-strategy` (katana `-pls`).
+/// `--page-load-strategy` (compatibility `-pls`).
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum PageLoadArg {
     #[value(name = "heuristic")]
@@ -305,11 +305,11 @@ pub struct CrawlArgs {
     /// Which planes run (default hybrid).
     #[arg(long, value_enum)]
     pub mode: Option<ModeArg>,
-    /// Katana `-hl`/`-headless`: run only the browser plane (`--mode dynamic`), not window visibility.
+    /// Compatibility `-hl`/`-headless`: run only the browser plane (`--mode dynamic`), not window visibility.
     #[arg(long = "headless", conflicts_with_all = ["mode", "hybrid"], help_heading = "Headless")]
     pub headless_mode: bool,
-    /// katana `-hh`/`-hybrid`: run both planes, the URL plane and the browser plane. This is the
-    /// default; the flag is the explicit spelling of `--mode hybrid` (katana's hijacking hybrid
+    /// Compatibility `-hh`/`-hybrid`: run both planes, the URL plane and the browser plane. This is the
+    /// default; the flag is the explicit spelling of `--mode hybrid` (the compatibility hijacking hybrid
     /// engine maps to two planes here).
     #[arg(long, conflicts_with = "mode")]
     pub hybrid: bool,
@@ -369,19 +369,19 @@ pub struct CrawlArgs {
     /// Minimum delay between requests to one origin, in milliseconds.
     #[arg(long, value_name = "MS")]
     pub delay_ms: Option<u32>,
-    /// Katana `-rd`/`-delay`: minimum delay between requests to one origin, in whole seconds.
+    /// Compatibility `-rd`/`-delay`: minimum delay between requests to one origin, in whole seconds.
     #[arg(long = "delay", value_name = "SECONDS", conflicts_with = "delay_ms")]
     pub delay_seconds: Option<u32>,
     /// Longest the crawl runs (`30s`, `5m`, `1h30m`, `2d` or bare seconds; at least 1s, at
     /// most 7d).
     #[arg(long, value_name = "DURATION", value_parser = parse_duration)]
     pub crawl_duration: Option<Duration>,
-    /// Start from katana's defaults (host scope rdn, depth 3, depth-first, no JavaScript
+    /// Start from the compatibility defaults (host scope rdn, depth 3, depth-first, no JavaScript
     /// endpoints or known files, no forms, 150 requests/s, delay at the politeness floor, 4
     /// MiB bodies, no `technologies` field) instead of crawlx's. Any other flag, `--config`
     /// or `--request` value overrides the preset.
     #[arg(long)]
-    pub katana_defaults: bool,
+    pub compat_defaults: bool,
     /// Check the browser, the configuration and the network path to the seeds, print a table
     /// and exit non-zero when a check fails.
     #[arg(long, help_heading = "Debug")]
@@ -394,7 +394,7 @@ pub struct CrawlArgs {
     #[arg(long, help_heading = "Update")]
     pub disable_update_check: bool,
 
-    // --- scope (katana -fs, -cs, -cos, -exclude, -strategy, -mdp, -kf, -em, -ef, -ndef, -d, -pc) ---
+    // --- scope (compatibility -fs, -cs, -cos, -exclude, -strategy, -mdp, -kf, -em, -ef, -ndef, -d, -pc) ---
     /// Host scope: `dn`, `rdn`, `fqdn`, `none`, or a regex over the host name (hosts matching
     /// it are in scope in addition to the seed host).
     #[arg(long, value_parser = parse_field_scope, value_name = "SCOPE", help_heading = "Scope")]
@@ -422,7 +422,7 @@ pub struct CrawlArgs {
     /// Frontier ordering.
     #[arg(short = 's', long, value_enum, help_heading = "Scope")]
     pub strategy: Option<StrategyArg>,
-    /// Maximum link hops from the seed (katana `-depth`, at most 100).
+    /// Maximum link hops from the seed (compatibility `-depth`, at most 100).
     #[arg(
         short = 'd',
         long,
@@ -475,7 +475,7 @@ pub struct CrawlArgs {
     #[arg(long, value_enum, conflicts_with_all = ["js_crawl", "jsluice", "no_js_endpoints"], help_heading = "Extraction")]
     pub javascript_mode: Option<JavascriptModeArg>,
 
-    // --- filters (katana -fsu/-fst, -pcs, -duf, -filter-page-type) ---
+    // --- filters (compatibility -fsu/-fst, -pcs, -duf, -filter-page-type) ---
     /// Skip URLs whose shape fingerprint already consumed its page budget.
     #[arg(long, help_heading = "Filters")]
     pub filter_similar: bool,
@@ -493,7 +493,7 @@ pub struct CrawlArgs {
         help_heading = "Filters"
     )]
     pub content_similar: Option<SimilarityArg>,
-    /// Enable content similarity independently of its backend (Katana `-pcs`).
+    /// Enable content similarity independently of its backend (compatibility `-pcs`).
     /// A bare flag means true; use `=false` to override a lower-priority enable.
     #[arg(
         long,
@@ -504,7 +504,7 @@ pub struct CrawlArgs {
         help_heading = "Filters"
     )]
     pub page_content_similar: Option<bool>,
-    /// Alternate content-similarity enable (Katana `-sdd`); combined with `-pcs` using OR.
+    /// Alternate content-similarity enable (compatibility `-sdd`); combined with `-pcs` using OR.
     #[arg(
         long,
         action = clap::ArgAction::Set,
@@ -514,7 +514,7 @@ pub struct CrawlArgs {
         help_heading = "Filters"
     )]
     pub similarity_deduplication: Option<bool>,
-    /// Select a backend without enabling it (Katana `-pcsm`; enabled default: simhash).
+    /// Select a backend without enabling it (compatibility `-pcsm`; enabled default: simhash).
     /// `off` explicitly disables filtering even when an enable switch is true.
     #[arg(long, value_enum, help_heading = "Filters")]
     pub page_content_similar_mode: Option<SimilarityArg>,
@@ -555,7 +555,7 @@ pub struct CrawlArgs {
     )]
     pub no_expand_page_type: Vec<PageTypeArg>,
 
-    // --- rate limits (katana -rl, -rlm, -c) ---
+    // --- rate limits (compatibility -rl, -rlm, -c) ---
     /// Global requests per second across all hosts.
     #[arg(
         long,
@@ -582,7 +582,7 @@ pub struct CrawlArgs {
     #[arg(short = 'c', long, value_name = "N", help_heading = "Rate limits")]
     pub concurrency: Option<u16>,
 
-    // --- fetch (katana -mrs, -timeout, -retry, -dr, -proxy, -r, -H) ---
+    // --- fetch (compatibility -mrs, -timeout, -retry, -dr, -proxy, -r, -H) ---
     /// Maximum response body bytes read.
     #[arg(long, value_name = "BYTES", help_heading = "Fetch")]
     pub max_response_size: Option<u64>,
@@ -630,7 +630,7 @@ pub struct CrawlArgs {
     #[command(flatten)]
     pub tls: crate::tls_args::TlsArgs,
 
-    // --- extraction (katana -flc, -kb*, -fx, -aff, -fc, -td) ---
+    // --- extraction (compatibility -flc, -kb*, -fx, -aff, -fc, -td) ---
     /// Custom regex fields: YAML or JSON list of `{name, regex: [..], part, group}`.
     #[arg(
         long,
@@ -675,11 +675,11 @@ pub struct CrawlArgs {
         help_heading = "Extraction"
     )]
     pub secret_validators: Option<PathBuf>,
-    /// Keep `technologies` in the JSONL records under `--katana-defaults` (always on otherwise).
+    /// Keep `technologies` in the JSONL records under `--compat-defaults` (always on otherwise).
     #[arg(long, help_heading = "Extraction")]
     pub tech_detect: bool,
 
-    // --- browser plane (katana -ph, -pls, -dwt) ---
+    // --- browser plane (compatibility -ph, -pls, -dwt) ---
     /// Isolated-world discovery hooks (`pushState`, `fetch`, `WebSocket`, `window.open`).
     #[arg(long, help_heading = "Headless")]
     pub page_hooks: bool,
@@ -693,7 +693,7 @@ pub struct CrawlArgs {
     #[command(flatten)]
     pub headless: HeadlessArgs,
 
-    // --- output (katana -do, -jsonl, -f, -output-template, -sf, -o, -sr, ...) ---
+    // --- output (compatibility -do, -jsonl, -f, -output-template, -sf, -o, -sr, ...) ---
     /// Record out-of-scope endpoints as never-fetched leaves.
     #[arg(long, help_heading = "Output")]
     pub display_out_scope: bool,
@@ -739,7 +739,7 @@ impl CrawlArgs {
             delay_ms,
             delay_seconds,
             crawl_duration,
-            katana_defaults,
+            compat_defaults,
             health_check,
             update,
             disable_update_check,
@@ -848,7 +848,7 @@ impl CrawlArgs {
         fill(&mut self.delay_ms, delay_ms);
         fill(&mut self.delay_seconds, delay_seconds);
         fill(&mut self.crawl_duration, crawl_duration);
-        fill(&mut self.katana_defaults, katana_defaults);
+        fill(&mut self.compat_defaults, compat_defaults);
         fill(&mut self.health_check, health_check);
         fill(&mut self.update, update);
         fill(&mut self.disable_update_check, disable_update_check);
@@ -877,9 +877,9 @@ impl CrawlArgs {
         fill(&mut self.filter_similar, filter_similar);
         fill(&mut self.filter_similar_threshold, filter_similar_threshold);
         fill(&mut self.filter_similar_budget, filter_similar_budget);
-        // Native mode is an enabling shorthand; Katana keeps enables and backend
-        // independent. Do not merge a lower native shorthand into Katana controls,
-        // or lower Katana controls into a command-line native shorthand.
+        // Native mode is an enabling shorthand; the compatibility flags keep enables and backend
+        // independent. Do not merge a lower native shorthand into compatibility controls,
+        // or lower compatibility controls into a command-line native shorthand.
         if self.content_similar.is_none() {
             if self.page_content_similar.is_none()
                 && self.similarity_deduplication.is_none()
@@ -887,7 +887,7 @@ impl CrawlArgs {
             {
                 self.content_similar = content_similar;
             }
-            // Both Katana enable spellings form one precedence group. An explicit
+            // Both compatibility enable spellings form one precedence group. An explicit
             // CLI false must replace either YAML spelling, not OR with it.
             if self.page_content_similar.is_none() && self.similarity_deduplication.is_none() {
                 self.page_content_similar = page_content_similar;
@@ -1007,8 +1007,8 @@ impl Resolved {
     pub(crate) fn template(&self, seed: &Url) -> anyhow::Result<CreateCrawl> {
         let args = &self.args;
         let mut base = CreateCrawl::new(seed.clone());
-        if args.katana_defaults {
-            katana_defaults::apply(&mut base);
+        if args.compat_defaults {
+            compat_flag_defaults::apply(&mut base);
         }
         let mut doc = serde_json::to_value(&base).context("building the default request")?;
         if let Some(layer) = &self.layer {
@@ -1064,7 +1064,7 @@ fn recorded_plan(path: &Path) -> anyhow::Result<String> {
     Ok(format!("recorded:file://{}", absolute.display()))
 }
 
-/// Katana `-timeout`/`-dwt`/`-rd` take seconds; the request stores milliseconds.
+/// Compatibility `-timeout`/`-dwt`/`-rd` take seconds; the request stores milliseconds.
 fn seconds_to_ms(flag: &str, secs: u32) -> anyhow::Result<u32> {
     secs.checked_mul(1000)
         .ok_or_else(|| anyhow!("{flag} {secs} overflows the millisecond field"))
@@ -1262,7 +1262,7 @@ fn apply_scope(args: &CrawlArgs, scope: &mut Scope) -> anyhow::Result<()> {
         || args.similarity_deduplication.is_some()
         || args.page_content_similar_mode.is_some()
     {
-        // Katana v1.8.0 (35267ac5), Options.ContentSimilarityEnabled:
+        // Compatibility-flag semantics, ContentSimilarityEnabled:
         // pcs OR sdd enables; selecting pcsm alone never enables a disabled index.
         let enabled = match (args.page_content_similar, args.similarity_deduplication) {
             (None, None) => scope.content_similarity.mode != SimilarityMode::Off,
@@ -1315,7 +1315,7 @@ fn apply_politeness(args: &CrawlArgs, p: &mut Politeness) {
 }
 
 /// Values of a flag that may name a file: a value that is an existing file stands for its
-/// non-blank, non-comment lines (katana's file-or-list slices).
+/// non-blank, non-comment lines (the compatibility file-or-list slices).
 fn expand_file_values(values: &[String]) -> anyhow::Result<Vec<String>> {
     let mut out = Vec::with_capacity(values.len());
     for value in values {
@@ -1456,9 +1456,9 @@ fn apply_extract(args: &CrawlArgs, e: &mut Extract) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One entry of `--custom-field-config`: the shape of katana's `CustomFieldConfig`
-/// (`pkg/output/custom_field.go`, commit 9662cd7): `name`, `type` (only `regex`), `part`,
-/// `group`, `regex[]`. As in katana an absent `part` scans the whole response.
+/// One entry of `--custom-field-config`: the shape of the compatibility `CustomFieldConfig`
+/// (ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md): `name`, `type` (only `regex`), `part`,
+/// `group`, `regex[]`. As in the compatibility flags an absent `part` scans the whole response.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CustomFieldFile {

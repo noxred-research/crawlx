@@ -116,7 +116,8 @@ async fn python_source_429_returns_to_frontier_with_durable_effect_charge_then_s
     request.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
     request.scope.max_discovery_depth = 0;
     let mut orchestration = crawlx_core::orchestration::OrchestrationConfigV1::default();
-    orchestration.pacing_dialect = crawlx_core::runtime_admission::PacingDialectV1::CrawleePythonThrottleV1;
+    orchestration.pacing_dialect =
+        crawlx_core::runtime_admission::PacingDialectV1::AdaptiveConcurrencyThrottleV1;
     request.orchestration = Some(orchestration);
     let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
         .await

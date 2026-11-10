@@ -59,7 +59,7 @@ fn chromium() -> Option<PathBuf> {
     [
         "/usr/bin/chromium-browser",
         "/usr/bin/chromium",
-        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome", // wire-compat: installed browser path
     ]
     .iter()
     .map(PathBuf::from)
@@ -293,11 +293,11 @@ impl Harness {
             .env("CRAWLX_CHECKPOINT_KMS_KEY_ID", self.kms.key_id())
             .env("CRAWLX_ARTIFACT_KEY_FILE", &self.artifact_key)
             .env("CRAWLX_SECRET_REDIS_URL", &self.secret_redis)
-            .env("AWS_ENDPOINT_URL_KMS", self.kms.endpoint())
-            .env("AWS_REGION", "us-east-1")
-            .env("AWS_ACCESS_KEY_ID", "checkpoint-fixture-access-key")
-            .env("AWS_SECRET_ACCESS_KEY", "checkpoint-fixture-secret-key")
-            .env("AWS_EC2_METADATA_DISABLED", "true")
+            .env("AWS_ENDPOINT_URL_KMS", self.kms.endpoint()) // wire-compat: SDK environment variable
+            .env("AWS_REGION", "us-east-1") // wire-compat: SDK environment variable
+            .env("AWS_ACCESS_KEY_ID", "checkpoint-fixture-access-key") // wire-compat: SDK environment variable
+            .env("AWS_SECRET_ACCESS_KEY", "checkpoint-fixture-secret-key") // wire-compat: SDK environment variable
+            .env("AWS_EC2_METADATA_DISABLED", "true") // wire-compat: SDK environment variable
             .stdin(Stdio::null())
             .stdout(std::fs::File::create(&log).unwrap())
             .stderr(std::fs::File::create(log.with_extension("err")).unwrap())

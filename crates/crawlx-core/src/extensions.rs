@@ -256,7 +256,7 @@ pub struct ExtensionPipelineV1 {
     pub routes: BTreeMap<String, HandlerV1>,
     /// Optional handler for unknown labels; omission means typed failure.
     pub default_handler: Option<HandlerV1>,
-    /// Reverse response, item and finalization order (Scrapy dialect).
+    /// Reverse response, item and finalization order (python-spider dialect).
     pub reverse_response: bool,
     /// Explicit declared dataset receiving accepted candidates; none means no dataset append.
     pub dataset: Option<String>,

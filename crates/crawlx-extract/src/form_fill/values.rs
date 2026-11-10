@@ -1,13 +1,13 @@
-//! Seeded value generators and the `rand_*` helper subset of katana's
+//! Seeded value generators and the `rand_*` helper subset of the reference
 //! form-config DSL.
 //!
-//! Katana evaluates `-fc` values such as `rand_email()` through the
-//! projectdiscovery/dsl expression engine. crawlx evaluates nothing: a value
+//! The reference implementation evaluates `-fc` values such as `rand_email()` through a
+//! general expression engine. crawlx evaluates nothing: a value
 //! is either a literal or exactly one call of a known helper with literal
 //! arguments, and every random draw comes from a ChaCha stream derived from
 //! the run seed (`CrawlSeed::rng`), so the same config under the same seed
 //! always resolves to the same value. A call crawlx does not know (or whose
-//! arguments do not parse) stays a literal string, as katana does when its
+//! arguments do not parse) stays a literal string, as the reference does when its
 //! expression fails to evaluate.
 
 use crawlx_core::seed::CrawlSeed;

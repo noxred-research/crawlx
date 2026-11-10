@@ -1212,7 +1212,7 @@ mod tests {
             "http://localhost/",
             "http://[::1]/",
             "http://2130706433/",
-            "http://metadata.google.internal/",
+            "http://metadata.google.internal/", // detection-data
             "http://10.0.0.5/",
             "ftp://example.com/",
         ] {

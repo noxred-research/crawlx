@@ -1,4 +1,4 @@
-//! Playwright/Patchright AX-recall differential.
+//! Reference-driver AX-recall differential (reference and hardened reference drivers).
 //!
 //! The Node oracle (`bench/browser-oracle/runner.mjs --discover`) enumerates the role-locator
 //! elements of every catalog fixture page G01–G30 and runs the driver's actionability checks
@@ -11,9 +11,9 @@
 //!
 //! Prerequisites, each named when missing: a Chromium for crawlx (`CRAWLX_CHROMIUM_PATH` or a
 //! usual location); and either an oracle result file (`CRAWLX_ORACLE_DISCOVERY=<file>`) or a
-//! `node` on `PATH` plus `bench/browser-oracle/node_modules/<driver>` (`npm ci && npx
-//! playwright install chromium` there) so the test can run the oracle itself against its gym.
-//! `ORACLE_DRIVER` selects the driver (default `playwright`). The comparison is written to
+//! `node` on `PATH` plus `bench/browser-oracle/node_modules/<package>` (the npm package behind the driver id; `npm ci`
+//! and the package's browser install there) so the test can run the oracle itself against its gym.
+//! `ORACLE_DRIVER` selects the driver (`reference` or `hardened`, default `reference`). The comparison is written to
 //! `bench/browser-oracle/out/discovery-comparison.<driver>.<profile>.json`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -57,21 +57,33 @@ fn fixtures() -> Vec<FixtureManifest> {
         .collect()
 }
 
+/// The npm package behind a driver id (dependency names stay as package names).
+fn driver_package(driver: &str) -> Result<&'static str, String> {
+    match driver {
+        "reference" => Ok("playwright"), // wire-compat: npm package name
+        "hardened" => Ok("patchright"),  // wire-compat: npm package name
+        other => Err(format!(
+            "unknown ORACLE_DRIVER {other:?} (expected `reference` or `hardened`)"
+        )),
+    }
+}
+
 /// The oracle report: from `CRAWLX_ORACLE_DISCOVERY`, or produced now by the Node runner.
 fn oracle_report(job_path: &Path, driver: &str, proxy: &str) -> Result<DiscoveryReport, String> {
     if let Some(path) = std::env::var_os("CRAWLX_ORACLE_DISCOVERY") {
         return DiscoveryReport::load(Path::new(&path))
             .map_err(|e| format!("{e}: {}", Path::new(&path).display()));
     }
+    let package = driver_package(driver)?;
     let dir = oracle_dir();
     if !dir
         .join("node_modules")
-        .join(driver)
+        .join(package)
         .join("package.json")
         .exists()
     {
         return Err(format!(
-            "bench/browser-oracle/node_modules/{driver} is absent (run `npm ci && npx {driver} install chromium` there) and CRAWLX_ORACLE_DISCOVERY is unset"
+            "bench/browser-oracle/node_modules/{package} is absent (run `npm ci` and the package's browser install there) and CRAWLX_ORACLE_DISCOVERY is unset"
         ));
     }
     let out = dir.join("out").join(format!("discovery.{driver}.json"));
@@ -102,7 +114,7 @@ async fn ax_recall_and_capability_parity_against_the_oracle() {
         eprintln!("SKIP: no Chromium executable found (set CRAWLX_CHROMIUM_PATH)");
         return;
     };
-    let driver = std::env::var("ORACLE_DRIVER").unwrap_or_else(|_| "playwright".to_owned());
+    let driver = std::env::var("ORACLE_DRIVER").unwrap_or_else(|_| "reference".to_owned());
     let gym = GymServer::start_evaluation().await.unwrap();
     let scope = gym
         .evaluation_scope()

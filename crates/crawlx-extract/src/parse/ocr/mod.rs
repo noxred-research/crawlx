@@ -1,4 +1,4 @@
-//! OCR for scanned PDF pages and image uploads (Firecrawl `parsers[].mode: ocr`, the
+//! OCR for scanned PDF pages and image uploads (compatibility API `parsers[].mode: ocr`, the
 //! `image` parser and `IMAGE_OCR_ENABLED`).
 //!
 //! An [`Ocr`] is built once from an [`OcrConfig`] ([`Ocr::from_config`]) and shared (`Arc`) by
@@ -15,7 +15,7 @@
 //! `CRAWLX_OCR_TESSERACT`, `CRAWLX_OCR_TESSDATA` (falls back to `TESSDATA_PREFIX`),
 //! `CRAWLX_OCR_MODELS`, `CRAWLX_OCR_RASTERIZER`, `CRAWLX_OCR_PDFTOPPM`, `CRAWLX_OCR_DPI`,
 //! `CRAWLX_OCR_TIMEOUT_MS`, `CRAWLX_OCR_MAX_PDF_PAGES`, `CRAWLX_OCR_MAX_IMAGE_PIXELS`,
-//! `CRAWLX_OCR_MIN_CONFIDENCE`, and Firecrawl's `IMAGE_OCR_ENABLED=true` (selects `tesseract`
+//! `CRAWLX_OCR_MIN_CONFIDENCE`, and the drop-in `IMAGE_OCR_ENABLED=true` (selects `tesseract`
 //! when no backend is named).
 //!
 //! # PDF pages
@@ -247,7 +247,7 @@ impl OcrConfig {
         match get("CRAWLX_OCR_BACKEND") {
             Some(v) => self.backend = v.parse()?,
             None => {
-                // Firecrawl's switch: on means the engine every self-host image carries
+                // Drop-in switch (wire-compat: env name set by existing deployments): on means the engine every self-host image carries
                 let image_ocr = get("IMAGE_OCR_ENABLED")
                     .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"));
                 if image_ocr && self.backend == OcrBackend::Off {

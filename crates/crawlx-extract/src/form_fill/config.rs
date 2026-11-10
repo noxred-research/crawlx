@@ -1,4 +1,4 @@
-//! The katana `-fc` form-config file (`$HOME/.config/katana/form-config.yaml`).
+//! The compatibility `-fc` form-config file (a YAML mapping of five keys).
 //!
 //! ```yaml
 //! email: "rand_email()"
@@ -8,7 +8,7 @@
 //! color: "#e66465"
 //! ```
 //!
-//! Katana decodes the file into five strings and evaluates `rand_*` calls
+//! The reference implementation decodes the file into five strings and evaluates `rand_*` calls
 //! through its DSL engine at load time. Here the strings are kept as written
 //! (the supported `rand_*` calls are evaluated per run seed by
 //! [`fill_form`](super::fill_form)) and a key left out (or empty) stays `None`,
@@ -35,7 +35,7 @@ pub enum FormConfigError {
     NotScalar(String),
 }
 
-/// Parse a katana `-fc` YAML document.
+/// Parse a compatibility `-fc` YAML document.
 ///
 /// Scalars (strings, numbers, booleans) are accepted as the value of
 /// `email`, `color`, `password`, `phone` and `placeholder`; an empty document
@@ -45,7 +45,7 @@ pub enum FormConfigError {
 /// # Errors
 ///
 /// [`FormConfigError`] when the text is not YAML, is not a mapping, names a
-/// key katana does not know, or holds a non-scalar value.
+/// key the reference does not know, or holds a non-scalar value.
 pub fn parse_form_config(text: &str) -> Result<FormFill, FormConfigError> {
     let doc: Value = serde_yaml_ng::from_str(text)?;
     let map = match doc {

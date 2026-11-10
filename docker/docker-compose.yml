@@ -15,7 +15,7 @@
 #     `CRAWLX_API_DATABASE_URL_FILE` names the separate non-owner request role;
 #     the secrets are files under /run/secrets, never environment values or flags;
 #   * `CRAWLX_ENVIRONMENT`, `CRAWLX_LOG`, `TMPDIR`; `CRAWLX_CHROMIUM_PATH` comes from the image;
-#   * `CRAWLX_S3_*` and `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for `crawlx admin --s3-bucket`:
+#   * `CRAWLX_S3_*` with `CRAWLX_S3_ACCESS_KEY`/`CRAWLX_S3_SECRET_KEY` mapped to the SDK credential variables, for `crawlx admin --s3-bucket`:
 #     `crawlx serve` and `crawlx worker` use the filesystem artifact store (`--artifacts-dir`),
 #     so they share the `artifacts` volume; the S3 backend is consumed by the admin commands only
 #     (verify-artifacts, sweep-retention), which is why only `admin` carries the S3 settings.
@@ -25,7 +25,7 @@
 #     dedicated volatile Valkey (no RDB/AOF, noeviction, no published port) holding the run-wide
 #     secret registry. The API refuses to write encrypted data and needs no Redis URL. The key
 #     provider is exactly one of the key file or `CRAWLX_ARTIFACT_KMS_KEY_ID`; this stack uses the
-#     key file, so no KMS pass-through is offered (setting both is a startup error). To use AWS KMS
+#     key file, so no KMS pass-through is offered (setting both is a startup error). To use cloud KMS
 #     instead, remove `CRAWLX_ARTIFACT_KEY_FILE` and the `artifact_key` secret from `api` and `worker`
 #     (and from `secrets:` below) and set `CRAWLX_ARTIFACT_KMS_KEY_ID: <key id or ARN>` on both.
 #     Never replace the key file, or retire a KMS key, while sealed artifacts exist.
@@ -267,7 +267,7 @@ services:
       CRAWLX_ENVIRONMENT: prod
       CRAWLX_LOG: ${CRAWLX_LOG:-info}
       CRAWLX_DATABASE_URL_FILE: /run/secrets/database_url
-      # Optional host pass-through; unset omits it. AWS credentials use the SDK provider chain.
+      # Optional host pass-through; unset omits it. Cloud credentials use the SDK provider chain.
       CRAWLX_CHECKPOINT_KMS_KEY_ID:
       # Artifact custody: the key file (see the header for the KMS alternative) and the
       # URL of the volatile secret registry; both are required, the worker refuses to start without them
@@ -460,8 +460,8 @@ services:
       CRAWLX_S3_REGION: us-east-1
       CRAWLX_S3_PATH_STYLE: "1"
       # `S3Blobs::new` reads these two from the environment only (no `*_FILE` form)
-      AWS_ACCESS_KEY_ID: ${CRAWLX_S3_ACCESS_KEY:-}
-      AWS_SECRET_ACCESS_KEY: ${CRAWLX_S3_SECRET_KEY:-}
+      AWS_ACCESS_KEY_ID: ${CRAWLX_S3_ACCESS_KEY:-} # wire-compat: SDK credential variable
+      AWS_SECRET_ACCESS_KEY: ${CRAWLX_S3_SECRET_KEY:-} # wire-compat: SDK credential variable
     secrets:
       - database_url
     volumes:

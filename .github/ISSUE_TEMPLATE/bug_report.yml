@@ -27,7 +27,7 @@ body:
         - CLI crawl, static mode
         - CLI crawl, dynamic or hybrid mode
         - API (REST, SSE)
-        - Firecrawl-compatible facade
+        - Compatibility API
         - Worker
         - Safety, egress or authorization
         - Storage, retention or secrets

@@ -5,7 +5,7 @@
 //! `report.json`; `inspect`, `replay` and `export` read a PostgreSQL store; `serve`, `worker`
 //! and `migrate` start the API, the worker process and apply migrations.
 //!
-//! `serve` and `worker` accept `--pprof-bind ADDR` (env `CRAWLX_PPROF_BIND`), katana's
+//! `serve` and `worker` accept `--pprof-bind ADDR` (env `CRAWLX_PPROF_BIND`), the compatibility
 //! `-pprof-server` counterpart ([`pprof`]): an **unauthenticated** listener with
 //! `GET /debug/pprof/profile?seconds=N` (CPU profile in pprof `profile.proto` form) and
 //! `GET /debug/pprof/heap` (JSON memory summary). It is refused on non-loopback addresses unless
@@ -22,6 +22,8 @@ mod archive_replay;
 mod authz;
 mod browser_cmd;
 pub mod captcha_args;
+mod compat_flag_defaults;
+mod compat_flags;
 pub mod config_check;
 mod config_file;
 mod config_intel;
@@ -37,8 +39,6 @@ mod health;
 mod healthcheck;
 mod input;
 mod inspect;
-mod katana_args;
-mod katana_defaults;
 mod mcp;
 mod merge;
 pub mod migration_inspect;
@@ -64,6 +64,7 @@ pub use admin::{AdminArgs, AdminCommand, AuditExportArgs};
 pub use admin_ops::OpsCommand;
 pub use ai_args::AiArgs;
 pub use authz::{AuthzArgs, AuthzCommand};
+pub use compat_flags::normalize_args;
 pub use config_check::{ConfigArgs, ConfigCheckArgs, ConfigCommand, CrawlxConfig};
 pub use crawl::{
     CrawlArgs, FieldScopeArg, LaunchArg, ModeArg, PageTypeArg, ProfileArg, StrategyArg, TrailingArg,
@@ -73,7 +74,6 @@ pub use headless_args::HeadlessArgs;
 pub use healthcheck::HealthcheckArgs;
 pub use input::InputArgs;
 pub use inspect::{InspectArgs, InspectKind};
-pub use katana_args::normalize_args;
 pub use mcp::McpArgs;
 pub use model_args::{ModelArgs, System1ModeArg};
 pub use ocr_args::OcrArgs;
@@ -116,7 +116,7 @@ pub enum Command {
     ///
     /// Seeds are the positional URLs, `-u` lists, `--list` files, or standard input with `-`;
     /// every seed is a separate run with its own frontier, at most `-p` at a time, and their
-    /// outputs are printed in seed order. `--config FILE` supplies flags (katana-style YAML) or a
+    /// outputs are printed in seed order. `--config FILE` supplies flags (compatibility-style YAML) or a
     /// request body (JSON, or TOML table `[crawl]`); flags override the file.
     ///
     /// Operator environment: `CRAWLX_TRAFFIC_ENDPOINT` and `CRAWLX_TRAFFIC_TOKEN` post every
@@ -168,7 +168,7 @@ pub enum Command {
     /// Configuration: `config check` validates `crawlx.toml` + `CRAWLX_*` and prints the
     /// effective values with secrets redacted.
     Config(ConfigArgs),
-    /// Run a Model Context Protocol server over stdio (Firecrawl MCP tools backed by a crawlx API).
+    /// Run a Model Context Protocol server over stdio (the compatibility MCP tools backed by a crawlx API).
     Mcp(mcp::McpArgs),
     /// Probe a URL and exit 0 for a 2xx answer, 1 otherwise: the container `HEALTHCHECK` of the
     /// distroless API image and of the worker (`docker/docker-compose.yml`).
@@ -190,7 +190,7 @@ pub async fn execute(cli: Cli, out: &mut dyn Write) -> anyhow::Result<ExitCode> 
     execute_with_env(cli, out, &|key| std::env::var(key).ok()).await
 }
 
-/// `DEBUG=true` (katana's switch): debug logging, and `main` prints the full error chain with a
+/// `DEBUG=true` (the compatibility switch): debug logging, and `main` prints the full error chain with a
 /// backtrace.
 #[must_use]
 pub fn debug_enabled(getenv: &dyn Fn(&str) -> Option<String>) -> bool {

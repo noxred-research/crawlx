@@ -45,8 +45,8 @@ workspace forbids `unsafe`.
 | `crawlx-scheduler` | Leases, retries, checkpoint cadence, round-robin turns, the stale-lease reaper, monitor schedules. |
 | `crawlx-telemetry` | Tracing subscriber with a redaction layer, a metrics registry, span names, optional OTLP export. |
 | `crawlx-worker` | The lease loop, browser pool, Session Actors, exploration drivers, the URL-plane runner and the local in-process run. |
-| `crawlx-api` | The Axum REST and SSE API, authentication, idempotency, webhooks and the Firecrawl-compatible facade. |
-| `crawlx-bench` | CrawlerGym fixture server, replay harness, scorecards, the Firecrawl differential runner, gates and load tools. |
+| `crawlx-api` | The Axum REST and SSE API, authentication, idempotency, webhooks and the compatibility API. |
+| `crawlx-bench` | CrawlerGym fixture server, replay harness, scorecards, the upstream differential runner, gates and load tools. |
 | `crawlx-cli` | The `crawlx` binary: `crawl`, `serve`, `worker`, `migrate`, `inspect`, `replay`, `admin` and the other commands. |
 
 The purity rule matters. `crawlx-url`, `crawlx-elements`, `crawlx-state`, `crawlx-graph`,
@@ -63,7 +63,7 @@ hash or an ordering. Callers pass timestamps in; randomness comes from a seed.
 
 - **API process.** Stateless. It validates a request, runs admission, persists the run in `queued`
   status and returns; it serves everything the worker journals, streams SSE from PostgreSQL, sends
-  webhooks and hosts the Firecrawl facade under `/compat/firecrawl/v2`. It never touches a browser.
+  webhooks and hosts the compatibility API under `/compat/v2`. It never touches a browser.
   Without a database URL it keeps runs in memory, where no worker can see them.
 - **Worker process.** Runs the lease loop. One lease is either a browser session slot
   `(role, run_index)` or a URL-plane batch. A worker holds at most `worker.max_sessions` leases
@@ -77,7 +77,7 @@ hash or an ordering. Callers pass timestamps in; randomness comes from a seed.
   page-initiated requests face the same egress policy as the HTTP fetcher. See the
   [safety model](safety-model.md#egress-and-ssrf).
 - **Optional services.** A typed-decision HTTP service, a local ONNX ranker (cargo feature `onnx`),
-  an OpenAI-compatible LLM endpoint, a SearXNG or SearchAPI backend, and a captcha-solver endpoint are
+  a chat-completions compatible LLM endpoint, a metasearch JSON API or search-provider backend, and a captcha-solver endpoint are
   all opt-in and unreachable unless configured.
 
 ## Request lifecycle

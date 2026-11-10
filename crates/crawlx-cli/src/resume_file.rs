@@ -1,4 +1,4 @@
-//! The `--resume FILE` of an in-memory crawl (katana `-resume`).
+//! The `--resume FILE` of an in-memory crawl (compatibility `-resume`).
 //!
 //! One seed: the file is that run's [`ResumeState`] JSON, byte for byte what
 //! [`ResumeState::to_json`] writes. Several seeds: an envelope
@@ -7,7 +7,7 @@
 //! its entry; when nothing is pending anywhere the file is deleted.
 
 use anyhow::{bail, Context as _};
-use crawlx_worker::katana::resume::{ResumeState, RESUME_VERSION};
+use crawlx_worker::surface::resume::{ResumeState, RESUME_VERSION};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -162,7 +162,7 @@ impl ResumeFile {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use crawlx_worker::katana::resume::ResumeEntry;
+    use crawlx_worker::surface::resume::ResumeEntry;
 
     fn state(url: &str) -> ResumeState {
         ResumeState::new(

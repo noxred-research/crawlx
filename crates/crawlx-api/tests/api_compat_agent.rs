@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Firecrawl v2 `/agent` family of the compat facade: the decision loop (search, map, scrape,
+//! compat v2 `/agent` family of the compat facade: the decision loop (search, map, scrape,
 //! extract, exchange, finish) driven by a scripted LLM over mock search, page tools and exchange
 //! providers, with a recording webhook transport.
 mod common;
@@ -11,7 +11,7 @@ use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::intel::exchange::{Capability, MockExchange, Terms, Toolkit};
 use crawlx_api::intel::search::{MockSearch, SearchResults, WebHit};
 use crawlx_api::intel::tools::MockPageTools;
-use crawlx_api::intel::webhook::{firecrawl_signature, JobWebhookSink};
+use crawlx_api::intel::webhook::{compat_signature, JobWebhookSink};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_api::{ApiConfig, AppState, Repos, Scope, Settings};
 use crawlx_core::time::ManualClock;
@@ -26,7 +26,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-const AGENT: &str = "/compat/firecrawl/v2/agent";
+const AGENT: &str = "/compat/v2/agent";
 const SECRET: &str = "whsec-test";
 const HOOK_URL: &str = "https://hooks.example.test/agent";
 
@@ -404,8 +404,8 @@ async fn happy_path_search_scrape_extract_finish_with_trace_snapshots_and_webhoo
                 .map(|(_, v)| v.clone())
         };
         assert_eq!(
-            header("X-Firecrawl-Signature").unwrap(),
-            firecrawl_signature(SECRET, &req.body)
+            header("X-Firecrawl-Signature").unwrap(), // wire-compat
+            compat_signature(SECRET, &req.body)
         );
         assert_eq!(header("X-Test").as_deref(), Some("1"));
         assert_eq!(header("Content-Type").as_deref(), Some("application/json"));
@@ -1337,7 +1337,7 @@ async fn the_request_is_validated_and_deprecated_models_warn() {
         "prompt": "x".repeat(10_001),
         "urls": ["not a url"],
         "effort": "extreme",
-        "model": "gpt-9",
+        "model": "model-9",
         "mode": "loud",
         "zeroDataRetention": "yes",
     });
@@ -1540,14 +1540,14 @@ async fn the_openapi_document_lists_the_agent_routes() {
     assert_eq!(s, StatusCode::OK);
     let doc = common::json(&b);
     for (method, path, scope) in [
-        ("post", "/compat/firecrawl/v2/agent", "crawls:write"),
-        ("get", "/compat/firecrawl/v2/agent", "crawls:read"),
-        ("get", "/compat/firecrawl/v2/agent/{jobId}", "crawls:read"),
-        ("delete", "/compat/firecrawl/v2/agent/{jobId}", "crawls:write"),
-        ("get", "/compat/firecrawl/v2/agent/{jobId}/trace", "crawls:read"),
+        ("post", "/compat/v2/agent", "crawls:write"),
+        ("get", "/compat/v2/agent", "crawls:read"),
+        ("get", "/compat/v2/agent/{jobId}", "crawls:read"),
+        ("delete", "/compat/v2/agent/{jobId}", "crawls:write"),
+        ("get", "/compat/v2/agent/{jobId}/trace", "crawls:read"),
         (
             "get",
-            "/compat/firecrawl/v2/agent/{jobId}/snapshots/{snapshotId}",
+            "/compat/v2/agent/{jobId}/snapshots/{snapshotId}",
             "crawls:read",
         ),
     ] {

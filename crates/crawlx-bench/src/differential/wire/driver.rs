@@ -20,18 +20,18 @@ const POLL: Duration = Duration::from_millis(400);
 /// Time a cancelled crawl gets to stop before the quiet window of a scenario opens.
 const QUIET_GRACE: Duration = Duration::from_millis(1500);
 
-/// A system under test reachable over the Firecrawl v2 HTTP surface.
+/// A system under test reachable over the upstream v2 HTTP surface.
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct Target {
-    /// System name (`firecrawl`, `crawlx`).
+    /// System name (`upstream`, `crawlx`).
     pub system: String,
-    /// `black_box_run` (the real Firecrawl) or `crawlx_facade`.
+    /// `black_box_run` (the real upstream) or `crawlx_facade`.
     pub provenance: String,
-    /// Pinned upstream commit, for the real Firecrawl.
+    /// Pinned upstream commit, for the real upstream.
     pub commit: Option<String>,
     /// API root; request paths (`/v2/crawl`) are appended (`http://127.0.0.1:3102`, or
-    /// `http://127.0.0.1:PORT/compat/firecrawl` for the facade).
+    /// `http://127.0.0.1:PORT/compat` for the facade).
     pub api_root: String,
     /// Bearer token the requests carry.
     pub bearer: String,

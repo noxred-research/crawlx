@@ -6,7 +6,7 @@
 //! [`FetchCookie`]) print `[redacted]` for every value in `Debug`; [`RequestControls`] is the
 //! form a run executes with: values are [`SecretOr`] (zeroized, redacted in `Debug`). A value
 //! is either a literal or a credential reference (`env://`, `file://`, `vault://`,
-//! `aws-sm://`) resolved by the worker right before the run starts. Durable run config
+//! `cloud-sm://`) resolved by the worker right before the run starts. Durable run config
 //! retains references but never literal header or cookie values; execution recovers literals
 //! from bounded volatile storage. [`CreateCrawl::redacted`] also masks references in outward views.
 //!
@@ -31,7 +31,7 @@ pub const MAX_VALUE_LEN: usize = 8192;
 /// Schemes whose values name a secret instead of holding it (resolved by the worker's
 /// `ChainResolver`). `https://…` and other URL-shaped values stay literal, so a `Referer`
 /// header is not mistaken for a reference.
-const REFERENCE_SCHEMES: [&str; 4] = ["env", "file", "vault", "aws-sm"];
+const REFERENCE_SCHEMES: [&str; 4] = ["env", "file", "vault", "cloud-sm"];
 
 /// Header names (lower-case) that `fetch.extraHeaders` rejects: framing and routing headers
 /// the transport owns, `Cookie` and `User-Agent` (use `fetch.cookies` and `fetch.userAgent`).
@@ -257,7 +257,7 @@ fn parse_cookie_header(value: &str) -> Result<Vec<FetchCookie>, CoreError> {
 }
 
 impl Fetch {
-    /// Route one raw request header (as written after `-H` or in a Firecrawl `headers` map):
+    /// Route one raw request header (as written after `-H` or in a compatibility API `headers` map):
     /// `Cookie` becomes [`Fetch::cookies`], `User-Agent` becomes [`Fetch::user_agent`], every
     /// other header goes to [`Fetch::extra_headers`] (a repeated name replaces the value).
     ///
@@ -883,7 +883,7 @@ mod tests {
             "env://X",
             "file:///run/secrets/t",
             "vault://kv/a#b",
-            "aws-sm://id#k",
+            "cloud-sm://id#k",
         ] {
             assert!(is_credential_reference(r), "{r}");
         }

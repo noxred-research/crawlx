@@ -1,10 +1,8 @@
 //! File-extension filter for the frontier
 //! (`scope.extensionMatch|extensionFilter|noDefaultExtensionFilter`).
 //!
-//! Ported from projectdiscovery/katana `pkg/utils/extensions/extensions.go`
-//! at commit 9662cd7 (MIT).
-//! Path classification follows `path.Ext` in the v1.8.0 validator at commit
-//! `35267ac5c8ff1db9694a319d0eb466ed97b0969f`.
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md.
+//! Path classification follows Go's `path.Ext`.
 //!
 //! A non-empty match list is an allow list (only those extensions pass); the
 //! filter list is a deny list, seeded with [`DEFAULT_EXTENSION_FILTER`] unless
@@ -14,7 +12,7 @@ use std::collections::BTreeSet;
 
 use url::Url;
 
-/// Katana's default deny list (images, fonts, archives, media, office
+/// The default deny list (images, fonts, archives, media, office
 /// documents, binaries), without the leading dot.
 pub const DEFAULT_EXTENSION_FILTER: &[&str] = &[
     "3g2", "3gp", "7z", "apk", "arj", "avi", "axd", "bmp", "csv", "deb", "dll", "doc", "drv", "eot", "exe",
@@ -78,7 +76,7 @@ impl ExtensionFilter {
         out
     }
 
-    /// Katana's defaults: no allow list, the default deny list.
+    /// The defaults: no allow list, the default deny list.
     #[must_use]
     pub fn defaults() -> Self {
         Self::new::<&str>(&[], &[], false)
@@ -117,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn katana_validator_cases() {
+    fn validator_cases() {
         let f = ExtensionFilter::new(&[".go"], &[], false);
         assert!(ok(&f, "https://e.test/main.go"));
         assert!(!ok(&f, "https://e.test/main.php"));

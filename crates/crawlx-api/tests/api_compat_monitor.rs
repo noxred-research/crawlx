@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Firecrawl v2 `/monitor` endpoints: lifecycle, validation, change detection, JSON-mode change
+//! compat v2 `/monitor` endpoints: lifecycle, validation, change detection, JSON-mode change
 //! tracking, goal judging, search targets, webhooks, the ticker and retention. Everything runs
 //! in memory on a manual clock with mocked scrape, search, LLM and webhook transport.
 
@@ -11,7 +11,7 @@ use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::intel::monitor::{scheduler, spawn_monitor_loop_every};
 use crawlx_api::intel::search::{MockSearch, SearchResults, WebHit};
 use crawlx_api::intel::tools::{MapLink, MockPageTools, ToolError};
-use crawlx_api::intel::webhook::{firecrawl_signature, JobWebhookSink};
+use crawlx_api::intel::webhook::{compat_signature, JobWebhookSink};
 use crawlx_api::webhooks::{TransportError, WebhookRequest, WebhookTransport};
 use crawlx_api::{ApiConfig, AppState, MemoryApiStore, Repos, Scope};
 use crawlx_core::time::ManualClock;
@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-const BASE: &str = "/compat/firecrawl/v2";
+const BASE: &str = "/compat/v2";
 const SECRET: &str = "whsec-monitor-test";
 
 fn utc(s: &str) -> chrono::DateTime<chrono::Utc> {
@@ -548,7 +548,7 @@ async fn scopes_and_tenants_are_enforced() {
     assert_eq!(v["data"], json!([]));
     let (s, _) = e.get(&format!("{BASE}/monitor/{id}")).await;
     assert_eq!(s, StatusCode::OK, "the owner still has it");
-    let (s, _) = e.send(Method::GET, "/compat/firecrawl/v2/monitor", None).await;
+    let (s, _) = e.send(Method::GET, "/compat/v2/monitor", None).await;
     assert_eq!(s, StatusCode::OK);
 }
 
@@ -1641,10 +1641,10 @@ async fn webhook_events_are_signed_and_filtered() {
         assert_eq!(body["data"][0]["monitorId"], id.as_str());
         assert_eq!(body["data"][0]["checkId"], c1["id"]);
         assert_eq!(
-            p.header("X-Firecrawl-Signature"),
-            Some(firecrawl_signature(SECRET, &p.body).as_str())
+            p.header("X-Firecrawl-Signature"), // wire-compat
+            Some(compat_signature(SECRET, &p.body).as_str())
         );
-        assert!(p.header("X-Firecrawl-Signature").unwrap().starts_with("sha256="));
+        assert!(p.header("X-Firecrawl-Signature").unwrap().starts_with("sha256=")); // wire-compat
         assert_eq!(p.header("X-Token"), Some("abc"));
         assert_eq!(p.header("Content-Type"), Some("application/json"));
         assert_eq!(p.header("Crawlx-Event"), body["type"].as_str());
@@ -1997,14 +1997,14 @@ async fn unknown_monitor_and_check_ids_are_not_found() {
 async fn openapi_lists_the_monitor_operations() {
     let listed = crawlx_api::openapi::operations();
     for (method, path) in [
-        ("post", "/compat/firecrawl/v2/monitor"),
-        ("get", "/compat/firecrawl/v2/monitor"),
-        ("get", "/compat/firecrawl/v2/monitor/{monitorId}"),
-        ("patch", "/compat/firecrawl/v2/monitor/{monitorId}"),
-        ("delete", "/compat/firecrawl/v2/monitor/{monitorId}"),
-        ("post", "/compat/firecrawl/v2/monitor/{monitorId}/run"),
-        ("get", "/compat/firecrawl/v2/monitor/{monitorId}/checks"),
-        ("get", "/compat/firecrawl/v2/monitor/{monitorId}/checks/{checkId}"),
+        ("post", "/compat/v2/monitor"),
+        ("get", "/compat/v2/monitor"),
+        ("get", "/compat/v2/monitor/{monitorId}"),
+        ("patch", "/compat/v2/monitor/{monitorId}"),
+        ("delete", "/compat/v2/monitor/{monitorId}"),
+        ("post", "/compat/v2/monitor/{monitorId}/run"),
+        ("get", "/compat/v2/monitor/{monitorId}/checks"),
+        ("get", "/compat/v2/monitor/{monitorId}/checks/{checkId}"),
     ] {
         assert!(listed.contains(&(method, path)), "{method} {path}");
     }

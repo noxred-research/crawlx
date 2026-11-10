@@ -1,27 +1,27 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! SDK-in-the-loop shape diff of the real, self-hosted Firecrawl against the crawlx facade
+//! SDK-in-the-loop shape diff of the real, self-hosted upstream service against the crawlx compatibility API
 //! (see `docs/integrations.md`).
 //!
-//! Gated on the environment: without `CRAWLX_UPSTREAM_FIRECRAWL_URL` the test prints `skipping:
-//! ...` and returns, so `cargo test` stays offline-green. With it, the same official `firecrawl-py`
+//! Gated on the environment: without `CRAWLX_UPSTREAM_URL` the test prints `skipping:
+//! ...` and returns, so `cargo test` stays offline-green. With it, the same official Python SDK
 //! calls (`bench/differential/sdk_shape_capture.py`: scrape, scrape of a 404 and of a
 //! robots-disallowed page, map, start_crawl + get_crawl_status + get_crawl_errors, the crawl
-//! waiter, cancel_crawl) run once against the real Firecrawl and once against the in-process
+//! waiter, cancel_crawl) run once against the real upstream service and once against the in-process
 //! facade (`support/sdk_rig.rs`), both crawling the same CrawlerGym fixture `s1`, and
 //! `bench/differential/sdk_shape_diff.py` writes the field-by-field report.
 //!
 //! Environment:
 //!
-//! * `CRAWLX_UPSTREAM_FIRECRAWL_URL`: the Firecrawl API, e.g. `http://127.0.0.1:3102` (a no-auth
+//! * `CRAWLX_UPSTREAM_URL`: the upstream API, e.g. `http://127.0.0.1:3102` (a no-auth
 //!   self-host; its containers reach the gym as `gym.test`, see `bench/differential/`);
 //! * `CRAWLX_UPSTREAM_GYM_PORT`: the port of a running CrawlerGym server (default 4100). It listens
 //!   on all interfaces: the host reaches it as `127.0.0.1:PORT` (the rig maps `site.example.test`
-//!   there), Firecrawl as `http://gym.test:PORT`;
+//!   there), the upstream service as `http://gym.test:PORT`;
 //! * `CRAWLX_SDK_SHAPE_OUT`: where the captures and `sdk-shape-diff.md` go (default
 //!   `bench/out/sdk-shape`, relative to the repository root);
 //! * `CRAWLX_SDK_SHAPE_EVIDENCE`: optional directory that also receives the size-trimmed captures
 //!   (`upstream.json`, `crawlx.json`);
-//! * `CRAWLX_UPSTREAM_COMMIT`: the pinned Firecrawl commit, named in the report header;
+//! * `CRAWLX_UPSTREAM_COMMIT`: the pinned upstream commit, named in the report header;
 //! * `CRAWLX_SDK_PYTHONPATH`: an installed `pip install --target` directory of
 //!   `tests/sdk/requirements.txt` (else it is installed, like `sdk_python.rs`; an unavailable pip
 //!   or PyPI skips the test).
@@ -66,8 +66,8 @@ async fn run_python(label: &str, script: &str, args: &[&str], python_path: &Path
         .env("PYTHONPATH", python_path)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONDONTWRITEBYTECODE", "1")
-        .env_remove("FIRECRAWL_API_KEY")
-        .env_remove("FIRECRAWL_API_URL")
+        .env_remove("FIRECRAWL_API_KEY") // wire-compat: variable the official SDK reads
+        .env_remove("FIRECRAWL_API_URL") // wire-compat: variable the official SDK reads
         .stdin(Stdio::null())
         .kill_on_drop(true);
     let out = tokio::time::timeout(CAPTURE_TIMEOUT, cmd.output())
@@ -119,9 +119,9 @@ fn assert_capture(capture: &Value, label: &str, sdk_version: &str) {
 }
 
 #[tokio::test]
-async fn sdk_shape_diff_of_the_real_firecrawl_and_the_facade() {
-    let Ok(upstream_url) = std::env::var("CRAWLX_UPSTREAM_FIRECRAWL_URL") else {
-        println!("skipping: CRAWLX_UPSTREAM_FIRECRAWL_URL not set");
+async fn sdk_shape_diff_of_the_real_upstream_and_the_facade() {
+    let Ok(upstream_url) = std::env::var("CRAWLX_UPSTREAM_URL") else {
+        println!("skipping: CRAWLX_UPSTREAM_URL not set");
         return;
     };
     let gym_port: u16 = std::env::var("CRAWLX_UPSTREAM_GYM_PORT")
@@ -137,7 +137,7 @@ async fn sdk_shape_diff_of_the_real_firecrawl_and_the_facade() {
         .await;
     assert!(
         reachable.is_ok(),
-        "CRAWLX_UPSTREAM_FIRECRAWL_URL={upstream_url} does not answer: {:?}",
+        "CRAWLX_UPSTREAM_URL={upstream_url} does not answer: {:?}",
         reachable.err()
     );
 
@@ -166,7 +166,7 @@ async fn sdk_shape_diff_of_the_real_firecrawl_and_the_facade() {
         let _ = std::fs::remove_file(stale);
     }
 
-    // the real Firecrawl: its containers reach the gym as `gym.test`
+    // the real upstream service: its containers reach the gym as `gym.test`
     let gym_origin = format!("http://gym.test:{gym_port}");
     run_python(
         "upstream capture",

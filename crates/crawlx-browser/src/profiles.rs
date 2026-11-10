@@ -1,4 +1,4 @@
-//! Named persistent browser profiles (`dynamic.browserProfile`, Firecrawl
+//! Named persistent browser profiles (`dynamic.browserProfile`, the compatibility API's
 //! `profile{name,saveChanges}`).
 //!
 //! A profile is a Chromium user-data directory below the launcher's profiles directory

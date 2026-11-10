@@ -18,7 +18,7 @@ import sys
 K = 12
 DEFAULT_THRESHOLD = 40
 # Idiom filter: a window in more than this many files of either tree is boilerplate. Calibrated
-# on the pinned Firecrawl tree and unrelated crawlers.
+# on the pinned upstream tree and unrelated crawlers.
 DEFAULT_MAX_DOC_FREQ = 5
 UPSTREAM_SUFFIXES = {".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
 KEYWORDS = frozenset("""

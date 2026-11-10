@@ -33,7 +33,7 @@ pub const MAX_QUESTION_ID_LEN: usize = 48;
 /// version, recorded on every `model_decisions` row.
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 pub struct ModelId {
-    /// Serving backend, e.g. `onnx-ranker` or `openai-compatible`.
+    /// Serving backend, e.g. `onnx-ranker` or `chat-completions`.
     pub provider: String,
     /// Model name at the provider.
     pub model: String,

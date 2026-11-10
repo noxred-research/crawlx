@@ -1,6 +1,6 @@
 //! Recording reverse proxy: the server-side vantage point of `crawl-bench`.
 //!
-//! Port of the idea in katana's `cmd/tools/crawl-bench/recorder.go` (MIT): every target sits
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md. The idea: every target sits
 //! behind a proxy, the crawler is pointed at the proxy, and what the target received is
 //! measured from the server side instead of from the crawler's own report. The recorder
 //! forwards the incoming `Host` header, so absolute links, sitemap URLs and redirects a target

@@ -1,7 +1,7 @@
 //! 64-bit Charikar simhash over weighted string features.
 //!
-//! Ported from projectdiscovery/katana `pkg/similarity/simhash.go` at commit
-//! 9662cd7 (MIT). Features are hashed with FNV-1a 64 so fingerprints are
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md. Features
+//! are hashed with FNV-1a 64 so fingerprints are
 //! stable across processes and platforms (`crawlx-state` has its own simhash
 //! for browser states; layering keeps the two separate).
 

@@ -297,31 +297,29 @@ pub(super) struct Liveness {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlCreditUsage" => {
+        "compatCreditUsage" => {
             Spec::new(&[]).reply::<CreditUsageResponse>("200", "Credits used this period.")
         }
-        "firecrawlCreditUsageHistorical" => {
+        "compatCreditUsageHistorical" => {
             Spec::new(&[]).reply::<CreditHistoricalResponse>("200", "Credits used per month.")
         }
-        "firecrawlTokenUsage" => {
-            Spec::new(&[]).reply::<TokenUsageResponse>("200", "Tokens used this period.")
-        }
-        "firecrawlTokenUsageHistorical" => {
+        "compatTokenUsage" => Spec::new(&[]).reply::<TokenUsageResponse>("200", "Tokens used this period."),
+        "compatTokenUsageHistorical" => {
             Spec::new(&[]).reply::<TokenHistoricalResponse>("200", "Tokens used per month.")
         }
-        "firecrawlQueueStatus" => {
+        "compatQueueStatus" => {
             Spec::new(&[]).reply::<QueueStatusResponse>("200", "Jobs in the tenant's queue.")
         }
-        "firecrawlActivity" => Spec::new(&[400, 422])
+        "compatActivity" => Spec::new(&[400, 422])
             .query::<ActivityQuery>()
             .reply::<ActivityResponse>("200", "The tenant's requests of the last 24 hours."),
-        "firecrawlFeedback" => Spec::new(&[404, 422])
+        "compatFeedback" => Spec::new(&[404, 422])
             .json::<super::search::GeneralFeedbackRequest>("The job and the rating.")
             .reply::<super::search::FeedbackResponse>("200", "The feedback was stored."),
-        "firecrawlSupportAsk" => Spec::new(&[422, 502, 504])
+        "compatSupportAsk" => Spec::new(&[422, 502, 504])
             .json::<SupportAskRequest>("The question and its context.")
             .reply::<SupportAskResponse>("200", "A diagnosis from the documentation and recent failures."),
-        "firecrawlSupportDocsSearch" => Spec::new(&[422, 502, 504])
+        "compatSupportDocsSearch" => Spec::new(&[422, 502, 504])
             .json::<DocsSearchRequest>("The documentation question.")
             .reply::<DocsSearchResponse>("200", "An answer with citations."),
         "readiness" => Spec::open(&[])

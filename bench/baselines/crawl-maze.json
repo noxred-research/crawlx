@@ -2,7 +2,7 @@
   "version": 1,
   "fixture": "g32",
   "recorded": "2026-10-20",
-  "source": "katana cmd/tools/crawl-maze-score expectedResults (commit 9662cd7, MIT); 91 targets, two stray /test prefixes normalized",
+  "source": "expectedResults list of a crawl-maze scoring tool ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md; 91 targets, two stray /test prefixes normalized",
   "request": {
     "hybrid": {
       "dynamic": {

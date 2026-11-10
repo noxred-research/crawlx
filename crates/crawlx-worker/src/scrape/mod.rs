@@ -1,5 +1,5 @@
-//! The Firecrawl scrape engine: turns the pages of a run whose
-//! [`crawlx_core::config::CreateCrawl::scrape`] is set into Firecrawl documents.
+//! The compatibility-API scrape engine: turns the pages of a run whose
+//! [`crawlx_core::config::CreateCrawl::scrape`] is set into compatibility documents.
 //!
 //! * [`ScrapeEngine`] – one engine per run; the URL plane ([`crate::UrlPlaneRunner`]) hands it
 //!   every frontier row of a `crawl`, `batch` or `scrape` job ([`JobKind::Map`] runs fetch and
@@ -27,7 +27,7 @@
 //! | `metadata["final_url"]`, `["redirects"]`, `["response_headers"]`, `["fingerprint"]`, `["request"]` | as on any static-plane page (credential headers are dropped, echoes of configured secrets redacted) |
 //! | `metadata["scrape"]` | the serialized [`ScrapeDocument`](crawlx_core::scrape::ScrapeDocument) |
 //!
-//! Inside the document: `statusCode`, `finalUrl`, `meta` (Firecrawl metadata keys),
+//! Inside the document: `statusCode`, `finalUrl`, `meta` (compatibility metadata keys),
 //! `numPages`/`totalPages` (PDF), `pages` and `blocks` (the `pdf` parser's options), `warning`
 //! (a skipped or degraded step, e.g. `ocr_unavailable`), `cacheState` + `cachedAt`, `optionsDigest` (what a stored
 //! scrape must match to be served again), `notCacheable`, and one field per requested format
@@ -488,7 +488,7 @@ impl ScrapeEngine {
         self
     }
 
-    /// The Firecrawl product the run serves.
+    /// The compatibility-API product the run serves.
     #[must_use]
     pub const fn kind(&self) -> JobKind {
         self.kind

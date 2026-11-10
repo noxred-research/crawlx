@@ -8,8 +8,8 @@ use crawlx_core::config::LaunchProfile;
 /// keyring: with a locked session keyring (for example after a reboot without a password
 /// login) the cookie store blocks, which stalls `Storage.getCookies` and every navigation.
 ///
-/// Do not create Chromium's default New Tab page: its OneGoogleBar/account services
-/// can request Google URLs before crawlx creates the first managed target. This
+/// Do not create Chromium's default New Tab page: its account/promo services
+/// can request vendor URLs before crawlx creates the first managed target. This
 /// suppresses only the browser-owned startup window, not target-page networking.
 pub const COMMON_FLAGS: [&str; 7] = [
     "--no-first-run",
@@ -41,7 +41,7 @@ pub const RENDER_FLAGS: [&str; 5] = [
     "--mute-audio",
 ];
 
-/// Keep certificate-error network-time checks, but do not query Google's time
+/// Keep certificate-error network-time checks, but do not query the vendor's time
 /// service merely because an owned browser started with a fresh profile.
 ///
 /// Chromium 155's `NetworkTimeTracker::Initialize` queues an immediate background

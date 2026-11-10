@@ -52,7 +52,7 @@ fn fetcher(config: FetchConfig, policy: EgressPolicy, resolver: StaticResolver) 
     Fetcher::new(config, Arc::new(policy), Arc::new(resolver)).unwrap()
 }
 
-// JA3's ordered fields, not random bytes, session IDs, or key-share material.
+// The TLS fingerprint's ordered fields, not random bytes, session IDs, or key-share material.
 #[derive(Debug, PartialEq, Eq)]
 struct HelloFields {
     version: u16,
@@ -245,7 +245,7 @@ fn assert_selected(hello: &HelloFields, seed: u64) {
 }
 
 #[tokio::test]
-async fn same_seed_emits_identical_ordered_ja3_fields() {
+async fn same_seed_emits_identical_ordered_fingerprint_fields() {
     let first = capture(42, false).await;
     let second = capture(42, false).await;
     assert_selected(&first, 42);
@@ -263,7 +263,7 @@ async fn different_seeds_change_emitted_hello_not_only_the_plan() {
         assert_selected(&hello, seed);
         changed |= hello != first;
     }
-    assert!(changed, "different seeds emitted identical JA3 fields");
+    assert!(changed, "different seeds emitted identical fingerprint fields");
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Golden tests for the katana-derived endpoint extractor: one snippet per parser
+//! Golden tests for the surface-discovery endpoint extractor: one snippet per parser
 //! construct, header cases, srcset, form body synthesis, htmx, JS regex mining and the
 //! textual guard.
 
@@ -50,7 +50,7 @@ fn find<'a>(found: &'a [DiscoveredEndpoint], path: &str) -> &'a DiscoveredEndpoi
         .unwrap_or_else(|| panic!("{want} not found in {:?}", urls(found)))
 }
 
-/// `(html, expected path, source)` — one row per katana parser construct.
+/// `(html, expected path, source)` — one row per reference parser construct.
 const CONSTRUCTS: &[(&str, &str, endpoints::EndpointSource)] = &[
     (
         r#"<a href="/test/html/body/a/href.found">x</a>"#,

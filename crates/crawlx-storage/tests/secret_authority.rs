@@ -118,7 +118,7 @@ fn envelope(row: &ArtifactRow) -> ArtifactKeyEnvelope {
         row.tenant,
         row.run,
         row.id,
-        "arn:aws:kms:us-east-1:111122223333:key/custody-regression".into(),
+        "arn:aws:kms:us-east-1:111122223333:key/custody-regression".into(), // wire-compat: key ARN shape
         vec![7; 256],
     )
     .unwrap()

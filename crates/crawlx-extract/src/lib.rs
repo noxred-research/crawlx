@@ -15,16 +15,16 @@
 //! * [`tables`] models HTML tables and renders GFM pipe tables;
 //! * [`metadata`] and [`links`] read head metadata, links and assets;
 //! * [`endpoints`], [`forms`], [`page_type`], [`custom_fields`],
-//!   [`technologies`] and [`secrets`] are the katana-derived discovery and
+//!   [`technologies`] and [`secrets`] are the surface-discovery and
 //!   classification extractors (ported with attribution where
 //!   noted in the module docs);
-//! * [`form_fill`] fills a static form for submission (katana `-aff`/`-fc`),
+//! * [`form_fill`] fills a static form for submission (the `-aff`/`-fc` compatibility flags),
 //!   [`kb`] builds the `knowledgebase` record (endpoint and form classes,
-//!   katana `-kb`/`-kb-endpoints`) and [`secret_validation`] plans and
+//!   the `-kb`/`-kb-endpoints` compatibility flags) and [`secret_validation`] plans and
 //!   interprets online validation of detected secrets
 //!   (`-kb-validate-secrets`); none of them touches the network or the clock.
-//! * the Firecrawl scrape formats, all pure functions:
-//!   [`firecrawl_meta`] (`metadata` object), [`images`], [`attributes`],
+//! * the compatibility API's scrape formats, all pure functions:
+//!   [`compat_meta`] (`metadata` object), [`images`], [`attributes`],
 //!   [`base64_images`] (inline base64 image removal), [`branding`]
 //!   (`BrandingProfile` heuristics), [`diff`] (`changeTracking` `git-diff` and
 //!   `json` modes), [`blocklist`] (`blockAds` CDP URL patterns) and
@@ -35,9 +35,9 @@
 //! with [`ExtractError::TooLarge`]. Extraction never panics on arbitrary
 //! input.
 //!
-//! This is a clean-room implementation of observable behavior; no Firecrawl
-//! source is consulted or copied. Katana (MIT) code is ported with
-//! attribution in the module docs.
+//! This is a clean-room implementation of observable behavior; no third-party
+//! source is consulted or copied. Code ported from MIT-licensed upstreams is marked with
+//! attribution in the module docs (see THIRD_PARTY_NOTICES.md).
 
 pub mod adaptive_selector;
 mod article;
@@ -50,13 +50,13 @@ pub mod attributes;
 pub mod base64_images;
 pub mod blocklist;
 pub mod branding;
+pub mod compat_meta;
 pub mod custom_fields;
 pub mod diff;
 pub mod document;
 pub mod dom;
 pub mod endpoints;
 pub mod extraction_import;
-pub mod firecrawl_meta;
 pub mod form_fill;
 pub mod forms;
 pub mod images;

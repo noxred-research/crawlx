@@ -1,4 +1,4 @@
-//! XHR and `fetch()` requests of a tab (`extract.xhr`, katana `-xhr-extraction`).
+//! XHR and `fetch()` requests of a tab (`extract.xhr`, compatibility flag `-xhr-extraction`).
 //!
 //! The CDP event handler feeds the three request lifecycle events of requests whose resource
 //! type is `XHR` or `Fetch` into an [`XhrTracker`]; finished requests wait there until

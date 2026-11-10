@@ -1,4 +1,4 @@
-//! The agent engine behind `POST /agent` (Firecrawl v2 `/agent`).
+//! The agent engine behind `POST /agent` (compat v2 `/agent`).
 //!
 //! A run is a bounded loop of decisions. At each step the LLM ([`LlmExtractor::complete`] with a
 //! JSON-schema constrained `{reasoning, action, args}` reply and a context of the request, the
@@ -1631,9 +1631,9 @@ impl Run {
                 Some(json!({
                     "provider": t.slug, "name": t.name, "capability": cap.name, "adds": cap.description,
                     "version": terms.version, "digest": terms.digest, "url": terms.url,
-                    "show": { "provider": "firecrawl", "capability": "terms/show", "options": { "provider": t.slug } },
+                    "show": { "provider": "firecrawl", "capability": "terms/show", "options": { "provider": t.slug } }, // wire-compat: exchange provider id echoed by clients
                     "accept": {
-                        "provider": "firecrawl", "capability": "terms/accept",
+                        "provider": "firecrawl", "capability": "terms/accept", // wire-compat: exchange provider id echoed by clients
                         "options": { "provider": t.slug, "version": terms.version, "digest": terms.digest, "confirmed": true },
                     },
                 }))

@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! The self-host provider overrides of the LLM products ("LLM providers"):
-//! `MODEL_EMBEDDING_NAME` ranks the pages of `/extract` before the LLM sees them, and
+//! `CRAWLX_EMBEDDING_MODEL` ranks the pages of `/extract` before the LLM sees them, and
 //! `EXTRACTION_PROVIDER_*` moves the extraction step (and only that step) to a second
-//! OpenAI-compatible endpoint.
+//! chat-completions compatible endpoint.
 //!
 //! The first group injects a deterministic [`MockEmbeddings`] to dictate the ranking; the second
 //! builds the backends from environment-variable maps exactly as `crawlx serve` does and talks
@@ -28,7 +28,7 @@ use tower::ServiceExt;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, Request as WmRequest, Respond, ResponseTemplate};
 
-const V2: &str = "/compat/firecrawl/v2";
+const V2: &str = "/compat/v2";
 
 const PAGE_A: &str = "https://shop.example.com/a";
 const PAGE_B: &str = "https://shop.example.com/b";
@@ -403,9 +403,9 @@ async fn env_wiring_ranks_through_the_embeddings_endpoint_before_the_chat_call()
     let dir = tempfile::tempdir().unwrap();
     let mut intel = IntelConfig::default()
         .from_lookup(env_map(&[
-            ("OPENAI_BASE_URL", format!("{}/v1", server.uri())),
-            ("MODEL_NAME", "chat-model".to_owned()),
-            ("MODEL_EMBEDDING_NAME", "embed-model".to_owned()),
+            ("CRAWLX_LLM_BASE_URL", format!("{}/v1", server.uri())),
+            ("CRAWLX_LLM_MODEL", "chat-model".to_owned()),
+            ("CRAWLX_EMBEDDING_MODEL", "embed-model".to_owned()),
             ("EXTRACT_EMBEDDING_TOP_N", "2".to_owned()),
         ]))
         .unwrap();
@@ -462,10 +462,10 @@ async fn env_without_the_embedding_model_makes_no_embeddings_call() {
         .await;
     let intel = IntelConfig::default()
         .from_lookup(env_map(&[
-            ("OPENAI_BASE_URL", format!("{}/v1", server.uri())),
-            ("MODEL_NAME", "chat-model".to_owned()),
+            ("CRAWLX_LLM_BASE_URL", format!("{}/v1", server.uri())),
+            ("CRAWLX_LLM_MODEL", "chat-model".to_owned()),
             // an empty value is "unset", as docker compose passes it
-            ("MODEL_EMBEDDING_NAME", String::new()),
+            ("CRAWLX_EMBEDDING_MODEL", String::new()),
         ]))
         .unwrap();
     assert!(intel.embeddings.is_none());
@@ -505,9 +505,9 @@ async fn an_embeddings_model_without_an_endpoint_override_uses_the_chat_endpoint
     let dir = tempfile::tempdir().unwrap();
     let mut intel = IntelConfig::default()
         .from_lookup(env_map(&[
-            ("OPENAI_BASE_URL", format!("{}/v1", server.uri())),
-            ("OPENAI_API_KEY", "unused-here".to_owned()),
-            ("MODEL_EMBEDDING_NAME", "embed-model".to_owned()),
+            ("CRAWLX_LLM_BASE_URL", format!("{}/v1", server.uri())),
+            ("CRAWLX_LLM_API_KEY", "unused-here".to_owned()),
+            ("CRAWLX_EMBEDDING_MODEL", "embed-model".to_owned()),
         ]))
         .unwrap();
     // the default key is a reference; point it at a file instead of the process environment
@@ -521,8 +521,8 @@ async fn an_embeddings_model_without_an_endpoint_override_uses_the_chat_endpoint
 
 fn extraction_env(default: &MockServer, provider: &MockServer, extra: &[(&str, String)]) -> IntelConfig {
     let mut pairs = vec![
-        ("OPENAI_BASE_URL", format!("{}/v1", default.uri())),
-        ("MODEL_NAME", "default-model".to_owned()),
+        ("CRAWLX_LLM_BASE_URL", format!("{}/v1", default.uri())),
+        ("CRAWLX_LLM_MODEL", "default-model".to_owned()),
         ("EXTRACTION_PROVIDER_BASE_URL", format!("{}/v1", provider.uri())),
         ("EXTRACTION_PROVIDER_MODEL", "extract-model".to_owned()),
     ];

@@ -1,4 +1,4 @@
-//! The browser half of `-health-check` (katana `-hc`, `internal/runner/healthcheck.go`):
+//! The browser half of `-health-check` (compatibility flag `-hc`):
 //! can this machine run the browser plane?
 //!
 //! [`probe`] runs five checks in a fixed order, each reported as a [`HealthCheck`]:

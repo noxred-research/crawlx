@@ -1,12 +1,12 @@
 //! The LLM provider settings of `crawlx config check`.
 //!
-//! The Firecrawl self-host variables (`OPENAI_*`, `MODEL_NAME`, `MODEL_EMBEDDING_NAME`,
+//! The self-host provider variables (`CRAWLX_LLM_*`, `CRAWLX_EMBEDDING_MODEL`,
 //! `EXTRACTION_PROVIDER_*`, `BRANDING_LLM_*`, ...) are read by `serve` and `worker` straight from
 //! the environment, so `config check` reads them the same way (through
 //! [`IntelConfig::from_lookup`]) and prints what those commands will use: endpoint, model, the
 //! *reference* of every API key with whether it resolves, routing shares and limits. It never
 //! prints a key: references (`env:NAME`) are names, endpoint URLs lose their user info and query,
-//! and a Firecrawl variable crawlx cannot act on is listed by name with the reason, never with
+//! and a compatibility variable crawlx cannot act on is listed by name with the reason, never with
 //! its value.
 
 use crate::config_check::Finding;
@@ -14,8 +14,8 @@ use crawlx_api::config::{
     resolve_secret_ref_with, BrandingSettings, EmbeddingSettings, ExtractionSettings, IntelConfig,
     LlmSettings, UNSUPPORTED_ENV,
 };
-use crawlx_model::llm::openai::DEFAULT_ENDPOINT;
-use crawlx_model::llm::{OpenAiCompatible, OpenAiEmbeddings};
+use crawlx_model::llm::chat_completions::DEFAULT_ENDPOINT;
+use crawlx_model::llm::{ChatCompletionsClient, HttpEmbeddings};
 use serde_json::{json, Map, Value};
 
 /// The effective provider settings and what is wrong with them.
@@ -79,7 +79,7 @@ fn llm_section(s: &LlmSettings, get: Env<'_>, findings: &mut Vec<Finding>) -> Va
     let key = key_status(s.api_key_ref.as_deref(), get, "intel.llm.apiKey", findings);
     // a key reference that does not resolve is already reported by `key_status`
     if let Ok(cfg) = s.resolve_with(get) {
-        if let Err(e) = OpenAiCompatible::new(cfg) {
+        if let Err(e) = ChatCompletionsClient::new(cfg) {
             findings.push(finding("intel.llm", e.to_string(), true));
         }
     }
@@ -108,14 +108,14 @@ fn embeddings_section(
         .or_else(|| llm.and_then(|l| l.api_key_ref.as_deref()));
     let key = key_status(key_ref, get, "intel.embeddings.apiKey", findings);
     if let Ok(cfg) = s.resolve_with(llm, get) {
-        if let Err(e) = OpenAiEmbeddings::new(cfg) {
+        if let Err(e) = HttpEmbeddings::new(cfg) {
             findings.push(finding("intel.embeddings", e.to_string(), true));
         }
     }
     json!({
         "model": s.model,
         "endpoint": redact_endpoint(endpoint),
-        "endpointFrom": if s.endpoint.is_some() { "MODEL_EMBEDDING_* override" } else { "default llm" },
+        "endpointFrom": if s.endpoint.is_some() { "embedding endpoint override" } else { "default llm" },
         "apiKey": key,
         "topN": s.top_n,
         "timeoutMs": s.timeout_ms,
@@ -133,7 +133,7 @@ fn extraction_section(
         findings.push(finding(
             "intel.extraction",
             "the extraction provider falls back to the default LLM, which is not configured \
-             (set OPENAI_BASE_URL / OLLAMA_BASE_URL / OPENAI_API_KEY)",
+             (set CRAWLX_LLM_BASE_URL / CRAWLX_LOCAL_LLM_BASE_URL / CRAWLX_LLM_API_KEY)",
             true,
         ));
     }
@@ -141,7 +141,7 @@ fn extraction_section(
         findings.push(finding("intel.extraction", e.to_string(), true));
     }
     if let Ok(cfg) = s.resolve_with(get) {
-        if let Err(e) = OpenAiCompatible::new(cfg) {
+        if let Err(e) = ChatCompletionsClient::new(cfg) {
             findings.push(finding("intel.extraction", e.to_string(), true));
         }
     }
@@ -174,14 +174,14 @@ fn branding_section(
         .model
         .as_deref()
         .or_else(|| llm.map(|l| l.model.as_str()))
-        .unwrap_or(crawlx_model::llm::openai::DEFAULT_MODEL);
+        .unwrap_or(crawlx_model::llm::chat_completions::DEFAULT_MODEL);
     let key_ref = s
         .api_key_ref
         .as_deref()
         .or_else(|| llm.and_then(|l| l.api_key_ref.as_deref()));
     let key = key_status(key_ref, get, "intel.branding.apiKey", findings);
     if let Ok(cfg) = s.resolve_with(llm, get) {
-        if let Err(e) = OpenAiCompatible::new(cfg) {
+        if let Err(e) = ChatCompletionsClient::new(cfg) {
             findings.push(finding("intel.branding", e.to_string(), true));
         }
     }
@@ -298,13 +298,13 @@ mod tests {
     fn secret_env() -> BTreeMap<String, String> {
         env(&[
             (
-                "OPENAI_BASE_URL",
+                "CRAWLX_LLM_BASE_URL",
                 "https://svc:hunter2@llm.internal:8443/v1?token=tokenInQuery",
             ),
-            ("OPENAI_API_KEY", SECRETS[0]),
-            ("MODEL_NAME", "qwen3"),
-            ("MODEL_EMBEDDING_NAME", "nomic-embed-text"),
-            ("EXTRACTION_PROVIDER_BASE_URL", "http://vllm:8000/v1"),
+            ("CRAWLX_LLM_API_KEY", SECRETS[0]),
+            ("CRAWLX_LLM_MODEL", "qwen3"),
+            ("CRAWLX_EMBEDDING_MODEL", "nomic-embed-text"),
+            ("EXTRACTION_PROVIDER_BASE_URL", "http://llm-server:8000/v1"),
             ("EXTRACTION_PROVIDER_API_KEY", SECRETS[1]),
             ("EXTRACTION_PROVIDER_ROLLOUT_PERCENT", "25"),
             ("EXTRACTION_PROVIDER_TEAM_IDS", "team-a,team-b"),
@@ -330,7 +330,7 @@ mod tests {
             );
         }
         // what is shown instead
-        assert!(json.contains("env:OPENAI_API_KEY") && json.contains("env:EXTRACTION_PROVIDER_API_KEY"));
+        assert!(json.contains("env:CRAWLX_LLM_API_KEY") && json.contains("env:EXTRACTION_PROVIDER_API_KEY"));
         assert!(json.contains("env:BRANDING_LLM_API_KEY"));
         assert!(
             toml.contains("https://<redacted>@llm.internal:8443/v1?<redacted>"),
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn a_key_reference_that_does_not_resolve_is_an_error_without_a_value() {
         let resolving = report(&|k| match k {
-            "OPENAI_BASE_URL" => Some("http://x/v1".to_owned()),
+            "CRAWLX_LLM_BASE_URL" => Some("http://x/v1".to_owned()),
             "EXTRACTION_PROVIDER_BASE_URL" => Some("http://y/v1".to_owned()),
             "EXTRACTION_PROVIDER_API_KEY" => Some("k".to_owned()),
             _ => None,
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn bad_numbers_and_overlapping_shares_are_errors_that_do_not_echo_the_text() {
         let r = run(&env(&[
-            ("OPENAI_BASE_URL", "http://x/v1"),
+            ("CRAWLX_LLM_BASE_URL", "http://x/v1"),
             ("EXTRACTION_PROVIDER_BASE_URL", "http://y/v1"),
             ("EXTRACTION_PROVIDER_ROLLOUT_PERCENT", "sk-oops-not-a-number"),
         ]));
@@ -442,7 +442,7 @@ mod tests {
         assert!(f.message.contains("EXTRACTION_PROVIDER_ROLLOUT_PERCENT"), "{f:?}");
         assert!(!f.message.contains("sk-oops"), "{f:?}");
         let r = run(&env(&[
-            ("OPENAI_BASE_URL", "http://x/v1"),
+            ("CRAWLX_LLM_BASE_URL", "http://x/v1"),
             ("EXTRACTION_PROVIDER_BASE_URL", "http://y/v1"),
             ("EXTRACTION_PROVIDER_ROLLOUT_PERCENT", "80"),
             ("EXTRACTION_PROVIDER_SHADOW_PERCENT", "30"),

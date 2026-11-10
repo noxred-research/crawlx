@@ -104,15 +104,15 @@ fn crawl_help_lists_every_flag() {
         "--field",
         "--output-template",
         "--store-fields",
-        // katana flag group: input
+        // compatibility flag group: input
         "--url",
         "--list",
         "--parallelism",
         "--resume",
         "--config",
-        // katana flag group: configuration and scope
+        // compatibility flag group: configuration and scope
         "--crawl-duration",
-        "--katana-defaults",
+        "--compat-defaults",
         "--health-check",
         "--update",
         "--disable-update-check",
@@ -130,7 +130,7 @@ fn crawl_help_lists_every_flag() {
         "--disable-redirects",
         "--field-config",
         "--kb-secrets",
-        // katana flag group: extraction and knowledge base
+        // compatibility flag group: extraction and knowledge base
         "--automatic-form-fill",
         "--form-config",
         "--knowledge-base",
@@ -139,7 +139,7 @@ fn crawl_help_lists_every_flag() {
         "--secret-validators",
         "--tech-detect",
         "--xhr-extraction",
-        // katana flag group: headless
+        // compatibility flag group: headless
         "--show-browser",
         "--headless-options",
         "--chrome-data-dir",
@@ -159,7 +159,7 @@ fn crawl_help_lists_every_flag() {
         "--enable-diagnostics",
         "--time-stable",
         "--recorded-flow",
-        // katana flag group: filters and output
+        // compatibility flag group: filters and output
         "--disable-unique-filter",
         "--no-expand-page-type",
         "--match-regex",
@@ -180,14 +180,14 @@ fn crawl_help_lists_every_flag() {
         "--silent",
         "--verbose",
         "--debug",
-        // katana flag group: AI
+        // compatibility flag group: AI
         "--ai-url",
         "--ai-model",
         "--ai-key-env",
         "--ai-record",
         "--ai-replay",
         "--ai-max-calls",
-        // katana flag group: operator environment named in the long help
+        // compatibility flag group: operator environment named in the long help
         "CRAWLX_TRAFFIC_ENDPOINT",
         "CRAWLX_TRAFFIC_TOKEN",
         "CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI",
@@ -491,7 +491,7 @@ async fn export_stores_only_selected_fields_in_an_independent_directory() {
     );
     assert_eq!(std::fs::read_to_string(&key_file).unwrap(), "existing\nx\ny\n");
     assert_eq!(std::fs::read_dir(&words).unwrap().count(), 2);
-    assert!(!dir.path().join("katana_field").exists());
+    assert!(!dir.path().join("field_wordlists").exists());
 
     let (stdout, code) = export(&[
         report.to_str().unwrap(),
@@ -527,7 +527,7 @@ async fn export_stored_custom_fields_default_beside_report_or_output_file() {
     .await;
     code.unwrap();
     assert_eq!(stdout, "https://example.test:8443/a/b.php?x=1&y=2 /a/b.php\n");
-    let words = dir.path().join("katana_field");
+    let words = dir.path().join("field_wordlists");
     assert_eq!(
         std::fs::read_to_string(words.join("https_example.test_8443_email.txt")).unwrap(),
         "a@example.test\n"
@@ -549,7 +549,7 @@ async fn export_stored_custom_fields_default_beside_report_or_output_file() {
     .await;
     code.unwrap();
     assert_eq!(
-        std::fs::read_to_string(output_dir.join("katana_field/https_example.test_8443_key.txt")).unwrap(),
+        std::fs::read_to_string(output_dir.join("field_wordlists/https_example.test_8443_key.txt")).unwrap(),
         "x\ny\n"
     );
     assert_eq!(std::fs::read_dir(&words).unwrap().count(), 1);
@@ -618,7 +618,7 @@ async fn crawl_explicit_wordlists_survive_missing_template_values_with_or_withou
         assert_eq!(stdout, "", "missing template field must not invent display text");
         let url = url::Url::parse(&site.base).unwrap();
         let stem = format!("http_{}_{}", url.host_str().unwrap(), url.port().unwrap());
-        let words = output.join("katana_field");
+        let words = output.join("field_wordlists");
         assert_eq!(
             std::fs::read_to_string(words.join(format!("{stem}_qurl.txt"))).unwrap(),
             format!("{allowed}\n")
@@ -1167,7 +1167,7 @@ fn parse_crawl(args: &[&str]) -> crawlx_cli::crawl::CrawlArgs {
 }
 
 #[test]
-fn katana_flags_map_onto_the_request() {
+fn compat_flags_map_onto_the_request() {
     use crawlx_core::config::{
         CrawlStrategy, CustomFieldPart, HostScope, KnownFile, PageLoadStrategy, PageType, SimilarityMode,
     };
@@ -1483,7 +1483,7 @@ fn flags_override_a_request_file() {
 fn custom_field_config_parses_yaml_and_json() {
     use crawlx_core::config::CustomFieldPart;
     let dir = tempfile::tempdir().unwrap();
-    // katana's field-config.yaml shape (pkg/output/custom_field.go): `type` is optional and
+    // the compatibility field-config.yaml shape: `type` is optional and
     // an absent `part` scans the whole response
     let yaml = dir.path().join("fields.yaml");
     std::fs::write(

@@ -1,6 +1,6 @@
 //! Route templates: path segments that identify an object become slots.
 //!
-//! Static rules replace numeric, UUID, hash/hex, date/timestamp (katana's
+//! Static rules replace numeric, UUID, hash/hex, date/timestamp (the
 //! fingerprint patterns), base64-ish and slug-with-id segments
 //! by `:id`. [`RouteTemplater::learn`] additionally discovers slots from
 //! observed sibling paths (≥ `min_distinct` distinct values at one position
@@ -211,7 +211,7 @@ fn static_slot(seg: &str) -> Option<String> {
 }
 
 /// Does the whole segment (no extension) denote an object identifier?
-/// Katana's anchored patterns (`crate::fingerprint::segment_placeholder`:
+/// The anchored patterns (`crate::fingerprint::segment_placeholder`:
 /// uuid, hashes, ≥ 8-char hex with a hex letter, dates, timestamps, numbers)
 /// are tried first, then the base64-ish and slug-with-id rules.
 #[must_use]

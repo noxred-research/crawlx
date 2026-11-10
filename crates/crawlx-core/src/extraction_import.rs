@@ -23,63 +23,50 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_MANIFEST_BYTES: usize = 1_048_576;
 /// Source family with one immutable release per dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ExtractionSourceV1 {
-    /// Trafilatura 2.3.1, Apache-2.0 source, not webpage rights.
-    Trafilatura,
-    /// Newspaper4k 0.9.6.1, MIT package with separate Goose Apache notice.
-    Newspaper4k,
-    /// Katana 1.8.0, MIT source with separately licensed data.
-    Katana,
+    /// Precision-oriented text extraction library, Apache-2.0 source, not webpage rights.
+    #[serde(rename = "text-precision")]
+    PrecisionText,
+    /// News-article extraction library, MIT package with a separate Apache-2.0 notice.
+    #[serde(rename = "news-article")]
+    NewsArticle,
+    /// Surface-discovery crawler flag set, MIT source with separately licensed data.
+    #[serde(rename = "surface-flags")]
+    SurfaceFlags,
 }
 impl ExtractionSourceV1 {
     /// Exact source release; no floating tags or version ranges.
     #[must_use]
     pub const fn release(self) -> &'static str {
         match self {
-            Self::Trafilatura => "2.3.1",
-            Self::Newspaper4k => "0.9.6.1",
-            Self::Katana => "1.8.0",
-        }
-    }
-    /// Immutable source root supplying this inventory.
-    #[must_use]
-    pub const fn source_url(self) -> &'static str {
-        match self {
-            Self::Trafilatura => {
-                "https://github.com/adbar/trafilatura/tree/e2f85c965662c7df26b73290ef175b2c2a5fdca6"
-            }
-            Self::Newspaper4k => {
-                "https://github.com/AndyTheFactory/newspaper4k/tree/22a4be5cda9f61ad425f0a7b83a20b9ed0756a43"
-            }
-            Self::Katana => {
-                "https://github.com/projectdiscovery/katana/tree/35267ac5c8ff1db9694a319d0eb466ed97b0969f"
-            }
+            Self::PrecisionText => "2.3.1",
+            Self::NewsArticle => "0.9.6.1",
+            Self::SurfaceFlags => "1.8.0",
         }
     }
     /// Package license, never a license for scraped content or external models.
     #[must_use]
     pub const fn license(self) -> &'static str {
         match self {
-            Self::Trafilatura => "Apache-2.0",
-            Self::Newspaper4k => "MIT; Goose portions Apache-2.0",
-            Self::Katana => "MIT",
+            Self::PrecisionText => "Apache-2.0",
+            Self::NewsArticle => "MIT; Apache-2.0 portions",
+            Self::SurfaceFlags => "MIT",
         }
     }
     /// Pinned feature ledger: `ID<TAB>upstream feature` per line, `#` starts a comment.
     fn inventory(self) -> &'static str {
         match self {
-            Self::Trafilatura => include_str!("../data/extraction-inventories/trafilatura.tsv"),
-            Self::Newspaper4k => include_str!("../data/extraction-inventories/newspaper4k.tsv"),
-            Self::Katana => include_str!("../data/extraction-inventories/katana-remaining.tsv"),
+            Self::PrecisionText => include_str!("../data/extraction-inventories/text-precision.tsv"),
+            Self::NewsArticle => include_str!("../data/extraction-inventories/news-article.tsv"),
+            Self::SurfaceFlags => include_str!("../data/extraction-inventories/surface-remaining.tsv"),
         }
     }
     fn prefix(self) -> &'static str {
         match self {
-            Self::Trafilatura => "TF-",
-            Self::Newspaper4k => "NP-",
-            Self::Katana => "KR-",
+            Self::PrecisionText => "TP-",
+            Self::NewsArticle => "NA-",
+            Self::SurfaceFlags => "SR-",
         }
     }
 }
@@ -176,8 +163,6 @@ pub struct ExtractionImportReportV1 {
     pub dialect: ExtractionDialectV1,
     /// Exact selected release.
     pub source_version: &'static str,
-    /// Immutable upstream provenance.
-    pub source_url: &'static str,
     /// Package/source license; model/content rights remain independent.
     pub license: &'static str,
     /// Always false; imports are native configuration, not SDK emulation.
@@ -342,7 +327,7 @@ fn validate_manifest(m: &ExtractionManifestV1) -> Result<(), ExtractionImportErr
     if m.options.len() > 128
         || m.required_inventory.len() > 128
         || m.required_inventory.iter().any(|id| id.len() > 16)
-        || (m.source == ExtractionSourceV1::Katana && m.dialect != ExtractionDialectV1::Cli)
+        || (m.source == ExtractionSourceV1::SurfaceFlags && m.dialect != ExtractionDialectV1::Cli)
     {
         return Err(ExtractionImportError::Manifest(
             "unsupported dialect or excessive option/inventory count",
@@ -365,7 +350,7 @@ fn validate_manifest(m: &ExtractionManifestV1) -> Result<(), ExtractionImportErr
     Ok(())
 }
 
-/// Return the complete IDs from the pinned ledger, including Katana residual gap IDs.
+/// Return the complete IDs from the pinned ledger, including the surface residual gap IDs.
 #[must_use]
 pub fn inventory_ids(source: ExtractionSourceV1) -> BTreeSet<String> {
     source
@@ -494,7 +479,7 @@ fn source_seed(m: &ExtractionManifestV1) -> Option<url::Url> {
             .first()?
             .as_str()
     })?;
-    if m.source == ExtractionSourceV1::Katana && value.contains(',') {
+    if m.source == ExtractionSourceV1::SurfaceFlags && value.contains(',') {
         return None;
     }
     let url = url::Url::parse(value).ok()?;
@@ -526,7 +511,7 @@ pub fn inspect_manifest(
         targets: BTreeSet::new(),
     };
     t.policy.nlp = NlpCapabilityV1::Off;
-    if m.source == ExtractionSourceV1::Newspaper4k {
+    if m.source == ExtractionSourceV1::NewsArticle {
         t.policy.algorithm = ArticleAlgorithmV1::ArticleGravityV1;
     }
     if let Some(crawl) = &mut t.crawl {
@@ -595,10 +580,10 @@ pub fn inspect_manifest(
             .all(|d| !d.requested || d.state == ImportStateV1::Translated);
     let differences = vec![
         "Only explicitly supplied settings are translated; omitted settings retain native defaults, not source defaults.",
-        "Trafilatura MIN_EXTRACTED_SIZE=250 is a candidate threshold; native minMainChars=40 is a final Unicode-scalar quality gate. They are not interchangeable.",
-        "Newspaper min_word_count=300 and min_sent_count=7 are not Unicode-scalar counts. Native minMainChars does not emulate these gates.",
-        "Newspaper max_keywords defaults to 35 in library and 10 in CLI. Native default NLP is disabled in imported profiles unless explicitly selected through a supported native contract.",
-        "Punkt/py3langid/dit and fingerprint data need separately licensed pinned resources. Imports never download models or silently substitute Unicode rules for Punkt.",
+        "The precision-text MIN_EXTRACTED_SIZE=250 is a candidate threshold; native minMainChars=40 is a final Unicode-scalar quality gate. They are not interchangeable.",
+        "The news-article min_word_count=300 and min_sent_count=7 are not Unicode-scalar counts. Native minMainChars does not emulate these gates.",
+        "The news-article max_keywords defaults to 35 in library and 10 in CLI. Native default NLP is disabled in imported profiles unless explicitly selected through a supported native contract.",
+        "Sentence-tokenizer, language-identification and fingerprint data need separately licensed pinned resources. Imports never download models or silently substitute Unicode rules for the tokenizer.",
         "Native dates use explicit referenceDate/locale only; source wall-clock future-date defaults are not reproduced.",
         "Native robots, TLS verification, checked proxies, retention and private-address admission remain enabled; no upstream unsafe default is inherited.",
         "Native JSON envelopes, CSV safety and XML/TEI schemas differ from upstream formats; CreateCrawl cannot express offline article serializers.",
@@ -609,7 +594,6 @@ pub fn inspect_manifest(
         source: m.source,
         dialect: m.dialect,
         source_version: m.source.release(),
-        source_url: m.source.source_url(),
         license: m.source.license(),
         sdk_abi_compatible: false,
         convertible,
@@ -658,7 +642,7 @@ fn translate_option(
         return;
     }
     let boolean = value.as_bool().or_else(|| {
-        if source == ExtractionSourceV1::Trafilatura && dialect == ExtractionDialectV1::Settings {
+        if source == ExtractionSourceV1::PrecisionText && dialect == ExtractionDialectV1::Settings {
             match value.as_str() {
                 Some("on") => Some(true),
                 Some("off") => Some(false),
@@ -722,7 +706,7 @@ fn translate_option(
         "language" => {
             let text = value.as_str().filter(|s| s.len() == 2 && s.bytes().all(|b| b.is_ascii_lowercase()));
             if let Some(text) = text { t.policy.target_language = Some(text.to_owned()); }
-            t.translated(key, "extract.content.targetLanguage", text.is_some(), "strict declared-language quality target only; no py3langid detection or automatic tokenizer download");
+            t.translated(key, "extract.content.targetLanguage", text.is_some(), "strict declared-language quality target only; no language-identification model and no automatic tokenizer download");
         }
         "max_text" | "max_summary" | "max_summary_sent" | "max_keywords" => {
             let (target, limit) = match canonical {
@@ -738,10 +722,10 @@ fn translate_option(
                 "max_summary_sent" => t.policy.summary_sentences = n,
                 _ => t.policy.keywords = n,
             } }
-            t.translated(key, target, n.is_some(), "native Unicode scalar/count bound; NLP remains disabled, not a silent Punkt replacement");
+            t.translated(key, target, n.is_some(), "native Unicode scalar/count bound; NLP remains disabled, not a silent sentence-tokenizer replacement");
         }
         "skip_nlp" => {
-            t.translated(key, "extract.content.nlp", boolean == Some(true), "skip-nlp=true maps to off; source NLP requires pinned licensed Punkt resources and is not silently emulated");
+            t.translated(key, "extract.content.nlp", boolean == Some(true), "skip-nlp=true maps to off; source NLP requires pinned licensed tokenizer resources and is not silently emulated");
         }
         "follow_meta_refresh" => {
             if let (Some(enabled), Some(crawl)) = (boolean, &mut t.crawl) {
@@ -749,7 +733,7 @@ fn translate_option(
                 policy.meta_refresh = enabled.then(crate::acquisition::MetaRefreshPolicyV1::default);
             }
             t.translated(key, "acquisition.metaRefresh", boolean.is_some(),
-                "native opt-in static bodyless GET; only first matching bounded case-insensitive tag, malformed first content never selects a later tag; relative observed URL and one immediate transition under unchanged checked admission and shared parent allowance; failed targets never fall back to original success; other NP-30 HTTP/binary/probe requirements remain open");
+                "native opt-in static bodyless GET; only first matching bounded case-insensitive tag, malformed first content never selects a later tag; relative observed URL and one immediate transition under unchanged checked admission and shared parent allowance; failed targets never fall back to original success; other NA-30 HTTP/binary/probe requirements remain open");
         }
         "fetch_images" | "skip_fetch_images" => {
             let disabled = boolean == Some(canonical == "skip_fetch_images");
@@ -758,8 +742,8 @@ fn translate_option(
         "output_format" => {
             let format = value.as_str();
             let native = match (source, format) {
-                (ExtractionSourceV1::Trafilatura, Some("markdown")) => Some(crate::config::OutputFormat::Markdown),
-                (ExtractionSourceV1::Trafilatura, Some("html")) => Some(crate::config::OutputFormat::Html),
+                (ExtractionSourceV1::PrecisionText, Some("markdown")) => Some(crate::config::OutputFormat::Markdown),
+                (ExtractionSourceV1::PrecisionText, Some("html")) => Some(crate::config::OutputFormat::Html),
                 _ => None,
             };
             if let Some(format) = native { if let Some(crawl) = &mut t.crawl { crawl.output.formats = vec![format]; } }
@@ -767,7 +751,7 @@ fn translate_option(
         }
         "timeout" | "delay" => {
             let min_ms = if canonical == "timeout" { 100 } else { 50 };
-            let n = source_milliseconds(value, source != ExtractionSourceV1::Katana, min_ms);
+            let n = source_milliseconds(value, source != ExtractionSourceV1::SurfaceFlags, min_ms);
             if let Some(n) = n { if let Some(crawl) = &mut t.crawl { if canonical == "timeout" { crawl.fetch.timeout_ms = n; } else { crawl.politeness.delay_ms = n; } } }
             let target = if canonical == "timeout" { "fetch.timeoutMs" } else { "politeness.delayMs" };
             t.translated(key, target, n.is_some(), "source seconds converted exactly to checked native milliseconds; sub-millisecond values and unsafe zero delays are rejected; combined native governor limits remain active");
@@ -861,7 +845,7 @@ fn translate_option(
         "proxy" | "cookies" | "headers" | "credentials" | "recorded_flow" => {
             t.unavailable(key, ImportStateV1::Rejected, "identity/proxy/auth import requires the explicit native request-identity reference contract; literal secrets, ambient references and arbitrary proxy settings are not imported");
         }
-        "solver" | "google_news" | "trends" | "archived" => {
+        "solver" | "news_search" | "trends" | "archived" => {
             t.unavailable(key, ImportStateV1::ExternalRequired, "explicit authorized connector/provider resource required; import performs no external requests and installs no hidden fallback");
         }
         "requests_params" | "top_image_settings" | "date_params" => {
@@ -885,7 +869,7 @@ fn translate_option(
                     crawl.scope.discovery = Some(policy);
                 }
             }
-            t.translated(key, "scope.sources", valid, "explicit bounded native source stages; no hidden Google fallback, guessed paths, or external connectors; multiple discovery mode flags are rejected");
+            t.translated(key, "scope.sources", valid, "explicit bounded native source stages; no hidden search-provider fallback, guessed paths, or external connectors; multiple discovery mode flags are rejected");
         }
         "formatting" | "links" => {
             if let Some(value) = boolean {
@@ -895,7 +879,7 @@ fn translate_option(
             t.translated(key, target, boolean.is_some(),
                 "explicit native structural HTML/Markdown keep flag; canonical plain text and discovery authority stay unchanged; null/format-dependent auto mode is not silently inferred");
         }
-        "punkt" => t.unavailable(key, ImportStateV1::ExternalRequired, "licensed checksum-pinned compatible Punkt/tokenizer resource required; no fake Punkt or runtime model download"),
+        "sentence_tokenizer" => t.unavailable(key, ImportStateV1::ExternalRequired, "licensed checksum-pinned compatible sentence-tokenizer resource required; no fake tokenizer or runtime model download"),
         _ => {
             t.unavailable(key, ImportStateV1::DecisionNeeded, "advertised pinned option has no complete executable source-semantic mapping; it is not ignored or silently approximated");
         }
@@ -935,7 +919,7 @@ fn report_nested(prefix: &str, value: &Value, t: &mut Translation) {
 
 // The explicit dialect catalog doubles as the machine-readable fixture matrix.
 // Alias spellings below are source names, never deprecated native aliases.
-const TF_LIBRARY: &[(&str, &str)] = &[
+const PRECISION_TEXT_LIBRARY: &[(&str, &str)] = &[
     ("url", "url"),
     ("fast", "fast"),
     ("no_fallback", "fast"),
@@ -961,7 +945,7 @@ const TF_LIBRARY: &[(&str, &str)] = &[
     ("options", "unavailable"),
     ("tei_validation", "unavailable"),
 ];
-const TF_SETTINGS: &[(&str, &str)] = &[
+const PRECISION_TEXT_SETTINGS: &[(&str, &str)] = &[
     ("url", "url"),
     ("DOWNLOAD_TIMEOUT", "timeout"),
     ("MAX_FILE_SIZE", "max_file_size"),
@@ -984,7 +968,7 @@ const TF_SETTINGS: &[(&str, &str)] = &[
     ("PROXY_URL", "proxy"),
     ("http_proxy", "proxy"),
 ];
-const TF_CLI: &[(&str, &str)] = &[
+const PRECISION_TEXT_CLI: &[(&str, &str)] = &[
     ("URL", "url"),
     ("input-file", "unavailable"),
     ("input-dir", "unavailable"),
@@ -1032,7 +1016,7 @@ const TF_CLI: &[(&str, &str)] = &[
     ("f", "fast"),
     ("v", "unavailable"),
 ];
-const NP_LIBRARY: &[(&str, &str)] = &[
+const NEWS_ARTICLE_LIBRARY: &[(&str, &str)] = &[
     ("url", "url"),
     ("language", "language"),
     ("min_word_count", "unavailable"),
@@ -1073,18 +1057,18 @@ const NP_LIBRARY: &[(&str, &str)] = &[
     ("authors", "unavailable"),
     ("meta_lang", "unavailable"),
     ("use_meta_language", "unavailable"),
-    ("nlp", "punkt"),
-    ("punkt", "punkt"),
+    ("nlp", "sentence_tokenizer"),
+    ("punkt", "sentence_tokenizer"), // wire-compat: source option key
     ("only_homepage", "source_mode"),
     ("only_in_path", "source_mode"),
     ("dry", "source_mode"),
-    ("google_news", "google_news"),
+    ("google_news", "news_search"), // wire-compat: source option key
     ("popular_urls", "unavailable"),
     ("hot", "trends"),
     ("before_request", "unavailable"),
     ("after_response", "unavailable"),
     ("on_error", "unavailable"),
-    ("cloudscraper", "unavailable"),
+    ("cloudscraper", "unavailable"), // wire-compat: source option key
     ("save", "unavailable"),
     ("pickle", "unavailable"),
     ("MIN_WORD_COUNT", "unavailable"),
@@ -1097,7 +1081,7 @@ const NP_LIBRARY: &[(&str, &str)] = &[
     ("MAX_SUMMARY_SENT", "max_summary_sent"),
     ("MAX_FILE_MEMO", "unavailable"),
 ];
-const NP_CLI: &[(&str, &str)] = &[
+const NEWS_ARTICLE_CLI: &[(&str, &str)] = &[
     ("url", "url"),
     ("urls-from-file", "unavailable"),
     ("urls-from-stdin", "unavailable"),
@@ -1125,7 +1109,7 @@ const NP_CLI: &[(&str, &str)] = &[
     ("o", "unavailable"),
     ("ua", "user_agent"),
 ];
-const KATANA: &[(&str, &str)] = &[
+const SURFACE_FLAGS: &[(&str, &str)] = &[
     ("u", "url"),
     ("list", "url"),
     ("resume", "unavailable"),
@@ -1135,7 +1119,7 @@ const KATANA: &[(&str, &str)] = &[
     ("crawl-duration", "unavailable"),
     ("max-domain-pages", "max_domain_pages"),
     ("js-crawl", "unavailable"),
-    ("jsluice", "unavailable"),
+    ("jsluice", "unavailable"), // wire-compat: source flag name
     ("known-files", "unavailable"),
     ("path-climb", "path_climb"),
     ("disable-redirects", "disable_redirects"),
@@ -1327,13 +1311,13 @@ pub fn option_catalog(
     dialect: ExtractionDialectV1,
 ) -> &'static [(&'static str, &'static str)] {
     match (source, dialect) {
-        (ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Library) => TF_LIBRARY,
-        (ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Cli) => TF_CLI,
-        (ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Settings) => TF_SETTINGS,
-        (ExtractionSourceV1::Newspaper4k, ExtractionDialectV1::Cli) => NP_CLI,
-        (ExtractionSourceV1::Newspaper4k, _) => NP_LIBRARY,
-        (ExtractionSourceV1::Katana, ExtractionDialectV1::Cli) => KATANA,
-        (ExtractionSourceV1::Katana, _) => &[],
+        (ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library) => PRECISION_TEXT_LIBRARY,
+        (ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli) => PRECISION_TEXT_CLI,
+        (ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Settings) => PRECISION_TEXT_SETTINGS,
+        (ExtractionSourceV1::NewsArticle, ExtractionDialectV1::Cli) => NEWS_ARTICLE_CLI,
+        (ExtractionSourceV1::NewsArticle, _) => NEWS_ARTICLE_LIBRARY,
+        (ExtractionSourceV1::SurfaceFlags, ExtractionDialectV1::Cli) => SURFACE_FLAGS,
+        (ExtractionSourceV1::SurfaceFlags, _) => &[],
     }
 }
 fn canonical_key(
@@ -1353,15 +1337,15 @@ mod tests {
     use serde_json::json;
     fn manifest(source: ExtractionSourceV1, dialect: ExtractionDialectV1) -> ExtractionManifestV1 {
         let key = match (source, dialect) {
-            (ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Cli) => "URL",
-            (ExtractionSourceV1::Katana, ExtractionDialectV1::Cli) => "u",
+            (ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli) => "URL",
+            (ExtractionSourceV1::SurfaceFlags, ExtractionDialectV1::Cli) => "u",
             _ => "url",
         };
         serde_json::from_value(json!({"version":1,"source":source,"sourceVersion":source.release(),"dialect":dialect,"options":{key:"https://fixture.test/story"}})).unwrap()
     }
     #[test]
     fn author_exclusion_import_rejects_invalid_bounds_without_echoing_values() {
-        let mut input = manifest(ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Library);
+        let mut input = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
         for names in [json!(["Émilie Durand", "Alex Example"]), json!([])] {
             input.options.insert("author_blacklist".into(), names);
             let (report, crawl) = inspect_manifest(&input).unwrap();
@@ -1384,26 +1368,26 @@ mod tests {
         }
     }
     #[test]
-    fn complete_inventory_includes_hyphenated_rows_and_katana_gaps() {
-        assert_eq!(inventory_ids(ExtractionSourceV1::Trafilatura).len(), 38);
-        assert_eq!(inventory_ids(ExtractionSourceV1::Newspaper4k).len(), 40);
-        let katana = inventory_ids(ExtractionSourceV1::Katana);
-        assert_eq!(katana.len(), 44);
-        assert!(katana.contains("KR-G12"));
+    fn complete_inventory_includes_hyphenated_rows_and_surface_gaps() {
+        assert_eq!(inventory_ids(ExtractionSourceV1::PrecisionText).len(), 38);
+        assert_eq!(inventory_ids(ExtractionSourceV1::NewsArticle).len(), 40);
+        let surface = inventory_ids(ExtractionSourceV1::SurfaceFlags);
+        assert_eq!(surface.len(), 44);
+        assert!(surface.contains("SR-G12"));
     }
     #[test]
     fn every_advertised_option_receives_a_disposition_without_execution() {
         for source in [
-            ExtractionSourceV1::Trafilatura,
-            ExtractionSourceV1::Newspaper4k,
-            ExtractionSourceV1::Katana,
+            ExtractionSourceV1::PrecisionText,
+            ExtractionSourceV1::NewsArticle,
+            ExtractionSourceV1::SurfaceFlags,
         ] {
             for dialect in [
                 ExtractionDialectV1::Library,
                 ExtractionDialectV1::Cli,
                 ExtractionDialectV1::Settings,
             ] {
-                if source == ExtractionSourceV1::Katana && dialect != ExtractionDialectV1::Cli {
+                if source == ExtractionSourceV1::SurfaceFlags && dialect != ExtractionDialectV1::Cli {
                     continue;
                 }
                 for &(key, _) in option_catalog(source, dialect) {
@@ -1423,9 +1407,9 @@ mod tests {
     }
     #[test]
     fn exact_pins_unknown_keys_duplicate_json_and_nested_values_fail_closed() {
-        assert!(parse_manifest(br#"{"version":1,"source":"trafilatura","sourceVersion":"2.3.1","dialect":"library","options":{"url":"https://fixture.test","fast":true,"fast":false}}"#).is_err());
-        assert!(parse_manifest(br#"{"version":1,"source":"newspaper4k","sourceVersion":"0.9.6.1","dialect":"library","options":{"requests_params":{"timeout":1,"timeout":2}}}"#).is_err());
-        let mut m = manifest(ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Library);
+        assert!(parse_manifest(br#"{"version":1,"source":"text-precision","sourceVersion":"2.3.1","dialect":"library","options":{"url":"https://fixture.test","fast":true,"fast":false}}"#).is_err());
+        assert!(parse_manifest(br#"{"version":1,"source":"news-article","sourceVersion":"0.9.6.1","dialect":"library","options":{"requests_params":{"timeout":1,"timeout":2}}}"#).is_err());
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
         m.source_version = "latest".into();
         assert!(inspect_manifest(&m).is_err());
         m.source_version = "2.3.1".into();
@@ -1434,42 +1418,46 @@ mod tests {
     }
     #[test]
     fn required_inventory_is_not_faked_by_one_option_mapping() {
-        let mut m = manifest(ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Library);
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
         m.options.insert("fast".into(), json!(true));
-        m.required_inventory.push("TF-04".into());
+        m.required_inventory.push("TP-04".into());
         let (report, native) = inspect_manifest(&m).unwrap();
         assert!(!report.convertible);
         assert!(native.is_none());
         assert!(report
             .dispositions
             .iter()
-            .any(|d| d.id == "TF-04" && d.requested && d.state == ImportStateV1::DecisionNeeded));
+            .any(|d| d.id == "TP-04" && d.requested && d.state == ImportStateV1::DecisionNeeded));
     }
     #[test]
     fn threshold_units_and_unsafe_provider_settings_are_never_silently_coerced() {
         for (source, key, value) in [
-            (ExtractionSourceV1::Newspaper4k, "min_word_count", json!(300)),
+            (ExtractionSourceV1::NewsArticle, "min_word_count", json!(300)),
             (
-                ExtractionSourceV1::Newspaper4k,
+                ExtractionSourceV1::NewsArticle,
                 "allow_private_hosts",
                 json!(true),
             ),
             (
-                ExtractionSourceV1::Newspaper4k,
+                ExtractionSourceV1::NewsArticle,
                 "proxies",
                 json!({"https":"http://user:secret@proxy.test"}),
             ),
-            (ExtractionSourceV1::Newspaper4k, "nlp", json!(true)),
+            (ExtractionSourceV1::NewsArticle, "nlp", json!(true)),
             (
-                ExtractionSourceV1::Katana,
+                ExtractionSourceV1::SurfaceFlags,
                 "captcha-solver-provider",
-                json!("capsolver"),
+                json!("task-api"),
             ),
-            (ExtractionSourceV1::Trafilatura, "output_format", json!("pickle")),
+            (
+                ExtractionSourceV1::PrecisionText,
+                "output_format",
+                json!("pickle"),
+            ),
         ] {
             let mut m = manifest(
                 source,
-                if source == ExtractionSourceV1::Katana {
+                if source == ExtractionSourceV1::SurfaceFlags {
                     ExtractionDialectV1::Cli
                 } else {
                     ExtractionDialectV1::Library
@@ -1484,14 +1472,14 @@ mod tests {
     }
     #[test]
     fn conflicting_focus_and_aliases_fail_before_io() {
-        let mut m = manifest(ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Library);
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
         m.options.insert("favor_precision".into(), json!(true));
         m.options.insert("favor_recall".into(), json!(true));
         assert!(!inspect_manifest(&m).unwrap().0.convertible);
     }
     #[test]
     fn native_settings_remain_runnable_and_seconds_are_checked() {
-        let mut m = manifest(ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Settings);
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Settings);
         m.options.insert("DOWNLOAD_TIMEOUT".into(), json!(30));
         m.options.insert("MAX_FILE_SIZE".into(), json!(20_000_000));
         m.options.insert("INSECURE_SSL_FALLBACK".into(), json!(false));
@@ -1505,8 +1493,8 @@ mod tests {
         assert!(!inspect_manifest(&m).unwrap().0.convertible);
     }
     #[test]
-    fn newspaper_settings_preserve_native_bounds_and_disable_unavailable_side_effects() {
-        let mut m = manifest(ExtractionSourceV1::Newspaper4k, ExtractionDialectV1::Library);
+    fn news_article_settings_preserve_native_bounds_and_disable_unavailable_side_effects() {
+        let mut m = manifest(ExtractionSourceV1::NewsArticle, ExtractionDialectV1::Library);
         m.options.extend([
             ("max_text".into(), json!(100_000)),
             ("max_keywords".into(), json!(35)),
@@ -1532,9 +1520,9 @@ mod tests {
             .is_none_or(|p| p.media_probes == 0 && p.connectors.is_empty()));
     }
     #[test]
-    fn trafilatura_all_discovery_modes_have_executable_native_stages_without_external_fallbacks() {
+    fn precision_text_all_discovery_modes_have_executable_native_stages_without_external_fallbacks() {
         for mode in ["feed", "sitemap", "crawl", "explore", "probe"] {
-            let mut m = manifest(ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Cli);
+            let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Cli);
             m.options.insert(mode.into(), json!(true));
             let (report, request) = inspect_manifest(&m).unwrap();
             assert!(report.convertible, "{mode}");
@@ -1550,9 +1538,9 @@ mod tests {
         }
     }
     #[test]
-    fn katana_residual_aliases_execute_native_mode_scope_delay_and_combined_rate_controls() {
+    fn surface_residual_aliases_execute_native_mode_scope_delay_and_combined_rate_controls() {
         for (key, expected) in [("hl", CrawlMode::Dynamic), ("hh", CrawlMode::Hybrid)] {
-            let mut m = manifest(ExtractionSourceV1::Katana, ExtractionDialectV1::Cli);
+            let mut m = manifest(ExtractionSourceV1::SurfaceFlags, ExtractionDialectV1::Cli);
             m.options.extend([
                 (key.into(), json!(true)),
                 ("ns".into(), json!(true)),
@@ -1569,14 +1557,14 @@ mod tests {
             assert_eq!(request.politeness.global_rps, Some(10));
             assert_eq!(request.politeness.per_host_rpm, Some(30));
         }
-        let mut m = manifest(ExtractionSourceV1::Katana, ExtractionDialectV1::Cli);
+        let mut m = manifest(ExtractionSourceV1::SurfaceFlags, ExtractionDialectV1::Cli);
         m.options
             .extend([("hl".into(), json!(true)), ("hh".into(), json!(true))]);
         assert!(!inspect_manifest(&m).unwrap().0.convertible);
     }
     #[test]
     fn literal_settings_and_fractional_seconds_preserve_units_without_float_casts() {
-        let mut m = manifest(ExtractionSourceV1::Trafilatura, ExtractionDialectV1::Settings);
+        let mut m = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Settings);
         m.options.extend([
             ("SSRF_PROTECTION".into(), json!("on")),
             ("INSECURE_SSL_FALLBACK".into(), json!("off")),

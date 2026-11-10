@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 /// Usage text of the `wire` subcommands.
 pub const USAGE: &str = "usage: crawlx-differential wire capture --spec FILE --family ID --api URL --origin URL --out FILE [options]\n\
-       crawlx-differential wire compare --firecrawl FILE --crawlx FILE [options]\n\
+       crawlx-differential wire compare --upstream FILE --crawlx FILE [options]\n\
 capture options:\n\
   --spec FILE          scenario file (bench/differential/wire-scenarios.json)\n\
   --family ID          the family of the spec to run\n\
-  --api URL            API root the requests go to (http://127.0.0.1:3102; for the facade .../compat/firecrawl)\n\
+  --api URL            API root the requests go to (http://127.0.0.1:3102; for the facade .../compat)\n\
   --origin URL         origin the system reaches the gym on (http://gym.test:4101): `{seed}` expands to it plus the family's seed path\n\
   --bearer TOKEN       bearer token (default fc-self-host)\n\
-  --system NAME        firecrawl (default) or crawlx\n\
+  --system NAME        upstream (default) or crawlx\n\
   --provenance P       black_box_run (default) or crawlx_facade\n\
   --commit SHA         pinned upstream commit, recorded verbatim\n\
   --gym-ledger URL     the gym's /__gym/ledger as this runner reaches it (quiet check, access log)\n\
@@ -26,7 +26,7 @@ capture options:\n\
   --restart-cmd CMD    shell command that restarts the API and its workers (scenarios with a hook)\n\
   --out FILE           capture file to write\n\
 compare options:\n\
-  --firecrawl FILE     capture of the real Firecrawl\n\
+  --upstream FILE     capture of the real upstream\n\
   --crawlx FILE        capture of the crawlx facade\n\
   --divergences FILE   ledger (default bench/differential/divergences.toml)\n\
   --label ID           family id (default: the capture's family)\n\
@@ -42,7 +42,7 @@ async fn capture(args: impl Iterator<Item = String>) -> Result<u8, String> {
     let mut it = args;
     let (mut spec, mut family, mut api, mut origin, mut out) = (None, None, None, None, None);
     let mut bearer = "fc-self-host".to_owned();
-    let mut system = "firecrawl".to_owned();
+    let mut system = "upstream".to_owned();
     let mut provenance = "black_box_run".to_owned();
     let (mut commit, mut gym_ledger, mut sink_origin, mut restart) = (None, None, None, None);
     let mut sink_bind = "0.0.0.0:0".to_owned();
@@ -119,12 +119,12 @@ async fn capture(args: impl Iterator<Item = String>) -> Result<u8, String> {
 
 fn compare_cmd(args: impl Iterator<Item = String>) -> Result<u8, String> {
     let mut it = args;
-    let (mut firecrawl, mut crawlx, mut label, mut out) = (None, None, None, None);
+    let (mut upstream, mut crawlx, mut label, mut out) = (None, None, None, None);
     let mut divergences = PathBuf::from("bench/differential/divergences.toml");
     let mut fail_on_warning = false;
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--firecrawl" => firecrawl = Some(PathBuf::from(value(&mut it, &a)?)),
+            "--upstream" => upstream = Some(PathBuf::from(value(&mut it, &a)?)),
             "--crawlx" => crawlx = Some(PathBuf::from(value(&mut it, &a)?)),
             "--divergences" => divergences = PathBuf::from(value(&mut it, &a)?),
             "--label" => label = Some(value(&mut it, &a)?),
@@ -134,9 +134,9 @@ fn compare_cmd(args: impl Iterator<Item = String>) -> Result<u8, String> {
             other => return Err(format!("unknown argument `{other}`\n{USAGE}")),
         }
     }
-    let firecrawl = firecrawl.ok_or_else(|| format!("--firecrawl is required\n{USAGE}"))?;
+    let upstream = upstream.ok_or_else(|| format!("--upstream is required\n{USAGE}"))?;
     let crawlx = crawlx.ok_or_else(|| format!("--crawlx is required\n{USAGE}"))?;
-    let fc = WireCapture::load(&firecrawl).map_err(|e| format!("{}: {e}", firecrawl.display()))?;
+    let fc = WireCapture::load(&upstream).map_err(|e| format!("{}: {e}", upstream.display()))?;
     let cx = WireCapture::load(&crawlx).map_err(|e| format!("{}: {e}", crawlx.display()))?;
     let ledger = Ledger::load(&divergences).map_err(|e| format!("{}: {e}", divergences.display()))?;
     let label = label.unwrap_or_else(|| fc.family.clone());

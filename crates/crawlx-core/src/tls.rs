@@ -1,7 +1,7 @@
 //! Opt-in synthetic ClientHello randomization for the URL fetch engine.
 //!
-//! This mode selects a seeded transport profile, not a browser fingerprint or the
-//! exact uTLS randomized distribution. Certificate verification is a separate setting.
+//! This mode selects a seeded transport profile, not a browser fingerprint or an
+//! exact copy of another stack's randomized distribution. Certificate verification is a separate setting.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;

@@ -42,7 +42,7 @@ The cards suggest a severity. Adapt the response targets to your organization.
 | `crawlx admin sweep-retention [--mode all\|zdr --force] [--orphan-grace-s <n>] [store flags]` | run the sweeper now; `--mode zdr --force` deletes ZDR content first ([RB-08](#rb-08) step 3) |
 | `crawlx admin durability-audit [--since <rfc3339>] [--json]` | accepted-job audit against `crawl_runs`; exit 1 when any accepted run is missing |
 | `crawlx admin safety-audit --reader-database-url <reader-dsn> --pause-database-url <pause-dsn> [--json]` | independent cross-tenant action-safety audit; automatically pauses violating runs; exit 1 on violations, 0 when clean; errors propagate |
-| `crawlx admin engine --tenant <id> [--set crawlx\|firecrawl\|shadow]` | show or set the compat engine flag |
+| `crawlx admin engine --tenant <id> [--set crawlx\|upstream\|shadow]` | show or set the compat engine flag |
 | `crawlx admin audit-export --tenant <id>\|--all [--day <date>]` | write the daily Merkle root of the audit chain |
 | `crawlx inspect trail <run-id>` | trail verifier: checks the journal, safety-decision and trust-lane invariants of a run, exit 1 on violations; `inspect actions <run-id> --status unknown` lists rows |
 | `crawlx healthcheck --url <url>` | exit 0 for a 2xx answer; `/v0/health/readiness` proves storage answers |
@@ -121,7 +121,7 @@ route failed Jobs and preserved JSON to paging rather than assuming Prometheus s
 | R-CFG | Revert the configuration in version control, run `crawlx config check`, then roll. |
 | R-CHROMIUM | Redeploy the previous image tag and revert `chromium-pin.toml`; sessions resume from checkpoint by re-observing. |
 | R-MODEL | Roll back to the previous model artifact (versioned independently) and check the calibration version matches ([RB-05](#rb-05) step 3). |
-| R-ENGINE | `crawlx admin engine --tenant <id> --set firecrawl`: new compat crawls go to the configured Firecrawl engine instead; in-flight crawls finish where they started. |
+| R-ENGINE | `crawlx admin engine --tenant <id> --set upstream`: new compat crawls go to the configured upstream engine instead; in-flight crawls finish where they started. |
 | R-ADMISSION | `crawlx admin resume --admission --crawl <id>` (or `--all` after listing paused runs) after a `drain --admission` or `freeze` ([RB-04](#rb-04) step 8, [RB-07](#rb-07) step 7, [RB-11](#rb-11)). |
 
 ---

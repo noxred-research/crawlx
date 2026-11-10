@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Drivers `runner.mjs` accepts (`ORACLE_DRIVER`).
-pub const DRIVERS: [&str; 2] = ["playwright", "patchright"];
+pub const DRIVERS: [&str; 2] = ["reference", "hardened"];
 
 /// One control in the runner's manifest.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -114,7 +114,7 @@ pub struct OracleReport {
     pub driver: String,
     /// Installed package version of the driver; results of different versions are never merged.
     pub driver_version: String,
-    /// Whether the driver captured console output (`false` for Patchright, which disables the Console domain).
+    /// Whether the driver captured console output (`false` for the hardened reference driver, which disables the Console domain).
     #[serde(default)]
     pub console_capture: bool,
     /// Entry URL of the manifest the runner executed.
@@ -304,7 +304,7 @@ mod tests {
     fn manifest() -> FixtureManifest {
         FixtureManifest::from_json(
             r##"{"id":"g31","url_path":"/g31/","controls":[
-              {"id":"c1","selector":"#c1","role":"button","oracle":{"playwright":"oracle_gap"}},
+              {"id":"c1","selector":"#c1","role":"button","oracle":{"reference":"oracle_gap"}},
               {"id":"c2","selector":"#c2","role":"button","expected":"not_actionable"}]}"##,
         )
         .unwrap()
@@ -314,7 +314,7 @@ mod tests {
         OracleReport {
             driver: driver.to_owned(),
             driver_version: version.to_owned(),
-            console_capture: driver == "playwright",
+            console_capture: driver == "reference",
             manifest_url: "http://h/g31/".to_owned(),
             started: String::new(),
             finished: String::new(),
@@ -333,39 +333,39 @@ mod tests {
 
     #[test]
     fn manifest_has_the_runner_shape_and_per_driver_expectations() {
-        let m = oracle_manifest(&manifest(), "http://127.0.0.1:9/", "playwright").unwrap();
+        let m = oracle_manifest(&manifest(), "http://127.0.0.1:9/", "reference").unwrap();
         assert_eq!(m.url, "http://127.0.0.1:9/g31/");
         let json = serde_json::to_value(&m).unwrap();
         assert_eq!(json["controls"][0]["expected"], "oracle_gap");
         assert_eq!(json["controls"][1]["expected"], "not_actionable");
         assert_eq!(json["controls"][1]["selector"], "#c2");
-        let p = oracle_manifest(&manifest(), "http://127.0.0.1:9", "patchright").unwrap();
+        let p = oracle_manifest(&manifest(), "http://127.0.0.1:9", "hardened").unwrap();
         assert_eq!(p.controls[0].expected, ExpectedClass::Actionable);
-        assert!(oracle_manifest(&manifest(), "http://h", "selenium").is_err());
+        assert!(oracle_manifest(&manifest(), "http://h", "other").is_err());
     }
 
     #[test]
     fn manifest_round_trips_through_a_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/g31.json");
-        write_manifest(&manifest(), "http://h:1", "patchright", &path).unwrap();
+        write_manifest(&manifest(), "http://h:1", "hardened", &path).unwrap();
         let back: OracleManifest = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             back,
-            oracle_manifest(&manifest(), "http://h:1", "patchright").unwrap()
+            oracle_manifest(&manifest(), "http://h:1", "hardened").unwrap()
         );
     }
 
     #[test]
     fn report_parse_validates_driver_and_verdicts() {
         let ok = serde_json::to_string(&report(
-            "playwright",
+            "reference",
             "1.56.1",
             &[("c1", ExpectedClass::OracleGap)],
         ))
         .unwrap();
         assert_eq!(OracleReport::parse(&ok).unwrap().results.len(), 1);
-        let bad_driver = ok.replace("playwright", "selenium");
+        let bad_driver = ok.replace("reference", "other");
         assert!(OracleReport::parse(&bad_driver).is_err());
         let bad_verdict = ok.replace("oracle_gap", "maybe");
         assert!(OracleReport::parse(&bad_verdict).is_err());
@@ -373,21 +373,21 @@ mod tests {
 
     #[test]
     fn merge_refuses_mixed_drivers_and_versions() {
-        let a = report("playwright", "1.56.1", &[("c1", ExpectedClass::Actionable)]);
-        let b = report("patchright", "1.56.2", &[("c2", ExpectedClass::Actionable)]);
+        let a = report("reference", "1.56.1", &[("c1", ExpectedClass::Actionable)]);
+        let b = report("hardened", "1.56.2", &[("c2", ExpectedClass::Actionable)]);
         let err = merge(&[a.clone(), b]).unwrap_err().to_string();
         assert!(
             err.contains("refusing to merge results from different drivers"),
             "{err}"
         );
         assert!(
-            err.contains("patchright@1.56.2") && err.contains("playwright@1.56.1"),
+            err.contains("hardened@1.56.2") && err.contains("reference@1.56.1"),
             "{err}"
         );
-        let c = report("playwright", "1.57.0", &[("c2", ExpectedClass::Actionable)]);
+        let c = report("reference", "1.57.0", &[("c2", ExpectedClass::Actionable)]);
         assert!(merge(&[a.clone(), c]).is_err());
         let a2 = report(
-            "playwright",
+            "reference",
             "1.56.1",
             &[
                 ("c1", ExpectedClass::NotActionable),
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn compare_mirrors_compare_mjs() {
         let oracle = merge(&[report(
-            "patchright",
+            "hardened",
             "1.56.2",
             &[
                 ("a", ExpectedClass::NotActionable),

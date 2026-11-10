@@ -11,7 +11,7 @@
 //!   before risky actions, on pause/approval wait/shutdown.
 //! * [`reaper`] – [`Reaper`]: every 15 s expire stale leases and mark orphaned
 //!   `intended` actions `unknown`.
-//! * [`schedule`] – [`Schedule`]: Firecrawl monitor schedules (cron or natural text, IANA zone,
+//! * [`schedule`] – [`Schedule`]: compatibility-API monitor schedules (cron or natural text, IANA zone,
 //!   5-minute floor, DST-aware next run).
 //! * [`monitor`] – [`MonitorScheduler`]: claims due monitors with a lease, runs them through a
 //!   [`MonitorRunner`] with bounded concurrency and reschedules them.

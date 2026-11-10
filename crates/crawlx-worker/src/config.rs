@@ -1,11 +1,11 @@
 //! Worker configuration.
 
 use crate::error::WorkerError;
-use crate::katana::form_ai::FormAi;
-use crate::katana::traffic_export::TrafficExportConfig;
 use crate::model::{ModelConfig, PlannerConfig};
 use crate::runtime::CpuPool;
 use crate::scrape::PageRenderer;
+use crate::surface::form_ai::FormAi;
+use crate::surface::traffic_export::TrafficExportConfig;
 use crawlx_browser::LaunchConfig;
 use crawlx_core::config::System1Mode;
 use crawlx_core::{CrawlRunId, CreateCrawl, SafetyProfile, WorkerId};
@@ -250,7 +250,7 @@ impl EgressConfig {
     }
 
     /// The resolver of `crawl`'s fetch plane: the injected one when set, else the servers
-    /// the request lists in `fetch.resolvers` (katana `-r`), else the system resolver.
+    /// the request lists in `fetch.resolvers` (the `-r` compatibility flag), else the system resolver.
     /// Egress checks apply to whatever the chosen resolver answers.
     ///
     /// # Errors
@@ -272,7 +272,7 @@ impl EgressConfig {
     /// The loopback egress proxy of `crawl`'s browser plane: the run's egress policy (bound to
     /// the authorization `record` when the run has one, [`Self::policy_for_run`]) over
     /// `resolver`, plus whatever `options` carry (flow capture, request controls). With
-    /// `fetch.proxy` set (katana `-proxy`, Firecrawl `proxy: basic`) every request the policy
+    /// `fetch.proxy` set (the `-proxy` compatibility flag, `proxy: basic`) every request the policy
     /// admits is chained to that proxy, so rendered pages leave through it like URL-plane
     /// fetches do. A ProxyX pool route chains through the pool gateway with the run's sticky
     /// identity (`run` keys the sticky id), `CONNECT` only.
@@ -346,7 +346,7 @@ impl RetainedProfilePolicy {
         }
         let key_ref = getenv("CRAWLX_PROFILE_KEY_REF")
             .filter(|reference| {
-                ["env://", "file://", "vault://", "aws-sm://"]
+                ["env://", "file://", "vault://", "cloud-sm://"]
                     .iter()
                     .any(|scheme| reference.starts_with(scheme))
             })
@@ -433,7 +433,7 @@ pub struct WorkerConfig {
     /// In-process tests must opt into explicit test-only gate status.
     pub gates: Gates,
     /// Attach to a running Chromium at this DevTools websocket instead of launching one
-    /// (katana `-chrome-ws-url`). Admitted only for runs whose safety profile
+    /// (the `-chrome-ws-url` compatibility flag). Admitted only for runs whose safety profile
     /// is `test_environment` or `authorized_security_test`.
     pub cdp_ws_url: Option<url::Url>,
     /// Open sessions in incognito contexts (default true). `false` reuses the attached
@@ -458,11 +458,11 @@ pub struct WorkerConfig {
     /// The default is sized like [`crate::RuntimeConfig::default`]'s blocking pool; a binary
     /// that builds its runtime from another `RuntimeConfig` passes [`CpuPool::new`] of it.
     pub cpu_pool: CpuPool,
-    /// Where to post every URL-plane exchange (katana `-traffic-export`, operator level:
+    /// Where to post every URL-plane exchange (the `-traffic-export` compatibility flag, operator level:
     /// never part of a request). `None` exports nothing.
     pub traffic_export: Option<TrafficExportConfig>,
     /// Operator-listed provider endpoints that check a detected token (`extract.validateSecrets`,
-    /// katana `-kb-validate-secrets`). `None` uses [`SecretValidators::builtin`], whose
+    /// the `-kb-validate-secrets` compatibility flag). `None` uses [`SecretValidators::builtin`], whose
     /// list is empty unless the build embeds one: then every finding stays `unknown`.
     pub secret_validators: Option<Arc<SecretValidators>>,
     /// Answers the form fields the deterministic filler could not resolve
@@ -470,12 +470,12 @@ pub struct WorkerConfig {
     pub form_ai: Option<Arc<dyn FormAi>>,
     /// Optional in-memory actual-action evidence for bounded benchmark runs.
     pub action_trace: Option<Arc<crate::action_trace::ActionTrace>>,
-    /// The document LLM behind the Firecrawl scrape formats `json`, `summary`, `question`,
+    /// The document LLM behind the compatibility-API scrape formats `json`, `summary`, `question`,
     /// `highlights`, `query` and `changeTracking`'s `json` mode. `None`: a page that asks for
     /// one of them fails with `llm_not_configured`.
     pub llm: Option<Arc<dyn LlmExtractor>>,
     /// Chooses per page whether the `json` format is answered by [`Self::llm`] or by a second
-    /// OpenAI-compatible endpoint (Firecrawl `EXTRACTION_PROVIDER_*`); every other LLM format
+    /// chat-completions compatible endpoint (the `EXTRACTION_PROVIDER_*` settings); every other LLM format
     /// keeps using [`Self::llm`]. `None`: [`Self::llm`] answers `json` too.
     pub extraction_llm: Option<Arc<ExtractionRouter>>,
     /// The LLM that refines the markup-derived `branding` profile (`BRANDING_LLM_*`). `None`: the
@@ -495,7 +495,7 @@ pub struct WorkerConfig {
     /// Default [`DEFAULT_MEDIA_MAX_BYTES`](crate::scrape::DEFAULT_MEDIA_MAX_BYTES) (256 MiB).
     pub media_max_bytes: usize,
     /// The OCR engine behind the `image` parser and PDF `mode: ocr` / `auto` of the scrape
-    /// `parsers` option (Firecrawl `parsers`, `IMAGE_OCR_ENABLED`). `None`: images yield no text
+    /// `parsers` option (the compatibility `parsers`, `IMAGE_OCR_ENABLED` settings). `None`: images yield no text
     /// and scanned PDF pages stay empty, each with an `ocr_unavailable` warning on the document.
     pub ocr: Option<Arc<crawlx_extract::parse::ocr::Ocr>>,
     /// How long a worker trusts the state of an authorization record it has read before it reads
@@ -564,7 +564,7 @@ impl WorkerConfig {
         crawlx_core::secret::request_identity_key_from_lookup(getenv).map_err(WorkerError::from)
     }
 
-    /// Load the operator's AWS KMS checkpoint key without exposing it in crawl configuration.
+    /// Load the operator's cloud KMS checkpoint key without exposing it in crawl configuration.
     ///
     /// # Errors
     /// Rejects empty key identifiers and provider initialization failures. No production key is generated.
@@ -702,7 +702,7 @@ pub fn read_only_custody_from_lookup(
 
 /// Load the durable encrypted-artifact key provider named by the environment.
 ///
-/// `CRAWLX_ARTIFACT_KMS_KEY_ID` selects AWS KMS (credentials and region come from the SDK's
+/// `CRAWLX_ARTIFACT_KMS_KEY_ID` selects cloud KMS (credentials and region come from the SDK's
 /// default chains); `CRAWLX_ARTIFACT_KEY_FILE` selects a 64-hex-character root key file.
 /// Exactly one may be set. `None` when neither is. The returned future does not borrow
 /// `getenv`, so it can be spawned.

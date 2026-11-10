@@ -1,4 +1,4 @@
-//! The caller's `actions[]` (Firecrawl): `wait`, `click`, `write`, `press`, `scroll`,
+//! The caller's `actions[]` (compatibility API): `wait`, `click`, `write`, `press`, `scroll`,
 //! `screenshot`, `scrape`, `executeJavascript` and `pdf`, executed in order on one page.
 //!
 //! Actions that act on the page as a user would (`click`, `write`, `press`, `scroll`) are
@@ -627,7 +627,7 @@ fn shot_of(result: PageOpResult) -> Result<Shot, RenderError> {
     }
 }
 
-/// JSON type name of a script's return value (Firecrawl `javascriptReturns[].type`).
+/// JSON type name of a script's return value (`javascriptReturns[].type` of the compatibility API).
 fn json_type(value: &serde_json::Value) -> &'static str {
     match value {
         serde_json::Value::Null => "null",
@@ -709,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn json_values_get_the_firecrawl_type_names() {
+    fn json_values_get_the_compatibility_type_names() {
         use serde_json::json;
         let names: Vec<&str> = [
             json!(null),

@@ -1,8 +1,8 @@
 //! Recorded-flow selector resolution: `css` through `DOM.querySelector`,
 //! `xpath` and `text` through `DOM.performSearch` / `DOM.getSearchResults`, `aria` through the
-//! accessibility tree. Semantics follow projectdiscovery/katana
-//! `pkg/engine/headless/auth/replay.go` (`queryElements`, `findVisible`) at commit 9662cd7
-//! (MIT): the first match wins; a selector that matches nothing resolves to `None` rather
+//! accessibility tree. Semantics follow a recorded-flow replay implementation ported from an
+//! MIT-licensed upstream; see THIRD_PARTY_NOTICES.md: the first match wins; a selector that
+//! matches nothing resolves to `None` rather
 //! than an error. Visibility is left to `revalidate` (the actor's protocol checks it before
 //! every action).
 

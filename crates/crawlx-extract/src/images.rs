@@ -1,4 +1,4 @@
-//! The Firecrawl `images` format: every image URL a page references.
+//! The compatibility API `images` format: every image URL a page references.
 //!
 //! [`images`] reads `<img>` (`src`, the lazy-loading attributes `data-src`/`data-original`/
 //! `data-lazy-src` and every candidate of `srcset`/`data-srcset`), the `srcset` of `<source>`

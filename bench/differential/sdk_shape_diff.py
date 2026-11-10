@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diff two `sdk_shape_capture.py` captures (real Firecrawl vs the crawlx facade) field by field.
+"""Diff two `sdk_shape_capture.py` captures (real upstream vs the crawlx facade) field by field.
 
     sdk_shape_diff.py --upstream FILE --crawlx FILE --out REPORT.md
                       [--meta KEY=VALUE ...] [--evidence-dir DIR]
@@ -421,7 +421,7 @@ def collect(comparison, key):
 
 
 def render_report(upstream, crawlx, comparison, meta):
-    lines = ["# SDK shape diff: real Firecrawl vs the crawlx compat facade", ""]
+    lines = ["# SDK shape diff: real upstream vs the crawlx compat facade", ""]
     lines += [f"* SDK: `firecrawl-py {upstream.get('sdk_version')}` (crawlx side: `{crawlx.get('sdk_version')}`)"]
     lines += [
         f"* upstream: `{upstream['api']}`, fixture `{upstream['seed']}`",

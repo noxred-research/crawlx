@@ -1,5 +1,5 @@
-//! LLM refinement of the `branding` format (Firecrawl self-host `BRANDING_JEV*` variables; crawlx
-//! `BRANDING_LLM_*`).
+//! LLM refinement of the `branding` format (configured through the `BRANDING_LLM_*`
+//! variables).
 //!
 //! The markup heuristics of [`crawlx_extract::branding`] produce a complete, deterministic
 //! `BrandingProfile`. When the operator configures a branding LLM, the profile and short

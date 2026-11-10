@@ -1,11 +1,11 @@
 //! Opt-in synthetic ClientHello randomization for the URL plane.
 //!
-//! Katana's `impersonate.Random` uses uTLS `HelloRandomized`, not a random browser
+//! The compatibility flag for randomized ClientHellos selects a fully randomized hello, not a random browser
 //! template. This implementation deliberately uses a narrower, modern profile:
 //! seeded TLS 1.2 AEAD cipher, group, signature and extension ordering, plus seeded
 //! OCSP/SCT requests. TLS 1.3 remains enabled with an explicit modern cipher prefix.
 //! EMS, padding and ALPN retain BoringSSL defaults. These are synthetic fingerprints,
-//! not faithful Chrome/Firefox fingerprints or an exact uTLS probability distribution.
+//! not faithful mainstream-browser fingerprints or an exact probability distribution of another stack.
 //!
 //! Only fingerprint choices use `CrawlSeed`; cryptographic randomness stays inside
 //! BoringSSL. Disabling impersonation leaves the existing rustls transport unchanged.

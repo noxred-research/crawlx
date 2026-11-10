@@ -39,26 +39,26 @@
       if (candidates.length === 1 && candidates[0].token) return candidates[0].token;
       return getResponse.call(this, widget, ...rest);
     });
-    if (kind.startsWith('recaptcha')) intercept(api, 'execute', execute => function(key, options = {}) {
+    if (kind.startsWith('checkbox')) intercept(api, 'execute', execute => function(key, options = {}) {
       const renderedV2 = records.some(item => item.kind === kind && String(item.widget) === String(key));
       if (typeof key !== 'string' || renderedV2) return execute.call(this, key, options);
       return new Promise(resolve => {
         let element = document.querySelector(`[data-sitekey="${CSS.escape(key)}"]`);
         if (!element) { element = document.createElement('div'); element.hidden = true; element.dataset.sitekey = key; document.documentElement.appendChild(element); }
-        const item = record(element, {...options, sitekey: key, callback: resolve}, enterprise ? 'recaptcha_v3_enterprise' : 'recaptcha_v3');
+        const item = record(element, {...options, sitekey: key, callback: resolve}, enterprise ? 'score_v3_enterprise' : 'score_v3');
         item.solved = false;
       });
     });
     const descriptor = Object.getOwnPropertyDescriptor(api, 'enterprise');
     if (!descriptor || descriptor.configurable) {
-      let value = install(api.enterprise, 'recaptcha_v2_enterprise', true);
+      let value = install(api.enterprise, 'checkbox_v2_enterprise', true);
       Object.defineProperty(api, 'enterprise', {configurable: true, enumerable: true,
-        get: () => value, set: next => {value = install(next, 'recaptcha_v2_enterprise', true);}
+        get: () => value, set: next => {value = install(next, 'checkbox_v2_enterprise', true);}
       });
     }
     return api;
   };
-  for (const [name, kind] of [['grecaptcha', 'recaptcha_v2'], ['hcaptcha', 'hcaptcha'], ['turnstile', 'turnstile']]) {
+  for (const [name, kind] of [['grecaptcha', 'checkbox_v2'], ['hcaptcha', 'widget_h'], ['turnstile', 'widget_t']]) { // wire-compat: page-global widget API names
     let value = window[name]; install(value, kind);
     const descriptor = Object.getOwnPropertyDescriptor(window, name);
     if (!descriptor || descriptor.configurable) Object.defineProperty(window, name, {
@@ -83,10 +83,10 @@
     }
   }, true);
   const scan = () => {
-    for (const element of document.querySelectorAll('.g-recaptcha,.h-captcha,.cf-turnstile')) {
+    for (const element of document.querySelectorAll('.g-recaptcha,.h-captcha,.cf-turnstile')) { // wire-compat: widget DOM markers
       if (elements.has(element)) continue;
-      const enterprise = [...document.scripts].some(script => script.src.includes('/recaptcha/enterprise.js'));
-      const kind = element.classList.contains('h-captcha') ? 'hcaptcha' : element.classList.contains('cf-turnstile') ? 'turnstile' : enterprise ? 'recaptcha_v2_enterprise' : 'recaptcha_v2';
+      const enterprise = [...document.scripts].some(script => script.src.includes('/recaptcha/enterprise.js')); // wire-compat: widget script URL
+      const kind = element.classList.contains('h-captcha') ? 'widget_h' : element.classList.contains('cf-turnstile') ? 'widget_t' : enterprise ? 'checkbox_v2_enterprise' : 'checkbox_v2'; // wire-compat: widget DOM markers
       record(element, {sitekey: element.dataset.sitekey, action: element.dataset.action, callback: element.dataset.callback,
         cData: element.dataset.cdata, chlPageData: element.dataset.chlPageData}, kind);
     }
@@ -106,7 +106,7 @@
   const deliver = async (id, token, writeValue) => {
     const item = records[id];
     if (!item || item.solved || !item.element.isConnected || !token || typeof writeValue !== 'function') return false;
-    const names = item.kind === 'turnstile' ? ['cf-turnstile-response'] : item.kind === 'hcaptcha' ? ['h-captcha-response', 'g-recaptcha-response'] : ['g-recaptcha-response'];
+    const names = item.kind === 'widget_t' ? ['cf-turnstile-response'] : item.kind === 'widget_h' ? ['h-captcha-response', 'g-recaptcha-response'] : ['g-recaptcha-response']; // wire-compat: widget response field names
     let callback = item.options.callback;
     if (typeof callback === 'string') {
       let owner = window;

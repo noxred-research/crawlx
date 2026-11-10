@@ -1,13 +1,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! The official Firecrawl SDKs and CLI against the Firecrawl facade (see
+//! The official drop-in SDKs and CLI against the compatibility API (see
 //! `docs/integrations.md`).
 //!
-//! Each test starts the facade IN-PROCESS on TCP ports with a real worker lease loop, a fixture
-//! site, a mock LLM and a SearXNG stand-in (`support/sdk_rig.rs`), installs the official package
+//! Each test starts the compatibility API IN-PROCESS on TCP ports with a real worker lease loop, a fixture
+//! site, a mock LLM and a metasearch stand-in (`support/sdk_rig.rs`), installs the official package
 //! from its registry into a temporary directory and spawns the driver script, which prints one
-//! JSON row per SDK method: `firecrawl-py` through `pip install --target` (pinned by
-//! `tests/sdk/requirements.txt`, driver `tests/sdk/test_sdk.py`), the `firecrawl` Node SDK and the
-//! `firecrawl` CLI through `npm ci` (`tests/sdk/package.json` + lockfile, driver
+//! JSON row per SDK method: the Python SDK through `pip install --target` (pinned by
+//! `tests/sdk/requirements.txt`, driver `tests/sdk/test_sdk.py`), the Node SDK and the
+//! Node CLI through `npm ci` (`tests/sdk/package.json` + lockfile, driver
 //! `tests/sdk/test_node.mjs`). Every row is asserted below: passing rows on the returned markdown,
 //! links and results, expected failures on the HTTP status the SDK saw.
 //!
@@ -36,7 +36,7 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(300);
 type Rows = BTreeMap<String, Value>;
 
 /// Install the pinned Node packages into `dir` together with the driver script (an ES module
-/// resolves `import 'firecrawl'` next to itself); `Err(reason)` when node, npm or the registry is
+/// resolves the Node SDK import next to itself); `Err(reason)` when node, npm or the registry is
 /// unavailable.
 async fn install_node_packages(dir: &Path) -> Result<(), String> {
     let mut version = Command::new("node");
@@ -73,8 +73,8 @@ async fn run_driver(label: &str, mut cmd: Command) -> Rows {
     let run = cmd
         .stdin(Stdio::null())
         .kill_on_drop(true)
-        .env_remove("FIRECRAWL_API_KEY")
-        .env_remove("FIRECRAWL_API_URL")
+        .env_remove("FIRECRAWL_API_KEY") // wire-compat: variable the official SDKs read
+        .env_remove("FIRECRAWL_API_URL") // wire-compat: variable the official SDKs read
         .output();
     let out = tokio::time::timeout(RUN_TIMEOUT, run)
         .await
@@ -94,10 +94,7 @@ async fn run_python(rig: &SdkRig, python_path: &Path) -> Rows {
         .env("PYTHONPATH", python_path)
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONDONTWRITEBYTECODE", "1")
-        .env(
-            "CRAWLX_SDK_FACADE_URL",
-            format!("{}/compat/firecrawl", rig.facade_root),
-        )
+        .env("CRAWLX_SDK_FACADE_URL", format!("{}/compat", rig.facade_root))
         .env("CRAWLX_SDK_REWRITE_URL", &rig.rewritten_root)
         .env("CRAWLX_SDK_API_KEY", &rig.key)
         .env("CRAWLX_SDK_SITE", rig.site.url(""));
@@ -114,15 +111,12 @@ async fn run_node(rig: &SdkRig, node_dir: &Path) -> Rows {
     cmd.arg(node_dir.join("test_node.mjs"))
         .current_dir(&work)
         .env("HOME", &home)
-        .env(
-            "CRAWLX_SDK_FACADE_URL",
-            format!("{}/compat/firecrawl", rig.facade_root),
-        )
+        .env("CRAWLX_SDK_FACADE_URL", format!("{}/compat", rig.facade_root))
         .env("CRAWLX_SDK_API_KEY", &rig.key)
         .env("CRAWLX_SDK_SITE", rig.site.url(""))
         .env(
             "CRAWLX_SDK_CLI",
-            node_dir.join("node_modules/firecrawl-cli/dist/index.js"),
+            node_dir.join("node_modules/firecrawl-cli/dist/index.js"), // wire-compat: npm package path of the official CLI
         );
     run_driver("node", cmd).await
 }
@@ -209,13 +203,13 @@ async fn official_python_sdk_runs_against_the_facade() {
     let version = pinned_python_sdk();
     assert_eq!(passed(&rows, "sdk_version")["version"], version.as_str());
 
-    // `api_url` with a path: firecrawl-py joins the rooted `/v2/scrape` with urljoin, which drops
-    // the `/compat/firecrawl` prefix, so the request lands on `/v2/scrape` of the host: 404
+    // `api_url` with a path: the Python SDK joins the rooted `/v2/scrape` with urljoin, which drops
+    // the `/compat` prefix, so the request lands on `/v2/scrape` of the host: 404
     failed_with(
         &rows,
         "scrape@prefix_base_url",
         404,
-        "FirecrawlError",
+        "FirecrawlError", // wire-compat: SDK error class name
         "route not found",
     );
 
@@ -261,7 +255,7 @@ async fn official_python_sdk_runs_against_the_facade() {
         r["url"]
             .as_str()
             .unwrap()
-            .ends_with(&format!("/compat/firecrawl/v2/crawl/{id}")),
+            .ends_with(&format!("/compat/v2/crawl/{id}")),
         "the start response names the crawl status URL: {r}"
     );
     assert_site_pages(passed(&rows, "crawl"), site, &["/", "/a", "/b"]);
@@ -281,7 +275,7 @@ async fn official_python_sdk_runs_against_the_facade() {
         [site.url("/"), site.url("/a"), site.url("/b")]
     );
 
-    // search through the SearXNG stand-in; with scrapeOptions the hits carry markdown
+    // search through the metasearch stand-in; with scrapeOptions the hits carry markdown
     assert_eq!(
         passed(&rows, "search")["web"],
         json!([
@@ -296,13 +290,13 @@ async fn official_python_sdk_runs_against_the_facade() {
     assert!(hits[0]["markdown"].as_str().unwrap().starts_with("# Page A"));
     assert_eq!(hits[1]["url"], site.url("/b"));
     assert!(hits[1]["markdown"].as_str().unwrap().starts_with("# Page B"));
-    let queries = rig.searxng.received_requests().await.unwrap();
+    let queries = rig.metasearch.received_requests().await.unwrap();
     assert!(
         !queries.is_empty()
             && queries
                 .iter()
                 .all(|q| q.url.query_pairs().any(|(k, v)| k == "q" && v == "fixture")),
-        "SearXNG saw `q=fixture`: {queries:?}"
+        "the metasearch stand-in saw `q=fixture`: {queries:?}"
     );
 
     // extract: the mock LLM answers the SDK's schema, with and without polling by hand
@@ -325,13 +319,13 @@ async fn official_python_sdk_runs_against_the_facade() {
     assert_site_pages(passed(&rows, "batch_scrape"), site, &["/a", "/b"]);
     assert_eq!(passed(&rows, "batch_scrape")["completed"], 2);
 
-    // team usage (crawlx has no balance: -1 is Firecrawl's `unlimited`)
+    // team usage (crawlx has no balance: -1 is the compatibility API's `unlimited`)
     assert_eq!(passed(&rows, "get_credit_usage")["remaining_credits"], -1);
     assert_eq!(passed(&rows, "get_token_usage")["remaining_tokens"], -1);
 
-    // LangChain's `FirecrawlLoader` (`integration="langchain"` rides in every request body)
+    // the document-loader integration (`integration="..."` rides in every request body)
     let docs_of = |method: &str| -> Vec<Value> { passed(&rows, method)["docs"].as_array().unwrap().clone() };
-    let d = docs_of("langchain.scrape");
+    let d = docs_of("loader.scrape");
     assert_eq!(d.len(), 1);
     assert!(d[0]["page_content"]
         .as_str()
@@ -340,7 +334,7 @@ async fn official_python_sdk_runs_against_the_facade() {
     assert_eq!(d[0]["metadata"]["title"], "Fixture Home");
     assert_eq!(d[0]["metadata"]["source_url"], site.url("/"));
     assert_eq!(d[0]["metadata"]["status_code"], 200);
-    let d = docs_of("langchain.crawl");
+    let d = docs_of("loader.crawl");
     let mut urls: Vec<&str> = d
         .iter()
         .map(|x| x["metadata"]["source_url"].as_str().unwrap())
@@ -351,27 +345,27 @@ async fn official_python_sdk_runs_against_the_facade() {
         .as_str()
         .unwrap()
         .starts_with("# Page B\n\nText of B.")));
-    let d = docs_of("langchain.map");
+    let d = docs_of("loader.map");
     let urls: Vec<&str> = d.iter().map(|x| x["page_content"].as_str().unwrap()).collect();
     assert_eq!(urls, [site.url("/"), site.url("/a"), site.url("/b")]);
     assert_eq!(d[0]["metadata"]["title"], "Fixture Home");
     assert_eq!(
-        docs_of("langchain.search"),
+        docs_of("loader.search"),
         [
             json!({"page_content": "the first hit", "metadata": {"url": site.url("/a"), "title": "Page A", "type": "web"}}),
             json!({"page_content": "the second hit", "metadata": {"url": site.url("/b"), "title": "Page B", "type": "web"}}),
         ]
     );
-    let d = docs_of("langchain.extract");
+    let d = docs_of("loader.extract");
     assert_eq!(d.len(), 1);
     assert_eq!(
         serde_json::from_str::<Value>(d[0]["page_content"].as_str().unwrap()).unwrap(),
         sdk_rig::extract_answer()
     );
 
-    // the v1 names: `FirecrawlApp` is the v2 client; `.v1` calls `{api_url}/v1/...`, which the
+    // the v1 names: the v1 client alias is the v2 client; `.v1` calls `{api_url}/v1/...`, which the
     // facade does not serve by design
-    passed(&rows, "FirecrawlApp_alias");
+    passed(&rows, "v1_client_alias");
     for method in [
         "v1.scrape_url",
         "v1.crawl_url",
@@ -435,7 +429,7 @@ async fn official_node_sdk_and_cli_run_against_the_facade() {
     assert_eq!(r["data"], sdk_rig::extract_answer());
     assert_site_pages(passed(&rows, "node.batchScrape"), site, &["/a", "/b"]);
 
-    // the `firecrawl` CLI (what the agent skills of `npx firecrawl-cli init` tell agents to run)
+    // the official CLI (what the agent skills of its `init` command tell agents to run)
     let cli_json = |method: &str| -> Value {
         let r = passed(&rows, method);
         serde_json::from_str(r["stdout"].as_str().unwrap())
@@ -491,9 +485,9 @@ async fn official_node_sdk_and_cli_run_against_the_facade() {
 /// How `crawlx serve` is told to accept `fc-` keys.
 #[derive(Clone, Copy)]
 enum FcKeys {
-    /// `--firecrawl-keys`.
+    /// `--compat-keys`.
     Flag,
-    /// `CRAWLX_COMPAT_FIRECRAWL_KEYS=1`.
+    /// `CRAWLX_COMPAT_KEYS=1`.
     Env,
     /// Neither.
     Off,
@@ -510,13 +504,13 @@ fn spawn_serve(dir: &Path, port: u16, key: &str, fc_keys: FcKeys) -> tokio::proc
         .args(["--api-key", &format!("acme={key}")]);
     match fc_keys {
         FcKeys::Flag => {
-            cmd.arg("--firecrawl-keys");
+            cmd.arg("--compat-keys");
         }
         FcKeys::Env => {
-            cmd.env("CRAWLX_COMPAT_FIRECRAWL_KEYS", "1");
+            cmd.env("CRAWLX_COMPAT_KEYS", "1");
         }
         FcKeys::Off => {
-            cmd.env_remove("CRAWLX_COMPAT_FIRECRAWL_KEYS");
+            cmd.env_remove("CRAWLX_COMPAT_KEYS");
         }
     }
     cmd.current_dir(dir)
@@ -554,7 +548,7 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// `crawlx serve --api-key acme=fc-...` with `--firecrawl-keys` (or the environment variable)
+/// `crawlx serve --api-key acme=fc-...` with `--compat-keys` (or the environment variable)
 /// serves the facade to that `fc-` key (and never a native `/v1` route); without either, the
 /// bootstrap key is refused at startup (docs/integrations.md, "Enable `fc-` keys").
 #[tokio::test]
@@ -588,7 +582,7 @@ async fn serve_bootstraps_fc_keys_with_the_flag_or_the_environment() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         assert!(ready, "crawlx serve did not come up on port {port}");
-        let usage = "/compat/firecrawl/v2/team/credit-usage";
+        let usage = "/compat/v2/team/credit-usage";
         assert_eq!(get_status(&client, port, usage, &key).await, 200);
         assert_eq!(
             get_status(&client, port, usage, &format!("fc-{}", "f".repeat(32))).await,

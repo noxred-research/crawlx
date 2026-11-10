@@ -1,8 +1,7 @@
 //! Custom regex fields evaluated at extraction time (`extract.customFields[]`).
 //!
-//! Ported from projectdiscovery/katana `pkg/engine/parser/parser.go`
-//! (`customFieldRegexParser`) and `pkg/output/custom_field.go` at commit
-//! 9662cd7 (MIT). The serde shape is [`crawlx_core::config::CustomField`]
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md. The serde shape is
+//! [`crawlx_core::config::CustomField`]
 //! (`name`, `regex[]`, `part`, `group`); this module compiles it into a
 //! bounded [`CustomField`] and runs it over headers and body.
 //!

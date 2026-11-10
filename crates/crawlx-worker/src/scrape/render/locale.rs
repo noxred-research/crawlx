@@ -1,4 +1,4 @@
-//! Browser emulation of a scrape request: Firecrawl's `mobile` and `location{country,
+//! Browser emulation of a scrape request: the compatibility API's `mobile` and `location{country,
 //! languages}` options as one [`Emulation`].
 //!
 //! `location` sets the `Accept-Language` header, the `navigator.language` locale and the time

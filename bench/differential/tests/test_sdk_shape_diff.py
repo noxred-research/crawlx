@@ -119,8 +119,8 @@ class DiffTests(unittest.TestCase):
         typed = diff.typed_diffs(up, cx)
         self.assertEqual(typed["set_upstream_only"], ["$.c"])
         self.assertEqual(typed["set_crawlx_only"], ["$.b"])
-        failed = {"ok": False, "error": "FirecrawlError", "message": "boom", "status_code": 500}
-        self.assertIn("FirecrawlError", diff.typed_diffs(up, failed)["failure"][1])
+        failed = {"ok": False, "error": "UpstreamSdkError", "message": "boom", "status_code": 500}
+        self.assertIn("UpstreamSdkError", diff.typed_diffs(up, failed)["failure"][1])
 
 
 class ReportTests(unittest.TestCase):

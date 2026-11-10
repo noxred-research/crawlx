@@ -1,4 +1,4 @@
-//! `-fc` form-config values in the browser plane (katana `-form-config`):
+//! `-fc` form-config values in the browser plane (the `-form-config` compatibility flag):
 //! when `extract.formFill` is enabled and configures a value for a field's class, the browser
 //! plane types it into the matching `Type` partition (valid email, phone, password, text);
 //! without the config, and for fields no class matches, the seeded partition values apply.

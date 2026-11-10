@@ -290,10 +290,10 @@ impl QuiescencePolicy {
             .with_time_stable(u64::from(dynamic.time_stable_ms))
     }
 
-    /// Require the page to stay quiet for `stable_ms` before it counts as settled (katana
+    /// Require the page to stay quiet for `stable_ms` before it counts as settled (compatibility flag
     /// `-time-stable`, `dynamic.timeStableMs`): both idle windows become at least `stable_ms` and
-    /// the hard timeout at least twice that, so the window can elapse (katana caps the stable
-    /// time at half of the timeout). `0` keeps `self` unchanged; an explicit request overrides a
+    /// the hard timeout at least twice that, so the window can elapse (the stable
+    /// time is capped at half of the timeout). `0` keeps `self` unchanged; an explicit request overrides a
     /// preset that waits for nothing.
     #[must_use]
     pub const fn with_time_stable(self, stable_ms: u64) -> Self {
@@ -985,7 +985,7 @@ mod tests {
         let p = QuiescencePolicy::for_dynamic(&d);
         assert_eq!(
             p.hard_timeout_ms, 20_000,
-            "katana: stable time is at most half the timeout"
+            "surface: stable time is at most half the timeout"
         );
         // a request for stability overrides a preset that would wait for nothing
         d.page_load_strategy = PageLoadStrategy::None;

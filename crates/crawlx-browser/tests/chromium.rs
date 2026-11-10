@@ -720,7 +720,7 @@ async fn storage_round_trips_between_contexts() {
 // Using its own address as the fixture also detects Chromium's implicit loopback bypass:
 // only proxy-form (absolute or CONNECT) request targets can reach the fixture routes.
 //
-// The stock pinned Chromium makes unsolicited Google-service requests (see
+// The stock pinned Chromium makes unsolicited vendor-service requests (see
 // `docs/design/data-and-secrets.md`). They are accepted as *denied containment* only: each must arrive in proxy
 // form at a host in `BROWSER_BACKGROUND_HOST_SUFFIXES` and be answered 403. Anything else
 // that is not a fixture GET fails the test.

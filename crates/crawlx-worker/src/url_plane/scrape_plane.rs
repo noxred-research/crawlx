@@ -1,4 +1,4 @@
-//! The page loop of Firecrawl scrape runs: the URL plane's queue, scope, robots and counters
+//! The page loop of compatibility-API scrape runs: the URL plane's queue, scope, robots and counters
 //! drive the [`ScrapeEngine`], which produces the stored result of every leased frontier row.
 //!
 //! Compared with the plain static plane a scrape run
@@ -14,7 +14,7 @@
 //!   URL-shape similarity filter for `scrape` and `batch` jobs (a caller who names a `.pdf` or
 //!   a third page of the same shape wants it; a crawl keeps the filter its request asked for
 //!   with `deduplicateSimilarURLs`), no `robots.txt` gate for `scrape` and `batch` jobs
-//!   (Firecrawl scrapes the URLs it is given) and no seed-path restriction for `batch` jobs.
+//!   (the compatibility API scrapes the URLs it is given) and no seed-path restriction for `batch` jobs.
 
 use super::{NativeHopAdmission, RequestSource, UrlPlaneRunner};
 use crate::counters::{Attempt, Plane};

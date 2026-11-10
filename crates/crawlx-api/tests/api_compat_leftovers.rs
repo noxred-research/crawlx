@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! The four items the Firecrawl facade corrections left open:
+//! The four items the compat facade corrections left open:
 //!
 //! 1. `metadata.concurrencyLimited` / `concurrencyQueueDurationMs`: the wait of a run in the
 //!    admission queue;
@@ -30,9 +30,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 
-const V2: &str = "/compat/firecrawl/v2";
-const CRAWL: &str = "/compat/firecrawl/v2/crawl";
-const SCRAPE: &str = "/compat/firecrawl/v2/scrape";
+const V2: &str = "/compat/v2";
+const CRAWL: &str = "/compat/v2/crawl";
+const SCRAPE: &str = "/compat/v2/scrape";
 
 async fn scrape_ok(rig: &Rig, body: &Value) -> Value {
     let (s, _, v) = rig.env.post(SCRAPE, body).await;
@@ -509,7 +509,7 @@ async fn deduplicate_similar_urls_never_enables_the_shape_filter() {
         async move { repos.get(id).await.unwrap() }
     };
 
-    // Firecrawl's default (real pinned run, 2026-10-28): every sibling page of one URL shape is
+    // The compat API's default (real pinned run, 2026-10-28): every sibling page of one URL shape is
     // fetched, so no setting drops the near-duplicate item URLs
     let default_id = start_crawl(&rig, &crawl(json!({}))).await;
     let default_pages = sources(&wait_crawl(&rig, &default_id).await);

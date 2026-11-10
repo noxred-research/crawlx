@@ -286,8 +286,8 @@ pub struct EngineArgs {
 pub enum EngineArg {
     /// crawlx serves the tenant.
     Crawlx,
-    /// Firecrawl serves the tenant; crawlx refuses non-shadow compat creates.
-    Firecrawl,
+    /// The upstream service serves the tenant; crawlx refuses non-shadow compat creates.
+    Upstream,
     /// Only mirrored (`X-Crawlx-Shadow: 1`) requests are accepted.
     Shadow,
 }
@@ -296,7 +296,7 @@ impl From<EngineArg> for TenantEngine {
     fn from(e: EngineArg) -> Self {
         match e {
             EngineArg::Crawlx => Self::Crawlx,
-            EngineArg::Firecrawl => Self::Firecrawl,
+            EngineArg::Upstream => Self::Upstream,
             EngineArg::Shadow => Self::Shadow,
         }
     }
@@ -359,7 +359,7 @@ pub enum OpsCommand {
     DurabilityAudit(DurabilityAuditArgs),
     /// Independently check action safety evidence and pause violating runs; exit 1 on violations.
     SafetyAudit(SafetyAuditArgs),
-    /// Show or set a tenant's `engine` flag (crawlx | firecrawl | shadow).
+    /// Show or set a tenant's `engine` flag (crawlx | upstream | shadow).
     Engine(EngineArgs),
     /// List registered workers, their heartbeat, draining flag and held leases.
     Workers(WorkersArgs),

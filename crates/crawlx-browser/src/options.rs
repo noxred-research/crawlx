@@ -1,11 +1,11 @@
-//! Operator launch options of the katana headless group: `-sc/-system-chrome`,
+//! Operator launch options of the compatibility headless group: `-sc/-system-chrome`,
 //! `-scp/-system-chrome-path`, `-sb/-show-browser`, `-ho/-headless-options`,
 //! `-nos/-no-sandbox` and `-cdd/-chrome-data-dir`, as validated setters on [`LaunchConfig`].
 //!
 //! These are operator settings, never request fields: a crawl request cannot choose which
 //! executable runs, where the profile lives or which switches Chromium gets.
 //!
-//! | katana flag | here |
+//! | compatibility flag | here |
 //! |---|---|
 //! | `-sc` | [`LaunchConfig::use_system_chrome`]: use the installed Chromium found through `CRAWLX_CHROMIUM_PATH` or the standard install paths (crawlx never downloads a browser) |
 //! | `-scp PATH` | [`LaunchConfig::set_chrome_path`] |
@@ -158,9 +158,9 @@ pub fn validate_flags(flags: &[String]) -> Result<(), LaunchOptionError> {
     Ok(())
 }
 
-/// Parse katana `-headless-options` entries into Chromium switches.
+/// Parse compatibility `-headless-options` entries into Chromium switches.
 ///
-/// The accepted forms are katana's: `--switch`, `--switch=value`, and bare tokens that continue
+/// The accepted forms are the compatibility flags': `--switch`, `--switch=value`, and bare tokens that continue
 /// the previous switch's value with a comma (a comma-separated flag list splits
 /// `--lang=en,fr` into `--lang=en` and `fr`). Surrounding whitespace is trimmed and empty entries
 /// are skipped.
@@ -257,7 +257,7 @@ impl LaunchConfig {
         Ok(())
     }
 
-    /// `-ho`: append katana-format Chromium switches (see [`parse_headless_options`]) after every
+    /// `-ho`: append compatibility-format Chromium switches (see [`parse_headless_options`]) after every
     /// crawlx-managed switch, refusing the ones [`validate_flags`] lists. Nothing is added when
     /// any entry is refused.
     ///
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_katana_forms_and_comma_continuations() {
+    fn parses_compat_forms_and_comma_continuations() {
         let parsed = parse_headless_options(&strings(&[
             "--disable-gpu",
             " --window-size=1920,1080 ",

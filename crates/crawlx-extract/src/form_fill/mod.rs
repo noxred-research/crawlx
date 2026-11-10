@@ -1,4 +1,4 @@
-//! Static form filling (`extract.formFill`, katana `-aff` / `-fc`).
+//! Static form filling (`extract.formFill`, compatibility flags `-aff` / `-fc`).
 //!
 //! [`fill_form`] turns a [`StaticForm`] into the request a browser would
 //! send after a user filled it in: a GET form becomes its action URL with the
@@ -6,8 +6,8 @@
 //! (`application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`,
 //! or a JSON object for `application/json`).
 //!
-//! Value rules, ported from projectdiscovery/katana `pkg/utils/formfill.go`
-//! and `formsemantic.go` at commit 9662cd7 (MIT), in this order per control:
+//! Value rules, ported from an MIT-licensed upstream (see THIRD_PARTY_NOTICES.md),
+//! in this order per control:
 //!
 //! * `disabled` controls are not submitted; `button`, `reset` and `image`
 //!   controls never are; of several named `submit` controls the first is.
@@ -17,12 +17,12 @@
 //! * `radio`: one value per name, the `checked` one else the first.
 //!   `checkbox`: always submitted (`on` without a `value`). `select`: the
 //!   selected option, else the first non-empty option.
-//! * `color`: [`FormFill::color`]. `number` / `range`: `min + step` (katana
+//! * `color`: [`FormFill::color`]. `number` / `range`: `min + step` (reference
 //!   defaults: min 1, step 1), kept within `max`.
 //! * Text-like controls: an answer in `decided` (keyed by field name), else
 //!   the family of the control (`type`, `autocomplete`, the words of `name`
 //!   and `id`; [`FormFill::email`], `phone` and `password` for those three,
-//!   katana's constants for the rest), else the *fallback*: a value
+//!   the reference constants for the rest), else the *fallback*: a value
 //!   generated from the `pattern`, else the `placeholder` attribute, else
 //!   [`FormFill::placeholder`], else eight seeded letters. Controls that took
 //!   the fallback are listed in [`FilledForm::unresolved`] so a caller can
@@ -31,7 +31,7 @@
 //! * Every text value then honours `pattern` (a value the anchored pattern
 //!   rejects is regenerated), `maxlength` (truncated) and `minlength` (padded).
 //!
-//! Differences from katana: values that katana draws at random (the email)
+//! Differences from the reference: values it draws at random (the email)
 //! or fixes to a brand string derive from the run's [`CrawlSeed`], so the
 //! same inputs always yield the same form; `-fc` values may name the
 //! deterministic helpers `rand_email()`, `rand_phone()`, `rand_first_name()`,
@@ -426,7 +426,7 @@ impl Filler<'_> {
     }
 }
 
-/// `min + step` for `number` / `range` controls: katana's defaults are
+/// `min + step` for `number` / `range` controls: the reference defaults are
 /// min 1 and step 1, and an attribute that is not an integer (`any`, a
 /// decimal) counts as absent. A sum above `max` falls back to `min`, the
 /// one value guaranteed to be valid.

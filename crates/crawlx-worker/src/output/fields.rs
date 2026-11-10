@@ -1,9 +1,9 @@
-//! Katana output fields: `url`, `path`, `fqdn`, `rdn`, `rurl`, `qurl`, `qpath`, `file`,
+//! Compatibility output fields: `url`, `path`, `fqdn`, `rdn`, `rurl`, `qurl`, `qpath`, `file`,
 //! `ufile`, `key`, `value`, `kv`, `dir`, `udir` plus custom regex fields.
 //!
-//! Semantics ported from katana `pkg/output/fields.go` (`formatField`) at commit
+//! Semantics ported from an MIT-licensed upstream (`formatField`; see THIRD_PARTY_NOTICES.md) at commit
 //! `9662cd7b60ba1bc3a88232433ddefc4f48a65bfe` (MIT). Deviations: `qpath` keeps the query in
-//! its original order (katana re-encodes it sorted; the README table shows the original
+//! its original order (the upstream re-encodes it sorted; the README table shows the original
 //! order), and `rdn` yields nothing instead of an empty string when the host has no
 //! registrable domain (IP addresses, single labels).
 
@@ -25,7 +25,7 @@ pub struct FieldError {
     pub name: String,
 }
 
-/// One output field (katana `-field`).
+/// One output field (the `-field` compatibility flag).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Field {
@@ -63,13 +63,13 @@ pub enum Field {
 }
 
 impl Field {
-    /// Built-in field names in katana's order.
+    /// Built-in field names in the reference order.
     pub const NAMES: [&'static str; 14] = [
         "url", "path", "fqdn", "rdn", "rurl", "qurl", "qpath", "file", "ufile", "key", "value", "kv", "dir",
         "udir",
     ];
 
-    /// Built-in fields in katana's order.
+    /// Built-in fields in the reference order.
     pub const ALL: [Self; 14] = [
         Self::Url,
         Self::Path,
@@ -186,7 +186,7 @@ fn base_name(path: &str) -> &str {
 }
 
 /// The directory prefix of `path` up to and including its last `/`, when the path has a
-/// slash after its leading one (katana `dir`).
+/// slash after its leading one (the `dir` field).
 fn directory(path: &str) -> Option<&str> {
     if path.is_empty() || path == "/" {
         return None;
@@ -196,7 +196,7 @@ fn directory(path: &str) -> Option<&str> {
     path.get(..last.checked_add(2)?)
 }
 
-/// Last path segment when it has an extension (katana `file`).
+/// Last path segment when it has an extension (the `file` field).
 fn file_name(path: &str) -> Option<&str> {
     if path.is_empty() || path == "/" {
         return None;
@@ -272,39 +272,39 @@ mod tests {
         extract(&field.parse().unwrap(), &Url::parse(url).unwrap(), &Value::Null)
     }
 
-    /// Every row of the katana README "Field" table (`/tmp/katana/README.md`, section
-    /// "Field"), with the URL each row's example implies. Multi-valued rows are joined with
+    /// Every row of the reference README "Field" table, with the URL each row's example implies.
+    /// Multi-valued rows are joined with
     /// the separator the README shows. The README's `path` example prints a full URL, which
-    /// contradicts katana's `formatField` (`parsed.Path`); the code is followed.
+    /// contradicts the reference `formatField` (`parsed.Path`); the code is followed.
     #[test]
     fn readme_field_table_reproduces() {
-        let q = "https://admin.projectdiscovery.io/admin/login?user=admin&password=admin";
-        let php = "https://admin.projectdiscovery.io/admin/login.php?user=admin&password=admin";
+        let q = "https://admin.example.test/admin/login?user=admin&password=admin";
+        let php = "https://admin.example.test/admin/login.php?user=admin&password=admin";
         let rows: [(&str, &str, &str, &str); 14] = [
             ("url", q, ",", q),
             ("qurl", php, ",", php),
             (
                 "qpath",
-                "https://admin.projectdiscovery.io/login?user=admin&password=admin",
+                "https://admin.example.test/login?user=admin&password=admin",
                 ",",
                 "/login?user=admin&password=admin",
             ),
             ("path", q, ",", "/admin/login"),
-            ("fqdn", q, ",", "admin.projectdiscovery.io"),
-            ("rdn", q, ",", "projectdiscovery.io"),
-            ("rurl", q, ",", "https://admin.projectdiscovery.io"),
+            ("fqdn", q, ",", "admin.example.test"),
+            ("rdn", q, ",", "example.test"),
+            ("rurl", q, ",", "https://admin.example.test"),
             (
                 "ufile",
-                "https://admin.projectdiscovery.io/login.js",
+                "https://admin.example.test/login.js",
                 ",",
-                "https://admin.projectdiscovery.io/login.js",
+                "https://admin.example.test/login.js",
             ),
             ("file", php, ",", "login.php"),
             ("key", q, ",", "user,password"),
             ("value", q, ",", "admin,admin"),
             ("kv", q, "&", "user=admin&password=admin"),
             ("dir", q, ",", "/admin/"),
-            ("udir", q, ",", "https://admin.projectdiscovery.io/admin/"),
+            ("udir", q, ",", "https://admin.example.test/admin/"),
         ];
         for (field, url, sep, expected) in rows {
             assert_eq!(values(field, url).join(sep), expected, "field `{field}`");

@@ -1,8 +1,7 @@
 //! Recorded login flows: a Chrome DevTools
-//! Recorder export or katana's explicit step list compiled into [`LoginStep`]s.
+//! Recorder export or the compatibility explicit step list compiled into [`LoginStep`]s.
 //!
-//! Ported from projectdiscovery/katana `pkg/engine/headless/auth/recording.go` and
-//! `pkg/engine/headless/auth/step.go` at commit 9662cd7 (MIT).
+//! Ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md.
 //!
 //! The flow is **data**: it never carries a credential. `change` values typed into a
 //! control that looks like a username or password field become [`FillValue::Placeholder`]
@@ -119,7 +118,7 @@ impl Selector {
         best
     }
 
-    /// Does the selector name a username / e-mail control (katana heuristics)?
+    /// Does the selector name a username / e-mail control (compatibility heuristics)?
     #[must_use]
     pub fn looks_like_username(&self) -> bool {
         let s = self.expr.to_ascii_lowercase();
@@ -135,7 +134,7 @@ impl Selector {
         .any(|m| s.contains(m))
     }
 
-    /// Does the selector name a password control (katana heuristics)?
+    /// Does the selector name a password control (compatibility heuristics)?
     #[must_use]
     pub fn looks_like_password(&self) -> bool {
         let s = self.expr.to_ascii_lowercase();
@@ -233,7 +232,7 @@ impl FillValue {
     }
 }
 
-/// Keys a `press` step may send (katana's key set).
+/// Keys a `press` step may send (the compatibility key set).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -290,7 +289,7 @@ pub enum RecordedFlowError {
     /// Neither a Recorder export (`type`) nor an explicit step list (`action`).
     #[error("recorded flow steps must be chrome recorder steps (type) or explicit steps (action)")]
     UnknownFormat,
-    /// An explicit step uses an action outside katana's set.
+    /// An explicit step uses an action outside the compatibility set.
     #[error("step {index} has unknown action {action:?}")]
     UnknownAction {
         /// 0-based index of the step.
@@ -354,7 +353,7 @@ pub enum RecordedFlowError {
     NotRecorded(String),
 }
 
-/// Chrome DevTools Recorder / `@puppeteer/replay` export (the fields that matter).
+/// Chrome DevTools Recorder export (the fields that matter).
 #[derive(Deserialize)]
 struct RecordingFile {
     #[serde(default)]
@@ -374,7 +373,7 @@ struct RecordingStep {
     key: String,
 }
 
-/// Explicit `{ "steps": [ { "action", "selector", "value" } ] }` (katana's `LoginStep`).
+/// Explicit `{ "steps": [ { "action", "selector", "value" } ] }` (the compatibility `LoginStep`).
 #[derive(Deserialize)]
 struct ExplicitFile {
     #[serde(default)]
@@ -747,7 +746,7 @@ mod tests {
     use super::*;
     use crate::login::LoginPlan;
 
-    /// A real Recorder export shape (`@puppeteer/replay` schema) of a two-step login.
+    /// A real Recorder export shape of a two-step login.
     const RECORDING: &str = r##"{
   "title": "acme login",
   "steps": [
@@ -1101,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn press_keys_normalize_like_katana() {
+    fn press_keys_normalize_like_the_compatibility_set() {
         assert_eq!(PressKey::parse("Enter"), Some(PressKey::Enter));
         assert_eq!(PressKey::parse("NumpadEnter"), Some(PressKey::Enter));
         assert_eq!(PressKey::parse("return"), Some(PressKey::Enter));

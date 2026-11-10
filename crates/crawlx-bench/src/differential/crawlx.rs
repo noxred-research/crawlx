@@ -88,7 +88,7 @@ pub struct CrawlxFrontierRow {
 
 impl CrawlxFrontierRow {
     /// The crawl's entry URL that `includePaths` refused as a page but that was fetched once for
-    /// its links (`policy_blocked` `not_included` / `url_not_included` at depth 0). Firecrawl
+    /// its links (`policy_blocked` `not_included` / `url_not_included` at depth 0). upstream
     /// reports the same URL in `errors[]` as `CRAWL_DENIAL` (the compat `/errors` of crawlx does
     /// too), so it belongs to the attempted set of C1.
     pub(crate) fn is_fetched_entry_denial(&self) -> bool {
@@ -106,10 +106,10 @@ pub struct FixtureRun {
     pub fixture: String,
     /// Crawl seed.
     pub seed: u64,
-    /// Query handling; the comparison uses `keep_all` (Firecrawl's default).
+    /// Query handling; the comparison uses `keep_all` (upstream's default).
     pub query_policy: QueryPolicy,
-    /// The Firecrawl crawl request the other side received (`POST /v2/crawl` body without
-    /// `url`); `Null` means the defaults. See [`apply_firecrawl_request`].
+    /// The upstream crawl request the other side received (`POST /v2/crawl` body without
+    /// `url`); `Null` means the defaults. See [`apply_compat_request`].
     pub request: serde_json::Value,
     /// Trailing-slash policy of the worker's canonicalizer; `None` takes the fixture manifest's
     /// (`s1`: strip). The compat facade's workers run with the crawlx default, `Keep`.
@@ -154,7 +154,7 @@ impl FixtureRun {
     }
 }
 
-/// Apply the options of a Firecrawl crawl request to the crawlx request, the way the compat
+/// Apply the options of an upstream crawl request to the crawlx request, the way the compat
 /// facade translates them (`crawlx-api` `compat_crawl`): `limit` to
 /// `limits.urls`; `includePaths`/`excludePaths` to `scope.includePaths`/`excludePaths` (or the
 /// URL-wide `urlInclude`/`urlExclude` with `regexOnFullURL`); `maxDiscoveryDepth`; `sitemap`;
@@ -162,13 +162,13 @@ impl FixtureRun {
 /// (`true` maps to `strip_all`, otherwise `query_policy` stays as given). Keys the in-process
 /// run has no counterpart for (`scrapeOptions`, `maxConcurrency`, `delay`, `webhook`,
 /// `deduplicateSimilarURLs`, ...) are ignored: they do not change admission. In particular
-/// `deduplicateSimilarURLs` is URL normalization in Firecrawl (a real run, 2026-10-28: `true`
+/// `deduplicateSimilarURLs` is URL normalization in upstream (a real run, 2026-10-28: `true`
 /// fetches `/s1/blog/` once, `false` also `/s1/blog`), which canonicalization always does, so it
 /// must not turn on the native shape filter `scope.filterSimilar`.
 ///
 /// # Errors
 /// [`BenchError::Request`] when a mapped key has the wrong JSON type or an unknown enum value.
-pub fn apply_firecrawl_request(
+pub fn apply_compat_request(
     crawl: &mut crawlx_core::config::CreateCrawl,
     request: &serde_json::Value,
 ) -> Result<(), BenchError> {
@@ -400,7 +400,7 @@ impl CrawlxRun {
             req.seed_url = url::Url::parse(&opts.crawl_origin(gym))?.join(path)?;
         }
         req.scope.query_policy = opts.query_policy;
-        apply_firecrawl_request(&mut req, &opts.request)?;
+        apply_compat_request(&mut req, &opts.request)?;
         let mut cfg = match opts.trailing_slash {
             Some(policy) => worker_config_with(policy, artifacts)?,
             None => worker_config(&manifest, artifacts)?,
@@ -458,9 +458,9 @@ mod tests {
     }
 
     #[test]
-    fn firecrawl_request_options_map_to_the_scope_and_limits() {
+    fn compat_request_options_map_to_the_scope_and_limits() {
         let mut c = crawl();
-        apply_firecrawl_request(
+        apply_compat_request(
             &mut c,
             &json!({"limit": 10, "includePaths": ["^/s1/docs"], "excludePaths": ["^/s1/blog"],
                     "maxDiscoveryDepth": 2, "sitemap": "only", "crawlEntireDomain": true,
@@ -479,19 +479,19 @@ mod tests {
 
     #[test]
     fn deduplicate_similar_urls_never_turns_on_the_shape_filter() {
-        // a real run showed it is URL normalization in Firecrawl, not a shape filter
+        // a real run showed it is URL normalization in upstream, not a shape filter
         let mut c = crawl();
-        apply_firecrawl_request(&mut c, &json!({"deduplicateSimilarURLs": true})).unwrap();
+        apply_compat_request(&mut c, &json!({"deduplicateSimilarURLs": true})).unwrap();
         assert!(!c.scope.filter_similar);
     }
 
     #[test]
     fn null_request_is_the_defaults_and_bad_types_are_errors() {
         let mut c = crawl();
-        apply_firecrawl_request(&mut c, &serde_json::Value::Null).unwrap();
+        apply_compat_request(&mut c, &serde_json::Value::Null).unwrap();
         assert_eq!(c.limits.urls, crawl().limits.urls);
-        assert!(apply_firecrawl_request(&mut c, &json!({"limit": "ten"})).is_err());
-        assert!(apply_firecrawl_request(&mut c, &json!({"sitemap": "maybe"})).is_err());
-        assert!(apply_firecrawl_request(&mut c, &json!([1])).is_err());
+        assert!(apply_compat_request(&mut c, &json!({"limit": "ten"})).is_err());
+        assert!(apply_compat_request(&mut c, &json!({"sitemap": "maybe"})).is_err());
+        assert!(apply_compat_request(&mut c, &json!([1])).is_err());
     }
 }

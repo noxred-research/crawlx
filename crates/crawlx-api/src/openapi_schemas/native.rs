@@ -68,7 +68,7 @@ fn source_discovery() -> Value {
             "connectors":{"type":"array","maxItems":8,"default":[],"items":{
                 "type":"object","additionalProperties":false,"required":["provider","endpoint"],
                 "properties":{
-                    "provider":{"type":"string","enum":["google_news","google_trends","internet_archive"]},
+                    "provider":{"type":"string","enum":["news_search","trends_search","web_archive_index"]},
                     "endpoint":{"type":"string","format":"uri","maxLength":4096},
                     "archiveBase":{"type":["string","null"],"format":"uri","maxLength":4096}
                 }
@@ -193,7 +193,7 @@ fn create(schemas: &mut Schemas) -> Value {
         "properties":{
             "discovery":{"anyOf":[source_discovery(),{"type":"null"}],"default":null},
             "sources":{"type":"array","items":{"type":"string","enum":[
-                "html","feeds","sitemap","categories","conventional","google_news","google_trends","archive"
+                "html","feeds","sitemap","categories","conventional","news_search","trends_search","archive"
             ]},"default":[]},
             "maxKnownUrls":{"type":"integer","minimum":1,"default":100000}
         }

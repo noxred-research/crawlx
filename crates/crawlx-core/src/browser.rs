@@ -134,7 +134,7 @@ pub struct ContextConfig {
     /// Capture console messages (always false under `Stealth`).
     pub console_capture: bool,
     /// Create a fresh incognito browser context (default `true`). `false` reuses the
-    /// browser's default context and its logged-in session (katana `-no-incognito`);
+    /// browser's default context and its logged-in session (compatibility flag `-no-incognito`);
     /// only meaningful with an attached browser and policy-gated like it.
     pub incognito: bool,
     /// Install the discovery hooks (`dynamic.pageHooks`): `history`,
@@ -477,7 +477,7 @@ pub trait BrowserContext: Send {
     }
     /// Scroll the active tab's document down in viewport-sized steps so lazily loaded content
     /// (infinite scroll, `IntersectionObserver` sentinels) appears (`dynamic.maxScrollSteps`,
-    /// katana `-max-scroll-steps`), then return to the top. Not a journaled action: it clicks,
+    /// compatibility flag `-max-scroll-steps`), then return to the top. Not a journaled action: it clicks,
     /// types and submits nothing, and the caller observes the page again afterwards. The default
     /// says the context cannot.
     ///

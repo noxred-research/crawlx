@@ -18,11 +18,11 @@ enum Kind {
     Local,
     S3,
     Http,
-    Solr,
-    Opensearch,
-    KafkaRestV2,
-    RabbitmqManagement,
-    GcsJsonUpload,
+    SearchUpdate,
+    SearchIndex,
+    StreamRestV2,
+    QueueHttpV1,
+    ObjectJsonUpload,
     FtpServiceV1,
 }
 #[derive(Deserialize)]
@@ -44,7 +44,7 @@ impl DeliveryRegistry {
     /// Read a bounded strict registry and resolve approved credential references at startup.
     ///
     /// Missing/malformed files and unavailable secrets are errors, never an empty-registry fallback.
-    /// HTTP producer protocols are explicitly named; native Kafka/AMQP/FTP clients are not claimed.
+    /// HTTP producer protocols are explicitly named; native stream/queue/FTP clients are not claimed.
     ///
     /// # Errors
     /// Returns file, schema, credential, unsupported capability or destination-construction errors.
@@ -127,11 +127,11 @@ impl DeliveryRegistry {
                     }
                     let protocol = match kind {
                         Kind::Http => HttpDeliveryProtocol::Http,
-                        Kind::Solr => HttpDeliveryProtocol::Solr,
-                        Kind::Opensearch => HttpDeliveryProtocol::OpenSearch,
-                        Kind::KafkaRestV2 => HttpDeliveryProtocol::KafkaRestV2,
-                        Kind::RabbitmqManagement => HttpDeliveryProtocol::RabbitMqManagement,
-                        Kind::GcsJsonUpload => HttpDeliveryProtocol::GcsJsonUpload,
+                        Kind::SearchUpdate => HttpDeliveryProtocol::SearchUpdate,
+                        Kind::SearchIndex => HttpDeliveryProtocol::SearchIndex,
+                        Kind::StreamRestV2 => HttpDeliveryProtocol::StreamRestV2,
+                        Kind::QueueHttpV1 => HttpDeliveryProtocol::QueueHttpV1,
+                        Kind::ObjectJsonUpload => HttpDeliveryProtocol::ObjectJsonUpload,
                         Kind::FtpServiceV1 => HttpDeliveryProtocol::FtpServiceV1,
                         _ => return Err(DeliveryError::Unavailable("invalid_provider_registry_kind")),
                     };

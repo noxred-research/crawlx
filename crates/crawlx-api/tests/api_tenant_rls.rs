@@ -240,9 +240,9 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
                 format!("/v1/crawls/{}/pages", runs[i]),
                 format!("/v1/crawls/{}/coverage", runs[i]),
                 format!("/v1/authorizations/{}", records[i]),
-                format!("/compat/firecrawl/v2/agent/{}", jobs[i]),
-                format!("/compat/firecrawl/v2/agent/{}/trace", jobs[i]),
-                format!("/compat/firecrawl/v2/agent/{}/snapshots/{SNAPSHOT}", jobs[i]),
+                format!("/compat/v2/agent/{}", jobs[i]),
+                format!("/compat/v2/agent/{}/trace", jobs[i]),
+                format!("/compat/v2/agent/{}/snapshots/{SNAPSHOT}", jobs[i]),
             ] {
                 let response = client
                     .get(format!("{base}{path}"))
@@ -264,9 +264,9 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
                 format!("/v1/crawls/{}/pages", runs[other]),
                 format!("/v1/crawls/{}/coverage", runs[other]),
                 format!("/v1/authorizations/{}", records[other]),
-                format!("/compat/firecrawl/v2/agent/{}", jobs[other]),
-                format!("/compat/firecrawl/v2/agent/{}/trace", jobs[other]),
-                format!("/compat/firecrawl/v2/agent/{}/snapshots/{SNAPSHOT}", jobs[other]),
+                format!("/compat/v2/agent/{}", jobs[other]),
+                format!("/compat/v2/agent/{}/trace", jobs[other]),
+                format!("/compat/v2/agent/{}/snapshots/{SNAPSHOT}", jobs[other]),
             ] {
                 let response = client
                     .get(format!("{base}{path}"))
@@ -297,10 +297,7 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
                     Method::POST,
                     format!("/v1/authorizations/{}/revoke", records[other]),
                 ),
-                (
-                    Method::DELETE,
-                    format!("/compat/firecrawl/v2/agent/{}", jobs[other]),
-                ),
+                (Method::DELETE, format!("/compat/v2/agent/{}", jobs[other])),
             ] {
                 let response = client
                     .request(method, format!("{base}{path}"))

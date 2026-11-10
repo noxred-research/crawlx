@@ -440,7 +440,7 @@ mod tests {
             ),
             (
                 WorkerError::Discovery(crawlx_core::discovery::DiscoveryErrorV1::ProviderUnavailable(
-                    crawlx_core::discovery::DiscoveryProviderV1::GoogleNews,
+                    crawlx_core::discovery::DiscoveryProviderV1::NewsSearch,
                 )),
                 ErrorClass::Terminal,
             ),

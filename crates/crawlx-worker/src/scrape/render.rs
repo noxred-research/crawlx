@@ -152,7 +152,7 @@ pub enum RenderError {
     Action {
         /// Position in `actions[]`.
         index: usize,
-        /// Firecrawl action type.
+        /// Compatibility-API action type.
         kind: &'static str,
         /// Fixed reason code.
         reason: String,

@@ -450,7 +450,7 @@ async fn d2_robots_txt_follows_the_request_host_once_the_origin_is_claimed() {
     let (status, ua) = robots(format!("ua.gym.test:{}", gym.port)).await;
     assert_eq!(status, 200);
     assert!(
-        ua.contains("User-agent: FirecrawlAgent\nDisallow: /d2/robots/fc-only\n"),
+        ua.contains("User-agent: FirecrawlAgent\nDisallow: /d2/robots/fc-only\n"), // wire-compat: robots product token
         "{ua}"
     );
     // any other host, the bare gym address included, allows everything

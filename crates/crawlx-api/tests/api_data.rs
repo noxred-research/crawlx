@@ -95,7 +95,7 @@ async fn add_page(e: &Env, run: CrawlRunId, n: i64, role: &str, big: bool) {
 }
 
 #[tokio::test]
-async fn pages_are_firecrawl_shaped_and_paginated() {
+async fn pages_are_compat_shaped_and_paginated() {
     let e = env();
     let id = e.create_run(&simple_body()).await;
     let run = rid(&id);

@@ -9,10 +9,10 @@
 //!
 //! [`MemoryCheckpointKeys`] is process-local custody, not a production root or a
 //! cross-process recovery mechanism. [`KmsCheckpointKeys`] requires an explicitly
-//! configured symmetric KMS key, AWS region and credentials from the SDK default
+//! configured symmetric KMS key, cloud region and credentials from the SDK default
 //! chain, reachable KMS, and `kms:GenerateDataKey` / `kms:Decrypt` permissions.
 //! Both KMS operations use the same ownership encryption context. Context IDs
-//! are not secrets: AWS can record encryption context in CloudTrail. Prefer a
+//! are not secrets: the provider can record encryption context in its audit trail. Prefer a
 //! stable key ARN over a retargetable alias for durable checkpoint recovery.
 //! Construction loads SDK configuration; it does not prove KMS authorization or
 //! availability. Each seal generates a fresh data key; each open calls KMS. No
@@ -187,7 +187,7 @@ pub enum CheckpointCryptoError {
         #[source]
         source: CheckpointCryptoSource,
     },
-    /// An AWS KMS operation failed without a plaintext fallback.
+    /// A cloud KMS operation failed without a plaintext fallback.
     #[error("checkpoint kms operation failed")]
     Kms {
         /// Redacted SDK failure source chain.
@@ -263,7 +263,7 @@ impl CheckpointKeys for MemoryCheckpointKeys {
     }
 }
 
-/// Real AWS KMS envelope encryption with fresh AES-256 data keys per checkpoint.
+/// Real cloud KMS envelope encryption with fresh AES-256 data keys per checkpoint.
 #[non_exhaustive]
 pub struct KmsCheckpointKeys {
     client: Client,
@@ -277,13 +277,13 @@ impl fmt::Debug for KmsCheckpointKeys {
 }
 
 impl KmsCheckpointKeys {
-    /// Load the AWS default region/credential chain with the approved rustls+ring connector.
+    /// Load the cloud SDK default region/credential chain with the approved rustls+ring connector.
     ///
     /// Does not create a KMS key or call KMS to validate grants. Every operation
     /// supplies the configured key ID, preventing decryption under another KMS key.
     ///
     /// # Errors
-    /// Rejects an empty/oversized key identifier or absent AWS region. SDK failures
+    /// Rejects an empty/oversized key identifier or absent cloud region. SDK failures
     /// are returned by `seal`/`open`; no generated key or plaintext fallback exists.
     pub async fn from_environment(key_id: String) -> Result<Self, CheckpointCryptoError> {
         validate_key_id(&key_id)?;

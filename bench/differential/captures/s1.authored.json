@@ -543,6 +543,6 @@
   },
   "crawlxSample": {
     "provenance": "authored_sample",
-    "note": "Authored from the s1 fixture manifest semantics (crates/crawlx-bench/fixtures/s1, keep_all query handling); not a black-box capture. bench/differential/run.sh overwrites it with a real export from the pinned Firecrawl commit when the nightly job runs."
+    "note": "Authored from the s1 fixture manifest semantics (crates/crawlx-bench/fixtures/s1, keep_all query handling); not a black-box capture. bench/differential/run.sh overwrites it with a real export from the pinned upstream commit when the nightly job runs."
   }
 }

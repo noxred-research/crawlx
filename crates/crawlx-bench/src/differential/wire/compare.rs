@@ -314,8 +314,8 @@ pub struct ObservationRow {
     pub scenario: String,
     /// Observation name.
     pub name: String,
-    /// Firecrawl value; empty when the observation exists on the crawlx side only.
-    pub firecrawl: Option<String>,
+    /// Upstream value; empty when the observation exists on the crawlx side only.
+    pub upstream: Option<String>,
     /// crawlx value.
     pub crawlx: Option<String>,
     /// Hard or soft.
@@ -328,7 +328,7 @@ impl ObservationRow {
     /// Both sides observed the same value.
     #[must_use]
     pub fn equal(&self) -> bool {
-        self.firecrawl == self.crawlx
+        self.upstream == self.crawlx
     }
 }
 
@@ -393,10 +393,7 @@ impl WireReport {
             self.scenarios.len()
         );
         let _ = writeln!(out, "## Scenarios\n");
-        let _ = writeln!(
-            out,
-            "| Scenario | Firecrawl | crawlx | Agree |\n|---|---|---|---|"
-        );
+        let _ = writeln!(out, "| Scenario | Upstream | crawlx | Agree |\n|---|---|---|---|");
         for id in &self.scenarios {
             let rows: Vec<&ObservationRow> = self.rows.iter().filter(|r| &r.scenario == id).collect();
             let headline = |side: fn(&ObservationRow) -> &Option<String>| -> String {
@@ -415,7 +412,7 @@ impl WireReport {
             let _ = writeln!(
                 out,
                 "| `{id}` | {} | {} | {} |",
-                headline(|r| &r.firecrawl),
+                headline(|r| &r.upstream),
                 headline(|r| &r.crawlx),
                 if all_equal { "yes" } else { "**no**" }
             );
@@ -427,7 +424,7 @@ impl WireReport {
         } else {
             let _ = writeln!(
                 out,
-                "| Scenario | Observation | Firecrawl | crawlx | Kind | Ledger |\n|---|---|---|---|---|---|"
+                "| Scenario | Observation | Upstream | crawlx | Kind | Ledger |\n|---|---|---|---|---|---|"
             );
             for r in different {
                 let _ = writeln!(
@@ -435,7 +432,7 @@ impl WireReport {
                     "| `{}` | `{}` | `{}` | `{}` | {} | {} |",
                     r.scenario,
                     r.name,
-                    r.firecrawl.as_deref().unwrap_or("(absent)"),
+                    r.upstream.as_deref().unwrap_or("(absent)"),
                     r.crawlx.as_deref().unwrap_or("(absent)"),
                     if r.hard { "hard" } else { "soft" },
                     r.documented.as_deref().unwrap_or("**undocumented**")
@@ -476,7 +473,7 @@ impl WireReport {
 /// A message when an origin of a capture is not a URL.
 pub fn compare(
     label: &str,
-    firecrawl: &WireCapture,
+    upstream: &WireCapture,
     crawlx: &WireCapture,
     ledger: &Ledger,
 ) -> Result<WireReport, String> {
@@ -484,19 +481,19 @@ pub fn compare(
     let origin = |c: &WireCapture| {
         Url::parse(&c.wire_sample.origin).map_err(|e| format!("origin `{}`: {e}", c.wire_sample.origin))
     };
-    let (fo, co) = (origin(firecrawl)?, origin(crawlx)?);
+    let (fo, co) = (origin(upstream)?, origin(crawlx)?);
     let mut rows = Vec::new();
     let mut findings = Vec::new();
     let mut used: BTreeSet<String> = BTreeSet::new();
     let mut scenarios = Vec::new();
-    let ids: BTreeSet<&str> = firecrawl
+    let ids: BTreeSet<&str> = upstream
         .scenarios
         .iter()
         .chain(&crawlx.scenarios)
         .map(|s| s.id.as_str())
         .collect();
     for id in ids {
-        let (Some(f), Some(c)) = (firecrawl.scenario(id), crawlx.scenario(id)) else {
+        let (Some(f), Some(c)) = (upstream.scenario(id), crawlx.scenario(id)) else {
             findings.push(Finding {
                 severity: Severity::Blocking,
                 kind: DivergenceKind::Behavior,
@@ -515,7 +512,7 @@ pub fn compare(
             let mut row = ObservationRow {
                 scenario: id.to_owned(),
                 name: name.clone(),
-                firecrawl: a.map(|o| o.value.clone()),
+                upstream: a.map(|o| o.value.clone()),
                 crawlx: b.map(|o| o.value.clone()),
                 hard: is_hard,
                 documented: None,
@@ -534,8 +531,8 @@ pub fn compare(
                     },
                     kind: DivergenceKind::Behavior,
                     detail: format!(
-                        "firecrawl `{}` vs crawlx `{}`",
-                        row.firecrawl.as_deref().unwrap_or("(absent)"),
+                        "upstream `{}` vs crawlx `{}`",
+                        row.upstream.as_deref().unwrap_or("(absent)"),
                         row.crawlx.as_deref().unwrap_or("(absent)")
                     ),
                     subject,
@@ -740,7 +737,7 @@ rationale = "r"
         let event = |t: &str, replied: u64, data: Value| {
             json!({
                 "label": "wh", "seq": 1, "replied": replied,
-                "headers": {"x-diff": "1", "content-type": "application/json; charset=utf-8", "x-firecrawl-signature": "sha256=x"},
+                "headers": {"x-diff": "1", "content-type": "application/json; charset=utf-8", "x-firecrawl-signature": "sha256=x"}, // wire-compat: webhook signature header
                 "body": {"success": true, "type": t, "id": "j", "data": data, "metadata": {"run": "wh"}}
             })
         };
@@ -760,7 +757,7 @@ rationale = "r"
         assert_eq!(out["webhook.terminal_events"].value, "1");
         assert_eq!(out["webhook.metadata_echo"].value, "echoed");
         assert_eq!(out["webhook.headers_echo"].value, "echoed");
-        assert_eq!(out["webhook.signature_headers"].value, "x-firecrawl-signature");
+        assert_eq!(out["webhook.signature_headers"].value, "x-firecrawl-signature"); // wire-compat: webhook signature header
         assert_eq!(out["webhook.page_data"].value, "array(1)");
         assert_eq!(
             out["webhook.envelope.crawl.page"].value,

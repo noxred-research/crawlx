@@ -1,4 +1,4 @@
-//! A stored scrape page as the Firecrawl `data` object (`ScrapeResponse.data`), and the credits
+//! A stored scrape page as the compat `data` object (`ScrapeResponse.data`), and the credits
 //! the page costs.
 
 use crate::routes::pages::{content, default_include, page_doc, read_content};
@@ -18,7 +18,7 @@ use serde_json::{json, Map, Value};
 /// lease loop polls for queued runs every 250 ms, so a shorter wait is pick-up latency.
 const QUEUE_PICKUP_GRACE: ChronoDuration = ChronoDuration::seconds(1);
 
-/// The Firecrawl job id of `page`: the run id of a scrape run, `{run}.{frontier}` for the pages
+/// The compat job id of `page`: the run id of a scrape run, `{run}.{frontier}` for the pages
 /// of crawl and batch runs.
 #[must_use]
 pub fn scrape_id(run: &CrawlRun, page: &PageRecord) -> String {
@@ -98,23 +98,18 @@ pub(crate) struct CacheHit {
     pub options: ScrapeOptions,
 }
 
-/// The Firecrawl `data` object of `page`, a page of `run`: the requested formats, `metadata`
+/// The compat `data` object of `page`, a page of `run`: the requested formats, `metadata`
 /// (`sourceURL`, `url`, `statusCode`, `contentType`, `error`, the page's `<meta>` values,
 /// `numPages`/`totalPages`, `cacheState`, `cachedAt`, `scrapeId`, `creditsUsed`, `proxyUsed`,
 /// `concurrencyLimited`, `concurrencyQueueDurationMs`) and
 /// `warning`. Pages of runs that carry no scrape job (plain crawls) keep the native page
 /// document. Blobs are resolved: text up to `inline_max_bytes` inline (larger values are
 /// linked from `metadata.crawlx`), `rawBase64` inline, screenshots and PDFs as URLs.
-pub async fn firecrawl_document(
-    state: &AppState,
-    run: &CrawlRun,
-    page: &PageRecord,
-    base_url: &str,
-) -> Value {
+pub async fn compat_document(state: &AppState, run: &CrawlRun, page: &PageRecord, base_url: &str) -> Value {
     render(state, run, page, base_url, None).await.0
 }
 
-/// As [`firecrawl_document`], marking the document as served from the stored scrape `hit`.
+/// As [`compat_document`], marking the document as served from the stored scrape `hit`.
 pub(crate) async fn render(
     state: &AppState,
     run: &CrawlRun,
@@ -194,7 +189,7 @@ pub(crate) async fn render(
         );
     }
     if let (true, Some(t)) = (o.wants("audio") || o.wants("video"), &doc.transcript) {
-        // additive to Firecrawl's shape: the speech-to-text of the returned media
+        // additive to the compat API's shape: the speech-to-text of the returned media
         data.insert("transcript".to_owned(), json!(t));
     }
     if let Some(s) = &doc.summary {
@@ -204,11 +199,11 @@ pub(crate) async fn render(
         data.insert("json".to_owned(), v.clone());
     }
     if let Some(a) = doc.answer.as_ref().or(doc.query.as_ref()) {
-        // the `question` and `query` formats share Firecrawl's `answer` field
+        // the `question` and `query` formats share the compat API's `answer` field
         data.insert("answer".to_owned(), json!(a));
     }
     if let Some(h) = &doc.highlights {
-        // Firecrawl documents `highlights` as one string of selected source text
+        // The compat API documents `highlights` as one string of selected source text
         data.insert("highlights".to_owned(), Value::String(h.join("\n\n")));
     }
     if let Some(a) = &doc.attributes {
@@ -352,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn credits_follow_the_firecrawl_price_list() {
+    fn credits_follow_the_compat_price_list() {
         let md = opts(vec![FormatSpec::Markdown]);
         assert_eq!(page_credits(&md, &doc(200), false), 1);
         assert_eq!(page_credits(&md, &doc(200), true), 2, "zero data retention +1");

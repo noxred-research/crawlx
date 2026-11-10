@@ -1,24 +1,26 @@
-# Firecrawl clients and integrations on the crawlx facade
+# Compatibility clients and integrations
 
-crawlx serves Firecrawl's v2 API under `/compat/firecrawl/v2` (`crates/crawlx-api/src/routes/mod.rs`,
-`routes/compat_*.rs`). This page says how to point Firecrawl's SDKs, its CLI and the third-party
-integrations at it, which endpoints each of them calls, which of those the facade serves, and what
-is exercised by tests. Every statement is marked **run** (executed by `cargo test -p crawlx-cli --test sdk_python`),
-**read** (read from the package or source file named, not executed) or **documented-only**.
+crawlx serves a compatibility API with v2 scrape, crawl, map, search, extract, agent and parse routes under
+`/compat/v2` (`crates/crawlx-api/src/routes/mod.rs`, `routes/compat_*.rs`). This page says how to point
+existing client libraries, command-line clients and third-party integrations at it, which endpoints each
+kind of client calls, which of those crawlx serves, and what is exercised by tests. Every statement is marked
+**run** (executed by `cargo test -p crawlx-cli --test sdk_python`), **read** (read from the package or source
+file in question, not executed) or **documented-only**.
 
-Versions examined: `firecrawl-py` 4.54.0, `langchain-firecrawl` 0.1.0,
-`langchain-community` 0.4.2, `llama-index-readers-web` 0.7.0, npm `firecrawl` 4.51.0 and
-`firecrawl-cli` 1.26.24, `@mendable/n8n-nodes-firecrawl` 2.2.0, `n8n-nodes-firecrawl` 0.3.0, the
-`main` branches of `langgenius/dify` and `FlowiseAI/Flowise`.
+Clients examined: the official Python and Node client libraries (v2 API generation) and the command-line
+client built on the Node library; the document loaders of two popular LLM-application frameworks (one
+maintained by the framework, one in its community package); a workflow-automation platform with an official and
+a community node; an LLM-application builder; a low-code flow builder. Package names and versions are not
+listed: the rules below follow from how each client builds its URLs and which routes it calls.
 
-## 1. Run the facade for a client
+## 1. Run the compatibility API for a client
 
 ```sh
 export CRAWLX_DATABASE_URL=postgres://crawlx:...@db/crawlx
 export CRAWLX_API_DATABASE_URL=postgres://crawlx_api:...@db/crawlx # restricted non-owner role
-FC_KEY="fc-$(openssl rand -hex 16)"            # fc- + 32 hex characters, like Firecrawl's own keys
-crawlx serve  --bind 0.0.0.0:8080 --firecrawl-keys --api-key "acme=$FC_KEY"
-crawlx worker                                   # executes the runs the facade creates
+FC_KEY="fc-$(openssl rand -hex 16)"            # fc- + 32 hex characters
+crawlx serve  --bind 0.0.0.0:8080 --compat-keys --api-key "acme=$FC_KEY"
+crawlx worker                                   # executes the runs the compatibility API creates
 ```
 
 Provision the restricted API login and its tenant-table grants before starting
@@ -30,60 +32,58 @@ with secret-manager files instead of environment values containing credentials.
   are crawlx runs; `crawlx worker` leases them from PostgreSQL (`crates/crawlx-cli/src/ops.rs`,
   `worker`). `crawlx serve` without `--database-url` keeps its runs in the process, where no worker
   can see them.
-* **Enable `fc-` keys.** An `fc-` key is accepted only when `compat.firecrawlKeys` is on:
-  `crawlx serve --firecrawl-keys` or the environment variable `CRAWLX_COMPAT_FIRECRAWL_KEYS=1`
+* **Enable `fc-` keys.** An `fc-` key is accepted only when `compat.prefixedKeys` is on:
+  `crawlx serve --compat-keys` or the environment variable `CRAWLX_COMPAT_KEYS=1`
   (`1`, `true`, `yes` or `on`; `CompatConfig::from_lookup`, `crates/crawlx-api/src/config.rs`). In a
-  library the setting is `ApiConfig.compat.firecrawl_keys`. **Run**: test
-  `serve_bootstraps_fc_keys_with_the_flag_or_the_environment` starts the `crawlx` binary with the flag
-  and with the variable, calls `GET /compat/firecrawl/v2/team/credit-usage` with the key (200) and
+  library the setting is `ApiConfig.compat.prefixed_keys`. **Run**: the bootstrap test starts the `crawlx` binary with the flag
+  and with the variable, calls `GET /compat/v2/team/credit-usage` with the key (200) and
   checks that an unknown `fc-` key and the same key on `/v1/crawls/{id}` get 401.
 * **Without the switch** a bootstrap `fc-` key is refused at startup (`bootstrap_keys`,
   `crates/crawlx-api/src/lib.rs`): `API key for tenant "acme" must look like cx_live_<26 base32
   characters>` (same test, third phase: the process exits non-zero with that message).
-* **Key shape.** `fc-` followed by 16 to 64 ASCII alphanumerics (`parse_firecrawl_key`,
+* **Key shape.** `fc-` followed by 16 to 64 ASCII alphanumerics (`parse_compat_key`,
   `crates/crawlx-api/src/auth.rs`). An `fc-` key authenticates only on `/compat/...` routes and
   never opens a native `/v1/...` route (`auth_layer`); a `cx_live_` key works on both.
 * **LLM and search backends** (needed by `/extract`, `/search`, the `json`, `summary`,
-  `question`, `highlights` and `query` formats) come from the Firecrawl self-host variables:
-  `OPENAI_BASE_URL` (or `OLLAMA_BASE_URL`), `MODEL_NAME`, `OPENAI_API_KEY`, `SEARXNG_ENDPOINT`,
-  `SEARXNG_ENGINES`, `SEARXNG_CATEGORIES`, `SEARCHAPI_API_KEY`, `SEARCHAPI_ENGINE`
+  `question`, `highlights` and `query` formats) come from these variables:
+  `CRAWLX_LLM_BASE_URL` (a chat-completions compatible endpoint; `CRAWLX_LOCAL_LLM_BASE_URL` for a local model server), `CRAWLX_LLM_MODEL`, `CRAWLX_LLM_API_KEY`, `CRAWLX_SEARCH_ENDPOINT` (a metasearch JSON API),
+  `CRAWLX_SEARCH_ENGINES`, `CRAWLX_SEARCH_CATEGORIES`, `CRAWLX_SEARCH_API_KEY`, `CRAWLX_SEARCH_API_ENGINE` (a hosted search-results API)
   (`IntelConfig::from_lookup`, `crates/crawlx-api/src/config.rs`). `crawlx serve` reads all of them;
   `crawlx worker` reads the LLM ones for the scrape formats. Without a backend the endpoint answers 503.
 
 ## 2. Which base URL a client needs
 
-The facade lives at `http://HOST:8080/compat/firecrawl`; Firecrawl clients append `/v2/...` to the base URL
+The compatibility API lives at `http://HOST:8080/compat`; compatible clients append `/v2/...` to the base URL
 they are given. Clients differ in how they join the two, and one of them throws the prefix away:
 
 | client | how it builds the URL | base URL to configure | status |
 |---|---|---|---|
-| `firecrawl-py` 4.54.0 (v2) | `urljoin(api_url + "/", "/v2/scrape")` (`firecrawl/v2/utils/http_client.py:35-39`): a rooted path **replaces** the path of `api_url` | the origin of a proxy that maps `/v2/*` to `/compat/firecrawl/v2/*` (section 3) | **run**: with `api_url=http://HOST/compat/firecrawl` the request goes to `/v2/scrape` and the facade answers `404 route not found` (row `scrape@prefix_base_url`); through the rewrite every method works |
-| npm `firecrawl` 4.51.0 | axios `baseURL` + `/v2/scrape` (`src/v2/utils/httpClient.ts:45-50`): the prefix is kept | `http://HOST:8080/compat/firecrawl` | **run** (`node.*` rows); a logging server also saw `POST /compat/firecrawl/v2/scrape` and `POST /compat/firecrawl/v2/map` |
-| `firecrawl` CLI 1.26.24 | the npm SDK, plus ``${apiUrl}${path}`` for `status`/`parse`/`feedback` (`dist/utils/client.js`, `dist/commands/*.js`) | `--api-url http://HOST:8080/compat/firecrawl` (or `FIRECRAWL_API_URL`) | **run** (`cli.*` rows) |
-| LangChain `FirecrawlLoader`, LlamaIndex `FireCrawlWebReader` | build `firecrawl.Firecrawl(api_key, api_url)` (Python SDK) | as `firecrawl-py` | **run** for LangChain (`langchain.*` rows); LlamaIndex **read** |
-| Dify `FirecrawlApp` | ``base_url.rstrip('/') + '/' + 'v2/scrape'`` (`api/core/rag/extractor/firecrawl/firecrawl_app.py`, `_build_url`): the prefix is kept | `http://HOST:8080/compat/firecrawl` | **read** |
-| n8n `@mendable/n8n-nodes-firecrawl` 2.2.0 | credential `Base URL` (default `https://api.firecrawl.dev/v2`) + relative `/scrape`, `/crawl`, ... (`dist/credentials/FirecrawlApi.credentials.js:11-16`, `dist/nodes/Firecrawl/Firecrawl.node.js:30`) | `http://HOST:8080/compat/firecrawl/v2` (the `/v2` is part of the value) | **read** |
-| n8n `n8n-nodes-firecrawl` 0.3.0 (third party) | credential `Base URL` default `https://api.firecrawl.dev/v1` + `/scrape`, `/map`, `/crawl`, `/crawl/{id}`, `/crawl/webhook`, `/crawl/websocket` (`dist/credentials/FireCrawlApi.credentials.js:12-14`, `dist/nodes/FireCrawl/resources/default/*/index.js`) | `http://HOST:8080/compat/firecrawl/v2` | **read** |
-| Flowise `FireCrawl` document loader | ``this.apiUrl + '/v1/scrape'`` and `/v1/crawl`, `/v1/extract`, `/v1/search`, `/v1/crawl/{id}`, `/v1/extract/{id}` (`packages/components/nodes/documentloaders/FireCrawl/FireCrawl.ts`, lines 192, 294, 406, 445, 481, 508) | none works: the paths are v1 | **read** |
-| Zapier, Make, any HTTP client | whatever URL you type | `http://HOST:8080/compat/firecrawl/v2/<endpoint>` | **documented-only** |
+| Python client library (v2) | `urljoin(api_url + "/", "/v2/scrape")`: a rooted path **replaces** the path of `api_url` | the origin of a proxy that maps `/v2/*` to `/compat/v2/*` (section 3) | **run**: with `api_url=http://HOST/compat` the request goes to `/v2/scrape` and the API answers `404 route not found` (row `scrape@prefix_base_url`); through the rewrite every method works |
+| Node client library | HTTP client `baseURL` + `/v2/scrape`: the prefix is kept | `http://HOST:8080/compat` | **run** (the Node rows); a logging server also saw `POST /compat/v2/scrape` and `POST /compat/v2/map` |
+| command-line client (built on the Node library) | the Node library, plus `${apiUrl}${path}` for `status`/`parse`/`feedback` | `--api-url http://HOST:8080/compat` (or its API-URL environment variable) | **run** (the CLI rows) |
+| framework document loaders (Python) | build a Python-library client from `(api_key, api_url)` | as the Python client library | **run** for one loader (the loader rows); the other **read** |
+| LLM-application builder | `base_url.rstrip('/') + '/' + 'v2/scrape'`: the prefix is kept | `http://HOST:8080/compat` | **read** |
+| workflow platform, official node | credential `Base URL` (default: the hosted v2 endpoint) + relative `/scrape`, `/crawl`, ... | `http://HOST:8080/compat/v2` (the `/v2` is part of the value) | **read** |
+| workflow platform, community node (third party) | credential `Base URL` default is a hosted v1 endpoint + `/scrape`, `/map`, `/crawl`, `/crawl/{id}`, `/crawl/webhook`, `/crawl/websocket` | `http://HOST:8080/compat/v2` | **read** |
+| low-code flow builder, document loader | `this.apiUrl + '/v1/scrape'` and `/v1/crawl`, `/v1/extract`, `/v1/search`, `/v1/crawl/{id}`, `/v1/extract/{id}` | none works: the paths are v1 | **read** |
+| no-code automation tools, any HTTP client | whatever URL you type | `http://HOST:8080/compat/v2/<endpoint>` | **documented-only** |
 
-### 3. The `/v2/*` rewrite `firecrawl-py` needs
+### 3. The `/v2/*` rewrite the Python client library needs
 
-Put a reverse proxy in front of the API that maps `/v2/...` to `/compat/firecrawl/v2/...`, and give
-the Python SDK the proxy's origin as `api_url`. The facade writes absolute links into its answers (the
+Put a reverse proxy in front of the API that maps `/v2/...` to `/compat/v2/...`, and give
+the Python client the proxy's origin as `api_url`. The compatibility API writes absolute links into its answers (the
 `url` of a started crawl, the `next` link of a paged status; `base_url`,
 `crates/crawlx-api/src/scrape_service.rs`) from the `Host` and `X-Forwarded-Proto` headers and names the
-`/compat/firecrawl/v2/...` path, which the SDK follows on the `api_url` origin
-(`firecrawl/v2/utils/api_origin.py`): forward both headers, and let `/compat/firecrawl/` pass through too.
+`/compat/v2/...` path, which the client follows on the `api_url` origin: forward both headers, and let `/compat/` pass through too.
 
-```nginx
-# not executed here: the same mapping as the rewrite used by the test
+```
+# reverse-proxy configuration, not executed here: the same mapping as the rewrite used by the test
 location /v2/ {
-    proxy_pass http://crawlx:8080/compat/firecrawl/v2/;
+    proxy_pass http://crawlx:8080/compat/v2/;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
-location /compat/firecrawl/ {
+location /compat/ {
     proxy_pass http://crawlx:8080;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
@@ -91,11 +91,11 @@ location /compat/firecrawl/ {
 ```
 
 The **run** evidence uses an in-process rewrite (`rewrite_v2` in `crates/crawlx-cli/tests/support/sdk_rig.rs`)
-instead of nginx. The facade does not serve `/v2/...` at the root by itself.
+instead of a reverse proxy. The API does not serve `/v2/...` at the root by itself.
 
-## 4. Endpoints the facade serves
+## 4. Endpoints the compatibility API serves
 
-Mounted by `crates/crawlx-api/src/routes/mod.rs` behind the key check, all under `/compat/firecrawl`:
+Mounted by `crates/crawlx-api/src/routes/mod.rs` behind the key check, all under `/compat`:
 
 | family | routes |
 |---|---|
@@ -116,107 +116,98 @@ every `/v1/...` route, `/v2/scrape/{jobId}/interact`, `/v2/browser...` and `/v2/
 
 ## 5. Per client
 
-### Python SDK `firecrawl-py` 4.54.0 (official) - run
+### Python client library (official) - run
 
 `tests/sdk/test_sdk.py` drives the real package (installed with `pip install --target` from
-`tests/sdk/requirements.txt`) against the in-process facade with a real worker, a fixture site, a mock LLM
-and a SearXNG stand-in. Results (`crates/crawlx-cli/tests/sdk_python.rs`,
-`official_python_sdk_runs_against_the_facade`):
+`tests/sdk/requirements.txt`) against the in-process compatibility API with a real worker, a fixture site, a mock LLM
+and a metasearch stand-in. Results (`crates/crawlx-cli/tests/sdk_python.rs`, the Python test):
 
-| SDK call | endpoint | result |
+| client call | endpoint | result |
 |---|---|---|
 | `scrape(url, formats=[markdown, links, html])` | `POST /v2/scrape` | pass: markdown, links, html, metadata |
 | `scrape` with a `json` format + schema | `POST /v2/scrape` | pass: `json` is the mock LLM's answer |
 | `start_crawl` + `get_crawl_status` polling | `POST /v2/crawl`, `GET /v2/crawl/{id}` | pass: `scraping` then `completed`, 3 pages with markdown |
 | `crawl` (waiter) | same | pass |
-| `get_crawl_errors`, `cancel_crawl` (finished crawl), `get_active_crawls` | `/v2/crawl/{id}/errors`, `DELETE /v2/crawl/{id}`, `/v2/crawl/active` | pass (`cancel_crawl` returns `False`: the facade answers 409) |
+| `get_crawl_errors`, `cancel_crawl` (finished crawl), `get_active_crawls` | `/v2/crawl/{id}/errors`, `DELETE /v2/crawl/{id}`, `/v2/crawl/active` | pass (`cancel_crawl` returns `False`: the API answers 409) |
 | `map` | `POST /v2/map` | pass |
-| `search`, `search(scrape_options=...)` | `POST /v2/search` | pass: hits from SearXNG, with markdown when scraped |
-| `extract`, `start_extract` + `get_extract_status` | `POST /v2/extract`, `GET /v2/extract/{id}` | pass: `completed`, data = the mock LLM's answer for the SDK's schema |
+| `search`, `search(scrape_options=...)` | `POST /v2/search` | pass: hits from the metasearch stand-in, with markdown when scraped |
+| `extract`, `start_extract` + `get_extract_status` | `POST /v2/extract`, `GET /v2/extract/{id}` | pass: `completed`, data = the mock LLM's answer for the client's schema |
 | `batch_scrape` | `POST /v2/batch/scrape`, `GET /v2/batch/scrape/{id}` | pass |
 | `get_credit_usage`, `get_token_usage` | `/v2/team/credit-usage`, `/v2/team/token-usage` | pass (`-1`: no balance) |
-| `scrape` with `api_url=http://HOST/compat/firecrawl` | `POST /v2/scrape` on the host | **expected fail, 404**: the SDK drops the prefix (section 2) |
-| `.v1.scrape_url`, `.v1.crawl_url`, `.v1.check_crawl_status`, `.v1.map_url` (`FirecrawlApp` is the v2 client in 4.54.0; the v1 methods hang off `Firecrawl(...).v1`) | `/compat/firecrawl/v1/...` | **expected fail, 404 `route not found`**: `/v1` is not served by design |
+| `scrape` with `api_url=http://HOST/compat` | `POST /v2/scrape` on the host | **expected fail, 404**: the client drops the prefix (section 2) |
+| the legacy v1 methods (`.v1.scrape_url`, `.v1.crawl_url`, `.v1.check_crawl_status`, `.v1.map_url`; the default client is the v2 one, the v1 methods hang off its `.v1` attribute) | `/compat/v1/...` | **expected fail, 404 `route not found`**: `/v1` is not served by design |
 
-### Node SDK `firecrawl` 4.51.0 and the `firecrawl` CLI 1.26.24 (official) - run
+### Node client library and its command-line client (official) - run
 
-`tests/sdk/test_node.mjs` (installed with `npm ci` from `tests/sdk/package-lock.json`;
-`official_node_sdk_and_cli_run_against_the_facade`) with `apiUrl = http://HOST/compat/firecrawl`, no rewrite:
+`tests/sdk/test_node.mjs` (installed with `npm ci` from `tests/sdk/package-lock.json`; the Node and CLI test)
+with `apiUrl = http://HOST/compat`, no rewrite:
 `scrape`, `startCrawl` + `getCrawlStatus`, `crawl`, `map`, `search`, `extract`, `batchScrape` all pass; the CLI
 passes `scrape --format markdown,links --json`, `map --json`, `search --json`, `crawl --wait` and
-`credit-usage --json` with `--api-url`/`--api-key`. `firecrawl search` also asks for the hosted `alexandria`
-source; the facade ignores it and says so in `warning`.
+`credit-usage --json` with `--api-url`/`--api-key`. The CLI's `search` also asks for a hosted-only
+source; the API ignores it and says so in `warning`.
 
-### Agent skills (`npx firecrawl-cli init`) - partly run
+### Agent-skill installers - partly run
 
-`init` installs skill files into the detected coding agents (README of `firecrawl-cli`, "Agent skills") and
-logs in; it does not talk to the facade. The skills tell the agent to run the `firecrawl` CLI, which does:
-tell the CLI about the facade with `firecrawl config --api-url http://HOST:8080/compat/firecrawl --api-key fc-...`
-or `FIRECRAWL_API_URL` / `FIRECRAWL_API_KEY` (README, "Self-hosted / Local Development"; a custom API URL skips
-the browser login). **Run**: the CLI commands above. **Not run**: `init` itself, which writes to `~/.agents`
-and downloads the skill catalog from Firecrawl's service. CLI commands that need hosted features
-(`interact`, `browser`, Alexandria tools) are not served.
+The command-line client's `init` command installs skill files into the detected coding agents and
+logs in; it does not talk to the compatibility API. The skills tell the agent to run the command-line client, which does:
+tell the CLI about the API with `config --api-url http://HOST:8080/compat --api-key fc-...`
+or its API-URL and API-key environment variables (the client's "self-hosted" mode; a custom API URL skips
+the browser login). **Run**: the CLI commands above. **Not run**: `init` itself, which writes to the agents' home
+directory and downloads a skill catalog from a hosted service. CLI commands that need hosted features
+(`interact`, `browser` and hosted-only tools) are not served.
 
-### LangChain - run (loader), read (community loader)
+### Document loaders for LLM-application frameworks - run (one loader), read (the other)
 
-`langchain-firecrawl` 0.1.0 `FirecrawlLoader` (alias `FireCrawlLoader`) builds `firecrawl.Firecrawl(api_key,
-api_url)` (`langchain_firecrawl/_utilities.py`, `create_client`) and calls `scrape` (`POST /v2/scrape`),
+The first-party loader of the framework's partner package builds a Python-library client from `(api_key, api_url)` and calls `scrape` (`POST /v2/scrape`),
 `crawl` (`POST /v2/crawl`, `GET /v2/crawl/{id}`), `map` (`POST /v2/map`), `extract` (`POST /v2/extract`,
-`GET /v2/extract/{id}`) and `search` (`POST /v2/search`) with `integration="langchain"`
-(`langchain_firecrawl/document_loaders.py:215-255`). **Run**: rows `langchain.scrape`, `.crawl`, `.map`,
-`.search`, `.extract` pass against the facade through the `/v2/*` rewrite, so the extra `integration` body
-field is accepted. `langchain_community.document_loaders.FireCrawlLoader` (0.4.2,
-`document_loaders/firecrawl.py:100-246`) makes the same SDK calls (`FirecrawlApp` is `Firecrawl`): **read**,
-not executed. Use `api_url=<rewrite origin>` for both.
+`GET /v2/extract/{id}`) and `search` (`POST /v2/search`) with an `integration` field in the body. **Run**: the loader rows `scrape`, `crawl`, `map`,
+`search`, `extract` pass against the API through the `/v2/*` rewrite, so the extra `integration` body
+field is accepted. The same framework's community-package loader makes the same client calls: **read**,
+not executed. A second framework's web reader makes the same calls (`scrape`, `crawl`, `map`, `search`, `extract` with its own
+`integration` value) under the same URL rule as the Python client library: **read**, not executed (the package pulls a long
+dependency tree). Use `api_url=<rewrite origin>` for all of them.
 
-### LlamaIndex - read
+### Workflow-automation platform - read
 
-`llama-index-readers-web` 0.7.0 `FireCrawlWebReader`
-(`llama_index/readers/web/firecrawl_web/base.py:44-56,410,549,632,679,843`) builds `Firecrawl(api_key, api_url)`
-and calls `scrape`, `crawl`, `map`, `search` and `extract` with `integration="llamaindex"`: the same endpoints and the
-same URL rule as the Python SDK. Not executed (the package pulls `llama-index-core` and a long dependency tree).
-
-### n8n - read
-
-The official node `@mendable/n8n-nodes-firecrawl` 2.2.0 posts `{..., "integration": "n8n"}` to `/scrape`, `/crawl`,
+The official node posts `{..., "integration": "<platform>"}` to `/scrape`, `/crawl`,
 `/map`, `/search`, `/extract`, `/batch/scrape`, `/agent` and reads `/crawl/{id}`, `/crawl/{id}/errors`,
 `/crawl/active`, `/extract/{id}`, `/batch/scrape/{id}[/errors]`, `/agent/{id}`, `/team/credit-usage`,
 `/team/queue-status`, `/team/token-usage[/historical]`, `/team/credit-usage/historical` (relative to the credential
-`Base URL`; `dist/nodes/Firecrawl/api/*/index.js`). Set the credential `Base URL` to
-`http://HOST:8080/compat/firecrawl/v2` and the API key to the `fc-` key; the facade serves all of those. Its
+`Base URL`). Set the credential `Base URL` to
+`http://HOST:8080/compat/v2` and the API key to the `fc-` key; the API serves all of those. Its
 `interact` and `browser` operations (`/scrape/{id}/interact`, `/browser`) are not served. The credential test
-calls `GET /team/credit-usage`. The community node `n8n-nodes-firecrawl` 0.3.0 is a v1 node: with its `Base URL`
-set to the v2 base, `scrape`, `map`, `crawl` and the crawl status call routes the facade serves; `crawl/webhook`
-and `crawl/websocket` are routes of that node's own API that the facade does not have; its request
-bodies were not compared with the facade. **HTTP Request node fallback**: any n8n workflow can call the facade
-with the *HTTP Request* node and an `Authorization: Bearer fc-...` header (section 6).
+calls `GET /team/credit-usage`. The community node is a v1 node: with its `Base URL`
+set to the v2 base, `scrape`, `map`, `crawl` and the crawl status call routes the API serves; `crawl/webhook`
+and `crawl/websocket` are routes of that node's own API that crawlx does not have; its request
+bodies were not compared with the compatibility API. **HTTP request node fallback**: any workflow can call the API
+with the platform's generic HTTP request node and an `Authorization: Bearer fc-...` header (section 6).
 
-### Dify - read
+### LLM-application builder - read
 
-`FirecrawlApp` (`api/core/rag/extractor/firecrawl/firecrawl_app.py`) posts `v2/scrape`, `v2/crawl`, `v2/map` and
-`v2/search` (the last two with `"integration": "dify"`) and reads `v2/crawl/{id}` plus the `next` links of
-paged results, all relative to the configured base URL. The facade serves all five. The credential check and the
-data-source flow of current Dify releases live in plugins that were not read (`api/services/auth/firecrawl` no
-longer exists on `main`), so whether Dify's "authorize" step accepts a self-hosted URL is unknown here.
+Its web-extractor client posts `v2/scrape`, `v2/crawl`, `v2/map` and
+`v2/search` (the last two with an `"integration"` field) and reads `v2/crawl/{id}` plus the `next` links of
+paged results, all relative to the configured base URL. The API serves all five. The credential check and the
+data-source flow of current releases live in plugins that were not read (the earlier auth service no
+longer exists on the main branch), so whether the builder's "authorize" step accepts a self-hosted URL is unknown here.
 
-### Flowise - read: does not work
+### Low-code flow builder - read: does not work
 
-The `FireCrawl` document loader calls `/v1/scrape`, `/v1/crawl`, `/v1/extract`, `/v1/search`, `/v1/crawl/{id}` and
-`/v1/extract/{id}` (`packages/components/nodes/documentloaders/FireCrawl/FireCrawl.ts`). The facade serves none
-of them (the same 404 as the `v1.*` rows above), so Flowise's Firecrawl loader cannot use crawlx. Flowise's other
-loaders (Cheerio, Puppeteer, ...) do not involve Firecrawl.
+Its document loader calls `/v1/scrape`, `/v1/crawl`, `/v1/extract`, `/v1/search`, `/v1/crawl/{id}` and
+`/v1/extract/{id}`. The compatibility API serves none
+of them (the same 404 as the legacy v1 rows above), so that loader cannot use crawlx. The builder's other
+loaders (static HTML, headless browser, ...) do not involve the compatibility API.
 
-### Zapier, Make, Lovable, CrewAI and other no-code tools - documented-only
+### No-code automation tools and agent frameworks - documented-only
 
-Zapier's *Webhooks by Zapier* (custom request) and Make's *HTTP > Make a request* send plain HTTP: use
-the URL, headers and bodies of section 6. Firecrawl's dedicated Zapier app, the Lovable connector and the CrewAI tools were
+The generic webhook or custom-request action of an automation tool sends plain HTTP: use
+the URL, headers and bodies of section 6. Dedicated apps, app-builder connectors and agent-framework tools were
 not examined (closed or not read); if they take only an API key and cannot be given a base URL, they cannot reach
-a self-hosted facade at all.
+a self-hosted compatibility API at all.
 
-## 6. Plain HTTP (curl, n8n HTTP Request, Zapier, Make)
+## 6. Plain HTTP (curl, workflow HTTP request nodes, automation tools)
 
 ```sh
-BASE=http://HOST:8080/compat/firecrawl/v2
+BASE=http://HOST:8080/compat/v2
 AUTH="Authorization: Bearer $FC_KEY"
 
 # one page
@@ -229,16 +220,16 @@ curl -s $BASE/crawl -H "$AUTH" -H 'content-type: application/json' \
 curl -s $BASE/crawl/<id> -H "$AUTH"                                                         # follow "next" while it is not null
 ```
 
-The request and response shapes are the ones the SDK rows above exercise.
+The request and response shapes are the ones the client rows above exercise.
 
 ## 7. Caveats
 
-* **`firecrawl-py` and its dependents (LangChain, LlamaIndex) need the `/v2/*` rewrite** (section 3); without it
-  they get 404 for every call. Everything that builds URLs by concatenation (npm SDK, CLI, Dify, n8n) takes the
-  `/compat/firecrawl` prefix as is.
-* **No `/v1`.** Clients and integrations that call `/v1/...` (Flowise, the v1 methods of both SDKs, the third-party n8n
-  node's default base URL) fail with 404.
-* **Hosted-only features** answer 404 or a warning: `interact`, browser sandbox, Alexandria, threat protection.
+* **The Python client library and its dependents (the framework loaders) need the `/v2/*` rewrite** (section 3); without it
+  they get 404 for every call. Everything that builds URLs by concatenation (Node library, CLI, the app builder, the workflow platform) takes the
+  `/compat` prefix as is.
+* **No `/v1`.** Clients and integrations that call `/v1/...` (the low-code flow builder, the v1 methods of both client libraries, the community workflow node's
+  default base URL) fail with 404.
+* **Hosted-only features** answer 404 or a warning: `interact`, browser sandbox, hosted-only search sources, threat protection.
 * **`extract` and `search` URLs** keep their own port (a fixed bug: `/extract` used to answer 422 `no valid URLs`
   for `http://host:8080/...`, found by this test).
 * **The test installs from PyPI and npm.** It prints `skipping: <reason>` and returns when `python3`/`pip`,

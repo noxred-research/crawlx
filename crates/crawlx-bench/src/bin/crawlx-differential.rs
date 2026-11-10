@@ -1,11 +1,11 @@
-//! `crawlx-differential`: compare a Firecrawl crawl export with a crawlx run.
+//! `crawlx-differential`: compare an upstream crawl export with a crawlx run.
 //!
 //! The crawlx side is either an existing run (`--crawlx FILE` written by a previous
 //! `--fixture` run, or `--crawlx-dir DIR` from `crawlx crawl --out DIR`) or produced here by
 //! crawling a gym fixture in-process (`--fixture ID`, static plane, no Chromium needed).
 
 use crawlx_bench::differential::{
-    CrawlxRun, DifferentialRunner, FirecrawlExport, FixtureRun, Ledger, Thresholds,
+    CrawlxRun, DifferentialRunner, FixtureRun, Ledger, Thresholds, UpstreamExport,
 };
 use crawlx_bench::gym::GymServer;
 use crawlx_core::config::QueryPolicy;
@@ -14,9 +14,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use url::Url;
 
-const USAGE: &str = "usage: crawlx-differential --firecrawl FILE (--fixture ID | --crawlx FILE | --crawlx-dir DIR) [options]\n\
-  --firecrawl FILE          Firecrawl v2 crawl export (status body with data[] merged, errors body under `errors`)\n\
-  --firecrawl-origin URL    origin Firecrawl crawled (default: origin of the first document)\n\
+const USAGE: &str = "usage: crawlx-differential --upstream FILE (--fixture ID | --crawlx FILE | --crawlx-dir DIR) [options]\n\
+  --upstream FILE          upstream v2 crawl export (status body with data[] merged, errors body under `errors`)\n\
+  --upstream-origin URL    origin upstream crawled (default: origin of the first document)\n\
   --fixture ID              crawl gym fixture ID in-process and compare against it\n\
   --crawlx FILE             crawlx run JSON written by --save-crawlx\n\
   --crawlx-dir DIR          directory written by `crawlx crawl --out DIR` (no frontier: succeeded pages only)\n\
@@ -24,7 +24,7 @@ const USAGE: &str = "usage: crawlx-differential --firecrawl FILE (--fixture ID |
   --save-crawlx FILE        with --fixture: write the crawlx run JSON here\n\
   --seed N                  crawl seed for --fixture (default 20261019)\n\
   --query-policy P          keep_all | classify | strip_all for --fixture (default keep_all)\n\
-  --request JSON|@FILE      the Firecrawl crawl request (`POST /v2/crawl` body without `url`) the other side received;\n\
+  --request JSON|@FILE      the upstream crawl request (`POST /v2/crawl` body without `url`) the other side received;\n\
                             its limit, includePaths, excludePaths, maxDiscoveryDepth, sitemap, crawlEntireDomain,\n\
                             allowExternalLinks, allowSubdomains and ignoreQueryParameters apply to the --fixture\n\
                             run too (default: none)\n\
@@ -55,8 +55,8 @@ enum Source {
 }
 
 struct Args {
-    firecrawl: PathBuf,
-    firecrawl_origin: Option<Url>,
+    upstream: PathBuf,
+    upstream_origin: Option<Url>,
     source: Source,
     crawlx_origin: Option<Url>,
     save_crawlx: Option<PathBuf>,
@@ -71,8 +71,8 @@ struct Args {
 
 #[allow(clippy::too_many_lines)]
 fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
-    let mut firecrawl = None;
-    let mut firecrawl_origin = None;
+    let mut upstream = None;
+    let mut upstream_origin = None;
     let mut fixture: Option<String> = None;
     let mut crawlx_file = None;
     let mut crawlx_dir = None;
@@ -99,10 +99,10 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
     };
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--firecrawl" => firecrawl = Some(PathBuf::from(value(&mut it, "--firecrawl")?)),
-            "--firecrawl-origin" => {
-                let v = value(&mut it, "--firecrawl-origin")?;
-                firecrawl_origin = Some(Url::parse(&v).map_err(|e| format!("--firecrawl-origin {v}: {e}"))?);
+            "--upstream" => upstream = Some(PathBuf::from(value(&mut it, "--upstream")?)),
+            "--upstream-origin" => {
+                let v = value(&mut it, "--upstream-origin")?;
+                upstream_origin = Some(Url::parse(&v).map_err(|e| format!("--upstream-origin {v}: {e}"))?);
             }
             "--fixture" => fixture = Some(value(&mut it, "--fixture")?),
             "--crawlx" => crawlx_file = Some(PathBuf::from(value(&mut it, "--crawlx")?)),
@@ -182,7 +182,7 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
             other => return Err(format!("unknown argument `{other}`\n{USAGE}")),
         }
     }
-    let firecrawl = firecrawl.ok_or_else(|| format!("--firecrawl is required\n{USAGE}"))?;
+    let upstream = upstream.ok_or_else(|| format!("--upstream is required\n{USAGE}"))?;
     let source = match (fixture, crawlx_file, crawlx_dir) {
         (Some(id), None, None) => {
             let mut opts = FixtureRun::new(&id);
@@ -205,8 +205,8 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
         }
     };
     Ok(Args {
-        firecrawl,
-        firecrawl_origin,
+        upstream,
+        upstream_origin,
         source,
         crawlx_origin,
         save_crawlx,
@@ -222,14 +222,14 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
 
 async fn run(args: Args) -> Result<u8, String> {
     let export =
-        FirecrawlExport::load(&args.firecrawl).map_err(|e| format!("{}: {e}", args.firecrawl.display()))?;
+        UpstreamExport::load(&args.upstream).map_err(|e| format!("{}: {e}", args.upstream.display()))?;
     let ledger =
         Ledger::load(&args.divergences).map_err(|e| format!("{}: {e}", args.divergences.display()))?;
-    let firecrawl_origin = match args.firecrawl_origin {
+    let upstream_origin = match args.upstream_origin {
         Some(o) => o,
         None => export
             .origin()
-            .ok_or("--firecrawl-origin is required when the export has no documents")?,
+            .ok_or("--upstream-origin is required when the export has no documents")?,
     };
     let (run, crawlx_origin, label) = match args.source {
         Source::Fixture(opts) => {
@@ -264,7 +264,7 @@ async fn run(args: Args) -> Result<u8, String> {
         .with_keep_query(!args.strip_tracking)
         .with_cardinality_only(args.cardinality_only)
         .with_label(args.label.unwrap_or(label))
-        .compare(&export, &firecrawl_origin, &run, &crawlx_origin);
+        .compare(&export, &upstream_origin, &run, &crawlx_origin);
     let md = report.to_markdown();
     match &args.out {
         Some(p) => std::fs::write(p, &md).map_err(|e| format!("{}: {e}", p.display()))?,

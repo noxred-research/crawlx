@@ -1,9 +1,9 @@
-//! CDN host list behind `scope.excludeHosts: ["cdn"]` (katana `-exclude cdn`).
+//! CDN host list behind `scope.excludeHosts: ["cdn"]` (compatibility flag `-exclude cdn`).
 //!
 //! `data/cdn_hosts.txt` is an own-authored suffix list of delivery-network, public asset and
 //! shared edge hostnames, embedded at build time. A host is a CDN host when it equals a
-//! suffix or is a subdomain of one, matched on label boundaries (`d1.cloudfront.net` and
-//! `cloudfront.net` match, `notcloudfront.net` does not). Names are matched, never
+//! suffix or is a subdomain of one, matched on label boundaries (`d1.edge.example` and
+//! `edge.example` match, `notedge.example` does not). Names are matched, never
 //! resolved: no I/O.
 
 use std::borrow::Cow;
@@ -49,23 +49,23 @@ mod tests {
     #[test]
     fn suffix_and_subdomains_match_on_label_boundaries() {
         for host in [
-            "cloudfront.net",
-            "d111111abcdef8.cloudfront.net",
+            "cloudfront.net",                // detection-data
+            "d111111abcdef8.cloudfront.net", // detection-data
             "cdn.jsdelivr.net",
             "a.b.c.akamaiedge.net",
             "mysite.b-cdn.net",
             "fonts.gstatic.com",
-            "ajax.googleapis.com",
-            "cdnjs.cloudflare.com",
+            "ajax.googleapis.com",  // detection-data
+            "cdnjs.cloudflare.com", // detection-data
         ] {
             assert!(is_cdn_host(host), "{host}");
         }
         for host in [
-            "notcloudfront.net",
-            "cloudfront.net.evil.test",
+            "notcloudfront.net",        // detection-data
+            "cloudfront.net.evil.test", // detection-data
             "example.com",
-            "www.cloudflare.com",
-            "www.googleapis.com",
+            "www.cloudflare.com", // detection-data
+            "www.googleapis.com", // detection-data
             "net",
             "",
             "10.0.0.1",

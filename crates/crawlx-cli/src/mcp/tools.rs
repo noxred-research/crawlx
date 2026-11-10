@@ -1,6 +1,6 @@
-//! The tool catalogue: names, descriptions and input schemas (mirroring the Firecrawl MCP
-//! server's tools), and the translation of validated arguments into requests against the
-//! crawlx Firecrawl-v2 facade (`/compat/firecrawl/v2/*`).
+//! The tool catalogue: names, descriptions and input schemas (mirroring the tools of the
+//! drop-in MCP server), and the translation of validated arguments into requests against the
+//! crawlx compatibility API (`/compat/v2/*`).
 
 use super::schema;
 use base64::Engine as _;
@@ -8,31 +8,31 @@ use serde_json::{json, Map, Value};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-/// Largest file `firecrawl_parse` uploads (the facade rejects larger bodies anyway).
+/// Largest file the parse tool uploads (the facade rejects larger bodies anyway).
 pub(crate) const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 
 /// One MCP tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tool {
-    /// `firecrawl_scrape`: one page.
+    /// The scrape tool: one page.
     Scrape,
-    /// `firecrawl_map`: URL discovery.
+    /// The map tool: URL discovery.
     Map,
-    /// `firecrawl_search`: web search.
+    /// The search tool: web search.
     Search,
-    /// `firecrawl_crawl`: start a crawl.
+    /// The crawl tool: start a crawl.
     Crawl,
-    /// `firecrawl_check_crawl_status`: read a crawl.
+    /// The crawl-status tool: read a crawl.
     CheckCrawlStatus,
-    /// `firecrawl_extract`: LLM extraction job.
+    /// The extract tool: LLM extraction job.
     Extract,
-    /// `firecrawl_extract_status`: read an extraction job.
+    /// The extract-status tool: read an extraction job.
     ExtractStatus,
-    /// `firecrawl_parse`: upload and parse a local file.
+    /// The parse tool: upload and parse a local file.
     Parse,
-    /// `firecrawl_agent`: research agent job.
+    /// The agent tool: research agent job.
     Agent,
-    /// `firecrawl_agent_status`: read an agent job.
+    /// The agent-status tool: read an agent job.
     AgentStatus,
 }
 
@@ -94,7 +94,7 @@ pub(crate) struct Upload {
 /// The HTTP request a tool call makes.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Call {
-    /// `GET` of the path segments below `/compat/firecrawl/v2`.
+    /// `GET` of the path segments below `/compat/v2`.
     Get(Vec<String>),
     /// `POST` of a JSON body.
     Post(Vec<String>, Value),
@@ -132,16 +132,16 @@ impl Tool {
     /// Wire name.
     pub(crate) fn name(self) -> &'static str {
         match self {
-            Tool::Scrape => "firecrawl_scrape",
-            Tool::Map => "firecrawl_map",
-            Tool::Search => "firecrawl_search",
-            Tool::Crawl => "firecrawl_crawl",
-            Tool::CheckCrawlStatus => "firecrawl_check_crawl_status",
-            Tool::Extract => "firecrawl_extract",
-            Tool::ExtractStatus => "firecrawl_extract_status",
-            Tool::Parse => "firecrawl_parse",
-            Tool::Agent => "firecrawl_agent",
-            Tool::AgentStatus => "firecrawl_agent_status",
+            Tool::Scrape => "firecrawl_scrape", // wire-compat: MCP tool name
+            Tool::Map => "firecrawl_map",       // wire-compat: MCP tool name
+            Tool::Search => "firecrawl_search", // wire-compat: MCP tool name
+            Tool::Crawl => "firecrawl_crawl",   // wire-compat: MCP tool name
+            Tool::CheckCrawlStatus => "firecrawl_check_crawl_status", // wire-compat: MCP tool name
+            Tool::Extract => "firecrawl_extract", // wire-compat: MCP tool name
+            Tool::ExtractStatus => "firecrawl_extract_status", // wire-compat: MCP tool name
+            Tool::Parse => "firecrawl_parse",   // wire-compat: MCP tool name
+            Tool::Agent => "firecrawl_agent",   // wire-compat: MCP tool name
+            Tool::AgentStatus => "firecrawl_agent_status", // wire-compat: MCP tool name
         }
     }
 
@@ -170,8 +170,8 @@ impl Tool {
             Tool::Scrape => {
                 "Fetch one web page and return its content as markdown (default), HTML, links, \
                  a summary or structured JSON. For structured data pass formats [\"json\"] with \
-                 jsonOptions {prompt, schema}. Takes one URL per call; use firecrawl_map to find \
-                 URLs and firecrawl_crawl for many pages."
+                 jsonOptions {prompt, schema}. Takes one URL per call; use the map tool to find \
+                 URLs and the crawl tool for many pages."
             }
             Tool::Map => {
                 "List the URLs of a website without fetching their content. Pass `search` to \
@@ -184,21 +184,21 @@ impl Tool {
             }
             Tool::Crawl => {
                 "Start a crawl of a website and return its job id at once. Read progress and \
-                 pages with firecrawl_check_crawl_status. Bound the crawl with `limit`, \
+                 pages with the crawl-status tool. Bound the crawl with `limit`, \
                  `maxDiscoveryDepth`, `includePaths` and `excludePaths`."
             }
             Tool::CheckCrawlStatus => {
                 "Read the status, progress counters and scraped pages of a crawl started with \
-                 firecrawl_crawl."
+                 the crawl tool."
             }
             Tool::Extract => {
                 "Extract structured data from one or more URLs (globs such as https://x.com/* \
                  allowed) with an LLM, guided by `prompt` and/or a JSON `schema`. Waits until the \
                  job ends; with wait=false it returns the job id at once and you read it with \
-                 firecrawl_extract_status."
+                 the extract-status tool."
             }
             Tool::ExtractStatus => {
-                "Read the status and extracted data of a job started with firecrawl_extract."
+                "Read the status and extracted data of a job started with the extract tool."
             }
             Tool::Parse => {
                 "Upload a local file (pdf, docx, doc, odt, rtf, xlsx, xls, html, csv, epub, ...) \
@@ -208,11 +208,11 @@ impl Tool {
             Tool::Agent => {
                 "Start a research agent that searches, reads pages and returns structured data \
                  when the URLs are not known or the answer spans several sites. Returns a job id \
-                 (and threadId) at once; read the result with firecrawl_agent_status, or set \
+                 (and threadId) at once; read the result with the agent-status tool, or set \
                  wait=true to block until the run ends."
             }
             Tool::AgentStatus => {
-                "Read the status, progress and result of a run started with firecrawl_agent. \
+                "Read the status, progress and result of a run started with the agent tool. \
                  `processing` is not final: check again until `completed` or `failed`."
             }
         }
@@ -270,12 +270,12 @@ impl Tool {
             ),
             Tool::Search => object(search_properties(), &["query"]),
             Tool::Crawl => object(crawl_properties(), &["url"]),
-            Tool::CheckCrawlStatus => id_schema("Crawl id returned by firecrawl_crawl."),
+            Tool::CheckCrawlStatus => id_schema("Crawl id returned by the crawl tool."),
             Tool::Extract => object(extract_properties(), &["urls"]),
-            Tool::ExtractStatus => id_schema("Job id returned by firecrawl_extract."),
+            Tool::ExtractStatus => id_schema("Job id returned by the extract tool."),
             Tool::Parse => object(parse_properties(), &[]),
             Tool::Agent => object(agent_properties(), &["prompt"]),
-            Tool::AgentStatus => id_schema("Job id returned by firecrawl_agent."),
+            Tool::AgentStatus => id_schema("Job id returned by the agent tool."),
         }
     }
 
@@ -441,7 +441,7 @@ fn scrape_properties() -> Map<String, Value> {
 fn scrape_options_property() -> Value {
     json!({
         "type": "object",
-        "description": "Options applied to every page fetched by this call (same fields as firecrawl_scrape, without url).",
+        "description": "Options applied to every page fetched by this call (same fields as the scrape tool, without url).",
         "properties": scrape_properties(),
     })
 }
@@ -604,7 +604,7 @@ const OPTION_PAIRS: [(&str, &str, &str); 4] = [
 const OBJECT_ENTRIES: [&str; 2] = ["json", "query"];
 
 /// Fold `jsonOptions`, `queryOptions`, `screenshotOptions` and `pdfOptions` into the
-/// object-form `formats` / `parsers` entries the Firecrawl API takes (for example
+/// object-form `formats` / `parsers` entries the compatibility API takes (for example
 /// `formats: ["json"]` + `jsonOptions: {prompt}` becomes `formats: [{type: "json", prompt}]`).
 fn fold_options(args: &mut Map<String, Value>) -> Result<(), Vec<String>> {
     let mut issues = Vec::new();

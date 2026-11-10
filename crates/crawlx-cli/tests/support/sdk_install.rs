@@ -41,12 +41,12 @@ pub async fn run_install(what: &str, mut cmd: Command) -> Result<(), String> {
     ))
 }
 
-/// The version `tests/sdk/requirements.txt` pins `firecrawl-py` to.
+/// The version `tests/sdk/requirements.txt` pins the official Python SDK to.
 pub fn pinned_python_sdk() -> String {
     let text = std::fs::read_to_string(repo_root().join("tests/sdk/requirements.txt")).unwrap();
     text.lines()
-        .find_map(|l| l.trim().strip_prefix("firecrawl-py=="))
-        .expect("requirements.txt pins firecrawl-py==X")
+        .find_map(|l| l.trim().strip_prefix("firecrawl-py==")) // wire-compat: pinned dependency package name
+        .expect("requirements.txt pins the official Python SDK as <package>==X")
         .trim()
         .to_owned()
 }

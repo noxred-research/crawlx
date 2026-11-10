@@ -1,4 +1,4 @@
-//! Removal of inline base64 images from rendered output (Firecrawl `removeBase64Images`).
+//! Removal of inline base64 images from rendered output (compatibility API `removeBase64Images`).
 //!
 //! Inline `data:image/...;base64,<payload>` URIs bloat Markdown and HTML without carrying
 //! anything a text consumer can use. [`strip_base64_images`] replaces every such URI with the
@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-/// Text that replaces a removed base64 image URI (Firecrawl's literal).
+/// Text that replaces a removed base64 image URI (the compatibility API's literal).
 pub const PLACEHOLDER: &str = "<Base64-Image-Removed>";
 
 /// Marker every removable URI contains; a cheap guard before the regex runs.

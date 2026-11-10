@@ -84,7 +84,7 @@ pub(super) const UPGRADE: &str = "With `Upgrade: websocket` the connection becom
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlCrawlWatch" => Spec::new(&[400, 404])
+        "compatCrawlWatch" => Spec::new(&[400, 404])
             .path("id", "Id of the crawl.", Some("uuid"))
             .query::<CrawlStatusQuery>()
             .reply::<CrawlStatus>(
@@ -92,7 +92,7 @@ pub(super) fn spec(id: &str) -> Option<Spec> {
                 "Without `Upgrade: websocket` the status of the crawl, as `GET /crawl/{id}`.",
             )
             .reply::<WatchFrame>("101", UPGRADE),
-        "firecrawlBatchScrapeWatch" => Spec::new(&[400, 404])
+        "compatBatchScrapeWatch" => Spec::new(&[400, 404])
             .path("id", "Id of the batch.", Some("uuid"))
             .query::<BatchStatusQuery>()
             .reply::<BatchStatus>(

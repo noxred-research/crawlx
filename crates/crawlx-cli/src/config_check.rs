@@ -85,7 +85,7 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_MODEL_BUNDLE",
     "CRAWLX_PARITY_VECTORS",
     "CRAWLX_MODEL_BUNDLE_URL",
-    "CRAWLX_COMPAT_FIRECRAWL_KEYS",
+    "CRAWLX_COMPAT_KEYS",
     "CRAWLX_COMPAT_ROBOTS_AUTHORIZATION",
     "CRAWLX_OCR_BACKEND",
     "CRAWLX_OCR_LANGUAGES",
@@ -120,6 +120,28 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_DELIVERY_REGISTRY",
     "CRAWLX_ZDR_REDIS_URL",
     "CRAWLX_ARTICLE_LANGUAGE_BUNDLE",
+    // model-provider, transcription and search settings read by `serve` (`IntelConfig`)
+    "CRAWLX_LLM_BASE_URL",
+    "CRAWLX_LLM_API_KEY",
+    "CRAWLX_LLM_MODEL",
+    "CRAWLX_LOCAL_LLM_BASE_URL",
+    "CRAWLX_EMBEDDING_MODEL",
+    "CRAWLX_TRANSCRIBE_ENDPOINT",
+    "CRAWLX_TRANSCRIBE_MODEL",
+    "CRAWLX_SEARCH_ENDPOINT",
+    "CRAWLX_SEARCH_ENGINES",
+    "CRAWLX_SEARCH_CATEGORIES",
+    "CRAWLX_SEARCH_API_KEY",
+    "CRAWLX_SEARCH_API_ENGINE",
+];
+/// Prefixes of the passthrough variables the `intel` report section covers; their raw values
+/// are never printed ([`redacted_passthrough`]).
+const INTEL_ENV_PREFIXES: &[&str] = &[
+    "CRAWLX_LLM_",
+    "CRAWLX_LOCAL_LLM_",
+    "CRAWLX_EMBEDDING_",
+    "CRAWLX_TRANSCRIBE_",
+    "CRAWLX_SEARCH_",
 ];
 
 /// Deployment environment.
@@ -1425,6 +1447,10 @@ fn capability_report(loaded: &Loaded) -> Value {
 }
 
 /// Passthrough variables with secret-bearing values redacted.
+///
+/// The model-provider, transcription and search variables (`INTEL_ENV_PREFIXES`) are always
+/// redacted here: their endpoints may carry credentials in the user info or query, and the
+/// `intel` section of the report already shows their effective values with those parts removed.
 fn redacted_passthrough(p: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     p.iter()
         .map(|(k, v)| {
@@ -1432,7 +1458,8 @@ fn redacted_passthrough(p: &BTreeMap<String, String>) -> BTreeMap<String, String
                 && (k == "CRAWLX_ZDR_REDIS_URL"
                     || k.ends_with("_URL") && k.contains("DATABASE")
                     || k.contains("SECRET")
-                    || k.contains("KEY"));
+                    || k.contains("KEY")
+                    || INTEL_ENV_PREFIXES.iter().any(|prefix| k.starts_with(prefix)));
             (
                 k.clone(),
                 if secret {
@@ -1479,7 +1506,7 @@ async fn check(args: &ConfigCheckArgs, out: &mut dyn Write) -> anyhow::Result<Ex
     validate_artifact_custody(&loaded, &mut findings).await;
     validate_checkpoint_keys(&loaded, &mut findings).await;
     validate_article_language_bundle(&loaded, &mut findings).await;
-    // the Firecrawl LLM provider variables are read from the process environment by `serve` and
+    // the LLM provider variables are read from the process environment by `serve` and
     // `worker` themselves, so they are reported from it too (secrets redacted)
     let intel = crate::config_intel::report(&|k| std::env::var(k).ok());
     findings.extend(intel.findings);
@@ -2669,7 +2696,7 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_kms_key_is_opt_in_redacted_and_rejects_empty_identifiers() {
-        let key_id = "arn:aws:kms:us-east-1:123456789012:key/operator-canary";
+        let key_id = "arn:aws:kms:us-east-1:123456789012:key/operator-canary"; // wire-compat: key ARN shape
         let loaded = load_from(None, &vars(&[("CRAWLX_CHECKPOINT_KMS_KEY_ID", key_id)])).unwrap();
         assert_eq!(
             capability_report(&loaded)["checkpoint_encryption"]["configured"],

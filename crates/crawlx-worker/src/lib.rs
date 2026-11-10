@@ -8,11 +8,11 @@
 //! * [`pool`] – [`BrowserPool`]: lazily launched Chromium processes, context semaphores.
 //! * [`supervisor`] – [`Supervisor`]: panics become typed [`SessionFailure`] events.
 //! * [`login`] – `builtin:form` login with a [`crawlx_core::SecretResolver`].
-//! * [`secrets`] – [`ChainResolver`]: `env://`, `file://`, `vault://`, `aws-sm://`, `totp://`.
+//! * [`secrets`] – [`ChainResolver`]: `env://`, `file://`, `vault://`, `cloud-sm://`, `totp://`.
 //! * [`driver`] – [`ExplorationDriver`]: strategies, arbiter, safety kernel, switching policy.
 //! * [`model`] – [`ModelServices`]: System 1 engine and LLM planner clients and their strategies.
 //! * [`url_plane`] – [`UrlPlaneRunner`]: robots, sitemap, frontier, fetch, extract, pages.
-//! * [`scrape`] – [`ScrapeEngine`]: Firecrawl scrape documents (cache, formats, change
+//! * [`scrape`] – [`ScrapeEngine`]: compatibility-API scrape documents (cache, formats, change
 //!   tracking, LLM formats, browser rendering) for the pages of scrape runs.
 //! * [`authorization`] – [`AuthorizationGuard`]: the run's authorization record,
 //!   its target as a hard bound on every request and its revocation or expiry as a run stop.
@@ -41,7 +41,6 @@ pub mod driver;
 pub mod error;
 pub mod extensions;
 pub mod fixture_evaluation;
-pub mod katana;
 pub mod lease_loop;
 pub mod login;
 pub mod media_probe;
@@ -64,6 +63,7 @@ pub mod scrape;
 pub mod secrets;
 pub mod stores;
 pub mod supervisor;
+pub mod surface;
 pub mod url_plane;
 pub mod xhr;
 
@@ -107,8 +107,8 @@ pub use run::{
 pub use runtime::{build_runtime, CpuPool, RuntimeConfig, RuntimeConfigError, PARSE_MEMORY_ENV};
 pub use scrape::{FailReason, Outcome, PageRenderer, ScrapeEngine, ScrapeFailure, Scraped};
 pub use secrets::{
-    AwsSecretsManagerResolver, ChainResolver, EnvSecretResolver, FileSecretResolver, SecretError,
-    TotpResolver, VaultResolver,
+    ChainResolver, CloudSecretsResolver, EnvSecretResolver, FileSecretResolver, SecretError, TotpResolver,
+    VaultResolver,
 };
 pub use stores::Stores;
 pub use supervisor::{SessionFailure, Supervisor};

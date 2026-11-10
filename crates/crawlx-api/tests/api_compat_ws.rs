@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! The Firecrawl SDK's WebSocket watcher (`Watcher` of the JS SDK): a real TCP
+//! The reference SDK's WebSocket watcher (`Watcher` of the JS SDK): a real TCP
 //! listener serving the router, a `tokio-tungstenite` client that passes the API key as the
 //! `Sec-WebSocket-Protocol` subprotocol the way `new WebSocket(url, apiKey)` does, and either a
 //! REAL worker (`common/scrape_rig.rs`) or hand-written runs, pages and journal events so the
@@ -9,7 +9,7 @@ mod common;
 mod scrape_rig;
 
 use common::{env_with, Env};
-use crawlx_api::auth::{generate_firecrawl_key, generate_key, key_record_for};
+use crawlx_api::auth::{generate_compat_key, generate_key, key_record_for};
 use crawlx_api::{ApiConfig, CompatConfig, Scope, Settings};
 use crawlx_core::config::CrawlMode;
 use crawlx_core::counters::{PlaneCounters, RunStatus, TerminalReason};
@@ -31,7 +31,7 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::{self, Message};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-const V2: &str = "/compat/firecrawl/v2";
+const V2: &str = "/compat/v2";
 
 /// Longest wait for one frame or one condition; every wait is bounded by it.
 const WAIT: Duration = Duration::from_secs(30);
@@ -210,7 +210,7 @@ fn fast_env(configure: impl FnOnce(&mut Settings)) -> Env {
         ApiConfig {
             rate_limit_per_minute: 0,
             compat: CompatConfig {
-                firecrawl_keys: true,
+                prefixed_keys: true,
                 ..CompatConfig::default()
             },
             ..ApiConfig::default()
@@ -626,7 +626,7 @@ async fn the_key_in_the_subprotocol_authenticates_and_is_echoed() {
     assert_eq!(kind_of(&frame(&mut ws).await), "catchup");
 
     // an `fc-` key (the one the SDK holds)
-    let fc = generate_firecrawl_key();
+    let fc = generate_compat_key();
     let rec = key_record_for(&fc, env.tenant, Scope::all_set(), true).unwrap();
     crawlx_api::ApiStore::key_insert(env.api.as_ref(), &rec, "acme")
         .await
@@ -663,7 +663,7 @@ async fn missing_or_bad_keys_are_refused_before_the_upgrade() {
         "{body}"
     );
     // well-formed but unknown keys
-    for key in [generate_key(), generate_firecrawl_key()] {
+    for key in [generate_key(), generate_compat_key()] {
         let (status, body) = refused(&server, &path, Some(&key), None).await;
         assert_eq!(status, 401, "{body}");
         assert_eq!(body["success"], false, "{body}");
@@ -678,7 +678,7 @@ async fn missing_or_bad_keys_are_refused_before_the_upgrade() {
     assert_ne!(forged, env.key);
     let (status, _) = refused(&server, &path, Some(&forged), None).await;
     assert_eq!(status, 401);
-    // an `fc-` key is off unless `compat.firecrawlKeys` is on
+    // an `fc-` key is off unless `compat.prefixedKeys` is on
     let plain = env_with(
         ApiConfig {
             rate_limit_per_minute: 0,
@@ -687,7 +687,7 @@ async fn missing_or_bad_keys_are_refused_before_the_upgrade() {
         Settings::default(),
         Arc::new(SystemClock),
     );
-    let fc = generate_firecrawl_key();
+    let fc = generate_compat_key();
     let rec = key_record_for(&fc, plain.tenant, Scope::all_set(), true).unwrap();
     crawlx_api::ApiStore::key_insert(plain.api.as_ref(), &rec, "acme")
         .await
@@ -900,7 +900,7 @@ async fn a_watched_crawl_delivers_every_page_once_and_totals_match_the_status() 
         "the watcher saw the pages the status lists"
     );
     assert_eq!(seen.len() as u64, status["completed"].as_u64().unwrap());
-    // the documents are the Firecrawl documents of the status route
+    // the documents are the compat documents of the status route
     let first_doc = frames
         .iter()
         .flat_map(|f| match kind_of(f) {

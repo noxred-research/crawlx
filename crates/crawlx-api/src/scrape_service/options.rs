@@ -1,8 +1,8 @@
-//! Firecrawl scrape options (camelCase JSON) -> [`ScrapeOptions`] plus the run fields they drive.
+//! The compat API scrape options (camelCase JSON) -> [`ScrapeOptions`] plus the run fields they drive.
 //!
 //! Every violation is collected (never just the first) as a [`Detail`] with a JSON Pointer
 //! `path`; callers answer them with `400 BAD_REQUEST` ([`crate::errors::HttpError::bad_request`]).
-//! Options crawlx does not implement but Firecrawl documents are accepted and reported in the
+//! Options crawlx does not implement but the compat API documents are accepted and reported in the
 //! additive `warnings[]` instead of failing the request.
 
 use crate::errors::Detail;
@@ -20,10 +20,10 @@ use serde_json::{Map, Value};
 /// `lockdown` extends the default `maxAge` to two years so existing stored pages stay eligible.
 const LOCKDOWN_MAX_AGE_MS: u64 = 63_072_000_000;
 
-/// Longest `question` / `highlights.query` text (Firecrawl limit).
+/// Longest `question` / `highlights.query` text (the compat API limit).
 const MAX_PROMPT_CHARS: usize = 10_000;
 
-/// Scrape option keys (Firecrawl v2 plus the v1 `extract` / `jsonOptions` aliases and the
+/// Scrape option keys (compat v2 plus the v1 `extract` / `jsonOptions` aliases and the
 /// request-level `zeroDataRetention`).
 const SCRAPE_KEYS: [&str; 28] = [
     "formats",
@@ -56,10 +56,10 @@ const SCRAPE_KEYS: [&str; 28] = [
     "profile",
 ];
 
-/// Formats Firecrawl documents that crawlx does not produce.
+/// Formats the compat API documents that crawlx does not produce.
 const UNSUPPORTED_FORMATS: [&str; 2] = ["product", "menu"];
 
-/// A parsed Firecrawl scrape request: the typed options plus everything that is not part of
+/// A parsed compat API scrape request: the typed options plus everything that is not part of
 /// [`ScrapeOptions`] itself.
 #[derive(Clone, PartialEq, Debug)]
 #[non_exhaustive]
@@ -186,7 +186,7 @@ struct Cx {
     details: Vec<Detail>,
     warnings: Vec<Warning>,
     /// A `json` format object carried the deprecated `checkPromptInjection` (lifted to the
-    /// top-level option, as Firecrawl does).
+    /// top-level option, as the compat API does).
     lifted_injection_check: bool,
 }
 
@@ -373,7 +373,7 @@ pub fn parse_scrape_options_in(
     if let Some(b) = cx.boolean(obj, "mobile") {
         o.mobile = b;
     }
-    // Firecrawl's default is true; the core model's default (verify) applies to native runs
+    // The compat API's default is true; the core model's default (verify) applies to native runs
     o.skip_tls_verification = cx.boolean(obj, "skipTlsVerification").unwrap_or(true);
     if let Some(n) = cx.uint(obj, "timeout", 1_000, 300_000) {
         o.timeout_ms = u32::try_from(n).unwrap_or(u32::MAX);
@@ -401,7 +401,7 @@ pub fn parse_scrape_options_in(
     if let Some(b) = cx.boolean(obj, "lockdown") {
         o.lockdown = b;
         if b {
-            // Firecrawl: lockdown requests are zero-data-retention and look 2 years back
+            // The compat API: lockdown requests are zero-data-retention and look 2 years back
             zdr = true;
             if max_age.is_none() {
                 o.max_age_ms = LOCKDOWN_MAX_AGE_MS;
@@ -428,7 +428,7 @@ pub fn parse_scrape_options_in(
         );
     }
     if !headers.is_empty() || !o.actions.is_empty() {
-        // Firecrawl: sensitive parameters (headers, actions) force storeInCache to false
+        // The compat API: sensitive parameters (headers, actions) force storeInCache to false
         o.store_in_cache = false;
     }
     if interactive(&o) {
@@ -528,7 +528,7 @@ fn parse_proxy(cx: &mut Cx, obj: &Map<String, Value>, o: &mut ScrapeOptions) {
     }
 }
 
-/// Firecrawl `profile{name,saveChanges}`: a named persistent browser profile. `saveChanges`
+/// The compat API `profile{name,saveChanges}`: a named persistent browser profile. `saveChanges`
 /// defaults to `true`; the name is 1 to 128 of `A-Z a-z 0-9 _ -`.
 fn parse_profile(cx: &mut Cx, obj: &Map<String, Value>, o: &mut ScrapeOptions) {
     let Some(v) = obj.get("profile") else { return };
@@ -1356,12 +1356,12 @@ mod tests {
     }
 
     #[test]
-    fn defaults_follow_firecrawl() {
+    fn defaults_follow_compat() {
         let p = parse(&json!({})).unwrap();
         assert_eq!(p.options.formats, vec![FormatSpec::Markdown]);
         assert!(
             p.options.skip_tls_verification,
-            "Firecrawl defaults skipTlsVerification to true"
+            "the compat API defaults skipTlsVerification to true"
         );
         assert!(p.options.only_main_content);
         assert_eq!(p.options.timeout_ms, 60_000);
@@ -1494,7 +1494,7 @@ mod tests {
 
     #[test]
     fn parsers_follow_the_openapi_shapes() {
-        // absent: Firecrawl's default [pdf, image], and no warning for it
+        // absent: the compat API's default [pdf, image], and no warning for it
         let absent = parse(&json!({})).unwrap();
         assert_eq!(absent.options.parsers, vec![ParserSpec::pdf(), ParserSpec::Image]);
         assert!(absent.warnings.is_empty());

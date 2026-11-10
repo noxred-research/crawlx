@@ -24,8 +24,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
-/// The robots.txt product token Firecrawl's crawler answers to (lowercase).
-const FIRECRAWL_ROBOTS_TOKEN: &str = "firecrawlagent";
+/// The robots.txt product token the compatibility API's crawler answers to (lowercase).
+const COMPAT_ROBOTS_TOKEN: &str = "firecrawlagent"; // wire-compat: robots.txt product token sites write rules for
 /// The product token of crawlx itself (lowercase).
 const OWN_ROBOTS_TOKEN: &str = "crawlx";
 
@@ -70,16 +70,16 @@ impl RobotsGate {
     ///
     /// `crawl` is the configuration the URL plane executes with
     /// ([`crate::url_plane::effective_crawl`]): its `safety.respectRobotsTxt` already says
-    /// whether the run honours the file. Firecrawl's crawler answers to `FirecrawlAgent`: a
+    /// whether the run honours the file. The compatibility API's crawler answers to its own product token: a
     /// facade run (one with a scrape job) that does not name its own robots user agent honours
-    /// the groups of both tokens; one that names `FirecrawlAgent` itself keeps honouring
+    /// the groups of both tokens; one that names that token itself keeps honouring
     /// `crawlx` groups too.
     #[must_use]
     pub(crate) fn for_crawl(crawl: &CreateCrawl, fetcher: Arc<Fetcher>, clock: Arc<dyn Clock>) -> Self {
         let aliases = if crawl.scrape.is_some() {
             match (&crawl.fetch.robots_user_agent, &crawl.fetch.user_agent) {
-                (None, None) => vec![FIRECRAWL_ROBOTS_TOKEN.to_owned()],
-                (Some(ua), _) if crawlx_policy::robots::product_token(ua) == FIRECRAWL_ROBOTS_TOKEN => {
+                (None, None) => vec![COMPAT_ROBOTS_TOKEN.to_owned()],
+                (Some(ua), _) if crawlx_policy::robots::product_token(ua) == COMPAT_ROBOTS_TOKEN => {
                     vec![OWN_ROBOTS_TOKEN.to_owned()]
                 }
                 _ => Vec::new(),

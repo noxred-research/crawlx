@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Drift tests of the generated OpenAPI schemas of the Firecrawl facade (`GET /v1/openapi.json`).
+//! Drift tests of the generated OpenAPI schemas of the compat facade (`GET /v1/openapi.json`).
 //!
-//! * **routes**: every `(method, path)` the router mounts under `/compat/firecrawl/v2` and
+//! * **routes**: every `(method, path)` the router mounts under `/compat/v2` and
 //!   `/v0/health/` is documented and every documented one is mounted (source scan of the
 //!   `.route(...)` calls plus a probe of the live router with every method);
 //! * **structure**: every `$ref` resolves, operation ids are unique, path parameters are declared,
@@ -47,7 +47,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
 
-const V2: &str = "/compat/firecrawl/v2";
+const V2: &str = "/compat/v2";
 const METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 /// A path value that no resource has.
 const UNKNOWN_ID: &str = "00000000-0000-7000-8000-000000000000";

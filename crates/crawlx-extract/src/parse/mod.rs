@@ -76,7 +76,7 @@ pub struct ParseLimits {
     pub max_rows: usize,
 }
 
-/// Default of [`ParseLimits::max_input_bytes`]: 50 MiB, Firecrawl's upload limit.
+/// Default of [`ParseLimits::max_input_bytes`]: 50 MiB, the compatibility API's upload limit.
 pub const DEFAULT_MAX_INPUT_BYTES: usize = 50 * 1024 * 1024;
 
 impl Default for ParseLimits {
@@ -715,7 +715,7 @@ pub struct ParsedDocument {
     pub links: Vec<String>,
     /// HTML and EPUB input: image URLs.
     pub images: Vec<String>,
-    /// Document properties by Firecrawl metadata key.
+    /// Document properties by compatibility API metadata key.
     pub metadata: BTreeMap<String, Value>,
     /// PDF: pages parsed.
     pub num_pages: Option<u32>,

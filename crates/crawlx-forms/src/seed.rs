@@ -26,7 +26,7 @@ pub const GENERATOR_VERSION: u16 = 1;
 pub const FALLBACK_EMAIL_DOMAIN: &str = "crawlx.invalid";
 
 /// Operator-configured values for the valid baseline partitions of the four text-like input
-/// classes (katana `-form-config`: `email`, `phone`, `password`, `placeholder`), already
+/// classes (the `-form-config` compatibility flag: `email`, `phone`, `password`, `placeholder`), already
 /// resolved for the run (`rand_*` helpers evaluated). A field whose partition matches takes
 /// the configured value instead of the seeded one; boundary and malformed partitions
 /// (`email:malformed`, `text:long_boundary`, ...) still generate theirs, because they exist to

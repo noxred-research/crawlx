@@ -76,19 +76,19 @@ pub fn admission_policy(cfg: &ApiConfig, clock: Arc<dyn Clock>) -> AdmissionPoli
 }
 
 /// Create the configured bootstrap API keys (all scopes). `fc-` keys are accepted only when
-/// [`CompatConfig::firecrawl_keys`] is on.
+/// [`CompatConfig::prefixed_keys`] is on.
 async fn bootstrap_keys(api: &dyn ApiStore, cfg: &ApiConfig) -> Result<(), ApiError> {
     for b in &cfg.api_keys {
         let tenant = auth::tenant_id_for(&b.tenant);
-        let record = auth::key_record_for(&b.key, tenant, Scope::all_set(), cfg.compat.firecrawl_keys)
+        let record = auth::key_record_for(&b.key, tenant, Scope::all_set(), cfg.compat.prefixed_keys)
             .ok_or_else(|| {
                 ApiError::Config(format!(
                     "API key for tenant {:?} must look like {}<{} base32 characters>{}",
                     b.tenant,
                     auth::KEY_PREFIX,
                     auth::SECRET_LEN,
-                    if cfg.compat.firecrawl_keys {
-                        format!(" or {}<16..=64 alphanumerics>", auth::FIRECRAWL_KEY_PREFIX)
+                    if cfg.compat.prefixed_keys {
+                        format!(" or {}<16..=64 alphanumerics>", auth::COMPAT_KEY_PREFIX)
                     } else {
                         String::new()
                     }

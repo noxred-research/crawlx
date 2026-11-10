@@ -6,8 +6,8 @@
 //! `artifacts` row second" ordering. Retries and backoff come from the SDK's
 //! standard retry mode; server-side encryption headers are passed through on
 //! every `PUT` from [`S3Config::sse`]. Credentials come from the process
-//! environment (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional
-//! `AWS_SESSION_TOKEN`) unless the caller supplies them.
+//! environment (the SDK access key id, secret access key and optional session
+//! token variables) unless the caller supplies them.
 
 use crate::artifacts::{ArtifactBlobs, BlobEntry, ObjectArtifactStore};
 use async_trait::async_trait;
@@ -38,15 +38,15 @@ pub type S3ArtifactStore = ObjectArtifactStore<S3Blobs>;
 pub enum Sse {
     /// `x-amz-server-side-encryption: AES256`.
     Aes256,
-    /// `x-amz-server-side-encryption: aws:kms`, optionally with a key id.
-    AwsKms {
-        /// `x-amz-server-side-encryption-aws-kms-key-id`; `None` uses the account's default key.
+    /// KMS-managed server-side encryption, optionally with a key id.
+    CloudKms {
+        /// KMS key id sent with the encryption header; `None` uses the account's default key.
         key_id: Option<String>,
     },
 }
 
 impl Sse {
-    /// Parse `CRAWLX_S3_SSE` (`aes256` or `aws:kms`) with an optional KMS key id.
+    /// Parse `CRAWLX_S3_SSE` (`aes256` or `kms`) with an optional KMS key id.
     ///
     /// # Errors
     ///
@@ -54,9 +54,9 @@ impl Sse {
     pub fn parse(algorithm: &str, kms_key_id: Option<String>) -> Result<Self, StoreError> {
         match algorithm.trim().to_ascii_lowercase().as_str() {
             "aes256" => Ok(Self::Aes256),
-            "aws:kms" | "aws_kms" | "kms" => Ok(Self::AwsKms { key_id: kms_key_id }),
+            "aws:kms" | "cloud_kms" | "kms" => Ok(Self::CloudKms { key_id: kms_key_id }), // wire-compat: S3 SSE algorithm label
             other => Err(StoreError::Conflict(format!(
-                "unknown server-side encryption {other:?} (expected aes256 or aws:kms)"
+                "unknown server-side encryption {other:?} (expected aes256 or kms)"
             ))),
         }
     }
@@ -70,7 +70,7 @@ pub struct S3Config {
     pub bucket: String,
     /// Signing region (`us-east-1` for most S3-compatible stores).
     pub region: String,
-    /// Custom endpoint (MinIO, Ceph RGW, LocalStack); `None` for AWS.
+    /// Custom endpoint (MinIO, Ceph RGW, local emulators); `None` for the default regional endpoint.
     pub endpoint: Option<String>,
     /// Path-style addressing (`https://host/bucket/key`); required for IP or single-host endpoints.
     pub path_style: bool,
@@ -83,7 +83,7 @@ pub struct S3Config {
 }
 
 impl S3Config {
-    /// Settings for `bucket` against AWS in `region` with the SDK defaults.
+    /// Settings for `bucket` against the default regional endpoint in `region` with the SDK defaults.
     #[must_use]
     pub fn new(bucket: impl Into<String>, region: impl Into<String>) -> Self {
         Self {
@@ -99,7 +99,7 @@ impl S3Config {
 
     /// Settings from the process environment: `CRAWLX_S3_BUCKET` (required),
     /// `CRAWLX_S3_REGION` (default `us-east-1`), `CRAWLX_S3_ENDPOINT`, `CRAWLX_S3_PATH_STYLE`
-    /// (`1`/`true`), `CRAWLX_S3_SSE` (`aes256` or `aws:kms`) and `CRAWLX_S3_KMS_KEY_ID`.
+    /// (`1`/`true`), `CRAWLX_S3_SSE` (`aes256` or `kms`) and `CRAWLX_S3_KMS_KEY_ID`.
     ///
     /// # Errors
     ///
@@ -171,7 +171,7 @@ impl S3Blobs {
             .credentials_provider(credentials)
             .http_client(http)
             .force_path_style(config.path_style)
-            // CRC32 trailers (`aws-chunked`) are not understood by every S3-compatible store;
+            // CRC32 trailers (chunked trailer encoding) are not understood by every S3-compatible store;
             // integrity is covered by the blake3 digest in the artifact row.
             .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
             .response_checksum_validation(ResponseChecksumValidation::WhenRequired)
@@ -254,7 +254,7 @@ impl ArtifactBlobs for S3Blobs {
             .body(body);
         match &self.sse {
             Some(Sse::Aes256) => request = request.server_side_encryption(ServerSideEncryption::Aes256),
-            Some(Sse::AwsKms { key_id }) => {
+            Some(Sse::CloudKms { key_id }) => {
                 request = request.server_side_encryption(ServerSideEncryption::AwsKms);
                 if let Some(id) = key_id {
                     request = request.ssekms_key_id(id);
@@ -282,7 +282,7 @@ impl ArtifactBlobs for S3Blobs {
             .body(ByteStream::from(bytes));
         match &self.sse {
             Some(Sse::Aes256) => req = req.server_side_encryption(ServerSideEncryption::Aes256),
-            Some(Sse::AwsKms { key_id }) => {
+            Some(Sse::CloudKms { key_id }) => {
                 req = req.server_side_encryption(ServerSideEncryption::AwsKms);
                 if let Some(id) = key_id {
                     req = req.ssekms_key_id(id);
@@ -396,8 +396,8 @@ mod tests {
     fn sse_labels_parse() {
         assert_eq!(Sse::parse("AES256", None).unwrap(), Sse::Aes256);
         assert_eq!(
-            Sse::parse("aws:kms", Some("k".to_owned())).unwrap(),
-            Sse::AwsKms {
+            Sse::parse("aws:kms", Some("k".to_owned())).unwrap(), // wire-compat: S3 SSE algorithm label
+            Sse::CloudKms {
                 key_id: Some("k".to_owned())
             }
         );

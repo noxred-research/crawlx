@@ -369,18 +369,18 @@ fn durable_key_identity_rejects_aliases_bare_ids_and_malformed_arns() {
     for key_id in [
         "alias/crawlx",
         "12345678-1234-1234-1234-123456789abc",
-        "arn:aws:kms:us-east-1:111122223333:alias/crawlx",
-        "arn:aws:kms:us-east-1:111122223333:key/alias/crawlx",
-        "arn:aws:kms:us-east-1.attacker.invalid:111122223333:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws:kms:us-east-1@attacker.invalid:111122223333:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws:kms:cn-north-1:111122223333:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws-cn:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws-us-gov:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws-iso:kms:us-iso-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws:kms:us-gov-west-1:111122223333:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws:kms:us-east-1:account:key/12345678-1234-1234-1234-123456789abc",
-        "arn:aws:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc:extra",
-        "arn:aws:kms:us-east-1:111122223333:key/mrk-not-a-key",
+        "arn:aws:kms:us-east-1:111122223333:alias/crawlx", // wire-compat: key ARN shape
+        "arn:aws:kms:us-east-1:111122223333:key/alias/crawlx", // wire-compat: key ARN shape
+        "arn:aws:kms:us-east-1.attacker.invalid:111122223333:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws:kms:us-east-1@attacker.invalid:111122223333:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws:kms:cn-north-1:111122223333:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws-cn:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws-us-gov:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws-iso:kms:us-iso-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws:kms:us-gov-west-1:111122223333:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws:kms:us-east-1:account:key/12345678-1234-1234-1234-123456789abc", // wire-compat: key ARN shape
+        "arn:aws:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc:extra", // wire-compat: key ARN shape
+        "arn:aws:kms:us-east-1:111122223333:key/mrk-not-a-key", // wire-compat: key ARN shape
     ] {
         assert!(
             matches!(
@@ -396,9 +396,9 @@ fn durable_key_identity_rejects_aliases_bare_ids_and_malformed_arns() {
 async fn trusted_resolver_pins_partition_region_and_https_ignoring_endpoint_parameters() {
     let id = "12345678-1234-1234-1234-123456789abc";
     for (partition, region, suffix) in [
-        ("aws", "us-east-1", "amazonaws.com"),
-        ("aws-cn", "cn-north-1", "amazonaws.com.cn"),
-        ("aws-us-gov", "us-gov-west-1", "amazonaws.com"),
+        ("aws", "us-east-1", "amazonaws.com"), // wire-compat: ARN partition, KMS endpoint host suffix
+        ("aws-cn", "cn-north-1", "amazonaws.com.cn"), // wire-compat: ARN partition, KMS endpoint host suffix
+        ("aws-us-gov", "us-gov-west-1", "amazonaws.com"), // wire-compat: ARN partition, KMS endpoint host suffix
     ] {
         let trusted =
             trusted_endpoint(&format!("arn:{partition}:kms:{region}:111122223333:key/{id}")).unwrap();
@@ -414,15 +414,15 @@ async fn trusted_resolver_pins_partition_region_and_https_ignoring_endpoint_para
         assert_eq!(resolved.url(), format!("https://kms.{region}.{suffix}"));
     }
     assert!(
-        trusted_endpoint("arn:aws:kms:us-east-1:111122223333:key/mrk-12345678123412341234123456789abc")
+        trusted_endpoint("arn:aws:kms:us-east-1:111122223333:key/mrk-12345678123412341234123456789abc") // wire-compat: key ARN shape
             .is_ok()
     );
 }
 
 #[tokio::test]
-async fn production_constructor_pins_aws_https_despite_environment_and_profile_endpoints() {
+async fn production_constructor_pins_cloud_https_despite_environment_and_profile_endpoints() {
     const CHILD: &str = "CRAWLX_ARTIFACT_KMS_ENDPOINT_TEST_CHILD";
-    const KEY: &str = "arn:aws:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc";
+    const KEY: &str = "arn:aws:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789abc"; // wire-compat: key ARN shape
     if std::env::var_os(CHILD).is_some() {
         let provider = KmsArtifactKeys::from_environment(KEY.to_owned()).await.unwrap();
         let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -446,13 +446,13 @@ async fn production_constructor_pins_aws_https_despite_environment_and_profile_e
         assert!(!observed.is_empty());
         assert!(observed
             .iter()
-            .all(|url| url == "https://kms.us-east-1.amazonaws.com/"));
+            .all(|url| url == "https://kms.us-east-1.amazonaws.com/")); // wire-compat: KMS endpoint host
         return;
     }
-    // A child process isolates AWS environment/profile injection without unsafe
+    // A child process isolates SDK environment/profile injection without unsafe
     // process-global environment mutation or races with other unit tests.
     let directory = tempfile::tempdir().unwrap();
-    let profile = directory.path().join("aws-config");
+    let profile = directory.path().join("sdk-config");
     std::fs::write(
         &profile,
         concat!(
@@ -468,20 +468,20 @@ async fn production_constructor_pins_aws_https_despite_environment_and_profile_e
     .unwrap();
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("artifact_key_crypto::tests::production_constructor_pins_aws_https_despite_environment_and_profile_endpoints")
+        .arg("artifact_key_crypto::tests::production_constructor_pins_cloud_https_despite_environment_and_profile_endpoints")
         .arg("--nocapture")
         .env(CHILD, "1")
-        .env("AWS_CONFIG_FILE", profile)
-        .env("AWS_PROFILE", "artifact-custody-test")
-        .env("AWS_ACCESS_KEY_ID", "fixture-access")
-        .env("AWS_SECRET_ACCESS_KEY", "fixture-secret")
-        .env("AWS_EC2_METADATA_DISABLED", "true")
-        .env("AWS_REGION", "us-west-2")
-        .env("AWS_ENDPOINT_URL", "http://127.0.0.1:9/environment-global")
-        .env("AWS_ENDPOINT_URL_KMS", "http://127.0.0.1:9/environment-service")
-        .env("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "false")
-        .env("AWS_USE_FIPS_ENDPOINT", "true")
-        .env("AWS_USE_DUALSTACK_ENDPOINT", "true")
+        .env("AWS_CONFIG_FILE", profile)  // wire-compat: SDK environment variable
+        .env("AWS_PROFILE", "artifact-custody-test")  // wire-compat: SDK environment variable
+        .env("AWS_ACCESS_KEY_ID", "fixture-access")  // wire-compat: SDK environment variable
+        .env("AWS_SECRET_ACCESS_KEY", "fixture-secret")  // wire-compat: SDK environment variable
+        .env("AWS_EC2_METADATA_DISABLED", "true")  // wire-compat: SDK environment variable
+        .env("AWS_REGION", "us-west-2")  // wire-compat: SDK environment variable
+        .env("AWS_ENDPOINT_URL", "http://127.0.0.1:9/environment-global")  // wire-compat: SDK environment variable
+        .env("AWS_ENDPOINT_URL_KMS", "http://127.0.0.1:9/environment-service")  // wire-compat: SDK environment variable
+        .env("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "false")  // wire-compat: SDK environment variable
+        .env("AWS_USE_FIPS_ENDPOINT", "true")  // wire-compat: SDK environment variable
+        .env("AWS_USE_DUALSTACK_ENDPOINT", "true")  // wire-compat: SDK environment variable
         .status()
         .unwrap();
     assert!(status.success());

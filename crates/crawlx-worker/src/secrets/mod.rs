@@ -7,7 +7,7 @@
 //! | `env` | [`EnvSecretResolver`] | `env://VAR` |
 //! | `file` | [`FileSecretResolver`] | `file:///abs/path` (not world-readable on unix) |
 //! | `vault` | [`VaultResolver`] | `vault://<mount>/<path>#<key>` (KV v2) |
-//! | `aws-sm` | [`AwsSecretsManagerResolver`] | `aws-sm://<secret-id>[#<json-key>]` |
+//! | `cloud-sm` | [`CloudSecretsResolver`] | `cloud-sm://<secret-id>[#<json-key>]` |
 //! | `totp` | [`TotpResolver`] | `totp://<base32-secret>[?digits=6&period=30&algo=sha1]` |
 //!
 //! Every value leaves a resolver as [`SecretOr::secret`]; errors name the reference (or,
@@ -15,13 +15,13 @@
 //! is written by the caller that triggers the resolution (`RunContext::login_material`),
 //! not here, so a resolver has no store dependency.
 
-mod aws_sm;
+mod cloud_sm;
 mod env;
 mod file;
 mod totp;
 mod vault;
 
-pub use aws_sm::AwsSecretsManagerResolver;
+pub use cloud_sm::CloudSecretsResolver;
 pub use env::EnvSecretResolver;
 pub use file::FileSecretResolver;
 pub use totp::{TotpAlgorithm, TotpResolver};
@@ -127,9 +127,9 @@ pub enum SecretError {
         #[source]
         source: reqwest::Error,
     },
-    /// AWS Secrets Manager did not return the secret.
-    #[error("aws secrets manager could not return {secret_id}")]
-    AwsSecretsManager {
+    /// cloud secrets manager did not return the secret.
+    #[error("cloud secrets manager could not return {secret_id}")]
+    CloudSecrets {
         /// Secret id or ARN.
         secret_id: String,
         /// Underlying SDK error.
@@ -207,9 +207,9 @@ impl ChainResolver {
     }
 
     /// Chain with every resolver the process environment allows: `env`, `file` and `totp`
-    /// always; `vault` when `VAULT_ADDR` and `VAULT_TOKEN` are set; `aws-sm` when the AWS
+    /// always; `vault` when `VAULT_ADDR` and `VAULT_TOKEN` are set; `cloud-sm` when the cloud
     /// SDK environment chain has a credential source (see
-    /// [`AwsSecretsManagerResolver::from_env`]). `clock` drives `totp://`.
+    /// [`CloudSecretsResolver::from_env`]). `clock` drives `totp://`.
     pub async fn from_env(clock: Arc<dyn Clock>) -> Self {
         let mut chain = Self::new()
             .with("env", Arc::new(EnvSecretResolver))
@@ -220,8 +220,8 @@ impl ChainResolver {
             Ok(None) => {}
             Err(e) => tracing::warn!(error = %e, "vault:// references disabled"),
         }
-        if let Some(aws) = AwsSecretsManagerResolver::from_env().await {
-            chain = chain.with("aws-sm", Arc::new(aws));
+        if let Some(cloud) = CloudSecretsResolver::from_env().await {
+            chain = chain.with("cloud-sm", Arc::new(cloud));
         }
         tracing::debug!(schemes = ?chain.by_scheme.keys().collect::<Vec<_>>(), "secret resolvers");
         chain

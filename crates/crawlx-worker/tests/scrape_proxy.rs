@@ -1,5 +1,5 @@
 //! Deployment proxy tiers through real loopback upstreams and persisted scrape documents.
-//! Crawl jobs enforce robots before either proxy tier; scrape jobs retain Firecrawl's explicit-URL behavior.
+//! Crawl jobs enforce robots before either proxy tier; scrape jobs retain the compatibility API's explicit-URL behavior.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[path = "common/authorization.rs"]

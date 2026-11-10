@@ -151,22 +151,22 @@ fn page_type_table() {
             PageType::Error,
         ),
         (
-            "captcha: recaptcha widget",
-            r#"<title>Check</title><div class="g-recaptcha" data-sitekey="k"></div><script src="https://www.google.com/recaptcha/api.js"></script>"#.to_owned(),
+            "captcha: checkbox widget family A",
+            r#"<title>Check</title><div class="g-recaptcha" data-sitekey="k"></div><script src="https://www.google.com/recaptcha/api.js"></script>"#.to_owned(), // wire-compat: markup and script URL of widget family A
             200,
             vec![],
             PageType::Captcha,
         ),
         (
-            "captcha: turnstile iframe + cloudflare title",
-            r#"<title>Just a moment...</title><div class="cf-turnstile"></div>"#.to_owned(),
+            "challenge widget family C + vendor title",
+            r#"<title>Just a moment...</title><div class="cf-turnstile"></div>"#.to_owned(), // wire-compat: markup class of widget family C
             403,
             vec![],
             PageType::Captcha,
         ),
         (
-            "captcha: hcaptcha script",
-            r#"<title>Verify</title><script src="https://js.hcaptcha.com/1/api.js"></script><p>Please complete the security check</p>"#.to_owned(),
+            "captcha: challenge widget family B script",
+            r#"<title>Verify</title><script src="https://js.hcaptcha.com/1/api.js"></script><p>Please complete the security check</p>"#.to_owned(), // wire-compat: script URL of widget family B
             200,
             vec![],
             PageType::Captcha,
@@ -309,8 +309,8 @@ const KEY: [u8; 32] = [7u8; 32];
 fn secrets_table_and_redaction() {
     assert!(secrets::rules_compiled());
     // Synthetic detector canaries; provider-shaped values are assembled from parts so the source holds no contiguous token.
-    let aws_id = concat!("AKIA", "IOSFODNN7EXAMPLE");
-    let aws_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    let cloud_id = concat!("AKIA", "IOSFODNN7EXAMPLE");
+    let cloud_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
     let ghp = format!(
         "{}{}",
         concat!("gh", "p_"),
@@ -320,9 +320,9 @@ fn secrets_table_and_redaction() {
         "github_",
         "pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRS"
     );
-    let slack = concat!("xo", "xb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx");
-    let stripe = concat!("sk_", "live_4eC39HqLyjWDarjtT1zdp7dc");
-    let google = concat!("AI", "zaSyD-1234567890abcdefghijklmnopqrstu");
+    let chat_tok = concat!("xo", "xb-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx");
+    let pay_tok = concat!("sk_", "live_4eC39HqLyjWDarjtT1zdp7dc");
+    let search_tok = concat!("AI", "zaSyD-1234567890abcdefghijklmnopqrstu");
     let jwt = concat!(
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.",
         "eyJzdWIiOiIxMjM0NTY3ODkwIn0.",
@@ -333,24 +333,34 @@ fn secrets_table_and_redaction() {
 
     // `(name, text containing the secret, the secret value, kind)`.
     let cases: Vec<(&str, String, &str, SecretKind)> = vec![
-        ("aws id", aws_id.to_owned(), aws_id, SecretKind::AwsAccessKeyId),
         (
-            "aws secret",
-            format!("aws_secret_access_key = \"{aws_secret}\""),
-            aws_secret,
-            SecretKind::AwsSecretAccessKey,
+            "cloud id",
+            cloud_id.to_owned(),
+            cloud_id,
+            SecretKind::AwsAccessKeyId,
+        ), // detection-data
+        (
+            "cloud secret",
+            format!("aws_secret_access_key = \"{cloud_secret}\""), // detection-data
+            cloud_secret,
+            SecretKind::AwsSecretAccessKey, // detection-data
         ),
         (
-            "aws secret yaml",
-            format!("AWS-SECRET: {aws_secret}\n"),
-            aws_secret,
-            SecretKind::AwsSecretAccessKey,
+            "cloud secret yaml",
+            format!("AWS-SECRET: {cloud_secret}\n"), // detection-data
+            cloud_secret,
+            SecretKind::AwsSecretAccessKey, // detection-data
         ),
         ("ghp", ghp.clone(), &ghp, SecretKind::GitHubToken),
         ("github pat", pat.to_owned(), pat, SecretKind::GitHubToken),
-        ("slack", slack.to_owned(), slack, SecretKind::SlackToken),
-        ("stripe", stripe.to_owned(), stripe, SecretKind::StripeKey),
-        ("google", google.to_owned(), google, SecretKind::GoogleApiKey),
+        ("chat", chat_tok.to_owned(), chat_tok, SecretKind::SlackToken), // detection-data
+        ("payment", pay_tok.to_owned(), pay_tok, SecretKind::StripeKey), // detection-data
+        (
+            "search",
+            search_tok.to_owned(),
+            search_tok,
+            SecretKind::GoogleApiKey,
+        ), // detection-data
         ("jwt", jwt.to_owned(), jwt, SecretKind::Jwt),
         ("pem", pem.to_owned(), pem, SecretKind::PrivateKey),
         (
@@ -409,18 +419,18 @@ fn secrets_table_and_redaction() {
         secrets::detect(&KEY, &headers, "")[0].value_hash
     );
 
-    // Ordering: headers first, then body by offset; stripe is not re-reported as a generic key.
-    let body = format!("api_key={stripe} then {aws_id}");
+    // Ordering: headers first, then body by offset; pay_tok is not re-reported as a generic key.
+    let body = format!("api_key={pay_tok} then {cloud_id}");
     let found = secrets::detect(&KEY, &headers, &body);
     assert_eq!(
         found.iter().map(|f| f.kind).collect::<Vec<_>>(),
-        vec![SecretKind::Jwt, SecretKind::StripeKey, SecretKind::AwsAccessKeyId]
+        vec![SecretKind::Jwt, SecretKind::StripeKey, SecretKind::AwsAccessKeyId] // detection-data
     );
     assert!(!format!("{found:?}").contains("4eC39HqLyjWDarjtT1zdp7dc"));
 
     // Clean text: nothing.
     assert!(secrets::detect(&KEY, &[], "hello world, nothing to see; version 1.2.3").is_empty());
-    assert!(Extractor::detect_secrets(&KEY, &[], &format!("<p>{aws_id}</p>")).len() == 1);
+    assert!(Extractor::detect_secrets(&KEY, &[], &format!("<p>{cloud_id}</p>")).len() == 1);
 }
 
 // ---------------------------------------------------------------- technologies
@@ -536,7 +546,7 @@ fn technologies_headers_with_version_and_implies() {
     let drupal = by_name(&got, "Drupal");
     assert_eq!(drupal.evidence, "header:x-generator");
     assert_eq!(drupal.version.as_deref(), Some("10"));
-    assert_eq!(by_name(&got, "Cloudflare").evidence, "header:cf-ray");
+    assert_eq!(by_name(&got, "Cloudflare").evidence, "header:cf-ray"); // detection-data
     assert_eq!(by_name(&got, "ASP.NET").version.as_deref(), Some("4.0.30319"));
     // header names are case-insensitive, values are anchored
     assert!(tech(&[("SERVER", "not-nginx")], "", None, &[])
@@ -596,7 +606,7 @@ fn technologies_script_src() {
     let react = by_name(&got, "React");
     assert_eq!(react.version.as_deref(), Some("18.2.0"));
     assert_eq!(by_name(&got, "unpkg").category, "cdn");
-    assert_eq!(by_name(&got, "Google Tag Manager").category, "tag-manager");
+    assert_eq!(by_name(&got, "Google Tag Manager").category, "tag-manager"); // detection-data
     assert_eq!(by_name(&got, "Node.js").evidence, "implied:Next.js");
 }
 
@@ -636,8 +646,9 @@ fn technologies_js_globals_and_url() {
     assert_eq!(by_name(&got, "React").evidence, "implied:Next.js");
     let url = Url::parse("https://my-site.pages.dev/index.html").unwrap();
     let got = tech(&[], "", Some(&url), &[]);
-    assert_eq!(by_name(&got, "Cloudflare Pages").evidence, "url");
+    assert_eq!(by_name(&got, "Cloudflare Pages").evidence, "url"); // detection-data
     assert_eq!(by_name(&got, "Cloudflare").evidence, "implied:Cloudflare Pages");
+    // detection-data
 }
 
 /// Evidence kinds rank headers > cookies > meta > script_src > js_globals > html > url;

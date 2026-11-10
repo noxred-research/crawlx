@@ -1,6 +1,6 @@
 //! The `audio` and `video` formats: the media a page is or references, stored as artifacts.
 //!
-//! Firecrawl serves an MP3 and the best video of a supported video page from its hosted engine.
+//! A hosted engine of the compatibility API serves an MP3 and the best video of a supported video page.
 //! crawlx has no transcoder, so it returns the media file the page offers, as it is:
 //!
 //! 1. A body that is itself media (`audio/*`, `video/*`, `application/ogg`, or an
@@ -36,7 +36,7 @@ use bytes::Bytes;
 use crawlx_core::scrape::{ScrapeDocument, ScrapeOptions};
 use crawlx_extract::media::{kind_from_content_type, media_refs, media_type, MediaKind, MediaRef};
 use crawlx_fetch::FetchOptions;
-use crawlx_model::llm::openai::MAX_TRANSCRIBE_BYTES;
+use crawlx_model::llm::chat_completions::MAX_TRANSCRIBE_BYTES;
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
 use url::Url;

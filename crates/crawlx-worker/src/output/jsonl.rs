@@ -1,6 +1,6 @@
-//! JSONL records (katana `-jsonl`): one request/response object per page.
+//! JSONL records (the `-jsonl` compatibility flag): one request/response object per page.
 //!
-//! Shape after katana `pkg/output/result.go` and `pkg/navigation/{request,response}.go`
+//! Shape after an MIT-licensed upstream's result and request/response types (see THIRD_PARTY_NOTICES.md)
 //! (MIT): `timestamp`, `request {method, endpoint, body, headers, tag, attribute, source,
 //! custom_fields, raw}`, `response {status_code, headers, body, content_length,
 //! technologies, raw, forms, xhr_requests, stored_response_path, knowledgebase, extra}`,
@@ -69,7 +69,7 @@ const RESPONSE_FIELDS: [&str; 14] = [
 
 /// Every JSONL field name `-eof` accepts and `-lof` lists: sorted, deduplicated. A name that
 /// exists in both `request` and `response` (`body`, `headers`, `raw`, `custom_fields`) is
-/// excluded from both, as in katana.
+/// excluded from both, as in the reference.
 #[must_use]
 pub fn field_names() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = TOP_FIELDS
@@ -112,7 +112,7 @@ pub struct Request {
     /// Page the URL was discovered on (`metadata.request.source`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-    /// Custom regex field values (katana puts them under `request`).
+    /// Custom regex field values (the reference puts them under `request`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub custom_fields: BTreeMap<String, Vec<String>>,
     /// Raw request text, only when the run captured it (`output.captureRaw`).
@@ -156,7 +156,7 @@ pub struct Response {
     /// Knowledge base (`{PageType, Forms, secrets, endpoints}`), only with `-kb`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub knowledgebase: Option<Value>,
-    /// Caller-defined data attached by an embedder (katana `Response.Extra`); never set by
+    /// Caller-defined data attached by an embedder (the reference `Response.Extra`); never set by
     /// crawlx itself.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, Value>,
@@ -217,7 +217,7 @@ fn custom_fields(v: Option<&Value>) -> BTreeMap<String, Vec<String>> {
         .unwrap_or_default()
 }
 
-/// `metadata.xhr_requests` in katana's request shape: `url` becomes `endpoint`.
+/// `metadata.xhr_requests` in the reference request shape: `url` becomes `endpoint`.
 fn xhr_requests(meta: &Value) -> Vec<Value> {
     meta.get("xhr_requests")
         .and_then(Value::as_array)
@@ -288,7 +288,7 @@ impl Record {
     }
 
     /// The record of a URL that could not be fetched: the request, the status when one was
-    /// seen, and the reason in `error` (katana emits such results with `error` set).
+    /// seen, and the reason in `error` (the reference emits such results with `error` set).
     #[must_use]
     pub fn from_failure(url: &str, status: Option<u16>, reason: &str) -> Self {
         Self {
@@ -306,7 +306,7 @@ impl Record {
         }
     }
 
-    /// Attach `response.knowledgebase` (katana `-kb`): `PageType`, `Forms` (each stored form
+    /// Attach `response.knowledgebase` (the `-kb` compatibility flag): `PageType`, `Forms` (each stored form
     /// classified as `{type, fields}` by [`crawlx_extract::kb::KbForm`]), `secrets` and
     /// `endpoints` as far as the page metadata has them. Nothing is attached when it has none.
     pub fn attach_knowledgebase(&mut self, page: &PageRecord) {
@@ -338,7 +338,7 @@ impl Record {
         }
     }
 
-    /// Drop fields by name (katana `-eof`): any name in [`field_names`]. A top-level name
+    /// Drop fields by name (the `-eof` compatibility flag): any name in [`field_names`]. A top-level name
     /// removes that part; a request/response name is removed from both parts that have it
     /// (`body` clears `request.body` and `response.body`). A part left without any field is
     /// dropped. Unknown names are ignored.
@@ -524,7 +524,7 @@ pub(super) mod tests {
         assert_eq!(v["response"]["custom_fields"]["email"][0], "a@e.com");
         assert_eq!(
             v["request"]["custom_fields"]["email"][0], "a@e.com",
-            "katana puts custom fields under request; the top-level metadata key is the fallback"
+            "the reference puts custom fields under request; the top-level metadata key is the fallback"
         );
         assert_eq!(v["response"]["secrets"][0]["kind"], "jwt");
         assert!(v.get("error").is_none());
@@ -533,7 +533,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn new_katana_fields_come_from_the_metadata_contract() {
+    fn new_compat_fields_come_from_the_metadata_contract() {
         let p = page("https://e.com/p", full_metadata());
         let mut r = Record::from_page(&p, None);
         let v = serde_json::to_value(&r).unwrap();
@@ -598,7 +598,7 @@ pub(super) mod tests {
         let v = serde_json::to_value(Record::from_page(&p, None)).unwrap();
         assert!(
             v["response"].get("status_code").is_none(),
-            "katana omits a zero status"
+            "the reference omits a zero status"
         );
     }
 

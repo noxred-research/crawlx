@@ -258,7 +258,7 @@ Configuring a solver never bypasses action admission. See the README for the fla
 
 API keys (`cx_live_` plus 26 base32 characters) are stored as BLAKE3 hashes and carry scopes such as
 `crawls:read`, `crawls:write`, `approvals:decide`, `artifacts:read_sensitive`, `authorizations:*`.
-Firecrawl-style `fc-` keys are accepted only on `/compat/*` routes and only when enabled. Tenant
+Prefixed `fc-` keys are accepted only on `/compat/*` routes and only when enabled. Tenant
 isolation is enforced by PostgreSQL row-level security and a restricted API database role; see
 [data and secrets](data-and-secrets.md#tenant-isolation).
 

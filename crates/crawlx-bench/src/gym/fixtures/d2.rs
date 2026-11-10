@@ -1,4 +1,4 @@
-//! Fixture `d2`: "differential site 2", the own-authored site of the Firecrawl differential
+//! Fixture `d2`: "differential site 2", the own-authored site of the upstream differential
 //! harness.
 //!
 //! Five sections under `/d2/`, all procedural and independent of the request host (every
@@ -94,14 +94,16 @@ Disallow: /d2/redir/private\n\
 Crawl-delay: 0\n";
 
 /// Rules of `ua.gym.test`: one group per user agent.
-const UA_ROBOTS: &str = "User-agent: *\n\
-Disallow: /d2/robots/ua-star\n\
-\n\
-User-agent: FirecrawlAgent\n\
-Disallow: /d2/robots/fc-only\n\
-\n\
-User-agent: crawlx\n\
-Disallow: /d2/robots/cx-only\n";
+const UA_ROBOTS: &str = concat!(
+    "User-agent: *\n",
+    "Disallow: /d2/robots/ua-star\n",
+    "\n",
+    "User-agent: FirecrawlAgent\n", // wire-compat: robots product token the upstream honours
+    "Disallow: /d2/robots/fc-only\n",
+    "\n",
+    "User-agent: crawlx\n",
+    "Disallow: /d2/robots/cx-only\n",
+);
 
 /// Rules of every host without a rule set of its own: everything allowed.
 const OPEN_ROBOTS: &str = "User-agent: *\nDisallow:\n";
@@ -887,7 +889,7 @@ mod tests {
             [
                 "User-agent: *",
                 "Disallow: /d2/robots/ua-star",
-                "User-agent: FirecrawlAgent",
+                "User-agent: FirecrawlAgent", // wire-compat: robots product token
                 "Disallow: /d2/robots/fc-only",
                 "User-agent: crawlx",
                 "Disallow: /d2/robots/cx-only",

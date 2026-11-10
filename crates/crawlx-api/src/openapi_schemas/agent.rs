@@ -410,23 +410,23 @@ pub(super) struct AgentSnapshot {
 
 pub(super) fn spec(id: &str) -> Option<Spec> {
     let s = match id {
-        "firecrawlStartAgent" => Spec::new(&[404, 409, 422, 503])
+        "compatStartAgent" => Spec::new(&[404, 409, 422, 503])
             .json::<AgentRequest>("The prompt and the run settings.")
             .reply::<AgentStarted>("200", "The run was admitted and continues in the background."),
-        "firecrawlListAgents" => Spec::new(&[400])
+        "compatListAgents" => Spec::new(&[400])
             .query::<AgentListQuery>()
             .reply::<AgentList>("200", "The tenant's runs, newest first."),
-        "firecrawlGetAgent" => Spec::new(&[400, 404, 410])
+        "compatGetAgent" => Spec::new(&[400, 404, 410])
             .path("jobId", "Id of the agent run.", Some("uuid"))
             .reply::<AgentStatus>("200", "The run's status, result, usage and expiry."),
-        "firecrawlCancelAgent" => Spec::new(&[400, 404, 409])
+        "compatCancelAgent" => Spec::new(&[400, 404, 409])
             .path("jobId", "Id of the agent run.", Some("uuid"))
             .reply::<AgentCancelled>("200", "The run was cancelled."),
-        "firecrawlGetAgentTrace" => Spec::new(&[400, 404])
+        "compatGetAgentTrace" => Spec::new(&[400, 404])
             .path("jobId", "Id of the agent run.", Some("uuid"))
             .query::<AgentTraceQuery>()
             .reply::<AgentTrace>("200", "One page of canonical execution events."),
-        "firecrawlGetAgentSnapshot" => Spec::new(&[400, 404])
+        "compatGetAgentSnapshot" => Spec::new(&[400, 404])
             .path("jobId", "Id of the agent run.", Some("uuid"))
             .path("snapshotId", "Id of the snapshot (a UUID).", Some("uuid"))
             .reply::<AgentSnapshot>("200", "The snapshot content."),

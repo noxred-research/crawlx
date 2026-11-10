@@ -1,4 +1,4 @@
-//! Seed input of `crawlx crawl` (katana `-u`, `-list`, stdin, `-parallelism`, `-resume`,
+//! Seed input of `crawlx crawl` (compatibility `-u`, `-list`, stdin, `-parallelism`, `-resume`,
 //! `-config`).
 
 use crate::merge::fill_fields;
@@ -41,7 +41,7 @@ pub struct InputArgs {
     /// ran dry.
     #[arg(long, value_name = "FILE", help_heading = "Input")]
     pub resume: Option<PathBuf>,
-    /// Configuration file: katana-style YAML with long-flag keys, or a `CreateCrawl` body as
+    /// Configuration file: compatibility-style YAML with long-flag keys, or a `CreateCrawl` body as
     /// JSON (`.json`) or TOML (`.toml`, table `[crawl]`). Flags override the file; the file
     /// overrides defaults; an unknown key is an error.
     #[arg(long, value_name = "FILE", help_heading = "Input")]

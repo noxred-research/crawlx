@@ -1,7 +1,7 @@
-//! Per-host field wordlists (katana `-store-fields DIR`).
+//! Per-host field wordlists (the `-store-fields DIR` compatibility flag).
 //!
-//! Katana (`pkg/output/fields.go` `storeFields`/`appendToFileField`, commit
-//! `9662cd7b60ba1bc3a88232433ddefc4f48a65bfe`, MIT) appends every value of a field to
+//! The reference tool (`storeFields`/`appendToFileField`, an MIT-licensed upstream; see
+//! THIRD_PARTY_NOTICES.md) appends every value of a field to
 //! `{dir}/{scheme}_{hostname}_{field}.txt`. Here a port in the host becomes `_` in the file
 //! name and values already present in the file are not appended again (stable first-seen
 //! order).
@@ -13,7 +13,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 /// Default wordlist directory beneath the crawl or export output directory.
-pub const DEFAULT_DIR: &str = "katana_field";
+pub const DEFAULT_DIR: &str = "field_wordlists";
 
 /// Directory of per-host wordlists.
 #[derive(Clone, Debug, PartialEq, Eq)]
