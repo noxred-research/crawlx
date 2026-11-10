@@ -589,6 +589,7 @@ impl ReplayRunner {
             .egress
             .serve_proxy(
                 &run.config,
+                run.id,
                 authorization.as_ref().map(|guard| guard.record()),
                 resolver,
                 EgressOptions::new(),

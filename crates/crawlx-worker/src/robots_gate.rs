@@ -434,6 +434,7 @@ mod tests {
         };
         let (fetcher, _) = crate::run::build_fetcher(
             &crawl,
+            crawlx_core::CrawlRunId(uuid::Uuid::nil()),
             crawl.effective_seed(),
             &cfg,
             RequestControls::default(),

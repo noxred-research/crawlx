@@ -538,6 +538,7 @@ impl BrowserRenderer {
                 .egress
                 .serve_proxy(
                     &crawl,
+                    rc.run,
                     rc.authorization.as_ref().map(|guard| guard.record()),
                     resolver,
                     crawlx_fetch::EgressOptions::new().with_controls(rc.controls.clone()),

@@ -19,6 +19,7 @@
 //! the same trust the fetch plane places in `fetch.proxy`.
 
 use crate::error::FetchError;
+use crate::proxyx::{ProxyxRoute, TunnelLog};
 use base64::Engine as _;
 use http::HeaderValue;
 use std::fmt;
@@ -66,7 +67,8 @@ struct Credentials {
     basic: HeaderValue,
 }
 
-/// Operator-supplied proxy routes. No provider-specific behavior is assumed.
+/// Operator-supplied proxy routes. A tier is a plain proxy URL or a ProxyX pool route, never
+/// both; no other provider-specific behavior is assumed.
 #[derive(Clone, Default)]
 #[non_exhaustive]
 pub struct ProxyRoutes {
@@ -74,6 +76,10 @@ pub struct ProxyRoutes {
     pub basic: Option<Url>,
     /// Enhanced route; required for both enhanced and automatic scrape modes.
     pub enhanced: Option<Url>,
+    /// Basic route through a ProxyX pool gateway; replaces `basic`.
+    pub basic_pool: Option<ProxyxRoute>,
+    /// Enhanced route through a ProxyX pool gateway; replaces `enhanced`.
+    pub enhanced_pool: Option<ProxyxRoute>,
 }
 
 impl fmt::Debug for ProxyRoutes {
@@ -81,6 +87,8 @@ impl fmt::Debug for ProxyRoutes {
         f.debug_struct("ProxyRoutes")
             .field("basic", &self.basic.as_ref().map(|_| "[configured]"))
             .field("enhanced", &self.enhanced.as_ref().map(|_| "[configured]"))
+            .field("basic_pool", &self.basic_pool)
+            .field("enhanced_pool", &self.enhanced_pool)
             .finish()
     }
 }
@@ -95,6 +103,9 @@ pub struct UpstreamProxy {
     port: u16,
     credentials: Option<Credentials>,
     tls: Option<TlsConnector>,
+    /// A ProxyX pool gateway: `CONNECT` only (it answers an absolute-form request with `405`),
+    /// and every `CONNECT` answer is recorded in the log.
+    pool: Option<Arc<TunnelLog>>,
 }
 
 impl fmt::Debug for UpstreamProxy {
@@ -195,7 +206,40 @@ impl UpstreamProxy {
             port,
             credentials,
             tls,
+            pool: None,
         })
+    }
+
+    /// The upstream of a ProxyX pool gateway at `gateway` (`http` or `https`, no userinfo):
+    /// the typed `username` and the org key as Basic credentials, `CONNECT` only, with every
+    /// answer recorded in `log`.
+    ///
+    /// # Errors
+    /// [`FetchError::InvalidUrl`] for another scheme, a missing host or a credential that
+    /// cannot be sent in a header. The message never contains the credentials.
+    pub(crate) fn pool(
+        gateway: &Url,
+        username: &str,
+        org_key: &str,
+        log: Arc<TunnelLog>,
+    ) -> Result<Self, FetchError> {
+        if !matches!(gateway.scheme(), "http" | "https") {
+            return Err(FetchError::InvalidUrl {
+                url: redacted(gateway),
+                reason: "a pool gateway is an http or https proxy",
+            });
+        }
+        let mut with_credentials = gateway.clone();
+        with_credentials
+            .set_username(username)
+            .and_then(|()| with_credentials.set_password(Some(org_key)))
+            .map_err(|()| FetchError::InvalidUrl {
+                url: redacted(gateway),
+                reason: "pool credentials cannot be attached to the gateway URL",
+            })?;
+        let mut upstream = Self::from_url(&with_credentials)?;
+        upstream.pool = Some(log);
+        Ok(upstream)
     }
 
     /// Scheme of the proxy URL.
@@ -217,9 +261,10 @@ impl UpstreamProxy {
     }
 
     /// Does the proxy take absolute-form HTTP requests (`http`/`https`), as opposed to
-    /// SOCKS5 where plain HTTP is sent in origin form over the tunnel?
+    /// SOCKS5 where plain HTTP is sent in origin form over the tunnel? A pool gateway takes
+    /// `CONNECT` only, so plain HTTP targets are tunneled and sent in origin form.
     pub(crate) const fn speaks_http(&self) -> bool {
-        matches!(self.scheme, UpstreamScheme::Http | UpstreamScheme::Https)
+        self.pool.is_none() && matches!(self.scheme, UpstreamScheme::Http | UpstreamScheme::Https)
     }
 
     /// `Proxy-Authorization` for HTTP proxies, `None` without credentials.
@@ -281,13 +326,27 @@ impl UpstreamProxy {
         match self.scheme {
             UpstreamScheme::Http | UpstreamScheme::Https => {
                 let mut io = self.dial_proxy(proxy_addrs).await?;
-                tokio::time::timeout(
+                let answer = tokio::time::timeout(
                     HANDSHAKE_TIMEOUT,
                     http_connect(&mut io, host, port, self.authorization()),
                 )
                 .await
-                .map_err(|_| "upstream proxy CONNECT timed out".to_owned())??;
-                Ok(io)
+                .map_err(|_| "upstream proxy CONNECT timed out".to_owned())?;
+                match (answer, &self.pool) {
+                    (Ok(answer), log) => {
+                        if let Some(log) = log {
+                            log.opened(host, port, answer.session.as_deref(), answer.exit_ip.as_deref());
+                        }
+                        Ok(io)
+                    }
+                    (Err(error), Some(log)) => {
+                        if let ConnectError::Refused { status, reason } = &error {
+                            log.refused(host, port, *status, reason);
+                        }
+                        Err(error.message(true))
+                    }
+                    (Err(error), None) => Err(error.message(false)),
+                }
             }
             UpstreamScheme::Socks5h => {
                 let dest = host
@@ -353,6 +412,41 @@ fn authority(host: &str, port: u16) -> String {
     }
 }
 
+/// What a `2xx` `CONNECT` answer carries that a caller may need: the ProxyX pool gateway
+/// names the session and the exit IP of the tunnel in two response headers.
+#[derive(Default)]
+struct ConnectAnswer {
+    session: Option<String>,
+    exit_ip: Option<String>,
+}
+
+/// Why a `CONNECT` did not open a tunnel.
+enum ConnectError {
+    /// The proxy answered with a non-`2xx` status line.
+    Refused { status: u16, reason: String },
+    /// Anything else: write or read failure, malformed or oversized answer.
+    Failed(String),
+}
+
+impl ConnectError {
+    /// The failure text, never carrying credentials or arbitrary remote text.
+    fn message(&self, pool: bool) -> String {
+        match self {
+            Self::Failed(text) => text.clone(),
+            Self::Refused { status, reason } if pool => {
+                let reason: String = reason
+                    .chars()
+                    .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
+                    .take(32)
+                    .collect();
+                format!("pool gateway refused CONNECT: {status} {reason}")
+            }
+            Self::Refused { status: 407, .. } => "upstream proxy requires authentication (407)".to_owned(),
+            Self::Refused { status, .. } => format!("upstream proxy refused CONNECT: {status}"),
+        }
+    }
+}
+
 /// Send `CONNECT host:port` and require a `2xx` answer. The answer is read byte by byte so
 /// no tunnel byte is consumed.
 async fn http_connect(
@@ -360,7 +454,8 @@ async fn http_connect(
     host: &str,
     port: u16,
     auth: Option<&HeaderValue>,
-) -> Result<(), String> {
+) -> Result<ConnectAnswer, ConnectError> {
+    let failed = |text: String| ConnectError::Failed(text);
     let authority = authority(host, port);
     let mut request = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
     if let Some(value) = auth.and_then(|v| v.to_str().ok()) {
@@ -371,36 +466,56 @@ async fn http_connect(
     request.push_str("\r\n");
     io.write_all(request.as_bytes())
         .await
-        .map_err(|e| format!("upstream proxy CONNECT write failed: {e}"))?;
+        .map_err(|e| failed(format!("upstream proxy CONNECT write failed: {e}")))?;
     let mut head = Vec::with_capacity(256);
     let mut byte = [0u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
         if head.len() >= MAX_CONNECT_HEAD {
-            return Err("upstream proxy CONNECT answer is too long".to_owned());
+            return Err(failed("upstream proxy CONNECT answer is too long".to_owned()));
         }
         let n = io
             .read(&mut byte)
             .await
-            .map_err(|e| format!("upstream proxy CONNECT read failed: {e}"))?;
+            .map_err(|e| failed(format!("upstream proxy CONNECT read failed: {e}")))?;
         if n == 0 {
-            return Err("upstream proxy closed the connection during CONNECT".to_owned());
+            return Err(failed(
+                "upstream proxy closed the connection during CONNECT".to_owned(),
+            ));
         }
         head.push(byte[0]);
     }
-    let status_line = head
-        .split(|b| *b == b'\r')
-        .next()
-        .map(String::from_utf8_lossy)
-        .unwrap_or_default();
-    let code = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|c| c.parse::<u16>().ok());
+    let text = String::from_utf8_lossy(&head);
+    let mut lines = text.split("\r\n");
+    let status_line = lines.next().unwrap_or_default();
+    let mut fields = status_line.splitn(3, ' ');
+    let code = fields.nth(1).and_then(|c| c.trim().parse::<u16>().ok());
     match code {
-        Some(c) if (200..300).contains(&c) => Ok(()),
-        Some(407) => Err("upstream proxy requires authentication (407)".to_owned()),
-        Some(c) => Err(format!("upstream proxy refused CONNECT: {c}")),
-        None => Err("upstream proxy sent a malformed CONNECT answer".to_owned()),
+        Some(c) if (200..300).contains(&c) => {
+            let mut answer = ConnectAnswer::default();
+            for line in lines {
+                let Some((name, value)) = line.split_once(':') else {
+                    continue;
+                };
+                if name.trim().eq_ignore_ascii_case("x-proxyx-pool-session") {
+                    answer.session = Some(value.trim().to_owned());
+                } else if name.trim().eq_ignore_ascii_case("x-proxyx-exit-ip") {
+                    answer.exit_ip = Some(value.trim().to_owned());
+                }
+            }
+            Ok(answer)
+        }
+        Some(status) => Err(ConnectError::Refused {
+            status,
+            reason: status_line
+                .splitn(3, ' ')
+                .nth(2)
+                .unwrap_or_default()
+                .trim()
+                .to_owned(),
+        }),
+        None => Err(failed(
+            "upstream proxy sent a malformed CONNECT answer".to_owned(),
+        )),
     }
 }
 

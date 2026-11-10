@@ -360,3 +360,26 @@ No FTP/SFTP service implementation or deployment is bundled or claimed available
 Operators must supply and audit the isolated implementation, its credential resolver and network
 isolation. Local HTTPS fixtures exercise the client/server authentication and result contract;
 they are not evidence of FTP/SFTP library interoperability or provider enforcement.
+
+## 9. ProxyX pool gateway (optional egress upstream)
+
+[ProxyX](https://github.com/noxred-research/proxyx) is a proxy platform whose pool gateway serves
+rotating and static exit addresses by country, city and provider. crawlx can use it as the upstream
+of its `basic` and `enhanced` proxy tiers. It is optional: without `[fetch.proxyx]` nothing changes,
+and the plain proxy URLs keep working.
+
+* **What crawlx adds on top of a plain proxy URL.** A typed username built and validated from a
+  selector; one sticky exit identity per crawl (the `sid` is derived from the run id, and the two
+  tiers of a run never share a lease); `CONNECT`-only transport, with plain `http://` targets
+  tunneled too; the pool session id and exit IP of each tunnel recorded as connection evidence; typed
+  refusal causes with a terminal versus retryable split; and asynchronous, bounded block feedback to
+  the gateway's control API.
+* **What does not change.** Every target and the gateway host still pass the egress policy,
+  authorization records and robots still apply, and no action is replayed. A gateway on a private
+  address must be listed in `egress.deployment_allowlist`.
+* **Configure it.** `[fetch.proxyx]` with a gateway URL, an optional control URL, the org key as an
+  `env://` or `file://` reference, and a selector table per tier. Flags, environment variables, the
+  precedence rules, the failure mapping and the metrics are in
+  [reference: proxy tiers and the ProxyX pool gateway](reference.md#deployment-proxy-tiers-and-the-proxyx-pool-gateway).
+* **Not covered.** SOCKS5 ingress (it does not carry the session id, so block feedback would be
+  impossible), the gateway's admin API, and block feedback from the browser plane.

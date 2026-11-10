@@ -140,10 +140,7 @@ impl ProfileRun {
         let egress = Digest::keyed(
             &key,
             "crawlx/profile-egress/v1",
-            rc.egress
-                .proxy_for(&rc.crawl)?
-                .map_or("direct", url::Url::as_str)
-                .as_bytes(),
+            rc.egress.route_for(&rc.crawl)?.identity().as_bytes(),
         );
         Ok((cipher, egress))
     }

@@ -77,7 +77,7 @@ pub use authorization::{
     StaticAuthorizationSource, DEFAULT_RECHECK_INTERVAL,
 };
 pub use checkpoint::{CheckpointPayload, Checkpointer};
-pub use config::{EgressConfig, RetainedProfilePolicy, WorkerConfig};
+pub use config::{EgressConfig, RetainedProfilePolicy, TierRoute, WorkerConfig};
 pub use counters::{Attempt, Plane, RunCounters};
 pub use crawlx_browser::{pin as chromium_pin, ChromiumPin};
 pub use crawlx_strategies::Gates;
