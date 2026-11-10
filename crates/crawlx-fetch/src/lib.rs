@@ -6,6 +6,7 @@
 //! * [`OriginGovernor`]: per-origin concurrency and adaptive spacing.
 //! * [`EgressProxy`]: loopback HTTP/CONNECT proxy for the browser plane, optionally chained to
 //!   the operator's upstream proxy ([`UpstreamProxy`]).
+//! * [`proxyx`]: native client of the ProxyX pool gateway, an optional upstream for the proxy tiers.
 //! * [`Resolver`]: DNS behind a trait (`HickoryResolver`, `StaticResolver`).
 
 pub mod body_limits;
@@ -22,6 +23,7 @@ pub mod governor;
 pub mod lists;
 pub mod preflight;
 pub mod protocol;
+pub mod proxyx;
 pub mod redirect;
 pub mod resolver;
 pub mod retry;

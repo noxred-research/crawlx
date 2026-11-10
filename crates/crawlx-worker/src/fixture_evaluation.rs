@@ -297,6 +297,8 @@ pub(crate) fn check_worker_config(
         || cfg.launch.auto_download_chromium
         || cfg.egress.proxy_routes.basic.is_some()
         || cfg.egress.proxy_routes.enhanced.is_some()
+        || cfg.egress.proxy_routes.basic_pool.is_some()
+        || cfg.egress.proxy_routes.enhanced_pool.is_some()
         || cfg
             .egress
             .fixture_scope

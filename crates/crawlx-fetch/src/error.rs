@@ -111,6 +111,20 @@ pub enum FetchError {
         /// Name of the offending header or cookie.
         name: String,
     },
+    /// The ProxyX pool route or selection is unusable. Never retried; carries no credential.
+    #[error("proxy pool configuration: {0}")]
+    Pool(#[from] crate::proxyx::ProxyxError),
+    /// The ProxyX pool gateway refused to open the tunnel. [`PoolCause::is_retryable`] says
+    /// whether another attempt can help.
+    ///
+    /// [`PoolCause::is_retryable`]: crate::proxyx::PoolCause::is_retryable
+    #[error("proxy pool refused the tunnel: {status} {}", .cause.map_or("unrecognized", crate::proxyx::PoolCause::code))]
+    PoolRefused {
+        /// The named cause; `None` for a reason phrase the gateway does not send.
+        cause: Option<crate::proxyx::PoolCause>,
+        /// The status line code.
+        status: u16,
+    },
     /// Local socket or listener failure (egress proxy).
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -175,6 +189,8 @@ impl FetchError {
             Self::Transport(_) => "transport",
             Self::ClientBuild(_) => "client_build",
             Self::InvalidHeader { .. } => "invalid_header",
+            Self::Pool(_) => "pool_config",
+            Self::PoolRefused { .. } => "pool_refused",
             Self::Io(_) => "io",
             Self::BodyDecode { .. } => "body_decode",
             Self::BodyLimit { .. } => "body_limit",

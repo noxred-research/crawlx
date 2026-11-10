@@ -16,11 +16,14 @@ use crate::codec::{
 };
 use crate::conditional::Validators;
 use crate::declaration::{ResponseDeclaration, StatusVerdict};
-use crate::egress::{capture_headers, protocol_of};
+use crate::egress::{
+    capture_headers, protocol_of, EgressOptions, EgressProxy, EgressProxyHandle, PROXY_ERROR_HEADER,
+};
 use crate::error::FetchError;
 use crate::evidence::{BodyEvidence, FetchEvidence, EVIDENCE_HEADER};
 use crate::governor::{GlobalOriginCap, GovernorConfig, Origin, OriginGovernor};
 use crate::preflight::HeadPreflight;
+use crate::proxyx::{PoolBinding, PoolTunnel};
 use crate::redirect::{is_redirect, location, strip_credentials, DEFAULT_MAX_REDIRECTS};
 use crate::resolver::Resolver;
 use crate::retry::{is_retryable_status, parse_retry_after, RetryPolicy};
@@ -81,6 +84,11 @@ pub struct FetchConfig {
     /// before the request is sent, and to the proxy host itself: a proxy on a denied
     /// address fails with [`FetchError::EgressDenied`].
     pub proxy: Option<Url>,
+    /// A ProxyX pool binding (see [`crate::proxyx`]). Takes precedence over `proxy`: every
+    /// request leaves through the pool gateway, `CONNECT` only (plain `http://` targets are
+    /// tunneled too), and the gateway host stays subject to the egress policy like any
+    /// upstream proxy. Block signals and tunnel metadata are collected by the binding.
+    pub pool: Option<Arc<PoolBinding>>,
     /// Process-wide per-origin connection cap shared with every other fetcher of the
     /// process. `None` gives this fetcher a private cap of
     /// `governor.global_per_origin_cap`.
@@ -113,6 +121,7 @@ impl std::fmt::Debug for FetchConfig {
             .field("max_body_bytes", &self.max_body_bytes)
             .field("request_timeout", &self.request_timeout)
             .field("proxy", &self.proxy.as_ref().map(|_| "[configured]"))
+            .field("pool", &self.pool.as_ref().map(|_| "[configured]"))
             .finish_non_exhaustive()
     }
 }
@@ -131,6 +140,7 @@ impl Default for FetchConfig {
             tls_impersonation: TlsImpersonation::Off,
             follow_redirects: true,
             proxy: None,
+            pool: None,
             shared_origin_cap: None,
             shared_governor: None,
             controls: RequestControls::default(),
@@ -195,8 +205,13 @@ impl FetchConfig {
     }
 
     /// Scheme check of `proxy` (`http`, `https`, `socks5`, `socks5h`; no userinfo-free
-    /// requirement: proxy credentials are allowed) and its host.
+    /// requirement: proxy credentials are allowed) and its host. A pool binding takes
+    /// precedence: its gateway is the proxy.
     fn proxy_target(&self) -> Result<Option<ProxyTarget>, FetchError> {
+        if let Some(pool) = &self.pool {
+            let (host, literal) = host_of(pool.gateway())?;
+            return Ok(Some(ProxyTarget { host, literal }));
+        }
         let Some(p) = &self.proxy else { return Ok(None) };
         crate::UpstreamProxy::from_url(p)?;
         let (host, literal) = host_of(p)?;
@@ -209,6 +224,12 @@ impl FetchConfig {
 struct ProxyTarget {
     host: String,
     literal: Option<IpAddr>,
+}
+
+/// Lower-cased host (IPv6 without brackets) and port of `url`, the key of a pool tunnel.
+fn authority_of(url: &Url) -> Option<(String, u16)> {
+    let (host, _) = host_of(url).ok()?;
+    Some((host, url.port_or_known_default()?))
 }
 
 /// Lower-cased host of `url` and, for an IP literal, the address.
@@ -548,6 +569,8 @@ pub struct Fetcher {
     governor: Arc<OriginGovernor>,
     /// Host the client dials when an upstream proxy is configured.
     proxy: Option<ProxyTarget>,
+    /// Loopback adapter of a pool route; dropping the fetcher stops it.
+    adapter: Option<EgressProxyHandle>,
     /// Unified capture: one `ProxyFlow { source: FetchPlane }` per response.
     capture: Option<mpsc::Sender<ProxyFlow>>,
     response_bodies: ResponseBodies,
@@ -584,6 +607,17 @@ impl Fetcher {
     ) -> Result<Self, FetchError> {
         let pins = Arc::new(PinTable::default());
         let proxy = cfg.proxy_target()?;
+        // A pool route is served through one loopback adapter owned by this fetcher: both HTTP
+        // clients speak plain proxy protocol to it, and it chains every admitted target to the
+        // gateway with `CONNECT` only (plain `http://` targets included).
+        let adapter = match &cfg.pool {
+            Some(pool) => Some(EgressProxy::serve_in_runtime(
+                Arc::clone(&policy),
+                Arc::clone(&resolver),
+                EgressOptions::new().with_upstream(pool.upstream().clone()),
+            )?),
+            None => None,
+        };
         let control_headers = control_headers(&cfg.controls)?;
         let client = if cfg.tls_impersonation == TlsImpersonation::Randomized {
             HttpClient::randomized(
@@ -591,6 +625,7 @@ impl Fetcher {
                 Arc::clone(&pins),
                 Arc::clone(&policy),
                 Arc::clone(&resolver),
+                adapter.as_ref().map(EgressProxyHandle::addr),
             )?
         } else {
             let mut builder = reqwest::Client::builder()
@@ -609,7 +644,16 @@ impl Fetcher {
             if let Some(read) = cfg.read_timeout {
                 builder = builder.read_timeout(read);
             }
-            if let Some(p) = &cfg.proxy {
+            if let Some(adapter) = &adapter {
+                builder = builder.proxy(
+                    reqwest::Proxy::all(format!("http://{}", adapter.addr()))
+                        .map_err(|error| FetchError::ClientBuild(error.into()))?,
+                );
+                if cfg.pool.as_ref().is_some_and(|pool| pool.rotates_each()) {
+                    // every request opens its own tunnel, hence its own identity
+                    builder = builder.pool_max_idle_per_host(0);
+                }
+            } else if let Some(p) = &cfg.proxy {
                 // Environment proxies stay disabled; only the checked proxy is used.
                 builder = builder.proxy(
                     reqwest::Proxy::all(p.clone()).map_err(|error| FetchError::ClientBuild(error.into()))?,
@@ -642,6 +686,7 @@ impl Fetcher {
             resolver,
             governor,
             proxy,
+            adapter,
             control_headers,
             capture: None,
             response_bodies: ResponseBodies::MetadataOnly,
@@ -655,9 +700,26 @@ impl Fetcher {
     ///
     /// # Errors
     /// Returns the same construction failures as [`Self::new`].
-    pub fn with_enhanced_proxy(mut self, proxy: &Url) -> Result<Self, FetchError> {
+    pub fn with_enhanced_proxy(self, proxy: &Url) -> Result<Self, FetchError> {
         let mut cfg = self.cfg.clone();
         cfg.proxy = Some(proxy.clone());
+        cfg.pool = None;
+        self.with_enhanced_config(cfg)
+    }
+
+    /// Configure an alternate upstream that is a ProxyX pool binding, retaining policy,
+    /// credentials, pacing and capture.
+    ///
+    /// # Errors
+    /// Returns the same construction failures as [`Self::new`].
+    pub fn with_enhanced_pool(self, pool: Arc<PoolBinding>) -> Result<Self, FetchError> {
+        let mut cfg = self.cfg.clone();
+        cfg.proxy = None;
+        cfg.pool = Some(pool);
+        self.with_enhanced_config(cfg)
+    }
+
+    fn with_enhanced_config(mut self, cfg: FetchConfig) -> Result<Self, FetchError> {
         let mut enhanced = Self::new(cfg, Arc::clone(&self.policy), Arc::clone(&self.resolver))?;
         enhanced.governor = Arc::clone(&self.governor);
         enhanced.capture.clone_from(&self.capture);
@@ -668,6 +730,21 @@ impl Fetcher {
             .clone_from(&self.response_body_origin);
         self.enhanced = Some(Box::new(enhanced));
         Ok(self)
+    }
+
+    /// The pool binding this fetcher routes through, if any.
+    #[must_use]
+    pub fn pool(&self) -> Option<&Arc<PoolBinding>> {
+        self.cfg.pool.as_ref()
+    }
+
+    /// The pool tunnel (session id and exit IP the gateway named) that carried the most recent
+    /// request to `url`'s authority, if the fetcher is pool-routed and the gateway reported one.
+    #[must_use]
+    pub fn pool_tunnel(&self, url: &Url) -> Option<PoolTunnel> {
+        let pool = self.cfg.pool.as_ref()?;
+        let (host, port) = authority_of(url)?;
+        pool.tunnel_for(&host, port)
     }
 
     /// The configured enhanced route, never an implicit fallback to the basic route.
@@ -1191,6 +1268,32 @@ impl Fetcher {
         }
     }
 
+    /// Queue a block signal for a response of a pool-routed fetch; a no-op otherwise.
+    fn observe_pool(&self, url: &Url, status: StatusCode, headers: &HeaderMap, body: &[u8]) {
+        if let (Some(pool), Some((host, port))) = (&self.cfg.pool, authority_of(url)) {
+            pool.observe(&host, port, status, headers, body);
+        }
+    }
+
+    /// A failed send on a pool route: the gateway's refusal of the tunnel when it refused one
+    /// (typed by its cause), otherwise `error`; a transport failure after the tunnel opened is
+    /// reported to the gateway as a `reset`.
+    fn pool_failure(&self, url: &Url, since: std::time::Instant, error: FetchError) -> FetchError {
+        let (Some(pool), Some((host, port))) = (&self.cfg.pool, authority_of(url)) else {
+            return error;
+        };
+        if let Some(refusal) = pool.refusal_since(&host, port, since) {
+            return FetchError::PoolRefused {
+                cause: refusal.cause,
+                status: refusal.status,
+            };
+        }
+        if matches!(error, FetchError::Transport(_)) {
+            pool.observe_reset(&host, port, since);
+        }
+        error
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn fetch_hop<F, Fut>(
         &self,
@@ -1247,9 +1350,34 @@ impl Fetcher {
             // across the transport boundary, including subsequent send attempts.
             check_authority().await?;
             let request_started = tokio::time::Instant::now();
-            let resp = self.client.send(method.clone(), url.clone(), req_headers).await?;
+            let attempt_started = std::time::Instant::now();
+            let resp = match self.client.send(method.clone(), url.clone(), req_headers).await {
+                Ok(resp) => resp,
+                Err(error) => return Err(self.pool_failure(url, attempt_started, error)),
+            };
+            // A plain `http://` target is forwarded by the adapter, which answers a failed or
+            // refused tunnel itself with a marked `502`: that is a transport failure of the pool
+            // route (typed by the gateway's cause when it refused), never the origin's answer.
+            // The adapter removes the marker from origin answers, so an origin cannot forge it;
+            // an `https://` target is a byte tunnel, whose failures surface as send errors.
+            if self.adapter.is_some()
+                && url.scheme() == "http"
+                && resp.headers().contains_key(PROXY_ERROR_HEADER)
+            {
+                let failed = FetchError::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "the pool gateway tunnel could not be opened",
+                ));
+                return Err(self.pool_failure(url, attempt_started, failed));
+            }
 
-            let peer_address = resp.remote_addr();
+            // The loopback adapter of a pool route is not the network peer; the gateway host
+            // was resolved, checked and pinned above.
+            let peer_address = if self.adapter.is_some() {
+                None
+            } else {
+                resp.remote_addr()
+            };
             let peer_observed = peer_address.is_some();
             let peer = peer_address.map_or(addrs[0], |address| address.ip());
             let pinned = guard
@@ -1315,6 +1443,7 @@ impl Fetcher {
                 && !(status.as_u16() == 429 && self.governor.defers_source_throttle())
             {
                 if let Some(wait) = self.cfg.retry.delay(attempt, retry_after, rng) {
+                    self.observe_pool(url, status, &resp_headers, &[]);
                     self.emit_flow(flow, None);
                     drop(resp);
                     drop(permit);
@@ -1325,6 +1454,7 @@ impl Fetcher {
                 }
             }
             if follow_redirects && is_redirect(status.as_u16()) {
+                self.observe_pool(url, status, &resp_headers, &[]);
                 self.emit_flow(flow, None);
                 return Ok(Hop::Redirect {
                     status,
@@ -1393,6 +1523,7 @@ impl Fetcher {
                     );
                 }
             }
+            self.observe_pool(url, status, &resp_headers, &body);
             self.emit_flow(flow, Some(&body));
             // The decoded body no longer matches the wire framing, like a transport decoder.
             if coded {

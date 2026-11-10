@@ -410,6 +410,8 @@ impl AcquisitionBudgetV1 {
             | FetchError::InvalidUrl { .. }
             | FetchError::UnsupportedMethod(_)
             | FetchError::InvalidHeader { .. }
+            | FetchError::Pool(_)
+            | FetchError::PoolRefused { .. }
             | FetchError::PeerNotPinned { .. } => true,
             FetchError::Transport(crawlx_fetch::error::HttpError::Rustls(source))
             | FetchError::Timeout(crawlx_fetch::error::HttpError::Rustls(source)) => source.is_connect(),
@@ -738,13 +740,19 @@ pub(crate) fn http_metadata(
     metadata.connection.peer = response.peer_observed.then_some(response.resolved_ip);
     metadata.connection.peer_checked = response.peer_observed.then_some(true);
     metadata.connection.proxy_route = Some(
-        if fetcher.config().proxy.is_some() {
+        if fetcher.config().pool.is_some() {
+            "proxyx_pool"
+        } else if fetcher.config().proxy.is_some() {
             "configured_proxy"
         } else {
             "direct"
         }
         .to_owned(),
     );
+    if let Some(tunnel) = fetcher.pool_tunnel(&response.final_url) {
+        metadata.connection.pool_session = Some(tunnel.session);
+        metadata.connection.pool_exit_ip = Some(tunnel.exit_ip);
+    }
     metadata.connection.tls_verification = (response.final_url.scheme() == "https").then(|| {
         if fetcher.config().controls.skip_tls_verification() {
             "explicit_insecure"

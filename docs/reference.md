@@ -8,7 +8,8 @@ Contents: [bounded source discovery](#bounded-source-discovery) ·
 [adaptive extraction descriptors](#scoped-adaptive-extraction-descriptors) ·
 [MCP server](#mcp-server) · [compatibility clients](#compatibility-clients) ·
 [compatibility flags](#compatibility-crawl-flags) · [JavaScript endpoint mining](#javascript-endpoint-mining) ·
-[wordlists](#wordlists-and-stored-fields) · [captcha solving](#captcha-solving)
+[wordlists](#wordlists-and-stored-fields) · [captcha solving](#captcha-solving) ·
+[proxy tiers and the pool gateway](#deployment-proxy-tiers-and-the-pool-gateway)
 
 ## Bounded source discovery
 
@@ -253,3 +254,82 @@ Captcha configuration requires an enabled browser plane; static-only crawls reje
 Supported widgets are checkbox (v2) and score-based (v3) widgets with their enterprise variants, and two further challenge-widget families (A and B). The browser fills each detected widget's response fields and invokes only its recorded callback or v3 promise resolver; it does not submit a form. Direct form submission during callback delivery is refused. Each widget gets at most one billed attempt per document, including ambiguous failures. Callback delivery has a separate ten-second bound and observes crawl cancellation. Keys and tokens are redacted from observations, console output, traffic metadata, page HTML/JSON, and storage exports. Full response-body capture, screenshots, PDFs, and raw DOM artifacts are refused with solving enabled because binary or opaque content cannot be safely redacted.
 
 Tests use controlled fixtures, not a live provider: `cargo test -p crawlx-browser --test captcha_transport`, `cargo test -p crawlx-browser --test captcha_widgets` (needs the pinned Chromium) and `cargo test -p crawlx-safety --test captcha`. An authorized operator smoke command is `CAPTCHA_SOLVER_PROVIDER=task-api CAPTCHA_SOLVER_KEY=... crawlx crawl https://controlled.example.test/challenge --mode dynamic --profile test_environment --limit-urls 1`; it needs a real provider account and a controlled target you are authorized to test.
+
+## Deployment proxy tiers and the pool gateway
+
+A scrape selects a proxy tier per job (`proxy: basic | enhanced | auto`). The operator decides
+what each tier is, in configuration, never in the request:
+
+- a plain proxy URL (`fetch.basic_proxy_url`, `fetch.enhanced_proxy_url`, or the flags and
+  `CRAWLX_FETCH_BASIC_PROXY_URL` / `CRAWLX_FETCH_ENHANCED_PROXY_URL`), `http`, `https`, `socks5` or
+  `socks5h`; or
+- a [ProxyX](https://github.com/noxred-research/proxyx) pool: an optional upstream with sticky
+  identities per crawl, country, city and pool-kind selection, and block feedback. A tier is a URL
+  or a pool, never both.
+
+`enhanced` and `auto` fail before any request when no enhanced route (URL or pool) is configured.
+Without a scrape job only the request's own `fetch.proxy` applies, as for the plain tiers.
+
+```toml
+[fetch.proxyx]
+gateway_url = "http://pool-gateway.internal:8080"  # the CONNECT listener; port defaults to 8080
+control_url = "http://pool-gateway.internal:8081"  # optional, enables block feedback; port defaults to 8081
+org_key     = "env://PROXYX_POOL_ORG_KEY"          # env://NAME, file:///absolute/path or the key itself
+
+[fetch.proxyx.basic]       # presence routes the basic tier through the pool; an empty table takes the org policy
+kind = "rotating"          # static | rotating
+country = "fr"             # two letters
+city = "paris"             # needs country
+provider = "oxylabs_res"   # a provider id without `-`
+ttl = "10m"                # 30s, 10m, 2h, 1d or seconds
+rotation = "sticky"        # sticky (default, one identity per crawl) | each (fresh identity per tunnel)
+
+[fetch.proxyx.enhanced]
+kind = "static"
+```
+
+| Setting | Environment | Flag |
+|---|---|---|
+| gateway | `CRAWLX_FETCH_PROXYX_GATEWAY_URL` or `CRAWLX_FETCH__PROXYX__GATEWAY_URL` | `--fetch-proxyx-gateway-url` |
+| control API | `CRAWLX_FETCH_PROXYX_CONTROL_URL` or `CRAWLX_FETCH__PROXYX__CONTROL_URL` | `--fetch-proxyx-control-url` |
+| org key | `CRAWLX_FETCH_PROXYX_ORG_KEY` or `CRAWLX_FETCH__PROXYX__ORG_KEY` | `--fetch-proxyx-org-key-ref` (a reference, never the key) |
+| basic selector | `CRAWLX_FETCH_PROXYX_BASIC="kind=rotating,cc=fr"` or `CRAWLX_FETCH__PROXYX__BASIC__KIND` and the other fields | `--fetch-proxyx-basic "kind=rotating,cc=fr"` |
+| enhanced selector | `CRAWLX_FETCH_PROXYX_ENHANCED` or `CRAWLX_FETCH__PROXYX__ENHANCED__…` | `--fetch-proxyx-enhanced` |
+
+Each field resolves flag, then environment, then file. A flag or environment selector replaces the
+whole selector of the tier; an empty value selects the pool with the org's policy. The flags are on
+`crawl`, `serve` and `worker`. `crawlx config check` validates the shape of the section and prints
+`<redacted>` for the org key and both URLs. The org key reference supports `env://` and `file://`
+(the file must be a regular file of at most 64 KiB that is not world-readable); `vault://` and
+`aws-sm://` references are not resolved for this key.
+
+How a crawl uses the pool:
+
+- **Identity.** The gateway reads the proxy username as `px` plus `-key-value` pairs. crawlx builds
+  it from the selector and validates the grammar locally (values `[a-z0-9_]`, `city` needs
+  `country`, `rotation = each` carries no `sid`, at most 128 bytes). With sticky rotation every
+  tunnel of a run sends `sid-cx_<tier>_<run id>`, so one run keeps one exit identity and its `basic`
+  and `enhanced` tiers lease different units. When the id does not fit the 128-byte budget it is
+  replaced by a prefix of its hash, never truncated.
+- **Transport.** The gateway accepts HTTP `CONNECT` only. crawlx tunnels plain `http://` targets
+  too and sends them in origin form over the tunnel. The fetch plane and the browser plane both go
+  through a loopback adapter that applies the egress policy to every target; the gateway host and
+  the control host are egress-checked like any upstream proxy, so a gateway on a private address
+  needs `egress.deployment_allowlist`.
+- **Evidence.** The acquisition result of a pool-routed fetch records `connection.proxyRoute =
+  "proxyx_pool"`, `connection.poolSession` and `connection.poolExitIp` (the values the gateway
+  returned in `X-ProxyX-Pool-Session` and `X-ProxyX-Exit-IP`), and `proxyUsed` as for any tier. The
+  org key and the username are never stored.
+- **Refusals.** A refused tunnel is `HTTP/1.1 <status> <cause>`. `auth_required`, `org_disabled`,
+  `org_blocked`, `option_denied`, `port_not_allowed`, `destination_denied`, `provider_auth` and `org_budget` fail the
+  page as `proxy_refused` (HTTP 502, `SCRAPE_PROXY_REFUSED`); the other causes (`org_capacity`,
+  `cache_empty`, `no_healthy_ip`, `cache_unavailable`, `source_limited`, `lease_timeout`,
+  `provider_timeout`, `provider_unavailable`, `upstream_error`) fail it as
+  `unreachable`. `crawlx.proxyx.tunnel_refusals{reason}` counts them.
+- **Block feedback.** With a control URL, a `429`, a challenge (`cf-mitigated: challenge`, a
+  `/sorry/` redirect or a known challenge page on a `403`/`503`), the second consecutive plain `403`
+  on a target, and a reset after the tunnel opened are posted to `POST /v1/block-signals`. The queue
+  is bounded (1024 events); a full queue drops and counts the event; batches of at most 500 are
+  posted by a background task that honors `Retry-After` on `429`, retries `5xx` a few times and
+  counts the rest as failed. It never blocks a fetch. `crawlx.proxyx.block_signals{outcome}` counts
+  `sent`, `ignored`, `dropped` and `failed`. The browser plane reports no signals.

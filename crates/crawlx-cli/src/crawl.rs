@@ -880,6 +880,7 @@ impl CrawlArgs {
             &mut self.proxy_routes.fetch_enhanced_proxy_url,
             proxy_routes.fetch_enhanced_proxy_url,
         );
+        self.proxy_routes.proxyx.fill_from(proxy_routes.proxyx);
         self.headless.fill_from(headless);
         self.out.fill_from(out);
         self.model.fill_from(model);

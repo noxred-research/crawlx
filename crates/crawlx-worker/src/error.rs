@@ -273,6 +273,12 @@ impl Classify for WorkerError {
                 // the request may have reached the origin: idempotent GET/HEAD only, so a
                 // retry is still safe, but the class records that the outcome is not known
                 FetchError::Timeout(_) => ErrorClass::OutcomeUnknown,
+                // a refusal the gateway never repairs (bad key, option denied, budget spent) is
+                // terminal; a saturated or briefly failing pool may clear
+                FetchError::PoolRefused { cause, .. } if cause.is_some_and(|c| !c.is_retryable()) => {
+                    ErrorClass::Terminal
+                }
+                FetchError::PoolRefused { .. } => ErrorClass::Retryable,
                 FetchError::InvalidUrl { .. }
                 | FetchError::UnsupportedMethod(_)
                 | FetchError::InvalidRedirect { .. }
@@ -283,6 +289,7 @@ impl Classify for WorkerError {
                 | FetchError::StatusDenied { .. }
                 | FetchError::PreflightRefused { .. }
                 | FetchError::InvalidDeclaration { .. }
+                | FetchError::Pool(_)
                 | FetchError::ClientBuild(_) => ErrorClass::Terminal,
                 FetchError::Io(e) => e.class(),
             },

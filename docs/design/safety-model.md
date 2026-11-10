@@ -171,7 +171,11 @@ blocklist.
   checks and pins each target, tunnels `CONNECT` only to checked addresses, and answers denials with
   `403` and an `x-crawlx-egress-denied` header. Launch profiles may not override these flags.
   Denials are counted by plane and reason. An operator upstream proxy (`http`, `https`, `socks5`,
-  `socks5h`) can be chained; the upstream proxy host is itself egress-checked.
+  `socks5h`) can be chained; the upstream proxy host is itself egress-checked. A ProxyX pool gateway
+  is such an upstream (`CONNECT` only): the gateway host and the control API host of its block
+  feedback are checked and pinned like any proxy, the gateway's own destination denylist is a second
+  layer rather than a substitute, and the org key travels only in `Proxy-Authorization` and the
+  control API's Basic password.
 - **Defense in depth.** Run workers with a deny-by-default network policy (see `deploy/k8s`);
   the in-process checks are not a substitute for network-level controls. WebSocket upgrades travel
   through the same vetted tunnel.

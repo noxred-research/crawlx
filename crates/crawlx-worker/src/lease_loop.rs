@@ -620,7 +620,7 @@ async fn slot_for<'a>(
             let proxy = if dynamic || crate::scrape::needs_browser_renderer(&row.config, cfg) {
                 Some(
                     cfg.egress
-                        .serve_proxy(&row.config, record, resolver, EgressOptions::new())
+                        .serve_proxy(&row.config, run_id, record, resolver, EgressOptions::new())
                         .await?,
                 )
             } else {
@@ -645,6 +645,7 @@ async fn slot_for<'a>(
             } else {
                 let (fetcher, _) = build_fetcher(
                     &row.config,
+                    run_id,
                     row.seed,
                     cfg,
                     rc.controls.clone(),

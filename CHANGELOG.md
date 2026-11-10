@@ -134,6 +134,21 @@ only, with offline tests). `docs/design/crawl-model.md` lists the test files tha
 case (shared 429 cooldown, login expiry, trust failure, DNS rebind, at-most-once actions, cancellation
 lease release) and the one known gap.
 
+### Added: pool gateway upstream for the proxy tiers
+
+- Optional [ProxyX](https://github.com/noxred-research/proxyx) pool gateway as the upstream of the
+  `basic` and `enhanced` proxy tiers (`[fetch.proxyx]`, `--fetch-proxyx-*`, `CRAWLX_FETCH_PROXYX_*`):
+  a typed, locally validated username (kind, country, city, provider, ttl, rotation), one sticky
+  exit identity per run (`sid` derived from the run id, separate per tier, `rotation = each` for a
+  fresh identity per tunnel), `CONNECT`-only transport that tunnels plain `http://` targets too on
+  both the fetch plane and the browser plane, the pool session id and exit IP recorded as connection
+  evidence (`connection.proxyRoute = "proxyx_pool"`, `poolSession`, `poolExitIp`), typed gateway
+  refusals (`proxy_refused` for terminal causes, `unreachable` for transient ones) and bounded,
+  asynchronous block feedback to the control API (`429`, challenges, repeated `403`, resets; honors
+  `Retry-After`; never blocks a fetch). The org key is an `env://` or `file://` reference or a
+  literal, redacted everywhere; the gateway and control hosts stay under the egress policy. New
+  metrics `crawlx.proxyx.block_signals` and `crawlx.proxyx.tunnel_refusals`.
+
 ### Changed: neutral names (breaking)
 
 Features, identifiers, files, configuration and documentation now use neutral names. Every
@@ -211,6 +226,10 @@ third-party product names outside the documented exceptions.
   form partitions, trusted corpus) and assert that each moves in the registry.
 
 ### Changed
+
+- `EgressConfig::proxy_for` is replaced by `route_for` (a `TierRoute`: direct, URL or pool);
+  `build_fetcher`, `build_fetcher_with_capture` and `serve_proxy` take the run id that keys the sticky
+  identity; `ProxyRoutes` gains the `basic_pool` and `enhanced_pool` fields.
 
 - Dependencies moved to rand 0.10 / rand_chacha 0.10, sqlx 0.9, redis 1.8, quick-xml 0.42,
   sha1/sha2 0.11 with hmac 0.13, html5ever 0.40 / scraper 0.29, oxc 0.156 and criterion 0.8.

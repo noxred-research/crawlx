@@ -151,6 +151,7 @@ impl HttpClient {
         pins: Arc<R>,
         policy: Arc<EgressPolicy>,
         resolver: Arc<dyn Resolver>,
+        pool_adapter: Option<SocketAddr>,
     ) -> Result<Self, FetchError> {
         let tls = SelectedHello::from_seed(cfg.seed).into_config(cfg.controls.skip_tls_verification());
         let provider = wreq::EmulationProvider::builder().tls_config(tls).build();
@@ -171,7 +172,16 @@ impl HttpClient {
             builder = builder.read_timeout(read);
         }
         let mut socks = None;
-        if let Some(proxy) = &cfg.proxy {
+        if let Some(adapter) = pool_adapter {
+            // A pool route is served by the fetcher's loopback adapter (`CONNECT` only).
+            builder = builder.proxy(
+                wreq::Proxy::all(format!("http://{adapter}"))
+                    .map_err(|error| FetchError::ClientBuild(error.into()))?,
+            );
+            if cfg.pool.as_ref().is_some_and(|pool| pool.rotates_each()) {
+                builder = builder.pool_max_idle_per_host(0);
+            }
+        } else if let Some(proxy) = &cfg.proxy {
             if matches!(proxy.scheme(), "socks5" | "socks5h") {
                 // Never construct wreq::Proxy from a SOCKS URL: it resolves the
                 // proxy eagerly, before a policy check, through system DNS.

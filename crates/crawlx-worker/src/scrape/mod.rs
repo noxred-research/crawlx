@@ -188,6 +188,11 @@ pub enum FailReason {
     RateLimited,
     /// The run was cancelled while the page was in flight; the row is abandoned, not failed.
     Cancelled,
+    /// The ProxyX pool gateway refused the tunnel for a cause another attempt cannot clear (bad
+    /// or disabled org key, option denied, destination or port refused, provider credential rejected,
+    /// daily budget spent), or
+    /// the pool configuration is unusable. Transient pool refusals end as `unreachable`.
+    ProxyRefused,
 }
 
 impl FailReason {
@@ -213,6 +218,7 @@ impl FailReason {
             Self::CacheIdentityUnavailable => "cache_identity_unavailable",
             Self::RateLimited => "rate_limited",
             Self::Cancelled => "run_stopped",
+            Self::ProxyRefused => "proxy_refused",
         }
     }
 
@@ -2144,9 +2150,14 @@ impl ScrapeEngine {
 }
 
 /// Fetch failure to page failure: a timeout is `scrape_timeout`, an egress refusal
-/// `egress_denied`, everything else `unreachable`.
+/// `egress_denied`, a terminal ProxyX pool refusal `proxy_refused`, everything else
+/// `unreachable`.
 fn fetch_failure(e: &FetchError) -> ScrapeFailure {
     let reason = match e {
+        FetchError::Pool(_) => FailReason::ProxyRefused,
+        FetchError::PoolRefused { cause, .. } if cause.is_some_and(|c| !c.is_retryable()) => {
+            FailReason::ProxyRefused
+        }
         FetchError::EgressDenied(denied) if denied.rule == crawlx_policy::DenyRule::AuthorizationScope => {
             FailReason::AuthorizationScope
         }

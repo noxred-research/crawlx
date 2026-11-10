@@ -51,6 +51,9 @@ use tokio_util::sync::CancellationToken;
 
 /// Response header naming the deny rule.
 pub const DENIED_HEADER: &str = "x-crawlx-egress-denied";
+/// Response header on the proxy's own `502` answers for a failed upstream connect or exchange.
+/// Never forwarded from an origin: the proxy removes it from origin responses.
+pub const PROXY_ERROR_HEADER: &str = "x-crawlx-proxy-error";
 
 /// Denial log is bounded; the counter is not.
 const MAX_LOGGED_DENIALS: usize = 1024;
@@ -380,19 +383,15 @@ impl Shared {
         let Some(up) = &self.upstream else {
             return match connect_any(addrs).await {
                 Ok(s) => Ok(Box::new(s)),
-                Err(e) => Err(Box::new(text_response(
-                    StatusCode::BAD_GATEWAY,
-                    &format!("upstream connect failed: {e}\n"),
-                ))),
+                Err(e) => Err(Box::new(upstream_failure(&format!(
+                    "upstream connect failed: {e}\n"
+                )))),
             };
         };
         let proxy_addrs = self.vet_upstream(method, up).await?;
-        up.tunnel(&proxy_addrs, host, port, addrs).await.map_err(|e| {
-            Box::new(text_response(
-                StatusCode::BAD_GATEWAY,
-                &format!("upstream proxy failed: {e}\n"),
-            ))
-        })
+        up.tunnel(&proxy_addrs, host, port, addrs)
+            .await
+            .map_err(|e| Box::new(upstream_failure(&format!("upstream proxy failed: {e}\n"))))
     }
 
     /// A connection for forwarding one plain-HTTP request to the admitted target. The flag is
@@ -408,17 +407,27 @@ impl Shared {
         match &self.upstream {
             Some(up) if up.speaks_http() => {
                 let proxy_addrs = self.vet_upstream(method, up).await?;
-                let io = up.connect_for_forward(&proxy_addrs).await.map_err(|e| {
-                    Box::new(text_response(
-                        StatusCode::BAD_GATEWAY,
-                        &format!("upstream proxy failed: {e}\n"),
-                    ))
-                })?;
+                let io = up
+                    .connect_for_forward(&proxy_addrs)
+                    .await
+                    .map_err(|e| Box::new(upstream_failure(&format!("upstream proxy failed: {e}\n"))))?;
                 Ok((io, true))
             }
             _ => Ok((self.open_tunnel(method, host, port, addrs).await?, false)),
         }
     }
+}
+
+/// An answer of the proxy itself for a failed upstream connect, handshake or exchange. It is
+/// marked with [`PROXY_ERROR_HEADER`] so a client that routes through this proxy can tell it
+/// from a `502` the origin sent.
+fn upstream_failure(msg: &str) -> Response<ProxyBody> {
+    let mut resp = text_response(StatusCode::BAD_GATEWAY, msg);
+    resp.headers_mut().insert(
+        HeaderName::from_static(PROXY_ERROR_HEADER),
+        header::HeaderValue::from_static("upstream"),
+    );
+    resp
 }
 
 fn text_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
@@ -755,13 +764,15 @@ async fn handle_forward(
                 None => b.boxed(),
             };
             strip_hop_by_hop(&mut p.headers);
+            // only this proxy may say it failed: never pass the marker on from an origin
+            p.headers.remove(PROXY_ERROR_HEADER);
             Response::from_parts(p, b)
         }
         Err(e) => {
             if let (Some(c), Some(b)) = (&shared.capture, builder) {
                 b.lock().finish(c);
             }
-            text_response(StatusCode::BAD_GATEWAY, &format!("{e}\n"))
+            upstream_failure(&format!("{e}\n"))
         }
     }
 }
@@ -867,7 +878,39 @@ impl EgressProxy {
         Self::start(policy, resolver, options).await
     }
 
+    /// [`Self::serve_with`] for a caller that is not `async` but runs inside a tokio runtime:
+    /// the loopback listener is bound synchronously. Used by a [`crate::Fetcher`] that owns its
+    /// adapter for the whole run.
+    ///
+    /// # Errors
+    /// [`FetchError::Io`] when no tokio runtime is running or the loopback listener cannot be
+    /// bound.
+    pub fn serve_in_runtime(
+        policy: Arc<EgressPolicy>,
+        resolver: Arc<dyn Resolver>,
+        options: EgressOptions,
+    ) -> Result<EgressProxyHandle, FetchError> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|e| FetchError::Io(std::io::Error::other(e.to_string())))?;
+        let std_listener = std::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))?;
+        std_listener.set_nonblocking(true)?;
+        let _entered = runtime.enter();
+        let listener = TcpListener::from_std(std_listener)?;
+        Self::launch(listener, policy, resolver, options)
+    }
+
     async fn start(
+        policy: Arc<EgressPolicy>,
+        resolver: Arc<dyn Resolver>,
+        options: EgressOptions,
+    ) -> Result<EgressProxyHandle, FetchError> {
+        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
+        Self::launch(listener, policy, resolver, options)
+    }
+
+    /// Start serving on a bound listener; must run inside a tokio runtime.
+    fn launch(
+        listener: TcpListener,
         policy: Arc<EgressPolicy>,
         resolver: Arc<dyn Resolver>,
         options: EgressOptions,
@@ -877,7 +920,6 @@ impl EgressProxy {
             controls,
             upstream,
         } = options;
-        let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
         let addr = listener.local_addr()?;
         let cancel = CancellationToken::new();
         let shared = Arc::new(Shared {
