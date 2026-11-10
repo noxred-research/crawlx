@@ -50,6 +50,14 @@
     return a;
   };
 
+  // Preserve handler order in the server ledger: independent fetches can arrive out of order.
+  // Only reports share this chain; gym.api requests must remain concurrent for async fixtures.
+  var reports = Promise.resolve();
+  function report(send) {
+    reports = reports.then(send, send);
+    return reports;
+  }
+
   function beacon(path, params) {
     var q = Object.keys(params)
       .map(function (k) {
@@ -57,7 +65,9 @@
       })
       .join('&');
     try {
-      return fetch('/__gym/' + path + '?' + q, { method: 'POST', keepalive: true }).catch(function () {});
+      return report(function () {
+        return fetch('/__gym/' + path + '?' + q, { method: 'POST', keepalive: true });
+      }).catch(function () {});
     } catch (e) {
       return null;
     }
@@ -108,10 +118,12 @@
         return encodeURIComponent(k) + '=' + encodeURIComponent(fields[k]);
       })
       .join('&');
-    return fetch('/' + FIXTURE + '/api/form/' + encodeURIComponent(formId), {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: body
+    return report(function () {
+      return fetch('/' + FIXTURE + '/api/form/' + encodeURIComponent(formId), {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: body
+      });
     }).then(function (r) {
       return r.json().catch(function () {
         return { ok: r.ok };

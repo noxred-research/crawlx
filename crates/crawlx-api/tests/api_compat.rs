@@ -248,6 +248,21 @@ async fn compat_status_cancel_errors_and_idempotency_alias() {
     assert_eq!(v["data"].as_array().unwrap().len(), 1);
     assert_eq!(v["next"], Value::Null);
 
+    // Offset pagination has the same boundary while the crawl remains running.
+    let (_, _, v) = e.get(&format!("{uri}?limit=2&skip=0")).await;
+    assert_eq!(v["data"].as_array().unwrap().len(), 2);
+    let next = v["next"].as_str().unwrap();
+    assert!(next.contains("limit=2") && next.ends_with("skip=2"), "{next}");
+    let (_, _, v) = e.get(next).await;
+    assert_eq!(v["data"].as_array().unwrap().len(), 1);
+    assert_eq!(v["next"], Value::Null);
+    for query in ["limit=3", "limit=3&skip=0", "limit=2&skip=3", "limit=2&skip=4"] {
+        let (s, _, v) = e.get(&format!("{uri}?{query}")).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(v["status"], "scraping");
+        assert_eq!(v["next"], Value::Null, "{query}: {v}");
+    }
+
     // errors: failed, robots-blocked and policy-blocked rows
     e.store
         .discover(

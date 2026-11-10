@@ -418,27 +418,6 @@ fn skip_link(path: &str, params: &Params, skip: usize) -> Value {
     Value::String(format!("{path}?{}", ser.finish()))
 }
 
-/// `next` of a crawl that is still running and has no further page of `data` to list yet: the
-/// link a poller follows for what the crawl stores next. An offset request continues after the
-/// pages it listed, a cursor request after its last page, and the first request starts at the
-/// pages it listed (`?skip=<listed>`).
-fn in_flight_next(
-    path: &str,
-    params: &Params,
-    skip: Option<usize>,
-    cursor: Option<&str>,
-    page: &[PageRecord],
-) -> Value {
-    match (skip, cursor) {
-        (Some(skipped), _) => skip_link(path, params, skipped.saturating_add(page.len())),
-        (None, Some(cursor)) => {
-            let key = page.last().map_or_else(|| cursor.to_owned(), page_key);
-            next_link(path, params, Some(&key))
-        }
-        (None, None) => skip_link(path, params, page.len()),
-    }
-}
-
 /// A stopped crawl that found at most this many pages gets a hint on how to broaden it.
 const FEW_RESULTS: u64 = 1;
 
@@ -471,6 +450,9 @@ fn status_warning(run: &RunMetadata, id: &str, seed_host: Option<&str>) -> Optio
 /// as an offset or `?cursor=` as the opaque position the `next` link carries). `creditsUsed`
 /// sums the credits of every stored page (`1` per page plus the extras of `json` and the other
 /// LLM formats); a terminal crawl is booked in the usage ledger once.
+///
+/// `next` is non-null only when another stored page is available, even while the crawl is
+/// running. Poll this status route again to wait for new pages; `next` is not a polling link.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`, `404 not_found` for an unknown run, a run owned by
@@ -525,11 +507,6 @@ pub async fn status(
         let (page, next_key) = paginate(keyed, limit, cursor.as_deref());
         let next = next_link(&path, &params, next_key.as_deref());
         (page, next)
-    };
-    let next = if next.is_null() && !run.status.is_terminal() {
-        in_flight_next(&path, &params, skip, cursor.as_deref(), &page)
-    } else {
-        next
     };
     let mut data = Vec::with_capacity(page.len());
     if let Some(live) = &live {

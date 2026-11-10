@@ -1032,9 +1032,7 @@ impl Fetcher {
         F: Fn() -> Fut + Sync,
         Fut: Future<Output = Result<(), FetchError>> + Send,
     {
-        // Bound the future stored by deeply composed worker acquisition/robots
-        // paths. Ordinary fetches retain their allocation-free direct path.
-        Box::pin(self.fetch_with_retry_budget(url, opts, 0, check_authority)).await
+        self.fetch_with_retry_budget(url, opts, 0, check_authority).await
     }
 
     async fn fetch_with_retry_budget<F, Fut>(
@@ -1051,7 +1049,10 @@ impl Fetcher {
         if opts.method != Method::GET && opts.method != Method::HEAD {
             return Err(FetchError::UnsupportedMethod(opts.method.to_string()));
         }
-        let result = self.fetch_inner(url, opts, max_retries, check_authority).await;
+        // Keep transport and decoder state out of every caller's async frame, including
+        // robots admission nested inside page acquisition. Allocate once per fetch,
+        // not once per retry or redirect, and retain cancellation through normal drop.
+        let result = Box::pin(self.fetch_inner(url, opts, max_retries, check_authority)).await;
         let outcome = match &result {
             Ok(r) => status_class(r.status),
             Err(_) => "error",
@@ -1715,6 +1716,32 @@ mod capture_tests {
         let mut headers = HeaderMap::new();
         headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
         headers
+    }
+
+    #[test]
+    fn fetch_futures_remain_bounded() {
+        let sink = Arc::new(StoredBodies::default());
+        let fetcher = fetcher(ResponseBodies::MetadataOnly, &sink);
+        let url = page_url();
+        let opts = FetchOptions::default();
+        let authority = || std::future::ready(Ok(()));
+        for (name, size) in [
+            ("fetch", std::mem::size_of_val(&fetcher.fetch(&url, &opts))),
+            (
+                "fetch_once",
+                std::mem::size_of_val(&fetcher.fetch_once(&url, &opts)),
+            ),
+            (
+                "fetch_with_authority",
+                std::mem::size_of_val(&fetcher.fetch_with_authority(&url, &opts, &authority)),
+            ),
+            (
+                "fetch_once_with_authority",
+                std::mem::size_of_val(&fetcher.fetch_once_with_authority(&url, &opts, &authority)),
+            ),
+        ] {
+            assert!(size <= 512, "{name} future uses {size} bytes");
+        }
     }
 
     #[tokio::test]

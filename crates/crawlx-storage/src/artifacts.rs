@@ -644,8 +644,8 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         bytes: &[u8],
         deadline: Option<Timestamp>,
     ) -> Result<ArtifactRef, StoreError> {
-        let run_row = self.runs.get(run).await?;
-        zdr_write_gate(run_row.config.retention.mode, class)?;
+        let run_row = self.runs.get_metadata(run).await?;
+        zdr_write_gate(run_row.retention.mode, class)?;
         if class == Sensitivity::CredentialBearing && run_row.status.is_terminal() {
             return Err(StoreError::RetentionDenied("credential run has ended".into()));
         }
@@ -657,8 +657,8 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             let expires_at = artifact_expiry(
                 class,
                 content_type,
-                run_row.config.retention.mode,
-                u32::from(run_row.config.retention.days),
+                run_row.retention.mode,
+                u32::from(run_row.retention.days),
                 now,
             )
             .map(|expiry| deadline.map_or(expiry, |deadline| deadline.min(expiry)))
@@ -695,8 +695,8 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             expires_at: artifact_expiry(
                 class,
                 content_type,
-                run_row.config.retention.mode,
-                u32::from(run_row.config.retention.days),
+                run_row.retention.mode,
+                u32::from(run_row.retention.days),
                 now,
             )
             .map(|expiry| deadline.map_or(expiry, |deadline| deadline.min(expiry)))
@@ -728,15 +728,15 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             entity: "artifact",
             id: artifact.id.to_string(),
         })?;
-        let run = self.runs.get(row.run).await?;
-        let source_expiry = (run.config.retention.days != 0)
-            .then(|| run.created_at + chrono::Duration::days(i64::from(run.config.retention.days)));
+        let run = self.runs.get_metadata(row.run).await?;
+        let source_expiry = (run.retention.days != 0)
+            .then(|| run.created_at + chrono::Duration::days(i64::from(run.retention.days)));
         if row.id != artifact.id
             || row.digest != artifact.digest
             || row.sensitivity != Sensitivity::Content
             || row.size_bytes > max_bytes
             || row.tenant != run.tenant
-            || run.config.retention.mode == RetentionMode::Zdr
+            || run.retention.mode == RetentionMode::Zdr
             || crate::tenant::current().is_some_and(|tenant| tenant != row.tenant)
             || self
                 .read_scope
@@ -992,9 +992,9 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         file: &Path,
         max_bytes: u64,
     ) -> Result<ArtifactRef, StoreError> {
-        let source = self.runs.get(run).await?;
+        let source = self.runs.get_metadata(run).await?;
         // Gate before opening even a temporary content file.
-        if source.config.retention.mode == RetentionMode::Zdr {
+        if source.retention.mode == RetentionMode::Zdr {
             return Err(StoreError::RetentionDenied(
                 "durable archive forbidden for zdr".into(),
             ));
@@ -1003,8 +1003,8 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         let expires_at = artifact_expiry(
             Sensitivity::Content,
             content_type,
-            source.config.retention.mode,
-            u32::from(source.config.retention.days),
+            source.retention.mode,
+            u32::from(source.retention.days),
             source.created_at,
         );
         if expires_at.is_some_and(|expiry| expiry <= now) {
@@ -1073,8 +1073,8 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         file: &Path,
         max_bytes: u64,
     ) -> Result<u64, StoreError> {
-        let source = self.runs.get(run).await?;
-        if source.tenant != tenant || source.config.retention.mode == RetentionMode::Zdr {
+        let source = self.runs.get_metadata(run).await?;
+        if source.tenant != tenant || source.retention.mode == RetentionMode::Zdr {
             return Err(StoreError::RetentionDenied(
                 "archive source is not retained tenant content".into(),
             ));
@@ -1192,8 +1192,8 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         bytes: &[u8],
     ) -> Result<ArtifactRef, StoreError> {
         if let (Some(buffer), Sensitivity::Content) = (&self.zdr, class) {
-            let run_row = self.runs.get(run).await?;
-            if run_row.config.retention.mode == RetentionMode::Zdr {
+            let run_row = self.runs.get_metadata(run).await?;
+            if run_row.retention.mode == RetentionMode::Zdr {
                 return buffer
                     .insert(
                         run_row.tenant,
@@ -1218,8 +1218,8 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         bytes: &[u8],
     ) -> Result<ArtifactRef, StoreError> {
         crawlx_core::dataset::validate_identifier(rendition)?;
-        let owner = self.runs.get(run).await?;
-        if owner.config.retention.mode == RetentionMode::Zdr {
+        let owner = self.runs.get_metadata(run).await?;
+        if owner.retention.mode == RetentionMode::Zdr {
             let buffer = self
                 .zdr
                 .as_ref()
@@ -1254,8 +1254,8 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         deadline: Timestamp,
     ) -> Result<ArtifactRef, StoreError> {
         crawlx_core::dataset::validate_identifier(rendition)?;
-        let owner = self.runs.get(run).await?;
-        if owner.config.retention.mode == RetentionMode::Zdr {
+        let owner = self.runs.get_metadata(run).await?;
+        if owner.retention.mode == RetentionMode::Zdr {
             let buffer = self
                 .zdr
                 .as_ref()
@@ -1290,8 +1290,8 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         artifact: &ArtifactRef,
         size_bytes: u64,
     ) -> Result<crawlx_core::dataset::DatasetContentV1, StoreError> {
-        let owner = self.runs.get(run).await?;
-        if owner.config.retention.mode == RetentionMode::Zdr {
+        let owner = self.runs.get_metadata(run).await?;
+        if owner.retention.mode == RetentionMode::Zdr {
             let buffer = self
                 .zdr
                 .as_ref()

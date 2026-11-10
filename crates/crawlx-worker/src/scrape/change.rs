@@ -184,15 +184,12 @@ fn without_iframe_src(text: &str) -> Cow<'_, str> {
             i += 1;
             continue;
         }
-        let Some(close) = text[i..].find('>') else {
-            break;
-        };
-        let end = i + close;
-        if let Some((from, to)) = iframe_src_value(&text[i..end]) {
+        let (end, src) = iframe_src_value(&text[i..]);
+        if let Some((from, to)) = src {
             out.push_str(&text[copied..i + from]);
             copied = i + to;
         }
-        i = end;
+        i += end;
     }
     if copied == 0 {
         return Cow::Borrowed(text);
@@ -201,8 +198,8 @@ fn without_iframe_src(text: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// Byte range of the `src` value (without its quotes) inside the opening tag `tag`.
-fn iframe_src_value(tag: &str) -> Option<(usize, usize)> {
+/// Tag end and byte range of its `src` value (without quotes), including truncated tags.
+fn iframe_src_value(tag: &str) -> (usize, Option<(usize, usize)>) {
     let bytes = tag.as_bytes();
     let skip_space = |mut k: usize| {
         while bytes.get(k).is_some_and(u8::is_ascii_whitespace) {
@@ -210,30 +207,51 @@ fn iframe_src_value(tag: &str) -> Option<(usize, usize)> {
         }
         k
     };
-    (1..bytes.len().saturating_sub(2)).find_map(|j| {
-        if !(bytes[j - 1].is_ascii_whitespace() && bytes[j..j + 3].eq_ignore_ascii_case(b"src")) {
-            return None;
-        }
-        let eq = skip_space(j + 3);
-        if bytes.get(eq) != Some(&b'=') {
-            return None;
-        }
-        let start = skip_space(eq + 1);
-        match bytes.get(start) {
-            Some(&quote @ (b'"' | b'\'')) => {
-                let close = bytes[start + 1..].iter().position(|b| *b == quote)?;
-                Some((start + 1, start + 1 + close))
+    let mut i = b"<iframe".len();
+    let mut src = None;
+    while i < bytes.len() {
+        i = skip_space(i);
+        match bytes.get(i) {
+            Some(b'>') => return (i + 1, src),
+            Some(b'/') => {
+                i += 1;
+                continue;
             }
-            Some(_) => {
-                let len = bytes[start..]
-                    .iter()
-                    .position(u8::is_ascii_whitespace)
-                    .unwrap_or(bytes.len() - start);
-                Some((start, start + len))
-            }
-            None => None,
+            None => break,
+            Some(_) => {}
         }
-    })
+        let name = i;
+        while bytes
+            .get(i)
+            .is_some_and(|b| !b.is_ascii_whitespace() && !matches!(b, b'=' | b'/' | b'>'))
+        {
+            i += 1;
+        }
+        let is_src = bytes[name..i].eq_ignore_ascii_case(b"src");
+        i = skip_space(i);
+        if bytes.get(i) != Some(&b'=') {
+            continue;
+        }
+        i = skip_space(i + 1);
+        let quote = bytes.get(i).copied().filter(|b| matches!(b, b'"' | b'\''));
+        if quote.is_some() {
+            i += 1;
+        }
+        let start = i;
+        while bytes.get(i).is_some_and(|b| match quote {
+            Some(quote) => *b != quote,
+            None => !b.is_ascii_whitespace() && *b != b'>',
+        }) {
+            i += 1;
+        }
+        if is_src && src.is_none() && start < i {
+            src = Some((start, i));
+        }
+        if quote.is_some() && i < bytes.len() {
+            i += 1;
+        }
+    }
+    (bytes.len(), src)
 }
 
 #[cfg(test)]
@@ -327,13 +345,36 @@ mod tests {
         assert_eq!(blanked("<IFRAME class=c SRC = 'u'>"), "<IFRAME class=c SRC = ''>");
         assert_eq!(blanked("<iframe src=u/1 id=x>"), "<iframe src= id=x>");
         assert_eq!(blanked("<iframe\n src=\"u\"\n>"), "<iframe\n src=\"\"\n>");
-        // other tags, other attributes and an unterminated tag are left alone
+        // other tags and other attributes are left alone
         assert_eq!(
             blanked(r#"<img src="u"> <iframe data-src="u">"#),
             r#"<img src="u"> <iframe data-src="u">"#
         );
         assert_eq!(blanked(r#"<iframes src="u">"#), r#"<iframes src="u">"#);
         assert_eq!(blanked("<iframe src=\"u"), "<iframe src=\"");
+        for (input, expected) in [
+            ("<iframe SRC='u", "<iframe SRC='"),
+            ("<iframe src=u", "<iframe src="),
+            ("<iframe src=\"u>", "<iframe src=\""),
+            ("<iframe src='u>", "<iframe src='"),
+            ("<iframe src=\"u>v\" id=x>", "<iframe src=\"\" id=x>"),
+            ("<iframe title='a>b' src=u>", "<iframe title='a>b' src=>"),
+            (
+                "<iframe title=\" src='keep'\" src=u>",
+                "<iframe title=\" src='keep'\" src=>",
+            ),
+            ("<iframe/src=u>", "<iframe/src=>"),
+            ("<iframe src=u'v id=x>", "<iframe src= id=x>"),
+            ("é <iframe src='雪", "é <iframe src='"),
+            ("<iframe src=>", "<iframe src=>"),
+            ("<iframe src=\"", "<iframe src=\""),
+            ("<iframe src=", "<iframe src="),
+            ("<iframe", "<iframe"),
+            ("<iframe data-src=u", "<iframe data-src=u"),
+            ("<iframe src=u><IFRAME SRC='v", "<iframe src=><IFRAME SRC='"),
+        ] {
+            assert_eq!(blanked(input), expected, "{input:?}");
+        }
         assert!(matches!(without_iframe_src("no tags"), Cow::Borrowed(_)));
     }
 

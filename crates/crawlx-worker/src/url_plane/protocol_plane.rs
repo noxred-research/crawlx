@@ -4,7 +4,18 @@ use super::*;
 use crawlx_core::protocol::ProtocolRouteV1;
 
 impl UrlPlaneRunner {
-    pub(super) async fn process_protocol_entry(
+    pub(super) fn process_protocol_entry<'a>(
+        &'a self,
+        entry: &'a FrontierEntry,
+        route: &'a ProtocolRouteV1,
+        label: &'a str,
+        discovery: Option<&'a DenialReason>,
+        cancel: &'a CancellationToken,
+    ) -> impl Future<Output = Result<(), WorkerError>> + Send + 'a {
+        Box::pin(self.process_protocol_entry_inner(entry, route, label, discovery, cancel))
+    }
+
+    async fn process_protocol_entry_inner(
         &self,
         entry: &FrontierEntry,
         route: &ProtocolRouteV1,

@@ -477,3 +477,58 @@ async fn the_static_plane_emits_the_url_metrics() {
         "unknown planes never get a series"
     );
 }
+
+#[tokio::test]
+async fn local_url_work_preserves_tenant_scope_after_spawning() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct ScopedResolver {
+        tenant: crawlx_core::TenantId,
+        inner: StaticResolver,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crawlx_fetch::Resolver for ScopedResolver {
+        async fn resolve(&self, host: &str) -> Result<Vec<std::net::IpAddr>, crawlx_fetch::FetchError> {
+            assert_eq!(crawlx_storage::tenant::current(), Some(self.tenant));
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            crawlx_fetch::Resolver::resolve(&self.inner, host).await
+        }
+    }
+
+    let site = common::site::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut url = url::Url::parse(&site.base).unwrap();
+    url.set_host(Some("tenant-fixture.test")).unwrap();
+    let mut request = static_crawl(&url.origin().ascii_serialization());
+    request.safety.respect_robots_txt = false;
+    request.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
+    request.scope.max_discovery_depth = 0;
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let tenant = stores.tenant;
+    let mut record = common::authorization::verified_record(&request, tenant);
+    record.url_prefixes = vec![url.origin().ascii_serialization()];
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut cfg = config(dir.path());
+    cfg.egress.resolver = Some(Arc::new(ScopedResolver {
+        tenant,
+        inner: StaticResolver::new().with("tenant-fixture.test", [std::net::Ipv4Addr::LOCALHOST.into()]),
+        calls: Arc::clone(&calls),
+    }));
+    let report = crawlx_storage::tenant::scope(
+        tenant,
+        crawlx_worker::run_local_with(
+            LocalRun::new(request, cfg)
+                .with_stores(stores)
+                .with_authorization(record),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.status, RunStatus::Completed);
+    assert_eq!(report.pages.len(), 1);
+    assert!(calls.load(Ordering::Relaxed) > 0);
+}

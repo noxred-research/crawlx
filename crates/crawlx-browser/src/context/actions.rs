@@ -16,6 +16,7 @@ use crawlx_core::ids::BackendNodeId;
 use crawlx_core::observation::{ActionReceipt, BoundingBox, LiveTargetFacts, Revalidation, RuntimeLocator};
 use crawlx_core::traffic::Fidelity;
 use serde_json::{json, Value};
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 const ACT_GROUP: &str = "crawlx-act";
@@ -354,7 +355,15 @@ impl CdpContext {
     }
 
     /// The full actionability pipeline for one target.
-    async fn check_target(
+    fn check_target<'a>(
+        &'a self,
+        locator: &'a RuntimeLocator,
+        expected: Option<ObservationEpoch>,
+    ) -> impl Future<Output = Result<Check, BrowserError>> + Send + 'a {
+        Box::pin(self.check_target_inner(locator, expected))
+    }
+
+    async fn check_target_inner(
         &self,
         locator: &RuntimeLocator,
         expected: Option<ObservationEpoch>,
@@ -582,7 +591,14 @@ impl CdpContext {
 
     /// Session the pointer event goes to and the hit point, in that session's viewport: an
     /// out-of-process iframe receives its input on its own session.
-    async fn pointer_target(
+    fn pointer_target<'a>(
+        &'a self,
+        locator: &'a RuntimeLocator,
+    ) -> impl Future<Output = Result<(CdpSession, (f64, f64)), BrowserError>> + Send + 'a {
+        Box::pin(self.pointer_target_inner(locator))
+    }
+
+    async fn pointer_target_inner(
         &self,
         locator: &RuntimeLocator,
     ) -> Result<(CdpSession, (f64, f64)), BrowserError> {
@@ -691,8 +707,16 @@ impl CdpContext {
         })
     }
 
+    fn run_action<'a>(
+        &'a mut self,
+        tab_id: &'a str,
+        action: BrowserAction,
+    ) -> impl Future<Output = Result<(), BrowserError>> + Send + 'a {
+        Box::pin(self.run_action_inner(tab_id, action))
+    }
+
     #[allow(clippy::too_many_lines)]
-    async fn run_action(&mut self, tab_id: &str, action: BrowserAction) -> Result<(), BrowserError> {
+    async fn run_action_inner(&mut self, tab_id: &str, action: BrowserAction) -> Result<(), BrowserError> {
         match action {
             BrowserAction::Click {
                 target,

@@ -8,6 +8,18 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed: bounded static-fetch futures and compatibility responses
+
+Static fetches now isolate transport and decoder state behind one heap allocation per fetch. URL dispatch also isolates each acquisition backend, so unused scrape and protocol state machines do not inflate static execution. These boundaries keep nested robots and page acquisition off the executor stack without increasing thread stack limits, with future-size regression tests. Static and hybrid URL-plane tasks retain their crawl tracing span. Compatibility crawl status returns a `next` link only when more stored results exist; clients poll the status route itself for new results. Change tracking also blanks iframe source values in truncated tags and handles quoted tag delimiters without changing unrelated attributes.
+
+Local URL-plane execution uses a structured child task so its polling stack does not nest inside local orchestration. Dropping the parent aborts the child, and crawl tracing plus producer custody follow the child.
+
+Session actors also isolate command and recovery futures, preventing unused command variants from inflating every actor poll under a constrained executor stack.
+
+Artifact admission, retention checks and in-memory artifact ownership checks now use the existing compact run metadata projection rather than cloning operational crawl configuration. Tenant ownership, terminal-credential refusal, expiry, custody and privacy checks remain unchanged.
+
+Gym event reports and form submissions now reach the server ledger in handler order instead of racing independent requests. This keeps same-seed G24 ledgers deterministic while ordinary fixture API requests remain concurrent.
+
 ### Fixed: PostgreSQL rejected actions finished with scripted-scroll fidelity
 
 The `action_fidelity` enum lacked `scripted_scroll`, so finishing an action whose receipt reported a forced scroll failed on PostgreSQL (migration `0046`). A property test now stores random action kinds and receipt fidelities through the journal and requires `lane`/`fidelity` to be present and consistent on every stored row, on the in-memory store and on PostgreSQL.

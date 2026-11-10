@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crawlx_bench::gym::fixtures::{self, backend, catalog_row, CATALOG_ROWS, NAMED_FIXTURES};
+use crawlx_bench::gym::ledger::LedgerEvent;
 use crawlx_bench::gym::manifest::{ControlRisk, ExpectedClass, FixtureManifest, Mechanism};
 use crawlx_bench::gym::{GymHandle, GymServer};
 use crawlx_bench::scorecard::{RunRows, Scorecard};
@@ -17,6 +18,7 @@ use crawlx_core::browser::{BrowserBackend, BrowserContext, ContextConfig};
 use crawlx_core::config::{CrawlMode, LaunchProfile, SafetyProfile};
 use crawlx_core::ids::SessionId;
 use crawlx_core::observation::{ObservationSpec, QuiescencePolicy};
+use crawlx_core::page_op::{PageOp, PageOpResult};
 use crawlx_elements::{Candidate, CandidateDiscovery, DiscoveryConfig};
 use crawlx_url::{CanonicalizeOptions, Canonicalizer};
 use crawlx_worker::{run_local_with, LocalRun};
@@ -820,6 +822,91 @@ async fn hybrid_mix_static_crawl_reaches_exactly_the_url_addressable_pages() {
 }
 
 // ---- real Chromium ----------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn g24_reports_reach_the_ledger_in_handler_order_when_first_request_is_blocked() {
+    let Some(backend) = launch().await else {
+        return;
+    };
+    let gym = gym().await;
+    let manifest = FixtureManifest::embedded("g24").unwrap();
+    let mut ctx = backend
+        .new_context(ContextConfig::new(SessionId::new()))
+        .await
+        .unwrap();
+    ctx.navigate(&canonical(&manifest.entry_url(&gym.base_url)))
+        .await
+        .unwrap();
+    let pending = ctx
+        .page_op(PageOp::EvaluateScript {
+            script: r#"(async () => {
+                const nativeFetch = window.fetch;
+                const started = [];
+                let release;
+                const blocked = new Promise(resolve => { release = resolve; });
+                window.fetch = function (url, init) {
+                    started.push(url);
+                    const send = () => nativeFetch.call(window, url, init);
+                    return started.length === 1 ? blocked.then(send) : send();
+                };
+                try {
+                    const click = __gym.hit('signup-submit');
+                    const form = __gym.form('signup', {
+                        email: 'ordered@example.test', name: 'Ordered', password: 'password123'
+                    });
+                    const probe = __gym.probe('ordered', 'done');
+                    await Promise.resolve();
+                    const pending = started.length;
+                    release();
+                    await Promise.all([click, form, probe]);
+                    return pending;
+                } finally {
+                    window.fetch = nativeFetch;
+                }
+            })()"#
+                .to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(pending, PageOpResult::Json(serde_json::json!(1)));
+    let events: Vec<_> = gym
+        .ledger()
+        .entries_for("g24")
+        .into_iter()
+        .map(|entry| entry.event)
+        .filter(|event| !matches!(event, LedgerEvent::Op { .. }))
+        .collect();
+    assert_eq!(
+        events,
+        vec![
+            LedgerEvent::Click {
+                control: "signup-submit".to_owned(),
+                trusted: false,
+            },
+            LedgerEvent::FormSubmit {
+                form: "signup".to_owned(),
+                fields: BTreeMap::from([
+                    ("email".to_owned(), "ordered@example.test".to_owned()),
+                    ("name".to_owned(), "Ordered".to_owned()),
+                    ("password".to_owned(), "password123".to_owned()),
+                ]),
+            },
+            LedgerEvent::Effect {
+                principal: "anonymous".to_owned(),
+                effect: "form:signup:accepted".to_owned(),
+                resource: "signup".to_owned(),
+                resource_context: "none".to_owned(),
+            },
+            LedgerEvent::Probe {
+                name: "ordered".to_owned(),
+                value: "done".to_owned(),
+            },
+        ]
+    );
+    ctx.close().await.unwrap();
+    backend.close().await.unwrap();
+    gym.shutdown().await;
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn g10_timer_reveals_appear_without_any_action_and_learn_no_confident_edge() {

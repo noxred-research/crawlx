@@ -222,6 +222,10 @@ curl -s $BASE/crawl/<id> -H "$AUTH"                                             
 
 The request and response shapes are the ones the client rows above exercise.
 
+`next` paginates results already stored; it is null when no further result page exists, even when
+`status` is `scraping`. Follow non-null links to drain available results. Poll the status route again
+to wait for more results or a terminal status; a null `next` does not mean the crawl has finished.
+
 ## 7. Caveats
 
 * **The Python client library and its dependents (the framework loaders) need the `/v2/*` rewrite** (section 3); without it

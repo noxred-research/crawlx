@@ -53,7 +53,9 @@ use crawlx_telemetry::Metrics;
 use crawlx_url::CanonicalizeOptions;
 use futures::FutureExt as _;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::future::Future;
 use std::panic::AssertUnwindSafe;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -1086,7 +1088,17 @@ impl SessionActor {
     ///
     /// # Errors
     /// Fails when a storage, browser or network operation it depends on fails.
-    pub async fn spawn(
+    pub fn spawn(
+        cfg: SessionConfig,
+        svc: SessionServices,
+        analyzer: Arc<StateAnalyzer>,
+        retention_days: u16,
+        pooled: PooledContext,
+    ) -> impl Future<Output = Result<SessionHandle, SessionError>> + Send {
+        Box::pin(Self::spawn_inner(cfg, svc, analyzer, retention_days, pooled))
+    }
+
+    async fn spawn_inner(
         cfg: SessionConfig,
         svc: SessionServices,
         analyzer: Arc<StateAnalyzer>,
@@ -1259,7 +1271,7 @@ impl SessionActor {
             }
             if self.needs_recovery && !stop {
                 self.needs_recovery = false;
-                match self.recover().await {
+                match Box::pin(self.recover()).await {
                     Ok(rung) => {
                         self.stats.recoveries.fetch_add(1, Ordering::Relaxed);
                         Metrics::global()
@@ -1431,11 +1443,17 @@ impl SessionActor {
         )
     }
 
+    // Construct only the selected operation's future in a separate synchronous
+    // frame; unused command variants must not reserve their state on every poll.
+    fn command_future<F: Future>(make: impl FnOnce() -> F) -> Pin<Box<F>> {
+        Box::pin(make())
+    }
+
     /// Returns true when the actor must stop.
     async fn handle(&mut self, cmd: SessionCommand) -> bool {
         match cmd {
             SessionCommand::Observe { spec, span, reply } => {
-                let r = self.observe(spec, &span).await;
+                let r = Self::command_future(|| self.observe(spec, &span)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
@@ -1446,27 +1464,27 @@ impl SessionActor {
                 span,
                 reply,
             } => {
-                let r = self.execute(*action, settle, retry_of, &span).await;
+                let r = Self::command_future(|| self.execute(*action, settle, retry_of, &span)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::Navigate { request, reply } => {
-                let r = self.navigate(&request).await;
+                let r = Self::command_future(|| self.navigate(&request)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::Checkpoint { reason, reply } => {
-                let r = self.checkpoint(reason).await;
+                let r = Self::command_future(|| self.checkpoint(reason)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::Restore { checkpoint, reply } => {
-                let r = self.restore(checkpoint).await;
+                let r = Self::command_future(|| self.restore(checkpoint)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::Reconcile { action_id, reply } => {
-                let r = self.reconcile(action_id).await;
+                let r = Self::command_future(|| self.reconcile(action_id)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
@@ -1503,7 +1521,7 @@ impl SessionActor {
                         Err(SessionError::LoginFailed("login binding expired".into())),
                         true,
                     ),
-                    r = self.do_login(*material, fallback) => (r, false),
+                    r = Self::command_future(|| self.do_login(*material, fallback)) => (r, false),
                 };
                 if interrupted {
                     // Dropping the login future stops subsequent plan steps, not an already
@@ -1523,31 +1541,31 @@ impl SessionActor {
                 let _ = reply.send(r);
             }
             SessionCommand::NarrowBindingDeadline { deadline, reply } => {
-                let r = self.narrow_binding_deadline(deadline).await;
+                let r = Self::command_future(|| self.narrow_binding_deadline(deadline)).await;
                 let _ = reply.send(r);
             }
             SessionCommand::ResolveSelector { selector, reply } => {
-                let r = self.resolve_selector(&selector).await;
+                let r = Self::command_future(|| self.resolve_selector(&selector)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::Revalidate { locator, reply } => {
-                let r = self.revalidate(&locator).await;
+                let r = Self::command_future(|| self.revalidate(&locator)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::StorageDigest { reply } => {
-                let r = self.storage_digest().await;
+                let r = Self::command_future(|| self.storage_digest()).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::TypeCredential { target, value, reply } => {
-                let r = self.type_credential(target, value).await;
+                let r = Self::command_future(|| self.type_credential(target, value)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
             SessionCommand::PageOp { op, reply } => {
-                let r = self.page_op(*op).await;
+                let r = Self::command_future(|| self.page_op(*op)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
@@ -1556,7 +1574,7 @@ impl SessionActor {
                 targets,
                 reply,
             } => {
-                let r = self.css_filter(&filter, &targets).await;
+                let r = Self::command_future(|| self.css_filter(&filter, &targets)).await;
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
@@ -1566,7 +1584,7 @@ impl SessionActor {
             }
             SessionCommand::Pause => {
                 if matches!(self.state, SessionState::Ready | SessionState::Authenticating) {
-                    let _ = self.checkpoint(CheckpointReason::Pause).await;
+                    let _ = Self::command_future(|| self.checkpoint(CheckpointReason::Pause)).await;
                     self.set_state(SessionState::Paused);
                 }
             }
@@ -1586,13 +1604,13 @@ impl SessionActor {
                         SessionState::Ready | SessionState::Paused | SessionState::Authenticating
                     )
                 {
-                    self.checkpoint_best_effort(CheckpointReason::Shutdown).await;
+                    Self::command_future(|| self.checkpoint_best_effort(CheckpointReason::Shutdown)).await;
                 }
                 if self.cfg.traffic_export.is_some() {
                     self.collect_traffic();
                 }
                 self.set_state(SessionState::Closing);
-                let cleanup = self.close_context().await;
+                let cleanup = Self::command_future(|| self.close_context()).await;
                 self.exit.lock().shutdown_completed = cleanup.is_ok();
                 self.set_state(SessionState::Closed);
                 let _ = reply.send(cleanup);

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! Residual shapes of the compat facade, each proven through the public router: the crawl status
-//! `warning`, the in-flight `expiresAt` and `next`, the map `id` and URL spelling, the `html`
+//! `warning`, the in-flight `expiresAt` and stored-page-only `next`, the map `id` and URL spelling, the `html`
 //! document skeleton, `changeTracking` ignoring iframe `src`, the response headers of the compat
 //! routes (CORS, `ETag`, `X-Response-Time`), the echo of the caller's `x-request-id` on a `409`,
 //! `compat.mode` and the dual signing of native webhooks.
@@ -124,10 +124,10 @@ async fn a_stopped_crawl_that_found_one_page_says_how_to_broaden_it() {
     rig.stop().await;
 }
 
-// ---- in-flight `expiresAt` and `next` ----------------------------------------------------------
+// ---- in-flight `expiresAt` and stored-page pagination ------------------------------------------
 
 #[tokio::test]
-async fn a_running_crawl_already_has_an_expiry_and_a_next_link() {
+async fn a_running_crawl_has_an_expiry_but_no_next_without_stored_pages() {
     let rig = scrape_rig::Rig::start(parked(CompatConfig::default())).await;
     let (s, _, v) = rig
         .env
@@ -148,14 +148,13 @@ async fn a_running_crawl_already_has_an_expiry_and_a_next_link() {
     )
     .unwrap();
     assert!(expires > created, "{status}");
-    let next = status["next"].as_str().unwrap_or_else(|| panic!("{status}"));
-    assert!(next.ends_with(&format!("{V2}/crawl/{id}?skip=0")), "{next}");
+    assert_eq!(status["next"], Value::Null, "{status}");
     assert_eq!(status["data"], json!([]));
 
-    // the query of the request is kept in the link, and an offset moves it on
+    // An offset past the available data must not turn pagination into a polling link.
     let (_, _, status) = rig.env.get(&format!("{V2}/crawl/{id}?limit=5&skip=3")).await;
-    let next = status["next"].as_str().unwrap();
-    assert!(next.contains("limit=5") && next.ends_with("skip=3"), "{next}");
+    assert_eq!(status["data"], json!([]));
+    assert_eq!(status["next"], Value::Null, "{status}");
 }
 
 #[tokio::test]

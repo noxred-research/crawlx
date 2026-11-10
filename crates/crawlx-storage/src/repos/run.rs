@@ -43,7 +43,11 @@ async fn run_from_row(pg: &Pg, r: &PgRow) -> Result<CrawlRun, StoreError> {
             )
             .await?
         } else {
-            from_json(get::<serde_json::Value>(r, "config")?)?
+            let config = get::<serde_json::Value>(r, "config")?;
+            // Decode on an independent stack rather than the nested metadata future's stack.
+            tokio::task::spawn_blocking(move || from_json(config))
+                .await
+                .map_err(|error| StoreError::Backend(format!("run config decode task failed: {error}")))??
         },
         config_digest: crate::codec::digest(&get::<Vec<u8>>(r, "config_digest")?)?,
         seed: CrawlSeed(unsigned_bits(get(r, "seed")?)?),

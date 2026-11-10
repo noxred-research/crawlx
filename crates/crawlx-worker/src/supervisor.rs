@@ -87,11 +87,11 @@ impl Supervisor {
         let name = name.to_owned();
         let failures = self.failures.clone();
         let span = tracing::Span::current();
+        // Heap-pin before constructing wrappers so custody, tracing, the tracker and
+        // `catch_unwind` never hold or move the large actor future by value.
+        let fut = Box::pin(fut);
         self.tracker.spawn(crawlx_core::custody::inherit(async move {
-            // Heap-pin the task body: the actor future is large, and each wrapper above it (the
-            // custody scope, the tracker, `catch_unwind`) would otherwise hold or move it by value
-            // on the worker thread's stack, which overflows its 2 MiB in debug builds.
-            match AssertUnwindSafe(Box::pin(fut)).catch_unwind().await {
+            match AssertUnwindSafe(fut).catch_unwind().await {
                 Ok(v) => Ok(v),
                 Err(payload) => {
                     let failure = SessionFailure {
