@@ -168,9 +168,12 @@ Thresholds are the planning defaults; each is a named constant in `release_gate.
 
 ## CI evidence transfer
 
-The `release-checklist` job runs on manual dispatch, the weekly schedule and `v*` release
-tags. Dispatch and tag evaluations block on failed or unmeasured items; weekly evaluations
-publish the same results without treating a report as release approval.
+The `release-checklist` job of `ci.yml` runs on manual dispatch and the weekly schedule.
+Dispatch evaluations block on failed or unmeasured items; weekly evaluations publish the same
+results without treating a report as release approval. `v*` release tags run the separate
+`release-checklist.yml` workflow, which blocks the same way. It has no producer jobs and no
+caches (a tag trigger makes cached steps a cache-poisoning surface), so it never finds
+same-run evidence and every producer-supplied item stays unmeasured until supplied.
 
 The job waits for its producers and downloads this run's `release-evidence-*` artifacts.
 `ci/release-evidence.py` copies the available G1 report to `bench/out/g1-report.json`,

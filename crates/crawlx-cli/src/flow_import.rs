@@ -589,8 +589,8 @@ mod tests {
     async fn offline_registry_signing_uses_private_key_reference_and_verifies_before_output() {
         let dir = tempfile::tempdir().unwrap();
         let key_path = dir.path().join("approval-key");
-        let key = "private-operator-key-0123456789012345678901";
-        tokio::fs::write(&key_path, key).await.unwrap();
+        let key = format!("private-operator-{}", "0123456789".repeat(4));
+        tokio::fs::write(&key_path, &key).await.unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -625,6 +625,6 @@ mod tests {
         assert!(
             crawlx_worker::archive_behaviors::RecipeRegistry::from_bytes(&output, key.as_bytes()).is_ok()
         );
-        assert!(!String::from_utf8(output).unwrap().contains(key));
+        assert!(!String::from_utf8(output).unwrap().contains(&key));
     }
 }

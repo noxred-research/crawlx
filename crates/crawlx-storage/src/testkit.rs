@@ -1,6 +1,7 @@
 //! Fixtures for tests of this crate and of downstream crates (scheduler, worker,
 //! strategies). Everything here is deterministic apart from fresh UUIDv7 ids.
 
+pub mod archive_races;
 #[cfg(feature = "fake-kms")]
 pub mod fake_kms;
 #[cfg(feature = "fake-s3")]

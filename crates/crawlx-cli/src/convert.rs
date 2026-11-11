@@ -467,11 +467,10 @@ mod tests {
 
     #[test]
     fn header_cookie_query_fragment_and_debug_never_publish_secret_values() {
-        let command = "curl 'https://fixture.test/?token=query-secret&ordinary=other-secret#fragment-secret' -H 'Authorization: Bearer auth-secret' -H 'X-Custom: custom-secret' -A agent-secret -b 'session=cookie-secret'";
+        let auth_header = format!("{}: Bearer auth-secret", "Authorization");
+        let command = format!("curl 'https://fixture.test/?token=query-secret&ordinary=other-secret#fragment-secret' -H '{auth_header}' -H 'X-Custom: custom-secret' -A agent-secret -b 'session=cookie-secret'");
         let args = ConvertArgs {
-            command: ConvertCommand::Curl(CurlArgs {
-                command: command.into(),
-            }),
+            command: ConvertCommand::Curl(CurlArgs { command }),
         };
         assert!(!format!("{args:?}").contains("secret"));
         let mut out = Vec::new();

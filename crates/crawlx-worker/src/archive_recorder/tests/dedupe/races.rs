@@ -3,6 +3,7 @@
 
 use super::*;
 use crawlx_core::archive_catalog::ArchiveRepo;
+use crawlx_storage::testkit::archive_races;
 use crawlx_storage::ArtifactIndex;
 use std::time::Duration;
 
@@ -145,9 +146,7 @@ async fn postgres_package_class_upgrade_revokes_and_physically_erases_dependents
         return;
     };
     let (source, dependent) = pair(&fixture.stores, fixture.clock.clone()).await;
-    sqlx::query("UPDATE artifacts SET sensitivity='sensitive' WHERE artifact_id=$1")
-        .bind(source.artifact.as_ref().unwrap().id.0)
-        .execute(fixture.pg.pool())
+    archive_races::mark_artifact_sensitive(&fixture.pg, source.artifact.as_ref().unwrap().id.0)
         .await
         .unwrap();
     revoked(&fixture.stores, &source, &dependent, fixture.clock.now()).await;
@@ -179,16 +178,7 @@ async fn postgres_package_class_upgrade_revokes_and_physically_erases_dependents
 async fn waiters(pg: &Pg, tenant: TenantId, expected: i64) {
     tokio::time::timeout(Duration::from_secs(20), async {
         for _ in 0..500 {
-            let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objsubid=1 \
-                 AND classid::bigint=((hashtextextended($1,0)>>32)&4294967295::bigint) \
-                 AND objid::bigint=(hashtextextended($1,0)&4294967295::bigint)",
-            )
-            .bind(tenant.to_string())
-            .fetch_one(pg.pool())
-            .await
-            .unwrap();
-            if count >= expected {
+            if archive_races::archive_lock_waiters(pg, tenant).await.unwrap() >= expected {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -289,10 +279,7 @@ async fn postgres_erase_waiting_for_dependency_commit_refreshes_closure_and_eras
         .await
         .unwrap()
         .unwrap();
-    let mut held = fixture.pg.pool().begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-        .bind(dependent.tenant.to_string())
-        .execute(&mut *held)
+    let held = archive_races::HeldArchiveLock::acquire(&fixture.pg, dependent.tenant)
         .await
         .unwrap();
     let mut tasks = tokio::task::JoinSet::new();
@@ -308,7 +295,7 @@ async fn postgres_erase_waiting_for_dependency_commit_refreshes_closure_and_eras
     let source_id = source.id;
     tasks.spawn(async move { RaceResult::Erase(ArchiveRepo::erase(&pg, tenant, source_id).await) });
     waiters(&fixture.pg, dependent.tenant, 2).await;
-    held.commit().await.unwrap();
+    held.release().await.unwrap();
     for _ in 0..2 {
         match tokio::time::timeout(Duration::from_secs(20), tasks.join_next())
             .await
@@ -322,14 +309,9 @@ async fn postgres_erase_waiting_for_dependency_commit_refreshes_closure_and_eras
             RaceResult::Erase(result) => result.unwrap(),
         }
     }
-    let edge: uuid::Uuid = sqlx::query_scalar(
-        "SELECT source_export FROM archive_dependencies WHERE tenant_id=$1 AND export_id=$2",
-    )
-    .bind(tenant.0)
-    .bind(dependent.id.0)
-    .fetch_one(fixture.pg.pool())
-    .await
-    .unwrap();
+    let edge = archive_races::archive_dependency_source(&fixture.pg, tenant, dependent.id.0)
+        .await
+        .unwrap();
     assert_eq!(
         edge, source.id,
         "erase must include the edge committed while it waited"

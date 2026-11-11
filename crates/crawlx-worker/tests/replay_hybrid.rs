@@ -285,22 +285,29 @@ async fn a_recorded_path_replays_and_verifies_against_the_live_target() {
     assert_eq!(broken.steps[0].verdict, StepVerdict::ElementNotFound);
 }
 
+/// A page whose only route to `/alpha` is a page-hook discovery: no AX candidates and no
+/// rendered link.
+fn hook_navigation_script(target: &str) -> FakeScript {
+    FakeScript::new()
+        .page(
+            FakePage::new("https://example.test/")
+                .title("Home")
+                .discovered(target, "pushState"),
+        )
+        .page(FakePage::new("https://example.test/alpha").title("Alpha"))
+        .page(FakePage::new("https://example.test/changed").title("Changed"))
+}
+
 #[tokio::test]
-async fn rendered_html_navigation_replays_without_page_hooks_or_ax_candidates() {
+async fn page_hook_navigation_replays_without_ax_candidates() {
     let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
         .await
         .unwrap();
-    let script = FakeScript::new()
-        .page(
-            FakePage::new("https://example.test/")
-                .title("Home")
-                .html("<html><body><a href='/alpha'>Alpha</a></body></html>"),
-        )
-        .page(FakePage::new("https://example.test/alpha").title("Alpha"));
+    let script = hook_navigation_script("/alpha");
     let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
     crawl.mode = CrawlMode::Dynamic;
-    crawl.dynamic.page_hooks = false;
+    crawl.dynamic.page_hooks = true;
     crawl.limits.interactions = 1;
     let report = run_local_with(
         LocalRun::new(crawl, cfg(dir.path()))
@@ -314,7 +321,7 @@ async fn rendered_html_navigation_replays_without_page_hooks_or_ax_candidates() 
         .actions
         .iter()
         .find(|action| action.status == ActionStatus::Succeeded)
-        .expect("rendered HTML supplies a navigation target without AX candidates");
+        .expect("a page-hook destination supplies a navigation target without AX candidates");
     assert_eq!(target.strategy, crawlx_worker::driver::DISCOVERED_URLS_STRATEGY);
     let plan = ReplayPlan::load(&stores, report.run_id, target.id).await.unwrap();
     assert_eq!(plan.steps.len(), 1);
@@ -334,16 +341,11 @@ async fn rendered_html_navigation_replays_without_page_hooks_or_ax_candidates() 
         .iter()
         .all(|step| matches!(step.verdict, StepVerdict::Matched { .. })));
 
-    let changed = FakeScript::new().page(
-        FakePage::new("https://example.test/")
-            .title("Home")
-            .html("<html><body><a href='/changed'>Alpha</a></body></html>"),
-    );
     let broken = ReplayRunner::run(
         cfg(dir.path()),
         plan,
         ReplayMode::Verify,
-        Some(real_clock_backend(changed)),
+        Some(real_clock_backend(hook_navigation_script("/changed"))),
         None,
     )
     .await
@@ -351,6 +353,43 @@ async fn rendered_html_navigation_replays_without_page_hooks_or_ax_candidates() 
     assert!(!broken.ok);
     assert_eq!(broken.steps.len(), 1);
     assert_eq!(broken.steps[0].verdict, StepVerdict::ElementNotFound);
+}
+
+/// Recording a rendered document never turns its HTML links into navigation proposals: with
+/// page hooks off and no AX candidates the session has nothing to execute.
+#[tokio::test]
+async fn rendered_html_links_alone_add_no_navigation_proposal() {
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let script = FakeScript::new()
+        .page(
+            FakePage::new("https://example.test/")
+                .title("Home")
+                .html("<html><body><a href='/alpha'>Alpha</a></body></html>"),
+        )
+        .page(FakePage::new("https://example.test/alpha").title("Alpha"));
+    let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
+    crawl.mode = CrawlMode::Dynamic;
+    crawl.dynamic.page_hooks = false;
+    crawl.limits.interactions = 1;
+    let report = run_local_with(
+        LocalRun::new(crawl, cfg(dir.path()))
+            .with_backend(real_clock_backend(script))
+            .with_stores(stores),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.status, RunStatus::Completed);
+    assert!(
+        report
+            .actions
+            .iter()
+            .all(|action| action.strategy != crawlx_worker::driver::DISCOVERED_URLS_STRATEGY),
+        "{:#?}",
+        report.actions
+    );
 }
 
 /// A submit control inside a `<form method=post>`: the descriptor the replay admits on has no

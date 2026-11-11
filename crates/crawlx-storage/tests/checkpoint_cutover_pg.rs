@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use chrono::Duration;
-use crawlx_core::repo::{ArtifactStore, CheckpointRecord, CheckpointRepo, RunRepo, Sensitivity};
+use crawlx_core::repo::{ArtifactStore, CheckpointRecord, CheckpointRepo, Sensitivity};
 use crawlx_core::time::ManualClock;
 use crawlx_core::{CheckpointId, ObservationEpoch, StoreError, TenantId};
 use crawlx_storage::artifacts::{ArtifactReaper, FsArtifactStore, FsBlobs, ObjectArtifactStore};
@@ -67,7 +67,23 @@ async fn migration_0037_revokes_only_legacy_checkpoint_uses_and_sweeps_their_obj
     .await
     .unwrap();
     let sessions = sessions(run.id, 1, 2);
-    pg.create_sessions(&sessions).await.unwrap();
+    for session in &sessions {
+        // RunRepo::create_sessions also writes `session_kind`, which migration 0063 adds.
+        sqlx::query(
+            "INSERT INTO crawl_sessions (session_id,run_id,role,run_index,schedule_slot,status,action_seq) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        )
+        .bind(session.id.0)
+        .bind(run.id.0)
+        .bind(&session.role.0)
+        .bind(i32::from(session.run_index))
+        .bind(i32::try_from(session.schedule_slot).unwrap())
+        .bind(session.status.as_str())
+        .bind(i64::try_from(session.action_seq).unwrap())
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
     let now = pg.db_now().await.unwrap();
     let clock = Arc::new(ManualClock::new(now));
     let directory = tempfile::tempdir().unwrap();
