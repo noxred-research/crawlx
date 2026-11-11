@@ -1,0 +1,53 @@
+{
+  "id": "l03-pagination-and-areas",
+  "family": "link_discovery",
+  "note": "list of reports, category links, pager anchors and image-map areas",
+  "expectedText": "https://corpus.test/reports/2026/01/winter-traffic\nhttps://corpus.test/reports/2026/02/rail-survey\nhttps://corpus.test/reports/2026/03/quarterly-ports\nhttps://corpus.test/reports/category/ports\nhttps://corpus.test/reports/category/rail\nhttps://corpus.test/reports/map/north\nhttps://corpus.test/reports/map/south\nhttps://corpus.test/reports?page=1\nhttps://corpus.test/reports?page=3",
+  "spans": [
+    {
+      "label": "link",
+      "start": 0,
+      "end": 50
+    },
+    {
+      "label": "link",
+      "start": 51,
+      "end": 98
+    },
+    {
+      "label": "link",
+      "start": 99,
+      "end": 150
+    },
+    {
+      "label": "link",
+      "start": 151,
+      "end": 193
+    },
+    {
+      "label": "link",
+      "start": 194,
+      "end": 235
+    },
+    {
+      "label": "link",
+      "start": 236,
+      "end": 273
+    },
+    {
+      "label": "link",
+      "start": 274,
+      "end": 311
+    },
+    {
+      "label": "link",
+      "start": 312,
+      "end": 346
+    },
+    {
+      "label": "link",
+      "start": 347,
+      "end": 381
+    }
+  ]
+}

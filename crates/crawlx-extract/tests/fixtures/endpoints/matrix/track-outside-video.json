@@ -1,0 +1,13 @@
+{
+  "construct": "track-outside-video",
+  "body": [
+    "<audio><track src='/a/lyrics.vtt'></audio>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/a/lyrics.vtt",
+      "source": "track/src"
+    }
+  ]
+}

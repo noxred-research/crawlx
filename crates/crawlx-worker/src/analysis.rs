@@ -24,6 +24,7 @@ use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -491,7 +492,14 @@ impl StateAnalyzer {
     /// and do not fail the analysis (a state without artifacts is still a state). The
     /// fingerprint and the cluster decision are timed (`fingerprint.duration`,
     /// `cluster.decision.duration`).
-    pub async fn analyze(&self, bundle: &ObservationBundle) -> Analyzed {
+    pub fn analyze<'a>(
+        &'a self,
+        bundle: &'a ObservationBundle,
+    ) -> impl Future<Output = Analyzed> + Send + 'a {
+        Box::pin(self.analyze_inner(bundle))
+    }
+
+    async fn analyze_inner(&self, bundle: &ObservationBundle) -> Analyzed {
         let masks = MaskBuilder::build(bundle, &[], &self.masks);
         let metrics = Metrics::global();
         let fingerprint_started = Instant::now();

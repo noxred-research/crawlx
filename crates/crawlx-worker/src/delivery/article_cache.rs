@@ -233,6 +233,9 @@ fn restore_article_cache(
         validation: None,
         image_urls: None,
         attributes: None,
+        outputs: None,
+        decode: None,
+        markup: None,
     });
     Ok((document, saved.expires_at, saved.source))
 }

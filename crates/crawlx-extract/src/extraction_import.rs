@@ -266,6 +266,8 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
                     "prune_xpath" => json!("//aside"),
                     "read_more_link" => json!("//a[@rel='next']"),
                     "author_blacklist" => json!(["Alex Example"]),
+                    "url_filter" => json!(["/blog/", "?page="]),
+                    "list_input" => json!("authored-urls.txt"),
                     "strategy" => json!("breadth-first"),
                     "output_format" => json!(if source == Source::NewsArticle {
                         "json"
@@ -284,9 +286,8 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
                 };
                 let state = match category {
                     "proxy" | "cookies" | "headers" | "credentials" | "recorded_flow" => State::Rejected,
-                    "solver" | "news_search" | "trends" | "archived" | "sentence_tokenizer" => {
-                        State::ExternalRequired
-                    }
+                    "solver" | "news_search" | "trends" | "archived" | "sentence_tokenizer"
+                    | "list_input" => State::ExternalRequired,
                     "unavailable" | "requests_params" | "top_image_settings" | "date_params" => {
                         State::DecisionNeeded
                     }

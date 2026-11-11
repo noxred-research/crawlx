@@ -820,7 +820,34 @@ impl RunContext {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn build_with_fixture_evaluation(
+    fn build_with_fixture_evaluation<'a>(
+        run: &'a CrawlRun,
+        cfg: &'a WorkerConfig,
+        stores: Stores,
+        backend: Option<Arc<dyn BrowserBackend>>,
+        secrets: Arc<dyn SecretResolver>,
+        cancel: CancellationToken,
+        proxy: Option<&'a EgressProxyHandle>,
+        controls: RequestControls,
+        authorization: Option<Arc<AuthorizationGuard>>,
+        evaluation: Option<&'a crate::fixture_evaluation::BoundFixtureEvaluation>,
+    ) -> impl Future<Output = Result<Self, WorkerError>> + Send + 'a {
+        Box::pin(Self::build_with_fixture_evaluation_inner(
+            run,
+            cfg,
+            stores,
+            backend,
+            secrets,
+            cancel,
+            proxy,
+            controls,
+            authorization,
+            evaluation,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn build_with_fixture_evaluation_inner(
         run: &CrawlRun,
         cfg: &WorkerConfig,
         mut stores: Stores,
@@ -2165,42 +2192,59 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     active.add(1.0, &[]);
     let result: Result<(), WorkerError> = async {
         if crawl.mode != CrawlMode::Dynamic {
-            let mut plane = UrlPlaneRunner::new(
-                run.id,
-                crawl.clone(),
-                cfg.worker_id,
-                UrlPlaneDeps {
-                    runs: Arc::clone(&stores.runs),
-                    frontier: Arc::clone(&stores.frontier),
-                    request_commits: Arc::clone(&stores.request_commits),
-                    leases: Arc::clone(&stores.leases),
-                    pages: Arc::clone(&stores.pages),
-                    events: Arc::clone(&stores.events),
-                    artifacts: Arc::clone(&stores.artifacts),
-                    archives: Arc::clone(&stores.archives),
-                    clock: Arc::clone(&clock),
-                },
-                fetcher,
-                rc.counters.clone(),
-                rc.canon.clone(),
-            )?
-            .with_cpu_pool(rc.cpu_pool.clone())
-            .with_route_learner(rc.routes.clone())
-            .with_surface_services(&rc)
-            .with_scrape_services(&rc, &cfg)
-            .with_authorization(rc.authorization.clone());
-            if let Some(drain) = &graceful_drain {
-                plane = plane.with_graceful_drain(drain.clone(), Some(hard_cancel.clone()));
-            }
-            if let Some(state) = &resume {
-                plane.seed_resume(state);
-            }
-            // Match leased execution: finite input must be sealed before draining.
-            // Child discovery keeps using parent-fenced appends after that seal.
-            plane.seed_if_empty().await?;
-            // Allocate the large URL-lane state machine once per run, not inside
-            // the already nested orchestration poll frame.
-            let outcome = Box::pin(plane.run(&run_cancel)).await?;
+            let deps = UrlPlaneDeps {
+                runs: Arc::clone(&stores.runs),
+                frontier: Arc::clone(&stores.frontier),
+                request_commits: Arc::clone(&stores.request_commits),
+                leases: Arc::clone(&stores.leases),
+                pages: Arc::clone(&stores.pages),
+                events: Arc::clone(&stores.events),
+                artifacts: Arc::clone(&stores.artifacts),
+                archives: Arc::clone(&stores.archives),
+                clock: Arc::clone(&clock),
+            };
+            // Match leased execution's independent task boundary. Heap pinning
+            // alone does not unwind the orchestration poll stack before URL work.
+            // JoinSet aborts the child if this run is dropped; its span follows
+            // the crawl exactly as it does for supervised leased URL tasks.
+            let mut plane_tasks = tokio::task::JoinSet::new();
+            let task_cfg = cfg.clone();
+            let task_rc = Arc::clone(&rc);
+            let task_drain = graceful_drain
+                .as_ref()
+                .map(|drain| (drain.clone(), hard_cancel.clone()));
+            let task_cancel = run_cancel.clone();
+            let tenant = crawlx_storage::tenant::current();
+            let work = Box::pin(async move {
+                let plane = build_local_url_plane(
+                    crawl,
+                    &task_cfg,
+                    &task_rc,
+                    fetcher,
+                    deps,
+                    task_drain.as_ref().map(|(drain, hard)| (drain, hard)),
+                    resume.as_ref(),
+                )?;
+                // Seal finite input before draining; child discovery retains
+                // its parent-fenced append authority after that seal.
+                plane.seed_if_empty().await?;
+                let outcome = Box::pin(plane.run(&task_cancel)).await?;
+                Ok::<_, WorkerError>((outcome, plane))
+            });
+            plane_tasks.spawn(crawlx_core::custody::inherit(
+                async move {
+                    match tenant {
+                        Some(tenant) => crawlx_storage::tenant::scope(tenant, work).await,
+                        None => work.await,
+                    }
+                }
+                .in_current_span(),
+            ));
+            let (outcome, plane) = plane_tasks
+                .join_next()
+                .await
+                .ok_or_else(|| WorkerError::Other("URL plane task returned no outcome".into()))?
+                .map_err(|error| WorkerError::Other(format!("URL plane task failed: {error}")))??;
             url_resume = Some(plane.resume_state()).filter(|s| !s.is_finished());
             reasons.push(outcome.terminal);
             dynamic_requests = outcome.dynamic_requests;
@@ -2318,6 +2362,38 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     }
     result?;
     Ok(report)
+}
+
+fn build_local_url_plane(
+    crawl: CreateCrawl,
+    cfg: &WorkerConfig,
+    rc: &Arc<RunContext>,
+    fetcher: Arc<Fetcher>,
+    deps: UrlPlaneDeps,
+    drain: Option<(&CancellationToken, &CancellationToken)>,
+    resume: Option<&ResumeState>,
+) -> Result<Arc<UrlPlaneRunner>, WorkerError> {
+    let mut plane = UrlPlaneRunner::new(
+        rc.run,
+        crawl,
+        cfg.worker_id,
+        deps,
+        fetcher,
+        rc.counters.clone(),
+        rc.canon.clone(),
+    )?
+    .with_cpu_pool(rc.cpu_pool.clone())
+    .with_route_learner(rc.routes.clone())
+    .with_surface_services(rc)
+    .with_scrape_services(rc, cfg)
+    .with_authorization(rc.authorization.clone());
+    if let Some((drain, hard_cancel)) = drain {
+        plane = plane.with_graceful_drain(drain.clone(), Some(hard_cancel.clone()));
+    }
+    if let Some(state) = resume {
+        plane.seed_resume(state);
+    }
+    Ok(Arc::new(plane))
 }
 
 /// Enforce the common account-reference policy before resolving any role credentials.

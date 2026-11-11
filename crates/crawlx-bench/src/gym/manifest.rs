@@ -344,6 +344,9 @@ pub struct MazeTarget {
     /// Fixture page (relative to the fixture root) that references the target.
     #[serde(default)]
     pub page: String,
+    /// Why no plane reaches the target today; required for `deferred` targets, forbidden otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_reason: Option<String>,
 }
 
 /// Expected metrics of a fixture (release-build pass criteria).
@@ -548,6 +551,22 @@ impl FixtureManifest {
             }
             if !maze_paths.insert(t.path.as_str()) {
                 return Err(bad(format!("duplicate crawl_maze target {}", t.path)));
+            }
+            match (t.plane, t.deferred_reason.as_deref()) {
+                (MazePlane::Deferred, Some(r)) if !r.trim().is_empty() => {}
+                (MazePlane::Deferred, _) => {
+                    return Err(bad(format!(
+                        "deferred crawl_maze target {} needs a non-empty deferred_reason",
+                        t.path
+                    )));
+                }
+                (_, Some(_)) => {
+                    return Err(bad(format!(
+                        "crawl_maze target {} carries a deferred_reason but is not deferred",
+                        t.path
+                    )));
+                }
+                (_, None) => {}
             }
         }
         Ok(())

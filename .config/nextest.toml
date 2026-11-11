@@ -1,0 +1,23 @@
+# cargo-nextest profiles for the flake handling (docs/ops/flaky-tests.md).
+#
+# A failing test is rerun once, only to classify it: a test that fails and then passes is
+# reported as flaky (`<flakyFailure>` in the junit file), never silently green. The junit file is
+# `target/nextest/<profile>/junit.xml`; `flake-report record` reads it into the flake history.
+#
+#   PR suites:  cargo nextest run --profile ci -E "$(flake-report filter --file ci/quarantine.toml)"
+#   nightly:    cargo nextest run --profile nightly   (quarantined tests included)
+#   quarantine: cargo nextest run --profile nightly -E "$(flake-report filter --file ci/quarantine.toml --only)"
+
+[profile.ci]
+retries = 1
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.nightly]
+retries = 1
+fail-fast = false
+
+[profile.nightly.junit]
+path = "junit.xml"

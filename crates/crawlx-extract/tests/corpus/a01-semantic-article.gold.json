@@ -1,0 +1,58 @@
+{
+  "id": "a01-semantic-article",
+  "family": "article_body",
+  "note": "semantic article element with navigation, related list and footer",
+  "expectedText": "Home Local Arts Contact\nTidewater Library Opens Night Reading Room\nThe Tidewater Library opened a night reading room on Thursday, giving residents a quiet place to study until ten o'clock. Librarians moved forty chairs and six long tables into the former map archive over the weekend.\nThe idea came from a survey of shift workers, who said the regular opening hours rarely matched their schedules. About two hundred people answered, and most asked for evening access to printers, outlets and a warm room.\nStaff will review attendance after three months. If the room stays busy, the council may fund a second evening on Sundays, according to the library board's planning notes.\nPopular this week\nHarbor crane inspection delayed\nBakery wins regional prize\nCopyright Tidewater Gazette. All rights reserved.\nPrivacy Terms",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 23
+    },
+    {
+      "label": "body",
+      "start": 24,
+      "end": 66
+    },
+    {
+      "label": "body",
+      "start": 67,
+      "end": 284
+    },
+    {
+      "label": "body",
+      "start": 285,
+      "end": 504
+    },
+    {
+      "label": "body",
+      "start": 505,
+      "end": 676
+    },
+    {
+      "label": "boilerplate",
+      "start": 677,
+      "end": 694
+    },
+    {
+      "label": "boilerplate",
+      "start": 695,
+      "end": 726
+    },
+    {
+      "label": "boilerplate",
+      "start": 727,
+      "end": 753
+    },
+    {
+      "label": "boilerplate",
+      "start": 754,
+      "end": 803
+    },
+    {
+      "label": "boilerplate",
+      "start": 804,
+      "end": 817
+    }
+  ]
+}

@@ -1,13 +1,13 @@
 # Upstream differential harness
 
-Upstream is a black box that produces data; crawlx
+Upstream is a black box that produces data; CrawlX
 is compared against that data. Nothing here links, vendors or translates upstream source.
 
 ## Pieces
 
 | Path | What |
 |---|---|
-| `crates/crawlx-bench/src/differential/` | the runner library: export shapes, crawlx run reduction, normalization (incl. block-level F1), the gym access log (`access.rs`), ledger, comparator, scorecard, and the wire-level scenarios (`wire/`: driver, webhook sink, comparator) |
+| `crates/crawlx-bench/src/differential/` | the runner library: export shapes, CrawlX run reduction, normalization (incl. block-level F1), the gym access log (`access.rs`), ledger, comparator, scorecard, and the wire-level scenarios (`wire/`: driver, webhook sink, comparator) |
 | `crates/crawlx-bench/src/bin/crawlx-differential.rs` | the CLI (`cargo run -p crawlx-bench --bin crawlx-differential -- --help`; `... -- wire --help` for the wire subcommands) |
 | `divergences.toml` | the divergence ledger; schema in the file header; entries may be scoped to families |
 | `families.json` | the crawl families: fixture, host, seed path, upstream request, comparison mode, expected verdict, recorded residuals |
@@ -15,8 +15,8 @@ is compared against that data. Nothing here links, vendors or translates upstrea
 | `captures/<family>.json` | the black-box upstream captures (`provenance: black_box_run`, pinned commit): a v2 export for a crawl family, the raw exchanges of the scenarios for a `wire-*` family; `s1.authored.json` is the authored sample of 2026-10-20, kept for diffing only |
 | `docker-compose.upstream.yaml`, `upstream.env` | the override file and the compose environment for the unmodified pinned upstream self-host (upstream's own `docker-compose.yaml` is the first `-f` file) |
 | `upstream_export.py` | crawl one family through a running upstream v2 API and write the export, with the gym's access log (stdlib only) |
-| `run.sh`, `run-wire.sh` | start the stack, run every crawl family (resp. wire family) against upstream and crawlx, score; `all` or one family |
-| `sdk_shape_capture.py`, `sdk_shape_diff.py`, `tests/` | the SDK-in-the-loop shape diff (below): the official Python SDK's calls (pinned in `tests/sdk/requirements.txt`) captured against one API, the field-by-field diff of two captures, and its offline unit tests |
+| `run.sh`, `run-wire.sh` | start the stack, run every crawl family (resp. wire family) against upstream and CrawlX, score; `all` or one family |
+| `sdk_shape_capture.py`, `sdk_shape_diff.py`, `markdown_metrics.py`, `tests/` | the SDK-in-the-loop shape diff (below): the official Python SDK's calls (pinned in `tests/sdk/requirements.txt`) captured against one API, the field-by-field diff of two captures with the markdown normalization metrics (`markdown_metrics.py`: block-level F1 and ordered-subsequence ratio), and their offline unit tests |
 
 ## Export format
 
@@ -31,7 +31,7 @@ and the `GET /v2/crawl/{id}/errors` body stored under `errors`:
 }
 ```
 
-Unknown fields are ignored. The crawlx side is the JSON `--save-crawlx` writes (status, URL-plane
+Unknown fields are ignored. The CrawlX side is the JSON `--save-crawlx` writes (status, URL-plane
 counters, succeeded pages with markdown and links, every frontier row with its outcome) or the
 directory `crawlx crawl --out DIR` writes (no frontier, so admission is judged on succeeded pages
 only).
@@ -40,8 +40,8 @@ only).
 
 - **C1 admission.** The set of URLs each system attempted (documents plus error entries on the
   upstream side; `succeeded`, `failed` and `unreachable` frontier rows plus the entry URL an
-  include filter refused as a page but crawlx fetched for its links, a depth-0 `policy_blocked` row
-  `not_included`/`url_not_included`, on the crawlx side; upstream lists that URL in `errors[]` as
+  include filter refused as a page but CrawlX fetched for its links, a depth-0 `policy_blocked` row
+  `not_included`/`url_not_included`, on the CrawlX side; upstream lists that URL in `errors[]` as
   `CRAWL_DENIAL`) and the
   robots-blocked sets. URLs are reduced to origin-independent keys (`{origin}/path?query`, fragment
   dropped, trailing slash removed), so the two systems may crawl the fixture on different hosts or
@@ -59,7 +59,7 @@ only).
   corpus mean) with the ordered-subsequence ratio, link-set Jaccard (0.98) and equality of
   `title`, `description`, `language`, `statusCode`, `contentType` (0.99 over the corpus). Below a
   threshold without a ledger entry is a **warning** (exit 0, or 3 with `--fail-on-warning`).
-- **C3 counters.** `status` (crawlx mapped through the compat facade's status table), `total`
+- **C3 counters.** `status` (CrawlX mapped through the compat facade's status table), `total`
   versus `admitted`, `completed` versus `succeeded`, attempted and robots-blocked cardinalities.
   Warnings.
 - **Wire families (C0/C3).** `wire-*` families compare behavior over HTTP (`run-wire.sh`): per scenario the
@@ -141,7 +141,7 @@ starts a fresh gym on `0.0.0.0:$GYM_PORT` per family (its `robots.txt` belongs t
 `x-idempotency-key` (the API process exits), and it fetches the gym only because `ALLOW_LOCAL_WEBHOOKS=true` is set on the API container.
 
 The `d2` families fetch the gym under several host names (`fixture_hosts` in `families.json`, mapped to the host
-gateway by `docker-compose.upstream.yaml` and to 127.0.0.1 by the crawlx run's resolver).
+gateway by `docker-compose.upstream.yaml` and to 127.0.0.1 by the CrawlX run's resolver).
 
 ```sh
 # the wire families: scenarios against the real upstream, the same scenarios against the in-process facade
@@ -161,15 +161,21 @@ run on every PR without upstream.
 
 ## SDK shape diff
 
-The question is what the official SDK sees from the real upstream and from the crawlx compat facade
+The question is what the official SDK sees from the real upstream and from the CrawlX compat facade
 for the same calls on the same fixture. `sdk_shape_capture.py` runs `scrape` (the entry page, a 404, a
 500, a robots-disallowed page), `map`, `start_crawl` + `get_crawl_status` + `get_crawl_errors`, the
 `crawl` waiter and `cancel_crawl` through the official Python SDK, records each typed result and the raw wire
 exchange of the same request, and `sdk_shape_diff.py` flattens both wires to JSON path to type and
-writes the markdown report (paths only upstream, only crawlx, type and presence differences, stable
+writes the markdown report (paths only upstream, only CrawlX, type and presence differences, stable
 values, response headers). The gated test `crates/crawlx-cli/tests/sdk_upstream_shape.rs` runs both
 captures (the facade in-process through `support/sdk_rig.rs`, the real upstream at
 `CRAWLX_UPSTREAM_URL`) and the diff; without the variable it prints `skipping: ...`.
+The diff also scores the page bodies: for every page both sides returned (paired by origin-independent
+`metadata.sourceURL`) it normalizes the two `markdown` strings with the same normalization as the Rust
+scorer (`markdown_metrics.py`), splits them into blocks and reports, per page and as a mean per exchange
+(report section "Markdown metrics"), the block-level F1 (multiset of exactly equal blocks) and the
+ordered-subsequence ratio (`2 * LCS / (|a| + |b|)` over the block order, so a reordered or missing block
+lowers it while the F1 does not see a reorder).
 The report and the raw captures are written to `bench/out/sdk-shape/` (git-ignored) unless the test is
 given another output directory.
 

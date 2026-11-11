@@ -54,6 +54,7 @@ sqlx.workspace = true
 tempfile.workspace = true
 tokio-tungstenite = "0.30"
 tower = { workspace = true, features = ["util"] }
+tracing-subscriber.workspace = true
 wiremock.workspace = true
 
 [lints]

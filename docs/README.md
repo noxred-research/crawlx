@@ -1,22 +1,22 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-    <img alt="crawlx" src="assets/logo-light.svg" width="260">
+    <img alt="CrawlX" src="assets/logo-light.svg" width="260">
   </picture>
 </p>
 
-# crawlx documentation
+# CrawlX documentation
 
-crawlx is a next-generation AI/LLM-native crawler for **authorized security research**: it maps the attack
+CrawlX is a next-generation AI/LLM-native crawler for **authorized security research**: it maps the attack
 surface of dynamic web applications with a URL plane and a browser-interaction plane (accessibility-tree
 discovery, semantic element identity, a probabilistic enablement graph, reversible state clustering), under a
 hard safety kernel. Optional typed-decision, ONNX-ranker and LLM guidance advises and never authorizes.
 
-crawlx is built and intended for testing systems you own or have written authorization to test. It is not for
+CrawlX is built and intended for testing systems you own or have written authorization to test. It is not for
 unauthorized scraping, credential attacks, evading a site's protections or any other abuse. See
 [Responsible use](../README.md#responsible-use) and the [safety model](design/safety-model.md).
 
-crawlx is pre-1.0. Production qualification is in progress; see the
+CrawlX is pre-1.0. Production qualification is in progress; see the
 [README](../README.md#release-status) and the [changelog](../CHANGELOG.md) for known limitations.
 
 ## Design
@@ -41,7 +41,7 @@ crawlx is pre-1.0. Production qualification is in progress; see the
 
 ## Project
 
-- [README](../README.md): what crawlx is, quick start and configuration pointers
+- [README](../README.md): what CrawlX is, quick start and configuration pointers
 - [Roadmap](roadmap.md): open work
 - [CONTRIBUTING](../CONTRIBUTING.md): coding standards, checks and contribution flow
 - [SECURITY](../SECURITY.md): private vulnerability reporting, response times and safe harbor

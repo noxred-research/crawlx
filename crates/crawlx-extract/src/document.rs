@@ -73,6 +73,18 @@ pub struct ExtractOptions {
     pub content_redaction: Option<crate::parse::redact::RedactOptions>,
     /// Trusted transient local language service; never serialized as request configuration.
     pub language_detector: Option<crawlx_core::article_language::ArticleLanguageHandle>,
+    /// Caller-scoped dedupe cache for block and content dedupe; never serialized request
+    /// configuration. Without it dedupe compares only within the document.
+    pub dedupe_cache: Option<crate::dedupe::DedupeHandle>,
+    /// Opt-in content outputs (variants, fit content, citations, tables, link/media scores,
+    /// target elements and discovery scope); absent keeps the legacy output.
+    pub outputs: Option<crate::content_outputs::ContentOutputOptions>,
+    /// Decode input bytes with diagnostics (byte-order mark, declared charset, `meta`) in
+    /// [`Extractor::extract_bytes`](crate::Extractor::extract_bytes); absent keeps lossy UTF-8.
+    pub decode: Option<crate::decode::DecodeOptions>,
+    /// Keep comments and/or CDATA payloads from the source in [`Document::markup`]; absent
+    /// keeps nothing and leaves the document unchanged.
+    pub markup: Option<crate::decode::MarkupRetention>,
 }
 
 impl Default for ExtractOptions {
@@ -100,6 +112,10 @@ impl Default for ExtractOptions {
             attribute_selectors: Vec::new(),
             content_redaction: None,
             language_detector: None,
+            dedupe_cache: None,
+            outputs: None,
+            decode: None,
+            markup: None,
         }
     }
 }
@@ -182,4 +198,15 @@ pub struct Document {
     /// Requested attribute-format values from the original parsed tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Vec<crawlx_core::scrape::AttributeResult>>,
+    /// Requested content outputs; present only when [`ExtractOptions::outputs`] was set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<crate::content_outputs::ContentOutputs>,
+    /// How the input bytes were decoded; present only when [`ExtractOptions::decode`] was set
+    /// and the document came from bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode: Option<crate::decode::DecodeReport>,
+    /// Comments and CDATA payloads kept from the source; present only when
+    /// [`ExtractOptions::markup`] was set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markup: Option<crate::decode::MarkupRecord>,
 }

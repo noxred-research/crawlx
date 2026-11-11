@@ -39,7 +39,7 @@ The cards suggest a severity. Adapt the response targets to your organization.
 | `crawlx admin freeze [--all]` | `scheduler.admission = frozen`; with `--all` also pauses every running crawl ([RB-11](#rb-11) level 2) |
 | `crawlx admin reconcile [--action <id>]` | list open `intended`/`unknown` rows; with an id, hand the action's session to the reconciler ([RB-02](#rb-02) step 3) |
 | `crawlx admin verify-artifacts [--since <rfc3339>] [--artifacts-dir <dir>\|--s3-bucket <b>]` | missing object, digest mismatch, orphan count; exit 1 on defects |
-| `crawlx admin sweep-retention [--mode all\|zdr --force] [--orphan-grace-s <n>] [store flags]` | run the sweeper now; `--mode zdr --force` deletes ZDR content first ([RB-08](#rb-08) step 3) |
+| `crawlx admin sweep-retention [--mode all\|zdr --force] [--every <duration> [--passes <n>]] [--orphan-grace-s <n>] [store flags]` | run the sweeper now; `--every` keeps running, one pass per interval ([scheduled sweeper](README.md#scheduled-retention-sweeper)); `--mode zdr --force` deletes ZDR content first ([RB-08](#rb-08) step 3) |
 | `crawlx admin durability-audit [--since <rfc3339>] [--json]` | accepted-job audit against `crawl_runs`; exit 1 when any accepted run is missing |
 | `crawlx admin safety-audit --reader-database-url <reader-dsn> --pause-database-url <pause-dsn> [--json]` | independent cross-tenant action-safety audit; automatically pauses violating runs; exit 1 on violations, 0 when clean; errors propagate |
 | `crawlx admin engine --tenant <id> [--set crawlx\|upstream\|shadow]` | show or set the compat engine flag |
@@ -398,9 +398,11 @@ Trigger: `retention.overdue_artifacts` above 0, `retention.sweep.failures` incre
    ([restore procedure](#backup-and-restore), step 6), and notify the data
    protection contact. Rotate the run data keys for affected runs. Continue to
    [RB-12](#rb-12) if a leak to third parties is possible.
-5. For `standard` and `extended`: the sweeper is the command `crawlx admin sweep-retention`, which you
-   schedule yourself (a cron job or Kubernetes CronJob; there is no built-in loop). Check that the
-   job runs and how often, its logs and `retention.sweep.failures`, permissions on the bucket and the
+5. For `standard` and `extended`: the sweeper is `crawlx admin sweep-retention`. Run it either as a
+   long-lived process, `crawlx admin sweep-retention --every 5m` (one pass now, then one per
+   interval until SIGINT or SIGTERM; see [the scheduled sweeper](README.md#scheduled-retention-sweeper)),
+   or as a cron job or Kubernetes CronJob that runs one pass. Check that the process or job runs
+   and how often, its logs and `retention.sweep.failures`, permissions on the bucket and the
    database role, and object-store lifecycle conflicts. The sweeper deletes the object first, then
    the row; a failure retries on the next pass and alerts.
 6. Run `crawlx admin sweep-retention` manually in batches if the backlog is large; watch database
@@ -710,7 +712,7 @@ One card for each of the 32 rules, in file order.
 - **Symptom.** No customer receives events.
 - **Dashboards.** Retention and webhooks: "Webhooks: pending, oldest age, outcomes". Storage: "DB pool in use / query p95 by op", for lock contention on the delivery queue.
 - **First commands.** The SQL of card 7; API pod CPU and database pool; confirm the signing key file is mounted (a missing secret file fails every signature); outbound DNS and egress rules of the API pods.
-- **Then.** [RB-09](#rb-09) step 3 (global failure). A `dead` row caused by crawlx (signing error, our sender's 5xx, queue lock) is a defect: record it.
+- **Then.** [RB-09](#rb-09) step 3 (global failure). A `dead` row caused by CrawlX (signing error, our sender's 5xx, queue lock) is a defect: record it.
 - **Rollback.** R-APP, R-CFG (signing key reference).
 
 ## 9. CrawlxWebhookSliBreach
@@ -834,8 +836,8 @@ One card for each of the 32 rules, in file order.
 
 - **Symptom.** The next overdue alert follows if this is not fixed.
 - **Dashboards.** Retention and webhooks: "Overdue artifacts by kind / sweep failures / ZDR violations". Storage: "Object store: latency p95, error ratio, spool bytes".
-- **First commands.** `crawlx admin sweep-retention` by hand and read the error; sweeper logs.
-- **Then.** [RB-08](#rb-08) step 5: permissions, lifecycle conflicts. The sweeper deletes the object first, then the row, and retries on failure.
+- **First commands.** `crawlx admin sweep-retention` by hand and read the error; sweeper logs. A scheduled sweeper (`--every`) logs `retention sweep failed; the next pass retries` with the error text of each failed pass and prints `pass N failed` on stdout; the process keeps running.
+- **Then.** [RB-08](#rb-08) step 5: permissions, lifecycle conflicts. The sweeper deletes the object first, then the row, and retries on failure. A pass that exceeds one hour is abandoned and counted as a failure; the next pass resumes the work.
 - **Rollback.** None.
 
 ## 19. CrawlxJournalHalt

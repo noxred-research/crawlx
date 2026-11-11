@@ -1,0 +1,13 @@
+{
+  "construct": "import-implementation",
+  "body": [
+    "<import implementation='/behaviors/x.htc'></import>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/behaviors/x.htc",
+      "source": "import/implementation"
+    }
+  ]
+}

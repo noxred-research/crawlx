@@ -9,6 +9,28 @@ use serde::{Deserialize, Serialize};
 
 mod chunks;
 pub use chunks::{WordChunkEnvelopeV1, WordChunkErrorV1, WordChunkPolicyV1, WordChunkStrategyV1};
+mod preview;
+pub use preview::{
+    check_preview_target, PreviewIntentV1, PreviewPurposeV1, PreviewRefusalV1, DEFAULT_PREVIEW_HEAD_BYTES,
+    MAX_PREVIEW_HEAD_BYTES, MIN_PREVIEW_HEAD_BYTES,
+};
+mod pipeline;
+pub use pipeline::{
+    ParserPipelineV1, PipelineLimitsV1, PipelineRouteV1, PipelineStageV1, StageReportV1, StageStatusV1,
+    MAX_PIPELINE_ROUTES, PIPELINE_FORMATS,
+};
+mod dedupe;
+pub use dedupe::{
+    ContentDigestsV1, DedupeAdmissionV1, DedupeCache, DedupeKeyV1, DedupeKindV1, DedupePolicyV1,
+    DedupeReportV1, DedupeScopeV1, DEDUPE_DIGEST_DOMAIN_V1, DEDUPE_NORMALIZATION_V1,
+    MAX_DEDUPE_CACHE_ENTRIES,
+};
+mod url_exclusion;
+pub use url_exclusion::{UrlExclusionPolicyV1, MAX_URL_EXCLUSION_RULES, MAX_URL_EXCLUSION_RULE_BYTES};
+
+/// Pinned extractor and normalization identifier recorded on every [`DocumentEnvelopeV1`] and
+/// bound into dedupe cache keys.
+pub const ARTICLE_EXTRACTOR_ID_V1: &str = "native_article_v1/unicode_rules_v1";
 
 /// Native fixed-point article strategy; not upstream algorithm parity.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +197,14 @@ pub struct ExtractionPolicyV1 {
     /// Absence preserves existing serialized extraction-policy identity.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunks: Option<WordChunkPolicyV1>,
+    /// Optional dedupe stages and digest report. Absence preserves existing serialized
+    /// extraction-policy identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dedupe: Option<DedupePolicyV1>,
+    /// Optional pre-acquisition URL exclusion lists, evaluated by the URL admission surface
+    /// before any request. Absence preserves existing serialized extraction-policy identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excluded_urls: Option<UrlExclusionPolicyV1>,
 }
 impl Default for ExtractionPolicyV1 {
     fn default() -> Self {
@@ -210,6 +240,8 @@ impl Default for ExtractionPolicyV1 {
             selectors: crate::selectors::SelectorPolicyV1::default(),
             item_loader: None,
             chunks: None,
+            dedupe: None,
+            excluded_urls: None,
         }
     }
 }
@@ -229,6 +261,12 @@ impl ExtractionPolicyV1 {
                 field: "extract.content.chunks",
                 reason: error.to_string(),
             })?;
+        }
+        if let Some(dedupe) = &self.dedupe {
+            dedupe.validate()?;
+        }
+        if let Some(excluded) = &self.excluded_urls {
+            excluded.validate()?;
         }
         if let Some(loader) = &self.item_loader {
             loader.validate()?;
@@ -461,6 +499,8 @@ pub enum QualityReasonV1 {
     ResourceLimit,
     /// Requested licensed optional model not injected.
     ModelUnavailable,
+    /// The normalized title and body were already admitted in the same dedupe scope.
+    DuplicateMain,
 }
 /// Quality counts and reasons, safe only after normal retention projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,7 +509,7 @@ pub enum QualityReasonV1 {
 pub struct QualityOutcomeV1 {
     /// Overall state.
     pub status: QualityStatusV1,
-    /// At most seven distinct reason codes.
+    /// At most eight distinct reason codes.
     pub reasons: Vec<QualityReasonV1>,
     /// Accepted main Unicode scalar count.
     pub main_chars: usize,
@@ -530,6 +570,8 @@ pub enum DiscoveryPurposeV1 {
     ImageReference,
     /// Explicit next/read-more hyperlink, no parser navigation.
     ReadMoreReference,
+    /// Entry of a caller-supplied URL list, still subject to scope, robots and egress checks.
+    ListedUrl,
 }
 /// Parser-produced reference, not permission to acquire a target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -538,7 +580,7 @@ pub enum DiscoveryPurposeV1 {
 pub struct DiscoveryIntentV1 {
     /// Resolved HTTP(S) target, still subject to worker scope/robots/egress/governor.
     pub url: url::Url,
-    /// Fixed purpose: `image_reference` or `read_more_reference`.
+    /// Fixed purpose: `image_reference`, `read_more_reference` or `listed_url`.
     pub purpose: DiscoveryPurposeV1,
 }
 impl DiscoveryIntentV1 {
@@ -585,6 +627,10 @@ pub struct DocumentEnvelopeV1 {
     /// Optional source-only ranges bound to final `Document.text`, never raw HTML.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunks: Option<WordChunkEnvelopeV1>,
+    /// Dedupe evidence: distinct digests and the block/content dedupe outcome. Present only
+    /// when the extraction policy carries a dedupe policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedupe: Option<DedupeReportV1>,
 }
 impl DocumentEnvelopeV1 {
     /// Construct a version-one envelope. No acquisition facts are invented here.
@@ -600,7 +646,7 @@ impl DocumentEnvelopeV1 {
     ) -> Self {
         Self {
             version: 1,
-            extractor: "native_article_v1/unicode_rules_v1".into(),
+            extractor: ARTICLE_EXTRACTOR_ID_V1.into(),
             policy_digest,
             main_digest,
             strategy,
@@ -614,6 +660,7 @@ impl DocumentEnvelopeV1 {
             source_mapping_redacted: false,
             privacy_projection_version: None,
             chunks: None,
+            dedupe: None,
         }
     }
 }

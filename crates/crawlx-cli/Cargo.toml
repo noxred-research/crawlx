@@ -77,6 +77,8 @@ tower = { workspace = true, features = ["util"] }
 sqlx.workspace = true
 rustix.workspace = true
 wiremock.workspace = true
+# `start_paused` clock of the sweep-loop tests.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

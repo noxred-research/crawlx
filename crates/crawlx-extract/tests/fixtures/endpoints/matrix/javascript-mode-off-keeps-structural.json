@@ -1,0 +1,14 @@
+{
+  "construct": "javascript-mode-off-keeps-structural",
+  "body": [
+    "<a href='/kept'>x</a><script>fetch('/not-mined');</script><meta name='x' content='./not-mined-either'>"
+  ],
+  "javascript_mode": "off",
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/kept",
+      "source": "a/href"
+    }
+  ]
+}

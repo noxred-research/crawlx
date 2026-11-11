@@ -1,0 +1,15 @@
+{
+  "construct": "meta-content-regex",
+  "body": [
+    "<html><head><meta name='x' content='go ./relative/target now'></head></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/relative/target",
+      "source": "meta/content",
+      "confidence": "regex"
+    }
+  ],
+  "javascript_mode": "regex"
+}

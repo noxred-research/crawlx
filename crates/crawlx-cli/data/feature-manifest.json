@@ -1,0 +1,251 @@
+{
+  "version": 1,
+  "baseline": {
+    "dialect": "surface-flags",
+    "release": "1.8.0",
+    "inventory": "crates/crawlx-core/data/extraction-inventories/surface-remaining.tsv"
+  },
+  "policies": {
+    "native": "the flag does what the baseline row describes",
+    "deviation": "the flag exists but one behavior differs on purpose; `deviation` says how and why"
+  },
+  "rows": [
+    {
+      "id": "SR-01",
+      "flags": ["crawl --list", "crawl --resume", "crawl --exclude"],
+      "compat": [],
+      "policy": "native",
+      "gates": [
+        "compat_flags.rs::comma_lists_list_files_and_flags_are_separate_runs_printed_in_seed_order",
+        "compat_flags.rs::resume_continues_a_stopped_run_and_removes_the_file_when_the_frontier_runs_dry"
+      ]
+    },
+    {
+      "id": "SR-02",
+      "flags": ["crawl --resolvers", "crawl --depth", "crawl --crawl-duration", "crawl --max-pages-per-host"],
+      "compat": ["-ct", "-mdp"],
+      "policy": "deviation",
+      "deviation": "a resolver list only chooses which DNS server answers; the egress checks still judge every returned address, so a resolver cannot reach a private target or widen an authorization",
+      "gates": [
+        "surface_lists.rs::resolver_files_hold_comma_and_space_separated_entries_comments_and_repeats",
+        "compat_flags.rs::a_resolver_list_file_steers_resolution_but_never_widens_authorization",
+        "compat_flags.rs::depth_limits_the_link_hops",
+        "compat_flags.rs::crawl_duration_takes_units_has_no_ten_second_floor_and_rejects_less_than_a_second"
+      ]
+    },
+    {
+      "id": "SR-03",
+      "flags": ["crawl --js-crawl", "crawl --jsluice"],
+      "compat": ["-jc", "-jsl"],
+      "policy": "native",
+      "gates": ["compat_flags.rs::javascript_modes_control_inline_and_standalone_crawl_requests"]
+    },
+    {
+      "id": "SR-04",
+      "flags": ["crawl --known-files", "crawl --path-climb", "crawl --no-redirects"],
+      "compat": ["-kf", "-pc", "-dr"],
+      "policy": "native",
+      "gates": [
+        "surface_lists.rs::known_file_spellings_and_all_never_name_a_file_twice",
+        "surface_lists.rs::path_climb_has_the_compatibility_and_native_spellings",
+        "compat_flags.rs::path_climb_crawls_the_parent_directories_of_discovered_urls"
+      ]
+    },
+    {
+      "id": "SR-05",
+      "flags": ["crawl --max-response-size", "crawl --timeout", "crawl --retries", "crawl --proxy", "crawl --headers", "crawl --tls-impersonate"],
+      "compat": ["-mrs", "-tlsi"],
+      "policy": "deviation",
+      "deviation": "header and cookie values are secrets: never logged, written to reports or included in the printed configuration digest",
+      "gates": ["compat_flags.rs::headers_cookies_and_user_agent_reach_the_site_and_never_reach_the_reports"]
+    },
+    {
+      "id": "SR-06",
+      "flags": ["crawl --automatic-form-fill", "crawl --form-extraction", "crawl --form-config"],
+      "compat": ["-aff", "-fx", "-fc"],
+      "policy": "deviation",
+      "deviation": "only GET forms are followed; other methods are recorded as endpoints and never sent",
+      "gates": ["compat_flags.rs::automatic_form_fill_follows_get_forms_with_the_configured_values"]
+    },
+    {
+      "id": "SR-07",
+      "flags": ["crawl --tech-detect", "crawl --custom-field-config", "crawl --knowledge-base", "crawl --kb-endpoints", "crawl --kb-validate-secrets"],
+      "compat": ["-td", "-flc", "-kb"],
+      "policy": "deviation",
+      "deviation": "secret validation runs only through configured validators; without any, every finding stays unknown",
+      "gates": [
+        "compat_flags.rs::knowledge_base_adds_the_object_to_jsonl_and_kb_endpoints_classifies_endpoints",
+        "compat_flags.rs::validating_secrets_without_validators_says_so_and_leaves_findings_unknown"
+      ]
+    },
+    {
+      "id": "SR-08",
+      "flags": ["crawl --config", "crawl --strategy", "crawl --ignore-query-params", "crawl --filter-similar", "crawl --filter-similar-threshold"],
+      "compat": ["-iqp", "-fsu", "-fst"],
+      "policy": "deviation",
+      "deviation": "a configuration file accepts only known keys and never names an executable import, hook or class path; an unknown key is refused naming the key",
+      "gates": [
+        "compat_flags.rs::a_yaml_config_can_drive_a_whole_crawl",
+        "surface_lists.rs::configuration_files_cannot_name_executable_imports_or_unknown_keys",
+        "surface_lists.rs::configuration_layers_apply_defaults_then_config_then_request_then_flags",
+        "compat_flags.rs::ignore_query_params_fetches_urls_that_differ_only_in_values_once"
+      ]
+    },
+    {
+      "id": "SR-09",
+      "flags": ["crawl --health-check", "crawl --error-log", "serve --pprof-bind", "worker --pprof-bind"],
+      "compat": ["-hc", "-elog"],
+      "policy": "deviation",
+      "deviation": "the pprof listener is unauthenticated and served on loopback only unless explicitly allowed; its heap route is a process memory summary (JSON or text), not an allocator profile",
+      "gates": [
+        "compat_flags.rs::health_check_prints_a_table_and_exits_nonzero_when_a_check_fails",
+        "compat_flags.rs::the_error_log_lists_failed_urls",
+        "pprof.rs::heap_text_summary_carries_the_same_numbers_and_no_labels",
+        "pprof.rs::serve_refuses_a_non_loopback_pprof_bind"
+      ]
+    },
+    {
+      "id": "SR-10",
+      "flags": ["crawl --headless", "crawl --hybrid"],
+      "compat": ["-hl", "-hh"],
+      "policy": "native",
+      "gates": ["compat_flags.rs::headless_adapter_reaches_native_browser_health_gate"]
+    },
+    {
+      "id": "SR-11",
+      "flags": ["crawl --system-chrome", "crawl --system-chrome-path", "crawl --show-browser", "crawl --headless-options", "crawl --no-sandbox", "crawl --chrome-data-dir", "crawl --no-incognito", "crawl --chrome-ws-url"],
+      "compat": ["-sc", "-scp", "-sb", "-ho", "-nos", "-cdd", "-noi", "-cwu"],
+      "policy": "deviation",
+      "deviation": "--no-sandbox is refused unless the CI environment switch is set",
+      "gates": ["compat_flags.rs::no_sandbox_is_refused_without_the_ci_environment_switch"]
+    },
+    {
+      "id": "SR-12",
+      "flags": ["crawl --xhr-extraction", "crawl --max-failure-count", "crawl --enable-diagnostics", "crawl --page-load-strategy", "crawl --dom-wait-time"],
+      "compat": ["-xhr", "-mfc", "-ed", "-pls", "-dwt"],
+      "policy": "native",
+      "gates": [
+        "compat_flags.rs::flags_map_onto_scope_fetch_extract_and_limit_fields",
+        "compat_flags.rs::enable_diagnostics_prints_one_record_per_browser_session"
+      ]
+    },
+    {
+      "id": "SR-13",
+      "flags": ["crawl --captcha-solver-provider", "crawl --captcha-solver-key"],
+      "compat": ["-csp", "-csk"],
+      "policy": "deviation",
+      "deviation": "the solver key is an environment or file reference, never a literal, and is never printed",
+      "gates": ["captcha.rs::unknown_provider_and_missing_or_literal_references_fail"]
+    },
+    {
+      "id": "SR-14",
+      "flags": ["crawl --recorded-flow"],
+      "compat": ["-rf"],
+      "policy": "deviation",
+      "deviation": "a recorded flow is referenced by path so typed values stay out of reports",
+      "gates": ["compat_flags.rs::recorded_flow_selects_the_recorded_login_plan_of_the_roles"]
+    },
+    {
+      "id": "SR-15",
+      "flags": ["crawl --crawl-scope", "crawl --crawl-out-scope", "crawl --field-scope", "crawl --no-scope", "crawl --display-out-scope"],
+      "compat": ["-cs", "-cos", "-fs", "-ns", "-do"],
+      "policy": "deviation",
+      "deviation": "--no-scope changes traversal only; it never authorizes private egress and explicit exclusions still apply",
+      "gates": [
+        "compat_flags.rs::scope_regex_files_filter_actual_requests_and_output",
+        "compat_flags.rs::a_regex_field_scope_admits_hosts_it_matches",
+        "compat_flags.rs::no_scope_never_authorizes_private_egress_and_delay_overflow_never_fetches"
+      ]
+    },
+    {
+      "id": "SR-16",
+      "flags": ["crawl --match-regex", "crawl --filter-regex", "crawl --store-field"],
+      "compat": ["-mr", "-fr", "-sf"],
+      "policy": "native",
+      "gates": ["compat_flags.rs::match_and_filter_regexes_select_output_lines"]
+    },
+    {
+      "id": "SR-17",
+      "flags": ["crawl --extension-match", "crawl --extension-filter", "crawl --no-default-ext-filter", "crawl --match-condition", "crawl --filter-condition"],
+      "compat": ["-em", "-ef", "-ndef", "-mdc", "-fdc"],
+      "policy": "native",
+      "gates": [
+        "compat_flags.rs::cli_extension_matching_preserves_dotfile_and_trailing_dot_admission_and_output",
+        "compat_flags.rs::match_and_filter_conditions_select_jsonl_records"
+      ]
+    },
+    {
+      "id": "SR-18",
+      "flags": ["crawl --disable-unique-filter", "crawl --page-content-similar", "crawl --similarity-deduplication", "crawl --page-content-similar-mode", "crawl --content-similar-distance", "crawl --content-similar-threshold", "crawl --content-similar-budget", "crawl --filter-page-type"],
+      "compat": ["-duf", "-pcs", "-sdd", "-pcsm", "-pcsd", "-pcst", "-pcsn", "-fpt"],
+      "policy": "native",
+      "gates": [
+        "compat_flags.rs::disable_unique_filter_keeps_pages_with_identical_bodies",
+        "compat_flags.rs::compat_similarity_runtime_smoke_filters_expansion_without_disabling_url_dedupe",
+        "compat_flags.rs::filter_page_type_filters_the_output_and_no_expand_page_type_stops_following"
+      ]
+    },
+    {
+      "id": "SR-19",
+      "flags": ["crawl --parallelism", "crawl --concurrency", "crawl --delay", "crawl --rate-limit", "crawl --rate-limit-minute", "crawl --host-rate-limit", "crawl --host-rate-limit-minute"],
+      "compat": ["-rd", "-rl", "-rlm", "-hrl", "-hrlm"],
+      "policy": "deviation",
+      "deviation": "the per-origin delay never goes below the politeness floor of 50 ms",
+      "gates": [
+        "compat_flags.rs::parallelism_bounds_how_many_seeds_run_at_once",
+        "compat_flags.rs::compat_defaults_set_the_preset_values_and_explicit_flags_override_them"
+      ]
+    },
+    {
+      "id": "SR-20",
+      "flags": ["crawl --update", "crawl --disable-update-check"],
+      "compat": ["-up", "-duc"],
+      "policy": "deviation",
+      "deviation": "the crawler never downloads or replaces its own binary and sends no update request by default; an upgrade is an operator deployment action",
+      "gates": [
+        "compat_flags.rs::update_asks_the_release_endpoint_once_and_reports_without_downloading",
+        "compat_flags.rs::the_automatic_update_check_is_off_by_default_and_disable_update_check_beats_the_env"
+      ]
+    },
+    {
+      "id": "SR-21",
+      "flags": ["crawl --output", "crawl --output-template", "crawl --store-response", "crawl --store-response-dir", "crawl --no-clobber", "crawl --store-fields"],
+      "compat": ["-ot", "-sr", "-srd", "-ncb", "-sfd"],
+      "policy": "native",
+      "gates": [
+        "compat_flags.rs::output_file_receives_the_urls_and_no_clobber_numbers_the_next_file",
+        "compat_flags.rs::store_response_writes_raw_exchanges_and_an_index"
+      ]
+    },
+    {
+      "id": "SR-22",
+      "flags": ["crawl --omit-raw", "crawl --omit-body", "crawl --list-output-fields", "crawl --exclude-output-fields"],
+      "compat": ["-or", "-ob", "-lof", "-eof"],
+      "policy": "native",
+      "gates": [
+        "compat_flags.rs::jsonl_carries_body_and_raw_unless_omitted_and_exclude_output_fields_drops_names",
+        "compat_flags.rs::list_output_fields_prints_the_jsonl_field_names_and_exits"
+      ]
+    },
+    {
+      "id": "SR-23",
+      "flags": ["crawl --no-color", "crawl --silent", "crawl --verbose", "crawl --debug"],
+      "compat": ["-nc"],
+      "policy": "deviation",
+      "deviation": "diagnostics stay on stderr and a failed command is never exit 0 (exit 2; exit 1 for a failed check); the upstream exit-zero failures are not copied",
+      "gates": [
+        "compat_flags.rs::silent_prints_results_only_and_no_color_controls_ansi",
+        "compat_flags.rs::debug_true_logs_at_debug_level_and_prints_the_full_error_chain_with_a_backtrace",
+        "surface_exit_contract.rs::usage_errors_exit_two_and_write_nothing_to_stdout",
+        "surface_exit_contract.rs::verbosity_switches_never_change_stdout"
+      ]
+    },
+    {
+      "id": "SR-G12",
+      "flags": ["config features"],
+      "compat": [],
+      "policy": "native",
+      "gates": ["feature_manifest.rs::every_row_names_real_flags_compat_spellings_and_existing_gates"]
+    }
+  ]
+}

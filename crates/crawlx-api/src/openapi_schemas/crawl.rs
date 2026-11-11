@@ -180,13 +180,15 @@ pub(super) struct CrawlStatus {
     completed: u64,
     /// Credits the stored pages cost.
     credits_used: u64,
-    /// RFC 3339 time the crawl is deleted; `null` until it is terminal.
-    expires_at: Option<String>,
+    /// RFC 3339 time the crawl is deleted: `finished + retention` for a terminal crawl, the
+    /// deadline it would have if it ended now (`created + retention`) while it runs.
+    expires_at: String,
     /// RFC 3339 time the crawl started.
     created_at: String,
     /// Seconds the crawl has run (or ran).
     duration: f64,
-    /// URL of the next page of `data`; `null` on the last page.
+    /// URL of the next page of `data`. While the crawl runs it is always set (the link that picks
+    /// up the pages stored next); `null` on the last page of a terminal crawl.
     next: Option<String>,
     /// This page of documents.
     data: Vec<Document>,
@@ -198,6 +200,10 @@ pub(super) struct CrawlStatus {
     coverage: CoverageSummary,
     /// Options that were not applied.
     warnings: Vec<Warning>,
+    /// A hint for the caller: pages the site's robots.txt disallowed (see `robotsBlocked` of the
+    /// errors route), or a stopped crawl that found at most one page. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
     /// RFC 3339 time the crawl finished (terminal crawls only).
     #[serde(skip_serializing_if = "Option::is_none")]
     completed_at: Option<String>,

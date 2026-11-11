@@ -1,0 +1,13 @@
+{
+  "construct": "frame-src",
+  "body": [
+    "<html><head></head><frameset><frame src='/frame.html'></frameset></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/frame.html",
+      "source": "frame/src"
+    }
+  ]
+}

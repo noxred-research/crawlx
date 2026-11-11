@@ -1,6 +1,6 @@
 # Data and secrets
 
-This page describes what crawlx keeps, for how long, in what form, and how secrets are kept out of
+This page describes what CrawlX keeps, for how long, in what form, and how secrets are kept out of
 everything else. Operator-side provisioning (keys, registries, Helm Secrets) is in
 [operations](../ops/README.md).
 
@@ -181,7 +181,7 @@ predicate. Service-worker and fetch-plane traffic is never attributed to the tru
 
 ## Parse-memory budget
 
-HTML parsing allocates unpredictably, so crawlx admits a parse before it starts. A process-wide budget
+HTML parsing allocates unpredictably, so CrawlX admits a parse before it starts. A process-wide budget
 (`CRAWLX_PARSE_MEMORY_BYTES`, default 4 GiB for the worker and 512 MiB for the API in the shipped
 Compose and Helm files) is charged **500 bytes per input byte**, without waiting, and the charge is held
 until the DOM is dropped. The factor is the measured worst case over an adversarial corpus (364 bytes
@@ -200,7 +200,7 @@ Stock Chrome for Testing (the pinned 155.0.8059.84 build) attempts unsolicited b
 the browser vendor's services (`accounts.google.com`, `redirector.gvt1.com`, `update.googleapis.com`,
 `content-autofill.googleapis.com`, `android.clients.google.com`) and a time-service query at startup.
 
-What crawlx does:
+What CrawlX does:
 
 - Launch flags reduce it (`--disable-background-networking`, `--disable-sync`,
   `--no-startup-window`, `--no-first-run`, component updates and default apps off in the standard
@@ -214,7 +214,7 @@ What crawlx does:
 - Add the hosts to `egress.operator_blocklist` if a deployment must guarantee that none is ever
   dialed regardless of scope.
 
-What crawlx does **not** do: prevent the attempts. A browser that makes zero attempts needs a patched
+What CrawlX does **not** do: prevent the attempts. A browser that makes zero attempts needs a patched
 build. `ci/build-chromium.py` builds a candidate from an already-synced Chromium checkout and applies
 the patches in `ci/chromium-patches/` (background account and autofill requests, component
 bootstrap, policy invalidation, bundled spell-check dictionaries). That build is not the default pin,

@@ -1,0 +1,23 @@
+{
+  "construct": "form-button-formaction",
+  "body": [
+    "<form action='/default'><button formaction='/alt-get'>a</button><button formaction='/alt-post' formmethod='post'>b</button></form>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/default",
+      "source": "form/action"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/alt-get",
+      "source": "button/formaction"
+    },
+    {
+      "method": "POST",
+      "url": "https://matrix.test/alt-post",
+      "source": "button/formaction"
+    }
+  ]
+}

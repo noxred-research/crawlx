@@ -63,6 +63,7 @@ use crawlx_url::{
 use parking_lot::Mutex;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -118,7 +119,7 @@ impl<'a> NativeHopAdmission<'a> {
                 .runner
                 .deps
                 .runs
-                .get(self.runner.run)
+                .get_metadata(self.runner.run)
                 .await
                 .map_err(FetchError::OriginAdmission)?
                 .status
@@ -915,7 +916,7 @@ impl UrlPlaneRunner {
                 .get(&parent)
                 .copied()
                 .ok_or(StoreError::LeaseLost)?;
-            let tenant = self.deps.runs.get(self.run).await?.tenant;
+            let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
             let request = crawlx_core::request::RequestEnvelopeV1::get(url.clone(), depth, from);
             // A canonical key alone can recur with different envelopes or admission outcomes.
             // Bind retries to their full content and live parent fence; identity dedupe stays in storage.
@@ -1121,7 +1122,7 @@ impl UrlPlaneRunner {
         if repaired > 0 {
             tracing::info!(run = %self.run, repaired, "url counters re-derived from the frontier");
         }
-        let row = self.deps.runs.get(self.run).await?;
+        let row = self.deps.runs.get_metadata(self.run).await?;
         let mut budget = Budget::new(&self.crawl.limits, row.started_at.unwrap_or(row.created_at))
             .with_max_pages_per_host(self.crawl.scope.max_pages_per_host);
         loop {
@@ -1451,7 +1452,7 @@ impl UrlPlaneRunner {
         // the wire CANCEL family: the facade kept requesting pages after `DELETE /crawl/{id}`).
         let mut cancelled = false;
         for entry in entries {
-            let run_row = self.deps.runs.get(self.run).await?;
+            let run_row = self.deps.runs.get_metadata(self.run).await?;
             cancelled = cancelled || run_row.status == RunStatus::Cancelled;
             // Every artifact this row retains publishes under its own frontier lease.
             // A row whose lease is already gone fails inside `process_leased` with `LeaseLost`.
@@ -1792,7 +1793,7 @@ impl UrlPlaneRunner {
             .get(&entry.id)
             .copied()
             .ok_or(StoreError::LeaseLost)?;
-        let tenant = self.deps.runs.get(self.run).await?.tenant;
+        let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
         let batch_id = crawlx_core::hash::Digest::of_value(
             "crawlx/extension-replacement/v1",
             &(self.run, entry.id, &proposal),
@@ -2045,6 +2046,8 @@ impl UrlPlaneRunner {
             legacy_reserved_effects = Some(effects);
         }
         if let Some(engine) = &self.scrape {
+            // Each backend owns a separate acquisition state machine. Keep unused
+            // scrape/protocol futures out of static dispatch and its nested robots checks.
             return self
                 .process_scrape_entry(engine, entry, discovery.as_ref(), cancel, legacy_reserved_effects)
                 .await;
@@ -2106,7 +2109,29 @@ impl UrlPlaneRunner {
         // Static parsing/caching has a large independent state machine. Keep it out
         // of the scrape/protocol dispatch frame, including when those branches return
         // early; otherwise its unused locals still exhaust ordinary executor stacks.
-        Box::pin(self.process_static_entry(
+        self.process_static_entry(
+            entry,
+            cancel,
+            queued,
+            discovery,
+            lifecycle,
+            legacy_reserved_effects,
+        )
+        .await
+    }
+
+    fn process_static_entry<'a>(
+        &'a self,
+        entry: &'a FrontierEntry,
+        cancel: &'a CancellationToken,
+        queued: crawlx_core::orchestration::QueuedRequestV1,
+        discovery: Option<DenialReason>,
+        lifecycle: crate::extensions::RequestLifecycle,
+        legacy_reserved_effects: Option<u32>,
+    ) -> impl Future<Output = Result<(), WorkerError>> + Send + 'a {
+        // Allocate in this synchronous boundary: constructing a large future in the
+        // caller's poll frame keeps its temporary stack space live while polling it.
+        Box::pin(self.process_static_entry_inner(
             entry,
             cancel,
             queued,
@@ -2114,10 +2139,9 @@ impl UrlPlaneRunner {
             lifecycle,
             legacy_reserved_effects,
         ))
-        .await
     }
 
-    async fn process_static_entry(
+    async fn process_static_entry_inner(
         &self,
         entry: &FrontierEntry,
         cancel: &CancellationToken,
@@ -2307,7 +2331,7 @@ impl UrlPlaneRunner {
         } else if let (Some(policy), Some(budget)) =
             (acquisition_policy.as_ref(), shared_acquisition_budget.as_mut())
         {
-            let tenant = self.deps.runs.get(self.run).await?.tenant;
+            let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
             let mut extract = self.extract.clone();
             extract.depth = u32::from(entry.depth);
             let observe =
@@ -2389,7 +2413,7 @@ impl UrlPlaneRunner {
                 if self.stop_requested(cancel)
                     && self.shutdown_checkpoint_requested()
                     && !self.authorization_lost().await
-                    && self.deps.runs.get(self.run).await?.status != RunStatus::Cancelled =>
+                    && self.deps.runs.get_metadata(self.run).await?.status != RunStatus::Cancelled =>
             {
                 self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
                     .await?;
@@ -2449,7 +2473,7 @@ impl UrlPlaneRunner {
             let _ = lifecycle.finalize(false);
             return self.defer_rate_limited(entry, &resp.final_url).await;
         }
-        let tenant = self.deps.runs.get(self.run).await?.tenant;
+        let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
         let mut acquisition_metadata = acquisition_metadata.unwrap_or_else(|| {
             crate::acquisition::http_metadata(self.run, tenant, &entry.url.url, &resp, &self.fetcher)
         });
@@ -3914,7 +3938,7 @@ impl UrlPlaneRunner {
                 break TerminalReason::Cancelled;
             }
             let store_started = tokio::time::Instant::now();
-            let run = self.deps.runs.get(self.run).await?;
+            let run = self.deps.runs.get_metadata(self.run).await?;
             match run.status {
                 RunStatus::Cancelled => break TerminalReason::Cancelled,
                 RunStatus::Paused => {
@@ -4187,6 +4211,68 @@ fn raw_request_text(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[tokio::test]
+    async fn dispatch_futures_remain_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        let stores =
+            crate::Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), directory.path())
+                .await
+                .unwrap();
+        let mut crawl = CreateCrawl::new(Url::parse("https://dispatch-fixture.invalid/").unwrap());
+        crawl.mode = CrawlMode::Static;
+        let canonical =
+            Canonicalizer::canonicalize_url(&crawl.seed_url, &CanonicalizeOptions::default()).unwrap();
+        let run = crawlx_storage::testkit::crawl_run(stores.tenant, crawl.clone());
+        stores.runs.create(&run, None).await.unwrap();
+        stores
+            .frontier
+            .discover(run.id, &canonical, 0, None, None)
+            .await
+            .unwrap();
+        let entry = stores.frontier.list(run.id).await.unwrap().pop().unwrap();
+        let fetcher = Arc::new(
+            Fetcher::new(
+                crawlx_fetch::FetchConfig::default(),
+                Arc::new(crawlx_policy::EgressPolicy::default()),
+                Arc::new(crawlx_fetch::StaticResolver::new()),
+            )
+            .unwrap(),
+        );
+        let runner = UrlPlaneRunner::new(
+            run.id,
+            crawl,
+            WorkerId::new(),
+            UrlPlaneDeps {
+                runs: stores.runs.clone(),
+                frontier: stores.frontier.clone(),
+                request_commits: stores.request_commits.clone(),
+                leases: stores.leases.clone(),
+                pages: stores.pages.clone(),
+                events: stores.events.clone(),
+                artifacts: stores.artifacts.clone(),
+                archives: stores.archives.clone(),
+                clock: Arc::new(crawlx_core::SystemClock),
+            },
+            fetcher,
+            RunCounters::default(),
+            CanonicalizeOptions::default(),
+        )
+        .unwrap();
+        let cancel = CancellationToken::new();
+        for (name, size) in [
+            (
+                "entry",
+                std::mem::size_of_val(&runner.process_entry(&entry, &cancel)),
+            ),
+            (
+                "leased",
+                std::mem::size_of_val(&runner.process_leased(&entry, &cancel, false)),
+            ),
+        ] {
+            assert!(size <= 8 * 1024, "{name} future uses {size} bytes");
+        }
+    }
 
     #[tokio::test]
     async fn artifact_storage_rechecks_scoped_secrets_created_by_final_json_projection() {

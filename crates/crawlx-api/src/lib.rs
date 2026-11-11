@@ -42,7 +42,7 @@ pub(crate) mod streams;
 pub mod util;
 pub mod webhooks;
 
-pub use config::{ApiConfig, ApiKeyBootstrap, CompatConfig, Settings};
+pub use config::{ApiConfig, ApiKeyBootstrap, CompatConfig, CompatMode, Settings};
 pub use errors::{ApiError, Detail, HttpError};
 pub use memory::MemoryApiStore;
 pub use pg::{PgApiStore, PgEraser};
@@ -278,6 +278,7 @@ pub async fn run_until_bound(
             clock,
         )
         .with_zdr_buffer(zdr)
+        .with_dual_signing(cfg.compat.mode.dual_signs_native_webhooks())
         .with_documents(state.clone()),
     );
     let metrics_stop = shutdown.child_token();

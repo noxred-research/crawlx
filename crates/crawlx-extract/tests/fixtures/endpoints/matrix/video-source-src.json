@@ -1,0 +1,13 @@
+{
+  "construct": "video-source-src",
+  "body": [
+    "<video><source src='/v/a.webm' type='video/webm'></video>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/v/a.webm",
+      "source": "source/src"
+    }
+  ]
+}

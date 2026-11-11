@@ -1,0 +1,17 @@
+{
+  "construct": "header-refresh-bare-target",
+  "headers": [
+    [
+      "Refresh",
+      "0;/bare/target"
+    ]
+  ],
+  "body": [],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/bare/target",
+      "source": "header/refresh"
+    }
+  ]
+}

@@ -16,6 +16,10 @@
 //!   process's own `/proc` entry and the browser resident-set sampler. It is **not** a pprof
 //!   heap profile: mimalloc, the allocator of the `crawlx` binary, exposes its statistics only
 //!   through `unsafe` FFI, which this workspace forbids, so no per-allocation data exists.
+//!   `GET /debug/pprof/heap?debug=1` renders the same numbers as `# Name = value` text lines
+//!   (`debug=0` is the JSON default; any other value answers `400`). Both carry sizes and counts
+//!   only, never labels, URLs, paths, headers or page content.
+//! * `GET /debug/pprof/` lists these routes.
 //!
 //! The listener carries **no authentication** and exposes stack traces and memory sizes of a
 //! process that holds tenant data, so it is refused on every non-loopback address unless
@@ -202,6 +206,7 @@ fn router(stop: CancellationToken) -> Router {
         stop,
     };
     Router::new()
+        .route("/debug/pprof/", get(index))
         .route("/debug/pprof/profile", get(profile))
         .route("/debug/pprof/heap", get(heap))
         .with_state(state)
@@ -318,8 +323,35 @@ fn encode_profile(guard: &pprof::ProfilerGuard<'_>) -> Result<Vec<u8>, EncodeErr
         .map_err(|e| EncodeError::Encode(Box::new(e)))
 }
 
-async fn heap() -> Response {
+/// Query of `GET /debug/pprof/heap`.
+#[derive(Debug, Deserialize)]
+struct HeapQuery {
+    debug: Option<String>,
+}
+
+/// The route list `GET /debug/pprof/` answers, one `path<TAB>description` per line.
+const INDEX: &str = "/debug/pprof/profile?seconds=N\tCPU profile, profile.proto\n\
+                     /debug/pprof/heap\tprocess memory summary (JSON)\n\
+                     /debug/pprof/heap?debug=1\tprocess memory summary (text)\n";
+
+async fn index() -> Response {
+    text(StatusCode::OK, INDEX)
+}
+
+async fn heap(Query(query): Query<HeapQuery>) -> Response {
+    // `debug=1` is the reference plain-text rendering; absent or `0` is the JSON summary
+    let as_text = match query.debug.as_deref() {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(other) => {
+            return text(
+                StatusCode::BAD_REQUEST,
+                format!("debug must be 0 or 1, got {other:?}"),
+            )
+        }
+    };
     match tokio::task::spawn_blocking(HeapReport::sample).await {
+        Ok(report) if as_text => text(StatusCode::OK, report.to_text()),
         Ok(report) => Json(report).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "memory sample task ended abnormally");
@@ -387,6 +419,32 @@ impl HeapReport {
                 .gauge(crawlx_telemetry::metrics::names::BROWSER_RSS_BYTES)
                 .get(&[]),
         }
+    }
+
+    /// The same numbers as `# Name = value` lines (`n/a` where unreadable), the plain-text
+    /// shape of the reference heap summary (`?debug=1`). Only sizes and counts: no label, URL,
+    /// path, header or page content ever appears here.
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        fn bytes(v: Option<u64>) -> String {
+            v.map_or_else(|| "n/a".to_owned(), |n| n.to_string())
+        }
+        format!(
+            "heap summary (source: {}; allocator statistics are not available in this build)\n\
+             # Pid = {}\n# RssBytes = {}\n# PeakRssBytes = {}\n# VirtualBytes = {}\n# DataBytes = {}\n\
+             # SwapBytes = {}\n# Threads = {}\n# RssTreeBytes = {}\n# BrowserRssGaugeBytes = {}\n",
+            self.source,
+            self.pid,
+            bytes(self.rss_bytes),
+            bytes(self.peak_rss_bytes),
+            bytes(self.virtual_bytes),
+            bytes(self.data_bytes),
+            bytes(self.swap_bytes),
+            bytes(self.threads),
+            bytes(self.rss_tree_bytes),
+            self.browser_rss_gauge_bytes
+                .map_or_else(|| "n/a".to_owned(), |g| format!("{g:.0}")),
+        )
     }
 }
 

@@ -1,0 +1,15 @@
+{
+  "construct": "form-no-action",
+  "body": [
+    "<form method='post'><input name='x' value='1'></form>"
+  ],
+  "expected": [
+    {
+      "method": "POST",
+      "url": "https://matrix.test/dir/page.html",
+      "source": "form/action",
+      "body": "x=1",
+      "content_type": "application/x-www-form-urlencoded"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "a06-german",
+  "family": "article_body",
+  "note": "German text with umlauts and sharp s",
+  "expectedText": "Startseite Lokales Kultur Kontakt\nNeuer Radweg verbindet Hafen und Altstadt\nDie Stadt hat am Montag einen neuen Radweg eröffnet, der den Hafen mit der Altstadt verbindet. Der Weg ist drei Kilometer lang und führt größtenteils entlang des alten Kanals.\nFür den Bau wurden vierhundert Bäume geschützt und zwölf Querungen für Fußgänger angelegt. Die Verkehrsplanerin Heike Brandl sagte, dass der Weg vor allem Schulkinder und Pendler entlasten solle.\nIm Frühjahr sollen Abstellanlagen und eine Luftpumpe am Marktplatz folgen. Anwohner können Vorschläge für weitere Verbindungen bis Ende Mai einreichen.\nAlle Rechte vorbehalten. Impressum Datenschutz",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 33
+    },
+    {
+      "label": "body",
+      "start": 34,
+      "end": 75
+    },
+    {
+      "label": "body",
+      "start": 76,
+      "end": 255
+    },
+    {
+      "label": "body",
+      "start": 256,
+      "end": 458
+    },
+    {
+      "label": "body",
+      "start": 459,
+      "end": 614
+    },
+    {
+      "label": "boilerplate",
+      "start": 615,
+      "end": 661
+    }
+  ]
+}

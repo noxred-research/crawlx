@@ -1,0 +1,28 @@
+{
+  "construct": "img-srcset",
+  "body": [
+    "<img src='/fallback.jpg' srcset='small.jpg 480w, /big.jpg 1080w, density.jpg 2x'>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/fallback.jpg",
+      "source": "img/src"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/small.jpg",
+      "source": "img/srcset"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/big.jpg",
+      "source": "img/srcset"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/density.jpg",
+      "source": "img/srcset"
+    }
+  ]
+}

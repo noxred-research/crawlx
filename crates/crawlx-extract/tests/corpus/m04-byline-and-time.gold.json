@@ -1,0 +1,28 @@
+{
+  "id": "m04-byline-and-time",
+  "family": "metadata",
+  "note": "no metadata tags: byline text and a time element only; no canonical or description exist",
+  "expectedText": "title=Night Market Moves to the Old Depot\nauthors=Jonas Pell\nlanguage=en-GB\npublished=2026-05-14",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 41
+    },
+    {
+      "label": "authors",
+      "start": 50,
+      "end": 60
+    },
+    {
+      "label": "language",
+      "start": 70,
+      "end": 75
+    },
+    {
+      "label": "published",
+      "start": 86,
+      "end": 96
+    }
+  ]
+}

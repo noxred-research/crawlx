@@ -1,0 +1,23 @@
+{
+  "construct": "area-href-ping",
+  "body": [
+    "<map name='m'><area href='/area-target' ping='/area-ping-1 /area-ping-2'></map>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/area-target",
+      "source": "area/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/area-ping-1",
+      "source": "area/ping"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/area-ping-2",
+      "source": "area/ping"
+    }
+  ]
+}

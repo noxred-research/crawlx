@@ -1,0 +1,13 @@
+{
+  "construct": "doctype-system-id",
+  "body": [
+    "<!DOCTYPE html SYSTEM 'http://matrix.test/dtd/legacy.dtd'><html></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "http://matrix.test/dtd/legacy.dtd",
+      "source": "html/doctype"
+    }
+  ]
+}

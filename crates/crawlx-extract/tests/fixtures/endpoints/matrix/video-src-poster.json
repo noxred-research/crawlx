@@ -1,0 +1,18 @@
+{
+  "construct": "video-src-poster",
+  "body": [
+    "<video src='/v/movie.mp4' poster='/v/poster.jpg'></video>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/v/movie.mp4",
+      "source": "video/src"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/v/poster.jpg",
+      "source": "video/poster"
+    }
+  ]
+}

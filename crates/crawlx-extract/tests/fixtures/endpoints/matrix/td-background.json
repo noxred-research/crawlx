@@ -1,0 +1,13 @@
+{
+  "construct": "td-background",
+  "body": [
+    "<table><tr><td background='/t/cell.gif'>x</td></tr></table>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/t/cell.gif",
+      "source": "table/td-background"
+    }
+  ]
+}

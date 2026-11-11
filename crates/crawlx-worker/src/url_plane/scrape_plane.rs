@@ -16,7 +16,7 @@
 //!   with `deduplicateSimilarURLs`), no `robots.txt` gate for `scrape` and `batch` jobs
 //!   (the compatibility API scrapes the URLs it is given) and no seed-path restriction for `batch` jobs.
 
-use super::{NativeHopAdmission, RequestSource, UrlPlaneRunner};
+use super::{Future, NativeHopAdmission, RequestSource, UrlPlaneRunner};
 use crate::counters::{Attempt, Plane};
 use crate::error::WorkerError;
 use crate::run::RunContext;
@@ -122,7 +122,18 @@ impl UrlPlaneRunner {
     /// Produce, store and complete one frontier row through `engine`. `discovery` is the include
     /// denial of the crawl's entry URL when it is fetched to start discovery only: its row ends
     /// `policy_blocked`, no page is stored, and its links are followed.
-    pub(super) async fn process_scrape_entry(
+    pub(super) fn process_scrape_entry<'a>(
+        &'a self,
+        engine: &'a ScrapeEngine,
+        entry: &'a FrontierEntry,
+        discovery: Option<&'a DenialReason>,
+        cancel: &'a tokio_util::sync::CancellationToken,
+        legacy_reserved_effects: Option<u32>,
+    ) -> impl Future<Output = Result<(), WorkerError>> + Send + 'a {
+        Box::pin(self.process_scrape_entry_inner(engine, entry, discovery, cancel, legacy_reserved_effects))
+    }
+
+    async fn process_scrape_entry_inner(
         &self,
         engine: &ScrapeEngine,
         entry: &FrontierEntry,

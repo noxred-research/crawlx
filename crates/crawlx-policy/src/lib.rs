@@ -39,6 +39,7 @@ pub use egress_lists::{EgressLists, ListError, SharedEgressLists};
 pub use error::PolicyError;
 pub use limits::{Budget, BudgetExhausted, BudgetKind, Remaining};
 pub use robots::{
-    DisallowedBy, FetchStatus, RobotsCache, RobotsConfig, RobotsRule, RobotsTxt, RobotsVerdict,
+    DisallowedBy, FetchStatus, HopKind, HopVerdict, RobotsCache, RobotsConfig, RobotsRule, RobotsTxt,
+    RobotsVerdict,
 };
 pub use scope::{DenialReason, ExcludeHosts, HostScopeRule, ScopePolicy, ScopeVerdict, UrlPatterns};

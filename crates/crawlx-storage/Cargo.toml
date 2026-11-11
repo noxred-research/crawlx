@@ -58,6 +58,15 @@ crawlx-storage = { path = ".", features = ["fake-s3", "fake-kms"] }
 crawlx-policy = { path = "../crawlx-policy" }
 crawlx-state = { path = "../crawlx-state" }
 proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "journal"
+harness = false
+
+[[bench]]
+name = "artifact_key"
+harness = false
 
 [lints]
 workspace = true

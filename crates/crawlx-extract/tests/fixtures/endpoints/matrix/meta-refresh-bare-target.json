@@ -1,0 +1,13 @@
+{
+  "construct": "meta-refresh-bare-target",
+  "body": [
+    "<html><head><meta http-equiv='refresh' content='0; /bare-meta'></head></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/bare-meta",
+      "source": "meta/refresh"
+    }
+  ]
+}

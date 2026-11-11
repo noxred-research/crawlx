@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 #[derive(JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Selector {
-    /// CSS selects existing elements; no pseudo-element string rewriting.
+    /// CSS selects existing elements; each comma-separated selector may end in `::text` or
+    /// `::attr(name)` in item fields and read-more rules. Any other pseudo-element fails admission.
     Css {
         /// At most 4096 UTF-8 bytes; invalid syntax fails admission.
         #[schemars(length(min = 1, max = 4096))]
@@ -39,6 +40,28 @@ pub(super) struct SelectorPolicy {
     /// At most 32 prefixes (64 bytes each), mapped to namespace URIs (1024 bytes each).
     #[schemars(extend("maxProperties" = 32))]
     namespaces: Option<BTreeMap<String, String>>,
+    /// Base for relative read-more targets: `document` (default, honors a base element) or `page`.
+    read_more_base: Option<ReadMoreBase>,
+}
+
+/// Base URL used to resolve relative read-more targets.
+#[derive(JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ReadMoreBase {
+    Document,
+    Page,
+}
+
+/// Element a nested field group's rules start from.
+#[derive(JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum FieldSource {
+    /// The group's base element.
+    Context,
+    /// Nearest following element sibling, optionally also matched by `selector`.
+    NextSibling { selector: Option<Selector> },
+    /// Nearest preceding element sibling, optionally also matched by `selector`.
+    PreviousSibling { selector: Option<Selector> },
 }
 
 /// Node projection. Attribute projection reads a local element attribute name.
@@ -51,6 +74,10 @@ pub(super) enum FieldExtraction {
         name: String,
     },
     Html,
+    /// All attributes of the element as a name to value object.
+    Attributes,
+    /// Nested object built from the field's `fields`.
+    Group,
 }
 
 /// Cardinality is checked before join/dedupe transforms.
@@ -75,6 +102,30 @@ pub(super) enum FieldTransform {
         separator: String,
     },
     Dedupe,
+    /// Collapse whitespace, drop control and zero-width characters, trim.
+    Clean,
+    /// Safe-regex projection; backreferences and look-around fail admission.
+    Regex {
+        #[schemars(length(min = 1, max = 512))]
+        pattern: String,
+        /// Capture group, zero for the whole match.
+        group: Option<usize>,
+        /// Keep every match instead of the first.
+        all: Option<bool>,
+    },
+    /// Versioned built-in pattern name, for example `email` or `email.v1`.
+    Builtin {
+        #[schemars(length(min = 1, max = 64))]
+        name: String,
+        all: Option<bool>,
+    },
+    /// Parse each string as JSON (at most 1 MiB).
+    JsonParse,
+    /// Keep at most the first `count` values.
+    Limit {
+        #[schemars(range(min = 1, max = 10000))]
+        count: usize,
+    },
 }
 
 /// One required declarative field rule; names must be unique within the loader.
@@ -94,6 +145,13 @@ pub(super) struct ItemField {
     required: Option<bool>,
     /// Explicit caller data; emitted quality is defaulted, never fetched or inferred.
     default: Option<Value>,
+    /// Nested field group; required exactly when `extraction` is `group`. At most 64 fields per
+    /// group, four nesting levels and 256 fields per loader.
+    #[schemars(length(max = 64))]
+    fields: Option<Vec<ItemField>>,
+    /// Element a nested field starts from, relative to the group's base element. Only valid on
+    /// nested fields.
+    source: Option<FieldSource>,
 }
 
 /// Bounded offline item schema and field recipe; omission overlays version-one defaults.

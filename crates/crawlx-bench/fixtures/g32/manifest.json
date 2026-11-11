@@ -10,6 +10,13 @@
       "GET /g32/sitemap.xml"
     ],
     "unauthorized_actions": 0,
+    "forbidden_ops": [
+      {
+        "method": "DELETE",
+        "path_prefix": "/g32/test/javascript/interactive/js-delete.found",
+        "profiles": ["read_only", "test_environment"]
+      }
+    ],
     "crawl_maze": [
       {
         "path": "/css/font-face.found",
@@ -177,6 +184,7 @@
         "path": "/html/body/img/src-data.found",
         "category": "html",
         "plane": "deferred",
+        "deferred_reason": "the img data: URI is skipped by the HTML attribute parser and its inline SVG payload (an image xlink:href) is never decoded and mined; needs a data: payload decoder in crawlx-extract",
         "page": "html/body/img/src-data.html"
       },
       {
@@ -285,6 +293,7 @@
         "path": "/html/head/profile.found",
         "category": "html",
         "plane": "deferred",
+        "deferred_reason": "the head profile attribute (HTML 4 metadata profile) has no attribute handler in crawlx-extract's tag table",
         "page": "html/head/profile.html"
       },
       {
@@ -297,6 +306,7 @@
         "path": "/html/head/comment-conditional.found",
         "category": "html",
         "plane": "deferred",
+        "deferred_reason": "the stylesheet link sits inside an IE-only conditional comment, which the HTML parser keeps as a comment node and the extractor never re-parses",
         "page": "html/head/comment-conditional.html"
       },
       {
@@ -321,12 +331,14 @@
         "path": "/html/head/meta/content-pinned-websites.found",
         "category": "html",
         "plane": "deferred",
+        "deferred_reason": "msapplication-config carries a bare root-relative path in meta content; the meta pass only mines quoted or absolute URLs from content, so a bare path is not recognised",
         "page": "html/head/meta/content-pinned-websites.html"
       },
       {
         "path": "/html/head/meta/content-reading-view.found",
         "category": "html",
         "plane": "deferred",
+        "deferred_reason": "reading-view carries a bare root-relative path in meta content; the meta pass only mines quoted or absolute URLs from content, so a bare path is not recognised",
         "page": "html/head/meta/content-reading-view.html"
       },
       {

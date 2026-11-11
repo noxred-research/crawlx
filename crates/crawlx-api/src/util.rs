@@ -4,7 +4,7 @@
 use crate::config::Settings;
 use crate::errors::{ErrorParts, HttpError};
 use crate::state::AppState;
-use axum::body::Body;
+use axum::body::{Body, HttpBody};
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::http::{header, HeaderName, HeaderValue, StatusCode};
@@ -268,10 +268,141 @@ pub fn json_response(status: StatusCode, body: &Value) -> Response {
 #[derive(Clone, Debug)]
 pub struct RequestId(pub String);
 
-/// Outermost middleware: request id + span, final error envelope, `X-Request-Id`.
+/// Largest body the compat `ETag` hashes; bigger answers go out without one.
+const ETAG_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// Methods and request headers a cross-origin caller of the compat routes may use.
+const CORS_METHODS: &str = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
+const CORS_HEADERS: &str = "authorization, content-type, idempotency-key, x-request-id";
+
+/// The caller's own `x-request-id` when it is a well-formed one (1..=128 of letters, digits, `.`,
+/// `_`, `:`, `-`): the value a compat `409` echoes back.
+fn caller_request_id(headers: &axum::http::HeaderMap) -> Option<String> {
+    let raw = headers.get("x-request-id")?.to_str().ok()?;
+    ((1..=128).contains(&raw.len())
+        && raw
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-')))
+    .then(|| raw.to_owned())
+}
+
+/// The answer to a cross-origin preflight of a compat route.
+fn preflight() -> Response {
+    let mut resp = Response::new(Body::empty());
+    *resp.status_mut() = StatusCode::NO_CONTENT;
+    let h = resp.headers_mut();
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static(CORS_METHODS),
+    );
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static(CORS_HEADERS),
+    );
+    h.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("86400"));
+    resp
+}
+
+/// `X-Response-Time` value: milliseconds with microsecond precision.
+fn response_time(elapsed: std::time::Duration) -> String {
+    format!("{}.{:03}ms", elapsed.as_millis(), elapsed.subsec_micros() % 1000)
+}
+
+/// Weak entity tag of a body: `W/"<length in hex>-<first 16 bytes of its BLAKE3, hex>"`.
+fn etag_of(body: &[u8]) -> String {
+    let digest = blake3::hash(body);
+    format!("W/\"{:x}-{}\"", body.len(), hex::encode(&digest.as_bytes()[..16]))
+}
+
+/// Does the request's `If-None-Match` list `etag` (or `*`)? Weak comparison.
+fn if_none_match(headers: &axum::http::HeaderMap, etag: &str) -> bool {
+    let weak = |t: &str| t.trim().trim_start_matches("W/").to_owned();
+    let ours = weak(etag);
+    headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|t| t.trim() == "*" || weak(t) == ours)
+}
+
+/// Response headers of the compat routes: `Access-Control-Allow-Origin`, `X-Response-Time`
+/// and, for a `GET` answer whose body is a plain buffer, an `ETag` (a matching `If-None-Match`
+/// turns the answer into `304 Not Modified`).
+async fn compat_headers(
+    resp: Response,
+    get: bool,
+    request: &axum::http::HeaderMap,
+    started: std::time::Instant,
+) -> Response {
+    let (mut parts, mut body) = resp.into_parts();
+    if parts.status == StatusCode::OK
+        && !parts.headers.contains_key(header::ETAG)
+        && body
+            .size_hint()
+            .exact()
+            .is_some_and(|n| n > 0 && usize::try_from(n).is_ok_and(|n| n <= ETAG_MAX_BYTES))
+    {
+        match axum::body::to_bytes(body, ETAG_MAX_BYTES).await {
+            Ok(bytes) => {
+                let etag = etag_of(&bytes);
+                if let Ok(v) = HeaderValue::from_str(&etag) {
+                    parts.headers.insert(header::ETAG, v);
+                }
+                if get && if_none_match(request, &etag) {
+                    parts.status = StatusCode::NOT_MODIFIED;
+                    parts.headers.remove(header::CONTENT_LENGTH);
+                    parts.headers.remove(header::CONTENT_TYPE);
+                    body = Body::empty();
+                } else {
+                    body = Body::from(bytes);
+                }
+            }
+            Err(_) => {
+                // the body was only buffered for the tag and is gone: say so instead of
+                // answering an empty 200
+                let mut failed = json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"success": false, "error": "response could not be read", "code": "internal"}),
+                );
+                failed
+                    .headers_mut()
+                    .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+                return failed;
+            }
+        }
+    }
+    parts
+        .headers
+        .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    if let Ok(v) = HeaderValue::from_str(&response_time(started.elapsed())) {
+        parts
+            .headers
+            .insert(HeaderName::from_static("x-response-time"), v);
+    }
+    Response::from_parts(parts, body)
+}
+
+/// Outermost middleware: request id + span, final error envelope, `X-Request-Id`. The compat
+/// routes also answer cross-origin preflights and carry `Access-Control-Allow-Origin`, `ETag` and
+/// `X-Response-Time`; a compat `409` echoes the caller's own `x-request-id`.
 pub async fn envelope_layer(mut req: Request, next: Next) -> Response {
+    let started = std::time::Instant::now();
     let rid = Uuid::now_v7().to_string();
     let compat = req.uri().path().starts_with("/compat/");
+    if compat && req.method() == axum::http::Method::OPTIONS {
+        let mut resp = preflight();
+        resp.headers_mut()
+            .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+        return resp;
+    }
+    let get = req.method() == axum::http::Method::GET;
+    let request_headers = if compat {
+        req.headers().clone()
+    } else {
+        axum::http::HeaderMap::new()
+    };
+    let caller_rid = compat.then(|| caller_request_id(req.headers())).flatten();
     let traceparent = req
         .headers()
         .get("traceparent")
@@ -295,11 +426,16 @@ pub async fn envelope_layer(mut req: Request, next: Next) -> Response {
         }
         None => None,
     };
+    // a `409` of the compat routes names the request the caller sent, not crawlx's own id
+    let shown = match (&caller_rid, resp.status()) {
+        (Some(caller), StatusCode::CONFLICT) => caller.clone(),
+        _ => rid.clone(),
+    };
     if let Some(e) = parts {
         let body = if compat {
-            e.compat_envelope(&rid)
+            e.compat_envelope(&shown)
         } else {
-            e.envelope(&rid)
+            e.envelope(&shown)
         };
         let headers = resp.headers().clone();
         let mut out = json_response(e.status, &body);
@@ -315,9 +451,12 @@ pub async fn envelope_layer(mut req: Request, next: Next) -> Response {
         }
         resp = out;
     }
-    if let Ok(v) = HeaderValue::from_str(&rid) {
+    if let Ok(v) = HeaderValue::from_str(&shown) {
         resp.headers_mut()
             .insert(HeaderName::from_static("x-request-id"), v);
+    }
+    if compat {
+        resp = compat_headers(resp, get, &request_headers, started).await;
     }
     resp
 }

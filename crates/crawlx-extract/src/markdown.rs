@@ -13,9 +13,12 @@
 //! contains more than one blank line between blocks. Characters that would
 //! change the Markdown meaning of text are backslash-escaped.
 
+use std::cell::RefCell;
+
+use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::dom::{collapse_ws, image_src, is_safe_link_scheme, pre_text, resolve, Elem, Node};
+use crate::dom::{collapse_ws, image_src, is_safe_link_scheme, plain_text, pre_text, resolve, Elem, Node};
 use crate::tables;
 
 /// Marks a `<br>` inside an inline run until whitespace collapsing is done.
@@ -44,7 +47,26 @@ struct Cx<'a> {
     base: &'a Url,
     /// Emit `data:image/...` sources instead of dropping the image.
     keep_data_images: bool,
+    /// Citation mode: links render as `text⟨n⟩` and are registered here.
+    citations: Option<&'a RefCell<Vec<Citation>>>,
 }
+
+/// One numbered reference of citation-style Markdown. The list is retained next to the text so
+/// every `⟨n⟩` marker resolves to the URL it replaced; nothing is fetched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct Citation {
+    /// One-based marker number, in order of first appearance.
+    pub index: usize,
+    /// Absolute link target (fragment retained; `http`, `https`, `mailto`, `tel` or `ftp`).
+    pub url: Url,
+    /// Collapsed link text of the first occurrence, at most 200 characters.
+    pub text: String,
+}
+
+/// Longest reference text kept per citation, in characters.
+const MAX_CITATION_TEXT: usize = 200;
 
 /// Convert content nodes to Markdown. Relative URLs are resolved against `base`; `data:image/...`
 /// sources are kept (verbatim) only when `keep_data_images` is set.
@@ -53,8 +75,73 @@ pub fn to_markdown(nodes: &[Node], base: &Url, keep_data_images: bool) -> String
     let cx = Cx {
         base,
         keep_data_images,
+        citations: None,
     };
     join_blocks(&run(nodes, &cx, None))
+}
+
+/// Convert content nodes to citation-style Markdown: each link becomes its text followed by a
+/// numbered marker `⟨n⟩`, links to the same URL share one number, and a reference list
+/// (`⟨n⟩ url: text`) is appended after a blank line. Images keep their inline form.
+///
+/// Returns the Markdown (reference list included) and the retained references.
+#[must_use]
+pub fn to_markdown_with_citations(
+    nodes: &[Node],
+    base: &Url,
+    keep_data_images: bool,
+) -> (String, Vec<Citation>) {
+    let citations = RefCell::new(Vec::new());
+    let cx = Cx {
+        base,
+        keep_data_images,
+        citations: Some(&citations),
+    };
+    let mut markdown = join_blocks(&run(nodes, &cx, None));
+    let citations = citations.into_inner();
+    if !citations.is_empty() {
+        if !markdown.is_empty() {
+            markdown.push_str("\n\n");
+        }
+        markdown.push_str(&render_references(&citations));
+    }
+    (markdown, citations)
+}
+
+/// Render the reference list of citation-style Markdown: one `⟨n⟩ url: text` line per citation.
+#[must_use]
+pub fn render_references(citations: &[Citation]) -> String {
+    let mut out = String::new();
+    for (i, c) in citations.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("⟨{}⟩ {}", c.index, c.url));
+        if !c.text.is_empty() {
+            out.push_str(": ");
+            out.push_str(&c.text);
+        }
+    }
+    out
+}
+
+/// Number of the citation for `url`, registering it on first sight.
+fn cite(citations: &RefCell<Vec<Citation>>, url: &Url, link: &Elem) -> usize {
+    let mut list = citations.borrow_mut();
+    let text = collapse_ws(&plain_text(&link.children));
+    if let Some(existing) = list.iter_mut().find(|c| &c.url == url) {
+        if existing.text.is_empty() {
+            existing.text = text.chars().take(MAX_CITATION_TEXT).collect();
+        }
+        return existing.index;
+    }
+    let index = list.len() + 1;
+    list.push(Citation {
+        index,
+        url: url.clone(),
+        text: text.chars().take(MAX_CITATION_TEXT).collect(),
+    });
+    index
 }
 
 /// Preserve final privacy-redacted text while escaping Markdown interpretation.
@@ -427,11 +514,18 @@ fn inline_elem(e: &Elem, cx: &Cx<'_>, mode: Mode, out: &mut String) {
                     if text.starts_with(char::is_whitespace) {
                         out.push(' ');
                     }
-                    out.push('[');
-                    out.push_str(t);
-                    out.push_str("](");
-                    out.push_str(&fmt_dest(&u));
-                    out.push(')');
+                    if let Some(citations) = cx.citations {
+                        out.push_str(t);
+                        out.push('⟨');
+                        out.push_str(&cite(citations, &u, e).to_string());
+                        out.push('⟩');
+                    } else {
+                        out.push('[');
+                        out.push_str(t);
+                        out.push_str("](");
+                        out.push_str(&fmt_dest(&u));
+                        out.push(')');
+                    }
                     if text.ends_with(char::is_whitespace) {
                         out.push(' ');
                     }

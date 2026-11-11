@@ -164,8 +164,13 @@ impl HttpClient {
             .dns_resolver(pins)
             .connect_timeout(cfg.connect_timeout)
             .timeout(cfg.request_timeout)
-            .gzip(true)
-            .brotli(true);
+            // Bodies are decoded by `codec`, under independent wire/decoded/ratio limits.
+            .gzip(false)
+            .brotli(false)
+            .tls_info(true);
+        if let Some(read) = cfg.read_timeout {
+            builder = builder.read_timeout(read);
+        }
         let mut socks = None;
         if let Some(adapter) = pool_adapter {
             // A pool route is served by the fetcher's loopback adapter (`CONNECT` only).
@@ -273,6 +278,20 @@ impl HttpResponse {
         match self {
             Self::Rustls(response) => response.headers(),
             Self::Randomized { response, .. } => response.headers(),
+        }
+    }
+
+    /// DER leaf certificate the transport reported for this response's own connection.
+    pub(crate) fn peer_certificate(&self) -> Option<&[u8]> {
+        match self {
+            Self::Rustls(response) => response
+                .extensions()
+                .get::<reqwest::tls::TlsInfo>()?
+                .peer_certificate(),
+            Self::Randomized { response, .. } => response
+                .extensions()
+                .get::<wreq::tls::TlsInfo>()?
+                .peer_certificate(),
         }
     }
 

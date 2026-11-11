@@ -1,0 +1,31 @@
+{
+  "construct": "header-names-case-insensitive",
+  "status": 301,
+  "headers": [
+    [
+      "LOCATION",
+      "/upper"
+    ],
+    [
+      "content-LOCATION",
+      "/mixed"
+    ],
+    [
+      "X-Other",
+      "/ignored"
+    ]
+  ],
+  "body": [],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/upper",
+      "source": "header/location"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/mixed",
+      "source": "header/content-location"
+    }
+  ]
+}

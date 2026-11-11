@@ -1,0 +1,48 @@
+{
+  "id": "a03-sibling-continuation",
+  "family": "article_body",
+  "note": "article continues in a sibling container after an inline advertisement",
+  "expectedText": "Riverside Post City desk\nFootbridge Repainting Starts Next Month\nThe city will begin repainting the old river footbridge next month, a job that has been postponed twice since the last coat peeled in the spring. Crews will work from a floating platform so that the walkway stays open.\nEngineers inspected the steel arches in October and found surface rust but no structural damage. The new paint system uses a primer that tolerates damp air, which should extend the repainting cycle to twelve years.\nSponsored: Riverside Paints, colors for every season\nResidents who cross the bridge on their way to the market will see short closures of the east ramp on weekday mornings. Signs at both ends will show the revised schedule, and a detour map will be posted at the tram stop.\nWork is expected to finish before the winter festival. The council has set aside a small fund to light the arches again once the paint has cured.\nRiverside Post is published weekly.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 24
+    },
+    {
+      "label": "body",
+      "start": 25,
+      "end": 64
+    },
+    {
+      "label": "body",
+      "start": 65,
+      "end": 283
+    },
+    {
+      "label": "body",
+      "start": 284,
+      "end": 498
+    },
+    {
+      "label": "boilerplate",
+      "start": 499,
+      "end": 551
+    },
+    {
+      "label": "body",
+      "start": 552,
+      "end": 772
+    },
+    {
+      "label": "body",
+      "start": 773,
+      "end": 918
+    },
+    {
+      "label": "boilerplate",
+      "start": 919,
+      "end": 954
+    }
+  ]
+}

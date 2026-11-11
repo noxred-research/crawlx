@@ -19,7 +19,7 @@ use bytes::Bytes;
 use crawlx_core::captcha::CaptchaSecrets;
 use crawlx_core::custody::{current_producer, CustodyLease, CustodySource, SecretEpoch};
 use crawlx_core::hash::Digest;
-use crawlx_core::repo::{CrawlRun, Sensitivity};
+use crawlx_core::repo::{RunMetadata, Sensitivity};
 use crawlx_core::secret::{SecretByteScanner, SecretScanError, SecretScanLimits, SecretScanMode};
 use crawlx_core::{ArtifactId, ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 use std::path::Path;
@@ -174,7 +174,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
     pub(super) fn sealing(
         &self,
         class: Sensitivity,
-        run: &CrawlRun,
+        run: &RunMetadata,
     ) -> Result<Option<&StoreCustody>, StoreError> {
         let Some(custody) = self.custody.as_ref().filter(|custody| {
             custody.writes == CustodyWrites::Required
@@ -299,7 +299,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
     pub(super) async fn put_sealed_bytes(
         &self,
         attached: &StoreCustody,
-        run_row: &CrawlRun,
+        run_row: &RunMetadata,
         class: Sensitivity,
         kind: &str,
         content_type: &str,
@@ -383,7 +383,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
     pub(super) async fn put_sealed_file(
         &self,
         attached: &StoreCustody,
-        run_row: &CrawlRun,
+        run_row: &RunMetadata,
         content_type: &str,
         file: &Path,
         max_bytes: u64,

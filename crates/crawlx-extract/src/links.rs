@@ -21,7 +21,7 @@ use crate::ExtractError;
 /// Maximum length of the text stored per link.
 const MAX_LINK_TEXT: usize = 512;
 
-fn anchor_text(el: ElementRef<'_>) -> String {
+pub(crate) fn anchor_text(el: ElementRef<'_>) -> String {
     let mut t = collapse_ws(&el.text().collect::<String>());
     if t.is_empty() {
         let alt = el

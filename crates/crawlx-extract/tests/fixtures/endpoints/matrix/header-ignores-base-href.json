@@ -1,0 +1,30 @@
+{
+  "construct": "header-ignores-base-href",
+  "headers": [
+    [
+      "Content-Location",
+      "rel.html"
+    ]
+  ],
+  "body": [
+    "<base href='/other/'>",
+    "<a href='rel.html'>x</a>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/rel.html",
+      "source": "header/content-location"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/other/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/other/rel.html",
+      "source": "a/href"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "construct": "binary-headers-still-parsed",
+  "status": 301,
+  "content_type": "image/png",
+  "headers": [
+    [
+      "Location",
+      "/moved-image"
+    ]
+  ],
+  "body_hex": "89504e470d0a1a0a0000000d49484452222f7365637265742f666f756e642e68746d6c2220222e2f68696464656e2f782e706870222068747470733a2f2f6c65616b2e746573742f612f622e706870",
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/moved-image",
+      "source": "header/location"
+    }
+  ]
+}

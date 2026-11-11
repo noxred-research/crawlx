@@ -318,4 +318,171 @@ mod tests {
             assert!(CATALOG.iter().any(|d| d.name == n), "{n}");
         }
     }
+
+    /// The measurement metrics the quality gates and runbooks read: identity, key coverage,
+    /// traffic capture, revalidation, round-robin roles, forms and the trusted corpus.
+    /// `(name, kind, labels, exported Prometheus name)`.
+    const MEASUREMENT_METRICS: &[(&str, MetricKind, &[&str], &str)] = &[
+        (
+            "crawlx.identity.collision_suspected",
+            MetricKind::Counter,
+            &["role"],
+            "crawlx_identity_collision_suspected_total",
+        ),
+        (
+            "crawlx.identity.splits",
+            MetricKind::Counter,
+            &["role"],
+            "crawlx_identity_splits_total",
+        ),
+        (
+            "crawlx.traffic.late_ratio",
+            MetricKind::Gauge,
+            &[],
+            "crawlx_traffic_late_ratio",
+        ),
+        (
+            "crawlx.traffic.unattributed",
+            MetricKind::Counter,
+            &["reason"],
+            "crawlx_traffic_unattributed_total",
+        ),
+        (
+            "crawlx.traffic.unmatched_proxy_flows",
+            MetricKind::Counter,
+            &[],
+            "crawlx_traffic_unmatched_proxy_flows_total",
+        ),
+        (
+            "crawlx.coverage.action_context",
+            MetricKind::Gauge,
+            &["role"],
+            "crawlx_coverage_action_context",
+        ),
+        (
+            "crawlx.keys.collision_rate",
+            MetricKind::Gauge,
+            &[],
+            "crawlx_keys_collision_rate",
+        ),
+        (
+            "crawlx.keys.coarsened",
+            MetricKind::Counter,
+            &[],
+            "crawlx_keys_coarsened_total",
+        ),
+        (
+            "crawlx.revalidate.latency",
+            MetricKind::Histogram,
+            &["outcome"],
+            "crawlx_revalidate_latency_seconds",
+        ),
+        (
+            "crawlx.session.round_wait",
+            MetricKind::Histogram,
+            &["role"],
+            "crawlx_session_round_wait_seconds",
+        ),
+        (
+            "crawlx.session.cross_principal_attribution_rate",
+            MetricKind::Gauge,
+            &["role"],
+            "crawlx_session_cross_principal_attribution_rate",
+        ),
+        (
+            "crawlx.roles.abandoned",
+            MetricKind::Counter,
+            &["reason"],
+            "crawlx_roles_abandoned_total",
+        ),
+        (
+            "crawlx.form.submissions",
+            MetricKind::Counter,
+            &["partition"],
+            "crawlx_form_submissions_total",
+        ),
+        (
+            "crawlx.form.denied_no_sink",
+            MetricKind::Counter,
+            &[],
+            "crawlx_form_denied_no_sink_total",
+        ),
+        (
+            "crawlx.coverage.diagnostic_only_keys",
+            MetricKind::Gauge,
+            &["role"],
+            "crawlx_coverage_diagnostic_only_keys",
+        ),
+        (
+            "crawlx.export.trusted_rows",
+            MetricKind::Counter,
+            &["kind"],
+            "crawlx_export_trusted_rows_total",
+        ),
+    ];
+
+    #[test]
+    fn measurement_metrics_are_catalogued_with_bounded_labels() {
+        for (name, kind, labels, prom) in MEASUREMENT_METRICS {
+            let def = CATALOG
+                .iter()
+                .find(|d| d.name == *name)
+                .unwrap_or_else(|| panic!("{name} is not catalogued"));
+            assert_eq!(def.kind, *kind, "{name}");
+            assert_eq!(def.labels, *labels, "{name}");
+            assert_eq!(def.prometheus_name(), *prom, "{name}");
+            // no unbounded dimension: never a role id, session id, URL or origin
+            for l in def.labels {
+                assert!(
+                    ["role", "reason", "outcome", "partition", "kind"].contains(l),
+                    "{name} uses label {l}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_measurement_metric_moves_in_the_registry_and_is_exported() {
+        use crate::metrics::Metrics;
+        let m = Metrics::new();
+        let label_value = |l: &str| match l {
+            "role" => "alice",
+            "reason" => "no_epoch",
+            "outcome" => "ok",
+            "partition" => "valid",
+            _ => "trusted",
+        };
+        for (name, kind, labels, prom) in MEASUREMENT_METRICS {
+            let pairs: Vec<(&str, &str)> = labels.iter().map(|l| (*l, label_value(l))).collect();
+            match kind {
+                MetricKind::Counter => {
+                    let c = m.counter(name);
+                    assert_eq!(c.get(&pairs), 0, "{name}");
+                    c.inc_by(2, &pairs);
+                    assert_eq!(c.get(&pairs), 2, "{name}");
+                }
+                MetricKind::Gauge => {
+                    let g = m.gauge(name);
+                    assert_eq!(g.get(&pairs), None, "{name}");
+                    g.set(0.25, &pairs);
+                    assert_eq!(g.get(&pairs), Some(0.25), "{name}");
+                }
+                MetricKind::Histogram => {
+                    let h = m.histogram(name);
+                    assert!(h.snapshot(&pairs).is_none(), "{name}");
+                    h.observe_with(0.002, &pairs);
+                    assert_eq!(h.snapshot(&pairs).unwrap().count, 1, "{name}");
+                }
+            }
+            assert!(
+                m.render_prometheus()
+                    .lines()
+                    .any(|l| !l.starts_with('#') && l.starts_with(prom)),
+                "{name} is not exported as {prom}"
+            );
+        }
+        let rejected = m.counter("crawlx.telemetry.rejected");
+        assert_eq!(rejected.get(&[("reason", "label_not_allowed")]), 0);
+        assert_eq!(rejected.get(&[("reason", "label_value_invalid")]), 0);
+    }
 }

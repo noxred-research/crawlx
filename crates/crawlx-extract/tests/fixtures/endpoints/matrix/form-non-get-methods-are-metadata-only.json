@@ -1,0 +1,19 @@
+{
+  "construct": "form-non-get-methods-are-metadata-only",
+  "body": [
+    "<form action='/del' method='delete'><input name='id' value='7'></form>",
+    "<form action='/mod' method='put'><input name='id' value='7'></form>"
+  ],
+  "expected": [
+    {
+      "method": "DELETE",
+      "url": "https://matrix.test/del",
+      "source": "form/action"
+    },
+    {
+      "method": "PUT",
+      "url": "https://matrix.test/mod",
+      "source": "form/action"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "construct": "event-handler-resolves-against-base",
+  "body": [
+    "<html><head><base href='/app/'></head><body><button onclick=\"fetch('act/go')\">x</button></body></html>"
+  ],
+  "javascript_mode": "ast",
+  "requires_ast": true,
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/app/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/app/act/go",
+      "source": "js/fetch"
+    }
+  ]
+}

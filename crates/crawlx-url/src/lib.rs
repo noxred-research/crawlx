@@ -11,6 +11,7 @@ pub mod destination_key;
 pub mod error;
 pub mod extensions;
 pub mod feed;
+pub mod feed_stream;
 pub mod fingerprint;
 pub mod frontier;
 pub mod links;
@@ -19,6 +20,7 @@ pub mod path_climb;
 pub mod route_template;
 pub mod scope;
 pub mod sitemap;
+pub mod url_exclusion;
 
 pub use canonical::{
     origin_of, CanonicalizeOptions, Canonicalized, Canonicalizer, TrailingSlash, KEY_DOMAIN,
@@ -38,4 +40,7 @@ pub use scope::{host_relation, HostRelation, PathFilter, ScopeDecision, ScopeFil
 pub use sitemap::{
     PendingSitemap, SitemapDoc, SitemapKind, SitemapParser, SitemapRef, SitemapTraversal, SitemapUrl,
     MAX_DEPTH, MAX_URLS,
+};
+pub use url_exclusion::{
+    PreFetchDecision, PreFetchGate, UrlExclusion, UrlExclusionFilter, URL_EXCLUDED_CODE,
 };

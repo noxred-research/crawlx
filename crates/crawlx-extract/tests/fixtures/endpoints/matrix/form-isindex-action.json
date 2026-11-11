@@ -1,0 +1,13 @@
+{
+  "construct": "form-isindex-action",
+  "body": [
+    "<isindex action='/index-search'>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/index-search",
+      "source": "isindex/action"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "construct": "header-content-location",
+  "headers": [
+    [
+      "Content-Location",
+      "/canonical/page"
+    ],
+    [
+      "Content-Location",
+      "alt.html#frag"
+    ]
+  ],
+  "body": [],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/canonical/page",
+      "source": "header/content-location"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/alt.html",
+      "source": "header/content-location"
+    }
+  ]
+}

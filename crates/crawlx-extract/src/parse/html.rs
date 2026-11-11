@@ -85,6 +85,9 @@ fn map_extract(e: ExtractError) -> ParseError {
             ParseError::corrupt_from("html", "endpoint discovery unavailable", source)
         }
         ExtractError::ParseMemory(source) => ParseError::ParseMemory(source),
+        ExtractError::Outputs(source) => {
+            ParseError::corrupt_from("html", "content output options were refused", source)
+        }
     }
 }
 

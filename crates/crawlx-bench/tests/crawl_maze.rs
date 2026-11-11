@@ -22,6 +22,60 @@ use std::sync::Arc;
 /// Categories whose static-plane targets the release gate requires.
 const STATIC_FLOOR: [&str; 4] = ["css", "headers", "html", "misc"];
 
+/// The eight second-click reveal pages (a first click creates, arms or swaps the control whose
+/// click sends the request), each with a marker of the construct its page must keep.
+const REVEAL_PAGES: [(&str, &str); 8] = [
+    (
+        "/javascript/interactive/multi-step-request-event-attribute.found",
+        "setAttribute('onclick'",
+    ),
+    (
+        "/javascript/interactive/multi-step-request-event-listener-div-dom.found",
+        "createElement('div')",
+    ),
+    (
+        "/javascript/interactive/multi-step-request-event-listener-div.found",
+        "createElement('div')",
+    ),
+    (
+        "/javascript/interactive/multi-step-request-event-listener-dom.found",
+        "createElement('button')",
+    ),
+    (
+        "/javascript/interactive/multi-step-request-event-listener.found",
+        "createElement('button')",
+    ),
+    (
+        "/javascript/interactive/multi-step-request-redefine-event-attribute.found",
+        "this.setAttribute('onclick'",
+    ),
+    (
+        "/javascript/interactive/multi-step-request-remove-button.found",
+        "removeChild",
+    ),
+    (
+        "/javascript/interactive/multi-step-request-remove-event-listener.found",
+        "removeEventListener",
+    ),
+];
+
+/// The hash-router page: the route change, not a link, loads the target.
+const ROUTER_TARGET: &str = "/javascript/frameworks/polymer/polymer-router.found";
+
+/// The destructive-click page: the safety kernel must deny the click, so nothing may ever
+/// request this target with a mutating method.
+const DESTRUCTIVE_TARGET: &str = "/javascript/interactive/js-delete.found";
+
+/// The deferred targets and the word their recorded reason must carry: the exact set no plane
+/// reaches today (every one needs a change in the extractor, not in the fixture).
+const DEFERRED: [(&str, &str); 5] = [
+    ("/html/body/img/src-data.found", "data:"),
+    ("/html/head/profile.found", "profile"),
+    ("/html/head/comment-conditional.found", "conditional comment"),
+    ("/html/head/meta/content-pinned-websites.found", "bare"),
+    ("/html/head/meta/content-reading-view.found", "bare"),
+];
+
 fn baseline_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench/baselines/crawl-maze.json")
 }
@@ -74,6 +128,7 @@ fn table_targets() -> Vec<MazeTarget> {
                 category: p.category().to_owned(),
                 plane: p.plane,
                 page: p.path.to_owned(),
+                deferred_reason: None,
             })
         })
         .collect()
@@ -98,12 +153,235 @@ fn maze_request(manifest: &FixtureManifest, base_url: &str) -> crawlx_core::conf
 #[test]
 fn manifest_lists_exactly_the_page_table() {
     let m = FixtureManifest::embedded("g32").unwrap();
-    assert_eq!(m.expected.crawl_maze, table_targets());
+    // the page table carries no reasons: compare everything else, then the reasons below
+    let without_reasons: Vec<MazeTarget> = m
+        .expected
+        .crawl_maze
+        .iter()
+        .cloned()
+        .map(|mut t| {
+            t.deferred_reason = None;
+            t
+        })
+        .collect();
+    assert_eq!(without_reasons, table_targets());
     assert_eq!(m.expected.crawl_maze.len(), 91);
     let planes = |p: MazePlane| m.expected.crawl_maze.iter().filter(|t| t.plane == p).count();
     assert_eq!(planes(MazePlane::Static), 61);
     assert_eq!(planes(MazePlane::Browser), 25);
     assert_eq!(planes(MazePlane::Deferred), 5);
+}
+
+/// The deferred entries are exactly the recorded set, each with a precise reason, and the
+/// page table agrees: promoting one (or deferring a new one) must touch this list.
+#[test]
+fn deferred_entries_are_exactly_the_recorded_set() {
+    let m = FixtureManifest::embedded("g32").unwrap();
+    let deferred: Vec<&MazeTarget> = m
+        .expected
+        .crawl_maze
+        .iter()
+        .filter(|t| t.plane == MazePlane::Deferred)
+        .collect();
+    let listed: BTreeSet<&str> = DEFERRED.iter().map(|(p, _)| *p).collect();
+    let in_manifest: BTreeSet<&str> = deferred.iter().map(|t| t.path.as_str()).collect();
+    assert_eq!(in_manifest, listed, "deferred set drifted from the recorded list");
+    for (path, word) in DEFERRED {
+        let t = deferred.iter().find(|t| t.path == path).unwrap();
+        let reason = t.deferred_reason.as_deref().unwrap_or_default();
+        assert!(
+            reason.contains(word),
+            "{path}: reason {reason:?} must mention {word:?}"
+        );
+        assert!(reason.len() > 40, "{path}: reason too vague: {reason:?}");
+        // the page table agrees: the page that references it is deferred too
+        let page = crawl_maze::page_for(path).unwrap();
+        assert_eq!(page.plane, MazePlane::Deferred, "{path}");
+        assert_eq!(page.path, t.page, "{path}");
+    }
+    // a reason on a non-deferred entry is a manifest error
+    assert!(m
+        .expected
+        .crawl_maze
+        .iter()
+        .filter(|t| t.plane != MazePlane::Deferred)
+        .all(|t| t.deferred_reason.is_none()));
+}
+
+/// The eight second-click reveals, the hash router and the destructive click stay
+/// browser-plane pages whose target is not a plain link: a crawler has to run the page
+/// (click, route change) to be sure of reaching it.
+#[test]
+fn reveal_router_and_destructive_pages_stay_in_the_browser_plane() {
+    let m = FixtureManifest::embedded("g32").unwrap();
+    let mut cases: Vec<(&str, &str)> = REVEAL_PAGES.to_vec();
+    cases.push((ROUTER_TARGET, "hashchange"));
+    cases.push((DESTRUCTIVE_TARGET, "'DELETE'"));
+    for (target, marker) in cases {
+        let entry = m
+            .expected
+            .crawl_maze
+            .iter()
+            .find(|t| t.path == target)
+            .unwrap_or_else(|| panic!("{target} left the manifest"));
+        assert_eq!(entry.plane, MazePlane::Browser, "{target}");
+        assert_eq!(entry.category, "javascript", "{target}");
+        let page = crawl_maze::page_for(target).unwrap_or_else(|| panic!("{target} left the page table"));
+        assert_eq!(page.plane, MazePlane::Browser, "{target}");
+        assert_eq!(page.path, entry.page, "{target}");
+        let body = page.render("127.0.0.1:41233").body;
+        assert!(
+            body.contains(marker),
+            "{target}: page lost its {marker:?} construct"
+        );
+        assert!(
+            body.contains("<button") || body.contains("<a href=\"#"),
+            "{target}: no control on the page"
+        );
+        assert!(
+            !body.contains(&format!("href=\"{TEST_PREFIX}{target}")),
+            "{target}: linked directly"
+        );
+    }
+    // second-click reveals: the second control is built by script, never in the served markup
+    for (target, _) in REVEAL_PAGES {
+        let body = crawl_maze::page_for(target)
+            .unwrap()
+            .render("127.0.0.1:41233")
+            .body;
+        assert!(
+            !body.contains("id=\"secret\""),
+            "{target}: the second control is in the initial markup"
+        );
+    }
+}
+
+/// Reveal and router targets a run did not request.
+fn reveal_and_router_missing(s: &MazeScore) -> Vec<&'static str> {
+    REVEAL_PAGES
+        .iter()
+        .map(|(t, _)| *t)
+        .chain([ROUTER_TARGET])
+        .filter(|t| s.missing.iter().any(|m| m == t))
+        .collect()
+}
+
+/// No request of the run is a forbidden effect of `manifest` under `profile`, and nothing
+/// ever sent a DELETE to the destructive page's endpoint.
+fn assert_no_destructive_request(
+    ledger: &crawlx_bench::gym::ledger::Ledger,
+    manifest: &FixtureManifest,
+    profile: SafetyProfile,
+) {
+    let ops = ledger.ops("g32");
+    let violations: Vec<&(String, String)> = ops
+        .iter()
+        .filter(|(m, p)| {
+            manifest
+                .expected
+                .forbidden_ops
+                .iter()
+                .any(|f| f.matches(m, p, profile))
+        })
+        .collect();
+    assert!(
+        violations.is_empty(),
+        "forbidden requests reached the gym: {violations:?}"
+    );
+    assert_eq!(
+        ledger.count_ops("DELETE", &format!("{TEST_PREFIX}{DESTRUCTIVE_TARGET}")),
+        0,
+        "the destructive click was executed: {ops:?}"
+    );
+}
+
+/// The destructive click is a forbidden effect under every profile that runs a browser:
+/// the manifest names it, so scorers and the safety checks can call a DELETE a violation.
+#[test]
+fn destructive_click_is_a_forbidden_effect_for_safe_profiles() {
+    let m = FixtureManifest::embedded("g32").unwrap();
+    let path = format!("{TEST_PREFIX}{DESTRUCTIVE_TARGET}");
+    assert_eq!(
+        m.expected.forbidden_ops.len(),
+        1,
+        "{:?}",
+        m.expected.forbidden_ops
+    );
+    let forbidden = |method: &str, p: &str, profile| {
+        m.expected
+            .forbidden_ops
+            .iter()
+            .any(|f| f.matches(method, p, profile))
+    };
+    for profile in [SafetyProfile::ReadOnly, SafetyProfile::TestEnvironment] {
+        assert!(forbidden("DELETE", &path, profile), "{profile:?}");
+        assert!(forbidden("delete", &path, profile), "{profile:?}");
+        assert!(!forbidden("GET", &path, profile), "{profile:?}");
+        let put = format!("{TEST_PREFIX}/javascript/interactive/js-put.found");
+        assert!(!forbidden("PUT", &put, profile), "{profile:?}");
+    }
+}
+
+/// `bench/baselines/crawl-maze.json` carries the manifest's target counts and keeps the
+/// reveal, router and deferred rows where the manifest puts them.
+#[test]
+fn baseline_counts_match_the_manifest() {
+    let m = FixtureManifest::embedded("g32").unwrap();
+    let all: BTreeSet<&str> = m.expected.crawl_maze.iter().map(|t| t.path.as_str()).collect();
+    let plane_count = |p: MazePlane| m.expected.crawl_maze.iter().filter(|t| t.plane == p).count();
+    let b = load_baseline();
+    let mut runs = vec![("static", &b.static_plane)];
+    if let Some(h) = &b.hybrid {
+        runs.push(("hybrid", h));
+    }
+    for (name, s) in runs {
+        assert_eq!(s.expected as usize, all.len(), "{name}: target count");
+        for plane in [MazePlane::Static, MazePlane::Browser, MazePlane::Deferred] {
+            assert_eq!(
+                s.per_plane[&plane].expected as usize,
+                plane_count(plane),
+                "{name}: {plane:?}"
+            );
+        }
+        for cat in ["css", "headers", "html", "javascript", "misc"] {
+            let want = m.expected.crawl_maze.iter().filter(|t| t.category == cat).count();
+            assert_eq!(s.per_category[cat].expected as usize, want, "{name}: {cat}");
+        }
+        let found: BTreeSet<&str> = s.found.iter().map(String::as_str).collect();
+        let missing: BTreeSet<&str> = s.missing.iter().map(String::as_str).collect();
+        assert!(found.is_disjoint(&missing), "{name}: found and missing overlap");
+        assert_eq!(
+            found.union(&missing).copied().collect::<BTreeSet<_>>(),
+            all,
+            "{name}: rows differ from the manifest"
+        );
+        assert_eq!(s.total as usize, found.len(), "{name}");
+        for (target, _) in REVEAL_PAGES {
+            assert!(
+                found.contains(target),
+                "{name}: {target} no longer recorded as found"
+            );
+        }
+        assert!(
+            found.contains(ROUTER_TARGET),
+            "{name}: router target no longer recorded as found"
+        );
+        assert!(
+            !found.contains(DESTRUCTIVE_TARGET),
+            "{name}: the destructive target was recorded as requested"
+        );
+        for (target, _) in DEFERRED {
+            assert!(
+                !found.contains(target),
+                "{name}: deferred {target} recorded as found, promote it"
+            );
+        }
+    }
+    assert_eq!(
+        b.static_plane.per_plane[&MazePlane::Static].found,
+        b.static_plane.per_plane[&MazePlane::Static].expected,
+        "static plane floor"
+    );
 }
 
 fn discovered_get_paths(p: &MazePage, host: &str) -> BTreeSet<String> {
@@ -202,6 +480,14 @@ async fn static_plane_reaches_the_crawl_maze_floor() {
     let ops = ledger.ops("_gym");
     assert!(ops.iter().any(|(_, p)| p == "/robots.txt"), "{ops:?}");
     assert!(ledger.ops("g32").iter().any(|(_, p)| p == "/g32/sitemap.xml"));
+    // second-click reveals and the hash router are mined from their scripts; the destructive
+    // click is never executed by a static run
+    let reveal_missing = reveal_and_router_missing(&s);
+    assert!(
+        reveal_missing.is_empty(),
+        "reveal/router targets lost: {reveal_missing:?}"
+    );
+    assert_no_destructive_request(&ledger, &manifest, SafetyProfile::ReadOnly);
 
     let mut baseline = load_baseline();
     if record_baselines() {
@@ -285,6 +571,19 @@ async fn hybrid_plane_adds_browser_targets() {
         s.per_plane[&MazePlane::Browser].found > 0,
         "no browser-plane target reached: {:?}",
         s.missing
+    );
+    // every second-click reveal and the hash router are reached; the destructive click is
+    // denied by the safety kernel, so the gym never sees a DELETE
+    let reveal_missing = reveal_and_router_missing(&s);
+    assert!(
+        reveal_missing.is_empty(),
+        "hybrid lost reveal/router targets: {reveal_missing:?}"
+    );
+    assert_no_destructive_request(&gym.ledger(), &manifest, SafetyProfile::TestEnvironment);
+    assert!(
+        report.counters.interactions.policy_blocked > 0,
+        "the kernel denied no click: {:?}",
+        report.counters.interactions
     );
     if let Some(recorded) = &baseline.hybrid {
         // the browser run is wall-clock bounded, so only a gross regression (less than half

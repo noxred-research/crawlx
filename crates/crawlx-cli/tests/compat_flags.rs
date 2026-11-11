@@ -2177,6 +2177,52 @@ async fn resolvers_decide_how_the_seed_host_resolves() {
     );
 }
 
+#[tokio::test]
+async fn a_resolver_list_file_steers_resolution_but_never_widens_authorization() {
+    let site = small_site().await;
+    let port = site.base.rsplit(':').next().unwrap().to_owned();
+    let (dns, _task) = fake_dns([127, 0, 0, 1]).await;
+    // the file form: comments, blank lines, a repeated entry and a trailing comment
+    let dir = tempfile::tempdir().unwrap();
+    let list = dir.path().join("resolvers.txt");
+    std::fs::write(
+        &list,
+        format!("# local test resolver\n\n{dns} # primary\n{dns}\n"),
+    )
+    .unwrap();
+    let list = list.to_str().unwrap().to_owned();
+
+    // an authorized origin resolved through the file's server is crawled
+    let ctx = Ctx::new(&[&format!("http://fake-host.test:{port}")]);
+    let mut args = ctx.base();
+    args.extend(strings(&[
+        "--resolvers",
+        &list,
+        &format!("http://fake-host.test:{port}/"),
+    ]));
+    let (stdout, code) = crawl(&args).await;
+    code.unwrap();
+    assert!(stdout.contains("urls.succeeded"), "{stdout}");
+    let before = site.hits().len();
+    assert!(before > 0);
+
+    // the same resolver answering a private address for a host the record does not cover
+    // reaches nothing: resolution never grants authorization
+    let ctx = Ctx::new(&[&format!("http://fake-host.test:{port}")]);
+    let mut args = ctx.base();
+    args.extend(strings(&[
+        "--resolvers",
+        &list,
+        &format!("http://uncovered-host.test:{port}/"),
+    ]));
+    let _ = crawl(&args).await;
+    assert_eq!(
+        site.hits().len(),
+        before,
+        "an uncovered host must not reach the site"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // forms: -aff, -fc
 // ---------------------------------------------------------------------------------------------

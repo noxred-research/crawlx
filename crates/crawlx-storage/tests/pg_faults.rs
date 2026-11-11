@@ -322,6 +322,112 @@ async fn every_t2_statement_failing_once_leaves_nothing_behind_on_postgres() {
     env.teardown().await;
 }
 
+/// A statement failure in the middle of T2 followed by the crash-recovery path: after each
+/// failpoint the lease reaper flips the still-`intended` action to `unknown`, an `applied`
+/// reconciliation closes it, no transition or epoch row exists for it, and a later full T2
+/// attempt is refused because the action is no longer `intended`.
+#[cfg(feature = "chaos")]
+#[tokio::test]
+async fn a_mid_transaction_failure_is_recovered_through_unknown_and_reconcile_on_postgres() {
+    use crawlx_storage::chaos;
+
+    let env = pg_env!();
+    for &point in chaos::T2_FAILPOINTS {
+        let a = env.intended(&env.pg).await;
+        chaos::reset();
+        chaos::arm(point, 1);
+        env.pg
+            .finish(a.id, full_outcome(a.session, a.cluster))
+            .await
+            .expect_err(point);
+        env.assert_nothing_partial(&a, point).await;
+        chaos::reset();
+
+        let flipped = env
+            .pg
+            .mark_unknown(Utc::now() + Duration::seconds(300))
+            .await
+            .unwrap();
+        assert!(
+            flipped.contains(&a.id),
+            "{point}: reaper flips the intended action"
+        );
+        let rec = ActionJournal::get(&env.pg, a.id).await.unwrap();
+        assert_eq!(
+            rec.status,
+            ActionStatus::Unknown,
+            "{point}: never failed, never succeeded"
+        );
+        env.pg
+            .reconcile(
+                a.id,
+                Reconciliation {
+                    resolution: ReconcileResolution::Applied,
+                    evidence: serde_json::json!({ "probe": "present", "point": point }),
+                    reconciled_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+        let rec = ActionJournal::get(&env.pg, a.id).await.unwrap();
+        assert_eq!(rec.status, ActionStatus::Reconciled, "{point}");
+        assert_eq!(
+            rec.reconcile_resolution,
+            Some(ReconcileResolution::Applied),
+            "{point}"
+        );
+        assert_eq!(
+            env.t2_rows(a.run.id).await.0,
+            0,
+            "{point}: no transition was written"
+        );
+        assert!(
+            env.pg
+                .finish(a.id, full_outcome(a.session, a.cluster))
+                .await
+                .is_err(),
+            "{point}: a stale T2 cannot overwrite the reconciled action"
+        );
+    }
+    chaos::reset();
+    env.teardown().await;
+}
+
+/// The worker-side `during_outcome_tx` failpoint drops the T2 future after it was polled once;
+/// the same cancellation against the real PostgreSQL journal (the future is polled exactly
+/// once, then dropped while its transaction or connection acquire is in flight) leaves nothing
+/// partial and the next full T2 succeeds on the same pool.
+#[tokio::test]
+async fn a_t2_future_dropped_after_one_poll_leaves_nothing_partial_on_postgres() {
+    let env = pg_env!();
+    let a = env.intended(&env.pg).await;
+    let fut = env.pg.finish(a.id, full_outcome(a.session, a.cluster));
+    tokio::select! {
+        biased;
+        r = fut => { let _ = r; }
+        () = std::future::ready(()) => {}
+    }
+    // give the server time to roll back a transaction whose connection was dropped mid-flight
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let rec = ActionJournal::get(&env.pg, a.id).await.unwrap();
+    if rec.status == ActionStatus::Intended {
+        env.assert_nothing_partial(&a, "dropped after one poll").await;
+        env.pg
+            .finish(a.id, full_outcome(a.session, a.cluster))
+            .await
+            .expect("the next full T2 succeeds on the same pool");
+    } else {
+        // the first poll can only have committed everything or nothing
+        assert_eq!(rec.status, ActionStatus::Succeeded);
+    }
+    assert_eq!(
+        env.t2_rows(a.run.id).await,
+        (1, 1, 2, 1, 2),
+        "T2 is all or nothing"
+    );
+    env.teardown().await;
+}
+
 fn migration_versions_on_disk() -> Vec<i64> {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
     let mut versions: Vec<i64> = std::fs::read_dir(dir)

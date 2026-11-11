@@ -1,0 +1,13 @@
+{
+  "construct": "meta-refresh-quoted",
+  "body": [
+    "<html><head><meta http-equiv='refresh' content=\"0; url='/quoted-target'\"></head></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/quoted-target",
+      "source": "meta/refresh"
+    }
+  ]
+}

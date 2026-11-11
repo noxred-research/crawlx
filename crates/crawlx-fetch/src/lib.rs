@@ -10,12 +10,18 @@
 //! * [`Resolver`]: DNS behind a trait (`HickoryResolver`, `StaticResolver`).
 
 pub mod body_limits;
+pub mod certificate;
+pub mod charset;
 pub mod client;
+pub mod codec;
 pub mod conditional;
+pub mod declaration;
 pub mod egress;
 pub mod error;
+pub mod evidence;
 pub mod governor;
 pub mod lists;
+pub mod preflight;
 pub mod protocol;
 pub mod proxyx;
 pub mod redirect;
@@ -25,14 +31,20 @@ mod tls;
 pub mod upstream;
 
 pub use body_limits::DEFAULT_MAX_BODY_BYTES;
-pub use client::{FetchConfig, FetchHop, FetchOptions, FetchResponse, Fetcher};
-pub use conditional::Validators;
+pub use certificate::{CertificateEvidence, CertificateUnavailable, PeerCertificate};
+pub use charset::{CharsetEvidence, CharsetSource, DecodeError};
+pub use client::{FetchConfig, FetchHop, FetchOptions, FetchResponse, Fetcher, OversizePolicy};
+pub use codec::{BodyLimitKind, BodyLimits};
+pub use conditional::{interpret as interpret_revalidation, CachedValidators, Revalidation, Validators};
+pub use declaration::{HttpErrorStatuses, ResponseDeclaration, StatusVerdict};
 pub use egress::{
     capture_headers, DeniedEvent, EgressOptions, EgressProxy, EgressProxyHandle, DENIED_HEADER,
 };
 pub use error::FetchError;
+pub use evidence::{BodyEvidence, FetchEvidence};
 pub use governor::{GlobalOriginCap, GovernorConfig, Origin, OriginGovernor, Permit};
 pub use lists::{EgressListSource, ListKind, ListReloader, ListsError, Reload, DEFAULT_RELOAD_INTERVAL};
+pub use preflight::{HeadPreflight, PreflightRefusal};
 pub use redirect::DEFAULT_MAX_REDIRECTS;
 pub use resolver::{HickoryResolver, Resolver, StaticResolver};
 pub use retry::RetryPolicy;

@@ -6,8 +6,9 @@
 
 use crawlx_bench::crawl_bench::recorder::{Hit, Recorder};
 use crawlx_bench::crawl_bench::{
-    combine, compare, delta_label, discovered_endpoints, endpoint_key, known_endpoints, percentile, run,
-    summarize, BenchConfig, Metric, Metrics, Profile, Report, Row, Sample, Target, AGGREGATE_LABEL, SCHEMA,
+    browser_available, combine, compare, delta_label, discovered_endpoints, endpoint_key, known_endpoints,
+    percentile, run, summarize, BenchConfig, Metric, Metrics, Profile, Report, Row, Sample, Target,
+    AGGREGATE_LABEL, BROWSER_INTERACTIONS, SCHEMA,
 };
 use crawlx_bench::gym::manifest::FixtureManifest;
 use crawlx_bench::gym::GymServer;
@@ -86,7 +87,7 @@ mod crawl_bench {
 
     #[test]
     fn every_profile_crawls_the_url_plane_and_compat_flag_defaults_set_the_preset_values() {
-        for profile in Profile::ALL {
+        for profile in Profile::ALL.into_iter().filter(|p| !p.needs_browser()) {
             let req = request(profile);
             assert_eq!(req.mode, CrawlMode::Static, "{profile}");
             assert!(!req.dynamic.enabled, "{profile}");
@@ -119,6 +120,155 @@ mod crawl_bench {
             "normalize() later lifts it to the 50 ms floor"
         );
         assert_eq!(s.scope.max_discovery_depth, 10);
+    }
+
+    #[test]
+    fn the_browser_profiles_turn_the_browser_plane_on_and_leave_the_rest_of_the_static_request_alone() {
+        let static_req = request(Profile::Static);
+        assert_eq!(
+            Profile::ALL
+                .into_iter()
+                .filter(|p| p.needs_browser())
+                .collect::<Vec<_>>(),
+            [Profile::Hybrid, Profile::BrowserOnly]
+        );
+        assert_eq!(Profile::parse("hybrid").unwrap(), Profile::Hybrid);
+        assert_eq!(Profile::parse("browser-only").unwrap(), Profile::BrowserOnly);
+
+        let hybrid = request(Profile::Hybrid);
+        assert_eq!(hybrid.mode, CrawlMode::Hybrid);
+        assert!(hybrid.dynamic.enabled && hybrid.dynamic.page_hooks);
+        assert_eq!(hybrid.limits.interactions, BROWSER_INTERACTIONS);
+        let only = request(Profile::BrowserOnly);
+        assert_eq!(only.mode, CrawlMode::Dynamic);
+        assert!(only.dynamic.enabled && only.dynamic.page_hooks);
+        assert_eq!(only.limits.interactions, BROWSER_INTERACTIONS);
+
+        // hybrid differs from static by the browser plane only: same scope, politeness, fetch,
+        // safety and strategies
+        for (name, a, b) in [
+            ("scope", json!(hybrid.scope), json!(static_req.scope)),
+            (
+                "politeness",
+                json!(hybrid.politeness),
+                json!(static_req.politeness),
+            ),
+            ("fetch", json!(hybrid.fetch), json!(static_req.fetch)),
+            (
+                "safety",
+                json!((hybrid.safety.profile, hybrid.safety.respect_robots_txt)),
+                json!((static_req.safety.profile, static_req.safety.respect_robots_txt)),
+            ),
+            (
+                "strategies",
+                json!(hybrid.dynamic.strategies),
+                json!(static_req.dynamic.strategies),
+            ),
+        ] {
+            assert_eq!(a, b, "{name}");
+        }
+        // both requests are valid
+        for mut req in [hybrid, only] {
+            req.normalize().unwrap();
+        }
+    }
+
+    #[test]
+    fn throughput_is_pages_per_second_and_every_profile_is_reported_against_static() {
+        let hits = vec![Hit::new("GET", "/s1/", 200, ms(20))];
+        let s = summarize(10, BTreeSet::new(), None, &hits, 4.0);
+        assert!((s.metrics.pps - 2.5).abs() < 1e-12 && s.metrics.interactions == 0);
+        assert!(summarize(5, BTreeSet::new(), None, &[], 0.0).metrics.pps.abs() < f64::EPSILON);
+
+        let cell = |pages: u64, seconds: f64, interactions: u64| {
+            Sample::new(
+                metrics(
+                    json!({"pages": pages, "requests": pages, "seconds": seconds, "interactions": interactions}),
+                ),
+                vec![],
+                BTreeSet::new(),
+            )
+        };
+        // median pages 20 over median seconds 2 = 10 pages/s; interactions take their median too
+        let combined = combine(&[cell(10, 3.0, 4), cell(30, 1.0, 8), cell(20, 2.0, 6)]);
+        assert!(
+            (combined.pps - 10.0).abs() < 1e-12 && combined.interactions == 6,
+            "{combined:?}"
+        );
+
+        let rows = vec![
+            Row::new("gym:a", Profile::Static, vec![cell(20, 2.0, 0)]),
+            Row::new("gym:a", Profile::Hybrid, vec![cell(30, 6.0, 12)]),
+            Row::new("gym:a", Profile::BrowserOnly, vec![cell(10, 4.0, 40)]),
+            Row::new("gym:b", Profile::Static, vec![cell(10, 1.0, 0)]),
+            Row::new("gym:b", Profile::Hybrid, vec![cell(10, 5.0, 3)]),
+            Row::new("gym:c", Profile::Hybrid, vec![cell(10, 5.0, 3)]),
+        ];
+        let report = Report::assemble(1, 1, &rows);
+        assert_eq!(report.aggregate["hybrid"].interactions, 18);
+        let ratios = report.throughput_ratios();
+        // gym:a: hybrid 5 pages/s and browser-only 2.5 over static 10; gym:b: hybrid 2 over 10;
+        // gym:c has no static run
+        assert!((ratios["gym:a"]["hybrid"] - 0.5).abs() < 1e-12);
+        assert!((ratios["gym:a"]["browser-only"] - 0.25).abs() < 1e-12);
+        assert!((ratios["gym:b"]["hybrid"] - 0.2).abs() < 1e-12);
+        assert!(!ratios.contains_key("gym:c") && !ratios["gym:a"].contains_key("static"));
+        // aggregate: static 30 pages in 3 s = 10 pages/s; hybrid 50 pages in 16 s
+        assert!((ratios[AGGREGATE_LABEL]["hybrid"] - 3.125 / 10.0).abs() < 1e-12);
+
+        let table = report.ratio_table();
+        let lines: Vec<Vec<&str>> = table.lines().map(|l| l.split_whitespace().collect()).collect();
+        assert_eq!(lines[0], ["target", "profile", "pps", "static_pps", "ratio"]);
+        // targets sorted (the aggregate label sorts before `gym:`), then profiles sorted
+        let keys: Vec<(&str, &str)> = lines[1..].iter().map(|l| (l[0], l[1])).collect();
+        assert_eq!(
+            keys,
+            [
+                (AGGREGATE_LABEL, "browser-only"),
+                (AGGREGATE_LABEL, "hybrid"),
+                ("gym:a", "browser-only"),
+                ("gym:a", "hybrid"),
+                ("gym:b", "hybrid"),
+            ]
+        );
+        assert_eq!(lines[3][2..], ["2.5", "10.0", "0.25x"]);
+        assert_eq!(lines[4][2..], ["5.0", "10.0", "0.50x"]);
+        assert_eq!(lines[5][2..], ["2.0", "10.0", "0.20x"]);
+
+        // no static counterpart anywhere: no ratio table
+        let only_hybrid = Report::assemble(
+            1,
+            1,
+            &[Row::new("gym:c", Profile::Hybrid, vec![cell(10, 5.0, 3)])],
+        );
+        assert!(only_hybrid.throughput_ratios().is_empty() && only_hybrid.ratio_table().is_empty());
+    }
+
+    #[test]
+    fn interactions_are_informational_and_a_baseline_without_pps_never_regresses() {
+        assert_eq!(Metric::Interactions.direction(), None);
+        assert!(!Metric::gated().contains(&Metric::Interactions));
+        assert!(Metric::gated().contains(&Metric::Pps));
+        let empty = report(&[], &[]);
+        let err = compare(&empty, &empty, 0.0, &[Metric::Interactions])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("interactions"), "{err}");
+
+        // a baseline recorded before `pps` and `interactions` existed reads them as zero
+        let old = report(&[("t", "static", doc(json!({})))], &[]);
+        assert!(old.results["t"]["static"].pps.abs() < f64::EPSILON);
+        let now = report(
+            &[("t", "static", doc(json!({"pps": 14.0, "interactions": 9})))],
+            &[],
+        );
+        assert!(compare(&now, &old, 0.0, &Metric::gated()).unwrap().is_empty());
+        // but a recorded throughput is gated like any other higher-is-better metric
+        let slow = report(&[("t", "static", doc(json!({"pps": 7.0})))], &[]);
+        let r = compare(&slow, &now, 10.0, &Metric::gated()).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].metric, Metric::Pps);
+        assert!((r[0].baseline - 14.0).abs() < f64::EPSILON && (r[0].current - 7.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -675,8 +825,10 @@ mod crawl_bench {
                 "recall",
                 "requests",
                 "errors",
+                "interactions",
                 "seconds",
                 "rps",
+                "pps",
                 "p50_ms",
                 "p95_ms"
             ]
@@ -691,7 +843,7 @@ mod crawl_bench {
         // values: ints plain, recall as a percentage, `-` without ground truth, 2 decimals for time
         assert_eq!(
             lines[1][2..],
-            ["23", "30", "82.0%", "40", "0", "2.00", "20.0", "1.00", "2.00"]
+            ["23", "30", "82.0%", "40", "0", "0", "2.00", "20.0", "0.0", "1.00", "2.00"]
         );
         assert_eq!(lines[3][4], "-");
         // columns are aligned: every line has its first cell at column 0 and no trailing spaces
@@ -767,10 +919,12 @@ mod crawl_bench {
                 "endpoints",
                 "errors",
                 "found",
+                "interactions",
                 "known",
                 "p50_ms",
                 "p95_ms",
                 "pages",
+                "pps",
                 "recall",
                 "requests",
                 "rps",
@@ -1037,6 +1191,54 @@ mod crawl_bench {
         }
     }
 
+    // ---- the browser plane (needs Chromium) ---------------------------------------------------
+
+    /// `true` with Chromium; otherwise prints why the test returns early.
+    fn have_chromium() -> bool {
+        if browser_available() {
+            return true;
+        }
+        eprintln!("SKIP: no Chromium executable found (set CRAWLX_CHROMIUM_PATH)");
+        false
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn browser_hybrid_profile_runs_the_browser_plane_next_to_the_static_profile() {
+        if !have_chromium() {
+            return;
+        }
+        // gym:s1 ends on the interaction budget (about 25 s in a debug build); gym:hybrid-mix
+        // runs into the 120 s crawl duration instead, so it is not a bounded test fixture
+        let cfg = bench(&["gym:s1"], &[Profile::Static, Profile::Hybrid]);
+        let report = run(&cfg, |_| {}).await.unwrap();
+        eprintln!("{}{}", report.table(None), report.ratio_table());
+
+        let s = &report.results["gym:s1"]["static"];
+        let h = &report.results["gym:s1"]["hybrid"];
+        assert!(h.pages > 0, "{h:?}");
+        assert!(
+            h.interactions > 0,
+            "the browser plane performed no interaction: {h:?}"
+        );
+        assert!(h.seconds > 0.0 && h.pps > 0.0, "{h:?}");
+        // the URL plane has no browser, and the same fixture and seed give the same static crawl
+        assert_eq!(s.interactions, 0, "{s:?}");
+        assert!(s.pages > 0 && s.pps > 0.0, "{s:?}");
+        // the hybrid crawl discovers at least what the URL plane alone does
+        let (static_set, hybrid_set) = (
+            &report.endpoints["gym:s1"]["static"],
+            &report.endpoints["gym:s1"]["hybrid"],
+        );
+        assert!(
+            static_set.iter().all(|p| hybrid_set.contains(p)),
+            "hybrid lost endpoints the static profile found: {static_set:?} vs {hybrid_set:?}"
+        );
+        // both profiles are reported side by side, with the ratio
+        let ratio = report.throughput_ratios()["gym:s1"]["hybrid"];
+        assert!(ratio.is_finite() && ratio > 0.0, "{ratio}");
+        assert!(report.ratio_table().contains("gym:s1"));
+    }
+
     // ---- the binary ---------------------------------------------------------------------------
 
     const BIN: &str = env!("CARGO_BIN_EXE_crawl-bench");
@@ -1062,6 +1264,11 @@ mod crawl_bench {
             "static",
             "compat-flag-defaults",
             "crawlx-defaults",
+            "hybrid",
+            "browser-only",
+            "CRAWLX_CHROMIUM_PATH",
+            "pps",
+            "interactions",
             "BASELINES",
             "--baseline",
             "--max-regress",
@@ -1180,5 +1387,56 @@ mod crawl_bench {
         let none = run_bin(&[]);
         assert_eq!(none.status.code(), Some(2));
         assert!(text(&none.stderr).contains("--target"));
+    }
+
+    #[test]
+    fn the_binary_skips_browser_profiles_without_chromium_and_fails_when_nothing_is_left() {
+        let no_browser = |args: &[&str]| {
+            std::process::Command::new(BIN)
+                .args(args)
+                .env("CRAWLX_CHROMIUM_PATH", "/nonexistent/chromium")
+                .output()
+                .unwrap()
+        };
+        let only = no_browser(&[
+            "--target",
+            "gym:s1",
+            "--profile",
+            "hybrid",
+            "--profile",
+            "browser-only",
+        ]);
+        assert_eq!(only.status.code(), Some(2), "{}", text(&only.stderr));
+        let stderr = text(&only.stderr);
+        assert!(
+            stderr.contains("skipping profile hybrid") && stderr.contains("skipping profile browser-only"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("CRAWLX_CHROMIUM_PATH") && text(&only.stdout).is_empty());
+
+        // with a URL-plane profile next to it the run goes on without the browser profile
+        let mixed = no_browser(&[
+            "--target",
+            "gym:s1",
+            "--repeat",
+            "1",
+            "--profile",
+            "static",
+            "--profile",
+            "hybrid",
+        ]);
+        assert_eq!(mixed.status.code(), Some(0), "{}", text(&mixed.stderr));
+        assert!(text(&mixed.stderr).contains("skipping profile hybrid"));
+        let stdout = text(&mixed.stdout);
+        assert!(
+            stdout
+                .lines()
+                .any(|l| l.starts_with("gym:s1") && l.contains("static")),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains("hybrid") && !stdout.contains("relative to static"),
+            "{stdout}"
+        );
     }
 }

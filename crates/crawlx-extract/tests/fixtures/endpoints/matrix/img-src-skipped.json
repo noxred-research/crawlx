@@ -1,0 +1,9 @@
+{
+  "construct": "img-src-skipped",
+  "body": [
+    "<img src='data:image/png;base64,AAAA'>",
+    "<img src='#'>",
+    "<img src=''>"
+  ],
+  "expected": []
+}

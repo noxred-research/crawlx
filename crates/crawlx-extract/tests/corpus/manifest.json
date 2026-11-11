@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "a01-semantic-article",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a01-semantic-article",
+      "files": {
+        "input": {
+          "path": "a01-semantic-article.html",
+          "sha256": "74fea2dc2bb3dd15050e3a06ef22574ab9bbd624ffb517cd8bca299721efe9e7"
+        },
+        "gold": {
+          "path": "a01-semantic-article.gold.json",
+          "sha256": "bd00d92b714c2de2ed8d8cba0619be265d182b92a6f669d590498d8cb8a836fa"
+        }
+      }
+    },
+    {
+      "id": "a02-div-layout",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a02-div-layout",
+      "files": {
+        "input": {
+          "path": "a02-div-layout.html",
+          "sha256": "1fdf69924b4f4e1f647b0f1f49490eb8e8c6848adcaae752cb433331a24ecf43"
+        },
+        "gold": {
+          "path": "a02-div-layout.gold.json",
+          "sha256": "b314c3eecbd99e7d8eb40706fb3368b1b7b9247aa181de1bba25a4c31ee90d25"
+        }
+      }
+    },
+    {
+      "id": "a03-sibling-continuation",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a03-sibling-continuation",
+      "files": {
+        "input": {
+          "path": "a03-sibling-continuation.html",
+          "sha256": "d8cc0bcacdbc3db7b5b73618ab3fcf5b34d14f6989eb858f3f619c01727d6c1b"
+        },
+        "gold": {
+          "path": "a03-sibling-continuation.gold.json",
+          "sha256": "26cbb7fc85bfdb598b6a60ba0e49e99a0dfb15fcb6f7a2966d50056c6441ea73"
+        }
+      }
+    },
+    {
+      "id": "a04-nested-chrome",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a04-nested-chrome",
+      "files": {
+        "input": {
+          "path": "a04-nested-chrome.html",
+          "sha256": "b774e3dfc6134e1935eb0bfbc3bec05a6fbcab752b8f562e35c5a3bb7e4f635e"
+        },
+        "gold": {
+          "path": "a04-nested-chrome.gold.json",
+          "sha256": "fd96e252de3bb14cf9cb0afa73b4c3fcbaa521411cf92075161f67203aa1f967"
+        }
+      }
+    },
+    {
+      "id": "a05-list-quote-table",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a05-list-quote-table",
+      "files": {
+        "input": {
+          "path": "a05-list-quote-table.html",
+          "sha256": "090ffba3d98c425d112cb2b168935cdf8fefb96337105a8a70139c2e98d8a4f3"
+        },
+        "gold": {
+          "path": "a05-list-quote-table.gold.json",
+          "sha256": "ed421913ae97c61ecc7f81ee90b5777a5b30ff106c2ac28e5077cdf90350d31e"
+        }
+      }
+    },
+    {
+      "id": "a06-german",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a06-german",
+      "files": {
+        "input": {
+          "path": "a06-german.html",
+          "sha256": "a6fbcf6e938f77427458c64f04d37dc931a10b8b4b75541df1310e867d32af65"
+        },
+        "gold": {
+          "path": "a06-german.gold.json",
+          "sha256": "b6eebeaf7636168cd4f09d4d60ecc0716b758688d0a27291a08a7d09346cb8bf"
+        }
+      }
+    },
+    {
+      "id": "a07-japanese",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a07-japanese",
+      "files": {
+        "input": {
+          "path": "a07-japanese.html",
+          "sha256": "35e330fb7b030bbd3332c837faacad807da60ccf9a957de93bf7795bda1dcc16"
+        },
+        "gold": {
+          "path": "a07-japanese.gold.json",
+          "sha256": "fc80857f468ca6445ef07f11d1cf7ea8487819a88d71cd25ae1c3f8c47a43fac"
+        }
+      }
+    },
+    {
+      "id": "b01-cookie-newsletter-related",
+      "family": "boilerplate",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/b01-cookie-newsletter-related",
+      "files": {
+        "input": {
+          "path": "b01-cookie-newsletter-related.html",
+          "sha256": "b683540ff0a5404bbf6693f4e302700b6dcd7046afc4fd14c79da1223c6e5c7a"
+        },
+        "gold": {
+          "path": "b01-cookie-newsletter-related.gold.json",
+          "sha256": "b736a0fe14282e094a56448610806e424d813e9aa1394a5881d936e276bff4e8"
+        }
+      }
+    },
+    {
+      "id": "b02-signup-card-grid",
+      "family": "boilerplate",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/b02-signup-card-grid",
+      "files": {
+        "input": {
+          "path": "b02-signup-card-grid.html",
+          "sha256": "e6133243d73ce18ec926b43e02c820c7624eb4b0a34420db0ca03376edf50e07"
+        },
+        "gold": {
+          "path": "b02-signup-card-grid.gold.json",
+          "sha256": "0be9bfadbbad6adee1f901bb1a91c5494763b51218f5a256e9f7c1200e1ac9d8"
+        }
+      }
+    },
+    {
+      "id": "b03-inline-advertisements",
+      "family": "boilerplate",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/b03-inline-advertisements",
+      "files": {
+        "input": {
+          "path": "b03-inline-advertisements.html",
+          "sha256": "9a8cd0e6b1437eda49afe5ac48c6e06214957893e396de8e542d76d7c94a83b3"
+        },
+        "gold": {
+          "path": "b03-inline-advertisements.gold.json",
+          "sha256": "3dad8803d35cb6946207309de97e1f6a7534a03abb2a35eb89426c559ebdba54"
+        }
+      }
+    },
+    {
+      "id": "b04-mega-menu",
+      "family": "boilerplate",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/b04-mega-menu",
+      "files": {
+        "input": {
+          "path": "b04-mega-menu.html",
+          "sha256": "ebff7c84bcb220f4ba2052e0e2a51cff2621fbaf6d00acf135e561c92c56414e"
+        },
+        "gold": {
+          "path": "b04-mega-menu.gold.json",
+          "sha256": "81231a4ecf9b65c8e000d9769111f4cb1406bc97330d834659d7473e23118f95"
+        }
+      }
+    },
+    {
+      "id": "m01-meta-tags",
+      "family": "metadata",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/m01-meta-tags",
+      "files": {
+        "input": {
+          "path": "m01-meta-tags.html",
+          "sha256": "d02abcdfcf2ff81413a06058e9728e671cd5819039f3961cff0847954ce8b738"
+        },
+        "gold": {
+          "path": "m01-meta-tags.gold.json",
+          "sha256": "4b31c5090275e158fd537e5421bc2629547a80f47e9cc31fe48453a611d7702f"
+        }
+      }
+    },
+    {
+      "id": "m02-json-ld-graph",
+      "family": "metadata",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/m02-json-ld-graph",
+      "files": {
+        "input": {
+          "path": "m02-json-ld-graph.html",
+          "sha256": "bd37717a97f13e08438ba061a085f55305b91659fc2b38fc7a53a624c84792aa"
+        },
+        "gold": {
+          "path": "m02-json-ld-graph.gold.json",
+          "sha256": "d7ff7381145caafbef5b80dc54270ee1490f28173e9df083c9ae983b06de7db4"
+        }
+      }
+    },
+    {
+      "id": "m03-conflicting-title-sources",
+      "family": "metadata",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/m03-conflicting-title-sources",
+      "files": {
+        "input": {
+          "path": "m03-conflicting-title-sources.html",
+          "sha256": "4968f1071240e9022a506bbeccafb430e09ea6d03a6b3304baa1a691bd3c2587"
+        },
+        "gold": {
+          "path": "m03-conflicting-title-sources.gold.json",
+          "sha256": "a8213d873782263a3c036d8a2c063b0890f7af3382339776aeb6f43297286719"
+        }
+      }
+    },
+    {
+      "id": "m04-byline-and-time",
+      "family": "metadata",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/m04-byline-and-time",
+      "files": {
+        "input": {
+          "path": "m04-byline-and-time.html",
+          "sha256": "8c4ca4c5f6d6d22290b4a91d9f71c33583dcbe70b758412a4deec3d372898e1f"
+        },
+        "gold": {
+          "path": "m04-byline-and-time.gold.json",
+          "sha256": "5939cc7a12193727874c7476e298c1617cf6452b6860313bd18d154a7571a237"
+        }
+      }
+    },
+    {
+      "id": "l01-mixed-schemes-and-duplicates",
+      "family": "link_discovery",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l01-mixed-schemes-and-duplicates",
+      "files": {
+        "input": {
+          "path": "l01-mixed-schemes-and-duplicates.html",
+          "sha256": "417b94599bff32b6c689a24dcb6fb37b3380b3bc89185d0497d91dd0c031571f"
+        },
+        "gold": {
+          "path": "l01-mixed-schemes-and-duplicates.gold.json",
+          "sha256": "37f811df00e0b3cb87641c87eda4b9d1ec38e687f2bec87484ffdc5d4066c695"
+        }
+      }
+    },
+    {
+      "id": "l02-base-element-resolution",
+      "family": "link_discovery",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l02-base-element-resolution",
+      "files": {
+        "input": {
+          "path": "l02-base-element-resolution.html",
+          "sha256": "30e5d3179c6f7900c7e6b720c89204568bbf0c8caccd2a700274c467bfe89ed6"
+        },
+        "gold": {
+          "path": "l02-base-element-resolution.gold.json",
+          "sha256": "a65a1e05eb8399f87b84f4f81f305e545be2a712c4e40ec641fdc4f21f1f7a12"
+        }
+      }
+    },
+    {
+      "id": "l03-pagination-and-areas",
+      "family": "link_discovery",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l03-pagination-and-areas",
+      "files": {
+        "input": {
+          "path": "l03-pagination-and-areas.html",
+          "sha256": "b6bf90e5b7393cb67cffca159400fa3b6119058ab5b5d262eb053ea7269f67a9"
+        },
+        "gold": {
+          "path": "l03-pagination-and-areas.gold.json",
+          "sha256": "83226d8faf199580e4f206e27dc0c1231d9957b4ede072d32a1a634bd3878476"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "construct": "htmx-delete-excluded",
+  "body": [
+    "<button hx-delete='/h/remove'>x</button>"
+  ],
+  "expected": []
+}

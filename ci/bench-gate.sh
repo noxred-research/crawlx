@@ -36,6 +36,8 @@ BENCHES=(
   crawlx-state:split
   crawlx-strategies:utility
   crawlx-scheduler:lease_pg
+  crawlx-storage:journal
+  crawlx-storage:artifact_key
 )
 MODE="${1:-gate}"
 BASELINE="bench/baselines/criterion.json"

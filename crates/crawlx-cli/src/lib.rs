@@ -39,6 +39,7 @@ mod health;
 mod healthcheck;
 mod input;
 mod inspect;
+mod list_values;
 mod mcp;
 mod merge;
 pub mod migration_inspect;

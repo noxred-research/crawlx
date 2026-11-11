@@ -96,6 +96,20 @@ mod visibility;
 pub mod cache;
 pub mod render;
 
+/// Span names of one scraped page of a compatibility crawl or scrape (the `crawl_id` and
+/// `frontier_id` fields identify the run and the page row, never the URL): the API's
+/// `admission` span covers the run's admission, then each page opens `fetch` (acquisition: HTTP
+/// or browser), `extract` (the CPU-pool composition of markdown, HTML and links) and `persist`
+/// (artifacts and page row).
+pub mod span {
+    /// Acquiring the body of one page.
+    pub const FETCH: &str = "fetch";
+    /// Composing the content of one page.
+    pub const EXTRACT: &str = "extract";
+    /// Storing the page and its artifacts.
+    pub const PERSIST: &str = "persist";
+}
+
 pub use media::DEFAULT_MEDIA_MAX_BYTES;
 pub use render::{ActionOutputs, BrowserRenderer, PageRenderer, RenderError, RenderRequest, Rendered, Shot};
 
@@ -120,6 +134,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::Instrument as _;
 use url::Url;
 
 /// Stylesheets fetched for the `branding` format.
@@ -767,6 +782,7 @@ impl ScrapeEngine {
                 acquisition_budget,
                 admission,
             )
+            .instrument(tracing::info_span!(span::FETCH, crawl_id = %self.run, frontier_id = entry.id))
             .await
         {
             Ok(a) => a,
@@ -871,6 +887,7 @@ impl ScrapeEngine {
                         (composed, verified)
                     })
                 })
+                .instrument(tracing::info_span!(span::EXTRACT, crawl_id = %self.run, frontier_id = entry.id))
                 .await
             {
                 Ok(Ok((composed, verified))) => {
@@ -1069,7 +1086,9 @@ impl ScrapeEngine {
             }
         }
 
-        let mut scraped = store::assemble(self, cpu, entry, acq, composed, doc, media).await?;
+        let mut scraped = store::assemble(self, cpu, entry, acq, composed, doc, media)
+            .instrument(tracing::info_span!(span::PERSIST, crawl_id = %self.run, frontier_id = entry.id))
+            .await?;
         scraped.accepted = article_accepted;
         scraped.outbox = article_outbox;
         Ok(Outcome::Page(Box::new(scraped)))

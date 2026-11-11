@@ -1,9 +1,9 @@
 # Compatibility clients and integrations
 
-crawlx serves a compatibility API with v2 scrape, crawl, map, search, extract, agent and parse routes under
+CrawlX serves a compatibility API with v2 scrape, crawl, map, search, extract, agent and parse routes under
 `/compat/v2` (`crates/crawlx-api/src/routes/mod.rs`, `routes/compat_*.rs`). This page says how to point
 existing client libraries, command-line clients and third-party integrations at it, which endpoints each
-kind of client calls, which of those crawlx serves, and what is exercised by tests. Every statement is marked
+kind of client calls, which of those CrawlX serves, and what is exercised by tests. Every statement is marked
 **run** (executed by `cargo test -p crawlx-cli --test sdk_python`), **read** (read from the package or source
 file in question, not executed) or **documented-only**.
 
@@ -29,7 +29,7 @@ Deployments should use `CRAWLX_DATABASE_URL_FILE` and `CRAWLX_API_DATABASE_URL_F
 with secret-manager files instead of environment values containing credentials.
 
 * **The worker is required.** `scrape`, `crawl`, `batch/scrape`, `map` and the pages `extract` reads
-  are crawlx runs; `crawlx worker` leases them from PostgreSQL (`crates/crawlx-cli/src/ops.rs`,
+  are CrawlX runs; `crawlx worker` leases them from PostgreSQL (`crates/crawlx-cli/src/ops.rs`,
   `worker`). `crawlx serve` without `--database-url` keeps its runs in the process, where no worker
   can see them.
 * **Enable `fc-` keys.** An `fc-` key is accepted only when `compat.prefixedKeys` is on:
@@ -178,7 +178,7 @@ The official node posts `{..., "integration": "<platform>"}` to `/scrape`, `/cra
 `interact` and `browser` operations (`/scrape/{id}/interact`, `/browser`) are not served. The credential test
 calls `GET /team/credit-usage`. The community node is a v1 node: with its `Base URL`
 set to the v2 base, `scrape`, `map`, `crawl` and the crawl status call routes the API serves; `crawl/webhook`
-and `crawl/websocket` are routes of that node's own API that crawlx does not have; its request
+and `crawl/websocket` are routes of that node's own API that CrawlX does not have; its request
 bodies were not compared with the compatibility API. **HTTP request node fallback**: any workflow can call the API
 with the platform's generic HTTP request node and an `Authorization: Bearer fc-...` header (section 6).
 
@@ -194,7 +194,7 @@ longer exists on the main branch), so whether the builder's "authorize" step acc
 
 Its document loader calls `/v1/scrape`, `/v1/crawl`, `/v1/extract`, `/v1/search`, `/v1/crawl/{id}` and
 `/v1/extract/{id}`. The compatibility API serves none
-of them (the same 404 as the legacy v1 rows above), so that loader cannot use crawlx. The builder's other
+of them (the same 404 as the legacy v1 rows above), so that loader cannot use CrawlX. The builder's other
 loaders (static HTML, headless browser, ...) do not involve the compatibility API.
 
 ### No-code automation tools and agent frameworks - documented-only
@@ -221,6 +221,10 @@ curl -s $BASE/crawl/<id> -H "$AUTH"                                             
 ```
 
 The request and response shapes are the ones the client rows above exercise.
+
+`next` paginates results already stored; it is null when no further result page exists, even when
+`status` is `scraping`. Follow non-null links to drain available results. Poll the status route again
+to wait for more results or a terminal status; a null `next` does not mean the crawl has finished.
 
 ## 7. Caveats
 

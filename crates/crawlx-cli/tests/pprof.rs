@@ -343,6 +343,79 @@ async fn heap_reports_what_the_memory_sampler_measures() {
     server.finish().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn heap_text_summary_carries_the_same_numbers_and_no_labels() {
+    if !std::path::Path::new("/proc/self/status").exists() {
+        eprintln!("skipping: no /proc, the memory sampler reads procfs");
+        return;
+    }
+    let server = Server::start().await;
+    let client = reqwest::Client::new();
+    // plant a secret-looking label value on a metric: it must not reach the summary
+    crawlx_telemetry::Metrics::global()
+        .gauge(crawlx_telemetry::metrics::names::RETENTION_OVERDUE_ARTIFACTS)
+        .set(1.0, &[("kind", "canary-secret-label")]);
+
+    let response = client
+        .get(server.url("/debug/pprof/heap?debug=1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(response.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/plain"));
+    let body = response.text().await.unwrap();
+    assert!(body.starts_with("heap summary (source: procfs;"), "{body}");
+    let value = |name: &str| -> String {
+        body.lines()
+            .find_map(|l| l.strip_prefix(&format!("# {name} = ")))
+            .unwrap_or_else(|| panic!("{name} missing from:\n{body}"))
+            .to_owned()
+    };
+    assert_eq!(value("Pid"), std::process::id().to_string());
+    assert!(value("RssBytes").parse::<u64>().unwrap() > 0);
+    assert!(value("PeakRssBytes").parse::<u64>().unwrap() >= value("RssBytes").parse::<u64>().unwrap());
+    assert!(value("Threads").parse::<u64>().unwrap() >= 1);
+    assert_eq!(value("BrowserRssGaugeBytes"), "n/a");
+    assert!(!body.contains("canary-secret-label"), "{body}");
+
+    // debug=0 is the JSON document; anything else is refused before sampling
+    let json = client
+        .get(server.url("/debug/pprof/heap?debug=0"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(json.headers()["content-type"], "application/json");
+    let refused = client
+        .get(server.url("/debug/pprof/heap?debug=2"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 400);
+    server.finish().await;
+}
+
+#[tokio::test]
+async fn the_index_lists_the_routes() {
+    let server = Server::start().await;
+    let body = reqwest::get(server.url("/debug/pprof/"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for route in [
+        "/debug/pprof/profile?seconds=N",
+        "/debug/pprof/heap",
+        "/debug/pprof/heap?debug=1",
+    ] {
+        assert!(body.contains(route), "{route} missing from:\n{body}");
+    }
+    server.finish().await;
+}
+
 #[tokio::test]
 async fn non_loopback_binds_are_refused_unless_allowed() {
     for bad in ["0.0.0.0:0", "[::]:0", "192.0.2.1:0", "[2001:db8::1]:0"] {

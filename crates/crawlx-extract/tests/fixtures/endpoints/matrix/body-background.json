@@ -1,0 +1,13 @@
+{
+  "construct": "body-background",
+  "body": [
+    "<html><body background='/t/page.gif'></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/t/page.gif",
+      "source": "body/background"
+    }
+  ]
+}

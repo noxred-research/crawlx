@@ -30,7 +30,8 @@ use crawlx_core::repo::{
     CrawlSession, DiscoveryOutcome, EdgeRecord, EdgeStore, EventRepo, FrontierEntry, FrontierRepo,
     FrontierStateCounts, FrontierStatus, IdentityAlias, IdentityAliasRepo, JournalOutcomes, KnownPage,
     LedgerRepo, LedgerRow, ModelDecisionRecord, ModelDecisionRepo, NewState, OutcomeRecord, PageRecord,
-    PageRepo, Reconciliation, RunEvent, RunRepo, SafetyAudit, SessionStatus, SplitApplied, StateRepo,
+    PageRepo, Reconciliation, RunEvent, RunMetadata, RunRepo, SafetyAudit, SessionStatus, SplitApplied,
+    StateRepo,
 };
 use crawlx_core::safety::{SafetyDecision, SafetyVerdict};
 use crawlx_core::state::StateSignature;
@@ -798,6 +799,15 @@ impl RunRepo for MemoryStore {
             .runs
             .get(&id)
             .cloned()
+            .ok_or_else(|| nf("crawl_run", id))
+    }
+
+    async fn get_metadata(&self, id: CrawlRunId) -> Result<RunMetadata, StoreError> {
+        self.inner
+            .lock()
+            .runs
+            .get(&id)
+            .map(RunMetadata::from)
             .ok_or_else(|| nf("crawl_run", id))
     }
 

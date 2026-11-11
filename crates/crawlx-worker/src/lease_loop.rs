@@ -32,6 +32,7 @@ use crawlx_telemetry::Metrics;
 use futures::stream::{FuturesUnordered, StreamExt as _};
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -129,7 +130,15 @@ async fn hybrid_start_requests(
 }
 
 /// Observe worker-local capabilities without contacting a target or opening an attached browser.
-async fn acquisition_manifest(
+fn acquisition_manifest<'a>(
+    cfg: &'a WorkerConfig,
+    backend: Option<&'a Arc<dyn BrowserBackend>>,
+    cancel: &'a CancellationToken,
+) -> impl Future<Output = Vec<crawlx_core::acquisition::BackendCapabilitiesV1>> + Send + 'a {
+    Box::pin(acquisition_manifest_inner(cfg, backend, cancel))
+}
+
+async fn acquisition_manifest_inner(
     cfg: &WorkerConfig,
     backend: Option<&Arc<dyn BrowserBackend>>,
     cancel: &CancellationToken,
@@ -180,8 +189,18 @@ async fn acquisition_manifest(
 ///
 /// # Errors
 /// Fails when a storage, browser or network operation it depends on fails.
+#[must_use = "the run does not execute unless the future is polled"]
+pub fn run_with(
+    cfg: WorkerConfig,
+    stores: Stores,
+    backend: Option<Arc<dyn BrowserBackend>>,
+    cancel: CancellationToken,
+) -> impl Future<Output = Result<(), WorkerError>> + Send {
+    Box::pin(run_with_inner(cfg, stores, backend, cancel))
+}
+
 #[allow(clippy::too_many_lines)]
-pub async fn run_with(
+async fn run_with_inner(
     cfg: WorkerConfig,
     stores: Stores,
     backend: Option<Arc<dyn BrowserBackend>>,
@@ -388,7 +407,8 @@ pub async fn run_with(
                             lease.clone(),
                             rc.stores.session_producer(rc.run, &lease),
                             rc.cancel.clone(),
-                        ),
+                        )
+                        .instrument(slot.span.clone()),
                     ),
                     _ => {
                         if mode == CrawlMode::Hybrid
@@ -397,9 +417,10 @@ pub async fn run_with(
                         {
                             if let Some(plane) = slot.plane.clone() {
                                 let token = rc.cancel.clone();
-                                slot.plane_task = Some(
-                                    supervisor.spawn("url-plane", async move { plane.run(&token).await }),
-                                );
+                                slot.plane_task = Some(supervisor.spawn(
+                                    "url-plane",
+                                    async move { plane.run(&token).await }.instrument(slot.span.clone()),
+                                ));
                             }
                         }
                         let starts = (mode == CrawlMode::Hybrid).then(|| slot.hybrid_starts.subscribe());

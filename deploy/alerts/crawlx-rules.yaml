@@ -3,6 +3,7 @@
 # exporter (`.` -> `_`, `_total` on counters, `_seconds` on durations). Thresholds are the
 # plan's; every rule carries `slo` (or `runbook`) and `severity` (page | ticket).
 # Validate: promtool check rules deploy/alerts/crawlx-rules.yaml
+# Unit tests (browser crash-loop alerts): promtool test rules deploy/alerts/crawlx-rules.test.yaml
 # (crates/crawlx-cli/tests/deploy_assets.rs parses this file and checks every metric name
 # against the catalog.)
 groups:

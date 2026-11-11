@@ -1,0 +1,23 @@
+{
+  "construct": "base-first-wins",
+  "body": [
+    "<html><head><base href='/first/'><base href='/second/'></head><body><a href='x.html'>x</a></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/first/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/second/",
+      "source": "base/href"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/first/x.html",
+      "source": "a/href"
+    }
+  ]
+}

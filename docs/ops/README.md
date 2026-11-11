@@ -1,6 +1,6 @@
 # Operations
 
-Operator documentation for running crawlx outside a development checkout. crawlx is pre-1.0 and
+Operator documentation for running CrawlX outside a development checkout. CrawlX is pre-1.0 and
 production qualification is in progress; see the [README](../../README.md#release-status).
 
 ## Index
@@ -8,6 +8,8 @@ production qualification is in progress; see the [README](../../README.md#releas
 | File | Purpose |
 |---|---|
 | [`runbooks.md`](runbooks.md) | Numbered runbooks RB-01 to RB-12 (stuck crawl, unknown-outcome reconciliation, browser crash loop, lease storm, model provider failure, object-store outage, database failover, retention and ZDR cleanup, webhook backlog, hot target, emergency stop, SEV-1 containment), one card per alert rule, the `crawlx admin` command table, the independent safety auditor, backup, restore and rollback |
+| [`release-gates.md`](release-gates.md) | The release-gate checklist computed by CI from evidence files (`release-gate check`), its items, thresholds, evidence layout and waivers |
+| [`flaky-tests.md`](flaky-tests.md) | Flake handling: one classifying rerun, quarantine to the nightly suite after 3 events in 14 days, the 30-day flake rate and the `flake-report` tool |
 | This file | Provisioning, validation and rotation of the optional operator capabilities (request-identity key, protocol and delivery registries, language bundle) |
 
 ## Where the pieces are
@@ -20,6 +22,93 @@ production qualification is in progress; see the [README](../../README.md#releas
 | Operator commands | `crawlx admin ...`, `crawlx inspect trail <run-id>`, `crawlx healthcheck`, `crawlx config check`, `crawlx migrate`; the command table is in [`runbooks.md`](runbooks.md#before-any-runbook) |
 | Runbooks, backup, restore, rollback | [`runbooks.md`](runbooks.md) |
 | Safety, retention and secret behavior | [`../design/safety-model.md`](../design/safety-model.md), [`../design/data-and-secrets.md`](../design/data-and-secrets.md) |
+
+## Scheduled retention sweeper
+
+`crawlx admin sweep-retention` runs one pass: expired artifacts and the objects behind them,
+orphan objects (with `--orphan-grace-s`), expired pages, and whole-run purges. Add `--every
+<duration>` to keep it running instead of scheduling a job:
+
+```sh
+crawlx admin sweep-retention --every 5m --artifacts-dir /var/lib/crawlx/artifacts
+```
+
+- **Cadence.** The first pass starts at once, then one starts every interval (`30s`, `5m`, `1h`,
+  bare seconds; at least 1 second, the same floor as `retention.sweep_interval_s`). Passes never
+  overlap. A pass that outlasts the interval delays the next one; missed ticks are not replayed
+  in a burst.
+- **Stop.** SIGINT or SIGTERM ends the loop at once: a pass in flight is dropped, which is safe
+  because every object removal is acknowledged on its own and the database deletes are batched,
+  so the next pass (or process) finishes what was cut short. The last line printed is
+  `stopped after N pass(es), M failed`, and the exit code is 0. `--passes <n>` stops after `n`
+  passes instead; a bounded run that saw a failed pass exits 1.
+- **Failures.** A failed pass is logged as `retention sweep failed; the next pass retries`
+  (error text only, never row or object content), counted in
+  `crawlx_retention_sweep_failures_total`, printed as `pass N failed`, and retried on the next
+  tick. A pass longer than one hour is abandoned and counted the same way.
+- **Signals for alerting.** Every pass refreshes `crawlx_retention_overdue_artifacts{kind}` and
+  `crawlx_zdr_violations_total`, the series the retention alert cards read; a pass logs the
+  counts it removed (`artifacts_deleted`, `orphans_collected`, `pages_deleted`, `runs_purged`,
+  `rows_deleted`, `authorizations_deleted`) and nothing else.
+- **Scope.** `--every` cannot be combined with `--mode zdr`: a forced ZDR sweep is a one-time,
+  confirmed operation (`--force`). Run one sweeper per deployment; two concurrent sweepers are
+  safe (the work is idempotent) but only add database load.
+
+## Exit codes, streams and diagnostics
+
+| Code | Meaning |
+|---|---|
+| 0 | Success (`crawlx --version` and help included) |
+| 1 | A check or audit ran and found failures (`--health-check`, `verify-artifacts`, `durability-audit`, `safety-audit`, a bounded sweep with a failed pass, `healthcheck`) |
+| 2 | The command failed or its arguments were refused. Unlike the upstream tool, a failed crawl is never exit 0 |
+| 3 | `crawlx extract`: the article-language capability could not be loaded |
+| 130 | `crawlx extract`: cancelled |
+
+Results are written to stdout; logs, errors and the update notice go to stderr, so piped JSON
+stays parseable under `-v`, `-debug`, `--log`, or `DEBUG=true`. `DEBUG=true` also prints the full
+error chain with a backtrace on failure. `-nc`/`--no-color` or `NO_COLOR` plain text; colour is
+never written to a pipe. `crawlx crawl` asks for a newer release only when `CRAWLX_UPDATE_CHECK=1`
+is set (or with `--update`), never replaces its own binary, and sends no update request by
+default; upgrades are an operator deployment action (image or package), not something the crawler
+does to itself.
+
+`crawlx crawl --print-config` prints the effective per-run request of every seed, after
+defaults, `--compat-defaults`, `--config`, `--request`, flags and admission, as a JSON array of
+`{seedUrl, configDigest, request}`. Secrets are redacted and excluded from the digest, so two runs
+print the same digest exactly when their effective requests are equal; nothing is crawled and
+nothing touches the network. Configuration files accept only known keys: an unknown key (an
+executable import, a hook, a class path, a deprecated spelling) is refused naming the key.
+
+`--resolvers` takes inline `ip[:port]` entries or a file of them (commas or white space, `#`
+comments, repeats counted once, at most 8). The resolvers only choose which DNS server answers;
+the egress checks still judge every returned address, and resolution never grants
+authorization. `--known-files` accepts `robots_paths`, `sitemap`, `all` and the spellings
+`robotstxt` and `sitemapxml`; a file named twice is visited once.
+
+The pprof listener (`--pprof-bind`, loopback only unless explicitly allowed) answers
+`GET /debug/pprof/` (route list), `/debug/pprof/profile?seconds=N` and
+`/debug/pprof/heap`, which is the memory summary read from the operating system (JSON, or text
+with `?debug=1`). It has no allocator statistics and no labels or content.
+
+`crawlx config features` prints the versioned feature manifest of the `crawl` flag set as JSON:
+per baseline row (the pinned release and its inventory id) the flags and compatibility
+spellings, the policy (`native`, or `deviation` with the reason it differs, such as a refused
+unsafe switch), and the tests that exercise it. The manifest ships in the binary
+(`crates/crawlx-cli/data/feature-manifest.json`); a test fails when a row names a flag, a
+spelling or a test that does not exist, or when a compatibility spelling has no row.
+
+`crawlx extract --input-dir DIR --list` prints one JSON line per discovered entry and extracts
+nothing. `--backup-dir NEW_DIR` copies each admitted input, with its relative path, into a new
+owner-only directory outside the source tree; copies are created exclusively, so two files with
+the same name in different directories stay separate and nothing is overwritten. `--zero-retention`
+declares that no disk sink may be used and refuses `--output` and `--backup-dir`.
+
+`crawlx source-import` of a Go-collector-style manifest accepts an exported `env` object. Every
+supported variable of the pinned release appears in the report with its effective source
+(`env`, `options`, or `unset`); programmatic options override variables, as in the source's own
+construction order. A convertible report carries `configDigest`. Unsafe or unlimited values
+(disabling robots.txt, a limit of `0`) and unmapped variables make the import refuse with a
+complete report; values are never echoed.
 
 ## Optional operator capabilities
 

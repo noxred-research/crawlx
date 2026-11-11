@@ -1,0 +1,23 @@
+{
+  "construct": "escaped-json-slashes",
+  "url": "https://matrix.test/data/config.json",
+  "content_type": "application/json",
+  "body": [
+    "{\"next\":\"https:\\/\\/matrix.test\\/api\\/next.json\",\"rel\":\"\\/data\\/other.json\"}"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/api/next.json",
+      "source": "js/regex",
+      "confidence": "regex"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/data/other.json",
+      "source": "js/regex",
+      "confidence": "regex"
+    }
+  ],
+  "javascript_mode": "regex"
+}

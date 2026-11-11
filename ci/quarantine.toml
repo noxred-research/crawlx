@@ -1,0 +1,5 @@
+# Quarantined flaky tests: excluded from the PR suites, run only by the nightly suite.
+# A test enters here after 3 flake events in 14 days (`flake-report quarantine`) and must be
+# fixed or deleted within 14 days of `since`; `flake-report check` fails on an older entry.
+# Entries are `[[test]]` tables with `id = "<binary id>::<test name>"`, `since = "YYYY-MM-DD"`
+# and `reason`. Remove an entry in the change that fixes or deletes the test.

@@ -1,0 +1,13 @@
+{
+  "construct": "iframe-src",
+  "body": [
+    "<iframe src='embed/inner.html'></iframe>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/embed/inner.html",
+      "source": "iframe/src"
+    }
+  ]
+}

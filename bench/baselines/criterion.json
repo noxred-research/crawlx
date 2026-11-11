@@ -1,8 +1,20 @@
 {
   "benchmarks": {
+    "action_journal_insert/memory/16": {
+      "median_ns": 22255.4,
+      "p95_ns": 24138.5
+    },
+    "action_journal_insert/postgres/16": {
+      "median_ns": 77846923.6,
+      "p95_ns": 115390138.8
+    },
     "arbiter_select/proposals/2668": {
       "median_ns": 6212061.0,
       "p95_ns": 6695323.5
+    },
+    "artifact_key_derive/object_key_1000": {
+      "median_ns": 617045.3,
+      "p95_ns": 1285116.0
     },
     "calibration_apply/rows/10000": {
       "median_ns": 1526417.1,
@@ -163,6 +175,14 @@
     "tokenize_shortlist/candidates/16": {
       "median_ns": 37487.9,
       "p95_ns": 41458.3
+    },
+    "transition_write_batch/memory/16": {
+      "median_ns": 21698.4,
+      "p95_ns": 26301.8
+    },
+    "transition_write_batch/postgres/16": {
+      "median_ns": 54959500.5,
+      "p95_ns": 64142916.0
     },
     "url_canonicalize/classify": {
       "median_ns": 847565.8,

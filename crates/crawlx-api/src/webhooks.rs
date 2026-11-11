@@ -299,6 +299,8 @@ pub struct WebhookSender {
     zdr: Option<Arc<DeliveryBuffer>>,
     /// Renders the documents of scrape runs' `page` events.
     documents: Option<AppState>,
+    /// Native deliveries also carry the compat signature header.
+    dual_sign: bool,
     cursors: Mutex<HashMap<CrawlRunId, u64>>,
     /// Event types whose pending gauges were set by an earlier tick (reset to 0 once drained).
     gauged_events: Mutex<BTreeSet<String>>,
@@ -324,6 +326,7 @@ impl WebhookSender {
             clock,
             zdr: None,
             documents: None,
+            dual_sign: false,
             cursors: Mutex::new(HashMap::new()),
             gauged_events: Mutex::new(BTreeSet::new()),
         }
@@ -335,6 +338,16 @@ impl WebhookSender {
     #[must_use]
     pub fn with_zdr_buffer(mut self, buffer: Arc<DeliveryBuffer>) -> Self {
         self.zdr = Some(buffer);
+        self
+    }
+
+    /// Sign the deliveries of native runs twice: `Crawlx-Signature` and the compat signature
+    /// header ([`SIGNATURE_HEADER`], `sha256=<hex HMAC-SHA256(secret, body)>`), for receivers that
+    /// have not moved to `Crawlx-Signature` yet (`compat.mode = strict`). Off by default; the
+    /// compat deliveries of scrape runs always carry the compat header.
+    #[must_use]
+    pub const fn with_dual_signing(mut self, on: bool) -> Self {
+        self.dual_sign = on;
         self
     }
 
@@ -619,7 +632,7 @@ impl WebhookSender {
         .await?;
         let body = payload.to_string().into_bytes();
         let t = now.timestamp();
-        let headers = vec![
+        let mut headers = vec![
             ("Content-Type".to_owned(), "application/json".to_owned()),
             ("Crawlx-Event".to_owned(), d.event_type.clone()),
             ("Crawlx-Delivery-Id".to_owned(), d.id.to_string()),
@@ -629,6 +642,10 @@ impl WebhookSender {
                 signature_header(&self.secret, t, &body),
             ),
         ];
+        if self.dual_sign {
+            // receivers that still verify the compat header keep working until they move
+            headers.push((SIGNATURE_HEADER.to_owned(), compat_signature(&self.secret, &body)));
+        }
         Ok(Prepared {
             headers,
             body,

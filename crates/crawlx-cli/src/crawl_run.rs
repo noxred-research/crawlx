@@ -112,6 +112,9 @@ pub(crate) async fn run(
             .egress;
         admitted.push((crawl, egress));
     }
+    if args.print_config {
+        return print_config(&admitted, out);
+    }
     let first = admitted
         .first()
         .map(|(c, _)| c)
@@ -293,6 +296,26 @@ pub(crate) async fn run(
     if !failures.is_empty() {
         bail!("{}", failures.join("; "));
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `--print-config`: the admitted request of every seed as `{seedUrl, configDigest, request}`.
+///
+/// The request is the redacted form (header and cookie values replaced), and the digest is
+/// computed over that same form, so a secret value never influences what is printed. Two runs
+/// print the same digest exactly when their effective, admitted requests are equal.
+fn print_config<E>(admitted: &[(CreateCrawl, E)], out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    let mut entries = Vec::with_capacity(admitted.len());
+    for (crawl, _) in admitted {
+        let redacted = crawl.redacted();
+        entries.push(serde_json::json!({
+            "seedUrl": redacted.seed_url,
+            "configDigest": redacted.digest()?.to_string(),
+            "request": redacted,
+        }));
+    }
+    serde_json::to_writer_pretty(&mut *out, &entries)?;
+    writeln!(out)?;
     Ok(ExitCode::SUCCESS)
 }
 

@@ -44,6 +44,7 @@ scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+sha2.workspace = true
 similar.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
@@ -53,6 +54,8 @@ zip.workspace = true
 [dev-dependencies]
 # Parity test only: `kb::classify_endpoint` mirrors `crawlx_observe::network::classify_endpoint`.
 crawlx-observe = { path = "../crawlx-observe" }
+# `tests/url_filter_import.rs`: imported URL filters are evaluated by the real scope policy.
+crawlx-policy = { path = "../crawlx-policy" }
 criterion.workspace = true
 proptest.workspace = true
 # `tests/parse_memory_ceiling.rs`: peak heap of the HTML parse path (the dependency, not this crate, owns the `unsafe`).

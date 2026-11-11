@@ -1,6 +1,6 @@
 # Crawl model
 
-This page describes how crawlx decides what to fetch and what to do on a page. The
+This page describes how CrawlX decides what to fetch and what to do on a page. The
 [architecture](architecture.md) page shows where each piece runs; the [safety model](safety-model.md)
 shows what limits it.
 
@@ -48,8 +48,17 @@ TF-IDF and BM25 with a threshold of 0.85), with a per-cluster budget.
 
 **Fetching.** `Fetcher` resolves, checks and pins the address, applies per-origin politeness, follows
 redirects manually with a re-check per hop (limit 10), retries `429` and `503` with backoff, sends
-conditional requests (ETag, Last-Modified) on the first hop, and caps the decoded body (8 MiB by
-default, so a compression bomb stops at the cap). See the
+conditional requests (ETag, Last-Modified) on the first hop, and bounds the body three independent
+ways: decoded bytes (8 MiB by default, hard ceiling 64 MiB; `0` means no bytes, never unlimited),
+wire bytes (the compressed size) and a decoded-per-wire expansion ratio that refuses a decompression
+bomb. `gzip`, `deflate` and `br` are decoded in the fetch plane (`crawlx_fetch::codec`, also usable
+on bytes already in memory); a body cut by a cap is marked truncated, and a corrupt or truncated
+stream is an error, not a short success. Every live response carries `FetchEvidence` (peer
+certificate fingerprint and validity or the reason none was observed, wire and decoded sizes,
+the wire digest of an encoded body, the selected text encoding and where it came from). Optional
+per-request controls: a declared MIME type or encoding override, allowed and denied HTTP error
+statuses (an allowed `429` still reaches the governor), refuse-on-oversize, and a `HEAD` preflight
+charged to the same admission and request allowance as the `GET`. See the
 [safety model](safety-model.md#egress-and-ssrf).
 
 **Extraction.** `Extractor::extract` parses once and returns title, description, language, canonical
@@ -357,3 +366,25 @@ Defaults need no gate: `dynamic.strategies` is `interaction_bfs` and `event_driv
 authenticated evidence is rejected at admission (CLI, API, and again by the worker) with
 `profile_conflict` naming the gate; no run is created. The mechanism is documented for operators in
 [`gates/README.md`](../../gates/README.md).
+
+## Acceptance case harnesses
+
+The cases below are exercised by existing test files. A row names every file that carries the
+case; nothing here is a single end-to-end run of all cases together, and a test that needs
+PostgreSQL (`CRAWLX_TEST_DATABASE_URL`) or Chromium (`CRAWLX_CHROMIUM_PATH`) prints `skipped` and
+passes when the dependency is absent, so a green run without them does not exercise those files.
+Run one with `cargo test -p <crate> --test <file>`, or a test inside `src/` with
+`cargo test -p <crate> --lib`.
+
+| Case | Test files | Needs |
+|---|---|---|
+| Shared 429 cooldown | `crates/crawlx-storage/tests/origin_admission_pg.rs` (`shared_feedback_coalesces_waves_and_start_checks_other_workers_cooldown`: one worker's cooldown is seen by another worker's start check); `crates/crawlx-fetch/tests/cooldown_pg.rs` (two governors, each with its own database handle over one origin store: a `429` or `503` published by one holds back the other worker's start on that origin only, is visible before the other worker leases work, and expires); `crates/crawlx-worker/tests/url_plane.rs` (`python_source_429_returns_to_frontier_with_durable_effect_charge_then_succeeds`: the 429 publishes one `request.rate_limited` cooldown and releases the URL, attempts stay charged); `crates/crawlx-fetch/tests/fetch.rs` (`retries_429_then_succeeds`, `honors_retry_after_seconds`, `huge_retry_after_is_not_waited_out`: the single-fetch retry loop) | PostgreSQL for the first two files |
+| Login expiry | `crates/crawlx-bench/tests/gym_fixtures.rs` (`g18_session_expires_and_recovers_through_the_server`: the fixture session expires after a fixed number of uses and refreshes); `crates/crawlx-worker/tests/recovery_login.rs` (`rung_three_logs_in_again_when_restore_fails`, `an_exhausted_ladder_fails_the_session`); `crates/crawlx-storage/tests/session_profiles.rs` (`binding_expiry_uses_only_durable_login_credit_and_a_bounded_reservation`, `fenced_recovery_can_reserve_relogin_past_the_previous_exploration_deadline`, `expired_binding_keeps_independent_lease_profile_and_repository_failures`); `crates/crawlx-worker/tests/surface_login_duration.rs` (`login_time_is_not_charged_to_the_crawl_duration`) | PostgreSQL for `session_profiles.rs` |
+| Hostname and trust failure | `crates/crawlx-fetch/src/tls_tests.rs` (`certificate_verification_stays_secure_and_skip_remains_explicit`; `certificate_evidence_is_observed_from_the_requests_own_connection_in_both_transports`: the peer certificate fingerprint and validity are read from the one connection the request used, with no second socket); `crates/crawlx-fetch/tests/request_controls.rs` (`tls_verification_is_enforced_unless_skipped`); `crates/crawlx-worker/tests/tls_worker.rs` (`randomized_worker_does_not_silently_disable_certificate_verification`); `crates/crawlx-browser/tests/capture_protocols.rs` (`controlled_https_uses_a_trusted_ca_and_rejects_the_same_ca_when_untrusted`); `crates/crawlx-browser/tests/request_controls.rs` (`skip_tls_verification_applies_to_its_context_only`) | Chromium for the two browser files |
+| DNS rebind | `crates/crawlx-fetch/tests/fetch.rs` (`rebinding_between_fetches_is_caught_by_re_resolution`: a name that turns private after a pooled connection is refused with the `Private` egress rule); the resolver unit tests in `crates/crawlx-fetch/src/resolver.rs` and `client.rs` | none |
+| At-most-once actions | `crates/crawlx-worker/tests/chaos_failpoints.rs` (every failpoint, including `a_crash_after_perform_before_outcome_leaves_intended_and_performs_exactly_once` and `reconcile_without_markers_in_another_cluster_is_indeterminate_and_never_retried`); `crates/crawlx-worker/tests/chaos_pg.rs` (`every_failpoint_over_postgres_leaves_t2_atomic_and_recovers`); `crates/crawlx-api/tests/api_replay_worker.rs` (`api_replay_worker_kill_reaps_lease_and_skips_the_committed_non_idempotent_action`); `crates/crawlx-cli/tests/chaos.rs` (`sigkill_on_counter_fixture_repeats_no_non_idempotent_action`) | PostgreSQL for `chaos_pg.rs` and `chaos.rs`; Chromium for `chaos.rs` |
+| Cancellation lease release | `crates/crawlx-worker/tests/actor_invariants.rs` (`cancellation_releases_permits_and_closes_contexts_within_5s`); `crates/crawlx-worker/tests/mode_isolation.rs` (`cancellation_before_either_plane_starts_closes_every_unleased_session`, `cancellation_during_hybrid_fetch_closes_sessions_before_browser_admission`); `crates/crawlx-worker/tests/pg_e2e.rs` (`cancellation_before_browser_admission_closes_unleased_sessions_on_postgres`); `crates/crawlx-worker/tests/origin_pacing.rs` (`cancelling_cap_waiter_releases_worker_slots`, `cancelling_spacing_waiter_releases_every_held_slot`); `crates/crawlx-worker/tests/chaos_failpoints.rs` (`cancellation_after_intent_closes_the_row_without_dispatching`); `crates/crawlx-worker/tests/url_lease_heartbeat.rs` (URL-row lease holder death and stale-fence completion) | PostgreSQL for the `_pg` variants |
+
+Known gap: the TLS tests use a self-signed fixture certificate, so they prove that an untrusted
+certificate is refused unless verification is explicitly skipped. No test presents a certificate
+that chains to a trusted root but names a different host.

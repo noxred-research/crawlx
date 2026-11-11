@@ -1,0 +1,15 @@
+{
+  "construct": "header-fragment-only-skipped",
+  "headers": [
+    [
+      "Location",
+      "#top"
+    ],
+    [
+      "Content-Location",
+      "mailto:a@b.test"
+    ]
+  ],
+  "body": [],
+  "expected": []
+}

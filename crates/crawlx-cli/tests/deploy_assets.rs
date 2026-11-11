@@ -121,6 +121,38 @@ fn alert_rules_parse_and_reference_only_catalogued_metrics() {
 }
 
 #[test]
+fn browser_crash_loop_alerts_have_promtool_test_cases() {
+    assert!(
+        root().join("deploy/alerts/crawlx-rules.test.yaml").is_file(),
+        "deploy/alerts/crawlx-rules.test.yaml must exist"
+    );
+    let rules: Value = serde_yaml_ng::from_str(&read("deploy/alerts/crawlx-rules.yaml")).unwrap();
+    let tests: Value = serde_yaml_ng::from_str(&read("deploy/alerts/crawlx-rules.test.yaml")).unwrap();
+    let mut tested = BTreeSet::new();
+    for case in tests["tests"].as_array().expect("tests") {
+        for check in case["alert_rule_test"].as_array().into_iter().flatten() {
+            if let Some(name) = check["alertname"].as_str() {
+                tested.insert(name.to_owned());
+            }
+        }
+    }
+    let mut crash_loop = 0;
+    for group in rules["groups"].as_array().expect("groups") {
+        for rule in group["rules"].as_array().expect("rules") {
+            let alert = rule["alert"].as_str().expect("alert name");
+            if alert.starts_with("CrawlxBrowserCrashLoop") {
+                crash_loop += 1;
+                assert!(
+                    tested.contains(alert),
+                    "{alert} has no case in crawlx-rules.test.yaml"
+                );
+            }
+        }
+    }
+    assert!(crash_loop >= 1, "no CrawlxBrowserCrashLoop alert in the rules");
+}
+
+#[test]
 fn dashboard_covers_every_plan_dashboard_with_catalogued_metrics() {
     let doc: Value = serde_json::from_str(&read("deploy/dashboards/crawlx.json")).unwrap();
     let known = exported_names();

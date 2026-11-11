@@ -1,0 +1,6 @@
+{
+  "construct": "binary-octet-stream-pdf",
+  "content_type": "application/octet-stream",
+  "body_hex": "255044462d312e370a312030206f626a203c3c202f555249202868747470733a2f2f6c65616b2e746573742f646f632f612e70687029203e3e20222e2f68696464656e2f782e70687022",
+  "expected": []
+}

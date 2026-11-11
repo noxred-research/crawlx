@@ -1,0 +1,18 @@
+{
+  "construct": "audio-source",
+  "body": [
+    "<audio><source src='/a/one.ogg' srcset='/a/two.ogg 1x'></audio>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/a/one.ogg",
+      "source": "audio/source"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/a/two.ogg",
+      "source": "audio/sourcesrcset"
+    }
+  ]
+}

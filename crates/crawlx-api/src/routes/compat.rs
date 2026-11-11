@@ -23,7 +23,7 @@ use crate::scrape_service::{
 };
 use crate::state::AppState;
 use crate::store::Scope;
-use crate::util::{json_response, next_link, paginate, ts, ts_opt, JsonBody, Params};
+use crate::util::{json_response, next_link, paginate, ts, JsonBody, Params};
 use crate::webhooks::announce_started;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -32,7 +32,7 @@ use axum::Extension;
 use crawlx_core::config::{CreateCrawl, OutputFormat, RetentionMode};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::hash::Digest;
-use crawlx_core::repo::{CrawlRun, FrontierEntry, FrontierStatus, PageRecord};
+use crawlx_core::repo::{CrawlRun, FrontierEntry, FrontierStatus, PageRecord, RunMetadata};
 use crawlx_core::scrape::{FormatSpec, JobKind};
 use crawlx_core::TenantId;
 use crawlx_model::llm::TokenUsage;
@@ -221,7 +221,9 @@ pub async fn create(
             mut crawl,
             mut warnings,
             robots_override,
+            query_policy_unset,
         } = translate(bd, planned.as_ref().map(|(m, _)| m))?;
+        st.config.compat.mode.apply(&mut crawl, query_policy_unset);
         // the LLM formats need the configured LLM: refuse before a run exists
         if crawl
             .scrape
@@ -311,8 +313,10 @@ async fn shadow_create(
             let Translated {
                 mut crawl,
                 mut warnings,
+                query_policy_unset,
                 ..
             } = translate(body, None)?;
+            state.config.compat.mode.apply(&mut crawl, query_policy_unset);
             shadow_rewrite(&mut crawl);
             warnings.push(Warning::new(
                 "shadow_rewritten",
@@ -414,12 +418,41 @@ fn skip_link(path: &str, params: &Params, skip: usize) -> Value {
     Value::String(format!("{path}?{}", ser.finish()))
 }
 
+/// A stopped crawl that found at most this many pages gets a hint on how to broaden it.
+const FEW_RESULTS: u64 = 1;
+
+/// The human-readable `warning` of a crawl status, if there is one: pages the site's robots.txt
+/// disallowed (they are listed under `robotsBlocked` of the errors route), else a stopped crawl
+/// that found at most one page. Wording is the one existing clients show their users.
+fn status_warning(run: &RunMetadata, id: &str, seed_host: Option<&str>) -> Option<String> {
+    if run.counters.urls.robots_blocked > 0 {
+        return Some(format!(
+            "One or more pages could not be crawled because the site's robots.txt disallows them. See the robotsBlocked list on GET /compat/v2/crawl/{id}/errors. Teams with the feature enabled can set ignoreRobotsTxt: true."
+        ));
+    }
+    let stopped = matches!(run.status, RunStatus::Completed | RunStatus::Cancelled);
+    let found = run.counters.urls.succeeded;
+    if stopped && found <= FEW_RESULTS {
+        let start = seed_host.map_or_else(
+            || "a higher-level path".to_owned(),
+            |host| format!("a higher-level path like {host}"),
+        );
+        return Some(format!(
+            "Only {found} result(s) found. For broader coverage, try crawling with crawlEntireDomain=true or start from {start}"
+        ));
+    }
+    None
+}
+
 /// `GET /compat/v2/crawl/{id}`.
 ///
 /// `data` holds the compat documents of the crawl's pages (`?limit=` per response, `?skip=`
 /// as an offset or `?cursor=` as the opaque position the `next` link carries). `creditsUsed`
 /// sums the credits of every stored page (`1` per page plus the extras of `json` and the other
 /// LLM formats); a terminal crawl is booked in the usage ledger once.
+///
+/// `next` is non-null only when another stored page is available, even while the crawl is
+/// running. Poll this status route again to wait for new pages; `next` is not a polling link.
 ///
 /// # Errors
 /// `403 scope_missing` without `crawls:read`, `404 not_found` for an unknown run, a run owned by
@@ -499,7 +532,7 @@ pub async fn status(
         "total": total,
         "completed": c.succeeded,
         "creditsUsed": credits,
-        "expiresAt": ts_opt(crate::resources::metadata_expires_at(&run)),
+        "expiresAt": ts(crate::resources::status_expires_at(&run)),
         "createdAt": ts(run.created_at),
         "duration": seconds(duration),
         "next": next,
@@ -516,6 +549,15 @@ pub async fn status(
     });
     if let (Some(at), Some(obj)) = (ended, body.as_object_mut()) {
         obj.insert("completedAt".to_owned(), json!(ts(at)));
+    }
+    let seed_host = live
+        .as_ref()
+        .and_then(|l| l.config.seed_url.host_str().map(str::to_owned));
+    if let (Some(text), Some(obj)) = (
+        status_warning(&run, &run.id.to_string(), seed_host.as_deref()),
+        body.as_object_mut(),
+    ) {
+        obj.insert("warning".to_owned(), json!(text));
     }
     if run.status.is_terminal() {
         match &live {

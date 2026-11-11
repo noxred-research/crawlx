@@ -7,6 +7,8 @@
 //!   whose `expires_at` has passed or that have `purge_requested_at` set, leaf
 //!   tables first in batches of 10 000 rows, writing one hash-chained
 //!   `audit_events` row per purged run.
+//! * [`run_sweep_loop`] / [`RetentionSweeper::run_loop`] – the scheduled sweeper: one pass per
+//!   interval, cancellable, never overlapping.
 //! * [`ensure_traffic_partitions`] – monthly `traffic_events` partitions created ahead of time.
 
 use crate::artifacts::{ArtifactReaper, LiveArtifacts};
@@ -24,7 +26,10 @@ use crawlx_telemetry::Metrics;
 use parking_lot::Mutex;
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
+use tokio_util::sync::CancellationToken;
 
 /// Rows deleted per statement when purging.
 const PURGE_BATCH: i64 = 10_000;
@@ -488,6 +493,138 @@ impl RetentionSweeper {
         )
         .await?;
         Ok(total)
+    }
+}
+
+/// Shortest period between two passes of [`run_sweep_loop`]; a smaller request is raised to it.
+pub const MIN_SWEEP_INTERVAL: StdDuration = StdDuration::from_secs(1);
+/// Longest one pass of [`run_sweep_loop`] may run before it is abandoned and counted as a failure.
+/// A pass is resumable, so the next one picks up where the abandoned one stopped.
+pub const MAX_SWEEP_PASS: StdDuration = StdDuration::from_secs(3_600);
+
+/// Schedule of [`run_sweep_loop`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
+#[must_use]
+pub struct SweepLoopConfig {
+    /// Period between pass starts; passes never overlap and a slow pass delays the next one
+    /// instead of causing a burst of catch-up passes.
+    pub interval: StdDuration,
+    /// Stop after this many finished passes (successful or failed); `None` runs until cancelled.
+    pub max_passes: Option<u64>,
+}
+
+impl SweepLoopConfig {
+    /// Run every `interval` (at least [`MIN_SWEEP_INTERVAL`]) until cancelled.
+    pub fn every(interval: StdDuration) -> Self {
+        Self {
+            interval: interval.max(MIN_SWEEP_INTERVAL),
+            max_passes: None,
+        }
+    }
+
+    /// Also stop after `passes` finished passes.
+    pub const fn with_max_passes(mut self, passes: u64) -> Self {
+        self.max_passes = Some(passes);
+        self
+    }
+}
+
+/// What a finished [`run_sweep_loop`] did.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[non_exhaustive]
+pub struct SweepLoopSummary {
+    /// Passes that ran to an end, successful or failed.
+    pub passes: u64,
+    /// Passes that failed or exceeded [`MAX_SWEEP_PASS`].
+    pub failures: u64,
+}
+
+/// Run `pass` once immediately and then every `config.interval` until `cancel` fires or
+/// `config.max_passes` is reached.
+///
+/// Cancellation is checked between passes and while one runs: an in-flight pass is dropped at
+/// its next await point. That is safe because a sweep is resumable (each object removal is
+/// acknowledged on its own and database statements are batched), so the next process or pass
+/// repeats what was cut short. A failed pass never ends the loop: the failure is logged
+/// (error text only, never row content) and counted in the summary, and the next pass retries.
+/// `observe` sees every finished pass (`Ok` report, or the failure) in order.
+pub async fn run_sweep_loop<F, Fut, O>(
+    config: SweepLoopConfig,
+    cancel: &CancellationToken,
+    mut pass: F,
+    mut observe: O,
+) -> SweepLoopSummary
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<SweepReport, StoreError>>,
+    O: FnMut(u64, &Result<SweepReport, StoreError>),
+{
+    let mut summary = SweepLoopSummary::default();
+    let mut ticker = tokio::time::interval(config.interval.max(MIN_SWEEP_INTERVAL));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => break,
+            _ = ticker.tick() => {}
+        }
+        let outcome = tokio::select! {
+            biased;
+            () = cancel.cancelled() => break,
+            r = tokio::time::timeout(MAX_SWEEP_PASS, pass()) => r,
+        };
+        summary.passes = summary.passes.saturating_add(1);
+        let result = outcome.unwrap_or_else(|_| {
+            Err(StoreError::Backend(
+                "retention sweep pass exceeded its time limit".to_owned(),
+            ))
+        });
+        match &result {
+            Ok(report) => tracing::info!(
+                pass = summary.passes,
+                artifacts_deleted = report.artifacts_deleted,
+                orphans_collected = report.orphans_collected,
+                pages_deleted = report.pages_deleted,
+                runs_purged = report.runs_purged,
+                rows_deleted = report.rows_deleted,
+                authorizations_deleted = report.authorizations_deleted,
+                "retention sweep finished"
+            ),
+            Err(error) => {
+                summary.failures = summary.failures.saturating_add(1);
+                tracing::warn!(pass = summary.passes, %error, "retention sweep failed; the next pass retries");
+            }
+        }
+        observe(summary.passes, &result);
+        if config.max_passes.is_some_and(|max| summary.passes >= max) {
+            break;
+        }
+    }
+    summary
+}
+
+impl RetentionSweeper {
+    /// [`run_sweep_loop`] over this sweeper, each pass stamped with the database clock.
+    pub async fn run_loop<O>(
+        &self,
+        config: SweepLoopConfig,
+        cancel: &CancellationToken,
+        observe: O,
+    ) -> SweepLoopSummary
+    where
+        O: FnMut(u64, &Result<SweepReport, StoreError>),
+    {
+        run_sweep_loop(
+            config,
+            cancel,
+            || async {
+                let now = self.pg.db_now().await?;
+                self.sweep(now).await
+            },
+            observe,
+        )
+        .await
     }
 }
 

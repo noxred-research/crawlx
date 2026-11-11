@@ -1,7 +1,7 @@
 # Safety model
 
-crawlx can click, type and submit in real web applications and can fetch arbitrary URLs. Its safety
-model has several independent layers, each of which fails closed. Use crawlx only against systems
+CrawlX can click, type and submit in real web applications and can fetch arbitrary URLs. Its safety
+model has several independent layers, each of which fails closed. Use CrawlX only against systems
 you own or are authorized to test; nothing here verifies legal permission to crawl a target.
 
 | Layer | Where | Decides |
@@ -88,7 +88,7 @@ alerts at SEV-1 in the [runbooks](../ops/runbooks.md).
 ## Authorization records
 
 An authorization record is an immutable, versioned JSON document written by the operator that
-states what a run may touch. It is *evidence of the operator's stated authorization*; crawlx does
+states what a run may touch. It is *evidence of the operator's stated authorization*; CrawlX does
 not check that the operator has the legal right to test the target.
 
 Contents: the tenant, a named authorizer who attests ownership or control, explicit origins or URL

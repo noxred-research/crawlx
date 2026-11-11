@@ -12,7 +12,12 @@
 //!   `exclude`/`include` selectors applied);
 //! * [`readability`] selects the main content block;
 //! * [`markdown`], [`text`] and [`serialize`] render the selected content;
-//! * [`tables`] models HTML tables and renders GFM pipe tables;
+//! * [`tables`] models HTML tables, renders GFM pipe tables, scores tables (data, layout or
+//!   ambiguous) and normalizes data rows;
+//! * [`content_outputs`] builds the opt-in output variants (raw, cleaned and fit HTML, citation
+//!   Markdown, tables, link/media scores) from [`fit`] (`pruning_v1` and `bm25_v1` content
+//!   filters, [`bm25`]) and [`link_media`] (intrinsic/contextual scores, preview intents and
+//!   head projection);
 //! * [`metadata`] and [`links`] read head metadata, links and assets;
 //! * [`endpoints`], [`forms`], [`page_type`], [`custom_fields`],
 //!   [`technologies`] and [`secrets`] are the surface-discovery and
@@ -49,19 +54,29 @@ mod article_tokens;
 pub mod attributes;
 pub mod base64_images;
 pub mod blocklist;
+pub mod bm25;
 pub mod branding;
 pub mod compat_meta;
+pub mod content_outputs;
 pub mod custom_fields;
+pub mod decode;
+pub mod dedupe;
 pub mod diff;
 pub mod document;
 pub mod dom;
 pub mod endpoints;
 pub mod extraction_import;
+pub mod find;
+pub mod fit;
 pub mod form_fill;
 pub mod forms;
+pub mod handlers;
 pub mod images;
+pub mod item_export;
 pub mod item_loader;
 pub mod kb;
+pub mod link_media;
+pub mod link_options;
 pub mod links;
 pub mod map_rank;
 pub mod markdown;
@@ -70,7 +85,10 @@ pub mod metadata;
 pub mod page_type;
 pub mod parse;
 pub mod parse_budget;
+pub mod pipeline;
 pub mod readability;
+pub mod recipe;
+pub mod regex_builtins;
 pub mod secret_validation;
 pub mod secrets;
 pub mod serialize;
@@ -86,6 +104,7 @@ use crawlx_core::hash::Digest;
 use scraper::{Html, Selector};
 use url::Url;
 
+pub use dedupe::DedupeHandle;
 pub use document::{Document, ExtractOptions, ExtractedLink};
 pub use endpoints::{DiscoveredEndpoint, DiscoveryInput, DiscoveryOptions};
 pub use forms::{StaticForm, StaticInput};
@@ -141,6 +160,9 @@ pub enum ExtractError {
     /// parsed. Transient resource pressure: retry once other parses have finished.
     #[error(transparent)]
     ParseMemory(#[from] parse_budget::ParseBudgetExhausted),
+    /// An opt-in content output option was refused or its filter ran out of budget.
+    #[error("content output failed: {0}")]
+    Outputs(#[from] content_outputs::ContentOutputError),
 }
 
 /// Stateless entry point of the crate.
@@ -283,7 +305,24 @@ impl Extractor {
         // The charge covers the lossy copy too: it is taken on the byte length here and topped
         // up to the decoded length in `extract_inner` (replacement characters expand input).
         let charge = parse_budget::charge(bytes.len())?;
-        let html = String::from_utf8_lossy(bytes);
+        let (html, decode_report) = match &opts.decode {
+            Some(decode_opts) => {
+                let declared = decode_opts.declared_charset.clone().or_else(|| {
+                    opts.content_type
+                        .as_deref()
+                        .and_then(decode::charset_of_content_type)
+                });
+                let decoded = decode::decode(bytes, declared.as_deref()).map_err(|error| match error {
+                    decode::DecodeError::TooLarge { len } => ExtractError::TooLarge {
+                        what: "bytes",
+                        limit: decode::MAX_DECODE_BYTES,
+                        actual: len,
+                    },
+                })?;
+                (std::borrow::Cow::Owned(decoded.text), Some(decoded.report))
+            }
+            None => (String::from_utf8_lossy(bytes), None),
+        };
         Self::extract_inner(
             &html,
             bytes,
@@ -291,7 +330,7 @@ impl Extractor {
             base,
             opts,
             project,
-            Some(charge),
+            Some((charge, decode_report)),
         )
     }
 
@@ -325,7 +364,7 @@ impl Extractor {
         page: &Url,
         opts: &ExtractOptions,
         projection: Option<&StringProjection<'_>>,
-        charge: Option<parse_budget::ParseCharge>,
+        byte_input: Option<(parse_budget::ParseCharge, Option<decode::DecodeReport>)>,
     ) -> Result<Document, ExtractError> {
         precheck(html, opts)?;
         if let Some(policy) = &opts.content {
@@ -334,9 +373,20 @@ impl Extractor {
         }
         let include = compile(&opts.include_tags)?;
         let exclude = compile(&opts.exclude_tags)?;
+        let target = match &opts.outputs {
+            Some(outputs) => {
+                outputs.validate()?;
+                compile(&outputs.target_elements)?
+            }
+            None => Vec::new(),
+        };
 
         // Nonwaiting charge for the DOM and everything derived from it. Declared before `doc`,
         // so it is released only after the parsed tree has been dropped.
+        let (charge, decode_report) = match byte_input {
+            Some((charge, report)) => (Some(charge), report),
+            None => (None, None),
+        };
         let mut charge = match charge {
             Some(charge) => charge,
             None => parse_budget::charge(html.len())?,
@@ -349,6 +399,10 @@ impl Extractor {
             opts.max_nodes
         };
         dom::check_limits(&doc, max_nodes)?;
+        let markup = opts
+            .markup
+            .filter(|retention| retention.comments || retention.cdata)
+            .map(|retention| decode::collect_markup(&doc, html, retention));
         let validation = opts.acquisition_validation.as_ref().map(|context| {
             validation::validate_acquisition(&validation::ValidationInput {
                 context,
@@ -374,9 +428,10 @@ impl Extractor {
             exclude: select_ids(&doc, &exclude),
             include: select_ids(&doc, &include),
         };
+        selected.include.extend(select_ids(&doc, &target));
         let mut item = None;
         let mut read_more = Vec::new();
-        let mut has_include = !include.is_empty();
+        let mut has_include = !include.is_empty() || !target.is_empty();
         if let Some(policy) = &opts.content {
             has_include |= !policy.selectors.include.is_empty();
             if !policy.selectors.include.is_empty()
@@ -388,14 +443,27 @@ impl Extractor {
                 let policy_selection = indexed.select_policy(&policy.selectors)?;
                 selected.include.extend(policy_selection.include);
                 selected.exclude.extend(policy_selection.exclude);
-                read_more = item_loader::select_read_more(&mut indexed, &policy.selectors, &base)?;
+                read_more = item_loader::select_read_more(
+                    &mut indexed,
+                    &policy.selectors,
+                    item_loader::read_more_base(&policy.selectors, &base, page),
+                )?;
                 if let Some(spec) = &policy.item_loader {
                     item = Some(item_loader::CompiledItemLoader::compile(spec)?.load(&mut indexed, &base)?);
                 }
             }
         }
         let body = dom::convert_node(find_body(&doc), &selected);
+        let cleaned: Option<Vec<Node>> = opts
+            .outputs
+            .as_ref()
+            .filter(|outputs| outputs.needs_cleaned())
+            .and_then(|_| body.clone())
+            .map(|node| vec![node]);
         let mut native = None;
+        let dedupe_ctx = dedupe::Context::new(opts, page)?;
+        let mut page_text = String::new();
+        let mut block_stats = dedupe::BlockStats::default();
         let mut content: Vec<Node> = match body {
             Some(Node::Elem(body)) if opts.content.is_some() => {
                 if let Some(policy) = &opts.content {
@@ -406,6 +474,9 @@ impl Extractor {
                         selection.children = dom::collect_matched(vec![Node::Elem(body)]);
                         selection
                     };
+                    if dedupe_ctx.is_some() {
+                        page_text = text::element_text(&body);
+                    }
                     let mut result = article::select(
                         body,
                         policy,
@@ -415,7 +486,10 @@ impl Extractor {
                     if has_include {
                         result.strategy = "explicit_selectors_v1";
                     }
-                    let nodes = std::mem::take(&mut result.nodes);
+                    let mut nodes = std::mem::take(&mut result.nodes);
+                    if let Some(ctx) = dedupe_ctx.as_ref().filter(|ctx| ctx.blocks_enabled()) {
+                        block_stats = ctx.prune_blocks(&mut nodes, &mut result.main_ids);
+                    }
                     native = Some(result);
                     nodes
                 } else {
@@ -538,7 +612,7 @@ impl Extractor {
                     opts.language_detector.as_ref().map(|handle| handle.detector()),
                 );
                 let operations = native.as_ref().map_or(0, |s| s.operations);
-                let quality = article_quality::evaluate(
+                let mut quality = article_quality::evaluate(
                     policy,
                     &metadata,
                     &text,
@@ -547,6 +621,10 @@ impl Extractor {
                     native.as_ref().is_some_and(|s| s.partial) || metadata.nlp_truncated,
                     author_excluded,
                 );
+                let content_stage = dedupe_ctx
+                    .as_ref()
+                    .map(|ctx| ctx.content_stage(metadata.title.value.as_deref(), &text, &mut quality))
+                    .unwrap_or_default();
                 let policy_bytes = serde_json::to_vec(policy)
                     .map_err(|e| crawlx_core::CoreError::Serialization(e.to_string()))?;
                 let mut envelope = crawlx_core::extraction::DocumentEnvelopeV1::new(
@@ -589,6 +667,13 @@ impl Extractor {
                 }
                 envelope.source_mapping_redacted = source_mapping_redacted;
                 envelope.privacy_projection_version = projection.map(|_| 1);
+                if let Some(ctx) = &dedupe_ctx {
+                    envelope.dedupe = Some(ctx.report(
+                        ctx.digests(digest, &page_text, &text, &comments),
+                        block_stats,
+                        content_stage,
+                    ));
+                }
                 Ok::<_, ExtractError>(envelope)
             })
             .transpose()?;
@@ -648,6 +733,41 @@ impl Extractor {
             Vec::new()
         };
 
+        let (links, assets, outputs) = match &opts.outputs {
+            None => (links, assets, None),
+            Some(options) => {
+                let scope = (options.discovery_scope == content_outputs::DiscoveryScope::Selected)
+                    .then(|| content_outputs::referenced_urls(&content, &base));
+                let (links, assets) = match &scope {
+                    Some(urls) => (
+                        links
+                            .into_iter()
+                            .filter(|l| urls.contains(l.url.as_str()))
+                            .collect(),
+                        assets.into_iter().filter(|u| urls.contains(u.as_str())).collect(),
+                    ),
+                    None => (links, assets),
+                };
+                let mut built = content_outputs::build(&content_outputs::BuildInput {
+                    options,
+                    doc: &doc,
+                    page,
+                    base: &base,
+                    raw: html,
+                    content: &content,
+                    cleaned: cleaned.as_deref(),
+                    links: &links,
+                    allowed_media: scope.as_ref(),
+                    keep_data_images: opts.keep_data_images,
+                    withhold: main_redacted,
+                })?;
+                if let Some(project) = project {
+                    built.project(project);
+                }
+                (links, assets, Some(built))
+            }
+        };
+
         Ok(Document {
             title: head.title,
             description: head.description,
@@ -673,6 +793,9 @@ impl Extractor {
             item,
             image_urls,
             attributes,
+            outputs,
+            decode: decode_report,
+            markup,
         })
     }
 }

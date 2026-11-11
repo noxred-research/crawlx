@@ -1,0 +1,58 @@
+{
+  "id": "b03-inline-advertisements",
+  "family": "boilerplate",
+  "note": "advertisement blocks between and inside article paragraphs",
+  "expectedText": "Advertisement: Quick Loans, approval in minutes\nNews Sport Events\nFree Bike Repair Clinic Returns to the Station Square\nSponsored: Cycle Palace summer sale, up to half off\nThe monthly bike repair clinic returns to Station Square on Saturday, with volunteer mechanics offering free checks of brakes, tires and chains. Last month they looked at more than ninety bicycles in four hours.\nVisitors can bring a bike with any problem, from a squeaky pedal to a bent wheel. Small parts are paid for by a neighborhood fund, and larger repairs are explained so owners can do them at home.\nAdvertisement: Premium mattresses delivered free\nThe clinic runs from ten in the morning until two in the afternoon. In case of rain it moves into the empty ticket hall.\nWin a weekend for two. Enter our prize draw today.\nStation Square Gazette. Terms. Privacy. Ad choices.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 47
+    },
+    {
+      "label": "boilerplate",
+      "start": 48,
+      "end": 65
+    },
+    {
+      "label": "body",
+      "start": 66,
+      "end": 119
+    },
+    {
+      "label": "boilerplate",
+      "start": 120,
+      "end": 171
+    },
+    {
+      "label": "body",
+      "start": 172,
+      "end": 383
+    },
+    {
+      "label": "body",
+      "start": 384,
+      "end": 578
+    },
+    {
+      "label": "boilerplate",
+      "start": 579,
+      "end": 627
+    },
+    {
+      "label": "body",
+      "start": 628,
+      "end": 748
+    },
+    {
+      "label": "boilerplate",
+      "start": 749,
+      "end": 799
+    },
+    {
+      "label": "boilerplate",
+      "start": 800,
+      "end": 851
+    }
+  ]
+}

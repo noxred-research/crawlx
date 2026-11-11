@@ -1,0 +1,13 @@
+{
+  "construct": "embed-src",
+  "body": [
+    "<embed src='/e/plugin.swf'>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/e/plugin.swf",
+      "source": "embed/src"
+    }
+  ]
+}

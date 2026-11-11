@@ -52,6 +52,10 @@ pub struct SelectorPolicyV1 {
     pub read_more: Vec<SelectorV1>,
     /// Prefix to namespace URI bindings. Unprefixed HTML names use HTML namespace.
     pub namespaces: BTreeMap<String, String>,
+    /// Base for relative read-more targets; omission means [`ReadMoreBaseV1::Document`] and keeps
+    /// the serialized policy unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_more_base: Option<ReadMoreBaseV1>,
 }
 impl SelectorPolicyV1 {
     /// Check bounded source sizes; compilation checks syntax.
@@ -81,6 +85,36 @@ impl SelectorPolicyV1 {
         Ok(())
     }
 }
+/// Element a nested field group's rules start from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[non_exhaustive]
+pub enum FieldSourceV1 {
+    /// The group's base element.
+    Context,
+    /// The nearest following element sibling, optionally restricted to a selector match.
+    NextSibling {
+        /// Sibling must also be selected by this selector (evaluated on the whole document).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selector: Option<SelectorV1>,
+    },
+    /// The nearest preceding element sibling, optionally restricted to a selector match.
+    PreviousSibling {
+        /// Sibling must also be selected by this selector (evaluated on the whole document).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selector: Option<SelectorV1>,
+    },
+}
+/// Base URL used to resolve relative read-more targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ReadMoreBaseV1 {
+    /// Honor a document `base` element, the default.
+    Document,
+    /// Resolve against the page URL the document was acquired from, ignoring any `base` element.
+    Page,
+}
 /// Selected-node projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -95,6 +129,10 @@ pub enum FieldExtractionV1 {
     },
     /// Serialized element markup.
     Html,
+    /// Every attribute of the element as a name to value object.
+    Attributes,
+    /// Nested object built from the field's own `fields`; carries no value of its own.
+    Group,
 }
 /// Number of output values, checked before any joining transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +166,35 @@ pub enum FieldTransformV1 {
     },
     /// Stable first-occurrence deduplication.
     Dedupe,
+    /// Collapse whitespace, remove control and zero-width characters, then trim.
+    Clean,
+    /// Safe-regex projection of each string: the capture `group` of the first match, or of every
+    /// match when `all` is set. Values without a match are dropped.
+    Regex {
+        /// Pattern in the bounded linear-time regex dialect (no backreferences or lookaround).
+        pattern: String,
+        /// Capture group, zero for the whole match.
+        #[serde(default)]
+        group: usize,
+        /// Keep every match instead of only the first.
+        #[serde(default)]
+        all: bool,
+    },
+    /// Versioned built-in pattern (for example `email`) applied like `Regex`.
+    Builtin {
+        /// Name from the built-in pattern table.
+        name: String,
+        /// Keep every match instead of only the first.
+        #[serde(default)]
+        all: bool,
+    },
+    /// Parse each string as bounded JSON.
+    JsonParse,
+    /// Keep at most the first `count` values of a list.
+    Limit {
+        /// Number of values retained, one through 10,000.
+        count: usize,
+    },
 }
 /// One field compiled before evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,6 +222,14 @@ pub struct ItemFieldV1 {
         deserialize_with = "present_default"
     )]
     pub default: Option<serde_json::Value>,
+    /// Nested field group: when non-empty the `selectors` select base elements and each nested
+    /// rule is evaluated relative to one base element. Requires the `group` projection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<ItemFieldV1>,
+    /// Element the nested selectors start from, relative to the group's base element.
+    /// Valid only on nested fields; absence means the base element itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<FieldSourceV1>,
 }
 
 fn present_default<'de, D: serde::Deserializer<'de>>(
@@ -205,31 +280,59 @@ impl ItemLoaderV1 {
         {
             return Err(invalid("item loader version or collection limit invalid"));
         }
-        let mut names = std::collections::BTreeSet::new();
-        for f in &self.fields {
-            if f.name.is_empty()
-                || f.name.len() > 64
-                || !names.insert(&f.name)
-                || f.selectors.is_empty()
-                || f.selectors.len() > 16
-                || f.transforms.len() > 16
-                || f.selectors
-                    .iter()
-                    .any(|s| s.expression().is_empty() || s.expression().len() > MAX_EXPRESSION_BYTES)
-                || matches!(&f.extraction, FieldExtractionV1::Attribute { name } if name.is_empty() || name.len()>128)
-                || f.transforms
-                    .iter()
-                    .any(|t| matches!(t, FieldTransformV1::Join { separator } if separator.len()>1024))
-            {
-                return Err(invalid("item loader field limit invalid"));
-            }
-            if let Some(default) = &f.default {
-                bounded_json_len(default, 65_536)?;
-            }
-        }
+        let mut total = 0usize;
+        validate_fields(&self.fields, 1, &mut total)?;
         bounded_json_len(&self.schemas, 262_144)?;
         Ok(())
     }
+}
+/// Deepest nesting of field groups, counting the top level as one.
+pub const MAX_FIELD_DEPTH: usize = 4;
+/// Most field rules in a recipe, including nested ones.
+pub const MAX_TOTAL_FIELDS: usize = 256;
+fn validate_fields(fields: &[ItemFieldV1], depth: usize, total: &mut usize) -> Result<(), CoreError> {
+    let selector_invalid =
+        |s: &SelectorV1| s.expression().is_empty() || s.expression().len() > MAX_EXPRESSION_BYTES;
+    let mut names = std::collections::BTreeSet::new();
+    for f in fields {
+        *total = total.saturating_add(1);
+        let group = matches!(&f.extraction, FieldExtractionV1::Group);
+        if *total > MAX_TOTAL_FIELDS
+            || f.name.is_empty()
+            || f.name.len() > 64
+            || !names.insert(&f.name)
+            || f.selectors.is_empty()
+            || f.selectors.len() > 16
+            || f.transforms.len() > 16
+            || f.selectors.iter().any(selector_invalid)
+            || matches!(&f.extraction, FieldExtractionV1::Attribute { name } if name.is_empty() || name.len()>128)
+            || f.transforms.iter().any(|t| match t {
+                FieldTransformV1::Join { separator } => separator.len() > 1024,
+                FieldTransformV1::Regex { pattern, .. } => pattern.is_empty() || pattern.len() > 512,
+                FieldTransformV1::Builtin { name, .. } => name.is_empty() || name.len() > 64,
+                FieldTransformV1::Limit { count } => !(1..=10_000).contains(count),
+                _ => false,
+            })
+            || group != !f.fields.is_empty()
+            || ((group || matches!(&f.extraction, FieldExtractionV1::Attributes)) && !f.transforms.is_empty())
+            || (!f.fields.is_empty() && depth >= MAX_FIELD_DEPTH)
+            || f.fields.len() > 64
+            || match &f.source {
+                None => false,
+                Some(FieldSourceV1::Context) => depth < 2,
+                Some(
+                    FieldSourceV1::NextSibling { selector } | FieldSourceV1::PreviousSibling { selector },
+                ) => depth < 2 || selector.as_ref().is_some_and(selector_invalid),
+            }
+        {
+            return Err(invalid("item loader field limit invalid"));
+        }
+        if let Some(default) = &f.default {
+            bounded_json_len(default, 65_536)?;
+        }
+        validate_fields(&f.fields, depth + 1, total)?;
+    }
+    Ok(())
 }
 
 /// Count JSON bytes without allocating a serialized copy, stopping at the caller ceiling.
@@ -292,6 +395,9 @@ pub struct FieldOutcomeV1 {
     /// Privacy projection changed or omitted content; default provenance remains explicit.
     #[serde(default)]
     pub redacted: bool,
+    /// Nested group fields: one ordered outcome list per base element, empty for plain fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<Vec<FieldOutcomeV1>>,
 }
 /// Complete typed item result, independent of network or persistence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,6 +422,7 @@ impl FieldOutcomeV1 {
             quality,
             value,
             redacted: false,
+            groups: Vec::new(),
         }
     }
 }

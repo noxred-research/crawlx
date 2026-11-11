@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Harbor tide notes</title>
+</head>
+<body>
+  <header class="site-header">
+    <div class="logo"><a href="/">Harbor Notes</a></div>
+    <nav class="main-nav" data-label="boilerplate">
+      <ul>
+        <li><a href="/home">Home zq01</a></li>
+        <li><a href="/tides">Tides</a></li>
+        <li><a href="/charts">Charts</a></li>
+        <li><a href="/about">About</a></li>
+        <li><a href="/contact">Contact</a></li>
+      </ul>
+    </nav>
+  </header>
+  <div class="breadcrumbs" data-label="boilerplate"><a href="/">Home</a> &raquo; <a href="/tides">Tides</a> &raquo; <span>zq02</span></div>
+  <main>
+    <article class="post-content">
+      <h1 data-label="content">Reading the harbor tide tables zq03</h1>
+      <p data-label="content">Tide tables list the predicted height of the water at fixed times, and they are published a year ahead so that pilots can plan arrivals. zq04</p>
+      <h2 data-label="content">Why the predictions drift zq05</h2>
+      <p data-label="content">Wind, air pressure and heavy rain upstream can lift or lower the water by a few centimeters, which is why the printed numbers are a baseline and not a promise. zq06</p>
+      <div class="share-buttons" data-label="boilerplate"><a href="/s/x">Share zq07</a> <a href="/s/m">Mail</a> <a href="/s/p">Print</a></div>
+      <ul data-label="content">
+        <li>Check the datum of the table before comparing two harbors. zq08</li>
+        <li>Convert local time to the time zone printed on the table. zq09</li>
+        <li>Allow a safety margin below the keel at low water. zq10</li>
+      </ul>
+      <blockquote data-label="content"><p>The sea keeps its own calendar, and the almanac only approximates it. zq11</p></blockquote>
+      <pre data-label="content"><code>height = mean_level + sum(amplitude * cos(speed * t + phase)) zq12</code></pre>
+      <figure>
+        <img src="/img/chart.png" alt="Tide curve">
+        <figcaption data-label="content">A one day tide curve drawn from the harmonic constants above. zq13</figcaption>
+      </figure>
+      <div class="newsletter" data-label="boilerplate"><p>Subscribe to our newsletter zq14</p><form><input type="email" name="email"><button>Join</button></form></div>
+      <p data-label="content">Compare the prediction with a live gauge reading before a tight passage, and note the difference in the log so the next crew can see the local bias. zq15</p>
+    </article>
+    <aside class="related-posts" data-label="boilerplate">
+      <h3>Related posts zq16</h3>
+      <ul>
+        <li><a href="/r/1">Moon phases</a></li>
+        <li><a href="/r/2">Spring tides</a></li>
+        <li><a href="/r/3">Lock schedules</a></li>
+      </ul>
+    </aside>
+    <div class="comments" data-label="boilerplate">
+      <p>Great post! zq17</p>
+      <p>Thanks, very useful.</p>
+    </div>
+  </main>
+  <footer data-label="boilerplate">
+    <p>&copy; 2024 Harbor Notes. All rights reserved. zq18</p>
+    <ul><li><a href="/privacy">Privacy</a></li><li><a href="/terms">Terms</a></li><li><a href="/cookies">Cookies</a></li></ul>
+  </footer>
+</body>
+</html>

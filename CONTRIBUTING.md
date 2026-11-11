@@ -1,4 +1,4 @@
-# Contributing to crawlx
+# Contributing to CrawlX
 
 Thank you for considering a contribution. This guide covers how the project is organized,
 what a change must satisfy, and how a pull request is reviewed.
@@ -15,7 +15,7 @@ Security vulnerabilities are **not** reported through issues or pull requests; f
 
 ## Intended use and what we accept
 
-crawlx is built for security research and authorized testing only: testing systems you own or have written
+CrawlX is built for security research and authorized testing only: testing systems you own or have written
 authorization to test. Contributions must fit that purpose. We will decline changes that:
 
 - add capabilities aimed at unauthorized scraping, credential attacks, exploitation, or evading a site's
@@ -34,12 +34,12 @@ runs at someone else's site, and never include evidence from one in an issue or 
 | If you want to | Start here |
 | --- | --- |
 | Report a bug or request a feature | Open an issue with the matching form; search existing issues first |
-| Ask how to use or deploy crawlx | The [docs](docs/README.md), then the question form |
+| Ask how to use or deploy CrawlX | The [docs](docs/README.md), then the question form |
 | Fix a typo or improve documentation | A pull request against `docs/` or the README; no issue needed |
 | Change crawler behavior | Open an issue first, then follow the [contribution flow](#contribution-flow) |
 | Pick something to work on | The [roadmap](docs/roadmap.md) |
 | Run the crawler locally to develop | [Development setup](#development-setup) and the [walkthrough](docs/walkthrough.md) |
-| Operate or deploy crawlx | [Operations](docs/ops/README.md) and the [runbooks](docs/ops/runbooks.md) |
+| Operate or deploy CrawlX | [Operations](docs/ops/README.md) and the [runbooks](docs/ops/runbooks.md) |
 
 ## Where to start
 
@@ -145,7 +145,7 @@ changes, and removals ship at least one release later.
 
 ## Clean-room rules for the compatibility layer
 
-crawlx offers a compatibility API. The reference implementation's server is AGPL-licensed, and this
+CrawlX offers a compatibility API. The reference implementation's server is AGPL-licensed, and this
 project must not become a derivative of it. Changes that touch `crawlx-url`, `crawlx-policy`,
 `crawlx-extract`, the `crawlx-api` compatibility routes or the differential harness must follow
 the checklist in the pull request template: implement behavior from public documentation,

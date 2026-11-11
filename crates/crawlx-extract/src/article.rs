@@ -46,7 +46,7 @@ fn hint(e: &Elem, words: &[&str]) -> bool {
             .any(|token| words.iter().any(|word| token.eq_ignore_ascii_case(word)))
     })
 }
-fn terminal(e: &Elem) -> bool {
+pub(crate) fn terminal(e: &Elem) -> bool {
     matches!(
         e.tag.as_str(),
         "p" | "pre" | "blockquote" | "table" | "figure" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"

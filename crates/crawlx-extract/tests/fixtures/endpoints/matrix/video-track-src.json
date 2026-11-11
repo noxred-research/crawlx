@@ -1,0 +1,13 @@
+{
+  "construct": "video-track-src",
+  "body": [
+    "<video><track src='/v/captions.vtt' kind='captions'></video>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/v/captions.vtt",
+      "source": "video/track-src"
+    }
+  ]
+}

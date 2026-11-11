@@ -97,7 +97,7 @@ impl ArchiveState {
 impl crate::ArtifactIndex for MemoryStore {
     async fn record(&self, row: &crate::ArtifactRow) -> Result<(), StoreError> {
         scope(row.tenant)?;
-        if RunRepo::get(self, row.run).await?.tenant != row.tenant {
+        if RunRepo::get_metadata(self, row.run).await?.tenant != row.tenant {
             return Err(StoreError::AccessDenied("artifact index tenant mismatch".into()));
         }
         self.archives.lock().artifacts.insert(row.id, row.clone());

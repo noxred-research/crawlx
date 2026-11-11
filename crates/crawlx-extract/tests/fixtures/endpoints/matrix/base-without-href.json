@@ -1,0 +1,13 @@
+{
+  "construct": "base-without-href",
+  "body": [
+    "<html><head><base target='_blank'></head><body><a href='x.html'>x</a></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/dir/x.html",
+      "source": "a/href"
+    }
+  ]
+}

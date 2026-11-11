@@ -1,0 +1,13 @@
+{
+  "construct": "html-manifest",
+  "body": [
+    "<html manifest='/app.appcache'></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/app.appcache",
+      "source": "html/manifest"
+    }
+  ]
+}

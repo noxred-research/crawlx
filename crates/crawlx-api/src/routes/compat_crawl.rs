@@ -131,6 +131,10 @@ pub(crate) struct Translated {
     /// record. [`crate::routes::compat::create`] attaches the facade's record (or answers `403`);
     /// the translation itself keeps robots.txt respected.
     pub robots_override: bool,
+    /// The request did not say `ignoreQueryParameters`: the translation chose `keep_all` (every
+    /// query string is its own URL), and a deployment on `compat.mode = native_defaults` replaces
+    /// that with the native default ([`crate::config::CompatMode::apply`]).
+    pub query_policy_unset: bool,
 }
 
 fn warn(code: &str, path: &str, message: impl Into<String>) -> Warning {
@@ -420,7 +424,8 @@ pub(crate) fn translate(body: &Value, plan: Option<&Map<String, Value>>) -> ApiR
             None
         }
     };
-    let ignore_query = cx.boolean("ignoreQueryParameters").unwrap_or(false);
+    let ignore_query_given = cx.boolean("ignoreQueryParameters");
+    let ignore_query = ignore_query_given.unwrap_or(false);
     let entire_domain = cx.boolean("crawlEntireDomain");
     let external = cx.boolean("allowExternalLinks");
     let subdomains = cx.boolean("allowSubdomains");
@@ -572,6 +577,7 @@ pub(crate) fn translate(body: &Value, plan: Option<&Map<String, Value>>) -> ApiR
         crawl,
         warnings: cx.warnings,
         robots_override,
+        query_policy_unset: ignore_query_given.is_none(),
     })
 }
 

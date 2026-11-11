@@ -1,0 +1,13 @@
+{
+  "construct": "htmx-put",
+  "body": [
+    "<button hx-put='/h/replace'>x</button>"
+  ],
+  "expected": [
+    {
+      "method": "PUT",
+      "url": "https://matrix.test/h/replace",
+      "source": "htmx/hx-put"
+    }
+  ]
+}

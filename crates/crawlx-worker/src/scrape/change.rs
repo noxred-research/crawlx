@@ -7,7 +7,8 @@
 //!
 //! * `new`: no baseline;
 //! * `removed`: the page answers `404` or `410` and a baseline exists;
-//! * `same`: the markdown equals the baseline's;
+//! * `same`: the markdown equals the baseline's, ignoring the `src` of embedded `<iframe>` tags
+//!   (their per-request tokens would make every fetch a change);
 //! * `changed`: it differs. Then `git-diff` (the default mode) adds `diff{text,json}`, and the
 //!   `json` mode runs the LLM extraction over the baseline and the current markdown with the
 //!   requested schema and prompt and adds `json{field: {previous, current}}`.
@@ -23,6 +24,7 @@ use crawlx_core::{CanonicalUrl, StoreError, TenantId, Timestamp};
 use crawlx_extract::diff::{json_diff, markdown_diff};
 use crawlx_model::llm::{LlmExtractor, TokenUsage};
 use serde_json::{json, Value};
+use std::borrow::Cow;
 
 /// Stored scrapes of the URL examined for a baseline.
 const CANDIDATES: u32 = 32;
@@ -131,7 +133,7 @@ pub(crate) async fn track(
         result.change_status = ChangeStatus::Removed;
         return Ok(result);
     }
-    if previous.markdown == markdown {
+    if without_iframe_src(&previous.markdown) == without_iframe_src(markdown) {
         result.change_status = ChangeStatus::Same;
         return Ok(result);
     }
@@ -159,6 +161,97 @@ pub(crate) async fn track(
         }
     }
     Ok(result)
+}
+
+/// `text` with the value of the `src` attribute of every `<iframe …>` tag blanked.
+///
+/// Embedded frames carry per-request tokens (challenge widgets, session ids), so two fetches of an
+/// unchanged page differ in them; the comparison of `changeTracking` ignores those values, the
+/// diff and the stored markdown keep them.
+fn without_iframe_src(text: &str) -> Cow<'_, str> {
+    const TAG: &[u8] = b"<iframe";
+    let bytes = text.as_bytes();
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut i = 0;
+    while i + TAG.len() <= bytes.len() {
+        let is_tag = bytes[i] == b'<'
+            && bytes[i..i + TAG.len()].eq_ignore_ascii_case(TAG)
+            && bytes
+                .get(i + TAG.len())
+                .is_none_or(|b| b.is_ascii_whitespace() || matches!(b, b'>' | b'/'));
+        if !is_tag {
+            i += 1;
+            continue;
+        }
+        let (end, src) = iframe_src_value(&text[i..]);
+        if let Some((from, to)) = src {
+            out.push_str(&text[copied..i + from]);
+            copied = i + to;
+        }
+        i += end;
+    }
+    if copied == 0 {
+        return Cow::Borrowed(text);
+    }
+    out.push_str(&text[copied..]);
+    Cow::Owned(out)
+}
+
+/// Tag end and byte range of its `src` value (without quotes), including truncated tags.
+fn iframe_src_value(tag: &str) -> (usize, Option<(usize, usize)>) {
+    let bytes = tag.as_bytes();
+    let skip_space = |mut k: usize| {
+        while bytes.get(k).is_some_and(u8::is_ascii_whitespace) {
+            k += 1;
+        }
+        k
+    };
+    let mut i = b"<iframe".len();
+    let mut src = None;
+    while i < bytes.len() {
+        i = skip_space(i);
+        match bytes.get(i) {
+            Some(b'>') => return (i + 1, src),
+            Some(b'/') => {
+                i += 1;
+                continue;
+            }
+            None => break,
+            Some(_) => {}
+        }
+        let name = i;
+        while bytes
+            .get(i)
+            .is_some_and(|b| !b.is_ascii_whitespace() && !matches!(b, b'=' | b'/' | b'>'))
+        {
+            i += 1;
+        }
+        let is_src = bytes[name..i].eq_ignore_ascii_case(b"src");
+        i = skip_space(i);
+        if bytes.get(i) != Some(&b'=') {
+            continue;
+        }
+        i = skip_space(i + 1);
+        let quote = bytes.get(i).copied().filter(|b| matches!(b, b'"' | b'\''));
+        if quote.is_some() {
+            i += 1;
+        }
+        let start = i;
+        while bytes.get(i).is_some_and(|b| match quote {
+            Some(quote) => *b != quote,
+            None => !b.is_ascii_whitespace() && *b != b'>',
+        }) {
+            i += 1;
+        }
+        if is_src && src.is_none() && start < i {
+            src = Some((start, i));
+        }
+        if quote.is_some() && i < bytes.len() {
+            i += 1;
+        }
+    }
+    (bytes.len(), src)
 }
 
 #[cfg(test)]
@@ -240,5 +333,82 @@ mod tests {
             ChangeStatus::New,
             "nothing to remove without a baseline"
         );
+    }
+
+    #[test]
+    fn iframe_src_is_blanked_in_every_tag_spelling() {
+        let blanked = |s: &str| without_iframe_src(s).into_owned();
+        assert_eq!(
+            blanked(r#"a <iframe src="https://x.test/1?t=9" width=3></iframe> b"#),
+            r#"a <iframe src="" width=3></iframe> b"#
+        );
+        assert_eq!(blanked("<IFRAME class=c SRC = 'u'>"), "<IFRAME class=c SRC = ''>");
+        assert_eq!(blanked("<iframe src=u/1 id=x>"), "<iframe src= id=x>");
+        assert_eq!(blanked("<iframe\n src=\"u\"\n>"), "<iframe\n src=\"\"\n>");
+        // other tags and other attributes are left alone
+        assert_eq!(
+            blanked(r#"<img src="u"> <iframe data-src="u">"#),
+            r#"<img src="u"> <iframe data-src="u">"#
+        );
+        assert_eq!(blanked(r#"<iframes src="u">"#), r#"<iframes src="u">"#);
+        assert_eq!(blanked("<iframe src=\"u"), "<iframe src=\"");
+        for (input, expected) in [
+            ("<iframe SRC='u", "<iframe SRC='"),
+            ("<iframe src=u", "<iframe src="),
+            ("<iframe src=\"u>", "<iframe src=\""),
+            ("<iframe src='u>", "<iframe src='"),
+            ("<iframe src=\"u>v\" id=x>", "<iframe src=\"\" id=x>"),
+            ("<iframe title='a>b' src=u>", "<iframe title='a>b' src=>"),
+            (
+                "<iframe title=\" src='keep'\" src=u>",
+                "<iframe title=\" src='keep'\" src=>",
+            ),
+            ("<iframe/src=u>", "<iframe/src=>"),
+            ("<iframe src=u'v id=x>", "<iframe src= id=x>"),
+            ("é <iframe src='雪", "é <iframe src='"),
+            ("<iframe src=>", "<iframe src=>"),
+            ("<iframe src=\"", "<iframe src=\""),
+            ("<iframe src=", "<iframe src="),
+            ("<iframe", "<iframe"),
+            ("<iframe data-src=u", "<iframe data-src=u"),
+            ("<iframe src=u><IFRAME SRC='v", "<iframe src=><IFRAME SRC='"),
+        ] {
+            assert_eq!(blanked(input), expected, "{input:?}");
+        }
+        assert!(matches!(without_iframe_src("no tags"), Cow::Borrowed(_)));
+    }
+
+    #[tokio::test]
+    async fn a_changed_iframe_src_alone_is_not_a_change() {
+        let mut d = doc();
+        let framed = |src: &str, text: &str| format!("{text}\n\n<iframe src=\"{src}\"></iframe>\n");
+        let same = track(
+            None,
+            Some(baseline_of(&framed("https://c.test/?token=1", "Pricing"))),
+            200,
+            true,
+            &framed("https://c.test/?token=2", "Pricing"),
+            &request(),
+            &mut d,
+        )
+        .await
+        .unwrap();
+        assert_eq!(same.change_status, ChangeStatus::Same);
+        let changed = track(
+            None,
+            Some(baseline_of(&framed("https://c.test/?token=1", "Pricing"))),
+            200,
+            true,
+            &framed("https://c.test/?token=2", "New pricing"),
+            &request(),
+            &mut d,
+        )
+        .await
+        .unwrap();
+        assert_eq!(changed.change_status, ChangeStatus::Changed);
+        assert!(changed.diff.unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .contains("token=2"));
     }
 }
