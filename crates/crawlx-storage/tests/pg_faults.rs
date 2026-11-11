@@ -20,6 +20,11 @@ use crawlx_storage::{LeaseRepo, Pg, PgConfig};
 
 const SNAPSHOT_V008: &str = include_str!("../schema/v008.sql");
 
+/// The chaos failpoints and their hit counters are process-global, and every test here that runs
+/// `ActionJournal::finish` passes through them. Tests in one binary run concurrently, so they take
+/// this lock to keep one test's `reset`/`arm` from clearing or bumping another test's counters.
+static FAILPOINT_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Env {
     url: String,
     schema: String,
@@ -211,6 +216,7 @@ fn full_outcome(session: SessionId, cluster: StateClusterId) -> OutcomeRecord {
 /// the reaper/reconcile path makes the action eligible again.
 #[tokio::test]
 async fn pg_terminated_connection_between_t1_and_t2_leaves_intended_and_nothing_partial() {
+    let _serial = FAILPOINT_SERIAL.lock().await;
     let env = pg_env!();
     // One connection and no pre-acquire ping: the pool cannot hide the dead connection
     // behind a transparent reconnect, so T2's first statement meets it.
@@ -287,6 +293,7 @@ async fn every_t2_statement_failing_once_leaves_nothing_behind_on_postgres() {
     use crawlx_storage::chaos;
     use std::error::Error;
 
+    let _serial = FAILPOINT_SERIAL.lock().await;
     let env = pg_env!();
     for &point in chaos::T2_FAILPOINTS {
         let a = env.intended(&env.pg).await;
@@ -331,6 +338,7 @@ async fn every_t2_statement_failing_once_leaves_nothing_behind_on_postgres() {
 async fn a_mid_transaction_failure_is_recovered_through_unknown_and_reconcile_on_postgres() {
     use crawlx_storage::chaos;
 
+    let _serial = FAILPOINT_SERIAL.lock().await;
     let env = pg_env!();
     for &point in chaos::T2_FAILPOINTS {
         let a = env.intended(&env.pg).await;
@@ -399,6 +407,7 @@ async fn a_mid_transaction_failure_is_recovered_through_unknown_and_reconcile_on
 /// partial and the next full T2 succeeds on the same pool.
 #[tokio::test]
 async fn a_t2_future_dropped_after_one_poll_leaves_nothing_partial_on_postgres() {
+    let _serial = FAILPOINT_SERIAL.lock().await;
     let env = pg_env!();
     let a = env.intended(&env.pg).await;
     let fut = env.pg.finish(a.id, full_outcome(a.session, a.cluster));
