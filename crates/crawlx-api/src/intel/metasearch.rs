@@ -18,6 +18,10 @@ use std::time::{Duration, Instant};
 const MAX_PAGES: u32 = 10;
 
 /// A metasearch JSON search client.
+#[allow(
+    clippy::disallowed_types,
+    reason = "metasearch HTTP adapter owns the raw reqwest client"
+)]
 #[derive(Clone, Debug)]
 pub struct MetasearchProvider {
     client: reqwest::Client,
@@ -34,6 +38,10 @@ impl MetasearchProvider {
     /// # Errors
     /// [`SearchError::Transport`] when `endpoint` is not an absolute http(s) URL or the HTTP
     /// client cannot be built.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "metasearch HTTP adapter builds the raw reqwest client"
+    )]
     pub fn new(endpoint: &str, engines: Vec<String>, categories: Vec<String>) -> Result<Self, SearchError> {
         let mut url = url::Url::parse(endpoint)
             .ok()

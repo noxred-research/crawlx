@@ -119,11 +119,17 @@ async fn http_checks_target_capacity_on_direct_and_distinct_proxy_routes() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: a raw reqwest client plays the browser against the egress proxy and never crosses a typed fetch boundary"
+)]
 async fn browser_forward_holds_capacity_without_capture_and_ignores_source_host_header() {
     let gate = body_gate().await;
     let cap = Arc::new(GlobalOriginCap::new(1));
+    let mut policy = EgressPolicy::new(true);
+    policy.extra_ports.push(gate.addr.port());
     let proxy = EgressProxy::serve_with(
-        Arc::new(EgressPolicy::new(true)),
+        Arc::new(policy),
         Arc::new(StaticResolver::new().with("target.test", [LOOPBACK])),
         EgressOptions::new().with_global_cap(Arc::clone(&cap)),
     )
@@ -140,6 +146,8 @@ async fn browser_forward_holds_capacity_without_capture_and_ignores_source_host_
         .send()
         .await
         .unwrap();
+    // A refusal answers immediately with a status; the gate would never see a request.
+    assert_eq!(response.status().as_u16(), 200);
     let _ = gate.request.await.unwrap();
     let alias = checked_alias(LOOPBACK).await;
     assert_occupied(&cap, &alias).await;
@@ -156,8 +164,10 @@ async fn browser_tunnel_retains_checked_alias_capacity_until_connection_closes()
     let destination = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = destination.local_addr().unwrap().port();
     let cap = Arc::new(GlobalOriginCap::new(1));
+    let mut policy = EgressPolicy::new(true);
+    policy.extra_ports.push(port);
     let proxy = EgressProxy::serve_with(
-        Arc::new(EgressPolicy::new(true)),
+        Arc::new(policy),
         Arc::new(StaticResolver::new().with("tunnel.test", [LOOPBACK])),
         EgressOptions::new().with_global_cap(Arc::clone(&cap)),
     )
@@ -172,7 +182,11 @@ async fn browser_tunnel_retains_checked_alias_capacity_until_connection_closes()
     while !head.ends_with(b"\r\n\r\n") {
         head.push(stream.read_u8().await.unwrap());
     }
-    assert!(head.starts_with(b"HTTP/1.1 200"));
+    assert!(
+        head.starts_with(b"HTTP/1.1 200"),
+        "tunnel refused: {}",
+        String::from_utf8_lossy(&head)
+    );
     let alias = checked_alias(LOOPBACK).await;
     assert_occupied(&cap, &alias).await;
     let (upstream, _) = destination.accept().await.unwrap();

@@ -243,6 +243,9 @@ impl RetentionSweeper {
     async fn sweep_inner(&self, now: Timestamp) -> Result<SweepReport, StoreError> {
         self.pg.reap_profiles().await?;
         self.pg.reap_profile_directories().await?;
+        // Metadata expiry shares the existing sweeper cadence, not another background loop.
+        let _report_rows = self.pg.purge_expired_report_history().await?;
+        let _graph_rows = self.pg.purge_expired_url_graph().await?;
         let mut report = SweepReport::default();
         // Revoke dependency closure before deleting source content. Each object removal is
         // acknowledged separately, so cancellation leaves a resumable erasure cursor.

@@ -141,6 +141,10 @@ fn a_stale_locator_landing_on_another_project_is_counted() {
     );
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_fixture_backend_ledger_feeds_the_gate() {
     let manifest = FixtureManifest::embedded(FIXTURE).unwrap();

@@ -371,7 +371,7 @@ async fn terminal_batch_reclaims_same_identity_after_local_put_without_receipt()
     let sink = LocalDestination::open(root.path()).await.unwrap();
     let config = crate::WorkerConfig::default();
     let authority = DeliveryAuthority {
-        policy: Arc::new(config.egress.policy_for_run(&f.run.config, None)),
+        policy: Arc::new(config.egress.policy_for_run(&f.run.config, None).unwrap()),
         resolver: config.egress.resolver_for(&f.run.config).unwrap(),
         governor: Arc::new(crawlx_fetch::OriginGovernor::new(
             crawlx_fetch::GovernorConfig::from_politeness(&f.run.config.politeness, f.run.seed),

@@ -89,7 +89,7 @@ async fn recover_run(
         governor
     };
     let authority = DeliveryAuthority {
-        policy: Arc::new(cfg.egress.policy_for_run(&run.config, record)),
+        policy: Arc::new(cfg.egress.policy_for_run(&run.config, record)?),
         resolver: cfg.egress.resolver_for(&run.config)?,
         governor,
         cancel: cancel.clone(),

@@ -1,6 +1,7 @@
 //! Shared redaction policy and immutable artifact approval.
 
 use super::json::{inspect_json, JsonDocument};
+use crate::parser_memory::{ByteAdmissionError, BytePermit};
 use parking_lot::RwLock;
 use regex::Regex;
 use serde_json::Value;
@@ -589,6 +590,91 @@ impl Redactor {
         out
     }
 
+    /// [`Self::scrub_bytes`] with every live byte admitted before it is allocated.
+    ///
+    /// Same stages in the same order: registered secrets, `secrets`, then (valid UTF-8 only)
+    /// the registered literals again, credential shapes, deny-listed `name=value` pairs and
+    /// session query values. Every stage counts its matches without allocating, computes its
+    /// EXACT output length, checks it against `max_output`, grows `permit` by that length and
+    /// only then allocates exactly that much. The previous intermediate is released as soon as
+    /// the next one exists, so the live peak (previous + next) is what the permit covers.
+    /// `permit` must not already cover `value`: that stays the caller's.
+    ///
+    /// Returns `None` when the scrub leaves the bytes unchanged. On `Some(out)` the permit has
+    /// grown by exactly `out.len()`; on `None` or an error it is back at its entry size.
+    ///
+    /// # Errors
+    /// [`BoundedScrubError`]: a stage over `max_output`, an admission refusal, a failed
+    /// allocation or an arithmetic overflow. No partial result is returned.
+    pub fn scrub_bytes_bounded<'secret>(
+        &self,
+        value: &[u8],
+        secrets: impl IntoIterator<Item = &'secret str>,
+        permit: &mut BytePermit,
+        max_output: usize,
+    ) -> Result<Option<Vec<u8>>, BoundedScrubError> {
+        let entry = permit.bytes();
+        let mut cur = Cur::Borrowed(value);
+        let result = (|| {
+            literal_stages(&mut cur, permit, max_output, secrets)?;
+            if std::str::from_utf8(cur.bytes()).is_ok() {
+                text_stages(&mut cur, permit, max_output)?;
+            }
+            Ok(())
+        })();
+        finish(cur, value, permit, entry, result)
+    }
+
+    /// [`Self::scrub`] with the exact-size admission of [`Self::scrub_bytes_bounded`].
+    ///
+    /// Returns `None` when the text is unchanged; otherwise the permit grew by exactly the
+    /// returned string's length.
+    ///
+    /// # Errors
+    /// See [`Self::scrub_bytes_bounded`].
+    pub fn scrub_text_bounded(
+        &self,
+        value: &str,
+        permit: &mut BytePermit,
+        max_output: usize,
+    ) -> Result<Option<String>, BoundedScrubError> {
+        let entry = permit.bytes();
+        let mut cur = Cur::Borrowed(value.as_bytes());
+        let result = text_stages(&mut cur, permit, max_output);
+        into_text(
+            finish(cur, value.as_bytes(), permit, entry, result)?,
+            permit,
+            entry,
+        )
+    }
+
+    /// [`Self::scrub_session_queries`] with the exact-size admission of
+    /// [`Self::scrub_bytes_bounded`]; hashes and JSON syntax are left untouched.
+    ///
+    /// # Errors
+    /// See [`Self::scrub_bytes_bounded`].
+    pub fn scrub_session_queries_bounded(
+        &self,
+        value: &str,
+        permit: &mut BytePermit,
+        max_output: usize,
+    ) -> Result<Option<String>, BoundedScrubError> {
+        let entry = permit.bytes();
+        let mut cur = Cur::Borrowed(value.as_bytes());
+        let result = match &PATTERNS.session_query {
+            Ok(session) => replace_regex(&mut cur, permit, max_output, session, Rewrite::Session),
+            // `scrub_session_queries` yields the bare marker when the pattern is unavailable.
+            Err(_) => install(&mut cur, permit, max_output, REDACTED.len(), |_, out| {
+                out.extend_from_slice(REDACTED.as_bytes());
+            }),
+        };
+        into_text(
+            finish(cur, value.as_bytes(), permit, entry, result)?,
+            permit,
+            entry,
+        )
+    }
+
     /// Redact a field: the whole value when the name is deny-listed, otherwise
     /// a scrubbed string. Non-string values of non-sensitive names pass through.
     #[must_use]
@@ -601,6 +687,308 @@ impl Redactor {
             other => other,
         }
     }
+}
+
+/// Why a bounded scrub produced no output. Never carries scrubbed or original content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum BoundedScrubError {
+    /// A stage's exact output length exceeds the caller's cap.
+    #[error("scrubbed output would exceed the {max} byte cap")]
+    OutputLimit {
+        /// The cap that was exceeded.
+        max: usize,
+    },
+    /// The shared byte budget refused the next stage's output.
+    #[error("scrub memory admission refused")]
+    Admission(#[from] ByteAdmissionError),
+    /// The allocation of an admitted stage output failed.
+    #[error("scrub allocation failed")]
+    Allocation,
+    /// A stage size computation overflowed.
+    #[error("scrub size arithmetic overflowed")]
+    Overflow,
+    /// A stage produced other than its precomputed exact size.
+    #[error("scrub stage violated its exact size")]
+    SizeMismatch,
+}
+
+/// The current intermediate: the caller's input, or a stage output charged to the permit.
+enum Cur<'a> {
+    Borrowed(&'a [u8]),
+    Owned(Vec<u8>),
+}
+
+impl Cur<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Owned(bytes) => bytes,
+        }
+    }
+}
+
+/// Which replacement a regex stage applies; `${1}` is kept verbatim in the keyed ones.
+#[derive(Clone, Copy)]
+enum Rewrite {
+    /// `REDACTED` replaces the whole match.
+    Whole,
+    /// `${1}=[REDACTED]`.
+    KeyValue,
+    /// `${1}[REDACTED]`.
+    Session,
+}
+
+impl Rewrite {
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::Whole | Self::Session => REDACTED,
+            Self::KeyValue => "=[REDACTED]",
+        }
+    }
+}
+
+/// Return `permit` to its `entry` size, releasing everything a failed or discarded scrub held.
+fn restore(permit: &mut BytePermit, entry: usize) {
+    let held = permit.bytes().saturating_sub(entry);
+    release(permit, held);
+}
+
+/// Release `bytes` of `permit` at once.
+fn release(permit: &mut BytePermit, bytes: usize) {
+    if bytes > 0 {
+        if let Ok(part) = permit.split(bytes) {
+            drop(part);
+        }
+    }
+}
+
+/// Replace the intermediate by a stage output of exactly `out_len` bytes, admitted first.
+fn install(
+    cur: &mut Cur<'_>,
+    permit: &mut BytePermit,
+    max: usize,
+    out_len: usize,
+    fill: impl FnOnce(&[u8], &mut Vec<u8>),
+) -> Result<(), BoundedScrubError> {
+    if out_len > max {
+        return Err(BoundedScrubError::OutputLimit { max });
+    }
+    permit.grow_by(out_len)?;
+    let mut out = Vec::new();
+    if out.try_reserve_exact(out_len).is_err() {
+        release(permit, out_len);
+        return Err(BoundedScrubError::Allocation);
+    }
+    fill(cur.bytes(), &mut out);
+    if out.len() != out_len {
+        drop(out);
+        release(permit, out_len);
+        return Err(BoundedScrubError::SizeMismatch);
+    }
+    if let Cur::Owned(previous) = std::mem::replace(cur, Cur::Owned(out)) {
+        let length = previous.len();
+        drop(previous);
+        release(permit, length);
+    }
+    Ok(())
+}
+
+/// Settle the permit and unwrap the result of a stage run.
+fn finish(
+    cur: Cur<'_>,
+    original: &[u8],
+    permit: &mut BytePermit,
+    entry: usize,
+    result: Result<(), BoundedScrubError>,
+) -> Result<Option<Vec<u8>>, BoundedScrubError> {
+    match (result, cur) {
+        (Ok(()), Cur::Owned(out)) if out.as_slice() != original => Ok(Some(out)),
+        (Ok(()), Cur::Owned(out)) => {
+            drop(out);
+            restore(permit, entry);
+            Ok(None)
+        }
+        (Ok(()), Cur::Borrowed(_)) => Ok(None),
+        (Err(error), cur) => {
+            drop(cur);
+            restore(permit, entry);
+            Err(error)
+        }
+    }
+}
+
+/// A stage output that is valid UTF-8 by construction, as a `String` without copying.
+fn into_text(
+    out: Option<Vec<u8>>,
+    permit: &mut BytePermit,
+    entry: usize,
+) -> Result<Option<String>, BoundedScrubError> {
+    match out.map(String::from_utf8).transpose() {
+        Ok(text) => Ok(text),
+        Err(_) => {
+            restore(permit, entry);
+            Err(BoundedScrubError::SizeMismatch)
+        }
+    }
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+/// Replace every non-overlapping occurrence of `needle` by `REDACTED`, leftmost first.
+fn replace_literal(
+    cur: &mut Cur<'_>,
+    permit: &mut BytePermit,
+    max: usize,
+    needle: &[u8],
+) -> Result<(), BoundedScrubError> {
+    if needle.is_empty() {
+        return Ok(());
+    }
+    let haystack = cur.bytes();
+    let mut count = 0usize;
+    let mut rest = haystack;
+    while let Some(at) = find(rest, needle) {
+        count = count.checked_add(1).ok_or(BoundedScrubError::Overflow)?;
+        rest = &rest[at + needle.len()..];
+    }
+    if count == 0 {
+        return Ok(());
+    }
+    let removed = count
+        .checked_mul(needle.len())
+        .ok_or(BoundedScrubError::Overflow)?;
+    let added = count
+        .checked_mul(REDACTED.len())
+        .ok_or(BoundedScrubError::Overflow)?;
+    let out_len = haystack
+        .len()
+        .checked_sub(removed)
+        .ok_or(BoundedScrubError::SizeMismatch)?
+        .checked_add(added)
+        .ok_or(BoundedScrubError::Overflow)?;
+    install(cur, permit, max, out_len, |haystack, out| {
+        let mut rest = haystack;
+        while let Some(at) = find(rest, needle) {
+            out.extend_from_slice(&rest[..at]);
+            out.extend_from_slice(REDACTED.as_bytes());
+            rest = &rest[at + needle.len()..];
+        }
+        out.extend_from_slice(rest);
+    })
+}
+
+/// Visit each match of `re` as `(start, end, keep_start, keep_end)`; the kept range is group 1.
+fn each_hit(
+    re: &Regex,
+    text: &str,
+    kind: Rewrite,
+    mut visit: impl FnMut(usize, usize, usize, usize) -> Result<(), BoundedScrubError>,
+) -> Result<(), BoundedScrubError> {
+    match kind {
+        Rewrite::Whole => {
+            for found in re.find_iter(text) {
+                visit(found.start(), found.end(), found.start(), found.start())?;
+            }
+        }
+        Rewrite::KeyValue | Rewrite::Session => {
+            for captures in re.captures_iter(text) {
+                let (Some(whole), Some(keep)) = (captures.get(0), captures.get(1)) else {
+                    return Err(BoundedScrubError::SizeMismatch);
+                };
+                visit(whole.start(), whole.end(), keep.start(), keep.end())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `replace_all` of `re` by `kind`, with the exact output length known before allocating.
+fn replace_regex(
+    cur: &mut Cur<'_>,
+    permit: &mut BytePermit,
+    max: usize,
+    re: &Regex,
+    kind: Rewrite,
+) -> Result<(), BoundedScrubError> {
+    let text = std::str::from_utf8(cur.bytes()).map_err(|_| BoundedScrubError::SizeMismatch)?;
+    let suffix = kind.suffix();
+    let mut matches = 0usize;
+    let mut removed = 0usize;
+    let mut added = 0usize;
+    each_hit(re, text, kind, |start, end, keep_start, keep_end| {
+        matches += 1;
+        removed = removed
+            .checked_add(end - start)
+            .ok_or(BoundedScrubError::Overflow)?;
+        added = added
+            .checked_add(keep_end - keep_start)
+            .and_then(|total| total.checked_add(suffix.len()))
+            .ok_or(BoundedScrubError::Overflow)?;
+        Ok(())
+    })?;
+    if matches == 0 {
+        return Ok(());
+    }
+    let out_len = text
+        .len()
+        .checked_sub(removed)
+        .ok_or(BoundedScrubError::SizeMismatch)?
+        .checked_add(added)
+        .ok_or(BoundedScrubError::Overflow)?;
+    install(cur, permit, max, out_len, |bytes, out| {
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return;
+        };
+        let mut last = 0usize;
+        let copied = each_hit(re, text, kind, |start, end, keep_start, keep_end| {
+            out.extend_from_slice(&text.as_bytes()[last..start]);
+            out.extend_from_slice(&text.as_bytes()[keep_start..keep_end]);
+            out.extend_from_slice(suffix.as_bytes());
+            last = end;
+            Ok(())
+        });
+        if copied.is_ok() {
+            out.extend_from_slice(&text.as_bytes()[last..]);
+        }
+    })
+}
+
+/// Registered secrets, then caller secrets: exact byte replacement on any bytes.
+fn literal_stages<'secret>(
+    cur: &mut Cur<'_>,
+    permit: &mut BytePermit,
+    max: usize,
+    secrets: impl IntoIterator<Item = &'secret str>,
+) -> Result<(), BoundedScrubError> {
+    for secret in REGISTERED.read().iter() {
+        replace_literal(cur, permit, max, secret.as_bytes())?;
+    }
+    for secret in secrets {
+        replace_literal(cur, permit, max, secret.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// [`Redactor::scrub`]: registered literals, credential shapes, then `name=value`, then session
+/// queries. The intermediate must be valid UTF-8.
+fn text_stages(cur: &mut Cur<'_>, permit: &mut BytePermit, max: usize) -> Result<(), BoundedScrubError> {
+    let (Ok(shapes), Ok(key_value), Ok(session)) =
+        (&PATTERNS.shapes, &PATTERNS.key_value, &PATTERNS.session_query)
+    else {
+        // `scrub` masks everything when a pattern is unavailable.
+        return install(cur, permit, max, REDACTED.len(), |_, out| {
+            out.extend_from_slice(REDACTED.as_bytes());
+        });
+    };
+    for secret in REGISTERED.read().iter() {
+        replace_literal(cur, permit, max, secret.as_bytes())?;
+    }
+    replace_regex(cur, permit, max, shapes, Rewrite::Whole)?;
+    replace_regex(cur, permit, max, key_value, Rewrite::KeyValue)?;
+    replace_regex(cur, permit, max, session, Rewrite::Session)
 }
 
 fn has_finalized_article_schema(value: &Value) -> bool {
@@ -1117,5 +1505,105 @@ mod tests {
             Value::String(REDACTED.into())
         );
         assert_eq!(r.redact_field("count", Value::from(3_u64)), Value::from(3_u64));
+    }
+
+    fn bounded_budget(limit: usize) -> (Arc<crate::parser_memory::ByteBudget>, BytePermit) {
+        let budget = Arc::new(crate::parser_memory::ByteBudget::new(limit));
+        let permit = budget.try_reserve(0).unwrap();
+        (budget, permit)
+    }
+
+    #[test]
+    fn bounded_scrub_matches_scrub_bytes_at_every_stage() {
+        assert!(register_secret("bounded-registered-canary-5e21"));
+        let inputs: [&[u8]; 8] = [
+            b"plain text, nothing to scrub",
+            b"before bounded-registered-canary-5e21 after",
+            b"\xff\0before:bounded-registered-canary-5e21:short:after\0\xfe",
+            b"Authorization: Bearer abcdefghijklmnop and token=query-canary-4c9e",
+            b"/invoice?id=3&amp;sessionid=g12_canary_7d91&page=2 short short",
+            b"password=[REDACTED]",
+            b"hash 0123456789abcdef0123456789abcdef0123456789abcdef end",
+            b"{\"a\":\"short\",\"password\":\"x\"}",
+        ];
+        let redactor = Redactor::new();
+        for input in inputs {
+            let expected = redactor.scrub_bytes(input, ["short"]).into_owned();
+            let (budget, mut permit) = bounded_budget(1 << 20);
+            let got = redactor
+                .scrub_bytes_bounded(input, ["short"], &mut permit, 1 << 20)
+                .unwrap();
+            assert_eq!(
+                got.clone().unwrap_or_else(|| input.to_vec()),
+                expected,
+                "{input:?}"
+            );
+            assert_eq!(
+                budget.used(),
+                got.as_ref().map_or(0, Vec::len),
+                "the permit covers exactly the returned bytes: {input:?}"
+            );
+            drop(permit);
+            assert_eq!(budget.used(), 0);
+        }
+    }
+
+    #[test]
+    fn bounded_text_scrubs_match_the_unbounded_ones() {
+        let redactor = Redactor::new();
+        let text = "Basic dXNlcjpwYXNzd29yZA== sid=abc123 /a?token=zz&x=1 ok";
+        let (budget, mut permit) = bounded_budget(1 << 20);
+        let got = redactor.scrub_text_bounded(text, &mut permit, 1 << 20).unwrap();
+        assert_eq!(got.as_deref(), Some(redactor.scrub(text).as_str()));
+        assert_eq!(budget.used(), got.as_ref().map_or(0, String::len));
+        drop(permit);
+        let (budget, mut permit) = bounded_budget(1 << 20);
+        let query = "/invoice?id=3&sessionid=g12_canary_7d91&page=2";
+        let got = redactor
+            .scrub_session_queries_bounded(query, &mut permit, 1 << 20)
+            .unwrap();
+        assert_eq!(
+            got.as_deref(),
+            Some(redactor.scrub_session_queries(query).as_ref())
+        );
+        assert_eq!(budget.used(), got.as_ref().map_or(0, String::len));
+        let (_, mut permit) = bounded_budget(1 << 20);
+        assert_eq!(
+            redactor
+                .scrub_text_bounded("nothing here", &mut permit, 1 << 20)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn bounded_scrub_refuses_before_allocating_and_leaves_nothing_reserved() {
+        let redactor = Redactor::new();
+        // Four one-byte matches become forty bytes: exact, not estimated.
+        let (budget, mut permit) = bounded_budget(40);
+        let out = redactor
+            .scrub_bytes_bounded(b"xxxx", ["x"], &mut permit, 40)
+            .unwrap();
+        assert_eq!(
+            out.as_deref(),
+            Some(b"[REDACTED][REDACTED][REDACTED][REDACTED]".as_slice())
+        );
+        assert_eq!(budget.used(), 40);
+        drop(permit);
+        assert_eq!(budget.used(), 0);
+
+        let (budget, mut permit) = bounded_budget(1 << 20);
+        assert_eq!(
+            redactor.scrub_bytes_bounded(b"xxxx", ["x"], &mut permit, 39),
+            Err(BoundedScrubError::OutputLimit { max: 39 })
+        );
+        assert_eq!(budget.used(), 0, "a cap refusal reserves nothing");
+
+        let (budget, mut permit) = bounded_budget(39);
+        assert!(matches!(
+            redactor.scrub_bytes_bounded(b"xxxx", ["x"], &mut permit, 1 << 20),
+            Err(BoundedScrubError::Admission(_))
+        ));
+        assert_eq!(budget.used(), 0, "an admission refusal reserves nothing");
     }
 }

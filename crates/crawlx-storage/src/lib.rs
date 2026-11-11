@@ -70,6 +70,7 @@
 //!   frontier needs the URL while the run is live.
 
 pub mod admin;
+pub mod approvals;
 pub mod archive;
 pub mod archive_catalog;
 pub mod artifact_crypto;
@@ -92,6 +93,7 @@ pub mod memory;
 pub mod origin;
 mod pg;
 pub mod profiles;
+pub mod report_history;
 mod repos;
 pub mod retention;
 pub mod s3;
@@ -102,6 +104,7 @@ pub mod tenant;
 pub mod testkit;
 pub mod trail;
 pub mod trusted;
+pub mod url_graph;
 pub mod zdr;
 
 pub use admin::{
@@ -109,7 +112,8 @@ pub use admin::{
     TenantEngine, WorkerRegistry, WorkerRow,
 };
 pub use artifact_custody::{
-    ArtifactCustody, CustodyWrites, LeasedSecretRegistrar, LocalArtifactCustody, PgArtifactCustody,
+    is_stale_epoch, ArtifactCustody, CustodyWrites, LeasedSecretRegistrar, LocalArtifactCustody,
+    PgArtifactCustody,
 };
 pub use artifacts::{
     ArtifactBlobs, ArtifactIndex, ArtifactReaper, ArtifactRow, BlobEntry, FsArtifactStore, FsBlobs,

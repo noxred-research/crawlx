@@ -314,7 +314,23 @@ pub struct ExcludeHosts {
     entries: Vec<(String, HostExclusion)>,
 }
 
+impl PartialEq for ExcludeHosts {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries
+            .iter()
+            .map(|(source, _)| source)
+            .eq(other.entries.iter().map(|(source, _)| source))
+    }
+}
+
+impl Eq for ExcludeHosts {}
+
 impl ExcludeHosts {
+    /// Empty exclusions for the const egress-policy constructor.
+    pub(crate) const fn empty() -> Self {
+        Self { entries: Vec::new() }
+    }
+
     /// Parse the entries. The keyword `cdn` (case-insensitive) is the bundled CDN host list
     /// ([`crate::cdn::is_cdn_host`]) and `private-ips` the private ranges; anything else
     /// that is not a CIDR or an IP literal is compiled as a bounded regex over the host name.
@@ -339,7 +355,14 @@ impl ExcludeHosts {
             } else {
                 HostExclusion::Regex(PathFilter::new(std::slice::from_ref(raw), &[])?)
             };
-            out.push((e.to_owned(), rule));
+            // Keywords, networks and addresses keep their trimmed label; a regex keeps its
+            // exact source so equality cannot conflate distinct patterns.
+            let label = if matches!(rule, HostExclusion::Regex(_)) {
+                raw
+            } else {
+                e
+            };
+            out.push((label.to_owned(), rule));
         }
         Ok(Self { entries: out })
     }
@@ -348,6 +371,19 @@ impl ExcludeHosts {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Match address rules without treating a resolved address as a hostname.
+    pub(crate) fn matches_ip(&self, ip: IpAddr) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|(_, rule)| match rule {
+                HostExclusion::PrivateIps => classify_ip(ip).is_some(),
+                HostExclusion::Net(net) => net.contains(&ip),
+                HostExclusion::Ip(address) => ip == *address,
+                HostExclusion::Cdn | HostExclusion::Regex(_) => false,
+            })
+            .map(|(source, _)| source.as_str())
     }
 
     /// Does any entry refuse `host`? Address rules apply to the literal IP
@@ -416,17 +452,7 @@ impl ScopePolicy {
             filter: ScopeFilter::new(&crawl.seed_url, s)?,
             hosts: HostScopeRule::new(s.host_scope, seed_host, s.allow_subdomains)?,
             host_pattern,
-            exclude_hosts: ExcludeHosts::new(&if crawl.safety.allow_private_networks {
-                // The authorization record governs private ranges; `private-ips` would
-                // otherwise deny the very hosts the record authorizes.
-                s.exclude_hosts
-                    .iter()
-                    .filter(|e| !e.trim().eq_ignore_ascii_case("private-ips"))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            } else {
-                s.exclude_hosts.clone()
-            })?,
+            exclude_hosts: ExcludeHosts::new(&s.exclude_hosts)?,
             urls: UrlPatterns::new(&s.url_include, &s.url_exclude)?,
             extensions: ExtensionFilter::new(
                 &s.extension_match,
@@ -1079,7 +1105,7 @@ mod tests {
         let default =
             ScopePolicy::new(&CreateCrawl::new(Url::parse("https://example.com/").unwrap())).unwrap();
         assert_eq!(denied(&default.decide(&cu("https://10.0.0.1/"), 1)), "external");
-        // `private-ips` is dropped when private networks are explicitly authorized
+        // Private-network authority never removes an explicit caller exclusion.
         let authorized = ScopePolicy::new(&crawl("https://10.0.0.1/", |c| {
             c.scope.exclude_hosts = vec!["private-ips".into()];
             c.safety.allow_private_networks = true;
@@ -1087,7 +1113,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             denied(&authorized.decide(&cu("https://10.0.0.1/app/"), 1)),
-            "admitted"
+            "host_excluded"
         );
     }
 

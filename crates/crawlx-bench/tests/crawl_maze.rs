@@ -10,8 +10,8 @@ use crawlx_bench::gym::manifest::{FixtureManifest, MazePlane, MazeTarget};
 use crawlx_bench::gym::{GymHandle, GymServer};
 use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, worker_config};
 use crawlx_browser::launch::find_executable;
-use crawlx_core::config::{CrawlMode, KnownFile, SafetyProfile};
-use crawlx_extract::endpoints::{discover, DiscoveryInput};
+use crawlx_core::config::{CrawlMode, JavascriptMode, KnownFile, SafetyProfile};
+use crawlx_extract::endpoints::{discover, discover_with, DiscoveryInput, DiscoveryOptions};
 use crawlx_storage::MemoryStore;
 use crawlx_worker::{run_local_with, LocalRun, Stores};
 use serde::{Deserialize, Serialize};
@@ -66,14 +66,13 @@ const ROUTER_TARGET: &str = "/javascript/frameworks/polymer/polymer-router.found
 /// request this target with a mutating method.
 const DESTRUCTIVE_TARGET: &str = "/javascript/interactive/js-delete.found";
 
-/// The deferred targets and the word their recorded reason must carry: the exact set no plane
-/// reaches today (every one needs a change in the extractor, not in the fixture).
-const DEFERRED: [(&str, &str); 5] = [
-    ("/html/body/img/src-data.found", "data:"),
-    ("/html/head/profile.found", "profile"),
-    ("/html/head/comment-conditional.found", "conditional comment"),
-    ("/html/head/meta/content-pinned-websites.found", "bare"),
-    ("/html/head/meta/content-reading-view.found", "bare"),
+/// Five formerly deferred constructs now discovered without executing their contents.
+const PROMOTED: [&str; 5] = [
+    "/html/body/img/src-data.found",
+    "/html/head/profile.found",
+    "/html/head/comment-conditional.found",
+    "/html/head/meta/content-pinned-websites.found",
+    "/html/head/meta/content-reading-view.found",
 ];
 
 fn baseline_path() -> PathBuf {
@@ -91,6 +90,9 @@ struct Baseline {
     #[serde(rename = "static")]
     static_plane: MazeScore,
     hybrid: Option<MazeScore>,
+    /// Reclassified targets not yet measured in the historical static run.
+    #[serde(default)]
+    unmeasured_static_additions: Vec<String>,
 }
 
 fn load_baseline() -> Baseline {
@@ -167,45 +169,32 @@ fn manifest_lists_exactly_the_page_table() {
     assert_eq!(without_reasons, table_targets());
     assert_eq!(m.expected.crawl_maze.len(), 91);
     let planes = |p: MazePlane| m.expected.crawl_maze.iter().filter(|t| t.plane == p).count();
-    assert_eq!(planes(MazePlane::Static), 61);
+    assert_eq!(planes(MazePlane::Static), 66);
     assert_eq!(planes(MazePlane::Browser), 25);
-    assert_eq!(planes(MazePlane::Deferred), 5);
+    assert_eq!(planes(MazePlane::Deferred), 0);
 }
 
-/// The deferred entries are exactly the recorded set, each with a precise reason, and the
-/// page table agrees: promoting one (or deferring a new one) must touch this list.
+/// Only the five formerly deferred constructs move to the static plane.
 #[test]
-fn deferred_entries_are_exactly_the_recorded_set() {
-    let m = FixtureManifest::embedded("g32").unwrap();
-    let deferred: Vec<&MazeTarget> = m
+fn formerly_deferred_targets_are_static_in_manifest_and_page_table() {
+    let manifest = FixtureManifest::embedded("g32").unwrap();
+    assert!(manifest
         .expected
         .crawl_maze
         .iter()
-        .filter(|t| t.plane == MazePlane::Deferred)
-        .collect();
-    let listed: BTreeSet<&str> = DEFERRED.iter().map(|(p, _)| *p).collect();
-    let in_manifest: BTreeSet<&str> = deferred.iter().map(|t| t.path.as_str()).collect();
-    assert_eq!(in_manifest, listed, "deferred set drifted from the recorded list");
-    for (path, word) in DEFERRED {
-        let t = deferred.iter().find(|t| t.path == path).unwrap();
-        let reason = t.deferred_reason.as_deref().unwrap_or_default();
-        assert!(
-            reason.contains(word),
-            "{path}: reason {reason:?} must mention {word:?}"
-        );
-        assert!(reason.len() > 40, "{path}: reason too vague: {reason:?}");
-        // the page table agrees: the page that references it is deferred too
+        .all(|target| { target.plane != MazePlane::Deferred && target.deferred_reason.is_none() }));
+    for path in PROMOTED {
+        let target = manifest
+            .expected
+            .crawl_maze
+            .iter()
+            .find(|target| target.path == path)
+            .unwrap();
         let page = crawl_maze::page_for(path).unwrap();
-        assert_eq!(page.plane, MazePlane::Deferred, "{path}");
-        assert_eq!(page.path, t.page, "{path}");
+        assert_eq!(target.plane, MazePlane::Static, "{path}");
+        assert_eq!(page.plane, MazePlane::Static, "{path}");
+        assert_eq!(page.path, target.page, "{path}");
     }
-    // a reason on a non-deferred entry is a manifest error
-    assert!(m
-        .expected
-        .crawl_maze
-        .iter()
-        .filter(|t| t.plane != MazePlane::Deferred)
-        .all(|t| t.deferred_reason.is_none()));
 }
 
 /// The eight second-click reveals, the hash router and the destructive click stay
@@ -330,6 +319,23 @@ fn baseline_counts_match_the_manifest() {
     let all: BTreeSet<&str> = m.expected.crawl_maze.iter().map(|t| t.path.as_str()).collect();
     let plane_count = |p: MazePlane| m.expected.crawl_maze.iter().filter(|t| t.plane == p).count();
     let b = load_baseline();
+    let unmeasured: BTreeSet<&str> = b.unmeasured_static_additions.iter().map(String::as_str).collect();
+    assert_eq!(
+        unmeasured.len(),
+        b.unmeasured_static_additions.len(),
+        "duplicate unmeasured target"
+    );
+    let missing_promotions: BTreeSet<&str> = b
+        .static_plane
+        .missing
+        .iter()
+        .map(String::as_str)
+        .filter(|target| PROMOTED.contains(target))
+        .collect();
+    assert_eq!(
+        unmeasured, missing_promotions,
+        "unmeasured promotions must match historical missing rows"
+    );
     let mut runs = vec![("static", &b.static_plane)];
     if let Some(h) = &b.hybrid {
         runs.push(("hybrid", h));
@@ -370,18 +376,103 @@ fn baseline_counts_match_the_manifest() {
             !found.contains(DESTRUCTIVE_TARGET),
             "{name}: the destructive target was recorded as requested"
         );
-        for (target, _) in DEFERRED {
-            assert!(
-                !found.contains(target),
-                "{name}: deferred {target} recorded as found, promote it"
-            );
+        if name == "static" {
+            for target in &b.unmeasured_static_additions {
+                assert!(
+                    PROMOTED.contains(&target.as_str()),
+                    "unmeasured target outside the five promotions"
+                );
+                assert!(
+                    !found.contains(target.as_str()),
+                    "measured target still marked unmeasured"
+                );
+            }
         }
     }
-    assert_eq!(
-        b.static_plane.per_plane[&MazePlane::Static].found,
-        b.static_plane.per_plane[&MazePlane::Static].expected,
-        "static plane floor"
+    // Keep the measured historical floor intact; promotions are not fabricated server hits.
+    assert!(
+        b.static_plane.per_plane[&MazePlane::Static].found >= 61,
+        "historical static floor"
     );
+    assert_eq!(
+        usize::try_from(b.static_plane.per_plane[&MazePlane::Static].found).unwrap()
+            + b.unmeasured_static_additions.len(),
+        usize::try_from(b.static_plane.per_plane[&MazePlane::Static].expected).unwrap(),
+        "static floor including explicitly unmeasured promotions"
+    );
+}
+
+fn discover_without_script_mining(html: &str) -> Vec<crawlx_extract::endpoints::DiscoveredEndpoint> {
+    let url = url::Url::parse("https://fixture.test/page").unwrap();
+    discover_with(
+        &DiscoveryInput {
+            url: &url,
+            status: 200,
+            headers: &[],
+            content_type: Some("text/html"),
+            body: html.as_bytes(),
+            depth: 0,
+        },
+        &DiscoveryOptions {
+            javascript_mode: JavascriptMode::Off,
+            ..DiscoveryOptions::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn promoted_constructs_do_not_need_script_execution_or_regex_mining() {
+    for target in PROMOTED {
+        let page = crawl_maze::page_for(target).unwrap().render("fixture.test");
+        let endpoints = discover_without_script_mining(&page.body);
+        let expected = format!("{TEST_PREFIX}{target}");
+        let endpoint = endpoints.iter().find(|e| e.url.path() == expected).unwrap();
+        assert_eq!(endpoint.method, http::Method::GET);
+        assert!(endpoint.body.is_none());
+        assert_eq!(
+            endpoint.confidence,
+            crawlx_extract::endpoints::Confidence::Structural
+        );
+        let encoded = serde_json::to_vec(endpoint).unwrap();
+        let decoded: crawlx_extract::endpoints::DiscoveredEndpoint =
+            serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(
+            *endpoint, decoded,
+            "source must round-trip through the registered source table"
+        );
+        assert!(endpoints
+            .iter()
+            .all(|e| matches!(e.url.scheme(), "http" | "https")));
+    }
+}
+
+#[test]
+fn embedded_markup_refuses_scripts_unsafe_schemes_unrecognized_meta_and_oversize_comments() {
+    let html = r#"<head profile="javascript:alert(1) data:text/html,unsafe file:///etc/passwd">
+        <meta name="description" content="/not-a-url-slot">
+        <meta name="reading-view" content="javascript:alert(1)">
+        <meta name="msapplication-config" content="data:image/svg+xml,unsafe">
+        <!-- ordinary <link href='/ordinary-comment'> -->
+        <!--[if IE]><link href='vbscript:unsafe'><script src='/script'>fetch('/run')</script><![endif]-->
+        </head><img src="data:text/html,<a href='/not-svg'>x</a>">
+        <img src="data:image/svg+xml,<svg onload='unsafe()'><script href='/svg-script'>unsafe()</script></svg>">"#;
+    assert!(discover_without_script_mining(html).is_empty());
+    let large = format!(
+        "<!--[if IE]>{}<link href='/too-large'><![endif]-->",
+        " ".repeat(64 * 1024)
+    );
+    assert!(discover_without_script_mining(&large).is_empty());
+    let bounded = r#"<head><base href='/safe/'><meta name='READING-VIEW' content=' view.xml '>
+        <meta name='MSAPPLICATION-CONFIG' content='./config.xml'></head>
+        <!--[IF IE]><link href='style.css'><![ENDIF]-->"#;
+    let paths: BTreeSet<_> = discover_without_script_mining(bounded)
+        .into_iter()
+        .map(|e| e.url.path().to_owned())
+        .collect();
+    for path in ["/safe/view.xml", "/safe/config.xml", "/safe/style.css"] {
+        assert!(paths.contains(path), "{paths:?}");
+    }
 }
 
 fn discovered_get_paths(p: &MazePage, host: &str) -> BTreeSet<String> {
@@ -480,6 +571,14 @@ async fn static_plane_reaches_the_crawl_maze_floor() {
     let ops = ledger.ops("_gym");
     assert!(ops.iter().any(|(_, p)| p == "/robots.txt"), "{ops:?}");
     assert!(ledger.ops("g32").iter().any(|(_, p)| p == "/g32/sitemap.xml"));
+    let ops = ledger.ops("g32");
+    for target in PROMOTED {
+        let path = format!("{TEST_PREFIX}{target}");
+        assert!(
+            ops.iter().any(|(method, seen)| method == "GET" && seen == &path),
+            "promoted target lacks an actual server GET: {path}"
+        );
+    }
     // second-click reveals and the hash router are mined from their scripts; the destructive
     // click is never executed by a static run
     let reveal_missing = reveal_and_router_missing(&s);
@@ -499,6 +598,7 @@ async fn static_plane_reaches_the_crawl_maze_floor() {
             "safety": { "profile": "read_only", "respectRobotsTxt": true }
         });
         baseline.static_plane = s.clone();
+        baseline.unmeasured_static_additions.clear();
         save_baseline(&baseline);
     }
     // no regression against the committed numbers: the static plane is deterministic
@@ -610,4 +710,51 @@ async fn hybrid_plane_adds_browser_targets() {
         save_baseline(&baseline);
     }
     gym.shutdown().await;
+}
+
+/// Newly decoded references must pass the same scope admission as ordinary links.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn promoted_targets_cannot_bypass_scope_denial() {
+    let gym = gym().await;
+    gym.claim_origin("g32");
+    let manifest = FixtureManifest::embedded("g32").unwrap();
+    let mut req = maze_request(&manifest, &gym.base_url);
+    req.scope.exclude_paths = PROMOTED
+        .iter()
+        .map(|target| format!("^{TEST_PREFIX}{}$", target.replace('.', r"\.")))
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = worker_config(&manifest, dir.path()).unwrap();
+    cfg.gates = crawlx_worker::Gates::from_status(crawlx_core::gates::GateStatus::ALL);
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let report = run_local_with(authorize_fixture(LocalRun::new(req, cfg).with_stores(stores)))
+        .await
+        .unwrap();
+    assert!(report.status.is_terminal(), "{:?}", report.status);
+    let ledger = gym.ledger();
+    for target in PROMOTED {
+        let page = crawl_maze::page_for(target).unwrap();
+        assert!(
+            ledger.count_ops("GET", &format!("/g32/{}", page.path)) > 0,
+            "source page not requested: {}",
+            page.path
+        );
+        assert_eq!(
+            ledger.count_ops("GET", &format!("{TEST_PREFIX}{target}")),
+            0,
+            "scope-denied target fetched: {target}"
+        );
+    }
+    assert_no_destructive_request(&ledger, &manifest, SafetyProfile::ReadOnly);
+    gym.shutdown().await;
+}
+
+#[test]
+fn disabled_metadata_configuration_is_not_a_navigation_target() {
+    assert!(discover_without_script_mining(
+        "<head><meta name='msapplication-config' content=' NoNe '></head>"
+    )
+    .is_empty());
 }

@@ -2,6 +2,10 @@
 //! Native bundles are authenticated file maps, never executable tar archives.
 //! Database ciphertext is separate from general artifact exports. Plaintext only lives
 //! in the caller's bounded memory or an explicitly leased temporary browser directory.
+//!
+//! Production custody uses complete supported storage-state JSON through
+//! `crate::custody::profiles`, with independently wrapped keys per generation.
+//! Arbitrary directory bundles are unavailable for custody runs and namespaces.
 
 use crate::codec::{from_json, get, to_json};
 use crate::error::db;
@@ -58,6 +62,7 @@ impl ProfileRuntimeLease {
 
 /// Retention-approved immutable profile namespace and compatibility descriptor.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct ProfileScopeV1 {
     /// Owning tenant.
@@ -128,6 +133,276 @@ impl ProfileScopeV1 {
             }
         }
         Ok(())
+    }
+}
+
+/// Complete, bounded version-one cookie and web-storage state, never a directory.
+///
+/// Construction rejects unknown fields, unsupported cookie attributes, duplicate
+/// identities, out-of-scope origins and values exceeding shared registry limits.
+/// Debug output never includes browser state. Custody acquisition releases this
+/// value only after every opaque cookie/storage name and value is registered.
+#[must_use]
+#[non_exhaustive]
+pub struct SupportedStorageState {
+    bytes: zeroize::Zeroizing<Vec<u8>>,
+    document: StorageDocument,
+}
+
+/// Maximum complete supported storage export, including JSON framing.
+pub const MAX_STORAGE_STATE_BYTES: usize = 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StorageDocument {
+    version: u32,
+    cookies: Vec<StorageCookie>,
+    origins: Vec<StorageOrigin>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct StorageCookie {
+    name: String,
+    value: String,
+    domain: String,
+    path: String,
+    expires: f64,
+    size: u64,
+    http_only: bool,
+    secure: bool,
+    session: bool,
+    #[serde(default, deserialize_with = "present_storage_attribute")]
+    same_site: Option<CookieSameSite>,
+    priority: CookiePriority,
+    #[serde(default)]
+    same_party: bool,
+    source_scheme: CookieSourceScheme,
+    source_port: i32,
+    #[serde(default, deserialize_with = "present_storage_attribute")]
+    partition_key: Option<StoragePartitionKey>,
+    #[serde(default)]
+    partition_key_opaque: bool,
+}
+
+fn present_storage_attribute<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+#[derive(Deserialize)]
+enum CookieSameSite {
+    Strict,
+    Lax,
+    None,
+}
+
+#[derive(Deserialize)]
+enum CookiePriority {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Deserialize)]
+enum CookieSourceScheme {
+    Unset,
+    NonSecure,
+    Secure,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct StoragePartitionKey {
+    top_level_site: String,
+    has_cross_site_ancestor: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StorageOrigin {
+    origin: String,
+    local: Vec<(String, String)>,
+    session: Vec<(String, String)>,
+}
+
+impl Drop for StorageCookie {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.name.zeroize();
+        self.value.zeroize();
+        self.domain.zeroize();
+        self.path.zeroize();
+        if let Some(partition) = &mut self.partition_key {
+            partition.top_level_site.zeroize();
+        }
+    }
+}
+
+impl Drop for StorageOrigin {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.origin.zeroize();
+        for (key, value) in self.local.iter_mut().chain(&mut self.session) {
+            key.zeroize();
+            value.zeroize();
+        }
+    }
+}
+
+impl std::fmt::Debug for SupportedStorageState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SupportedStorageState")
+            .field("bytes", &self.bytes.len())
+            .field("cookies", &self.document.cookies.len())
+            .field("origins", &self.document.origins.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl SupportedStorageState {
+    /// Validate a complete supported browser export under its exact origin scope.
+    ///
+    /// This proves schema support, not that the browser read every document.
+    /// Producers must use the strict profile export, never redacted checkpoints.
+    ///
+    /// # Errors
+    /// Rejects malformed, excessive, ambiguous, unsupported or out-of-scope state.
+    pub fn parse(bytes: &[u8], scope: &ProfileScopeV1) -> Result<Self, StoreError> {
+        scope.validate()?;
+        if bytes.is_empty() || bytes.len() > MAX_STORAGE_STATE_BYTES {
+            return Err(invalid("profile storage state exceeds bound"));
+        }
+        let document: StorageDocument = serde_json::from_slice(bytes)
+            .map_err(|_| invalid("invalid or unsupported profile storage state"))?;
+        if document.version != 1 || document.cookies.len() > 256 || document.origins.len() > 64 {
+            return Err(invalid("unsupported profile storage state version or count"));
+        }
+        let mut cookie_ids = BTreeSet::new();
+        for cookie in &document.cookies {
+            // Protocol attributes are typed metadata, not opaque application values.
+            // Unsupported attributes must not be silently discarded by browser import.
+            let _attributes = (
+                &cookie.priority,
+                &cookie.same_site,
+                &cookie.source_scheme,
+                cookie.http_only,
+            );
+            if cookie.name.is_empty()
+                || !cookie
+                    .name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+                || cookie.domain.is_empty()
+                || cookie.domain.len() > 253
+                || cookie.domain.bytes().any(|b| b.is_ascii_control())
+                || !cookie.path.starts_with('/')
+                || cookie.path.len() > 4096
+                || cookie.path.bytes().any(|b| b.is_ascii_control())
+                || !cookie.expires.is_finite()
+                || (cookie.session && cookie.expires > 0.0)
+                || cookie.value.bytes().any(|byte| byte.is_ascii_control())
+                || (cookie
+                    .same_site
+                    .as_ref()
+                    .is_some_and(|site| matches!(site, CookieSameSite::None))
+                    && !cookie.secure)
+                || (!cookie.session && cookie.expires <= 0.0)
+                || cookie.size > 32 * 1024
+                || cookie.same_party
+                || cookie.partition_key_opaque
+                || !(cookie.source_port == -1 || (1..=65535).contains(&cookie.source_port))
+            {
+                return Err(invalid("unsupported profile cookie"));
+            }
+            let domain = cookie.domain.strip_prefix('.').unwrap_or(&cookie.domain);
+            let allowed = scope.allowed_origins.iter().any(|origin| {
+                url::Url::parse(origin).is_ok_and(|url| {
+                    url.host_str() == Some(domain) && (!cookie.secure || url.scheme() == "https")
+                })
+            });
+            if !allowed {
+                return Err(invalid("profile cookie domain outside allowed origins"));
+            }
+            let partition = cookie.partition_key.as_ref();
+            if partition.is_some_and(|key| !scope.allowed_origins.contains(&key.top_level_site)) {
+                return Err(invalid("profile cookie partition outside allowed origins"));
+            }
+            if !cookie_ids.insert((
+                &cookie.name,
+                &cookie.domain,
+                &cookie.path,
+                partition.map(|key| (&key.top_level_site, key.has_cross_site_ancestor)),
+            )) {
+                return Err(invalid("duplicate profile cookie"));
+            }
+        }
+        let mut origins = BTreeSet::new();
+        let mut entries = 0usize;
+        for origin in &document.origins {
+            if !scope.allowed_origins.contains(&origin.origin) || !origins.insert(&origin.origin) {
+                return Err(invalid("duplicate or out-of-scope profile storage origin"));
+            }
+            for storage in [&origin.local, &origin.session] {
+                let mut keys = BTreeSet::new();
+                for (key, _) in storage {
+                    if !keys.insert(key) {
+                        return Err(invalid("duplicate profile web-storage key"));
+                    }
+                }
+                entries = entries
+                    .checked_add(storage.len())
+                    .ok_or_else(|| invalid("profile storage count overflow"))?;
+            }
+        }
+        if entries > 256 {
+            return Err(invalid("profile storage entry count exceeded"));
+        }
+        let state = Self {
+            bytes: zeroize::Zeroizing::new(bytes.to_vec()),
+            document,
+        };
+        let values = state.opaque_values();
+        if values.len() > 256
+            || values.iter().any(|value| value.len() > 16 * 1024)
+            || values.iter().map(|value| value.len()).sum::<usize>() > MAX_STORAGE_STATE_BYTES
+        {
+            return Err(invalid("profile opaque values exceed shared registry bounds"));
+        }
+        Ok(state)
+    }
+
+    /// Borrow the fully validated, secret-bearing JSON for browser import.
+    ///
+    /// Call only after custody acquisition registered its complete opaque values.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return distinct opaque names and values in deterministic registration order.
+    ///
+    /// Cookie domain/path and enum fields are validated protocol metadata; origins
+    /// must already belong to the explicit public scope. Application-controlled
+    /// cookie names/values and both web-storage names/values are secret-bearing.
+    pub(crate) fn opaque_values(&self) -> BTreeSet<&str> {
+        self.document
+            .cookies
+            .iter()
+            .flat_map(|cookie| [cookie.name.as_str(), cookie.value.as_str()])
+            .chain(self.document.origins.iter().flat_map(|origin| {
+                origin
+                    .local
+                    .iter()
+                    .chain(&origin.session)
+                    .flat_map(|(key, value)| [key.as_str(), value.as_str()])
+            }))
+            .filter(|value| !value.is_empty())
+            .collect()
     }
 }
 
@@ -381,7 +656,8 @@ struct Payload {
     files: ProfileFiles,
 }
 
-/// AEAD profile key. Never serializable or printable; supply from an approved SecretResolver.
+/// Legacy directory-bundle AEAD key, never production retained-profile custody.
+/// Production custody uses independently wrapped ArtifactKeys per generation.
 pub struct ProfileCipher {
     key: LessSafeKey,
 }
@@ -498,13 +774,38 @@ pub struct ProfileInspection {
     pub files: usize,
 }
 
-/// Fenced encrypted profile service. Existing lease owner and database tenant policies authenticate operations.
+/// Legacy directory-bundle service, unavailable for runs or rows using custody.
 pub struct BrowserProfileRepo<'a> {
     pg: &'a Pg,
     cipher: &'a ProfileCipher,
 }
 
-async fn audit_profile(
+async fn legacy_profile_mode(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    lease: &SessionLease,
+    scope: &ProfileScopeV1,
+) -> Result<(), StoreError> {
+    let custody: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 \
+         UNION ALL SELECT 1 FROM browser_profiles WHERE tenant_id=$1 AND principal=$3 \
+         AND name=$4 AND custody_format<>0)",
+    )
+    .bind(scope.tenant.0)
+    .bind(lease.session.run.0)
+    .bind(&scope.principal.0)
+    .bind(&scope.name)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(db)?;
+    if custody {
+        return Err(StoreError::Unavailable(
+            "profile_unavailable: arbitrary directory bundles are unavailable in custody mode".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn audit_profile(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     lease: &SessionLease,
     scope: &ProfileScopeV1,
@@ -560,6 +861,7 @@ impl<'a> BrowserProfileRepo<'a> {
         }
         let mut tx = self.pg.pool.begin().await.map_err(db)?;
         let now = lock_lease(&mut tx, lease, scope.tenant).await?;
+        legacy_profile_mode(&mut tx, lease, scope).await?;
         let row =
             sqlx::query("SELECT retention_mode::text AS mode, expires_at FROM crawl_runs WHERE run_id=$1")
                 .bind(lease.session.run.0)
@@ -655,6 +957,7 @@ impl<'a> BrowserProfileRepo<'a> {
         }
         let mut tx = self.pg.pool.begin().await.map_err(db)?;
         let now = lock_lease(&mut tx, lease, scope.tenant).await?;
+        legacy_profile_mode(&mut tx, lease, scope).await?;
         let row = sqlx::query("SELECT encrypted_bundle,digest,scope FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 AND generation=$4 AND expires_at>$5")
             .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).bind(i64::try_from(generation).map_err(|_| invalid("profile generation exhausted"))?).bind(now)
             .fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(|| invalid("profile unavailable"))?;
@@ -700,6 +1003,7 @@ impl<'a> BrowserProfileRepo<'a> {
         }
         let mut tx = self.pg.pool.begin().await.map_err(db)?;
         let now = lock_lease(&mut tx, lease, scope.tenant).await?;
+        legacy_profile_mode(&mut tx, lease, scope).await?;
         let row = sqlx::query("SELECT encrypted_bundle,digest,scope,session_id,lease_fence FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 FOR UPDATE")
             .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).fetch_optional(&mut *tx).await.map_err(db)?;
         let Some(row) = row else {
@@ -787,6 +1091,7 @@ impl<'a> BrowserProfileRepo<'a> {
         }
         let mut tx = self.pg.pool.begin().await.map_err(db)?;
         lock_lease(&mut tx, lease, scope.tenant).await?;
+        legacy_profile_mode(&mut tx, lease, scope).await?;
         let result = sqlx::query("DELETE FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 AND generation=$4 AND scope=$5")
             .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).bind(i64::try_from(generation).map_err(|_| invalid("profile generation exhausted"))?)
             .bind(to_json(scope)?)

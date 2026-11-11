@@ -127,6 +127,14 @@ jobs:
       - run: ci/lint-static.sh
       - run: ci/lint-chromiumoxide.sh
       - run: ci/provenance-check.sh
+      - name: Sensitive transport boundaries
+        run: |
+          python3 -B ci/privacy-boundaries.py
+          python3 -B -m unittest discover -s ci -p 'test_privacy_boundaries.py'
+      - name: Identity provenance and SBOM regressions
+        run: python3 -B -m unittest discover -s ci -p 'test_identity_sbom.py'
+      - name: Namespace helper regressions
+        run: python3 -B -m unittest discover -s deploy/isolation -p 'test_netns_helper.py'
       - run: ci/shingle-scan.sh --self-test
       - name: CI evidence report regressions
         run: python3 -B -m unittest discover -s ci -p 'test_*_reports.py'
@@ -1133,6 +1141,9 @@ jobs:
           for img in "$API_IMAGE" "$WORKER_IMAGE"; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$SYFT_IMAGE" \
               "docker:$img" -o spdx-json > "sbom/${img//[:\/]/_}.spdx.json"
+            python3 -B ci/identity-sbom.py "sbom/${img//[:\/]/_}.spdx.json" \
+              --output "sbom/${img//[:\/]/_}.identity.spdx.json"
+            mv "sbom/${img//[:\/]/_}.identity.spdx.json" "sbom/${img//[:\/]/_}.spdx.json"
           done
       - name: Vulnerability scan (trivy, CRITICAL blocks)
         run: |

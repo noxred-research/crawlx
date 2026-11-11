@@ -1,0 +1,49 @@
+{
+  "schema": "crawlx.identity-profile-provenance/1",
+  "engine": "Chromium",
+  "version": "155.0.8059.84",
+  "platform": "linux-x86_64",
+  "archiveSha256": "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc",
+  "executableSha256": "b866a2964538c825538c454de4867973b926650da57ec12dc3328807d768247b",
+  "embeddedNoticesSha256": "fc63eda353b7cc0cf797c7d7e5ae823096b8a2d1734f83afb078a405d3a0fb65",
+  "embeddedNoticesBytes": 8682100,
+  "embeddedNoticesCount": 768,
+  "roles": [
+    {
+      "role": "ca_or_transport_notice",
+      "noticeSha256": "6d29b685206b28617dd9ac13818ccc943e57df68aeea1db0f4a5539f4507a9aa",
+      "noticeBytes": 18122
+    },
+    {
+      "role": "ca_or_transport_notice",
+      "noticeSha256": "a718a32ad435b316ce3a9e871e05421d6ca784c435f8ef5715c1b6e289381f04",
+      "noticeBytes": 26847
+    },
+    {
+      "role": "compression",
+      "noticeSha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+      "noticeBytes": 1084
+    },
+    {
+      "role": "compression",
+      "noticeSha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8",
+      "noticeBytes": 1549
+    },
+    {
+      "role": "compression",
+      "noticeSha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+      "noticeBytes": 1002
+    },
+    {
+      "role": "compression",
+      "noticeSha256": "eba684204073ed715c4abb48129acdfd2bff8ae48339e6a7da3b341d3027b7f0",
+      "noticeBytes": 9701
+    },
+    {
+      "role": "tls",
+      "noticeSha256": "c9d230b5b6d2185409a6514aecf416b1198552769a4e8abde47521afc4895010",
+      "noticeBytes": 13114
+    }
+  ],
+  "distributionApproval": "external_required"
+}

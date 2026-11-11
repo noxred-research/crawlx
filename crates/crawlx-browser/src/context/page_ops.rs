@@ -14,14 +14,14 @@ use super::selector::describe;
 use super::state::State;
 use super::{CdpContext, Ctl};
 use crate::cdp::CdpSession;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use crawlx_core::browser::BrowserError;
 use crawlx_core::ids::{BackendNodeId, FrameId, TabId};
 use crawlx_core::observation::RuntimeLocator;
 use crawlx_core::page_op::{Emulation, PageOp, PageOpResult, PdfSpec, SelectorState, ShotSpec};
+use crawlx_core::parser_memory::{AdmittedBytes, AdmittedText, Budgeted, ByteBudget, BytePermit};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Longest a script may run (`EvaluateScript`, one `Html` serialization).
@@ -253,8 +253,49 @@ fn main_world_result(v: &Value) -> Result<Value, BrowserError> {
         .map_or(Value::Null, |s| Value::String(s.to_owned())))
 }
 
-/// Decode the base64 `data` member of a command result.
-fn decode_data(method: &str, result: &Value) -> Result<Vec<u8>, BrowserError> {
+/// Own `text`, a string moved out of a charged CDP value, as an immutable shared document.
+///
+/// `rest` is what is left of that value and is freed first. The permit that covered the whole
+/// value is cut down to the text's own capacity; surplus is released only after the value's
+/// other memory is gone. A capacity above the reservation (the decode bound is an estimate)
+/// is admitted afterwards and refused with [`BrowserError::Memory`] when it does not fit.
+pub(super) fn admit_text(
+    text: String,
+    rest: Value,
+    mut permit: BytePermit,
+) -> Result<AdmittedText, BrowserError> {
+    drop(rest);
+    let keep = text.capacity();
+    if permit.bytes() < keep {
+        if let Err(refused) = permit.grow_to(keep) {
+            drop(text);
+            drop(permit);
+            return Err(BrowserError::Memory(refused));
+        }
+    } else if let Ok(surplus) = permit.split(permit.bytes() - keep) {
+        drop(surplus);
+    }
+    Ok(AdmittedText::new(text, permit))
+}
+
+/// `Runtime.evaluate` parameters for a by-value main-world evaluation.
+fn main_evaluate_params(expression: &str, await_promise: bool, timeout: Duration) -> Value {
+    json!({
+        "expression": expression,
+        "awaitPromise": await_promise,
+        "returnByValue": true,
+        "timeout": u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+    })
+}
+
+/// Decode the base64 `data` member of a command result into bytes that carry their own
+/// reservation, made before the output buffer is allocated. The charged response the data
+/// borrows from stays alive for the call.
+fn decode_data(
+    budget: &Arc<ByteBudget>,
+    method: &str,
+    result: &Value,
+) -> Result<AdmittedBytes, BrowserError> {
     let data = result
         .get("data")
         .and_then(Value::as_str)
@@ -262,15 +303,16 @@ fn decode_data(method: &str, result: &Value) -> Result<Vec<u8>, BrowserError> {
             method: method.to_owned(),
             message: "no data in result".to_owned(),
         })?;
-    STANDARD.decode(data).map_err(|e| BrowserError::Protocol {
-        method: method.to_owned(),
-        message: e.to_string(),
-    })
+    crate::cdp::decode_admitted_base64(budget, method, data)
 }
 
 /// Capture `spec` from `sess`. A full-page capture is as wide as the content, at least
 /// `viewport_width` (the layout metrics report the width without the scrollbar).
-async fn capture(sess: &CdpSession, spec: &ShotSpec, viewport_width: u32) -> Result<Vec<u8>, BrowserError> {
+async fn capture(
+    sess: &CdpSession,
+    spec: &ShotSpec,
+    viewport_width: u32,
+) -> Result<AdmittedBytes, BrowserError> {
     let mut params = json!({
         "format": if spec.quality.is_some() { "jpeg" } else { "png" },
         "fromSurface": true,
@@ -297,8 +339,8 @@ async fn capture(sess: &CdpSession, spec: &ShotSpec, viewport_width: u32) -> Res
             "x": 0, "y": 0, "width": edge("width", viewport_width), "height": edge("height", 1), "scale": 1,
         });
     }
-    let result = sess.send("Page.captureScreenshot", params).await?;
-    decode_data("Page.captureScreenshot", &result)
+    let result = sess.send_budgeted("Page.captureScreenshot", params).await?;
+    decode_data(sess.client.budget(), "Page.captureScreenshot", result.value())
 }
 
 impl CdpContext {
@@ -479,35 +521,66 @@ impl CdpContext {
         timeout: Duration,
     ) -> Result<Value, BrowserError> {
         let (_, sess) = self.session_for(None)?;
-        let limit_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+        // A plain call: the script's by-value result is returned as an uncharged `Value`, so
+        // the transport bounds it at `cdp::METADATA_REPLY_LIMIT` (larger results are refused
+        // with `BrowserError::Memory`).
         let v = self
             .ctl
             .client
             .call_with_timeout(
                 "Runtime.evaluate",
                 Some(&sess.session_id),
-                json!({
-                    "expression": expression,
-                    "awaitPromise": await_promise,
-                    "returnByValue": true,
-                    "timeout": limit_ms,
-                }),
+                main_evaluate_params(expression, await_promise, timeout),
                 timeout + Duration::from_secs(1),
             )
             .await?;
         main_world_result(&v)
     }
 
-    /// `PageOp::Html`.
+    /// `Runtime.evaluate` in the main world returning the whole response still charged to the
+    /// byte budget, for results the caller retains (the document HTML).
+    async fn evaluate_main_charged(
+        &self,
+        expression: &str,
+        await_promise: bool,
+        timeout: Duration,
+    ) -> Result<Budgeted<Value>, BrowserError> {
+        let (_, sess) = self.session_for(None)?;
+        self.ctl
+            .client
+            .call_budgeted_with_timeout(
+                "Runtime.evaluate",
+                Some(&sess.session_id),
+                main_evaluate_params(expression, await_promise, timeout),
+                timeout + Duration::from_secs(1),
+            )
+            .await
+    }
+
+    /// `PageOp::Html`: the serialized document is moved out of the charged response, not
+    /// copied, and keeps exactly its own reservation.
     async fn html(&self) -> Result<PageOpResult, BrowserError> {
-        let v = self.evaluate_main(HTML_SCRIPT, false, SCRIPT_TIMEOUT).await?;
-        let field = |key: &str| v.get(key).and_then(Value::as_str).map(str::to_owned);
-        match (field("html"), field("url")) {
-            (Some(html), Some(url)) => Ok(PageOpResult::Html { html, url }),
-            _ => Err(BrowserError::Script(
-                "document serialization returned an unexpected shape".to_owned(),
-            )),
+        let mut reply = self
+            .evaluate_main_charged(HTML_SCRIPT, false, SCRIPT_TIMEOUT)
+            .await?;
+        if let Some(details) = reply.value().get("exceptionDetails") {
+            return Err(BrowserError::Script(exception_message(details)));
         }
+        let shape = || BrowserError::Script("document serialization returned an unexpected shape".to_owned());
+        let Some(Value::Object(document)) = reply.value_mut().pointer_mut("/result/value") else {
+            return Err(shape());
+        };
+        let html = match document.get_mut("html") {
+            Some(Value::String(html)) => std::mem::take(html),
+            _ => return Err(shape()),
+        };
+        let url = match document.get_mut("url") {
+            Some(Value::String(url)) => std::mem::take(url),
+            _ => return Err(shape()),
+        };
+        let (response, permit) = reply.into_parts();
+        let html = admit_text(html, response, permit)?;
+        Ok(PageOpResult::Html { html, url })
     }
 
     /// `PageOp::Screenshot`: the viewport override applies for this capture only.
@@ -550,7 +623,7 @@ impl CdpContext {
         let scale = (f64::from(spec.scale) * 1000.0).round() / 1000.0;
         let (_, sess) = self.session_for(None)?;
         let result = sess
-            .send(
+            .send_budgeted(
                 "Page.printToPDF",
                 json!({
                     "landscape": spec.landscape,
@@ -562,7 +635,7 @@ impl CdpContext {
             )
             .await?;
         Ok(PageOpResult::Bytes {
-            bytes: decode_data("Page.printToPDF", &result)?,
+            bytes: decode_data(self.ctl.client.budget(), "Page.printToPDF", result.value())?,
             content_type: "application/pdf",
         })
     }
@@ -682,7 +755,7 @@ impl CdpContext {
 }
 
 /// The result of a finished capture.
-fn shot_result(spec: &ShotSpec, bytes: Vec<u8>) -> PageOpResult {
+fn shot_result(spec: &ShotSpec, bytes: AdmittedBytes) -> PageOpResult {
     PageOpResult::Bytes {
         bytes,
         content_type: if spec.quality.is_some() {
@@ -751,15 +824,56 @@ mod tests {
 
     #[test]
     fn capture_data_decodes_or_reports_the_method() {
-        assert_eq!(
-            decode_data("capture", &json!({ "data": "AQID" })).unwrap(),
-            vec![1, 2, 3]
-        );
+        let budget = Arc::new(ByteBudget::new(1 << 20));
+        let decoded = decode_data(&budget, "capture", &json!({ "data": "AQID" })).unwrap();
+        assert_eq!(decoded.as_slice(), [1, 2, 3]);
+        assert!(budget.used() >= 3, "decoded bytes stay charged while held");
+        drop(decoded);
+        assert_eq!(budget.used(), 0);
         for bad in [json!({}), json!({ "data": "***" })] {
-            match decode_data("capture", &bad) {
+            match decode_data(&budget, "capture", &bad) {
                 Err(BrowserError::Protocol { method, .. }) => assert_eq!(method, "capture"),
                 other => panic!("{other:?}"),
             }
         }
+        assert_eq!(budget.used(), 0, "a refused decode releases its reservation");
+    }
+
+    #[test]
+    fn oversized_capture_is_refused_before_the_decode_buffer_exists() {
+        let budget = Arc::new(ByteBudget::new(64));
+        let data = "A".repeat(4096);
+        match decode_data(&budget, "capture", &json!({ "data": data })) {
+            Err(BrowserError::Memory(refused)) => assert!(refused.exceeds_budget()),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn admitted_text_keeps_only_its_own_capacity_charged() {
+        let budget = Arc::new(ByteBudget::new(1 << 20));
+        let permit = budget.try_reserve(10_000).unwrap();
+        let text = String::from("<html></html>");
+        let capacity = text.capacity();
+        let admitted = admit_text(text, json!({ "ballast": "x".repeat(1000) }), permit).unwrap();
+        assert_eq!(budget.used(), capacity);
+        let shared = admitted.clone();
+        drop(admitted);
+        assert_eq!(budget.used(), capacity, "clones share one reservation");
+        drop(shared);
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn admitted_text_beyond_its_reservation_is_refused_and_released() {
+        let budget = Arc::new(ByteBudget::new(16));
+        let permit = budget.try_reserve(1).unwrap();
+        let text = "x".repeat(64);
+        assert!(matches!(
+            admit_text(text, Value::Null, permit),
+            Err(BrowserError::Memory(_))
+        ));
+        assert_eq!(budget.used(), 0);
     }
 }

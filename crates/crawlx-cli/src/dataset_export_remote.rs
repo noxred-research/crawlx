@@ -12,6 +12,10 @@ use crawlx_core::{
     dataset::{validate_identifier, DatasetDeclarationV1, DatasetItemV1},
     CrawlRunId,
 };
+#[allow(
+    clippy::disallowed_types,
+    reason = "authenticated dataset download imports the raw reqwest client"
+)]
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
@@ -77,6 +81,10 @@ fn artifact_url(endpoint: &Url, run: CrawlRunId, entry: &Entry) -> anyhow::Resul
     Ok(url)
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "authenticated dataset download takes the raw reqwest client"
+)]
 async fn bytes(http: &Client, url: Url, key: &str, limit: usize) -> anyhow::Result<Vec<u8>> {
     let mut response = http
         .get(url)
@@ -115,6 +123,10 @@ async fn bytes(http: &Client, url: Url, key: &str, limit: usize) -> anyhow::Resu
     Ok(body)
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "authenticated dataset download takes the raw reqwest client"
+)]
 async fn metadata<T: DeserializeOwned>(http: &Client, url: Url, key: &str) -> anyhow::Result<T> {
     let body = bytes(http, url, key, MAX_METADATA_BYTES).await?;
     serde_json::from_slice(&body).context("invalid dataset API metadata")
@@ -145,6 +157,10 @@ fn validate_page(page: &Page, after: u64, limit: u16, schema: &str) -> anyhow::R
     Ok(())
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "authenticated dataset download builds the raw reqwest client"
+)]
 pub(super) async fn export(args: &DatasetExportArgs, out: &mut dyn Write) -> anyhow::Result<()> {
     // Validate all serializer and source arguments before issuing a request or writing framing.
     let mut stream = ItemStream::new(args, out)?;

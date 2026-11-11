@@ -101,9 +101,10 @@ pub struct ReplayCapture {
     /// True when the phase hit its text capture cap; QA never calls that a full match.
     #[serde(default)]
     pub truncated: bool,
-    /// Actual bytes. JSON manifests do not embed content.
-    #[serde(skip)]
-    pub bytes: Vec<u8>,
+    /// Actual bytes, charged until the caller's content sink drops them. JSON manifests do
+    /// not embed content, so a deserialized capture is empty.
+    #[serde(skip, default = "crawlx_core::parser_memory::AdmittedBytes::empty")]
+    pub bytes: crawlx_core::parser_memory::AdmittedBytes,
 }
 
 /// Actual served resource result, including missing resources. URLs remain content.
@@ -917,13 +918,48 @@ async fn text_capture(context: &mut dyn BrowserContext, kind: &str) -> Result<Re
     let Some(serde_json::Value::Bool(truncated)) = value.remove("truncated") else {
         return Err(ReplayError::Refused("text completeness unavailable"));
     };
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let budget = crawlx_core::parser_memory::global();
+    let refused = || ReplayError::Refused("capture byte admission");
+    // The CDP-decoded `text` is already live; account it, then reserve the exact normalized
+    // copy (never longer than the source) before building it.
+    let source_len = text.len();
+    let source_permit = budget.try_reserve(source_len).map_err(|_| refused())?;
+    let mut normalized_permit = budget.try_reserve(0).map_err(|_| refused())?;
+    normalized_permit.grow_by(source_len).map_err(|_| refused())?;
+    let mut normalized = String::with_capacity(source_len);
+    for word in text.split_whitespace() {
+        if !normalized.is_empty() {
+            normalized.push(' ');
+        }
+        normalized.push_str(word);
+    }
+    drop(text);
+    drop(source_permit);
+    // Both redaction passes use the core bounded API: each stage computes its exact output
+    // length, checks it against the capture cap, and admits it before allocating.
     let redactor = crawlx_telemetry::redact::Redactor::new();
-    let approved = redactor
-        .scrub_session_queries(&redactor.scrub(&normalized))
-        .into_owned();
-    approve_body("text/plain", approved.as_bytes())?;
-    let mut captured = capture(kind, "text/plain", approved.into_bytes());
+    let scrub_refused = |_| ReplayError::Refused("capture redaction bound or byte admission");
+    let mut scrub_permit = budget.try_reserve(0).map_err(|_| refused())?;
+    let (mut body, mut body_permit) = match redactor
+        .scrub_text_bounded(&normalized, &mut scrub_permit, CAPTURE_BYTES)
+        .map_err(scrub_refused)?
+    {
+        Some(scrubbed) => (scrubbed, scrub_permit),
+        None => (normalized, normalized_permit),
+    };
+    let mut query_permit = budget.try_reserve(0).map_err(|_| refused())?;
+    if let Some(scrubbed) = redactor
+        .scrub_session_queries_bounded(&body, &mut query_permit, CAPTURE_BYTES)
+        .map_err(scrub_refused)?
+    {
+        body = scrubbed;
+        body_permit = query_permit;
+    }
+    approve_body("text/plain", body.as_bytes())?;
+    let approved = body.into_bytes();
+    body_permit.grow_to(approved.capacity()).map_err(|_| refused())?;
+    let admitted = crawlx_core::parser_memory::AdmittedBytes::new(approved, body_permit);
+    let mut captured = capture(kind, "text/plain", admitted);
     captured.truncated = truncated;
     Ok(captured)
 }
@@ -969,7 +1005,8 @@ async fn shot(
     }
     Ok(capture(kind, "image/png", bytes))
 }
-fn capture(kind: &str, mime: &str, bytes: Vec<u8>) -> ReplayCapture {
+/// Wrap already-admitted bytes; the permit travels with them to the caller's sink.
+fn capture(kind: &str, mime: &str, bytes: crawlx_core::parser_memory::AdmittedBytes) -> ReplayCapture {
     ReplayCapture {
         kind: kind.into(),
         digest: digest(&bytes),

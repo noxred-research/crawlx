@@ -4,12 +4,13 @@
 //! `main` instead of `#[tokio::main]`, so the blocking pool is bounded (tokio's default is
 //! 512 threads) and the threads are recognizable in a profiler.
 
+use crawlx_core::parser_memory::{ByteBudget, BytePermit};
 use crawlx_extract::parse_budget::DEFAULT_PARSE_MEMORY_BYTES;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::task::JoinError;
 
@@ -17,10 +18,6 @@ use tokio::task::JoinError;
 pub const THREAD_NAME: &str = "crawlx-rt";
 /// Default upper bound of the `spawn_blocking` pool.
 pub const DEFAULT_MAX_BLOCKING_THREADS: usize = 64;
-/// Shared article serialization maxima, not an allocator-capacity, DOM or RSS bound.
-const ARTICLE_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
-static ARTICLE_OUTPUT_BUDGET: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(ARTICLE_OUTPUT_BYTES)));
 
 /// Runtime metrics for explicit diagnostic builds. This instruments runtime workers,
 /// not the client futures submitting requests.
@@ -133,7 +130,7 @@ pub struct CpuPool {
     permits: Arc<Semaphore>,
     waiting: Arc<AtomicUsize>,
     capacity: usize,
-    article_output: Arc<Semaphore>,
+    article_output: Arc<ByteBudget>,
 }
 
 impl Default for CpuPool {
@@ -156,46 +153,42 @@ impl CpuPool {
             permits: Arc::new(Semaphore::new(permits.get())),
             waiting: Arc::new(AtomicUsize::new(0)),
             capacity: permits.get(),
-            article_output: Arc::clone(&ARTICLE_OUTPUT_BUDGET),
+            article_output: Arc::clone(crawlx_core::parser_memory::global()),
         }
     }
 
-    /// Reserve a serializer's existing maximum without waiting while it owns a document.
+    /// Reserve a serializer's maximum from the shared input/DOM/output budget.
     ///
-    /// The permit must move with the blocking closure and approved bytes through sink I/O.
-    /// Only migrated article buffers are covered; source bodies and parser allocations are not.
+    /// Move this permit with the blocking closure and approved bytes through sink I/O.
+    /// This reserves admitted capacity, not a fallible parser allocator or RSS ceiling.
     ///
     /// # Errors
     /// Returns typed resource pressure before any output buffer allocation or CPU queueing.
     pub(crate) fn try_reserve_article_output(
         &self,
         maximum: usize,
-    ) -> Result<tokio::sync::OwnedSemaphorePermit, crawlx_core::StoreError> {
-        let denied = || crawlx_core::StoreError::ResourceExhausted {
-            resource: "article_output_reservation",
-            requested: maximum,
-            available: self.article_output.available_permits(),
-            source: None,
-        };
-        let count = u32::try_from(maximum).map_err(|_| denied())?;
-        Arc::clone(&self.article_output)
-            .try_acquire_many_owned(count)
-            .map_err(|_| denied())
+    ) -> Result<BytePermit, crawlx_core::StoreError> {
+        self.article_output
+            .try_reserve(maximum)
+            .map_err(|error| crawlx_core::StoreError::ResourceExhausted {
+                resource: "article_output_reservation",
+                requested: error.requested,
+                available: error.available,
+                source: None,
+            })
     }
 
     #[cfg(test)]
     pub(crate) fn with_article_output_limit(permits: NonZeroUsize, limit: std::num::NonZeroU32) -> Self {
         let mut pool = Self::with_permits(permits);
-        let maximum = usize::try_from(limit.get())
-            .unwrap_or(0)
-            .min(ARTICLE_OUTPUT_BYTES);
-        pool.article_output = Arc::new(Semaphore::new(maximum));
+        let maximum = usize::try_from(limit.get()).unwrap_or(0);
+        pool.article_output = Arc::new(ByteBudget::new(maximum));
         pool
     }
 
     #[cfg(test)]
     pub(crate) fn article_output_available(&self) -> usize {
-        self.article_output.available_permits()
+        self.article_output.available()
     }
 
     /// Closures waiting for a permit right now.

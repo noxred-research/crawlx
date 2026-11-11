@@ -125,6 +125,10 @@ fn endpoint(args: &ApplyArgs) -> anyhow::Result<url::Url> {
 /// # Errors
 /// Returns unsafe/nonregular/oversized input, policy conflicts, transport/authentication,
 /// live-fence/CAS, privacy or retention errors. API content and credentials are never echoed.
+#[allow(
+    clippy::disallowed_types,
+    reason = "authenticated dataset import builds the raw reqwest client"
+)]
 pub async fn run(args: DatasetImportArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     match args.command {
         DatasetImportCommand::Inspect { input } => inspect_manifest(&read_export(&input).await?, out),

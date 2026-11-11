@@ -134,6 +134,7 @@ impl EmbeddingsConfig {
 
 /// Chat-completions-compatible embeddings client (hosted gateways, local model servers, ...).
 pub struct HttpEmbeddings {
+    #[allow(clippy::disallowed_types, reason = "HTTP provider adapter boundary")]
     client: reqwest::Client,
     url: reqwest::Url,
     model: String,
@@ -199,6 +200,7 @@ impl HttpEmbeddings {
     /// [`EmbeddingsError::InvalidRequest`] for a malformed or non-HTTP endpoint, an empty model
     /// or a `max_batch` outside `1..=`[`MAX_BATCH`]; [`EmbeddingsError::Transport`] when the HTTP
     /// client cannot be built.
+    #[allow(clippy::disallowed_types, reason = "HTTP provider adapter boundary")]
     pub fn new(config: EmbeddingsConfig) -> Result<Self, EmbeddingsError> {
         let url = embeddings_url(&config.endpoint)?;
         if config.model.trim().is_empty() {
@@ -225,6 +227,7 @@ impl HttpEmbeddings {
         })
     }
 
+    #[allow(clippy::disallowed_types, reason = "HTTP provider adapter boundary")]
     fn map_err(&self, e: reqwest::Error) -> EmbeddingsError {
         let e = e.without_url();
         if e.is_timeout() {
@@ -262,9 +265,10 @@ impl HttpEmbeddings {
             }
             bytes.extend_from_slice(&chunk);
         }
-        let reply: Reply = serde_json::from_slice(&bytes).map_err(|e| {
-            EmbeddingsError::InvalidOutput(format!("response is not an embeddings reply: {e}"))
-        })?;
+        // Deserializer diagnostics may quote a provider-controlled secret value.
+        // Keep only a fixed classification, including in Debug and source chains.
+        let reply: Reply = serde_json::from_slice(&bytes)
+            .map_err(|_| EmbeddingsError::InvalidOutput("response is not an embeddings reply".to_owned()))?;
         if reply.data.len() != texts.len() {
             return Err(EmbeddingsError::InvalidOutput(format!(
                 "{} vectors for {} inputs",

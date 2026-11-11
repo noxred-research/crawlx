@@ -9,6 +9,7 @@ use crawlx_core::{
     CrawlRunId, TenantId,
 };
 use crawlx_fetch::{
+    acquisition_service::{AcquisitionServiceAdapter, AcquisitionServiceRegistrationV1},
     protocol::{
         service::{DelegateScope, ServiceAdapter, ServiceRegistration},
         ProtocolError, ProtocolResource,
@@ -29,6 +30,7 @@ use url::Url;
 #[derive(Debug, Default)]
 pub struct ProtocolRegistry {
     services: BTreeMap<String, Arc<ServiceAdapter>>,
+    acquisition_services: BTreeMap<String, Arc<AcquisitionServiceAdapter>>,
     approved_tenants: BTreeSet<String>,
     whois: Option<crawlx_fetch::protocol::whois::WhoisRegistry>,
     ftp: Option<crawlx_fetch::protocol::ftp::FtpRegistry>,
@@ -39,6 +41,8 @@ struct RegistryFile {
     schema_version: u8,
     approved_tenants: BTreeSet<String>,
     services: BTreeMap<String, ServiceRegistration>,
+    #[serde(default)]
+    acquisition_services: BTreeMap<String, AcquisitionServiceRegistrationV1>,
     #[serde(default)]
     whois: Option<crawlx_fetch::protocol::whois::WhoisRegistry>,
     #[serde(default)]
@@ -100,7 +104,11 @@ impl ProtocolRegistry {
         }
         let file: RegistryFile = serde_json::from_slice(&bytes)
             .map_err(|_| WorkerError::Config("invalid protocol registry schema".to_owned()))?;
-        if file.schema_version != 1 || file.services.len() > 16 || file.approved_tenants.len() > 256 {
+        if file.schema_version != 1
+            || file.services.len() > 16
+            || file.acquisition_services.len() > 16
+            || file.approved_tenants.len() > 256
+        {
             return Err(WorkerError::Config(
                 "protocol registry version or count".to_owned(),
             ));
@@ -122,11 +130,20 @@ impl ProtocolRegistry {
             ftp.validate()
                 .map_err(|error| WorkerError::Config(error.to_string()))?;
         }
-        if file.services.contains_key("native_ftp") || file.services.contains_key("native_whois") {
+        if file.services.contains_key("native_ftp")
+            || file.services.contains_key("native_whois")
+            || file.acquisition_services.contains_key("native_ftp")
+            || file.acquisition_services.contains_key("native_whois")
+            || file
+                .acquisition_services
+                .keys()
+                .any(|id| file.services.contains_key(id))
+        {
             return Err(WorkerError::Config("reserved protocol registry id".to_owned()));
         }
         let mut registry = Self {
             services: BTreeMap::new(),
+            acquisition_services: BTreeMap::new(),
             approved_tenants: file.approved_tenants,
             whois: file.whois,
             ftp: file.ftp,
@@ -145,7 +162,55 @@ impl ProtocolRegistry {
                 .map_err(|e| WorkerError::Config(e.to_string()))?;
             registry.services.insert(id, Arc::new(adapter));
         }
+        for (id, registration) in file.acquisition_services {
+            if id.is_empty() || id.len() > 128 {
+                return Err(WorkerError::Config("protocol registry id".to_owned()));
+            }
+            let credential = resolver
+                .resolve(&registration.credential_ref)
+                .await
+                .map_err(|_| {
+                    WorkerError::Config("acquisition service scoped credential unavailable".to_owned())
+                })?;
+            let adapter = AcquisitionServiceAdapter::new(registration, credential)
+                .map_err(|e| WorkerError::Config(e.to_string()))?;
+            registry.acquisition_services.insert(id, Arc::new(adapter));
+        }
         Ok(Arc::new(registry))
+    }
+}
+
+impl ProtocolRegistry {
+    /// Aggregate backend capability published by workers for every registered acquisition service.
+    ///
+    /// One `acquisition_service` backend id exists, so its build digest commits to every sorted
+    /// `(registry id, build digest, guard digest)`; the per-run selector still names one exact id.
+    /// `None` when no service is registered.
+    ///
+    /// # Errors
+    /// Fails if the digest input cannot be encoded.
+    pub(crate) fn acquisition_capability(&self) -> Result<Option<BackendCapabilitiesV1>, WorkerError> {
+        if self.acquisition_services.is_empty() {
+            return Ok(None);
+        }
+        let registered: Vec<(&str, Digest, Digest)> = self
+            .acquisition_services
+            .iter()
+            .map(|(id, adapter)| {
+                let registration = adapter.registration();
+                (id.as_str(), registration.build_digest, registration.guard_digest)
+            })
+            .collect();
+        let digest = Digest::of_value("crawlx/acquisition-service-registry/v1", &registered)
+            .map_err(|e| WorkerError::Config(e.to_string()))?;
+        let mut capability = BackendCapabilitiesV1::native_http("crawlx-fetch", env!("CARGO_PKG_VERSION"));
+        capability.backend_id = "acquisition_service".to_owned();
+        capability.build_digest = Some(digest);
+        capability.limitations = vec![
+            "service_declared_target_evidence".to_owned(),
+            "certificate_evidence_unavailable".to_owned(),
+        ];
+        Ok(Some(capability))
     }
 }
 
@@ -176,10 +241,60 @@ impl ProtocolRuntime {
     ) -> Result<Self, WorkerError> {
         Ok(Self {
             registry,
-            policy: Arc::new(egress.policy_for_run(crawl, record)),
+            policy: Arc::new(egress.policy_for_run(crawl, record)?),
             resolver: egress.resolver_for(crawl)?,
             governor,
         })
+    }
+
+    /// Refuse an unknown selector, unapproved tenant or non-ZDR service before any socket.
+    ///
+    /// # Errors
+    /// Fails for an unregistered id, a tenant without external-processing approval, or a
+    /// zero-retention run on a service that does not declare `zdr_compatible`.
+    pub fn admit_acquisition_service(
+        &self,
+        id: &str,
+        tenant: TenantId,
+        zdr: bool,
+    ) -> Result<(), WorkerError> {
+        let adapter =
+            self.registry.acquisition_services.get(id).ok_or_else(|| {
+                WorkerError::Config("acquisition service registration unavailable".to_owned())
+            })?;
+        if !self.external_processing_approved(tenant)
+            || (zdr && !adapter.registration().capabilities.contains("zdr_compatible"))
+        {
+            return Err(WorkerError::Config(
+                "acquisition service scope refused".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Registered adapter with this runtime's already checked egress, resolver and governor.
+    pub(crate) fn acquisition_service(
+        &self,
+        id: &str,
+    ) -> Option<(
+        &Arc<AcquisitionServiceAdapter>,
+        &EgressPolicy,
+        &dyn Resolver,
+        &OriginGovernor,
+    )> {
+        self.registry.acquisition_services.get(id).map(|adapter| {
+            (
+                adapter,
+                self.policy.as_ref(),
+                self.resolver.as_ref(),
+                self.governor.as_ref(),
+            )
+        })
+    }
+
+    /// Whether the operator approved this tenant for external content processing.
+    pub(crate) fn external_processing_approved(&self, tenant: TenantId) -> bool {
+        self.registry.approved_tenants.contains(&tenant.to_string())
     }
 
     /// Refuse all explicit unavailable delegates at run admission, before acquisition sockets.
@@ -454,6 +569,16 @@ pub fn capability_report(
                 Some(cap.build_digest.clone()),
             ));
         }
+        for (id, adapter) in &registry.acquisition_services {
+            let registration = adapter.registration();
+            delegates.push(ProtocolCapabilityEntryV1::configured(
+                id.clone(),
+                BTreeSet::from(["https".to_owned()]),
+                registration.capabilities.clone(),
+                67_108_864,
+                Some(registration.build_digest.to_hex()),
+            ));
+        }
         for (id, scheme, enabled, capabilities) in [
             (
                 "native_ftp",
@@ -492,3 +617,7 @@ pub fn capability_report(
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "protocol_acquisition_tests.rs"]
+mod acquisition_tests;

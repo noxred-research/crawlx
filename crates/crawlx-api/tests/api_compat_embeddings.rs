@@ -9,6 +9,10 @@
 //! to wiremock servers standing in for the chat and embeddings endpoints (no network).
 
 use axum::body::Body;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{Method, Request, StatusCode};
 use axum::Router;
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
@@ -345,7 +349,7 @@ impl Respond for KeywordVectors {
 
 fn chat_reply(content: &Value) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({
-        "choices": [{"message": {"role": "assistant", "content": content.to_string()}}],
+        "choices": [{"message": {"role": "assistant", "content": content.to_string()}, "finish_reason":"stop"}],
         "usage": {"prompt_tokens": 11, "completion_tokens": 5, "total_tokens": 16},
     }))
 }

@@ -13,6 +13,10 @@ use tokio_util::sync::CancellationToken;
 /// Metadata-API latency target (ms).
 const SLO_MS: f64 = 150.0;
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_hundred_rps_for_twenty_seconds_stays_under_the_latency_target() {
     let port = {

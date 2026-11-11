@@ -312,6 +312,10 @@ fn display_url(url: &str) -> String {
 }
 
 /// Stream `url` into `dest`, hashing as it goes; returns the lowercase hex SHA-256.
+#[allow(
+    clippy::disallowed_types,
+    reason = "Chromium download transport boundary constructs the raw HTTP client"
+)]
 async fn download(url: &str, dest: &Path) -> Result<String, InstallError> {
     let fail = |reason: String| InstallError::Download {
         url: display_url(url),

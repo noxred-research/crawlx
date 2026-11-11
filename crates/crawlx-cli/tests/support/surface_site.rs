@@ -3,6 +3,10 @@
 
 use axum::body::Body;
 use axum::extract::State;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use axum::response::Response;
 use axum::Router;

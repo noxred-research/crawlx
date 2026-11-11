@@ -225,11 +225,13 @@ pub async fn create(
         } = translate(bd, planned.as_ref().map(|(m, _)| m))?;
         st.config.compat.mode.apply(&mut crawl, query_policy_unset);
         // the LLM formats need the configured LLM: refuse before a run exists
-        if crawl
-            .scrape
-            .as_ref()
-            .is_some_and(|j| j.options.formats.iter().any(FormatSpec::needs_llm))
-        {
+        if crawl.scrape.as_ref().is_some_and(|job| {
+            job.options.formats.iter().any(FormatSpec::needs_llm)
+                || matches!(
+                    job.options.content_strategy,
+                    Some(crawlx_core::scrape::ContentStrategySpecV1::ModelV1 { .. })
+                )
+        }) {
             llm(st)?;
         }
         if robots_override {

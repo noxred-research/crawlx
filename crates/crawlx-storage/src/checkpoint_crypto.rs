@@ -25,6 +25,10 @@
 
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed checkpoint-custody adapter owns the raw client and redacts all provider failures"
+)]
 use aws_sdk_kms::{primitives::Blob, types::DataKeySpec, Client};
 use aws_smithy_http_client::tls;
 use crawlx_core::checkpoint_crypto::{
@@ -266,6 +270,10 @@ impl CheckpointKeys for MemoryCheckpointKeys {
 /// Real cloud KMS envelope encryption with fresh AES-256 data keys per checkpoint.
 #[non_exhaustive]
 pub struct KmsCheckpointKeys {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "private raw client is confined to the reviewed checkpoint-custody adapter"
+    )]
     client: Client,
     key_id: String,
 }
@@ -285,6 +293,10 @@ impl KmsCheckpointKeys {
     /// # Errors
     /// Rejects an empty/oversized key identifier or absent cloud region. SDK failures
     /// are returned by `seal`/`open`; no generated key or plaintext fallback exists.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "construct the private checkpoint-custody client only at this reviewed adapter boundary"
+    )]
     pub async fn from_environment(key_id: String) -> Result<Self, CheckpointCryptoError> {
         validate_key_id(&key_id)?;
         let http = aws_smithy_http_client::Builder::new()

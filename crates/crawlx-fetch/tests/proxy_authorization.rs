@@ -44,6 +44,10 @@ async fn start(policy: EgressPolicy) -> EgressProxyHandle {
         .unwrap()
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: a raw reqwest client plays the browser against the egress proxy and never crosses a typed fetch boundary"
+)]
 fn proxied_client(proxy: &EgressProxyHandle) -> reqwest::Client {
     reqwest::Client::builder()
         .proxy(reqwest::Proxy::http(format!("http://127.0.0.1:{}", proxy.port())).unwrap())

@@ -1,0 +1,16 @@
+{
+  "status": "completed",
+  "total": 1,
+  "completed": 1,
+  "data": [{
+    "markdown": "# Catalog\n\nA bounded local fixture.",
+    "links": [],
+    "metadata": {
+      "sourceURL": "https://fixture.invalid/catalog?edition=2",
+      "statusCode": 200,
+      "title": "Catalog",
+      "contentType": "text/html"
+    }
+  }],
+  "errors": {"errors": [], "robotsBlocked": []}
+}

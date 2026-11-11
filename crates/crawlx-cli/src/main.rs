@@ -11,6 +11,9 @@ use std::process::ExitCode;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
+    if let Some(code) = crawlx_extract::isolated::dispatch(std::env::args_os()) {
+        return ExitCode::from(code);
+    }
     // `DEBUG=true` (the compatibility switch): print the whole error chain with a backtrace. anyhow records
     // the backtrace when an error is created, so it is requested before anything runs.
     let debug = crawlx_cli::debug_enabled(&|key| std::env::var(key).ok());

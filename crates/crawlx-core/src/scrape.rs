@@ -8,6 +8,7 @@
 
 use crate::hash::Digest;
 use crate::page_op::SelectorState;
+use crate::parser_memory::AdmittedText;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -487,6 +488,54 @@ impl ProxyMode {
     }
 }
 
+/// Largest provider output-token ceiling a [`ContentStrategySpecV1::ModelV1`] request may name.
+pub const MAX_CONTENT_STRATEGY_OUTPUT_TOKENS: u32 = 65_536;
+/// Largest decoded provider response a [`ContentStrategySpecV1::ModelV1`] request may name.
+pub const MAX_CONTENT_STRATEGY_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Opt-in, versioned content strategy of one scrape. Absence means [`Self::NativeV1`]: the
+/// deterministic native parser, with no model provider involved.
+///
+/// `ModelV1` is authenticated, immutable request configuration. Page content can never widen
+/// it, and generated output never becomes a navigation or action authority.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "strategy",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[non_exhaustive]
+pub enum ContentStrategySpecV1 {
+    /// The existing native parser and table handling.
+    #[default]
+    NativeV1,
+    /// One bounded model call over the composed markdown; no retry, mirror or native fallback.
+    ModelV1 {
+        /// The requested content operation.
+        target: ContentStrategyTargetV1,
+        /// Provider completion-token ceiling (1..=65 536).
+        max_output_tokens: u32,
+        /// Decoded provider response-byte ceiling (1..=8 388 608).
+        max_response_bytes: usize,
+        /// Explicit consent to external model processing of the page content; must be `true`.
+        external_processing_consent: bool,
+    },
+}
+
+/// The operation a [`ContentStrategySpecV1::ModelV1`] strategy performs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub enum ContentStrategyTargetV1 {
+    /// Normalize tables only; the markdown stays native.
+    Tables,
+    /// Replace the markdown with model-selected page content.
+    Content,
+    /// Do both: model-selected content and normalized tables.
+    TablesAndContent,
+}
+
 /// Per-page scrape options (compatibility API `ScrapeOptions`).
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -592,6 +641,11 @@ pub struct ScrapeOptions {
     /// Redact personal data from the returned markdown, html and rawHtml (compatibility API `redactPII`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redact_pii: Option<RedactPii>,
+    /// Opt-in versioned content strategy. `None` and `nativeV1` keep the native parser untouched;
+    /// `modelV1` needs explicit consent, never combines with `onlyCleanContent`, and is refused on
+    /// zero-data-retention runs before any model I/O.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_strategy: Option<ContentStrategySpecV1>,
 }
 
 fn is_zero_u32(n: &u32) -> bool {
@@ -652,6 +706,10 @@ impl ScrapeOptions {
         shaped.max_age_ms = 0;
         shaped.min_age_ms = None;
         shaped.cache = None;
+        // `nativeV1` and omission describe the same native answer.
+        if matches!(shaped.content_strategy, Some(ContentStrategySpecV1::NativeV1)) {
+            shaped.content_strategy = None;
+        }
         shaped.store_in_cache = true;
         shaped.lockdown = false;
         shaped.timeout_ms = DEFAULT_TIMEOUT_MS;
@@ -697,6 +755,7 @@ impl Default for ScrapeOptions {
             only_clean_content: false,
             check_prompt_injection: false,
             redact_pii: None,
+            content_strategy: None,
             profile: None,
         }
     }
@@ -753,6 +812,10 @@ pub struct ScrapeJob {
     /// Caller metadata echoed in every webhook payload (compatibility API `webhook.metadata`).
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub webhook_metadata: serde_json::Value,
+    /// Keep the `robots.txt` gate of a `scrape` or `batch` job. The compatibility API scrapes the
+    /// URLs it is given and lowers the gate; the single-page commands scrape under it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub honor_robots_txt: bool,
 }
 
 impl ScrapeJob {
@@ -765,6 +828,7 @@ impl ScrapeJob {
             urls: Vec::new(),
             webhook_headers: BTreeMap::new(),
             webhook_metadata: serde_json::Value::Null,
+            honor_robots_txt: false,
         }
     }
 }
@@ -853,6 +917,38 @@ impl ScrapeOptions {
                 }
             }
         }
+        if let Some(ContentStrategySpecV1::ModelV1 {
+            max_output_tokens,
+            max_response_bytes,
+            external_processing_consent,
+            ..
+        }) = &self.content_strategy
+        {
+            if !(1..=MAX_CONTENT_STRATEGY_OUTPUT_TOKENS).contains(max_output_tokens) {
+                return Err(format!(
+                    "contentStrategy: maxOutputTokens must be 1..={MAX_CONTENT_STRATEGY_OUTPUT_TOKENS}"
+                ));
+            }
+            if !(1..=MAX_CONTENT_STRATEGY_RESPONSE_BYTES).contains(max_response_bytes) {
+                return Err(format!(
+                    "contentStrategy: maxResponseBytes must be 1..={MAX_CONTENT_STRATEGY_RESPONSE_BYTES}"
+                ));
+            }
+            if !external_processing_consent {
+                return Err(
+                    "contentStrategy: modelV1 requires externalProcessingConsent to be true".to_owned(),
+                );
+            }
+            if self.only_clean_content {
+                return Err("contentStrategy: modelV1 cannot be combined with onlyCleanContent".to_owned());
+            }
+            if self.wants("rawBase64") {
+                return Err(
+                    "contentStrategy: modelV1 processes page markdown and cannot be used with the `rawBase64` format"
+                        .to_owned(),
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -882,12 +978,55 @@ pub struct AttributeResult {
 }
 
 /// HTML captured by a `scrape` action.
+///
+/// The DOM is charged: clones share one allocation and its byte reservation. The wire shape
+/// is a plain string; deserializing reserves the bytes before copying them.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct ActionScrape {
     /// Document URL at that point.
     pub url: String,
     /// Serialized DOM at that point.
-    pub html: String,
+    #[serde(with = "admitted_html")]
+    pub html: AdmittedText,
+}
+
+/// Serde adapter writing [`AdmittedText`] as a string and admitting it before reading one.
+mod admitted_html {
+    use crate::parser_memory::{global, AdmittedText};
+    use serde::de::{Error, Visitor};
+    use serde::{Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(html: &AdmittedText, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(html.as_str())
+    }
+
+    struct Admit;
+
+    impl Visitor<'_> for Admit {
+        type Value = AdmittedText;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a string")
+        }
+
+        fn visit_str<E: Error>(self, text: &str) -> Result<AdmittedText, E> {
+            let permit = global()
+                .try_reserve(text.len())
+                .map_err(|_| E::custom("byte admission refused the captured html"))?;
+            Ok(AdmittedText::new(text.to_owned(), permit))
+        }
+
+        fn visit_string<E: Error>(self, text: String) -> Result<AdmittedText, E> {
+            let permit = global()
+                .try_reserve(text.capacity())
+                .map_err(|_| E::custom("byte admission refused the captured html"))?;
+            Ok(AdmittedText::new(text, permit))
+        }
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<AdmittedText, D::Error> {
+        deserializer.deserialize_str(Admit)
+    }
 }
 
 /// Value returned by an `executeJavascript` action.
@@ -1061,6 +1200,12 @@ pub struct ScrapeDocument {
     /// Requested native content outputs after privacy projection and retention admission.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outputs: Option<serde_json::Value>,
+    /// GENERATED content of an opt-in `modelV1` content strategy: the final typed
+    /// `ContentDocumentV1` (`version`, `markdown`, `tables`). It is untrusted model output, not
+    /// native source evidence, structural metadata or a navigation authority; native `outputs`,
+    /// article envelopes, source ranges, digests and discovery links never derive from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_content: Option<serde_json::Value>,
     /// Results of `actions[]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<ActionResults>,
@@ -1126,6 +1271,7 @@ impl ScrapeDocument {
             pages: None,
             blocks: None,
             outputs: None,
+            model_content: None,
             actions: None,
             llm_tokens: 0,
             audio: None,

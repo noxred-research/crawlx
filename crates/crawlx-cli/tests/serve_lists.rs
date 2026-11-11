@@ -102,6 +102,10 @@ async fn start(dir: &Path, key: &str, env: &[(&str, &Path)]) -> Serve {
     );
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn create_crawl(serve: &Serve, key: &str, seed: &str) -> (u16, Value) {
     let response = reqwest::Client::new()
         .post(format!("{}/v1/crawls", serve.base))
@@ -133,6 +137,10 @@ fn authz(serve: &Serve, key: &str, args: &[&str]) -> std::process::Output {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn serve_loads_the_operator_keys_and_reloads_the_blocklist_on_sighup() {
     let dir = tempfile::tempdir().unwrap();
     let key = generate_key();

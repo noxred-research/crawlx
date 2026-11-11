@@ -139,13 +139,16 @@ fn every_row_names_real_flags_compat_spellings_and_existing_gates() {
             let at = source
                 .find(&format!("fn {name}("))
                 .unwrap_or_else(|| panic!("{id}: {gate} does not exist"));
-            let before: Vec<&str> = source[..at].lines().rev().take(4).collect();
-            assert!(
-                before
-                    .iter()
-                    .any(|l| l.contains("#[test]") || l.contains("#[tokio::test")),
-                "{id}: {gate} is not a test"
-            );
+            // the attribute block above the fn: walk up until the previous item ends
+            let is_test = source[..at]
+                .lines()
+                .rev()
+                .take_while(|l| {
+                    let t = l.trim_end();
+                    !(t.is_empty() || t.ends_with('}') || t.ends_with(';'))
+                })
+                .any(|l| l.contains("#[test]") || l.contains("#[tokio::test"));
+            assert!(is_test, "{id}: {gate} is not a test");
         }
         for spelling in strings(&row["compat"]) {
             let rewritten = crawlx_cli::normalize_args(["crawlx", "crawl", spelling]);

@@ -131,6 +131,10 @@ struct LoopbackTransport {
 
 #[async_trait]
 impl WebhookTransport for LoopbackTransport {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "test client speaks HTTP to an owned local fixture server"
+    )]
     async fn post(&self, req: WebhookRequest) -> Result<u16, TransportError> {
         let host = req
             .url

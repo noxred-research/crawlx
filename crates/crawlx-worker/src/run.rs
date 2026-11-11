@@ -68,6 +68,14 @@ use tracing::Instrument as _;
 
 const MAX_SESSION_POOL_BINDINGS: usize = 1024;
 
+/// Close a context nobody will use and return its slot, confirming closure before capacity returns.
+async fn close_pooled(pooled: crate::pool::PooledContext) -> Result<(), WorkerError> {
+    let (context, _, capacity) = pooled.into_parts();
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
+    capacity.release(matches!(closed, Ok(Ok(())))).await?;
+    Ok(())
+}
+
 /// Everything one run needs, shared by its sessions and its URL plane.
 #[derive(Clone)]
 pub struct RunContext {
@@ -122,8 +130,20 @@ pub struct RunContext {
     pub protocol_registry: Option<Arc<crate::protocol::ProtocolRegistry>>,
     /// Immutable tenant-approved recipe resolved at admission, outside tenant control.
     pub archive_behavior: Option<Arc<crawlx_core::archive_behaviors::RecipeV1>>,
+    /// Operator-approved actor portion of the immutable extension recipe.
+    pub(crate) extension_actor_recipe: Option<Arc<crawlx_core::archive_behaviors::RecipeV1>>,
+    /// Process-local interactive control shared with the loopback API.
+    pub interactive_profiles: Option<Arc<crate::interactive_profiles::InteractiveProfiles>>,
     /// Protected operator root for tenant-keyed request/cache correlation.
     pub request_identity_key: Option<crawlx_core::secret::SecretOr<[u8; 32]>>,
+    /// Shared run-local advisory quotas; never replaces the deployment governor.
+    pub(crate) advisory_frontier: Arc<crawlx_scheduler::frontier::AdvisoryFrontierV1>,
+    /// Retained URL evidence sink, available only with the protected stable identity key.
+    pub(crate) url_graph_producer: Option<Arc<crate::url_graph::UrlGraphProducer>>,
+    /// Immutable normalized run policy and deterministic graph-model pin.
+    pub(crate) url_graph_policy: crawlx_core::url_graph::UrlGraphPolicyV1,
+    /// Operator-approved source traversal/projection, never taken from source content.
+    pub(crate) source_dispatch: Option<Arc<crate::source_dispatch::SourceDispatcher>>,
     /// Model clients (System 1, planner) shared by the sessions of the run.
     pub models: ModelServices,
     /// Milestone gates the strategy registry checks before building gated strategies.
@@ -132,6 +152,8 @@ pub struct RunContext {
     pub incognito: bool,
     /// Operator-approved retained-profile policy; never supplied by a crawl request.
     pub retained_profiles: Option<crate::config::RetainedProfilePolicy>,
+    /// Retained structured profiles of this run's sessions, by session. Never holds raw state.
+    pub(crate) profile_sessions: crate::profile_custody_runtime::ProfileSessions,
     /// The proxy traffic source when `capture.backend = "proxy"`.
     pub capture: Option<Arc<ProxyCapture>>,
     /// The worker's CPU pool, for the URL plane's extraction step.
@@ -311,6 +333,9 @@ pub struct RunReport {
     #[serde(skip)]
     /// Page contents.
     pub page_contents: Vec<PageContent>,
+    /// Native HEAD observations, without fabricated document or body output.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub head_responses: Vec<serde_json::Value>,
     /// Browser processes the run's pool launched; `0` for every `mode = static` run.
     pub browser_launches: usize,
     #[serde(skip)]
@@ -363,6 +388,7 @@ pub struct LocalRun {
     pub resume: Option<ResumeState>,
     /// Optional graceful shutdown signal, distinct from hard caller cancellation.
     graceful_drain: Option<CancellationToken>,
+    initial_request_method: http::Method,
     // Deliberately absent from WorkerConfig, request JSON and queued run records.
     fixture_evaluation: Option<crate::fixture_evaluation::FixtureEvaluationPermit>,
 }
@@ -385,8 +411,26 @@ impl LocalRun {
             authorization_source: None,
             resume: None,
             graceful_drain: None,
+            initial_request_method: http::Method::GET,
             fixture_evaluation: None,
         }
+    }
+
+    /// Select GET or HEAD for the initial URL; discovered children remain GET.
+    ///
+    /// # Errors
+    /// Rejects unsafe methods and HEAD outside native static acquisition before I/O.
+    pub fn with_initial_request_method(mut self, method: http::Method) -> Result<Self, WorkerError> {
+        if !matches!(method, http::Method::GET | http::Method::HEAD)
+            || (method == http::Method::HEAD
+                && (self.crawl.mode != CrawlMode::Static || self.crawl.scrape.is_some()))
+        {
+            return Err(WorkerError::Config(
+                "initial request requires native GET or HEAD".into(),
+            ));
+        }
+        self.initial_request_method = method;
+        Ok(self)
     }
 
     /// Attach single-use Advisory evaluation authority from an owned local fixture listener.
@@ -725,7 +769,7 @@ pub fn build_fetcher_with_capture(
     origin_governor: Arc<crawlx_fetch::OriginGovernor>,
 ) -> Result<(Arc<Fetcher>, Arc<dyn Resolver>), WorkerError> {
     let resolver = cfg.egress.resolver_for(crawl)?;
-    let policy = Arc::new(cfg.egress.policy_for_run(crawl, record));
+    let policy = Arc::new(cfg.egress.policy_for_run(crawl, record)?);
     let route = cfg.egress.route_for(crawl)?;
     let pool = route.bind_run(run, Some((Arc::clone(&policy), Arc::clone(&resolver))))?;
     let fetch_cfg = FetchConfig {
@@ -883,6 +927,8 @@ impl RunContext {
     ) -> Result<Self, WorkerError> {
         cfg.check_article_language(&run.config)?;
         let archive_behavior = Box::pin(cfg.resolve_archive_behaviors(&run.config, run.tenant)).await?;
+        let extension_actor_recipe =
+            Box::pin(cfg.resolve_extension_actor_recipe(&run.config, run.tenant)).await?;
         let checkpoint_keys = cfg
             .checkpoint_keys
             .as_ref()
@@ -984,7 +1030,7 @@ impl RunContext {
             Arc::clone(&origin_governor),
         )?;
         let delivery_authority = Arc::new(crate::delivery::DeliveryAuthority {
-            policy: Arc::new(cfg.egress.policy_for_run(&crawl, record)),
+            policy: Arc::new(cfg.egress.policy_for_run(&crawl, record)?),
             resolver: delivery_resolver,
             governor: Arc::clone(&origin_governor),
             cancel: cancel.clone(),
@@ -995,24 +1041,41 @@ impl RunContext {
             Arc::clone(&robots_fetcher),
             Arc::clone(&clock),
         );
-        let kernel = Arc::new(build_kernel(&crawl, Arc::clone(&clock), record)?);
+        let kernel = Arc::new(
+            build_kernel(&crawl, Arc::clone(&clock), record)?.with_run_deadline(
+                Budget::new(&crawl.limits, run.started_at.unwrap_or(run.created_at)).deadline(),
+            ),
+        );
         let mut pool_cfg = PoolConfig::with_contexts(cfg.contexts_per_browser);
         let mut launch = cfg.launch_config();
-        // Names are logical encrypted catalog identities, never legacy tenant/name directories.
+        if let Some(settings) = crate::netns::NamespaceSettings::from_env(&|name| std::env::var(name).ok())
+            .map_err(|error| WorkerError::Config(error.to_string()))?
+        {
+            settings
+                .prepare(&mut launch)
+                .await
+                .map_err(|error| WorkerError::Config(error.to_string()))?;
+        }
+        // Names are logical encrypted catalog identities: cookie and web-storage state held under
+        // durable key custody and the run's secret authority, never a profile directory.
         if crawl.dynamic.browser_profile.is_some() {
             if cfg.retained_profiles.is_none()
                 || stores.pg.is_none()
                 || crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr
             {
-                return Err(WorkerError::Config("profile_unavailable: retained profiles require operator approval, encryption key and PostgreSQL fence; zdr forbids them".into()));
+                return Err(WorkerError::Config("profile_unavailable: retained profiles require operator approval and PostgreSQL fence; zdr forbids them".into()));
             }
-            if stores.custody.is_some() {
+            if stores.pg_secret_authority.is_none()
+                || !stores
+                    .artifact_keys
+                    .as_ref()
+                    .is_some_and(|keys| keys.is_available() && keys.is_durable())
+            {
                 return Err(WorkerError::Config(
-                    "profile_unavailable: retained browser profiles are unavailable while encrypted artifact custody is enabled"
+                    "profile_unavailable: retained browser profiles require the run secret authority and durable artifact key custody"
                         .into(),
                 ));
             }
-            launch.profiles_dir = Some(std::path::PathBuf::from(crate::profile_lifecycle::PROFILE_TMPFS));
         }
         if crawl.dynamic.browser_profile.is_some() && cfg.cdp_ws_url.is_some() {
             return Err(WorkerError::Config(
@@ -1061,6 +1124,19 @@ impl RunContext {
         let pool = match backend {
             Some(b) => BrowserPool::with_backend_config(b, pool_cfg),
             None => BrowserPool::new(launch, pool_cfg),
+        };
+        let pool = if crawl.extensions.configured() {
+            pool.with_extensions(
+                crate::pool::PoolExtensions::new(
+                    &crawl.extensions,
+                    Arc::clone(&stores.events),
+                    run.id,
+                    cancel.clone(),
+                )
+                .map_err(|error| WorkerError::Config(error.to_string()))?,
+            )
+        } else {
+            pool
         };
         // capture contract (`late` = started after settle) on the default backend;
         // `with_proxy_capture` replaces this wrapper for the proxy backend
@@ -1112,6 +1188,41 @@ impl RunContext {
                 crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr,
             )?;
         }
+        if let Some(id) = crawl.fetch.acquisition_service.as_deref() {
+            let registry = protocol_registry.as_ref().ok_or_else(|| {
+                WorkerError::Config(
+                    "acquisition service capability unavailable: operator registry absent".to_owned(),
+                )
+            })?;
+            crate::protocol::ProtocolRuntime::new(
+                Arc::clone(registry),
+                &cfg.egress,
+                &crawl,
+                authorization.as_deref().map(|guard| guard.record()),
+                Arc::clone(&origin_governor),
+            )?
+            .admit_acquisition_service(
+                id,
+                run.tenant,
+                crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr,
+            )?;
+        }
+        let advisory_frontier = Arc::new(
+            crawlx_scheduler::frontier::AdvisoryFrontierV1::new(Default::default())
+                .map_err(|_| WorkerError::Config("invalid advisory frontier policy".into()))?,
+        );
+        let url_graph_producer = cfg.request_identity_key.as_ref().map(|root| {
+            Arc::new(crate::url_graph::UrlGraphProducer::new(
+                Arc::clone(&stores.url_graph),
+                root.expose(),
+            ))
+        });
+        let url_graph_policy = crawlx_core::url_graph::UrlGraphPolicyV1::new(
+            run.config_digest,
+            Digest::of("crawlx/url-graph/model/v1", b"fixed-point-link-rank/1"),
+            16,
+            8500,
+        );
         let mut context = Self {
             run: run.id,
             seed: run.seed,
@@ -1130,6 +1241,10 @@ impl RunContext {
             checkpoint_keys,
             captcha,
             request_identity_key: cfg.request_identity_key.clone(),
+            advisory_frontier,
+            url_graph_producer,
+            url_graph_policy,
+            source_dispatch: cfg.source_dispatch.clone(),
             captcha_secrets,
             worker: cfg.worker_id,
             cancel,
@@ -1140,10 +1255,13 @@ impl RunContext {
             session_flow_capture: None,
             protocol_registry,
             archive_behavior,
+            extension_actor_recipe,
+            interactive_profiles: cfg.interactive_profiles.clone(),
             models,
             gates: cfg.gates.clone(),
             incognito: cfg.incognito,
             retained_profiles: cfg.retained_profiles.clone(),
+            profile_sessions: Arc::default(),
             capture: None,
             cpu_pool: cfg.cpu_pool.clone(),
             browser_pages: None,
@@ -1306,6 +1424,7 @@ impl RunContext {
             tenant: self.stores.tenant,
             checkpoint_keys: Arc::clone(&self.checkpoint_keys),
             journal: Arc::clone(&self.stores.journal),
+            approvals: Arc::clone(&self.stores.approvals),
             runs: Arc::clone(&self.stores.runs),
             events: Arc::clone(&self.stores.events),
             states: Arc::clone(&self.stores.states),
@@ -1364,7 +1483,7 @@ impl RunContext {
         let policy = Arc::new(self.egress.policy_for_run(
             &self.crawl,
             self.authorization.as_ref().map(|guard| guard.record()),
-        ));
+        )?);
         let pool = route
             .bind(binding, Some((policy, resolver)))?
             .ok_or_else(|| WorkerError::Config("session proxy binding unavailable".into()))?;
@@ -1423,29 +1542,26 @@ impl RunContext {
             ));
         }
         let retained = self.crawl.dynamic.browser_profile.is_some();
-        let profile_key = if retained {
-            Some(crate::profile_lifecycle::ProfileRun::encryption(self).await?)
+        let profile_rt = if retained {
+            Some(crate::profile_custody_runtime::ProfileCustodyRuntime::from_run(self, lease).await?)
         } else {
             None
         };
+        if let Some(runtime) = &profile_rt {
+            // Before any context exists: only the profile's origins are reachable with its state.
+            cfg.context.navigation_guard = Some(crate::profile_custody_runtime::origin_guard(
+                runtime.origins().clone(),
+                cfg.context.navigation_guard.take(),
+            ));
+        }
         // CAPTCHA tokens register run-wide under this session's fence before page delivery.
         cfg.context.secret_registrar = self.stores.secret_registrar(
             self.stores.session_producer(self.run, lease),
             &self.captcha_secrets,
         );
-        let mut acquisition_config = cfg.context.clone();
-        if retained {
-            if self.retained_profiles.is_none() || self.stores.pg.is_none() {
-                return Err(WorkerError::Config(
-                    "profile_unavailable: operator policy and existing lease required".into(),
-                ));
-            }
-            acquisition_config.browser_profile = None;
-            acquisition_config.incognito = true;
-        }
         let pooled = self
             .pool
-            .acquire(acquisition_config, retained || cfg.exclusive_browser)
+            .acquire(cfg.context.clone(), cfg.exclusive_browser)
             .await?;
         let metadata = self.stores.runs.get_metadata(self.run).await?;
         let mut identity = SessionIdentityV1::new(
@@ -1469,11 +1585,7 @@ impl RunContext {
                 None => self.egress.route_for(&self.crawl)?.egress_digest(),
             },
             metadata.config_digest,
-            self.crawl
-                .dynamic
-                .browser_profile
-                .as_ref()
-                .map(|profile| Digest::of("crawlx/session-profile/v1", profile.name.as_bytes())),
+            None,
         );
         // Login is outside the exploration clock. Reserve only its bounded envelope;
         // session_body narrows this to the measured, durably credited deadline before
@@ -1488,33 +1600,37 @@ impl RunContext {
             .authorization
             .as_ref()
             .map_or(expiry, |guard| expiry.min(guard.record().valid_to));
-        let (pooled, profile) = if retained {
-            let build = pooled.build.clone();
-            let (context, _, capacity) = pooled.into_parts();
-            let closed = tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
-            capacity.release(matches!(closed, Ok(Ok(())))).await?;
-            let (cipher, egress) = profile_key
-                .ok_or_else(|| WorkerError::Config("profile_unavailable: operator key missing".into()))?;
-            let profile =
-                crate::profile_lifecycle::ProfileRun::prepare(self, lease, &identity, cfg, cipher, egress)
-                    .await?;
-            identity = profile.identity().clone();
-            let pooled = self.pool.acquire(cfg.context.clone(), true).await?;
-            if pooled.build != build {
-                let (context, _, capacity) = pooled.into_parts();
-                let closed = tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
-                capacity.release(matches!(closed, Ok(Ok(())))).await?;
-                return Err(WorkerError::Config(
-                    "profile_unavailable: browser build changed after profile compatibility check".into(),
-                ));
+        // Custody is claimed before binding: the binding verifier finds the claimed generation in
+        // `browser_profiles` under this lease. The state itself is applied to the final context.
+        let profile = match profile_rt {
+            Some(runtime) => {
+                let generation = self
+                    .crawl
+                    .dynamic
+                    .browser_profile
+                    .as_ref()
+                    .map_or(0, |requested| requested.generation);
+                match runtime.acquire(&identity, generation).await {
+                    Ok(start) => {
+                        identity.profile = start.profile_identity()?;
+                        Some(crate::profile_custody_runtime::ProfileSession::new(
+                            runtime, start,
+                        ))
+                    }
+                    Err(error) => {
+                        if let Err(cleanup) = close_pooled(pooled).await {
+                            tracing::warn!(error = %cleanup, "retained profile cleanup failed after acquire failure");
+                        }
+                        return Err(error);
+                    }
+                }
             }
-            (pooled, Some(profile))
-        } else {
-            (pooled, None)
+            None => None,
         };
         let expiry = profile
             .as_ref()
-            .map_or(expiry, |profile| expiry.min(profile.expires_at()));
+            .and_then(crate::profile_custody_runtime::ProfileSession::expires_at)
+            .map_or(expiry, |profile_expiry| expiry.min(profile_expiry));
         let binding = if let Some(pg) = &self.stores.pg {
             let binding = match pg.bind_session(lease, identity, expiry).await {
                 Ok(binding) => binding,
@@ -1593,7 +1709,7 @@ impl RunContext {
             cfg.context.egress_proxy_port = Some(proxy.port());
             let pooled = self
                 .pool
-                .acquire(cfg.context.clone(), retained || cfg.exclusive_browser)
+                .acquire(cfg.context.clone(), cfg.exclusive_browser)
                 .await?;
             if pooled.build != expected_build {
                 let (context, _, capacity) = pooled.into_parts();
@@ -1608,10 +1724,19 @@ impl RunContext {
         } else {
             pooled
         };
-        Ok(match profile {
-            Some(profile) => pooled.with_profile(profile),
-            None => pooled,
-        })
+        let mut pooled = pooled;
+        // The final context exists only now (a bound proxy re-acquires it), so this is the one
+        // place the claimed generation can be applied. Failure closes everything.
+        if let Some(mut session) = profile {
+            if let Err(error) = session.apply(self.clock.now(), &mut *pooled.ctx).await {
+                if let Err(cleanup) = close_pooled(pooled).await {
+                    tracing::warn!(error = %cleanup, "retained profile cleanup failed after apply failure");
+                }
+                return Err(error);
+            }
+            self.profile_sessions.lock().insert(lease.session.id, session);
+        }
+        Ok(pooled)
     }
 
     /// Browser context settings of a session: launch profile, egress proxy, tab policy,
@@ -1655,10 +1780,14 @@ impl RunContext {
         c.secret_registrar = crawlx_core::custody::current_producer()
             .and_then(|producer| self.stores.secret_registrar(producer, &self.captcha_secrets));
         if let Some(gate) = self.browser_guard() {
-            // every document the browser loads is checked against `robots.txt` first;
-            // a run that ignores it navigates unchecked
+            // Robots remains a document-only guard; the signed network scope below covers all resources.
             c.navigation_guard = Some(Arc::new(gate.clone()));
         }
+        c.navigation_guard = Some(Arc::new(crawlx_browser::network_guard::ScopedNetworkGuard::new(
+            (*self.delivery_authority.policy).clone(),
+            self.cancel.clone(),
+            c.navigation_guard.take(),
+        )));
         c
     }
 
@@ -1859,18 +1988,31 @@ pub async fn run_session(
         .stores
         .session_producer(rc.run, &lease)
         .with_cancellation(publication_cancel);
-    crawlx_core::custody::with_producer(
-        producer,
-        Box::pin(run_session_scoped(
-            rc,
-            scheduler,
-            lease,
-            start_requests,
-            driver,
-            strategies,
-        )),
+    let authority = rc.stores.pg_secret_authority.clone();
+    let outcome = crawlx_core::custody::with_producer(
+        producer.clone(),
+        crate::custody_renewal::with_custody_renewal(authority, producer, async {
+            Ok::<_, WorkerError>(
+                Box::pin(run_session_scoped(
+                    rc,
+                    scheduler,
+                    lease,
+                    start_requests,
+                    driver,
+                    strategies,
+                ))
+                .await,
+            )
+        }),
     )
-    .await
+    .await;
+    match outcome {
+        Ok(end) => end,
+        Err(error) => SessionEnd {
+            terminal: TerminalReason::FatalError,
+            error: Some(error.to_string()),
+        },
+    }
 }
 
 async fn run_session_scoped(
@@ -2068,9 +2210,35 @@ async fn session_generation_body(
             error: None,
         });
     }
+    let manual = rc.interactive_profiles.is_some();
+    let manual_cancel = rc.cancel.child_token();
     let mut cfg = rc.session_config(session);
     cfg.context.session_binding = replacement;
-    let login = rc.prepare_session_login(session, &mut cfg).await?;
+    if manual {
+        if session.status == SessionStatus::Recovering
+            || cfg.context.session_binding.is_some()
+            || rc.crawl.dynamic.browser_profile.is_some()
+        {
+            return Err(WorkerError::Config(
+                "interactive profiles require a fresh incognito session".into(),
+            ));
+        }
+        cfg.origin_cancel = manual_cancel.clone();
+        cfg.effect_cancel = Some(manual_cancel.clone());
+        cfg.context.captcha_cancel = manual_cancel.clone();
+        cfg.context.navigation_guard =
+            Some(Arc::new(crawlx_browser::network_guard::ScopedNetworkGuard::new(
+                (*rc.delivery_authority.policy).clone(),
+                manual_cancel.clone(),
+                cfg.context.navigation_guard.take(),
+            )));
+        cfg.awaits_login = false;
+    }
+    let login = if manual {
+        None
+    } else {
+        rc.prepare_session_login(session, &mut cfg).await?
+    };
     let pooled = rc.acquire_bound_session(lease, &mut cfg).await?;
     let login_bounds = LoginBounds::from(&cfg);
     let analyzer = Arc::new(StateAnalyzer::new(
@@ -2120,7 +2288,11 @@ async fn session_generation_body(
             .map(|index| start_requests.remove(index))
             .unwrap_or_else(|| crawlx_core::request::RequestEnvelopeV1::get(seed.clone(), 0, None));
         match handle.navigate(seed_request.clone()).await {
-            Ok(_) => {}
+            Ok(_) => {
+                // Restored web storage is only observable once the origin has a document.
+                crate::profile_custody_runtime::confirm_seed(&rc.profile_sessions, session.id, &handle)
+                    .await?;
+            }
             // robots.txt disallows the seed itself: nothing was loaded and nothing is left to explore
             Err(SessionError::Browser(BrowserError::RobotsBlocked { reason, .. })) => {
                 crate::driver::record_robots_blocked(rc, Some(session.id), &seed, 0, reason).await;
@@ -2186,7 +2358,54 @@ async fn session_generation_body(
         )
         .with_model_overlay(set.overlay, set.system1)
         .with_authenticated(authenticated)
-        .with_role_budget(role_budget);
+        .with_role_budget(role_budget)
+        .with_approval_lease(lease.clone());
+        if let Some(recipe) = &rc.extension_actor_recipe {
+            driver = driver.with_extension_recipe(Arc::clone(recipe));
+        }
+        if let Some(registry) = &rc.interactive_profiles {
+            let binding =
+                cfg.context.session_binding.clone().ok_or_else(|| {
+                    WorkerError::Config("interactive profiles require a bound session".into())
+                })?;
+            let (authority, keys, custody_store) = match (
+                rc.stores.pg_secret_authority.clone(),
+                rc.stores.artifact_keys.clone(),
+                rc.stores.custody.clone(),
+            ) {
+                (Some(authority), Some(keys), Some(custody)) => (authority, keys, custody),
+                _ => {
+                    return Err(WorkerError::Config(
+                        "interactive profiles require custody-enabled PostgreSQL".into(),
+                    ))
+                }
+            };
+            if rc.retained_profiles.is_none() {
+                return Err(WorkerError::Config(
+                    "interactive profiles require operator retained-profile permission".into(),
+                ));
+            }
+            let producer = crawlx_core::custody::current_producer().ok_or_else(|| {
+                WorkerError::Config("interactive profiles require the session producer lease".into())
+            })?;
+            let registrar = Arc::new(crawlx_storage::artifact_custody::LeasedSecretRegistrar::new(
+                custody_store,
+                producer.clone(),
+                rc.captcha_secrets.clone(),
+            ));
+            let control = registry
+                .register(binding, manual_cancel.clone())
+                .map_err(|_| WorkerError::Config("interactive control unavailable".into()))?;
+            driver = driver.with_interactive(crate::driver::InteractiveDeps::new(
+                control,
+                authority,
+                keys,
+                producer,
+                registrar,
+                true,
+                lease.clone(),
+            ));
+        }
         let mut requests = vec![seed_request];
         requests.extend(start_requests);
         driver.run(requests).await
@@ -2206,6 +2425,28 @@ async fn session_generation_body(
         crate::actor::ShutdownReason::Graceful
     } else {
         crate::actor::ShutdownReason::Completed
+    };
+    // The retained structured profile commits from the live browser before it shuts down, and
+    // only for a session that ended normally; every other end discards its claim uncommitted.
+    let outcome = match outcome {
+        Ok(terminal)
+            if !rc.cancel.is_cancelled()
+                && !matches!(
+                    terminal,
+                    TerminalReason::Cancelled
+                        | TerminalReason::FatalError
+                        | TerminalReason::RecoveryExhausted
+                        | TerminalReason::AuthorizationRevoked
+                ) =>
+        {
+            crate::profile_custody_runtime::commit(&rc.profile_sessions, session.id, &handle)
+                .await
+                .map(|_| terminal)
+        }
+        other => {
+            crate::profile_custody_runtime::discard(&rc.profile_sessions, session.id);
+            other
+        }
     };
     let shutdown = handle.shutdown(reason).await.map_err(WorkerError::from);
     *retired = handle.retired_binding();
@@ -2274,6 +2515,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
         authorization_source,
         resume,
         graceful_drain,
+        initial_request_method,
         fixture_evaluation,
     } = local;
     let cancel = hard_cancel.child_token();
@@ -2592,8 +2834,11 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
                     &task_rc,
                     fetcher,
                     deps,
-                    task_drain.as_ref().map(|(drain, hard)| (drain, hard)),
-                    resume.as_ref(),
+                    LocalPlaneStart {
+                        drain: task_drain.as_ref().map(|(drain, hard)| (drain, hard)),
+                        resume: resume.as_ref(),
+                        initial_request_method,
+                    },
                 )
                 .await?;
                 // Seal finite input before draining; child discovery retains
@@ -2746,15 +2991,29 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     Ok(report)
 }
 
+/// How a local URL plane starts: graceful drain tokens, resume state and the seed method.
+struct LocalPlaneStart<'a> {
+    /// Graceful drain and hard-cancel tokens.
+    drain: Option<(&'a CancellationToken, &'a CancellationToken)>,
+    /// Checkpoint state to resume from.
+    resume: Option<&'a ResumeState>,
+    /// Method of the seed requests (GET or HEAD).
+    initial_request_method: http::Method,
+}
+
 async fn build_local_url_plane(
     crawl: CreateCrawl,
     cfg: &WorkerConfig,
     rc: &Arc<RunContext>,
     fetcher: Arc<Fetcher>,
     deps: UrlPlaneDeps,
-    drain: Option<(&CancellationToken, &CancellationToken)>,
-    resume: Option<&ResumeState>,
+    start: LocalPlaneStart<'_>,
 ) -> Result<UrlPlaneRunner, WorkerError> {
+    let LocalPlaneStart {
+        drain,
+        resume,
+        initial_request_method,
+    } = start;
     let mut plane = UrlPlaneRunner::new(
         rc.run,
         crawl,
@@ -2768,7 +3027,8 @@ async fn build_local_url_plane(
     .with_route_learner(rc.routes.clone())
     .with_surface_services(rc)
     .with_scrape_services(rc, cfg)
-    .with_authorization(rc.authorization.clone());
+    .with_authorization(rc.authorization.clone())
+    .with_initial_request_method(initial_request_method)?;
     if let Some((drain, hard_cancel)) = drain {
         plane = plane.with_graceful_drain(drain.clone(), Some(hard_cancel.clone()));
     }
@@ -3077,6 +3337,20 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         .await?
         .into_iter()
         .partition(|session| session.kind == crawlx_core::repo::SessionKind::HttpCoordinator);
+    let mut head_responses = Vec::new();
+    let mut after = 0;
+    loop {
+        let events = stores.events.list_after(run, after, 1000).await?;
+        if events.is_empty() {
+            break;
+        }
+        for event in events {
+            after = event.seq;
+            if event.kind == "head_response" {
+                head_responses.push(event.payload);
+            }
+        }
+    }
     Ok(RunReport {
         run_id: run,
         status: row.status,
@@ -3091,6 +3365,7 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         coverage,
         pages,
         page_contents,
+        head_responses,
         browser_launches: 0,
         failures,
         resume: None,

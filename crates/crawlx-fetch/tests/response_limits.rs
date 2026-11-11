@@ -149,11 +149,13 @@ async fn the_wire_cap_is_independent_of_the_decoded_cap() {
             state.to_le_bytes()[0]
         })
         .collect();
+    let wire = gzip(&noise).await;
+    let wire_len = u64::try_from(wire.len()).unwrap();
     let server = serve(
         "/noise",
         ResponseTemplate::new(200)
             .insert_header("content-encoding", "gzip")
-            .set_body_bytes(gzip(&noise).await),
+            .set_body_bytes(wire),
     )
     .await;
     let f = fetcher(fast_config(), allow_private_policy(&server), resolver());
@@ -165,7 +167,14 @@ async fn the_wire_cap_is_independent_of_the_decoded_cap() {
     assert!(resp.truncated);
     let evidence = resp.evidence().unwrap();
     assert_eq!(evidence.body.limit, Some(BodyLimitKind::Wire));
-    assert_eq!(evidence.body.wire_bytes, 20_000);
+    // `wire_bytes` counts what was received: the cap bounds what is decoded, and the chunk that
+    // crosses it is still metered in full. It must reach the cap and stop short of the whole body.
+    assert!(evidence.body.wire_bytes >= 20_000, "{}", evidence.body.wire_bytes);
+    assert!(
+        evidence.body.wire_bytes < wire_len,
+        "{}",
+        evidence.body.wire_bytes
+    );
     assert!(resp.body.len() < 300_000);
 }
 

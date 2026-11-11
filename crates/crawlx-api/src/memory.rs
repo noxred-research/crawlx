@@ -86,7 +86,6 @@ impl AuthzRow {
 struct Inner {
     keys: HashMap<String, KeyRecord>,
     idem: HashMap<(TenantId, String), IdemRow>,
-    approvals: Vec<ApprovalRecord>,
     audit: Vec<AuditEntry>,
     runs: Vec<(TenantId, CrawlRunId)>,
     shadows: BTreeSet<CrawlRunId>,
@@ -161,18 +160,14 @@ impl MemoryApiStore {
         Self { inner, store }
     }
 
-    /// Test/dev seeding: add a pending approval (the worker/safety kernel does this in production).
+    /// Seed an unbound API fixture. Worker requests use the shared approval repository.
     pub fn add_approval(&self, approval: ApprovalRecord) {
-        self.inner.lock().approvals.push(approval);
+        self.store.insert_approval_record(approval);
     }
 
-    /// Mark an approval consumed (the intent journal does this in production).
+    /// Mark an unbound fixture consumed. Bound worker requests require fenced consumption.
     pub fn consume_approval(&self, id: ApprovalId, at: Timestamp) {
-        for a in &mut self.inner.lock().approvals {
-            if a.id == id {
-                a.consumed_at = Some(at);
-            }
-        }
+        self.store.consume_approval_fixture(id, at);
     }
 
     /// Seed an authorization record exactly as given (lifecycle fields included): the test
@@ -216,9 +211,7 @@ impl MemoryApiStore {
     pub fn purge_run(&self, run: CrawlRunId) -> u64 {
         let mut g = self.inner.lock();
         let mut n = 0u64;
-        let before = g.approvals.len();
-        g.approvals.retain(|a| a.run != run);
-        n += (before - g.approvals.len()) as u64;
+        n += self.store.purge_approval_records(run);
         let before = g.deliveries.len();
         g.deliveries.retain(|d| d.run != run);
         n += (before - g.deliveries.len()) as u64;
@@ -395,26 +388,15 @@ impl ApiStore for MemoryApiStore {
     }
 
     async fn approvals_list(&self, run: CrawlRunId) -> StoreResult<Vec<ApprovalRecord>> {
-        let mut v: Vec<ApprovalRecord> = self
-            .inner
-            .lock()
-            .approvals
-            .iter()
-            .filter(|a| a.run == run)
-            .cloned()
-            .collect();
-        v.sort_by_key(|a| a.id);
-        Ok(v)
+        Ok(self.store.approval_records(run))
     }
 
     async fn approval_get(&self, run: CrawlRunId, id: ApprovalId) -> StoreResult<Option<ApprovalRecord>> {
         Ok(self
-            .inner
-            .lock()
-            .approvals
-            .iter()
-            .find(|a| a.run == run && a.id == id)
-            .cloned())
+            .store
+            .approval_records(run)
+            .into_iter()
+            .find(|record| record.id == id))
     }
 
     async fn approval_decide(
@@ -424,28 +406,10 @@ impl ApiStore for MemoryApiStore {
         decision: ApprovalDecision,
         decided_by: Uuid,
         reason: Option<&str>,
-        now: Timestamp,
+        _now: Timestamp,
     ) -> StoreResult<DecideOutcome> {
-        let action = {
-            let mut g = self.inner.lock();
-            let Some(a) = g.approvals.iter_mut().find(|a| a.run == run && a.id == id) else {
-                return Ok(DecideOutcome::NotFound);
-            };
-            if a.decision == decision {
-                return Ok(DecideOutcome::Unchanged(a.clone()));
-            }
-            if a.decision != ApprovalDecision::Pending || a.expires_at <= now || a.consumed_at.is_some() {
-                return Ok(DecideOutcome::NotPending(a.clone()));
-            }
-            a.decision = decision;
-            a.decided_by = Some(decided_by);
-            a.decided_at = Some(now);
-            a.reason = reason.map(str::to_owned);
-            (a.clone(), a.action)
-        };
         self.store
-            .resolve_hold(action.1, decision == ApprovalDecision::Approved);
-        Ok(DecideOutcome::Applied(action.0))
+            .decide_approval_record(run, id, decision, decided_by, reason)
     }
 
     async fn transitions_list(

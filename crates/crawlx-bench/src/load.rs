@@ -405,6 +405,7 @@ impl Sample {
 }
 
 /// `POST /v1/crawls`; the created id and the sample.
+#[allow(clippy::disallowed_types, reason = "reviewed API load HTTP driver adapter")]
 async fn create_run(client: &reqwest::Client, cfg: &LoadConfig, origin: Instant) -> (Option<String>, Sample) {
     let started = Instant::now();
     let body = serde_json::json!({ "seedUrl": cfg.seed_url, "seed": cfg.seed });
@@ -437,6 +438,7 @@ async fn create_run(client: &reqwest::Client, cfg: &LoadConfig, origin: Instant)
     )
 }
 
+#[allow(clippy::disallowed_types, reason = "reviewed API load HTTP driver adapter")]
 struct Shared {
     client: reqwest::Client,
     cfg: LoadConfig,
@@ -651,6 +653,7 @@ fn overlaps(windows: &[(Duration, Duration)], s: &Sample) -> bool {
     windows.iter().any(|(start, end)| from <= *end && to >= *start)
 }
 
+#[allow(clippy::disallowed_types, reason = "reviewed API load HTTP driver adapter")]
 async fn run_inner(
     cfg: &LoadConfig,
     on_clock_start: impl FnOnce(),

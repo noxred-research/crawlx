@@ -205,6 +205,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[allow(
+        clippy::disallowed_types,
+        reason = "owned loopback fixture transport boundary"
+    )]
     async fn the_sink_records_deliveries_and_fails_the_first_ones_on_request() {
         let sink = Sink::start("127.0.0.1:0".parse().unwrap()).await.unwrap();
         sink.script("retry", 2, 503);

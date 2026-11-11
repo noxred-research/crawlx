@@ -10,8 +10,9 @@
 //! stays denied under [`DenyRule::Transition`] because the denied-range
 //! table lists those prefixes.
 
-use crate::authorization::{AuthzFailure, RecordScope};
+use crate::authorization::{AuthorizationRecord, AuthzFailure, RecordScope};
 use crate::egress_lists::{EgressLists, SharedEgressLists};
+use crate::scope::ExcludeHosts;
 use ipnet::IpNet;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -62,6 +63,8 @@ pub enum DenyRule {
     AuthorizationScope,
     /// The destination is on the operator blocklist (`egress.operator_blocklist`, RB-10 step 5).
     Blocklist,
+    /// A caller's `scope.excludeHosts` entry denied the hostname or an address.
+    HostExcluded,
 }
 
 impl DenyRule {
@@ -88,6 +91,7 @@ impl DenyRule {
             Self::Configured => "configured",
             Self::AuthorizationScope => "authorization_scope",
             Self::Blocklist => "operator_blocklist",
+            Self::HostExcluded => "host_excluded",
         }
     }
 
@@ -514,15 +518,39 @@ pub fn classify_ip(ip: IpAddr) -> Option<DenyRule> {
     classify(ip).map(|c| c.rule)
 }
 
+/// Exact target and signed private networks for one admitted run.
+///
+/// Construct this only from the current authorization record after admission or re-authorization.
+/// The request's private-network boolean is not authority. An empty signed network list grants
+/// no private access; neither deployment exemptions nor legacy allowances can widen this bound.
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[non_exhaustive]
+pub struct PrivateHostScope {
+    record_scope: RecordScope,
+    authorized_networks: Vec<IpNet>,
+}
+
+impl PrivateHostScope {
+    /// Bind the record's exact origins, prefixes, path exclusions and signed networks.
+    ///
+    /// Caller exclusions remain attached independently; this mapping never removes them.
+    #[must_use]
+    pub fn new(record: &AuthorizationRecord) -> Self {
+        Self {
+            record_scope: record.scope(),
+            authorized_networks: record.authorized_networks.clone(),
+        }
+    }
+}
+
 /// Egress policy for one run (or deployment). Cheap to clone; `Send + Sync`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct EgressPolicy {
-    /// Honor private-range exemptions (only meaningful with an authorization
-    /// record, which admission enforces). When `extra_allow` is empty every
-    /// exemptable private range is allowed; otherwise only `extra_allow`.
+    /// Legacy fixture/deployment exemption. Production request booleans must never set this
+    /// directly. A signed network bound attached by the builders always takes precedence.
     pub allow_private: bool,
-    /// Authorized networks (`authorizedNetworks`, E11). Exempts only private,
-    /// CGNAT, unique-local and loopback ranges; never metadata or link-local.
+    /// Legacy explicit exemptions. A signed network bound supersedes this list.
+    /// Only private, CGNAT, unique-local and loopback ranges are exemptable.
     pub extra_allow: Vec<IpNet>,
     /// Always denied (`Configured`), checked before any allowance.
     pub extra_deny: Vec<IpNet>,
@@ -541,6 +569,10 @@ pub struct EgressPolicy {
     /// exempt without a record (`test_environment` runs: the deployment named those networks
     /// explicitly). Meaningless without [`Self::lists`] holding an allowlist.
     pub deployment_exempt: bool,
+    /// Signed network authority, independent of mutable legacy allowances and deployment grants.
+    authorized_private_networks: Option<Arc<[IpNet]>>,
+    /// Caller exclusions are denials, never exemptions.
+    host_exclusions: ExcludeHosts,
 }
 
 impl Default for EgressPolicy {
@@ -562,6 +594,8 @@ impl EgressPolicy {
             fixture_scope: None,
             lists: None,
             deployment_exempt: false,
+            authorized_private_networks: None,
+            host_exclusions: ExcludeHosts::empty(),
         }
     }
 
@@ -583,6 +617,26 @@ impl EgressPolicy {
         self
     }
 
+    /// Apply the exact admitted private-host mapping through the existing policy builders.
+    #[must_use]
+    pub fn with_private_host_scope(self, scope: PrivateHostScope) -> Self {
+        self.with_record_scope(scope.record_scope)
+            .with_authorized_private_networks(scope.authorized_networks)
+    }
+
+    /// Attach every caller host exclusion, without removing `private-ips`.
+    #[must_use]
+    pub fn with_host_exclusions(mut self, exclusions: ExcludeHosts) -> Self {
+        self.host_exclusions = exclusions;
+        self
+    }
+
+    /// Signed private-network bound, when one has been attached. Empty means no private access.
+    #[must_use]
+    pub fn authorized_private_networks(&self) -> Option<&[IpNet]> {
+        self.authorized_private_networks.as_deref()
+    }
+
     /// Exempt private, CGNAT, unique-local and loopback ranges for exactly `networks` (the
     /// authorized networks of an authorization record), and nothing else.
     ///
@@ -592,14 +646,12 @@ impl EgressPolicy {
     /// denied, the resolved address (not the name) is checked on every connection, and the
     /// deployment allowlist still bounds the result.
     #[must_use]
-    pub fn with_authorized_private_networks(mut self, networks: Vec<IpNet>) -> Self {
-        if networks.is_empty() {
-            self.allow_private = false;
-            self.extra_allow.clear();
-        } else {
-            self.allow_private = true;
-            self.extra_allow = networks;
-        }
+    pub fn with_authorized_private_networks(mut self, mut networks: Vec<IpNet>) -> Self {
+        networks.sort_unstable();
+        networks.dedup();
+        self.allow_private = !networks.is_empty();
+        self.extra_allow.clear();
+        self.authorized_private_networks = Some(Arc::from(networks));
         self
     }
 
@@ -622,6 +674,9 @@ impl EgressPolicy {
     }
 
     fn private_exempt(&self, lists: Option<&EgressLists>) -> bool {
+        if let Some(networks) = &self.authorized_private_networks {
+            return !networks.is_empty();
+        }
         self.allow_private || !self.extra_allow.is_empty() || self.deployment_allows_exemption(lists)
     }
 
@@ -629,6 +684,10 @@ impl EgressPolicy {
     /// are bounded by the deployment allowlist; a `test_environment` run needs no record for
     /// an address the allowlist names.
     fn exempt_ip(&self, ip: IpAddr, lists: Option<&EgressLists>) -> bool {
+        if let Some(networks) = &self.authorized_private_networks {
+            return networks.iter().any(|network| network.contains(&ip))
+                && lists.is_none_or(|list| list.allows_ip(ip));
+        }
         let in_allowlist = lists
             .and_then(EgressLists::allowlist)
             .is_some_and(|nets| nets.iter().any(|n| n.contains(&ip)));
@@ -683,6 +742,15 @@ impl EgressPolicy {
                 "operator blocklist",
             ));
         }
+        if self.host_exclusions.matches_ip(ip).is_some()
+            || (basis != ip && self.host_exclusions.matches_ip(basis).is_some())
+        {
+            return Err(EgressDenied::new(
+                DenyRule::HostExcluded,
+                ip.to_string(),
+                "caller host exclusion",
+            ));
+        }
         match cls {
             None => Ok(()),
             Some(c) if c.rule.exemptable() && self.exempt_ip(c.basis, lists.as_deref()) => Ok(()),
@@ -719,6 +787,18 @@ impl EgressPolicy {
             Host::Ipv4(v4) => self.check_ip(IpAddr::V4(*v4))?,
             Host::Ipv6(v6) => self.check_ip(IpAddr::V6(*v6))?,
             Host::Domain(d) => self.check_domain(d.as_ref())?,
+        }
+        let excluded = !self.host_exclusions.is_empty()
+            && match host {
+                Host::Domain(domain) => self.host_exclusions.matches(domain.as_ref(), None).is_some(),
+                _ => self.host_exclusions.matches(&host.to_string(), None).is_some(),
+            };
+        if excluded {
+            return Err(EgressDenied::new(
+                DenyRule::HostExcluded,
+                host.to_string(),
+                "caller host exclusion",
+            ));
         }
         if let Some(scope) = &self.record_scope {
             if !scope.contains_host(host) {
@@ -806,6 +886,44 @@ impl EgressPolicy {
     /// # Errors
     /// [`EgressDenied`] naming the first failed check.
     pub fn check_url(&self, url: &Url) -> Result<(), EgressDenied> {
+        self.check_url_authority(url)?;
+        if let Some(scope) = &self.record_scope {
+            scope.check_request(url).map_err(|error| {
+                EgressDenied::new(
+                    DenyRule::AuthorizationScope,
+                    url.as_str(),
+                    match error {
+                        AuthzFailure::Excluded(_) => "authorization record excluded path",
+                        _ => "authorization record scope",
+                    },
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Check the exact authority of an opaque HTTPS CONNECT tunnel.
+    ///
+    /// This does not authorize encrypted paths. Browser navigation and other visible requests
+    /// must still pass their full URL scope checks.
+    ///
+    /// # Errors
+    /// [`EgressDenied`] for an invalid destination or an origin outside the signed target.
+    pub fn check_connect_authority(&self, url: &Url) -> Result<(), EgressDenied> {
+        self.check_url_authority(url)?;
+        if let Some(scope) = &self.record_scope {
+            scope.check_origin(url).map_err(|_| {
+                EgressDenied::new(
+                    DenyRule::AuthorizationScope,
+                    url.as_str(),
+                    "authorization record tunnel origin",
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    fn check_url_authority(&self, url: &Url) -> Result<(), EgressDenied> {
         if self
             .fixture_scope
             .as_ref()
@@ -835,18 +953,6 @@ impl EgressPolicy {
         let port = url.port_or_known_default().unwrap_or(0);
         self.check_port(port)?;
         self.check_host_value(&host)?;
-        if let Some(scope) = &self.record_scope {
-            scope.check_request(url).map_err(|e| {
-                EgressDenied::new(
-                    DenyRule::AuthorizationScope,
-                    url.as_str(),
-                    match e {
-                        AuthzFailure::Excluded(_) => "authorization record excluded path",
-                        _ => "authorization record scope",
-                    },
-                )
-            })?;
-        }
         Ok(())
     }
 }

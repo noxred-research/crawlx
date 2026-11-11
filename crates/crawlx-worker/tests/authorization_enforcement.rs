@@ -109,9 +109,12 @@ fn page(title: &str, links: &str) -> axum::response::Response {
         .into_response()
 }
 
+/// A verified record for `origins`. The fixtures live on loopback, so the record signs
+/// `127.0.0.0/8`: an empty signed network list grants no private access.
 fn record(origins: &[&str], tweak: impl FnOnce(&mut AuthorizationRecord)) -> AuthorizationRecord {
     let mut r = sample_record(TenantId::new(), SystemClock.now(), origins);
     r.verified_at = Some(SystemClock.now());
+    r.authorized_networks = vec!["127.0.0.0/8".parse().unwrap()];
     tweak(&mut r);
     r
 }

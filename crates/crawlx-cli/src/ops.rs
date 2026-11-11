@@ -309,6 +309,7 @@ pub(crate) async fn worker(
     cfg.load_checkpoint_keys_from_lookup(getenv).await?;
     cfg.load_artifact_custody_from_lookup(getenv).await?;
     cfg.load_article_language_from_lookup(getenv).await?;
+    cfg.load_source_dispatch_from_lookup(getenv)?;
     cfg.load_delivery_from_lookup(getenv).await?;
     // Bind before the worker starts so a bad address fails fast; the listener drains once the
     // worker returns (it already handles SIGINT/SIGTERM itself).

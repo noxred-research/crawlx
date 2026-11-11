@@ -947,6 +947,10 @@ mod crawl_bench {
     // ---- the recorder -------------------------------------------------------------------------
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(
+        clippy::disallowed_types,
+        reason = "owned loopback fixture transport boundary"
+    )]
     async fn the_recorder_forwards_the_proxy_host_and_records_status_and_latency() {
         let gym = GymServer::start("127.0.0.1:0".parse().unwrap()).await.unwrap();
         let recorder = Recorder::start(&Url::parse(&gym.base_url).unwrap())
@@ -1014,6 +1018,10 @@ mod crawl_bench {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[allow(
+        clippy::disallowed_types,
+        reason = "owned loopback fixture transport boundary"
+    )]
     async fn the_recorder_answers_502_when_the_upstream_is_gone_and_refuses_non_http_upstreams() {
         // a port nothing listens on
         let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

@@ -3,6 +3,10 @@
 mod common;
 mod resume_rig;
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},

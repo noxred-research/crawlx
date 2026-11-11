@@ -132,12 +132,20 @@ fn completed(v: &Value) -> u64 {
     v.get("completed").and_then(Value::as_u64).unwrap_or(0)
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed wire comparison HTTP driver adapter"
+)]
 struct Driver<'a> {
     target: &'a Target,
     http: reqwest::Client,
 }
 
 impl Driver<'_> {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "reviewed wire comparison HTTP driver adapter"
+    )]
     async fn exchange(
         &self,
         step: &str,
@@ -356,6 +364,10 @@ impl Driver<'_> {
 ///
 /// # Errors
 /// [`BenchError::Network`] when the HTTP client cannot be built.
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed wire comparison HTTP driver adapter"
+)]
 pub async fn run_family(target: &Target, family: &WireFamily) -> Result<WireCapture, BenchError> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(90))

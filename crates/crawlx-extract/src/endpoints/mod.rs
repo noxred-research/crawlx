@@ -17,6 +17,7 @@
 #[cfg(feature = "js-ast")]
 pub mod ast;
 pub mod body;
+mod embedded;
 pub mod headers;
 pub mod script;
 #[cfg(feature = "js-ast")]
@@ -202,6 +203,9 @@ pub const ALL_SOURCES: &[EndpointSource] = &[
     body::JS_REGEX,
     body::HTML_REGEX,
     body::META_CONTENT,
+    body::HEAD_PROFILE,
+    body::CONDITIONAL_COMMENT,
+    body::IMG_DATA,
     body::JS_FETCH,
     body::JS_AXIOS,
     body::JS_HTTP,

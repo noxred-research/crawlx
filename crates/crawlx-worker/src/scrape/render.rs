@@ -14,6 +14,7 @@
 //! path: success, failure, `timeout` and cancellation of the run.
 
 mod actions;
+mod charged;
 pub mod locale;
 
 use crate::actor::{SessionActor, SessionHandle, ShutdownReason};
@@ -25,6 +26,7 @@ use actions::ActionRunner;
 use async_trait::async_trait;
 use crawlx_core::observation::{NavigationResult, QuiescencePolicy};
 use crawlx_core::page_op::{PageOp, PageOpResult, ShotSpec};
+use crawlx_core::parser_memory::AdmittedText;
 use crawlx_core::repo::{CrawlSession, SessionStatus};
 use crawlx_core::scrape::{ActionScrape, FormatSpec, JavascriptReturn, ScrapeOptions};
 use crawlx_core::{BrowserError, PrincipalId, SessionId, StoreError};
@@ -65,8 +67,8 @@ pub struct RenderRequest<'a> {
 /// An encoded image or document.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Shot {
-    /// The bytes.
-    pub bytes: Vec<u8>,
+    /// The bytes; charged, so clones share one allocation and its reservation.
+    pub bytes: crawlx_core::parser_memory::AdmittedBytes,
     /// Media type: `image/png`, `image/jpeg` or `application/pdf`.
     pub content_type: &'static str,
 }
@@ -119,8 +121,9 @@ pub struct Rendered {
     pub headers: Vec<(String, String)>,
     /// `Content-Type` of the main document.
     pub content_type: Option<String>,
-    /// Serialized DOM after `waitFor` and every action.
-    pub html: String,
+    /// Serialized DOM after `waitFor` and every action. Charged: clones share the allocation
+    /// and its byte reservation, which lasts as long as any clone or sink still reads it.
+    pub html: AdmittedText,
     /// The `screenshot` format capture, taken after the actions.
     pub screenshot: Option<Shot>,
     /// Results of the actions.
@@ -132,6 +135,16 @@ pub struct Rendered {
     pub computed_styles: Option<ComputedStyles>,
     /// Native observed evidence; absent means a legacy/test adapter did not supply it.
     pub evidence: Option<RenderedEvidence>,
+}
+
+impl Rendered {
+    /// The serialized DOM as shared [`bytes::Bytes`], without copying. The view and every slice
+    /// of it keep the charged text and its byte reservation alive, so a parse or sink that
+    /// outlives this `Rendered` (or a cancelled caller) never outlives the reservation.
+    #[must_use]
+    pub fn body(&self) -> bytes::Bytes {
+        charged::body_bytes(&self.html)
+    }
 }
 
 /// Why a page could not be rendered.
@@ -723,7 +736,7 @@ impl BrowserRenderer {
         } else {
             None
         };
-        let (mut html, url) = match handle.page_op(PageOp::Html).await.map_err(render_error)? {
+        let (html, url) = match handle.page_op(PageOp::Html).await.map_err(render_error)? {
             PageOpResult::Html { html, url } => (html, url),
             _ => {
                 return Err(RenderError::Browser(
@@ -732,15 +745,14 @@ impl BrowserRenderer {
             }
         };
         let truncated = allowance.is_some_and(|budget| html.len() > budget.max_decoded_bytes);
-        if let Some(allowance) = allowance {
-            if html.len() > allowance.max_decoded_bytes {
-                let mut end = allowance.max_decoded_bytes;
-                while !html.is_char_boundary(end) {
-                    end = end.saturating_sub(1);
-                }
-                html.truncate(end);
-            }
-        }
+        let html = match allowance {
+            Some(allowance) => charged::truncate_admitted(
+                html,
+                allowance.max_decoded_bytes,
+                crawlx_core::parser_memory::global(),
+            )?,
+            None => html,
+        };
         let parsed_final_url = Url::parse(&url).ok();
         let final_url_observed = parsed_final_url.is_some();
         let final_url = parsed_final_url.unwrap_or_else(|| req.request.url.url.clone());
@@ -869,4 +881,16 @@ fn render_error(e: SessionError) -> RenderError {
         SessionError::Browser(b) => browser_error(b),
         other => RenderError::Browser(other.to_string()),
     }
+}
+
+/// Run only registry-approved actions through normal observation, kernel and journal admission.
+pub(crate) async fn run_approved_recipe<'a>(
+    driver: crate::driven::Driver<'a>,
+    recipe: &'a crawlx_core::archive_behaviors::RecipeV1,
+    progress: &mut crate::archive_behaviors::RecipeProgress,
+    virtual_bytes: usize,
+) -> Result<(), RenderError> {
+    Box::pin(actions::ActionRunner::new(driver, virtual_bytes).run_recipe(recipe, progress))
+        .await
+        .map(drop)
 }

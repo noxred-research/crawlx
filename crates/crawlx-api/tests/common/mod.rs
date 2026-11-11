@@ -2,6 +2,10 @@
 //! Shared fixtures: an in-memory API environment and request helpers.
 
 use axum::body::Body;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::Router;
 use bytes::Bytes;
@@ -44,7 +48,7 @@ pub fn env_with_zdr(
     settings: Settings,
     clock: Arc<dyn Clock>,
 ) -> (Env, Arc<DeliveryBuffer>) {
-    let store = Arc::new(MemoryStore::new());
+    let store = Arc::new(MemoryStore::with_clock(clock.clone()));
     let zdr = Arc::new(DeliveryBuffer::with_defaults(clock.clone()));
     store.set_dataset_delivery(zdr.clone());
     let artifacts = Arc::new(

@@ -9,6 +9,7 @@
 //! * [`proxyx`]: native client of the ProxyX pool gateway, an optional upstream for the proxy tiers.
 //! * [`Resolver`]: DNS behind a trait (`HickoryResolver`, `StaticResolver`).
 
+pub mod acquisition_service;
 pub mod body_limits;
 pub mod certificate;
 pub mod charset;
@@ -20,6 +21,7 @@ pub mod egress;
 pub mod error;
 pub mod evidence;
 pub mod governor;
+pub mod identity_profile;
 pub mod lists;
 pub mod preflight;
 pub mod protocol;
@@ -34,7 +36,9 @@ pub mod upstream;
 pub use body_limits::DEFAULT_MAX_BODY_BYTES;
 pub use certificate::{CertificateEvidence, CertificateUnavailable, PeerCertificate};
 pub use charset::{CharsetEvidence, CharsetSource, DecodeError};
-pub use client::{FetchConfig, FetchHop, FetchOptions, FetchResponse, Fetcher, OversizePolicy};
+pub use client::{
+    FetchConfig, FetchHop, FetchOptions, FetchResponse, Fetcher, OversizePolicy, ResponseHeaderGate,
+};
 pub use codec::{BodyLimitKind, BodyLimits};
 pub use conditional::{interpret as interpret_revalidation, CachedValidators, Revalidation, Validators};
 pub use declaration::{HttpErrorStatuses, ResponseDeclaration, StatusVerdict};

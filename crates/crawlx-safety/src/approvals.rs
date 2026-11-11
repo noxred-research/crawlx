@@ -5,14 +5,16 @@
 //! does not waive the kernel: the action is re-classified at execution and a
 //! changed class or parameters void the approval ([`ApprovalError::Mismatch`]).
 //!
-//! The store is a synchronous trait because the kernel is pure and sync; the
-//! PostgreSQL-backed implementation lives with the worker/storage wiring.
+//! The store is synchronous and must never hide blocking database I/O. Durable
+//! adapters consume asynchronously before constructing [`VerifiedApproval`].
 
 use chrono::Duration;
+use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
 use crawlx_core::ids::{ActionContextId, ApprovalId};
 use crawlx_core::safety::RiskClass;
 use crawlx_core::time::{Clock, Timestamp};
+use crawlx_core::{ActionId, CrawlRunId, SessionId, TenantId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -162,8 +164,8 @@ pub trait ApprovalStore: Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`ApprovalError::Unavailable`] when the backing store cannot persist
-    /// the request.
+    /// [`ApprovalError::Unavailable`] when persistence fails, or
+    /// [`ApprovalError::NotPending`] when the identifier already exists.
     fn issue(&self, request: ApprovalRequest) -> Result<(), ApprovalError>;
     /// An unexpired, unconsumed, undenied request for the same binding.
     ///
@@ -214,6 +216,104 @@ pub trait ApprovalStore: Send + Sync {
         params_digest: &Digest,
         now: Timestamp,
     ) -> Result<(), ApprovalError>;
+}
+
+/// Trusted actor authority for exactly one durable approval use.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
+pub struct ApprovalAuthority {
+    /// Owning tenant.
+    pub tenant: TenantId,
+    /// Owning run.
+    pub run: CrawlRunId,
+    /// Owning session.
+    pub session: SessionId,
+    /// Original parked action, reused for intent and outcome.
+    pub action: ActionId,
+    /// Active lease fencing token at durable consumption.
+    pub fence: i64,
+    /// Exact observation, with no mutation slack.
+    pub epoch: ObservationEpoch,
+}
+
+impl ApprovalAuthority {
+    /// Build authority from the trusted actor lease and original parked action.
+    #[must_use]
+    pub const fn new(
+        tenant: TenantId,
+        run: CrawlRunId,
+        session: SessionId,
+        action: ActionId,
+        fence: i64,
+        epoch: ObservationEpoch,
+    ) -> Self {
+        Self {
+            tenant,
+            run,
+            session,
+            action,
+            fence,
+            epoch,
+        }
+    }
+}
+
+/// A preloaded, durably spent approval. This value deliberately cannot be cloned
+/// or deserialized. It grants no authority until the kernel reclassifies the action.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct VerifiedApproval {
+    pub(crate) request: ApprovalRequest,
+    pub(crate) authority: ApprovalAuthority,
+    spent: bool,
+}
+
+impl VerifiedApproval {
+    /// Cross the trusted storage boundary after its fenced, single-use transaction
+    /// commits. Never call this constructor with API input or a decision snapshot.
+    ///
+    /// The storage transaction must validate tenant, run, session, lease owner/fence,
+    /// action, exact epoch, request digest, risk, expiry and active authorization.
+    /// Cancellation after that commit spends the approval without executing it.
+    #[must_use]
+    pub fn from_consumed(request: ApprovalRequest, authority: ApprovalAuthority) -> Self {
+        Self {
+            request,
+            authority,
+            spent: false,
+        }
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.spent = true;
+    }
+
+    pub(crate) fn consume(
+        &mut self,
+        expected: ApprovalAuthority,
+        key: ActionContextId,
+        risk: RiskClass,
+        params: &Digest,
+        epoch: ObservationEpoch,
+        now: Timestamp,
+    ) -> Result<ApprovalId, ApprovalError> {
+        if std::mem::replace(&mut self.spent, true) {
+            return Err(ApprovalError::Consumed);
+        }
+        if self.authority != expected || self.authority.epoch != epoch {
+            return Err(ApprovalError::Mismatch("authority"));
+        }
+        if self.request.is_expired(now) {
+            return Err(ApprovalError::Expired);
+        }
+        if self.request.action_key != key
+            || self.request.risk != risk
+            || self.request.params_digest != *params
+        {
+            return Err(ApprovalError::Mismatch("request"));
+        }
+        Ok(self.request.approval_id)
+    }
 }
 
 /// In-memory store (tests, single-process runs). Time comes from the injected
@@ -272,13 +372,14 @@ impl InMemoryApprovalStore {
 
 impl ApprovalStore for InMemoryApprovalStore {
     fn issue(&self, request: ApprovalRequest) -> Result<(), ApprovalError> {
-        self.guard().insert(
-            request.approval_id,
-            ApprovalRecord {
-                request,
-                state: ApprovalState::Pending,
-            },
-        );
+        let mut records = self.guard();
+        let std::collections::btree_map::Entry::Vacant(entry) = records.entry(request.approval_id) else {
+            return Err(ApprovalError::NotPending);
+        };
+        entry.insert(ApprovalRecord {
+            request,
+            state: ApprovalState::Pending,
+        });
         Ok(())
     }
 
@@ -601,5 +702,32 @@ mod tests {
         .unwrap();
         assert!(!s.is_empty());
         assert_eq!(s.len(), 2);
+    }
+
+    #[test]
+    fn reissuing_a_spent_identifier_cannot_reset_single_use() {
+        let (clock, store) = setup();
+        let request = issue(&clock, &store);
+        store.approve_now(request.approval_id, "reviewer").unwrap();
+        store
+            .consume(
+                request.approval_id,
+                request.action_key,
+                request.risk,
+                &request.params_digest,
+                clock.now(),
+            )
+            .unwrap();
+        assert_eq!(store.issue(request.clone()), Err(ApprovalError::NotPending));
+        assert_eq!(
+            store.consume(
+                request.approval_id,
+                request.action_key,
+                request.risk,
+                &request.params_digest,
+                clock.now()
+            ),
+            Err(ApprovalError::Consumed)
+        );
     }
 }

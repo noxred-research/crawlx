@@ -448,6 +448,9 @@ impl BrowserContext for CaptureContext {
     async fn export_storage(&mut self) -> Result<Vec<u8>, BrowserError> {
         self.inner.export_storage().await
     }
+    async fn export_profile_storage(&mut self) -> Result<Vec<u8>, BrowserError> {
+        self.inner.export_profile_storage().await
+    }
     async fn import_storage(&mut self, blob: &[u8]) -> Result<(), BrowserError> {
         self.inner.import_storage(blob).await
     }

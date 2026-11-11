@@ -58,8 +58,12 @@ use std::time::Duration;
 pub mod adaptive_selectors;
 #[path = "feed_finalization.rs"]
 mod feed_finalization;
+#[path = "report_history/memory.rs"]
+pub(crate) mod report_history;
 #[path = "request_memory.rs"]
 mod request_memory;
+#[path = "url_graph/memory.rs"]
+mod url_graph;
 
 #[derive(Clone)]
 struct SessionRow {
@@ -95,6 +99,14 @@ enum Hold {
     None,
     Denied,
     AwaitingApproval,
+}
+
+#[derive(Clone)]
+struct MemoryApprovalRow {
+    record: crate::ApprovalRecord,
+    request: Option<crate::approvals::ApprovalRequestV1>,
+    consumed_fence: Option<i64>,
+    revoked: bool,
 }
 
 struct ClusterRow {
@@ -158,11 +170,13 @@ struct Inner {
     sessions: BTreeMap<SessionId, SessionRow>,
     frontier: Vec<FrontierRow>,
     requests: request_memory::RequestState,
+    url_graph: BTreeMap<CrawlRunId, crate::url_graph::MemoryGraph>,
     dataset: crate::dataset::DatasetState,
     adaptive_selectors: BTreeMap<String, adaptive_selectors::StoredDescriptor>,
     pages: Vec<PageRecord>,
     page_captures: BTreeMap<(CrawlRunId, i64), PageRecord>,
     actions: BTreeMap<ActionId, ActionRow>,
+    approvals: BTreeMap<crawlx_core::ApprovalId, MemoryApprovalRow>,
     action_order: Vec<ActionId>,
     session_seq: HashMap<SessionId, u64>,
     states: Vec<NewState>,
@@ -220,6 +234,7 @@ pub struct MemoryStore {
     head_custody: Arc<tokio::sync::RwLock<()>>,
     head_authorities: Mutex<HeadAuthorities>,
     pub(crate) archives: Mutex<crate::archive_catalog::ArchiveState>,
+    pub(crate) report_history: Mutex<report_history::ReportState>,
     pub(crate) worker_registry: Mutex<crate::admin::WorkerRegistryState>,
 }
 
@@ -260,6 +275,7 @@ impl MemoryStore {
             head_custody: Arc::new(tokio::sync::RwLock::new(())),
             head_authorities: Mutex::new(HeadAuthorities::default()),
             archives: Mutex::new(crate::archive_catalog::ArchiveState::default()),
+            report_history: Mutex::new(report_history::ReportState::default()),
             worker_registry: Mutex::new(crate::admin::WorkerRegistryState::default()),
         }
     }
@@ -709,18 +725,6 @@ impl MemoryStore {
         }
     }
 
-    /// Approval decision for a held action: approving releases the hold (the action becomes
-    /// eligible), denying marks it denied. Returns `false` if the action does not exist.
-    pub fn resolve_hold(&self, action: ActionId, approved: bool) -> bool {
-        match self.inner.lock().actions.get_mut(&action) {
-            Some(a) => {
-                a.hold = if approved { Hold::None } else { Hold::Denied };
-                true
-            }
-            None => false,
-        }
-    }
-
     /// Erasure: delete every row of `run` (the in-memory mirror of `RetentionSweeper::purge_run`).
     /// Returns the number of rows removed.
     ///
@@ -773,6 +777,10 @@ impl MemoryStore {
         self.archives.lock().purge_run(run);
         let mut g = self.inner.lock();
         let mut n = erased.saturating_add(event_rows);
+        n = n.saturating_add(self.report_history.lock().purge_run(run));
+        let before = g.approvals.len();
+        g.approvals.retain(|_, row| row.record.run != run);
+        n = n.saturating_add(u64::try_from(before.saturating_sub(g.approvals.len())).unwrap_or(u64::MAX));
         let doomed_actions: Vec<ActionId> = g
             .actions
             .iter()
@@ -800,6 +808,7 @@ impl MemoryStore {
         g.frontier.retain(|f| f.e.run != run);
         n += (before - g.frontier.len()) as u64;
         g.dataset.purge_run(run);
+        g.url_graph.remove(&run);
         let before = g.adaptive_selectors.len();
         g.adaptive_selectors.retain(|_, record| record.run != run);
         n = n.saturating_add(
@@ -2327,6 +2336,33 @@ impl ActionJournal for MemoryStore {
                 dataset_page,
             },
         );
+        if let Some(approval) = v.approval {
+            g.approvals.entry(approval).or_insert_with(|| MemoryApprovalRow {
+                record: crate::ApprovalRecord {
+                    id: approval,
+                    run,
+                    action: id,
+                    risk_class: v.risk_class.as_str().to_owned(),
+                    summary: serde_json::json!({
+                        "role": p.key.principal.0,
+                        "route_template": p.key.route_template.0,
+                        "action_kind": p.key.action_kind.as_str(),
+                        "resource_context": p.key.resource_context.as_str(),
+                        "input_class": p.key.input_class.0,
+                    }),
+                    decision: crate::ApprovalDecision::Pending,
+                    requested_at: now,
+                    expires_at: now + ChronoDuration::hours(24),
+                    decided_by: None,
+                    decided_at: None,
+                    reason: None,
+                    consumed_at: None,
+                },
+                request: None,
+                consumed_fence: None,
+                revoked: false,
+            });
+        }
         Ok(id)
     }
 
@@ -3143,6 +3179,336 @@ impl IdentityAliasRepo for MemoryStore {
 
 #[path = "dataset_memory.rs"]
 mod dataset_memory;
+
+fn approval_lease(
+    state: &Inner,
+    tenant: TenantId,
+    lease: &SessionLease,
+    now: Timestamp,
+) -> Result<(), StoreError> {
+    let run = state.runs.get(&lease.session.run).ok_or(StoreError::LeaseLost)?;
+    let session = state
+        .sessions
+        .get(&lease.session.id)
+        .ok_or(StoreError::LeaseLost)?;
+    if run.tenant != tenant
+        || state.pending_purges.contains_key(&run.id)
+        || !matches!(run.status, RunStatus::Queued | RunStatus::Running)
+        || run.terminal_reason == Some(TerminalReason::AuthorizationRevoked)
+        || session.s.run != run.id
+        || session.s.role != lease.session.role
+        || session.owner != Some(lease.worker)
+        || session.token != Some(lease.fencing_token)
+        || session.expires.is_none_or(|expires| expires <= now)
+        || !matches!(
+            session.s.status,
+            SessionStatus::Running | SessionStatus::Recovering
+        )
+    {
+        return Err(StoreError::LeaseLost);
+    }
+    Ok(())
+}
+
+fn approval_action(
+    state: &Inner,
+    tenant: TenantId,
+    lease: &SessionLease,
+    binding: &crate::approvals::ApprovalBindingV1,
+) -> Result<(), StoreError> {
+    let action = state
+        .actions
+        .get(&binding.action)
+        .ok_or_else(crate::approvals::conflict)?;
+    if binding.tenant != tenant
+        || binding.run != lease.session.run
+        || binding.session != lease.session.id
+        || action.rec.run != binding.run
+        || action.rec.session != binding.session
+        || action.rec.key.id() != binding.action_key
+        || action.rec.epoch != binding.epoch
+        || action.rec.status != ActionStatus::Proposed
+    {
+        return Err(crate::approvals::conflict());
+    }
+    Ok(())
+}
+
+impl MemoryStore {
+    /// Seed an API fixture in the same approval table the worker uses.
+    /// Unbound fixtures cannot be consumed by the durable bridge.
+    pub fn insert_approval_record(&self, record: crate::ApprovalRecord) {
+        self.inner
+            .lock()
+            .approvals
+            .entry(record.id)
+            .or_insert(MemoryApprovalRow {
+                record,
+                request: None,
+                consumed_fence: None,
+                revoked: false,
+            });
+    }
+
+    /// API-visible decisions from the shared worker approval table, sorted by ID.
+    #[must_use]
+    pub fn approval_records(&self, run: CrawlRunId) -> Vec<crate::ApprovalRecord> {
+        self.inner
+            .lock()
+            .approvals
+            .values()
+            .filter(|row| row.record.run == run)
+            .map(|row| row.record.clone())
+            .collect()
+    }
+
+    /// API reviewer decision using the injected clock, atomically with the action hold.
+    ///
+    /// # Errors
+    /// Returns conflict for a non-reviewer decision.
+    pub fn decide_approval_record(
+        &self,
+        run: CrawlRunId,
+        id: crawlx_core::ApprovalId,
+        decision: crate::ApprovalDecision,
+        reviewer: uuid::Uuid,
+        reason: Option<&str>,
+    ) -> Result<crate::DecideOutcome, StoreError> {
+        use crate::{ApprovalDecision, DecideOutcome};
+        if !matches!(decision, ApprovalDecision::Approved | ApprovalDecision::Denied) {
+            return Err(crate::approvals::conflict());
+        }
+        let mut state = self.inner.lock();
+        let now = self.clock.now();
+        let Some(row) = state.approvals.get_mut(&id).filter(|row| row.record.run == run) else {
+            return Ok(DecideOutcome::NotFound);
+        };
+        if row.revoked || row.record.expires_at <= now || row.record.consumed_at.is_some() {
+            return Ok(DecideOutcome::NotPending(row.record.clone()));
+        }
+        if row.record.decision == decision {
+            return Ok(DecideOutcome::Unchanged(row.record.clone()));
+        }
+        if row.record.decision != ApprovalDecision::Pending {
+            return Ok(DecideOutcome::NotPending(row.record.clone()));
+        }
+        row.record.decision = decision;
+        row.record.decided_by = Some(reviewer);
+        row.record.decided_at = Some(now);
+        row.record.reason = reason.map(str::to_owned);
+        let record = row.record.clone();
+        if let Some(action) = state.actions.get_mut(&record.action) {
+            action.hold = if decision == ApprovalDecision::Denied {
+                Hold::Denied
+            } else {
+                Hold::AwaitingApproval
+            };
+        }
+        Ok(DecideOutcome::Applied(record))
+    }
+
+    /// Fixture hook for a spent unbound approval. Bound approvals must use fenced consumption.
+    pub fn consume_approval_fixture(&self, id: crawlx_core::ApprovalId, at: Timestamp) {
+        if let Some(row) = self
+            .inner
+            .lock()
+            .approvals
+            .get_mut(&id)
+            .filter(|row| row.request.is_none())
+        {
+            row.record.consumed_at = Some(at);
+        }
+    }
+
+    /// Purge shared approval records with the API run metadata.
+    pub fn purge_approval_records(&self, run: CrawlRunId) -> u64 {
+        let mut state = self.inner.lock();
+        let before = state.approvals.len();
+        state.approvals.retain(|_, row| row.record.run != run);
+        u64::try_from(before - state.approvals.len()).unwrap_or(u64::MAX)
+    }
+}
+
+#[async_trait]
+impl crate::approvals::ApprovalRepository for MemoryStore {
+    async fn persist_approval(
+        &self,
+        tenant: TenantId,
+        lease: &SessionLease,
+        request: &crate::approvals::ApprovalRequestV1,
+    ) -> Result<(), StoreError> {
+        self.check_head_authority(lease.session.run).await?;
+        let mut state = self.inner.lock();
+        let now = self.clock.now();
+        approval_lease(&state, tenant, lease, now)?;
+        request.validate(now)?;
+        approval_action(&state, tenant, lease, &request.binding)?;
+        if state.approvals.values().any(|row| {
+            row.record.id != request.id
+                && row
+                    .request
+                    .as_ref()
+                    .is_some_and(|bound| bound.binding.action == request.binding.action)
+        }) {
+            return Err(crate::approvals::conflict());
+        }
+        let row = state
+            .approvals
+            .get_mut(&request.id)
+            .ok_or_else(crate::approvals::conflict)?;
+        if let Some(old) = &row.request {
+            return if old == request {
+                Ok(())
+            } else {
+                Err(crate::approvals::conflict())
+            };
+        }
+        if row.record.run != request.binding.run
+            || row.record.action != request.binding.action
+            || row.record.risk_class != request.binding.risk.as_str()
+            || !matches!(
+                row.record.decision,
+                crate::ApprovalDecision::Pending
+                    | crate::ApprovalDecision::Approved
+                    | crate::ApprovalDecision::Denied
+            )
+            || row.revoked
+            || row.record.consumed_at.is_some()
+        {
+            return Err(crate::approvals::conflict());
+        }
+        row.record.requested_at = request.created_at;
+        row.record.expires_at = request.expires_at;
+        row.request = Some(request.clone());
+        Ok(())
+    }
+
+    async fn find_approval(
+        &self,
+        tenant: TenantId,
+        lease: &SessionLease,
+        key: ActionContextId,
+        risk: crawlx_core::safety::RiskClass,
+        params: Digest,
+        epoch: ObservationEpoch,
+    ) -> Result<Option<crate::approvals::DurableApprovalV1>, StoreError> {
+        self.check_head_authority(lease.session.run).await?;
+        let state = self.inner.lock();
+        let now = self.clock.now();
+        approval_lease(&state, tenant, lease, now)?;
+        for row in state.approvals.values() {
+            let Some(request) = &row.request else { continue };
+            let binding = &request.binding;
+            if binding.tenant == tenant
+                && binding.run == lease.session.run
+                && binding.session == lease.session.id
+                && binding.action_key == key
+                && binding.risk == risk
+                && binding.params_digest == params
+                && binding.epoch == epoch
+                && row.record.decision == crate::ApprovalDecision::Approved
+                && row.record.consumed_at.is_none()
+                && request.expires_at > now
+                && !row.revoked
+            {
+                approval_action(&state, tenant, lease, binding)?;
+                return Ok(Some(crate::approvals::DurableApprovalV1 {
+                    request: request.clone(),
+                    record: row.record.clone(),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn consume_approval(
+        &self,
+        tenant: TenantId,
+        lease: &SessionLease,
+        expected: &crate::approvals::DurableApprovalV1,
+    ) -> Result<crate::approvals::ConsumedApprovalV1, StoreError> {
+        self.check_head_authority(lease.session.run).await?;
+        let mut state = self.inner.lock();
+        let now = self.clock.now();
+        approval_lease(&state, tenant, lease, now)?;
+        expected.request.validate(now)?;
+        approval_action(&state, tenant, lease, &expected.request.binding)?;
+        let row = state
+            .approvals
+            .get_mut(&expected.request.id)
+            .ok_or_else(crate::approvals::conflict)?;
+        if row.request.as_ref() != Some(&expected.request)
+            || row.revoked
+            || row.record.decision != crate::ApprovalDecision::Approved
+            || row.record.consumed_at.is_some()
+            || row.record.decided_at.is_none_or(|at| at > now)
+        {
+            return Err(crate::approvals::conflict());
+        }
+        row.record.consumed_at = Some(now);
+        row.consumed_fence = Some(lease.fencing_token);
+        Ok(crate::approvals::ConsumedApprovalV1 {
+            request: expected.request.clone(),
+            fence: lease.fencing_token,
+            consumed_at: now,
+        })
+    }
+
+    async fn intend_approved(
+        &self,
+        tenant: TenantId,
+        lease: &SessionLease,
+        action: ActionId,
+        epoch: ObservationEpoch,
+        verdict: &SafetyVerdict,
+    ) -> Result<(), StoreError> {
+        self.check_head_authority(lease.session.run).await?;
+        let mut state = self.inner.lock();
+        let now = self.clock.now();
+        approval_lease(&state, tenant, lease, now)?;
+        let id = verdict.approval.ok_or_else(crate::approvals::conflict)?;
+        let row = state.approvals.get(&id).ok_or_else(crate::approvals::conflict)?;
+        let request = row.request.as_ref().ok_or_else(crate::approvals::conflict)?;
+        approval_action(&state, tenant, lease, &request.binding)?;
+        request.validate(now)?;
+        if request.binding.action != action
+            || request.binding.epoch != epoch
+            || verdict.decision != SafetyDecision::Allow
+            || verdict.risk_class != request.binding.risk
+            || row.record.decision != crate::ApprovalDecision::Approved
+            || row.revoked
+            || row.consumed_fence != Some(lease.fencing_token)
+            || row.record.consumed_at.is_none_or(|at| at > now)
+        {
+            return Err(crate::approvals::conflict());
+        }
+        let summary = request.summary.clone();
+        let before = state
+            .states
+            .iter()
+            .filter(|s| {
+                s.session == lease.session.id
+                    && s.epoch.navigation_seq == epoch.navigation_seq
+                    && s.epoch.document_seq == epoch.document_seq
+                    && s.epoch.mutation_seq <= epoch.mutation_seq
+            })
+            .max_by_key(|s| (s.epoch, s.observed_at))
+            .map(|s| s.id);
+        let row = state
+            .actions
+            .get_mut(&action)
+            .ok_or_else(crate::approvals::conflict)?;
+        row.rec.status = ActionStatus::Intended;
+        row.rec.intended_at = Some(now);
+        row.rec.safety_decision = verdict.decision_id;
+        row.rec.before_state = before;
+        row.hold = Hold::None;
+        state
+            .safety
+            .push((lease.session.run, lease.session.id, verdict.clone(), summary));
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod exact_frontier_lease_tests {

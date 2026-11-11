@@ -11,8 +11,16 @@ use crawlx_fetch::{
     EgressOptions, EgressProxy, EgressProxyHandle, StaticResolver, UpstreamProxy, DENIED_HEADER,
 };
 use crawlx_policy::egress::{DenyRule, EgressPolicy};
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: raw http messages used only by the in-process upstream proxy fixture"
+)]
 use http::{header, Method, Request, Response, StatusCode};
 use http_body_util::Full;
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: raw hyper body type used only by the in-process upstream proxy fixture"
+)]
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -51,6 +59,10 @@ struct HttpUpstream {
 
 /// An HTTP proxy that requires [`OPERATOR_AUTH`]: plain requests are answered itself
 /// (`via upstream: <uri>`), `CONNECT` tunnels to the routed address.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: the in-process upstream proxy serves raw hyper/http messages and never crosses a typed fetch boundary"
+)]
 async fn http_upstream(routes: Routes) -> HttpUpstream {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -75,6 +87,10 @@ async fn http_upstream(routes: Routes) -> HttpUpstream {
     HttpUpstream { addr, seen }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: the in-process upstream proxy answers raw hyper/http messages and never crosses a typed fetch boundary"
+)]
 fn upstream_answer(req: Request<Incoming>, log: &Mutex<Vec<Seen>>, routes: &Routes) -> Response<Full<Bytes>> {
     let header_of = |name: header::HeaderName| {
         req.headers()
@@ -237,6 +253,13 @@ fn loopback_policy() -> EgressPolicy {
     p
 }
 
+/// [`loopback_policy`] plus the mock target's ephemeral port, which is not a default port.
+fn loopback_policy_for(target: &MockServer) -> EgressPolicy {
+    let mut p = loopback_policy();
+    p.extra_ports.push(target.address().port());
+    p
+}
+
 async fn chained_proxy(policy: EgressPolicy, upstream: &str) -> EgressProxyHandle {
     let upstream = UpstreamProxy::from_url(&Url::parse(upstream).unwrap()).unwrap();
     EgressProxy::serve_with(
@@ -249,6 +272,10 @@ async fn chained_proxy(policy: EgressPolicy, upstream: &str) -> EgressProxyHandl
 }
 
 /// A browser-like client of the egress proxy that also sends its own `Proxy-Authorization`.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: a raw reqwest client plays the browser against the egress proxy and never crosses a typed fetch boundary"
+)]
 fn browser(proxy: &EgressProxyHandle) -> reqwest::Client {
     reqwest::Client::builder()
         .proxy(
@@ -347,7 +374,7 @@ async fn connect_tunnels_through_the_upstream_with_its_credentials() {
     let target = target_server().await;
     let upstream = http_upstream(routes_to(&target)).await;
     let proxy = chained_proxy(
-        loopback_policy(),
+        loopback_policy_for(&target),
         &format!(
             "http://{OPERATOR_URL_USERINFO}@127.0.0.1:{}",
             upstream.addr.port()
@@ -454,7 +481,7 @@ async fn an_upstream_that_demands_other_credentials_fails_the_tunnel_with_a_bad_
     let target = target_server().await;
     let upstream = http_upstream(routes_to(&target)).await;
     let proxy = chained_proxy(
-        loopback_policy(),
+        loopback_policy_for(&target),
         &format!("http://wrong:secret@127.0.0.1:{}", upstream.addr.port()),
     )
     .await;
@@ -480,7 +507,7 @@ async fn socks_fixture() -> (MockServer, SocksUpstream) {
 async fn socks5h_sends_the_host_name_and_the_credentials() {
     let (target, upstream) = socks_fixture().await;
     let proxy = chained_proxy(
-        loopback_policy(),
+        loopback_policy_for(&target),
         &format!(
             "socks5h://{OPERATOR_URL_USERINFO}@127.0.0.1:{}",
             upstream.addr.port()
@@ -527,7 +554,7 @@ async fn socks5h_sends_the_host_name_and_the_credentials() {
 async fn socks5_sends_the_address_the_policy_checked() {
     let (target, upstream) = socks_fixture().await;
     let proxy = chained_proxy(
-        loopback_policy(),
+        loopback_policy_for(&target),
         &format!(
             "socks5://{OPERATOR_URL_USERINFO}@127.0.0.1:{}",
             upstream.addr.port()

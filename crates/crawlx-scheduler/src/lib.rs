@@ -21,6 +21,7 @@
 
 mod checkpointing;
 mod error;
+pub mod frontier;
 mod lease;
 pub mod monitor;
 mod plan;

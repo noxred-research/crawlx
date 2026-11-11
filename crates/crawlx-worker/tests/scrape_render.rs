@@ -170,9 +170,17 @@ impl OpsContext {
     }
 }
 
+/// Page-op payloads are budget-admitted, as the browser produces them.
+fn admitted(bytes: &[u8]) -> crawlx_core::parser_memory::AdmittedBytes {
+    let permit = crawlx_core::parser_memory::global()
+        .try_reserve(bytes.len())
+        .unwrap();
+    crawlx_core::parser_memory::AdmittedBytes::new(bytes.to_vec(), permit)
+}
+
 fn png() -> PageOpResult {
     PageOpResult::Bytes {
-        bytes: PLACEHOLDER_PNG.to_vec(),
+        bytes: admitted(&PLACEHOLDER_PNG),
         content_type: "image/png",
     }
 }
@@ -251,7 +259,9 @@ impl BrowserContext for OpsContext {
             PageOp::Html => {
                 let bundle = self.inner.observe(ObservationSpec::default()).await?;
                 Ok(PageOpResult::Html {
-                    html: bundle.html.unwrap_or_default(),
+                    html: bundle.html.ok_or_else(|| {
+                        BrowserError::Script("settled document html unavailable".to_owned())
+                    })?,
                     url: bundle.url.url.to_string(),
                 })
             }
@@ -280,7 +290,7 @@ impl BrowserContext for OpsContext {
             }
             PageOp::Screenshot(_) => Ok(png()),
             PageOp::PrintToPdf(_) => Ok(PageOpResult::Bytes {
-                bytes: b"%PDF-1.4 scripted".to_vec(),
+                bytes: admitted(b"%PDF-1.4 scripted"),
                 content_type: "application/pdf",
             }),
             other @ (PageOp::BeginVirtualRows(_)
@@ -334,6 +344,8 @@ async fn fake_rig_with_recipe(
     }
     let mut record = authorization_fixture::verified_record(&crawl, stores.tenant);
     record.robots_override_acknowledged = true;
+    // one scripted test renders a page of a second origin on purpose: the signed scope names it
+    record.origins.push("https://other.test".to_owned());
     let stores =
         stores.with_authorization_source(Arc::new(crawlx_worker::StaticAuthorizationSource::new(record)));
     let run = create_run(&stores, &crawl).await;
@@ -1326,6 +1338,11 @@ async fn rig(profile: SafetyProfile) -> Option<Rig> {
         target.set_host(Some(host)).unwrap();
         record.origins.push(target.origin().ascii_serialization());
     }
+    // the lab page embeds the tracker at its default port; the signed scope names that origin
+    record
+        .origins
+        .push("http://googleads.g.doubleclick.net".to_owned()); // detection-data
+    let proxy_record = record.clone();
     let stores =
         stores.with_authorization_source(Arc::new(crawlx_worker::StaticAuthorizationSource::new(record)));
     let run = create_run(&stores, &crawl).await;
@@ -1349,7 +1366,7 @@ async fn rig(profile: SafetyProfile) -> Option<Rig> {
     if std::env::var("CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI").is_err() && std::env::var_os("CI").is_none() {
         cfg.launch.unsafe_no_sandbox_for_ci = std::env::var("USER").map_or(true, |u| u == "root");
     }
-    let policy = Arc::new(cfg.egress.policy_for(&crawl));
+    let policy = Arc::new(cfg.egress.policy_for_run(&crawl, Some(&proxy_record)).unwrap());
     let proxy = EgressProxy::serve(policy, cfg.egress.resolver().unwrap())
         .await
         .unwrap();

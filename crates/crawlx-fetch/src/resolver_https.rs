@@ -103,6 +103,10 @@ impl HttpsResolverConfig {
 }
 
 /// Checked encrypted DNS transport. No redirects, ambient proxy, or DNS recursion.
+#[allow(
+    clippy::disallowed_types,
+    reason = "pinned HTTPS resolver transport owns the raw reqwest client"
+)]
 #[non_exhaustive]
 pub struct HttpsResolver {
     config: HttpsResolverConfig,
@@ -166,6 +170,10 @@ impl HttpsResolver {
         Self::build_validated(config, endpoint_policy, answer_policy, cancel)
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "pinned HTTPS resolver transport builds the raw reqwest client"
+    )]
     fn build_validated(
         mut config: HttpsResolverConfig,
         endpoint_policy: Arc<EgressPolicy>,

@@ -4,10 +4,12 @@ use super::{codec, identifier, joined, json, limits, stopped};
 use crate::{Stores, WorkerError};
 use crawlx_core::archive::ArchiveCaptureFactsV1;
 use crawlx_core::archive_catalog::{ArchiveExportV1, ArchiveRecordV1};
+use crawlx_core::custody::FrozenArchiveSource;
 use crawlx_core::orchestration::QueuedRequestV1;
 use crawlx_core::repo::{CrawlRun, PageRecord};
 use crawlx_core::{ArtifactRef, Clock};
 use crawlx_storage::archive::{staging::StagedFile, warc, ArchiveError};
+use crawlx_storage::custody::frozen_archive::with_terminal_grant;
 use crawlx_telemetry::redact::Redactor;
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -256,11 +258,20 @@ impl Recorder<'_> {
             return Ok(RecordOutcome::Omitted("remaining_encoded_archive_byte_budget"));
         }
         crawlx_storage::chaos::pause("archive.before_shard_commit").await;
+        let terminal = super::run_is_terminal(self.stores, self.run.id).await?;
+        let sources = vec![FrozenArchiveSource::new(source.clone(), source_custody)];
         let artifact = tokio::select! {
             biased;
             () = self.cancel.cancelled() => return Err(stopped()),
-            result = self.stores.artifacts.put_archive_file_with_custody(self.run.id, "application/warc", shard.path(),
-                self.export.config.max_record_bytes.saturating_add(131_072), &source_custody) => result?,
+            result = with_terminal_grant(
+                self.stores.custody.as_deref(),
+                terminal,
+                self.export,
+                &source_custody,
+                sources,
+                self.stores.artifacts.put_archive_file_with_custody(self.run.id, "application/warc", shard.path(),
+                    self.export.config.max_record_bytes.saturating_add(131_072), &source_custody),
+            ) => result??,
         };
         crawlx_storage::chaos::pause("archive.after_shard_commit").await;
         let mut record = ArchiveRecordV1::resource(

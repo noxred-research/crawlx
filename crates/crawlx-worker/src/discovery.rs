@@ -5,7 +5,14 @@
 
 use super::*;
 use crate::acquisition::AcquisitionBudgetV1;
+use crate::extension_recipes::{
+    CompiledExtensionRecipe, RecipeCandidateKindV1, RecipeCandidateV1, RecipeExecutionError,
+};
+use crate::source_dispatch::{
+    SourceDispatchError, SourceDispatchInput, SourceDispatchOutcome, SourceDispatcher, SourceReferenceV1,
+};
 use crawlx_core::discovery::{DiscoveryErrorV1, DiscoveryProviderV1, DiscoverySourceV1};
+use crawlx_core::extension_recipes::ExtensionRecipeV1;
 use crawlx_core::extraction::{DiscoveryPurposeV1, QualityStatusV1};
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{LoaderCursorV1, RequestBatchV1};
@@ -124,6 +131,8 @@ enum SourceParseError {
     Feed(#[from] crawlx_url::feed::FeedError),
     #[error(transparent)]
     Decode(#[from] SitemapDecodeError),
+    #[error(transparent)]
+    Recipe(#[from] RecipeExecutionError),
 }
 
 /// Shared checkpoint authority for list and row-stream source loaders.
@@ -136,6 +145,93 @@ struct DiscoveryLoader {
     fence: i64,
     chunk_size: usize,
     label: String,
+}
+
+/// Borrow legacy URLs, recipe proposals or typed child references without copying URLs.
+#[derive(Clone, Copy)]
+enum SourceBatch<'a> {
+    Urls(&'a [Url]),
+    Recipe(&'a [RecipeCandidateV1]),
+    Dispatch(&'a [SourceReferenceV1]),
+}
+
+/// Handler and provenance hints carried by one proposal; none is an admission input.
+#[derive(Clone, Copy)]
+enum Proposal<'a> {
+    Recipe(&'a RecipeCandidateV1),
+    Reference(&'a SourceReferenceV1),
+}
+
+impl<'a> SourceBatch<'a> {
+    fn len(self) -> usize {
+        match self {
+            Self::Urls(urls) => urls.len(),
+            Self::Recipe(candidates) => candidates.len(),
+            Self::Dispatch(references) => references.len(),
+        }
+    }
+
+    fn slice(self, start: usize, end: usize) -> Self {
+        match self {
+            Self::Urls(urls) => Self::Urls(&urls[start..end]),
+            Self::Recipe(candidates) => Self::Recipe(&candidates[start..end]),
+            Self::Dispatch(references) => Self::Dispatch(&references[start..end]),
+        }
+    }
+
+    fn iter(self) -> impl Iterator<Item = (&'a Url, Option<Proposal<'a>>)> {
+        (0..self.len()).map(move |index| match self {
+            Self::Urls(urls) => (&urls[index], None),
+            Self::Recipe(candidates) => (&candidates[index].url, Some(Proposal::Recipe(&candidates[index]))),
+            Self::Dispatch(references) => (
+                &references[index].url,
+                Some(Proposal::Reference(&references[index])),
+            ),
+        })
+    }
+}
+
+/// Shared immutable selector snapshot used by both native sitemap source paths.
+#[derive(Clone)]
+struct SourceRecipe {
+    compiled: Arc<CompiledExtensionRecipe>,
+    max_input_bytes: usize,
+    max_sitemap_depth: u16,
+}
+
+impl SourceRecipe {
+    fn new(spec: &ExtensionRecipeV1, compiled: Arc<CompiledExtensionRecipe>) -> Self {
+        Self {
+            compiled,
+            max_input_bytes: spec.max_input_bytes,
+            max_sitemap_depth: spec.max_sitemap_depth,
+        }
+    }
+
+    fn select(
+        &self,
+        bytes: &[u8],
+        source: &Url,
+        depth: u16,
+        policy: &crawlx_core::discovery::SourceDiscoveryPolicyV1,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<RecipeCandidateV1>, SourceParseError> {
+        let decoded = decode_sitemap(bytes, policy.max_feed_bytes.min(self.max_input_bytes))?;
+        if decoded.len() > self.max_input_bytes {
+            return Err(RecipeExecutionError::from(
+                crawlx_core::extension_recipes::ExtensionRecipeError::Limit,
+            )
+            .into());
+        }
+        let mut document = crawlx_url::SitemapParser::parse_limited(&decoded, policy.max_entries)
+            .map_err(crawlx_url::feed::FeedError::from)?;
+        if let Some(lastmod) = &policy.sitemap_lastmod {
+            document
+                .urls
+                .retain(|entry| lastmod.includes(entry.lastmod.as_ref()));
+        }
+        Ok(self.compiled.sitemap_document(document, source, depth, cancel)?)
+    }
 }
 
 impl UrlPlaneRunner {
@@ -244,18 +340,23 @@ impl UrlPlaneRunner {
                 .map_err(|error| WorkerError::Other(error.to_string()))?
                 .to_hex()
         );
-        let digest = Digest::of_value(
-            if matches!(label, "html_sources" | "feed") {
-                "crawlx/discovery-representation/v2"
-            } else {
-                "crawlx/discovery-representation/v1"
-            },
-            &(
-                Digest::of("crawlx/discovery-bytes/v1", source_bytes),
-                policy,
-                &self.crawl.scope.sources,
-            ),
-        )
+        let wire_digest = Digest::of("crawlx/discovery-bytes/v1", source_bytes);
+        let digest = if let Some(recipe) = self.extension_recipe() {
+            let pin = recipe.pin();
+            Digest::of_value(
+                "crawlx/discovery-recipe-representation/v1",
+                &(wire_digest, policy, &self.crawl.scope.sources, pin),
+            )
+        } else {
+            Digest::of_value(
+                if matches!(label, "html_sources" | "feed") {
+                    "crawlx/discovery-representation/v2"
+                } else {
+                    "crawlx/discovery-representation/v1"
+                },
+                &(wire_digest, policy, &self.crawl.scope.sources),
+            )
+        }
         .map_err(|error| WorkerError::Other(error.to_string()))?;
         let digest = private_key.as_ref().map_or(digest, |key| {
             Digest::keyed(&key.0, "crawlx/discovery-private-source/v1", &digest.0)
@@ -297,7 +398,7 @@ impl UrlPlaneRunner {
     /// Commit bounded proposals and their physical source position under the parent fence.
     async fn append_source_chunk(
         &self,
-        urls: &[Url],
+        candidates: SourceBatch<'_>,
         position: u64,
         parent: &FrontierEntry,
         loader: &mut DiscoveryLoader,
@@ -310,7 +411,7 @@ impl UrlPlaneRunner {
         let memo_scope = self.discovery_memo_scope(parent, &loader.label).await?;
         let mut memo_keys = Vec::new();
         let depth = parent.depth.saturating_add(1);
-        for url in urls {
+        for (url, recipe) in candidates.iter() {
             let Some((canonical, bearing)) = self.canonicalize(url) else {
                 continue;
             };
@@ -345,7 +446,38 @@ impl UrlPlaneRunner {
                 continue;
             }
             memo_keys.push(canonical.key);
-            requests.push(RequestEnvelopeV1::get(canonical, depth, Some(parent.id)));
+            let mut request = RequestEnvelopeV1::get(canonical, depth, Some(parent.id));
+            match recipe {
+                Some(Proposal::Recipe(candidate)) => {
+                    request.route.clone_from(&candidate.route);
+                    if candidate.kind == RecipeCandidateKindV1::Sitemap {
+                        request.metadata.insert(
+                            "recipe_sitemap_depth".into(),
+                            serde_json::json!(candidate.sitemap_depth),
+                        );
+                    }
+                    if let Some(language) = &candidate.language_hint {
+                        request
+                            .metadata
+                            .insert("recipe_language_hint".into(), serde_json::json!(language));
+                    }
+                }
+                Some(Proposal::Reference(reference)) => {
+                    // A source-authored label names a reviewed handler only; otherwise default.
+                    if self.crawl.extensions.route(&reference.route).is_ok() {
+                        request.route.clone_from(&reference.route);
+                    }
+                    request.metadata.insert(
+                        "source_child".into(),
+                        serde_json::json!(reference.source_child.to_hex()),
+                    );
+                    request
+                        .metadata
+                        .insert("source_ordinal".into(), serde_json::json!(reference.ordinal));
+                }
+                None => {}
+            }
+            requests.push(request);
         }
         let next = LoaderCursorV1::new(loader.source.clone(), loader.digest, position);
         let batch_id = Digest::of_value(
@@ -392,33 +524,42 @@ impl UrlPlaneRunner {
         label: &str,
         source_bytes: &[u8],
     ) -> Result<usize, WorkerError> {
+        self.append_source_candidates(SourceBatch::Urls(urls), parent, label, source_bytes)
+            .await
+    }
+
+    /// Preserve exact recipe handlers while sharing native admission and fenced cursors.
+    async fn append_source_candidates(
+        &self,
+        candidates: SourceBatch<'_>,
+        parent: &FrontierEntry,
+        label: &str,
+        source_bytes: &[u8],
+    ) -> Result<usize, WorkerError> {
         let Some(mut loader) = self.source_loader(parent, label, source_bytes).await? else {
             return Ok(0);
         };
-        let start = loader
+        let mut start = loader
             .cursor
             .as_ref()
             .map_or(0, |cursor| usize::try_from(cursor.position).unwrap_or(usize::MAX));
-        if start > urls.len() {
+        if start > candidates.len() {
             return Err(StoreError::Conflict("discovery cursor exceeds source".into()).into());
         }
-        let mut inserted = 0usize;
-        // Even an empty selected set pins its representation and policy across restart.
-        let empty_source = (urls.is_empty() && loader.cursor.is_none()).then_some(urls);
-        let chunk_size = loader.chunk_size;
-        for (index, chunk) in urls[start..].chunks(chunk_size).chain(empty_source).enumerate() {
-            let position = start
-                .saturating_add(index.saturating_mul(chunk_size))
-                .saturating_add(chunk.len());
+        let mut inserted = 0_usize;
+        // Empty selections still pin representation and recipe identity on the first commit.
+        while start < candidates.len() || (candidates.len() == 0 && loader.cursor.is_none()) {
+            let end = start.saturating_add(loader.chunk_size).min(candidates.len());
             inserted = inserted.saturating_add(
                 self.append_source_chunk(
-                    chunk,
-                    u64::try_from(position).unwrap_or(u64::MAX),
+                    candidates.slice(start, end),
+                    u64::try_from(end).unwrap_or(u64::MAX),
                     parent,
                     &mut loader,
                 )
                 .await?,
             );
+            start = end;
         }
         Ok(inserted)
     }
@@ -593,8 +734,10 @@ impl UrlPlaneRunner {
                     if urls.len() > loader.chunk_size {
                         return Err(DiscoveryErrorV1::Limit("feed_row_requests").into());
                     }
-                    admitted = admitted
-                        .saturating_add(self.append_source_chunk(&urls, position, entry, loader).await?);
+                    admitted = admitted.saturating_add(
+                        self.append_source_chunk(SourceBatch::Urls(&urls), position, entry, loader)
+                            .await?,
+                    );
                 }
             }
             if done {
@@ -637,6 +780,7 @@ impl UrlPlaneRunner {
         record: &mut PageRecord,
         expand: bool,
         budget: Option<&AcquisitionBudgetV1>,
+        cancel: &CancellationToken,
     ) -> Result<bool, WorkerError> {
         let Some(policy) = &self.crawl.scope.discovery else {
             return Ok(false);
@@ -675,7 +819,21 @@ impl UrlPlaneRunner {
                                 .content_type
                                 .as_deref()
                                 .is_some_and(|kind| kind.starts_with("text/plain"))))));
-        if connector.is_none() && !feed && !sitemap {
+        let source_dispatcher =
+            if connector.is_none() && !sitemap && self.source_enabled(DiscoverySourceV1::Feeds) {
+                self.source_dispatcher()
+            } else {
+                None
+            };
+        let dispatch_recognized = source_dispatcher.is_some()
+            && SourceDispatcher::recognizes(&response.body, response.content_type.as_deref());
+        // Supported archive bytes without an operator capability are reported, never parsed.
+        let dispatch_unavailable = connector.is_none()
+            && !sitemap
+            && source_dispatcher.is_none()
+            && self.source_enabled(DiscoverySourceV1::Feeds)
+            && response.body.starts_with(b"PK\x03\x04");
+        if connector.is_none() && !feed && !sitemap && !dispatch_recognized && !dispatch_unavailable {
             return Ok(false);
         }
         // A recognized source has completed its acquisition and cannot spend more of
@@ -686,6 +844,26 @@ impl UrlPlaneRunner {
         if response.truncated || response.body.len() > policy.max_feed_bytes {
             record.metadata["source_discovery"] =
                 serde_json::json!({"status":"resource_limit","reason":"source_bytes"});
+            return Ok(true);
+        }
+        if dispatch_unavailable {
+            record.metadata["source_dispatch"] = serde_json::json!({
+                "status":"unavailable","reason":"operator_policy_missing",
+            });
+            return Ok(true);
+        }
+        if let Some(dispatcher) = source_dispatcher.filter(|_| dispatch_recognized) {
+            self.discover_dispatched_source(Arc::clone(dispatcher), entry, response, record, expand, cancel)
+                .await?;
+            // Feeds still run the richer native URL parser below; archive and unhandled
+            // bytes end here without a second, independent interpretation.
+            if !feed {
+                return Ok(true);
+            }
+        }
+        if sitemap && connector.is_none() && self.crawl.extension_recipe.is_some() {
+            self.discover_recipe_source_response(entry, response, record, expand, cancel)
+                .await?;
             return Ok(true);
         }
         if connector.is_none()
@@ -793,11 +971,224 @@ impl UrlPlaneRunner {
                         ("rejected", "sitemap_gzip_invalid")
                     }
                     SourceParseError::Feed(_) => ("rejected", "source_protocol"),
+                    SourceParseError::Recipe(_) => ("rejected", "recipe_source"),
                 };
                 record.metadata["source_discovery"] = serde_json::json!({"status":status,"reason":reason});
             }
         }
         Ok(true)
+    }
+
+    /// Run the operator-approved bounded dispatcher on the CPU pool and admit its typed child
+    /// references through the same fenced scope/robots/budget path as every other source.
+    async fn discover_dispatched_source(
+        &self,
+        dispatcher: Arc<SourceDispatcher>,
+        entry: &FrontierEntry,
+        response: &FetchResponse,
+        record: &mut PageRecord,
+        expand: bool,
+        cancel: &CancellationToken,
+    ) -> Result<(), WorkerError> {
+        // Body and its transport admission enter the blocking closure together.
+        let body = super::memory_plane::owned_bytes(response);
+        let content_type = response.content_type.clone();
+        let final_url = response.final_url.clone();
+        let tenant = self.deps.runs.get(self.run).await?.tenant;
+        // Stable and tenant-scoped; never derived from source content.
+        let root_id = Digest::of_value(
+            "crawlx/source-dispatch-root/v1",
+            &(tenant, self.run, entry.id, entry.url.key),
+        )
+        .map_err(|error| WorkerError::Other(error.to_string()))?;
+        let retention = self.crawl.retention.mode;
+        let controls = self.fetcher.config().controls.clone();
+        let captcha = self.captcha_secrets.clone();
+        let token = cancel.clone();
+        let outcome = self
+            .cpu_pool
+            .run(move || {
+                let privacy = |text: &str| -> Result<String, StoreError> {
+                    let scrubbed = crawlx_core::secret::Redactor::new()
+                        .scrub_bytes(text.as_bytes(), controls.secret_values());
+                    let text = String::from_utf8(scrubbed.into_owned())
+                        .map_err(|_| StoreError::RetentionDenied("source projection unavailable".into()))?;
+                    match &captcha {
+                        Some(registry) => registry
+                            .redact(&text)
+                            .map_err(|_| StoreError::RetentionDenied("source projection unavailable".into())),
+                        None => Ok(text),
+                    }
+                };
+                let cancelled = || token.is_cancelled();
+                dispatcher.dispatch(SourceDispatchInput {
+                    body: body.as_ref(),
+                    content_type: content_type.as_deref(),
+                    response_url: &final_url,
+                    root_id,
+                    retention,
+                    truncated: false,
+                    baseline_modified_ms: None,
+                    privacy: &privacy,
+                    cancelled: &cancelled,
+                })
+            })
+            .await
+            .map_err(|error| WorkerError::Other(error.to_string()))?;
+        if cancel.is_cancelled() {
+            return Err(FetchError::AcquisitionCancelled.into());
+        }
+        match outcome {
+            Ok(SourceDispatchOutcome::NotHandled) => {}
+            Ok(SourceDispatchOutcome::Handled(carrier)) => {
+                // The carrier owns the expansion reservation until references are admitted
+                // and the evidence is stored.
+                let batch = carrier.value();
+                let admitted = if expand && !self.crawl.cache_only() {
+                    self.append_source_candidates(
+                        SourceBatch::Dispatch(&batch.references),
+                        entry,
+                        "source_dispatch",
+                        &response.body,
+                    )
+                    .await?
+                } else {
+                    0
+                };
+                let evidence =
+                    serde_json::to_vec(batch).map_err(|error| WorkerError::Other(error.to_string()))?;
+                let artifact = self
+                    .store(
+                        entry.id,
+                        Sensitivity::Content,
+                        "application/vnd.crawlx.discovery+json",
+                        &evidence,
+                    )
+                    .await;
+                record.metadata["source_dispatch"] = serde_json::json!({
+                    "status":"parsed","children":batch.children.len(),
+                    "references":batch.references.len(),"admitted":admitted,
+                    "truncated":batch.truncated,"omittedChildren":batch.omitted_children,
+                    "freshness":batch.freshness,"policyDigest":batch.policy_digest,
+                    "content":artifact,
+                });
+            }
+            Err(SourceDispatchError::Cancelled) => return Err(FetchError::AcquisitionCancelled.into()),
+            Err(SourceDispatchError::Unavailable(reason)) => {
+                record.metadata["source_dispatch"] =
+                    serde_json::json!({"status":"unavailable","reason":reason.as_str()});
+            }
+            Err(SourceDispatchError::SourceTruncated | SourceDispatchError::Limit) => {
+                record.metadata["source_dispatch"] =
+                    serde_json::json!({"status":"resource_limit","reason":"source_dispatch_limit"});
+            }
+            Err(_) => {
+                record.metadata["source_dispatch"] =
+                    serde_json::json!({"status":"rejected","reason":"source_dispatch_refused"});
+            }
+        }
+        Ok(())
+    }
+
+    /// Evaluate source recipes before the generic source response can return early.
+    async fn discover_recipe_source_response(
+        &self,
+        entry: &FrontierEntry,
+        response: &FetchResponse,
+        record: &mut PageRecord,
+        expand: bool,
+        cancel: &CancellationToken,
+    ) -> Result<(), WorkerError> {
+        let Some(spec) = &self.crawl.extension_recipe else {
+            return Ok(());
+        };
+        let compiled = self
+            .extension_recipe()
+            .ok_or_else(|| WorkerError::Config("extension recipe snapshot unavailable".into()))?;
+        let recipe = SourceRecipe::new(spec, Arc::clone(compiled));
+        let pin = compiled.pin().clone();
+        let request = self.deps.frontier.get_request(self.run, entry.id).await?;
+        let depth = match request.envelope.metadata.get("recipe_sitemap_depth") {
+            Some(value) => value
+                .as_u64()
+                .and_then(|n| u16::try_from(n).ok())
+                .ok_or_else(|| WorkerError::Config("invalid recipe sitemap depth".into()))?,
+            None => 0,
+        };
+        let body = response.body.clone();
+        let source = response.final_url.clone();
+        let policy = self
+            .crawl
+            .scope
+            .discovery
+            .clone()
+            .ok_or_else(|| WorkerError::Config("source policy unavailable".into()))?;
+        let cancellation = cancel.clone();
+        let selected = self
+            .cpu_pool
+            .run(move || recipe.select(&body, &source, depth, &policy, &cancellation))
+            .await
+            .map_err(|error| WorkerError::Other(error.to_string()))?;
+        if cancel.is_cancelled() {
+            return Err(FetchError::AcquisitionCancelled.into());
+        }
+        match selected {
+            Ok(candidates) => {
+                let mut admitted = if expand && !self.crawl.cache_only() {
+                    self.append_source_candidates(
+                        SourceBatch::Recipe(&candidates),
+                        entry,
+                        "sitemap",
+                        &response.body,
+                    )
+                    .await?
+                } else {
+                    0
+                };
+                if expand && !self.crawl.cache_only() && entry.depth == 0 {
+                    let configured = self.configured_discovery_sources(&entry.url);
+                    if !configured.is_empty() {
+                        admitted = admitted.saturating_add(
+                            self.append_source_urls(&configured, entry, "configured_sources", &response.body)
+                                .await?,
+                        );
+                    }
+                }
+                let content = serde_json::to_vec(&serde_json::json!({
+                    "recipe":pin, "variants":candidates,
+                }))
+                .map_err(|error| WorkerError::Other(error.to_string()))?;
+                let artifact = self
+                    .store(
+                        entry.id,
+                        Sensitivity::Content,
+                        "application/vnd.crawlx.discovery+json",
+                        &content,
+                    )
+                    .await;
+                record.metadata["source_discovery"] = serde_json::json!({
+                    "status":"parsed", "kind":"sitemap", "recipe":pin,
+                    "candidates":candidates.len(), "admitted":admitted,
+                    "truncated":false, "content":artifact,
+                });
+            }
+            Err(error) => {
+                let (status, reason) = match error {
+                    SourceParseError::Decode(SitemapDecodeError::Limit) => {
+                        ("resource_limit", "sitemap_gzip_expansion")
+                    }
+                    SourceParseError::Decode(SitemapDecodeError::Invalid(_)) => {
+                        ("rejected", "sitemap_gzip_invalid")
+                    }
+                    SourceParseError::Feed(_) => ("rejected", "source_protocol"),
+                    SourceParseError::Recipe(_) => ("rejected", "recipe_source"),
+                };
+                record.metadata["source_discovery"] = serde_json::json!({
+                    "status":status, "reason":reason, "recipe":pin,
+                });
+            }
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -931,6 +1322,11 @@ impl UrlPlaneRunner {
         let Some(policy) = &self.crawl.scope.discovery else {
             return Ok(0);
         };
+        if self.crawl.extension_recipe.is_some() {
+            return self
+                .discover_recipe_parent_sitemaps(parent, record, budget, cancel)
+                .await;
+        }
         let mut roots = self.robots.sitemaps(&parent.url.origin);
         if roots.is_empty() {
             if let Ok(url) = parent.url.url.join("/sitemap.xml") {
@@ -1091,6 +1487,161 @@ impl UrlPlaneRunner {
             "partial":incomplete || failed > 0,"content":content,
         });
         Ok(count)
+    }
+
+    /// Keep native auxiliary budgets while applying the same recipe to every sitemap.
+    async fn discover_recipe_parent_sitemaps(
+        &self,
+        parent: &FrontierEntry,
+        record: &mut PageRecord,
+        budget: &mut AcquisitionBudgetV1,
+        cancel: &CancellationToken,
+    ) -> Result<usize, WorkerError> {
+        let Some(policy) = &self.crawl.scope.discovery else {
+            return Ok(0);
+        };
+        let Some(spec) = &self.crawl.extension_recipe else {
+            return Ok(0);
+        };
+        let compiled = self
+            .extension_recipe()
+            .ok_or_else(|| WorkerError::Config("extension recipe snapshot unavailable".into()))?;
+        let recipe = SourceRecipe::new(spec, Arc::clone(compiled));
+        let mut roots = self.robots.sitemaps(&parent.url.origin);
+        if roots.is_empty() {
+            if let Ok(url) = parent.url.url.join("/sitemap.xml") {
+                roots.push(url.to_string());
+            }
+        }
+        let mut partial = roots.len() > policy.max_source_documents;
+        let mut queue: std::collections::VecDeque<_> = roots
+            .into_iter()
+            .take(policy.max_source_documents)
+            .map(|url| (url, 0_u16))
+            .collect();
+        let mut seen = BTreeSet::new();
+        let mut unique = BTreeSet::new();
+        let mut candidates = Vec::new();
+        let mut output_bytes = 2_usize;
+        let mut representations = Vec::new();
+        let mut attempted = 0_usize;
+        let mut failed = 0_usize;
+        while let Some((location, depth)) = queue.pop_front() {
+            if cancel.is_cancelled() {
+                return Err(FetchError::AcquisitionCancelled.into());
+            }
+            if attempted >= policy.max_source_documents
+                || depth > policy.max_source_depth.min(recipe.max_sitemap_depth)
+                || candidates.len() >= policy.max_entries.min(spec.max_candidates)
+                || !budget.can_retry()
+            {
+                partial = true;
+                break;
+            }
+            if !seen.insert(location.clone()) {
+                continue;
+            }
+            attempted = attempted.saturating_add(1);
+            let Ok(url) = Url::parse(&location) else {
+                failed = failed.saturating_add(1);
+                continue;
+            };
+            let response = match self
+                .fetch_discovery_auxiliary(
+                    &url,
+                    parent.depth,
+                    policy.max_feed_bytes.min(recipe.max_input_bytes),
+                    budget,
+                    cancel,
+                    crawlx_policy::robots::HopKind::Feed,
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(_) => {
+                    failed = failed.saturating_add(1);
+                    continue;
+                }
+            };
+            representations.push((
+                url,
+                Digest::of("crawlx/sitemap-representation/v1", &response.body),
+                response.status.as_u16(),
+                response.truncated,
+            ));
+            if !response.status.is_success() || response.truncated {
+                failed = failed.saturating_add(1);
+                continue;
+            }
+            let body = response.body.clone();
+            let source = response.final_url.clone();
+            let parser = recipe.clone();
+            let parser_policy = policy.clone();
+            let cancellation = cancel.clone();
+            let selected = self
+                .cpu_pool
+                .run(move || parser.select(&body, &source, depth, &parser_policy, &cancellation))
+                .await
+                .map_err(|error| WorkerError::Other(error.to_string()))?;
+            match selected {
+                Ok(selected) => {
+                    for candidate in selected {
+                        if candidate.kind == RecipeCandidateKindV1::Sitemap {
+                            let room = policy
+                                .max_source_documents
+                                .saturating_sub(attempted)
+                                .saturating_sub(queue.len());
+                            if room == 0 {
+                                partial = true;
+                            } else {
+                                queue.push_back((candidate.url.into(), candidate.sitemap_depth));
+                            }
+                        } else if unique.insert(candidate.url.clone()) {
+                            let bytes = crawlx_core::extensions::json_size(&candidate)
+                                .map_err(|error| WorkerError::Config(error.to_string()))?;
+                            let next_bytes = output_bytes
+                                .saturating_add(bytes)
+                                .saturating_add(usize::from(!candidates.is_empty()));
+                            if candidates.len() >= policy.max_entries.min(spec.max_candidates)
+                                || next_bytes > spec.max_output_bytes
+                            {
+                                partial = true;
+                                break;
+                            }
+                            output_bytes = next_bytes;
+                            candidates.push(candidate);
+                        }
+                    }
+                }
+                Err(_) => failed = failed.saturating_add(1),
+            }
+        }
+        if cancel.is_cancelled() {
+            return Err(FetchError::AcquisitionCancelled.into());
+        }
+        let source_bytes =
+            serde_json::to_vec(&representations).map_err(|error| WorkerError::Other(error.to_string()))?;
+        let admitted = self
+            .append_source_candidates(SourceBatch::Recipe(&candidates), parent, "sitemap", &source_bytes)
+            .await?;
+        let evidence = serde_json::to_vec(&serde_json::json!({
+            "recipe":compiled.pin(), "representations":representations, "variants":candidates,
+        }))
+        .map_err(|error| WorkerError::Other(error.to_string()))?;
+        let content = self
+            .store(
+                parent.id,
+                Sensitivity::Content,
+                "application/vnd.crawlx.discovery+json",
+                &evidence,
+            )
+            .await;
+        record.metadata["sitemap_discovery"] = serde_json::json!({
+            "recipe":compiled.pin(), "candidates":candidates.len(), "admitted":admitted,
+            "documentsAttempted":attempted, "failedDocuments":failed,
+            "partial":partial || failed > 0, "content":content,
+        });
+        Ok(admitted)
     }
 
     /// Shared scope and authority admission, without recursively loading robots.
@@ -1430,26 +1981,38 @@ impl UrlPlaneRunner {
                         Some(opts.status),
                         response.truncated,
                     ));
-                    let body = response.body.clone();
                     let base = response.final_url.clone();
-                    let controls = self.fetcher.config().controls.clone();
-                    let captcha = captcha.clone();
                     let extracted = if response.status.is_success() && !response.truncated {
-                        Some(
-                            self.cpu_pool
-                                .run(move || {
-                                    crate::acquisition::extract_document_with_secrets(
-                                        &body, &base, &opts, &controls, &captcha,
-                                    )
-                                })
-                                .await
-                                .map_err(|error| WorkerError::Other(error.to_string()))?,
+                        let hold =
+                            memory_plane::reserve_derived(memory_plane::derived_bytes(response.body.len()))
+                                .map_err(|error| {
+                                WorkerError::Other(format!("discovery document memory admission: {error}"))
+                            })?;
+                        match memory_plane::extract_isolated(
+                            &self.cpu_pool,
+                            crawlx_core::parser_memory::Budgeted::new(
+                                memory_plane::owned_bytes(&response),
+                                hold,
+                            ),
+                            base,
+                            opts,
+                            &self.fetcher.config().controls,
+                            Some(&captcha),
+                            cancel,
                         )
+                        .await
+                        {
+                            memory_plane::IsolatedOutcome::Parsed(document, hold) => Some((document, hold)),
+                            memory_plane::IsolatedOutcome::Failed(_) => None,
+                            memory_plane::IsolatedOutcome::Cancelled => {
+                                return Err(FetchError::AcquisitionCancelled.into())
+                            }
+                        }
                     } else {
                         None
                     };
                     let mut article_content = None;
-                    if let Some(Ok(document)) = extracted {
+                    if let Some((document, _document_hold)) = extracted {
                         next = document.article.as_ref().and_then(|article| {
                             article
                                 .discovery

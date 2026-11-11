@@ -12,11 +12,13 @@ use crawlx_core::counters::{ActionStatus, TerminalReason};
 use crawlx_core::hash::Digest;
 use crawlx_core::safety::RiskClass;
 use crawlx_core::secret::{CredentialRef, SecretOr, SecretResolver};
-use crawlx_core::{ActionContextId, ApprovalId, CoreError, SystemClock, Timestamp, TrustLane};
-use crawlx_safety::{
-    ApprovalError, ApprovalRecord, ApprovalRequest, ApprovalState, ApprovalStore, InMemoryApprovalStore,
+use crawlx_core::{ActionContextId, ApprovalId, CoreError, StoreError, SystemClock, Timestamp, TrustLane};
+use crawlx_safety::{ApprovalError, ApprovalRecord, ApprovalRequest, ApprovalStore, InMemoryApprovalStore};
+use crawlx_storage::approvals::{
+    ApprovalRepository, ApprovalRequestV1, ConsumedApprovalV1, DurableApprovalV1,
 };
 use crawlx_storage::MemoryStore;
+use crawlx_storage::{ApprovalDecision, DecideOutcome, SessionLease};
 use crawlx_strategies::InMemoryLedger;
 use crawlx_worker::replay::{ReplayMode, ReplayPlan, ReplayRunner, StepVerdict};
 use crawlx_worker::{run_local_with, Gates, LocalRun, Stores};
@@ -41,8 +43,19 @@ impl SecretResolver for FixtureSecrets {
 }
 
 // This explicit test reviewer approves only this fixture's destructive click requests.
-// It delegates all binding, expiry and atomic single-use checks to the real approval store.
+// The kernel store only mints a request per parked action and refuses every other kind at
+// request time. The decision itself is durable, like an API reviewer's: `ReviewedApprovals`
+// decides each persisted request through the shared approval table and delegates every
+// binding, expiry, fence and atomic single-use check to the real repository.
 // The worker cannot construct an admitted action from this reviewer's decision alone.
+fn eligible(summary: &str, risk: RiskClass) -> bool {
+    risk == RiskClass::Destructive
+        && summary.contains("kind=click")
+        && ["alice", "bob", "admin"]
+            .iter()
+            .any(|principal| summary.contains(&format!("principal={principal} ")))
+}
+
 struct FixtureReviewer {
     store: InMemoryApprovalStore,
     issued: Mutex<Vec<ApprovalId>>,
@@ -59,19 +72,13 @@ impl FixtureReviewer {
 
 impl ApprovalStore for FixtureReviewer {
     fn issue(&self, request: ApprovalRequest) -> Result<(), ApprovalError> {
-        if request.risk != RiskClass::Destructive
-            || !request.summary.contains("kind=click")
-            || !["alice", "bob", "admin"]
-                .iter()
-                .any(|principal| request.summary.contains(&format!("principal={principal} ")))
-        {
+        if !eligible(&request.summary, request.risk) {
             return Err(ApprovalError::Unavailable);
         }
         let id = request.approval_id;
-        let now = request.created_at;
         self.store.issue(request)?;
         self.issued.lock().unwrap().push(id);
-        self.store.approve(id, "g22-fixture-reviewer", now)
+        Ok(())
     }
 
     fn find_open(
@@ -105,6 +112,73 @@ impl ApprovalStore for FixtureReviewer {
         now: Timestamp,
     ) -> Result<(), ApprovalError> {
         self.store.consume(id, key, risk, params, now)
+    }
+}
+
+/// The durable approval repository with this fixture's reviewer in front of it.
+struct ReviewedApprovals {
+    repo: Arc<MemoryStore>,
+}
+
+#[async_trait]
+impl ApprovalRepository for ReviewedApprovals {
+    async fn persist_approval(
+        &self,
+        tenant: crawlx_core::TenantId,
+        lease: &SessionLease,
+        request: &ApprovalRequestV1,
+    ) -> Result<(), StoreError> {
+        self.repo.persist_approval(tenant, lease, request).await?;
+        if eligible(&request.summary, request.binding.risk) {
+            let outcome = self.repo.decide_approval_record(
+                request.binding.run,
+                request.id,
+                ApprovalDecision::Approved,
+                uuid::Uuid::from_u128(0x6732_3200),
+                Some("g22 fixture reviewer"),
+            )?;
+            assert!(
+                matches!(outcome, DecideOutcome::Applied(_) | DecideOutcome::Unchanged(_)),
+                "the fixture reviewer's decision must apply: {outcome:?}"
+            );
+        }
+        Ok(())
+    }
+
+    async fn find_approval(
+        &self,
+        tenant: crawlx_core::TenantId,
+        lease: &SessionLease,
+        key: ActionContextId,
+        risk: RiskClass,
+        params: Digest,
+        epoch: crawlx_core::epoch::ObservationEpoch,
+    ) -> Result<Option<DurableApprovalV1>, StoreError> {
+        self.repo
+            .find_approval(tenant, lease, key, risk, params, epoch)
+            .await
+    }
+
+    async fn consume_approval(
+        &self,
+        tenant: crawlx_core::TenantId,
+        lease: &SessionLease,
+        expected: &DurableApprovalV1,
+    ) -> Result<ConsumedApprovalV1, StoreError> {
+        self.repo.consume_approval(tenant, lease, expected).await
+    }
+
+    async fn intend_approved(
+        &self,
+        tenant: crawlx_core::TenantId,
+        lease: &SessionLease,
+        action: crawlx_core::ActionId,
+        epoch: crawlx_core::epoch::ObservationEpoch,
+        verdict: &crawlx_core::SafetyVerdict,
+    ) -> Result<(), StoreError> {
+        self.repo
+            .intend_approved(tenant, lease, action, epoch, verdict)
+            .await
     }
 }
 
@@ -182,6 +256,7 @@ async fn g22_worker_covers_contexts_consumes_approvals_and_replay_halts_at_destr
             .clone()
             .expect("verified fixture authorization"),
     )));
+    stores.approvals = Arc::new(ReviewedApprovals { repo: memory.clone() });
     let report = run_local_with(local.with_stores(stores.clone())).await.unwrap();
     assert_eq!(report.sessions.len(), 6, "{report:?}");
     assert!(report.status.is_terminal(), "{report:?}");
@@ -314,19 +389,37 @@ async fn g22_worker_covers_contexts_consumes_approvals_and_replay_halts_at_destr
     }
     let rebuilt = InMemoryLedger::from_rows(report.ledger.clone());
     assert_eq!(rebuilt.coverage(None), report.coverage);
+    // Approvals are durable: the shared approval table holds each decision and its single use.
     let issued = reviewer.issued.lock().unwrap().clone();
-    let consumed: Vec<_> = issued
+    let source_approvals = memory.approval_records(report.run_id);
+    let consumed: Vec<_> = source_approvals
         .iter()
-        .filter_map(|id| reviewer.get(*id).unwrap())
-        .filter(|record| matches!(record.state, ApprovalState::Consumed { .. }))
+        .filter(|record| record.consumed_at.is_some())
         .collect();
     assert!(!consumed.is_empty());
     assert!(
-        delete_keys
-            .iter()
-            .all(|key| consumed.iter().any(|record| record.request.action_key == *key)),
+        consumed.iter().all(|record| issued.contains(&record.id)),
+        "only requests the kernel minted for parked actions may be spent"
+    );
+    let consumed_keys: BTreeSet<ActionContextId> = consumed
+        .iter()
+        .filter_map(|record| report.actions.iter().find(|action| action.id == record.action))
+        .map(|action| action.key.id())
+        .collect();
+    assert!(
+        delete_keys.is_subset(&consumed_keys),
         "each destructive context needs its own consumed approval"
     );
+    for (action_id, _) in &captured {
+        assert_eq!(
+            consumed
+                .iter()
+                .filter(|record| record.action == *action_id)
+                .count(),
+            1,
+            "every executed Delete spends exactly one approval on its own parked action"
+        );
+    }
 
     // Request the complete path through the last Delete. A fresh kernel must halt
     // at its first destructive step, without reusing any consumed source approval.
@@ -375,11 +468,9 @@ async fn g22_worker_covers_contexts_consumes_approvals_and_replay_halts_at_destr
         source_evidence,
         "restore must preserve source custody"
     );
-    assert!(
-        consumed.iter().all(|record| matches!(
-            reviewer.get(record.request.approval_id).unwrap().unwrap().state,
-            ApprovalState::Consumed { .. }
-        )),
+    assert_eq!(
+        memory.approval_records(report.run_id),
+        source_approvals,
         "fixture restoration must not revive consumed source approvals"
     );
     let replay = ReplayRunner::run(
@@ -398,9 +489,7 @@ async fn g22_worker_covers_contexts_consumes_approvals_and_replay_halts_at_destr
         "the first source Delete must halt replay"
     );
     assert!(
-        consumed
-            .iter()
-            .any(|record| record.request.action_key == first_delete_key),
+        consumed_keys.contains(&first_delete_key),
         "the blocked source Delete must have consumed its own approval"
     );
     let replayed_path: Vec<_> = replay.steps.iter().map(|step| step.action).collect();
@@ -436,13 +525,11 @@ async fn g22_worker_covers_contexts_consumes_approvals_and_replay_halts_at_destr
         source_evidence,
         "source server evidence must remain an unchanged prefix"
     );
-    for record in &consumed {
-        assert_eq!(
-            reviewer.get(record.request.approval_id).unwrap().as_ref(),
-            Some(record),
-            "replay must not alter consumed source approvals"
-        );
-    }
+    assert_eq!(
+        memory.approval_records(report.run_id),
+        source_approvals,
+        "replay must not alter the source run's durable approvals"
+    );
     assert_eq!(
         InMemoryLedger::from_rows(report.ledger.clone()).coverage(None),
         report.coverage

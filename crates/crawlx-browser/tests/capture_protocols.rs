@@ -881,6 +881,7 @@ impl H3Origin {
                                                 }
                                                 _ => ("text/plain", &[][..]),
                                             };
+                                            #[allow(clippy::disallowed_types, reason = "owned loopback HTTP/3 fixture transport boundary; synthetic non-secret response")]
                                             let response = http::Response::builder()
                                                 .status(200)
                                                 .header("content-type", content_type)
@@ -1082,6 +1083,7 @@ impl Origin {
                                     ) => return,
                                 Err(error) => panic!("HTTP/2 fixture TLS handshake failed: {error}"),
                             };
+                            #[allow(clippy::disallowed_types, reason = "owned loopback HTTP/2 fixture transport boundary; synthetic non-secret service")]
                             let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
                                 let counted = Arc::clone(&counted);
                                 async move {
@@ -1093,6 +1095,7 @@ impl Origin {
                                     } else {
                                         (404, &[][..])
                                     };
+                                    #[allow(clippy::disallowed_types, reason = "owned loopback HTTP/2 fixture transport boundary; synthetic non-secret response")]
                                     let response = http::Response::builder()
                                         .status(status)
                                         .header("content-type", "text/plain")

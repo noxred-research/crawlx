@@ -78,6 +78,10 @@ struct WireRequest<'a> {
 }
 
 /// The planner over HTTP.
+#[allow(
+    clippy::disallowed_types,
+    reason = "typed planner adapter owns the raw reqwest client"
+)]
 pub struct HttpPlanner {
     client: reqwest::Client,
     endpoint: reqwest::Url,
@@ -101,6 +105,10 @@ impl HttpPlanner {
     /// # Errors
     /// [`ModelError::InvalidRequest`] for a malformed or non-HTTP endpoint,
     /// [`ModelError::Transport`] if the HTTP client cannot be built.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "typed planner adapter builds the raw reqwest client"
+    )]
     pub fn new(config: HttpPlannerConfig) -> Result<Self, ModelError> {
         let endpoint = reqwest::Url::parse(&config.endpoint)
             .map_err(|e| ModelError::InvalidRequest(format!("endpoint: {e}")))?;
@@ -129,6 +137,10 @@ impl HttpPlanner {
         &self.guard
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "typed planner adapter translates the raw reqwest error"
+    )]
     async fn call(&self, req: &PlannerRequest) -> Result<String, ModelError> {
         let state = req.state.value().sanitized();
         let body = WireRequest {

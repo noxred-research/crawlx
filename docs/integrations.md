@@ -415,5 +415,7 @@ methods requiring a journal cannot bypass that requirement through conversion.
 Header, cookie, user-agent and query values are masked; fragments are removed and URL credentials
 are refused. Do not place real credentials in shell history or process arguments.
 
-An interactive shell, HTML viewer and arbitrary code execution are not exposed.
-Their local execution boundary and viewer isolation remain product decisions, not server capabilities.
+`crawlx shell URL` acquires one page through normal authorization, egress, scope,
+robots and acquisition budgets. Its bounded REPL evaluates only CSS, XPath, regex
+and item recipes on that stored page; commands cannot fetch, execute code or spawn
+processes. Browser viewers and arbitrary code execution are not exposed.

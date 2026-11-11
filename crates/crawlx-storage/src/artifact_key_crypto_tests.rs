@@ -21,6 +21,10 @@ fn memory() -> MemoryArtifactKeys {
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture constructs only the reviewed key-custody SDK adapter"
+)]
 fn kms(fixture: &LoopbackKms) -> KmsArtifactKeys {
     let http = aws_smithy_http_client::Builder::new()
         .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))

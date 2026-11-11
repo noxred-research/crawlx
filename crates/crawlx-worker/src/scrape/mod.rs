@@ -87,7 +87,8 @@
 mod branding_llm;
 mod change;
 mod compose;
-mod guard;
+mod content_strategy;
+pub(crate) mod guard;
 mod llm;
 mod media;
 mod store;
@@ -122,6 +123,7 @@ use chrono::SecondsFormat;
 use compose::{BodyKind, ComposeInput, Composed};
 use crawlx_core::config::{CreateCrawl, RetentionMode};
 use crawlx_core::hash::Digest;
+use crawlx_core::parser_memory::{Budgeted, BytePermit};
 use crawlx_core::repo::{FrontierEntry, PageRecord};
 use crawlx_core::scrape::{ChangeMode, FormatSpec, JobKind, ScrapeDocument, ScrapeOptions};
 use crawlx_core::{CrawlRunId, TenantId, Timestamp};
@@ -400,7 +402,7 @@ struct Acquired {
     redirects: Vec<String>,
     render: Option<RenderExtras>,
     metadata: crawlx_core::acquisition::AcquisitionResultV1,
-    document: Option<Box<crawlx_extract::Document>>,
+    document: Option<Budgeted<Box<crawlx_extract::Document>>>,
     budget: Option<(
         crate::acquisition::AcquisitionBudgetV1,
         tokio_util::sync::CancellationToken,
@@ -1019,6 +1021,12 @@ impl ScrapeEngine {
                 "cache-only request has no matching retained response; network dispatch forbidden",
             )));
         }
+        if self.zdr && content_strategy::is_model(opts) {
+            return Ok(Outcome::Failed(ScrapeFailure::new(
+                FailReason::LlmFailed,
+                "the model content strategy is not allowed with zero data retention",
+            )));
+        }
         if self.needs_llm() && self.llm.is_none() {
             return Ok(Outcome::Failed(ScrapeFailure::new(
                 FailReason::LlmNotConfigured,
@@ -1093,8 +1101,11 @@ impl ScrapeEngine {
         }
         let mut content_dedupe = None;
         let mut local_dedupe = None;
+        // Admitted parser output keeps its byte reservation until the last sink. The permit is
+        // declared before every value it covers, so it drops after them, also on early exit.
+        let mut article_permit: Option<BytePermit>;
         let (article_accepted, article_outbox, article_cache) =
-            if let Some(mut document) = acq.document.take() {
+            if let Some(mut prepared) = acq.document.take() {
                 let run = self.deps.runs.get(self.run).await?;
                 let accepted = acq.metadata.validation.content_accepted;
                 if accepted && self.durable_dedupe {
@@ -1102,14 +1113,16 @@ impl ScrapeEngine {
                         tenant,
                         self.run,
                         scoped_extract.dedupe_cache.as_ref(),
-                        &document,
+                        prepared.value(),
                     )?;
                 }
                 if accepted && !self.durable_dedupe {
-                    local_dedupe = document.dedupe_commit.take();
+                    local_dedupe = prepared.value_mut().dedupe_commit.take();
                 } else {
-                    let _ = document.dedupe_commit.take();
+                    let _ = prepared.value_mut().dedupe_commit.take();
                 }
+                let (document, permit) = prepared.into_parts();
+                article_permit = Some(permit);
                 let (document, items, outbox) = crate::delivery::prepare_article_acceptance(
                     self.deps.artifacts.as_ref(),
                     cpu,
@@ -1135,14 +1148,27 @@ impl ScrapeEngine {
                     } else {
                         (document, None)
                     };
-                acq.document = Some(document);
+                let permit = article_permit
+                    .take()
+                    .ok_or_else(|| WorkerError::Other("admitted parser reservation unavailable".into()))?;
+                acq.document = Some(Budgeted::new(document, permit));
                 (items, outbox, cache)
             } else {
                 (Vec::new(), Vec::new(), None)
             };
+        // Declared before `composed`: the reservation outlives the composed output and every
+        // sink, and stays with the blocking closure if this future is cancelled mid-compose.
+        let mut _output_permit: Option<BytePermit> = None;
         let mut composed = if skip_compose {
             Composed::default()
         } else {
+            let (prepared, compose_permit) = match acq.document.take() {
+                Some(admitted) => {
+                    let (document, permit) = admitted.into_parts();
+                    (Some(document), Some(permit))
+                }
+                None => (None, None),
+            };
             let mut input = ComposeInput {
                 body: acq.body.clone(),
                 base: acq.final_url.clone(),
@@ -1153,28 +1179,62 @@ impl ScrapeEngine {
                 options: Arc::clone(&self.options),
                 extract: scoped_extract,
                 ocr: self.ocr.clone(),
-                document: acq.document.take(),
+                document: prepared,
                 controls: self.fetcher.config().controls.clone(),
                 captcha_secrets: self.captcha_secrets.clone(),
                 extensions: self.extensions.clone(),
                 route_label: request.route,
                 cancel: cancel.clone(),
             };
+            let mut compose_permit = compose_permit;
+            if input.document.is_none() && kind == BodyKind::Html {
+                // No direct, unadmitted parse: the document is prepared through the shared
+                // isolated parser first. The body is charged for real here (not assumed to own
+                // a reservation), and the reservation is kept through every sink.
+                match compose::prepare_document(&input, cpu, false)
+                    .instrument(
+                        tracing::info_span!(span::EXTRACT, crawl_id = %self.run, frontier_id = entry.id),
+                    )
+                    .await
+                {
+                    Ok(admitted) => {
+                        let (document, permit) = admitted.into_parts();
+                        input.document = Some(document);
+                        compose_permit = Some(permit);
+                    }
+                    Err(_) if cancel.is_cancelled() => {
+                        return Ok(Outcome::Failed(ScrapeFailure::new(
+                            FailReason::Cancelled,
+                            "scrape cancelled during document parsing",
+                        )))
+                    }
+                    Err(error) => return Ok(Outcome::Failed(error.into_failure())),
+                }
+            }
             match cpu
                 .run(move || {
-                    compose::compose(&mut input).map(|mut composed| {
+                    let permit = compose_permit;
+                    let result = compose::compose(&mut input).map(|mut composed| {
                         let verified = composed.verify_article(&input);
                         (composed, verified)
-                    })
+                    });
+                    // The input (and any prepared document) drops before its reservation.
+                    drop(input);
+                    (result, permit)
                 })
                 .instrument(tracing::info_span!(span::EXTRACT, crawl_id = %self.run, frontier_id = entry.id))
                 .await
             {
-                Ok(Ok((composed, verified))) => {
-                    verified?;
-                    composed
+                Ok((result, permit)) => {
+                    _output_permit = permit;
+                    match result {
+                        Ok((composed, verified)) => {
+                            verified?;
+                            composed
+                        }
+                        Err(e) => return Ok(Outcome::Failed(e.into_failure())),
+                    }
                 }
-                Ok(Err(e)) => return Ok(Outcome::Failed(e.into_failure())),
                 Err(e) => return Err(WorkerError::Other(format!("scrape composition task failed: {e}"))),
             }
         };
@@ -1356,12 +1416,55 @@ impl ScrapeEngine {
             if let Some(render) = acq.render.as_mut() {
                 // the `scrape` actions captured the DOM at their step: redact those too
                 for captured in &mut render.actions.scrapes {
-                    captured.html = crawlx_extract::parse::redact::redact(&captured.html, &redact_opts).text;
+                    // The worst-case redacted size is reserved BEFORE the replacement is
+                    // allocated; the original stays charged until the copy exists. An unknown
+                    // bound or a refused reservation is an explicit error, never a guess.
+                    let bound =
+                        compose::redaction_bound(captured.html.len(), &redact_opts).ok_or_else(|| {
+                            WorkerError::Other("action capture redaction bound unavailable".into())
+                        })?;
+                    let mut permit =
+                        crawlx_core::parser_memory::global()
+                            .try_reserve(bound)
+                            .map_err(|error| {
+                                WorkerError::Other(format!("action capture admission refused: {error}"))
+                            })?;
+                    let text = crawlx_extract::parse::redact::redact(&captured.html, &redact_opts).text;
+                    let needed = text.capacity();
+                    if needed > permit.bytes() {
+                        return Err(WorkerError::Other(
+                            "action capture redaction exceeded its admitted bound".into(),
+                        ));
+                    }
+                    let excess = permit.bytes() - needed;
+                    if excess > 0 {
+                        // Release what the result did not use; the split-off part drops at once.
+                        drop(permit.split(excess).map_err(|error| {
+                            WorkerError::Other(format!("action capture admission refused: {error}"))
+                        })?);
+                    }
+                    captured.html = crawlx_core::parser_memory::AdmittedText::new(text, permit);
                 }
             }
             doc.pii_redacted = true;
             if let Some(w) = guard::unsupported_warning(&out.unsupported) {
                 guard::push_warning(&mut composed.warning, w);
+            }
+        }
+        // Explicit model strategy runs after the final PII projection and before every other
+        // markdown consumer. It is not part of `guard::clean_markdown`: a model error never
+        // degrades to a warning and falls back to the native result.
+        if content_strategy::is_model(opts) {
+            if skip_compose {
+                return Ok(Outcome::Failed(ScrapeFailure::new(
+                    FailReason::UnsupportedContent,
+                    "the model content strategy needs page text and this response has none",
+                )));
+            }
+            if let Err(failure) =
+                content_strategy::apply(self, opts, &mut composed.markdown, &mut doc, cancel).await
+            {
+                return Ok(Outcome::Failed(failure));
             }
         }
         if opts.only_clean_content && !skip_compose && composed.markdown.is_some() {
@@ -1567,8 +1670,8 @@ impl ScrapeEngine {
         let context = crate::acquisition::context(policy, resource.target_status, false);
         let base = resource.final_url.clone().unwrap_or_else(|| url.clone());
         let extract = self.scoped_extract(tenant, Some(request))?;
-        let body =
-            crate::acquisition::extraction_body(&resource.body, &self.fetcher.config().controls, &extract);
+        let body = compose::parser_input(&resource.body, &self.fetcher.config().controls, &extract, false)
+            .map_err(|e| fetch_failure(&e))?;
         let validation = crate::acquisition::validate_body(
             body,
             base.clone(),
@@ -1579,6 +1682,7 @@ impl ScrapeEngine {
             cpu,
             &self.fetcher.config().controls,
             self.captcha_secrets.as_ref(),
+            cancel,
         );
         let (outcome, mut document) =
             tokio::time::timeout_at(budget.render_allowance(cancel).deadline, validation)
@@ -1586,7 +1690,10 @@ impl ScrapeEngine {
                 .map_err(|_| fetch_failure(&FetchError::AcquisitionDeadline))?
                 .map_err(|e| fetch_failure(&e))?;
         metadata.validation = outcome;
-        if let Some(article) = document.as_mut().and_then(|document| document.article.as_mut()) {
+        if let Some(article) = document
+            .as_mut()
+            .and_then(|document| document.value_mut().article.as_mut())
+        {
             article.acquisition_request_digest = Some(metadata.request_digest);
         }
         budget.record(
@@ -1725,7 +1832,7 @@ impl ScrapeEngine {
         // Legacy facade escalation and native acquisition are independent branch state
         // machines. Inlining both reserves the legacy HTTP/browser poll frame even for
         // an explicitly native request and exhausts the caller's executor stack.
-        Box::pin(self.acquire_legacy(request, observe, cpu, tenant)).await
+        Box::pin(self.acquire_legacy(request, observe, cpu, tenant, cancel)).await
     }
 
     async fn acquire_legacy(
@@ -1734,6 +1841,7 @@ impl ScrapeEngine {
         observe: &FetchObserver<'_>,
         cpu: &CpuPool,
         tenant: TenantId,
+        cancel: &tokio_util::sync::CancellationToken,
     ) -> Result<Acquired, ScrapeFailure> {
         let url = &request.url.url;
         let extract = self.scoped_extract(tenant, Some(request))?;
@@ -1785,10 +1893,11 @@ impl ScrapeEngine {
                 .evidence
                 .as_ref()
                 .map_or_else(Vec::new, |e| e.redirects.clone());
-            let body = Bytes::from(rendered.html);
+            let body = rendered.body();
             let policy = crawlx_core::acquisition::AcquisitionPolicyV1::default();
             let (validation, document) = crate::acquisition::validate_body(
-                crate::acquisition::extraction_body(&body, &self.fetcher.config().controls, &extract),
+                compose::parser_input(&body, &self.fetcher.config().controls, &extract, true)
+                    .map_err(|e| fetch_failure(&e))?,
                 rendered.final_url.clone(),
                 rendered.content_type.clone(),
                 rendered.headers.clone(),
@@ -1797,6 +1906,7 @@ impl ScrapeEngine {
                 cpu,
                 &self.fetcher.config().controls,
                 self.captcha_secrets.as_ref(),
+                cancel,
             )
             .await
             .map_err(|e| fetch_failure(&e))?;
@@ -1847,7 +1957,8 @@ impl ScrapeEngine {
                 prior_requests = resp.attempts;
                 prior_bytes = u64::try_from(resp.body.len()).unwrap_or(u64::MAX);
                 prior_attempts =
-                    crate::acquisition::http_metadata(self.run, tenant, url, &resp, &self.fetcher).attempts;
+                    crate::acquisition::http_metadata(self.run, tenant, url, &resp, &self.fetcher, None)
+                        .attempts;
                 let enhanced = self.fetcher.enhanced().ok_or_else(|| {
                     ScrapeFailure::new(
                         FailReason::Unreachable,
@@ -1861,10 +1972,11 @@ impl ScrapeEngine {
                 proxy_used = ProxyMode::Enhanced;
             }
             let mut metadata =
-                crate::acquisition::http_metadata(self.run, tenant, url, &resp, effective_fetcher);
+                crate::acquisition::http_metadata(self.run, tenant, url, &resp, effective_fetcher, None);
             let policy = crawlx_core::acquisition::AcquisitionPolicyV1::default();
             let (validation, document) = crate::acquisition::validate_body(
-                crate::acquisition::extraction_body(&resp.body, &self.fetcher.config().controls, &extract),
+                compose::parser_input(&resp.body, &self.fetcher.config().controls, &extract, true)
+                    .map_err(|e| fetch_failure(&e))?,
                 resp.final_url.clone(),
                 resp.content_type.clone(),
                 header_pairs(&resp.headers),
@@ -1873,6 +1985,7 @@ impl ScrapeEngine {
                 cpu,
                 &self.fetcher.config().controls,
                 self.captcha_secrets.as_ref(),
+                cancel,
             )
             .await
             .map_err(|e| fetch_failure(&e))?;
@@ -2121,10 +2234,11 @@ impl ScrapeEngine {
                 if rendered.evidence.is_none() {
                     return Err(fetch_failure(&FetchError::AcquisitionUnavailable));
                 }
-                let body = Bytes::from(rendered.html);
+                let body = rendered.body();
                 budget.charge_bytes(body.len());
                 let (validation, document) = crate::acquisition::validate_body(
-                    crate::acquisition::extraction_body(&body, &self.fetcher.config().controls, &extract),
+                    compose::parser_input(&body, &self.fetcher.config().controls, &extract, true)
+                        .map_err(|e| fetch_failure(&e))?,
                     rendered.final_url.clone(),
                     rendered.content_type.clone(),
                     rendered.headers.clone(),
@@ -2133,6 +2247,7 @@ impl ScrapeEngine {
                     cpu,
                     &self.fetcher.config().controls,
                     self.captcha_secrets.as_ref(),
+                    cancel,
                 )
                 .await
                 .map_err(|e| fetch_failure(&e))?;
@@ -2171,7 +2286,7 @@ impl ScrapeEngine {
             if let Some(article) = acquired
                 .document
                 .as_mut()
-                .and_then(|document| document.article.as_mut())
+                .and_then(|document| document.value_mut().article.as_mut())
             {
                 article.acquisition_request_digest = Some(acquired.metadata.request_digest);
                 article.source_artifact = acquired
@@ -2432,7 +2547,7 @@ impl ScrapeEngine {
 
     /// Does any requested format need the LLM (including `changeTracking`'s `json` mode)?
     fn needs_llm(&self) -> bool {
-        self.options.formats.iter().any(|f| {
+        content_strategy::is_model(&self.options) || self.options.formats.iter().any(|f| {
             f.needs_llm()
                 || matches!(f, FormatSpec::ChangeTracking { modes, .. } if modes.contains(&ChangeMode::Json))
         })
@@ -2648,8 +2763,8 @@ impl ScrapeEngine {
 }
 
 /// Fetch failure to page failure: a timeout is `scrape_timeout`, an egress refusal
-/// `egress_denied`, a terminal ProxyX pool refusal `proxy_refused`, everything else
-/// `unreachable`.
+/// `egress_denied`, a terminal ProxyX pool refusal `proxy_refused`, a bounded-parser refusal
+/// `extract_failed`, everything else `unreachable`.
 fn fetch_failure(e: &FetchError) -> ScrapeFailure {
     let reason = match e {
         FetchError::Pool(_) => FailReason::ProxyRefused,
@@ -2660,6 +2775,8 @@ fn fetch_failure(e: &FetchError) -> ScrapeFailure {
             FailReason::AuthorizationScope
         }
         FetchError::EgressDenied(_) => FailReason::EgressDenied,
+        // the page was reached; the bounded parser refused its content or the extraction policy
+        FetchError::AcquisitionParser(_) => FailReason::ExtractFailed,
         FetchError::Timeout(_) => FailReason::ScrapeTimeout,
         FetchError::AcquisitionDeadline => FailReason::ScrapeTimeout,
         FetchError::AcquisitionCancelled => FailReason::Cancelled,

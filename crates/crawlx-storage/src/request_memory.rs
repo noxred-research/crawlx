@@ -1,6 +1,7 @@
 //! Memory frontier transaction helpers; same bounds and fence semantics as PostgreSQL.
 use super::*;
 use crawlx_core::acquisition::{AcquisitionAllowanceV1, AcquisitionUsageV1};
+use crawlx_core::extensions::ExtensionReceiptV1;
 use crawlx_core::orchestration::*;
 use crawlx_core::request::{RequestEnvelopeV1, RequestIdentityV1};
 use std::collections::BTreeSet;
@@ -21,6 +22,7 @@ pub(super) struct RequestState {
     head_receipts: BTreeMap<(CrawlRunId, i64), HeadReceipt>,
     pub(super) observed_pages: BTreeMap<(CrawlRunId, i64), HeadEventCustody>,
     content_registry: crate::digest_registry::RegistryState,
+    extension_attempts: BTreeMap<ExtensionAttemptKey, (Digest, u64)>,
 }
 
 impl RequestState {
@@ -28,6 +30,7 @@ impl RequestState {
         self.head_receipts.retain(|(owner, _), _| *owner != run);
         self.observed_pages.retain(|(owner, _), _| *owner != run);
         self.content_registry.purge_run(run);
+        self.extension_attempts.retain(|(_, owner, ..), _| *owner != run);
     }
 }
 
@@ -145,6 +148,70 @@ fn live_parent(g: &Inner, run: CrawlRunId, id: i64, fence: i64, now: Timestamp) 
             && row.token == Some(fence)
             && row.expires.is_some_and(|expires| expires > now)
     })
+}
+
+/// Tenant, run, request, fence and attempt: the exact scope of one callback trail.
+type ExtensionAttemptKey = (TenantId, CrawlRunId, i64, i64, u32);
+
+/// Validated trail whose application cannot fail.
+struct PreparedExtensionAttempt {
+    key: ExtensionAttemptKey,
+    digest: Digest,
+    payload: serde_json::Value,
+}
+
+/// Check one complete trail without mutating state. `None` means an identical replay or an
+/// attempt without configured extensions. ZDR runs keep metadata only, like the PostgreSQL
+/// event projection.
+fn prepare_extension_attempt(
+    g: &Inner,
+    run: &CrawlRun,
+    request_id: i64,
+    fence: i64,
+    attempt: u32,
+    receipts: &[ExtensionReceiptV1],
+) -> Result<Option<PreparedExtensionAttempt>, StoreError> {
+    if !(1..=32_767_u32).contains(&attempt) {
+        return Err(StoreError::Conflict("invalid extension attempt".into()));
+    }
+    let digest = Digest::of_value("crawlx/extension-attempt/v1", &receipts)
+        .map_err(|error| StoreError::Serialization(error.to_string()))?;
+    let key = (run.tenant, run.id, request_id, fence, attempt);
+    if let Some((stored, _)) = g.requests.extension_attempts.get(&key) {
+        return if *stored == digest {
+            Ok(None)
+        } else {
+            Err(StoreError::Conflict("extension attempt receipts changed".into()))
+        };
+    }
+    if receipts.is_empty() {
+        return Ok(None);
+    }
+    let mut payload = serde_json::Map::new();
+    payload.insert("requestId".into(), request_id.into());
+    if run.config.retention.mode != RetentionMode::Zdr {
+        payload.insert("fence".into(), fence.into());
+        payload.insert("attempt".into(), attempt.into());
+        payload.insert("digest".into(), digest.to_hex().into());
+        payload.insert("receipts".into(), serde_json::to_value(receipts)?);
+    }
+    Ok(Some(PreparedExtensionAttempt {
+        key,
+        digest,
+        payload: serde_json::Value::Object(payload),
+    }))
+}
+
+fn apply_extension_attempt(
+    g: &mut Inner,
+    run: CrawlRunId,
+    prepared: PreparedExtensionAttempt,
+    now: Timestamp,
+) {
+    let seq = push_event(g, run, "extension_attempt", prepared.payload, now);
+    g.requests
+        .extension_attempts
+        .insert(prepared.key, (prepared.digest, seq));
 }
 
 pub(super) fn reserve_legacy(
@@ -1124,7 +1191,45 @@ impl RequestCommitRepo for MemoryStore {
     ) -> Result<(), StoreError> {
         self.finalize_run_feeds_owned(run, status, reason, batches).await
     }
+    async fn record_extension_attempt(
+        &self,
+        run: CrawlRunId,
+        request_id: i64,
+        fence: i64,
+        attempt: u32,
+        receipts: &[ExtensionReceiptV1],
+    ) -> Result<(), StoreError> {
+        crawlx_core::extensions::validate_extension_receipts(receipts)
+            .map_err(|_| StoreError::Conflict("invalid extension attempt receipts".into()))?;
+        let now = self.clock.now();
+        let mut g = self.inner.lock();
+        if g.pending_purges.contains_key(&run) {
+            return Err(head_unavailable());
+        }
+        let owner = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+        if crate::tenant::current().is_some_and(|tenant| tenant != owner.tenant) {
+            return Err(StoreError::AccessDenied(
+                "extension attempt tenant mismatch".into(),
+            ));
+        }
+        let live = g.frontier.iter().any(|row| {
+            row.e.id == request_id
+                && row.e.run == run
+                && row.e.status == FrontierStatus::Leased
+                && row.token == Some(fence)
+                && row.expires.is_some_and(|expires| expires > now)
+                && u32::from(row.e.attempts) == attempt
+        });
+        if !live {
+            return Err(StoreError::LeaseLost);
+        }
+        if let Some(prepared) = prepare_extension_attempt(&g, owner, request_id, fence, attempt, receipts)? {
+            apply_extension_attempt(&mut g, run, prepared, now);
+        }
+        Ok(())
+    }
     async fn commit_fenced(&self, mut commit: RequestCommitV1) -> Result<(), StoreError> {
+        commit.validate_processing_evidence()?;
         // Serialize hash arbitration across staging I/O without holding the state lock over await.
         let _digest_gate = if commit.content_dedupe.is_some() {
             let gate = Arc::clone(&self.inner.lock().requests.content_registry.gate);
@@ -1495,6 +1600,29 @@ impl RequestCommitRepo for MemoryStore {
                 &commit.outbox,
                 now,
             )?;
+            // Fallible evidence is prepared before the first mutation; the apply step cannot fail.
+            let attempt = g.frontier[parent_index].e.attempts;
+            let extension = if commit.extensions.is_empty() {
+                None
+            } else {
+                prepare_extension_attempt(
+                    &g,
+                    run,
+                    commit.request_id,
+                    commit.fence,
+                    u32::from(attempt),
+                    &commit.extensions,
+                )?
+            };
+            // The report source is locked like the PostgreSQL commit: a run being purged takes no
+            // new facts. A terminal run does not refuse its rows' own fenced commits.
+            if g.pending_purges.contains_key(&commit.run) {
+                return Err(StoreError::RetentionDenied("report source being purged".into()));
+            }
+            // Lock order is inner first, report history second; both are held to the end.
+            let mut report = self.report_history.lock();
+            let report_delta =
+                super::report_history::prepare_commit(&report, run, &commit, now, attempt.max(1))?;
             let mut children = commit.children.take();
             if let Some(batch) = &children {
                 if batch.run != commit.run
@@ -1507,7 +1635,9 @@ impl RequestCommitRepo for MemoryStore {
                     return Err(StoreError::Conflict("result child authority mismatch".into()));
                 }
             }
-            if commit.status == FrontierStatus::Succeeded && observed_principal.is_none() {
+            if matches!(commit.status, FrontierStatus::Succeeded | FrontierStatus::Failed)
+                && observed_principal.is_none()
+            {
                 if let Some(policy) = run
                     .config
                     .orchestration
@@ -1534,7 +1664,10 @@ impl RequestCommitRepo for MemoryStore {
                         .ok_or_else(|| nf("frontier row", commit.request_id))?;
                     let deadline = run.started_at.unwrap_or(run.created_at)
                         + ChronoDuration::seconds(i64::from(run.config.limits.duration_seconds));
-                    if let Some(next) = policy.next_visit(&current, commit.request_id, now, deadline)? {
+                    if let Some(decision) =
+                        policy.next_visit_after_commit(&current, &commit, now, deadline, None)?
+                    {
+                        let next = decision.request;
                         let principal = g
                             .requests
                             .principals
@@ -1564,6 +1697,10 @@ impl RequestCommitRepo for MemoryStore {
                     .content_registry
                     .apply(claim, commit.request_id, outcome.clone());
             }
+            if let Some(prepared) = extension {
+                apply_extension_attempt(&mut g, commit.run, prepared, now);
+            }
+            super::report_history::apply_commit(&mut report, report_delta);
             crate::dataset::apply_prepared(&mut g.dataset, dataset);
             if let Some(page) = commit.page {
                 // The latest projection and history own independent lifetimes. Clone once here,

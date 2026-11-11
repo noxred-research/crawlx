@@ -32,6 +32,7 @@ use bytes::Bytes;
 use crawlx_core::browser::ResponseBodySink;
 use crawlx_core::config::{Fetch, ResponseBodies};
 use crawlx_core::hash::Digest;
+use crawlx_core::parser_memory::BytePermit;
 use crawlx_core::request_controls::RequestControls;
 use crawlx_core::seed::CrawlSeed;
 use crawlx_core::tls::TlsImpersonation;
@@ -76,6 +77,9 @@ pub struct FetchConfig {
     pub seed: CrawlSeed,
     /// Synthetic seeded ClientHello randomization; off keeps the rustls transport.
     pub tls_impersonation: TlsImpersonation,
+    /// Explicit immutable TLS/H2/header identity bound to the existing session generation.
+    /// Absence preserves the ordinary transport; invalid selections never fall back.
+    pub identity_profile: Option<crawlx_core::identity_profile::IdentitySelectionV1>,
     /// Follow `3xx` answers (`fetch.followRedirects`, default true). When false every
     /// redirect is returned as the final response, whatever the per-request option says.
     pub follow_redirects: bool,
@@ -138,6 +142,7 @@ impl Default for FetchConfig {
             governor: GovernorConfig::default(),
             seed: CrawlSeed(0),
             tls_impersonation: TlsImpersonation::Off,
+            identity_profile: None,
             follow_redirects: true,
             proxy: None,
             pool: None,
@@ -156,6 +161,9 @@ impl FetchConfig {
     /// `crawlx/<version> (+<contact>)`.
     #[must_use]
     pub fn user_agent(&self) -> String {
+        if self.identity_profile.is_some() {
+            return crawlx_core::identity_profile::NATIVE_USER_AGENT.to_owned();
+        }
         if let Some(ua) = self.controls.user_agent() {
             return ua.to_owned();
         }
@@ -258,6 +266,20 @@ pub enum OversizePolicy {
     Reject,
 }
 
+/// An optional caller policy evaluated on every native response before reading its body.
+pub trait ResponseHeaderGate: Send + Sync + std::fmt::Debug {
+    /// Accept these observed response headers or stop the fetch.
+    ///
+    /// # Errors
+    /// Returns the caller's typed refusal without polling the response body.
+    fn check(
+        &self,
+        status: u16,
+        content_type: Option<&str>,
+        content_length: Option<u64>,
+    ) -> Result<(), FetchError>;
+}
+
 /// Per-request options.
 #[derive(Clone, Debug)]
 pub struct FetchOptions {
@@ -294,6 +316,8 @@ pub struct FetchOptions {
     pub declaration: ResponseDeclaration,
     /// `HEAD` request before a `GET` (ignored for other methods).
     pub preflight: Option<HeadPreflight>,
+    /// Caller admission on native headers, including redirects, before any body polling.
+    pub header_gate: Option<Arc<dyn ResponseHeaderGate>>,
 }
 
 impl Default for FetchOptions {
@@ -314,6 +338,7 @@ impl Default for FetchOptions {
             oversize: OversizePolicy::Truncate,
             declaration: ResponseDeclaration::default(),
             preflight: None,
+            header_gate: None,
         }
     }
 }
@@ -348,6 +373,15 @@ pub struct FetchResponse {
     pub headers: HeaderMap,
     /// Decoded body, at most the cap.
     pub body: Bytes,
+    /// Shared byte admission retained by this body and every shallow body clone.
+    /// Field order keeps the body alive no longer than its admission.
+    pub body_permit: Option<Arc<BytePermit>>,
+    /// Independently observed received wire bytes; unknown for synthetic responses.
+    pub wire_bytes: Option<u64>,
+    /// Measured final-hop DNS result; absent for literals and synthetic responses.
+    pub dns_report: Option<crawlx_core::report_history::ReportDataV1>,
+    /// Application protocol observed on the final response, never a configured expectation.
+    pub negotiated_protocol: Option<crawlx_core::traffic::Protocol>,
     /// The body was cut at the cap.
     pub truncated: bool,
     /// URLs that answered with a redirect, in order. The full chain is
@@ -553,6 +587,10 @@ enum Hop {
         status: StatusCode,
         headers: HeaderMap,
         body: Bytes,
+        body_permit: Option<Arc<BytePermit>>,
+        wire_bytes: u64,
+        dns_report: Option<crawlx_core::report_history::ReportDataV1>,
+        negotiated_protocol: crawlx_core::traffic::Protocol,
         truncated: bool,
         peer: IpAddr,
         peer_observed: bool,
@@ -600,11 +638,18 @@ impl Fetcher {
     /// [`FetchError::ClientBuild`] when the TLS backend or HTTP client cannot be
     /// initialised; [`FetchError::InvalidUrl`] when `cfg.proxy` has an unsupported scheme
     /// or no host.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "checked fetch adapter exclusively owns native client construction"
+    )]
     pub fn new(
         cfg: FetchConfig,
         policy: Arc<EgressPolicy>,
         resolver: Arc<dyn Resolver>,
     ) -> Result<Self, FetchError> {
+        if let Some(selection) = &cfg.identity_profile {
+            crate::identity_profile::validate_selection(selection, &cfg)?;
+        }
         let pins = Arc::new(PinTable::default());
         let proxy = cfg.proxy_target()?;
         // A pool route is served through one loopback adapter owned by this fetcher: both HTTP
@@ -619,7 +664,9 @@ impl Fetcher {
             None => None,
         };
         let control_headers = control_headers(&cfg.controls)?;
-        let client = if cfg.tls_impersonation == TlsImpersonation::Randomized {
+        let client = if cfg.identity_profile.is_some()
+            || cfg.tls_impersonation == TlsImpersonation::Randomized
+        {
             HttpClient::randomized(
                 &cfg,
                 Arc::clone(&pins),
@@ -701,6 +748,9 @@ impl Fetcher {
     /// # Errors
     /// Returns the same construction failures as [`Self::new`].
     pub fn with_enhanced_proxy(self, proxy: &Url) -> Result<Self, FetchError> {
+        if self.cfg.identity_profile.is_some() {
+            return Err(crawlx_core::identity_profile::IdentityProfileError::ConflictingControls.into());
+        }
         let mut cfg = self.cfg.clone();
         cfg.proxy = Some(proxy.clone());
         cfg.pool = None;
@@ -713,6 +763,9 @@ impl Fetcher {
     /// # Errors
     /// Returns the same construction failures as [`Self::new`].
     pub fn with_enhanced_pool(self, pool: Arc<PoolBinding>) -> Result<Self, FetchError> {
+        if self.cfg.identity_profile.is_some() {
+            return Err(crawlx_core::identity_profile::IdentityProfileError::ConflictingControls.into());
+        }
         let mut cfg = self.cfg.clone();
         cfg.proxy = None;
         cfg.pool = Some(pool);
@@ -1128,6 +1181,7 @@ impl Fetcher {
                     opts.dont_adjust_delay,
                     opts.suppress_credentials,
                     opts.suppress_validators || !redirects.is_empty(),
+                    opts.header_gate.as_deref(),
                     &mut rng,
                     &mut attempts,
                     max_retries,
@@ -1155,6 +1209,10 @@ impl Fetcher {
                     status,
                     headers: rh,
                     body,
+                    body_permit,
+                    wire_bytes,
+                    dns_report,
+                    negotiated_protocol,
                     truncated,
                     peer,
                     peer_observed,
@@ -1168,6 +1226,10 @@ impl Fetcher {
                         status,
                         headers: rh,
                         body,
+                        body_permit,
+                        wire_bytes: Some(wire_bytes),
+                        dns_report,
+                        negotiated_protocol: Some(negotiated_protocol),
                         truncated,
                         redirects,
                         hops,
@@ -1314,6 +1376,7 @@ impl Fetcher {
         dont_adjust_delay: bool,
         suppress_credentials: bool,
         suppress_validators: bool,
+        header_gate: Option<&dyn ResponseHeaderGate>,
         rng: &mut ChaCha8Rng,
         attempts: &mut u32,
         max_retries: u32,
@@ -1370,6 +1433,19 @@ impl Fetcher {
                 Ok(resp) => resp,
                 Err(error) => return Err(self.pool_failure(url, attempt_started, error)),
             };
+            if let Some(gate) = header_gate {
+                let headers = resp.headers();
+                gate.check(
+                    resp.status().as_u16(),
+                    headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok()),
+                    headers
+                        .get(header::CONTENT_LENGTH)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.trim().parse().ok()),
+                )?;
+            }
             // A plain `http://` target is forwarded by the adapter, which answers a failed or
             // refused tunnel itself with a marked `502`: that is a transport failure of the pool
             // route (typed by the gateway's cause when it refused), never the origin's answer.
@@ -1398,6 +1474,7 @@ impl Fetcher {
             let pinned = guard
                 .as_ref()
                 .map_or_else(|| addrs.contains(&peer), |g| g.contains(peer));
+            self.policy.check_all(host, &[peer])?;
             if !pinned {
                 return Err(FetchError::PeerNotPinned {
                     host: host.to_owned(),
@@ -1406,6 +1483,7 @@ impl Fetcher {
             }
 
             let status = resp.status();
+            let negotiated_protocol = protocol_of(resp.version());
             let mut resp_headers = resp.headers().clone();
             let reserved: Vec<_> = resp_headers
                 .keys()
@@ -1493,6 +1571,7 @@ impl Fetcher {
             let read = if method == Method::HEAD {
                 BodyRead {
                     body: Bytes::new(),
+                    body_permit: None,
                     wire_bytes: 0,
                     wire_digest: None,
                     limit: None,
@@ -1581,6 +1660,10 @@ impl Fetcher {
                 status,
                 headers: resp_headers,
                 body,
+                body_permit: read.body_permit,
+                wire_bytes: read.wire_bytes,
+                dns_report: target.dns_report().cloned(),
+                negotiated_protocol,
                 truncated,
                 peer,
                 peer_observed,

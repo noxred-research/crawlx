@@ -104,6 +104,10 @@ pub struct Repos {
     pub datasets: Arc<dyn crawlx_core::dataset::DatasetRepo>,
     /// Existing request result transaction authority, shared with the frontier store.
     pub request_commits: Arc<dyn crawlx_core::orchestration::RequestCommitRepo>,
+    /// Tenant-scoped measured report history under existing custody.
+    pub report_history: Arc<dyn crawlx_core::report_history::ReportHistoryRepo>,
+    /// Scoped versioned URL graph, separate from browser action state.
+    pub url_graph: Arc<dyn crawlx_core::url_graph::UrlGraphRepo>,
     /// Typed versioned KV, under the request's existing tenant scope.
     pub kv: Arc<dyn crawlx_core::dataset::KvRepo>,
     /// Tenant-scoped seen ledger and category metadata reset authority.
@@ -181,6 +185,8 @@ impl Repos {
             journal: store.clone(),
             datasets: store.clone(),
             request_commits: store.clone(),
+            report_history: store.clone(),
+            url_graph: store.clone(),
             kv: store.clone(),
             source_memo: store.clone(),
             adaptive_selectors: store.clone(),
@@ -208,6 +214,8 @@ impl Repos {
             frontier: pg_arc.clone(),
             datasets: pg_arc.clone(),
             request_commits: pg_arc.clone(),
+            report_history: pg_arc.clone(),
+            url_graph: pg_arc.clone(),
             kv: pg_arc.clone(),
             source_memo: pg_arc.clone(),
             adaptive_selectors: pg_arc.clone(),
@@ -338,6 +346,8 @@ pub struct Shared {
     pub clock: Arc<dyn Clock>,
     /// Independent fixture evidence supplied by a trusted benchmark harness; absent in production.
     pub fixture_ground_truth: Option<Arc<dyn crate::resources::FixtureGroundTruthSource>>,
+    /// Optional control registry shared with the exact in-process local worker.
+    pub interactive_profiles: Option<Arc<crawlx_worker::interactive_profiles::InteractiveProfiles>>,
     /// Cancelled when the server shuts down; open SSE streams end on it.
     pub shutdown: CancellationToken,
     /// Browser build replays are admitted against (the pinned build).
@@ -396,6 +406,7 @@ pub struct AppStateBuilder {
     settings: Settings,
     clock: Arc<dyn Clock>,
     fixture_ground_truth: Option<Arc<dyn crate::resources::FixtureGroundTruthSource>>,
+    interactive_profiles: Option<Arc<crawlx_worker::interactive_profiles::InteractiveProfiles>>,
     shutdown: CancellationToken,
     build: DeploymentBuild,
     zdr: Option<Arc<DeliveryBuffer>>,
@@ -410,6 +421,17 @@ pub struct AppStateBuilder {
 }
 
 impl AppStateBuilder {
+    /// Share the exact local worker's interactive control registry.
+    /// Separate API and worker processes must not create independent registries.
+    #[must_use]
+    pub fn interactive_profiles(
+        mut self,
+        registry: Arc<crawlx_worker::interactive_profiles::InteractiveProfiles>,
+    ) -> Self {
+        self.interactive_profiles = Some(registry);
+        self
+    }
+
     /// Replace the default [`Settings`].
     #[must_use]
     pub fn settings(mut self, settings: Settings) -> Self {
@@ -547,6 +569,7 @@ impl AppStateBuilder {
             settings: self.settings,
             clock: self.clock,
             fixture_ground_truth: self.fixture_ground_truth,
+            interactive_profiles: self.interactive_profiles,
             shutdown: self.shutdown,
             build: self.build,
             zdr,
@@ -580,6 +603,7 @@ impl AppState {
             settings: Settings::default(),
             clock: Arc::new(SystemClock),
             fixture_ground_truth: None,
+            interactive_profiles: None,
             shutdown: CancellationToken::new(),
             build: DeploymentBuild::resolve(),
             zdr: None,

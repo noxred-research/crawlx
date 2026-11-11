@@ -14,6 +14,10 @@ pub const MAX_REPLY_BYTES: usize = 4 * 1024 * 1024;
 /// [`SearchError::Timeout`], [`SearchError::Transport`] (connect/TLS/body failures),
 /// [`SearchError::Status`] for a non-2xx status and [`SearchError::InvalidReply`] for a reply that
 /// is oversize or not JSON.
+#[allow(
+    clippy::disallowed_types,
+    reason = "bounded search reply reader takes the raw reqwest request builder"
+)]
 pub async fn get_json(
     request: reqwest::RequestBuilder,
     timeout: Duration,
@@ -45,6 +49,10 @@ pub async fn get_json(
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "search transport error translation consumes the raw reqwest error"
+)]
 fn map_reqwest(e: reqwest::Error, after_ms: u64) -> SearchError {
     if e.is_timeout() {
         SearchError::Timeout { after_ms }

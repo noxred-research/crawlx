@@ -47,6 +47,7 @@ mod inspect;
 mod list_values;
 mod mcp;
 mod merge;
+mod migration_dialects;
 pub mod migration_inspect;
 mod model_args;
 mod ocr_args;
@@ -56,9 +57,11 @@ pub mod pprof;
 pub mod profiles;
 pub mod protocol;
 pub mod proxyx_config;
+pub mod reparse;
 mod resolver_https_config;
 pub mod response_replay;
 mod resume_file;
+pub mod scrape;
 mod style;
 pub mod tls_args;
 mod update;
@@ -138,6 +141,12 @@ pub enum Command {
     /// `CRAWLX_EGRESS_OPERATOR_BLOCKLIST_FILE` (a file replaces the static list); `SIGHUP`
     /// re-reads the files.
     Crawl(Box<CrawlArgs>),
+    /// Acquire one page with a safe read method and explicit extraction/output.
+    Scrape(scrape::ScrapeArgs),
+    /// Inspect one admitted stored page using bounded selectors only.
+    Shell(scrape::ShellArgs),
+    /// Reparse retained source under its original ownership, retention and privacy authority.
+    Reparse(reparse::ReparseArgs),
     /// Print a stored run: run, pages, states, epochs, actions, transitions, coverage, traffic.
     Inspect(InspectArgs),
     /// Re-execute a recorded transition path against the live target through a session.
@@ -254,6 +263,9 @@ pub async fn execute_with_env(
             let _telemetry = init(resolved.args.out.log_filter(env_debug));
             Box::pin(crawl_run::run(resolved, out, getenv)).await
         }
+        Command::Scrape(args) => Box::pin(scrape::run(args, out, getenv)).await,
+        Command::Shell(args) => Box::pin(scrape::shell(args, out, getenv)).await,
+        Command::Reparse(args) => Box::pin(reparse::execute(args, out)).await,
         Command::Inspect(args) => {
             let _telemetry = default_logs();
             inspect::run(args, out).await

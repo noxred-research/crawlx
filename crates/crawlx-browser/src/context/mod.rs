@@ -1364,6 +1364,10 @@ impl BrowserContext for CdpContext {
         self.export_storage_impl().await
     }
 
+    async fn export_profile_storage(&mut self) -> Result<Vec<u8>, BrowserError> {
+        CdpContext::export_profile_storage(self).await
+    }
+
     async fn import_storage(&mut self, blob: &[u8]) -> Result<(), BrowserError> {
         self.import_storage_impl(blob).await
     }

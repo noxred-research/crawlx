@@ -385,7 +385,9 @@ async fn approvals_decide_flow() {
         Err(StoreError::Conflict(_))
     ));
 
-    // approve: Applied, the action is released
+    // approve: Applied. The reviewer decision is not an admission capability: the hold
+    // stays until the worker's fenced single-use consume and T1 release it
+    // (covered by the storage durable_approvals_pg tests).
     let DecideOutcome::Applied(applied) = s
         .approval_decide(
             run.id,
@@ -402,9 +404,15 @@ async fn approvals_decide_flow() {
     };
     assert_eq!(applied.decision, ApprovalDecision::Approved);
     assert_eq!(applied.decided_by, Some(approver));
-    assert_eq!(applied.decided_at, Some(now));
+    // The decision instant is database time, never the caller-supplied clock: durable
+    // expiry and single-use consume must not depend on an application clock.
+    let decided = applied.decided_at.expect("decision time recorded");
+    assert!(
+        (decided - now).abs() < chrono::Duration::minutes(1),
+        "{decided} vs {now}"
+    );
     assert_eq!(applied.reason.as_deref(), Some("looks fine"));
-    assert_eq!(env.hold(a1).await, "none");
+    assert_eq!(env.hold(a1).await, "awaiting_approval");
 
     // same decision again: Unchanged; the other one: NotPending
     assert_eq!(
@@ -419,7 +427,7 @@ async fn approvals_decide_flow() {
             .unwrap(),
         DecideOutcome::NotPending(applied.clone())
     );
-    assert_eq!(env.hold(a1).await, "none");
+    assert_eq!(env.hold(a1).await, "awaiting_approval");
 
     // deny: the hold becomes `denied`
     let v2 = approval_verdict();
@@ -432,25 +440,26 @@ async fn approvals_decide_flow() {
     assert!(matches!(&out, DecideOutcome::Applied(r) if r.decision == ApprovalDecision::Denied));
     assert_eq!(env.hold(a2).await, "denied");
 
-    // expired: still pending in the table but past `expires_at`
+    // expired: still pending in the table but past `expires_at` on the database clock
+    // (a caller-supplied clock never governs durable expiry)
     let v3 = approval_verdict();
     let a3 = env.propose(run.id, session, "alice", 3, &v3).await;
     let ap3 = v3.approval.unwrap();
+    sqlx::query(
+        "UPDATE approvals SET expires_at = requested_at + interval '1 millisecond' WHERE approval_id = $1",
+    )
+    .bind(ap3.0)
+    .execute(env.pg.pool())
+    .await
+    .unwrap();
     let out = s
-        .approval_decide(
-            run.id,
-            ap3,
-            ApprovalDecision::Approved,
-            approver,
-            None,
-            now + Duration::days(2),
-        )
+        .approval_decide(run.id, ap3, ApprovalDecision::Approved, approver, None, now)
         .await
         .unwrap();
     assert!(matches!(&out, DecideOutcome::NotPending(r) if r.decision == ApprovalDecision::Pending));
     assert_eq!(env.hold(a3).await, "awaiting_approval");
 
-    // consumed: the same decision stays Unchanged, a different one is NotPending
+    // consumed: a spent approval is single use, so repeating the decision is NotPending too
     let v4 = approval_verdict();
     let a4 = env.propose(run.id, session, "alice", 4, &v4).await;
     let ap4 = v4.approval.unwrap();
@@ -466,7 +475,7 @@ async fn approvals_decide_flow() {
         s.approval_decide(run.id, ap4, ApprovalDecision::Approved, approver, None, now)
             .await
             .unwrap(),
-        DecideOutcome::Unchanged(_)
+        DecideOutcome::NotPending(_)
     ));
     assert!(matches!(
         s.approval_decide(run.id, ap4, ApprovalDecision::Denied, approver, None, now)
@@ -474,7 +483,7 @@ async fn approvals_decide_flow() {
             .unwrap(),
         DecideOutcome::NotPending(_)
     ));
-    assert_eq!(env.hold(a4).await, "none");
+    assert_eq!(env.hold(a4).await, "awaiting_approval");
 
     // consumed while still pending
     let v5 = approval_verdict();

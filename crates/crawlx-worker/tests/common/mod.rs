@@ -332,6 +332,44 @@ pub async fn rig_with(
     }
 }
 
+/// [`rig_with`] whose signed record also covers the URL prefix `prefix`, for a test that
+/// navigates the fake browser to a second origin on purpose (the signed scope bounds every
+/// navigation, so an off-origin page is only reachable when the record names it).
+pub async fn rig_with_authorized_prefix(fake: Arc<FakeBackend>, profile: SafetyProfile, prefix: &str) -> Rig {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
+    let mut crawl = crawl(profile);
+    crawl.safety.respect_robots_txt = false;
+    crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
+    let mut record = authorization::verified_record_with_clock(&crawl, stores.tenant, &SystemClock);
+    record.robots_override_acknowledged = true;
+    record.url_prefixes.push("https://other.test".to_owned());
+    record.url_prefixes.push(prefix.to_owned());
+    let RigCore {
+        stores,
+        backend,
+        rc,
+        handle,
+        run,
+        session,
+        principal,
+        dir,
+    } = rig_core_authorized(stores, dir, fake.clone(), fake, crawl, record, None).await;
+    Rig {
+        store,
+        stores,
+        backend,
+        rc,
+        handle,
+        run,
+        session,
+        principal,
+        dir,
+        flaky: None,
+    }
+}
+
 pub async fn rig(script: FakeScript, profile: SafetyProfile) -> Rig {
     let fake = Arc::new(
         FakeBackend::builder()

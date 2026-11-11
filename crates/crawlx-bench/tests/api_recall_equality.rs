@@ -94,6 +94,10 @@ async fn serve_api(
     (base, key)
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn get(client: &reqwest::Client, key: &str, url: &str) -> Value {
     let response = client.get(url).bearer_auth(key).send().await.unwrap();
     assert!(response.status().is_success(), "{url}: {}", response.status());
@@ -101,6 +105,10 @@ async fn get(client: &reqwest::Client, key: &str, url: &str) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn api_coverage_equals_the_offline_calculation_for_a_real_run() {
     if find_executable().is_none() {
         eprintln!("SKIP: no Chromium executable found (set CRAWLX_CHROMIUM_PATH)");
@@ -278,6 +286,10 @@ async fn api_coverage_equals_the_offline_calculation_for_a_real_run() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn fixture_manifest_input_matches_bench_recall_without_a_browser() {
     let manifest = FixtureManifest::from_json(
         r##"{"id":"truth","url_path":"/truth/","controls":[

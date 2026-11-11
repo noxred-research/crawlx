@@ -271,6 +271,10 @@ fn own_status_kib(key: &str) -> u64 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn heap_reports_what_the_memory_sampler_measures() {
     if !std::path::Path::new("/proc/self/status").exists() {
         eprintln!("skipping: no /proc, the memory sampler reads procfs");
@@ -344,6 +348,10 @@ async fn heap_reports_what_the_memory_sampler_measures() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn heap_text_summary_carries_the_same_numbers_and_no_labels() {
     if !std::path::Path::new("/proc/self/status").exists() {
         eprintln!("skipping: no /proc, the memory sampler reads procfs");

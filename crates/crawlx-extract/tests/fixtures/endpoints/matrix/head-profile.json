@@ -1,0 +1,18 @@
+{
+  "construct": "head-profile",
+  "body": [
+    "<html><head profile=\"http://www.w3.org/2005/10/profile /profiles/site\"><title>t</title></head><body></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "http://www.w3.org/2005/10/profile",
+      "source": "head/profile"
+    },
+    {
+      "method": "GET",
+      "url": "https://matrix.test/profiles/site",
+      "source": "head/profile"
+    }
+  ]
+}

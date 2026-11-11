@@ -5,6 +5,10 @@
 //! logged and never part of an error message.
 
 use super::tools::{Call, Plan, Shape, Source, Upload, MAX_UPLOAD_BYTES};
+#[allow(
+    clippy::disallowed_types,
+    reason = "bounded API protocol client imports raw reqwest request and response types"
+)]
 use reqwest::{Method, RequestBuilder, Response, StatusCode};
 use serde_json::{json, Value};
 use std::future::Future;
@@ -63,6 +67,10 @@ impl std::fmt::Debug for Config {
 }
 
 /// Why a tool call failed. Rendered as an `isError` tool result, never as a protocol error.
+#[allow(
+    clippy::disallowed_types,
+    reason = "API protocol failures wrap the raw reqwest error as their source"
+)]
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ApiError {
     /// The API base URL cannot carry a path.
@@ -154,6 +162,10 @@ pub(crate) enum ApiError {
 }
 
 /// Client of the compatibility API (v2).
+#[allow(
+    clippy::disallowed_types,
+    reason = "API protocol client owns the raw reqwest client"
+)]
 pub(crate) struct Api {
     http: reqwest::Client,
     base: Url,
@@ -169,6 +181,10 @@ impl Api {
     ///
     /// # Errors
     /// Fails when the HTTP client cannot be constructed.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "API protocol client builds the raw reqwest client"
+    )]
     pub(crate) fn new(config: &Config, sleep: SleepFn) -> Result<Self, ApiError> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("crawlx-mcp/", env!("CARGO_PKG_VERSION")))
@@ -258,6 +274,10 @@ impl Api {
         Ok(url)
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "API protocol client authorizes the raw reqwest request builder"
+    )]
     fn authorize(&self, request: RequestBuilder) -> RequestBuilder {
         match &self.key {
             Some(key) => request.bearer_auth(key),
@@ -279,6 +299,10 @@ impl Api {
         self.finish(url.path(), request).await
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "API protocol client builds the raw reqwest multipart upload"
+    )]
     async fn upload(&self, upload: Upload) -> Result<Value, ApiError> {
         let Upload {
             source,
@@ -305,6 +329,10 @@ impl Api {
 
     /// Send, read the body (bounded), and turn error statuses and `success: false` into
     /// [`ApiError::Status`].
+    #[allow(
+        clippy::disallowed_types,
+        reason = "API protocol client sends the raw reqwest request builder"
+    )]
     async fn finish(&self, path: &str, request: RequestBuilder) -> Result<Value, ApiError> {
         let response = request
             .send()
@@ -335,6 +363,10 @@ impl Api {
         Ok(value)
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "API protocol client reads the raw reqwest response body"
+    )]
     async fn read_body(&self, path: &str, mut response: Response) -> Result<Vec<u8>, ApiError> {
         let too_large = || ApiError::TooLarge {
             path: path.to_owned(),
@@ -360,6 +392,10 @@ impl Api {
         Ok(body)
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "API protocol client translates the raw reqwest error"
+    )]
     fn transport(&self, path: &str, error: reqwest::Error) -> ApiError {
         if error.is_timeout() {
             ApiError::Timeout {

@@ -6,7 +6,9 @@ use std::fmt;
 mod json;
 pub use json::contains_secret_bytes;
 mod redact;
-pub use redact::{register_secret, Redacted, Redactor, DENY_NAMES, MIN_REGISTERED_SECRET_LEN, REDACTED};
+pub use redact::{
+    register_secret, BoundedScrubError, Redacted, Redactor, DENY_NAMES, MIN_REGISTERED_SECRET_LEN, REDACTED,
+};
 mod stream;
 pub use stream::{SecretByteScanner, SecretScanError, SecretScanLimits, SecretScanMode};
 

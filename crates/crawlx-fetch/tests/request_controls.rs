@@ -340,6 +340,10 @@ fn robots_user_agent_precedence() {
 }
 
 /// HTTPS server presenting the self-signed fixture certificate (SAN `localhost`, `127.0.0.1`).
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: the in-process HTTPS origin serves raw hyper messages and never crosses a typed fetch boundary"
+)]
 async fn tls_server() -> (u16, tokio::task::JoinHandle<()>) {
     use hyper::service::service_fn;
     use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -424,6 +428,10 @@ async fn tls_verification_is_enforced_unless_skipped() {
 /// header names, and any header echoing a configured value, in either direction) in the
 /// flows it reports.
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: a raw reqwest client plays the browser against the egress proxy and never crosses a typed fetch boundary"
+)]
 async fn egress_proxy_capture_masks_configured_values() {
     use crawlx_core::traffic::ProxyFlow;
     let server = MockServer::start().await;
@@ -433,8 +441,10 @@ async fn egress_proxy_capture_masks_configured_values() {
         .mount(&server)
         .await;
     let (tx, mut rx) = tokio::sync::mpsc::channel::<ProxyFlow>(8);
+    let mut policy = EgressPolicy::new(true);
+    policy.extra_ports.push(server.address().port());
     let proxy = crawlx_fetch::EgressProxy::serve_with_capture_and_controls(
-        Arc::new(EgressPolicy::new(true)),
+        Arc::new(policy),
         resolver(&["pub.test"]),
         tx,
         controls(|_| {}).await,

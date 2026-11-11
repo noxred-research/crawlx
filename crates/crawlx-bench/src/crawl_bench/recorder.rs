@@ -14,6 +14,7 @@ use crate::error::BenchError;
 use axum::body::{to_bytes, Body};
 use axum::extract::{Request, State};
 use axum::http::header::{ACCEPT_ENCODING, CONTENT_LENGTH, HOST, LOCATION};
+#[allow(clippy::disallowed_types, reason = "reviewed recording HTTP proxy adapter")]
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -86,6 +87,7 @@ impl Hit {
     }
 }
 
+#[allow(clippy::disallowed_types, reason = "reviewed recording HTTP proxy adapter")]
 #[derive(Debug)]
 struct ProxyState {
     upstream: Url,
@@ -113,6 +115,7 @@ impl Recorder {
     /// [`BenchError::Bind`] when the loopback listener cannot bind, [`BenchError::LocalAddr`]
     /// when its address is unreadable, [`BenchError::CrawlBench`] when `upstream` is not an
     /// `http(s)` URL with a host or the upstream client cannot be built.
+    #[allow(clippy::disallowed_types, reason = "reviewed recording HTTP proxy adapter")]
     pub async fn start(upstream: &Url) -> Result<Self, BenchError> {
         if !matches!(upstream.scheme(), "http" | "https") || upstream.host_str().is_none() {
             return Err(BenchError::CrawlBench(format!(

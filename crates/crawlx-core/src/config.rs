@@ -25,6 +25,10 @@ const fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
 #[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+const fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
+}
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
 const fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
@@ -914,10 +918,11 @@ impl PageHookOptions {
 }
 
 /// `dynamic.browserProfile` (compatibility API `profile{name,saveChanges}`): a named persistent
-/// browser profile. The worker keeps it as a Chromium user-data directory under its
-/// `--profiles-dir`, namespaced by tenant. With `saveChanges` the run reuses the directory
-/// (cookies and local storage written by earlier runs are present, and its own are kept);
-/// without it the run starts from a copy that is discarded afterwards.
+/// browser profile. The worker keeps its cookies and web storage as encrypted, versioned state
+/// under durable key custody (never as a user-data directory). `generation` names the exact
+/// version to restore: 0 starts a new namespace (refused when one already exists), N >= 1
+/// restores that generation or fails, never an empty profile. With `saveChanges` the run commits
+/// its final state as generation `generation + 1`; without it nothing is written.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserProfile {
@@ -926,6 +931,9 @@ pub struct BrowserProfile {
     /// Keep what the run writes into the profile (compatibility API default `true`).
     #[serde(default = "t")]
     pub save_changes: bool,
+    /// Exact generation to restore; 0 creates the namespace.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub generation: u64,
 }
 
 impl BrowserProfile {
@@ -1419,6 +1427,12 @@ pub struct Fetch {
     /// Response overflow handling; absence preserves truncation at the body limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oversize: Option<crate::acquisition::OversizePolicy>,
+    /// Digest of the installed native HTTP identity profile; absence keeps the ordinary transport.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_profile: Option<crate::hash::Digest>,
+    /// Operator registry id of an approved HTML acquisition service; never an endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquisition_service: Option<String>,
 }
 
 impl Fetch {
@@ -1451,6 +1465,8 @@ impl Default for Fetch {
             preflight: None,
             declaration: None,
             oversize: None,
+            identity_profile: None,
+            acquisition_service: None,
         }
     }
 }
@@ -1718,6 +1734,9 @@ pub struct CreateCrawl {
     /// Reviewed compiled extension pipeline; no executable caller code is accepted.
     #[serde(default)]
     pub extensions: crate::extensions::ExtensionPipelineV1,
+    /// Optional immutable reviewed request, actor, item and discovery recipe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_recipe: Option<crate::extension_recipes::ExtensionRecipeV1>,
     /// Bounded run-local accepted-item, feed and key-value namespaces.
     #[serde(default)]
     pub datasets: crate::dataset::DatasetConfigV1,
@@ -1763,6 +1782,7 @@ impl CreateCrawl {
             protocol: crate::protocol::ProtocolConfigV1::default(),
             orchestration: None,
             extensions: crate::extensions::ExtensionPipelineV1::default(),
+            extension_recipe: None,
             datasets: crate::dataset::DatasetConfigV1::default(),
             extract: Extract::default(),
             scrape: None,
@@ -1877,6 +1897,17 @@ impl CreateCrawl {
     /// malformed `extract.customFields` (name, missing regex, group index).
     pub fn normalize(&mut self) -> Result<(), Vec<CoreError>> {
         let mut errs = Vec::new();
+        if let Some(recipe) = &self.extension_recipe {
+            if self.extensions.configured() && self.extensions != recipe.pipeline {
+                errs.push(CoreError::Conflict {
+                    a: "extensions",
+                    b: "extensionRecipe.pipeline",
+                    reason: "only one effective extension pipeline may be configured".into(),
+                });
+            } else {
+                self.extensions = recipe.pipeline.clone();
+            }
+        }
         if let Err(reason) = self.capture.browser.validate() {
             errs.push(CoreError::Invalid {
                 field: "capture.browser",
@@ -1988,6 +2019,14 @@ impl CreateCrawl {
                 reason: error.to_string(),
             });
         }
+        if let Some(recipe) = &self.extension_recipe {
+            if let Err(error) = recipe.validate() {
+                errs.push(CoreError::Invalid {
+                    field: "extensionRecipe",
+                    reason: error.to_string(),
+                });
+            }
+        }
         if let Err(error) = self.datasets.validate() {
             errs.push(CoreError::Invalid {
                 field: "datasets",
@@ -2001,6 +2040,12 @@ impl CreateCrawl {
                     reason: error.to_string(),
                 });
             }
+        }
+        if self.fetch.acquisition_service.is_some() && self.acquisition.is_none() {
+            self.acquisition = Some(crate::acquisition::AcquisitionPolicyV1 {
+                backend_ids: vec!["acquisition_service".to_owned()],
+                ..Default::default()
+            });
         }
         if (self.scope.discovery.is_some() || self.cache.is_some() || !self.protocol.routes.is_empty())
             && self.acquisition.is_none()
@@ -2051,6 +2096,28 @@ impl CreateCrawl {
                     a: "acquisition.backendIds",
                     b: "scrape.options",
                     reason: "browser scrape options require native_browser as the primary backend".to_owned(),
+                });
+            }
+            let service_backend = acquisition
+                .backend_ids
+                .iter()
+                .any(|id| id == "acquisition_service");
+            if service_backend != self.fetch.acquisition_service.is_some() {
+                errs.push(CoreError::Conflict {
+                    a: "fetch.acquisitionService",
+                    b: "acquisition.backendIds",
+                    reason: "the acquisition_service backend and fetch.acquisitionService require each other"
+                        .to_owned(),
+                });
+            }
+            if service_backend
+                && (acquisition.backend_ids != ["acquisition_service"]
+                    || !acquisition.fallback_backend_ids.is_empty())
+            {
+                errs.push(CoreError::Conflict {
+                    a: "acquisition.backendIds",
+                    b: "acquisition.fallbackBackendIds",
+                    reason: "acquisition_service is the only backend and has no native fallback".to_owned(),
                 });
             }
         }
@@ -2288,6 +2355,51 @@ impl CreateCrawl {
                 });
             }
         }
+        if let Some(digest) = self.fetch.identity_profile {
+            let installed = crate::identity_profile::IdentityProfileV1::pinned_chromium().digest();
+            if installed.ok() != Some(digest) {
+                errs.push(CoreError::Invalid {
+                    field: "fetch.identityProfile",
+                    reason: "profile digest is not installed".to_owned(),
+                });
+            }
+            if self.mode != CrawlMode::Static
+                || self.scrape.is_some()
+                || self.fetch.acquisition_service.is_some()
+                || self.fetch.tls_impersonation != TlsImpersonation::Off
+                || self.fetch.skip_tls_verification
+                || self.fetch.user_agent.is_some()
+                || !self.fetch.extra_headers.is_empty()
+                || self.fetch.preflight.is_some()
+            {
+                errs.push(CoreError::Conflict {
+                    a: "fetch.identityProfile",
+                    b: "mode",
+                    reason: "coherent identity requires URL-only static mode and no custom TLS, UA, headers, preflight or service"
+                        .to_owned(),
+                });
+            }
+        }
+        if let Some(id) = &self.fetch.acquisition_service {
+            if id.is_empty()
+                || id.len() > 128
+                || matches!(id.as_str(), "native_ftp" | "native_whois")
+                || self.mode != CrawlMode::Static
+                || self.scrape.is_some()
+                || !self.fetch.extra_headers.is_empty()
+                || !self.fetch.cookies.is_empty()
+                || self.fetch.user_agent.is_some()
+                || self.fetch.skip_tls_verification
+                || self.fetch.proxy.is_some()
+                || self.fetch.preflight.is_some()
+            {
+                errs.push(CoreError::Invalid {
+                    field: "fetch.acquisitionService",
+                    reason: "registry id (<=128, not reserved) requires static URL-only mode without headers, cookies, UA, proxy or preflight"
+                        .to_owned(),
+                });
+            }
+        }
         if let Some(proxy) = &self.fetch.proxy {
             if !matches!(proxy.scheme(), "http" | "https" | "socks5" | "socks5h")
                 || proxy.host_str().is_none()
@@ -2476,6 +2588,12 @@ impl CreateCrawl {
                 errs.push(CoreError::Invalid {
                     field: "dynamic.browserProfile.name",
                     reason: format!("1 to {MAX_PROFILE_NAME_LEN} of A-Z a-z 0-9 _ -"),
+                });
+            }
+            if i64::try_from(p.generation).is_err() {
+                errs.push(CoreError::Invalid {
+                    field: "dynamic.browserProfile.generation",
+                    reason: "at most 9223372036854775807".to_owned(),
                 });
             }
         }

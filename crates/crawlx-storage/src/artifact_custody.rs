@@ -23,9 +23,11 @@ use crate::custody::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use crawlx_core::archive_catalog::ArchiveCustodyV1;
 use crawlx_core::captcha::CaptchaSecrets;
 use crawlx_core::custody::{
-    CustodyLease, RunSecretAuthority as _, RunSecretSnapshot, SecretEpoch, SecretRegistrar,
+    CustodyLease, FrozenArchiveGrant, FrozenArchiveSource, RunSecretAuthority as _, RunSecretSnapshot,
+    SecretEpoch, SecretRegistrar,
 };
 use crawlx_core::hash::Digest;
 use crawlx_core::secret::SecretScanError;
@@ -120,6 +122,43 @@ pub trait ArtifactCustody: Send + Sync {
     /// # Errors
     /// Any error means withdrawal is unconfirmed and the staged object must be kept.
     async fn withdraw(&self, tenant: TenantId, run: CrawlRunId, id: ArtifactId) -> Result<(), StoreError>;
+
+    /// Bind the terminal run's closed secret epoch to an archive export's source proofs.
+    ///
+    /// Registers nothing and reads no raw secret. `custody` is narrowed by every source.
+    ///
+    /// # Errors
+    /// Rejects non-terminal runs, non-export leases, stale fences, missing or unmatched
+    /// source custody and weakened class or deadline.
+    async fn issue_frozen_archive(
+        &self,
+        lease: &CustodyLease,
+        custody: &ArchiveCustodyV1,
+        sources: &[FrozenArchiveSource],
+    ) -> Result<FrozenArchiveGrant, StoreError> {
+        let _ = (lease, custody, sources);
+        Err(StoreError::Unavailable(
+            "frozen archive custody unavailable".into(),
+        ))
+    }
+
+    /// Atomically publish one archive output under a [`FrozenArchiveGrant`].
+    ///
+    /// # Errors
+    /// Rejects any producer, run, fence, epoch, class, deadline, type or source drift.
+    async fn publish_frozen_archive(
+        &self,
+        grant: &FrozenArchiveGrant,
+        lease: &CustodyLease,
+        row: &ArtifactRow,
+        ciphertext: &CiphertextIdentity,
+        envelope: &ArtifactKeyEnvelope,
+    ) -> Result<(), StoreError> {
+        let _ = (grant, lease, row, ciphertext, envelope);
+        Err(StoreError::Unavailable(
+            "frozen archive custody unavailable".into(),
+        ))
+    }
 
     /// Whether [`Self::publish`] itself writes the `artifacts` catalog row. When it does
     /// not, the store records the row through its attached index after publication.
@@ -255,6 +294,28 @@ impl ArtifactCustody for PgArtifactCustody {
         id: ArtifactId,
     ) -> Result<Option<ArtifactKeyCustody>, StoreError> {
         self.authority.try_read_custody(tenant, run, id).await
+    }
+
+    async fn issue_frozen_archive(
+        &self,
+        lease: &CustodyLease,
+        custody: &ArchiveCustodyV1,
+        sources: &[FrozenArchiveSource],
+    ) -> Result<FrozenArchiveGrant, StoreError> {
+        self.authority.issue_frozen_archive(lease, custody, sources).await
+    }
+
+    async fn publish_frozen_archive(
+        &self,
+        grant: &FrozenArchiveGrant,
+        lease: &CustodyLease,
+        row: &ArtifactRow,
+        ciphertext: &CiphertextIdentity,
+        envelope: &ArtifactKeyEnvelope,
+    ) -> Result<(), StoreError> {
+        self.authority
+            .publish_frozen_archive(grant, lease, row, ciphertext, envelope)
+            .await
     }
 
     async fn withdraw(&self, tenant: TenantId, run: CrawlRunId, id: ArtifactId) -> Result<(), StoreError> {
@@ -445,6 +506,84 @@ impl ArtifactCustody for LocalArtifactCustody {
 
     async fn withdraw(&self, tenant: TenantId, run: CrawlRunId, id: ArtifactId) -> Result<(), StoreError> {
         self.state.lock().published.remove(&(tenant.0, run.0, id.0));
+        Ok(())
+    }
+
+    async fn issue_frozen_archive(
+        &self,
+        lease: &CustodyLease,
+        custody: &ArchiveCustodyV1,
+        sources: &[FrozenArchiveSource],
+    ) -> Result<FrozenArchiveGrant, StoreError> {
+        Self::check(lease)?;
+        let (incarnation, epoch) = {
+            let state = self.state.lock();
+            let run = state
+                .runs
+                .get(&(lease.tenant.0, lease.run.0))
+                .ok_or_else(|| StoreError::Conflict("secret authority missing or expired".into()))?;
+            (run.incarnation, run.epoch)
+        };
+        let mut narrowed = *custody;
+        for source in sources {
+            if source.custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive {
+                narrowed.sensitivity = crawlx_core::repo::Sensitivity::Sensitive;
+            }
+            narrowed.expires_at = match (narrowed.expires_at, source.custody.expires_at) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (left, right) => left.or(right),
+            };
+        }
+        FrozenArchiveGrant::new(
+            lease,
+            SecretEpoch::new(lease.tenant, lease.run, incarnation, epoch),
+            narrowed,
+            sources.to_vec(),
+        )
+    }
+
+    async fn publish_frozen_archive(
+        &self,
+        grant: &FrozenArchiveGrant,
+        lease: &CustodyLease,
+        row: &ArtifactRow,
+        ciphertext: &CiphertextIdentity,
+        envelope: &ArtifactKeyEnvelope,
+    ) -> Result<(), StoreError> {
+        Self::check(lease)?;
+        grant.check_lease(lease)?;
+        if row.tenant != lease.tenant || row.run != lease.run {
+            return Err(StoreError::Conflict("artifact publication scope mismatch".into()));
+        }
+        grant.check_output(row.sensitivity, row.expires_at, &row.kind, &row.content_type)?;
+        let identity = CiphertextIdentity::new(ciphertext.digest, ciphertext.size_bytes)?;
+        if row.object_key != encrypted_object_key(row.tenant, row.run, row.id, identity.digest) {
+            return Err(StoreError::Conflict(
+                "artifact ciphertext key must bind unique artifact identity".into(),
+            ));
+        }
+        let mut state = self.state.lock();
+        let run = state
+            .runs
+            .get(&(lease.tenant.0, lease.run.0))
+            .ok_or_else(|| StoreError::Conflict("secret authority missing or expired".into()))?;
+        if grant.epoch.incarnation != run.incarnation || grant.epoch.epoch != run.epoch {
+            return Err(StoreError::Conflict(PUBLISH_STALE.into()));
+        }
+        let key = (lease.tenant.0, lease.run.0, row.id.0);
+        let custody = ArtifactKeyCustody {
+            envelope: envelope.clone(),
+            ciphertext: identity,
+        };
+        if let Some((existing, existing_row)) = state.published.get(&key) {
+            if existing != &custody || existing_row != row {
+                return Err(StoreError::Conflict(
+                    "artifact publication retry changed immutable custody".into(),
+                ));
+            }
+            return Ok(());
+        }
+        state.published.insert(key, (custody, row.clone()));
         Ok(())
     }
 

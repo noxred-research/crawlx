@@ -1,0 +1,1 @@
+-- no-op: SQLite has no eligibility function; capability probes run in the repository, whose backend id allowlist is in Rust.

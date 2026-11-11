@@ -1099,7 +1099,7 @@ fn misc_sitemap(_: &Env<'_>) -> MazeResponse {
 
 // ---- table -----------------------------------------------------------------------------------
 
-use MazePlane::{Browser, Deferred, Static};
+use MazePlane::{Browser, Static};
 
 macro_rules! p {
     ($path:literal, $plane:ident, $title:literal, $render:ident, [$($t:literal),* $(,)?]) => {
@@ -1303,7 +1303,7 @@ pub const PAGES: &[MazePage] = &[
     ),
     p!(
         "html/body/img/src-data.html",
-        Deferred,
+        Static,
         "img src data: URI with an inner image",
         img_src_data,
         ["/html/body/img/src-data.found"]
@@ -1422,7 +1422,7 @@ pub const PAGES: &[MazePage] = &[
     ),
     p!(
         "html/head/profile.html",
-        Deferred,
+        Static,
         "head profile",
         head_profile,
         ["/html/head/profile.found"]
@@ -1436,7 +1436,7 @@ pub const PAGES: &[MazePage] = &[
     ),
     p!(
         "html/head/comment-conditional.html",
-        Deferred,
+        Static,
         "conditional comment",
         comment_conditional,
         ["/html/head/comment-conditional.found"]
@@ -1464,14 +1464,14 @@ pub const PAGES: &[MazePage] = &[
     ),
     p!(
         "html/head/meta/content-pinned-websites.html",
-        Deferred,
+        Static,
         "meta msapplication-config",
         meta_content_pinned,
         ["/html/head/meta/content-pinned-websites.found"]
     ),
     p!(
         "html/head/meta/content-reading-view.html",
-        Deferred,
+        Static,
         "meta reading view",
         meta_content_reading_view,
         ["/html/head/meta/content-reading-view.found"]

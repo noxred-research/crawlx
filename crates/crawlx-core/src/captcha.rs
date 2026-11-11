@@ -212,6 +212,12 @@ pub enum CaptchaError {
     /// The safety kernel refused provider billing and callback delivery.
     #[error("captcha callback denied by safety policy")]
     PolicyDenied,
+    /// A secret snapshot exceeds its caller-supplied byte maximum.
+    #[error("captcha secret snapshot exceeds its limit")]
+    SnapshotLimit,
+    /// The shared byte budget refused the snapshot, or its allocation failed.
+    #[error("captcha secret snapshot memory admission refused")]
+    MemoryAdmission,
 }
 
 /// Shared runtime-only secret registry for browser and capture redaction.
@@ -254,6 +260,53 @@ impl CaptchaSecrets {
     /// Returns [`CaptchaError::Delivery`] if the registry lock is poisoned.
     pub fn has_values(&self) -> Result<bool, CaptchaError> {
         Ok(!self.0.lock().map_err(|_| CaptchaError::Delivery)?.is_empty())
+    }
+
+    /// Copy scoped literal secrets under one registry lock into admitted, zeroized memory.
+    ///
+    /// The exact size (`sum(len) + count * size_of::<String>()`, checked) is computed first and
+    /// reserved from the shared budget BEFORE any allocation; the vector and every string then
+    /// use fallible exact allocations. The values are sensitive: never log, persist or expose
+    /// the snapshot. Keep it alive until the consumer owns its own admitted copy.
+    ///
+    /// # Errors
+    /// [`CaptchaError::Delivery`] for a poisoned registry, [`CaptchaError::SnapshotLimit`] when
+    /// the exact size exceeds `maximum` (or overflows) and [`CaptchaError::MemoryAdmission`]
+    /// when the budget refuses it or an allocation fails. Nothing stays reserved on failure.
+    pub fn literal_snapshot_admitted(
+        &self,
+        maximum: usize,
+    ) -> Result<crate::parser_memory::Budgeted<zeroize::Zeroizing<Vec<String>>>, CaptchaError> {
+        let values = self.0.lock().map_err(|_| CaptchaError::Delivery)?;
+        let mut total = values
+            .len()
+            .checked_mul(std::mem::size_of::<String>())
+            .ok_or(CaptchaError::SnapshotLimit)?;
+        for value in values.iter() {
+            total = total
+                .checked_add(value.expose().len())
+                .ok_or(CaptchaError::SnapshotLimit)?;
+        }
+        if total > maximum {
+            return Err(CaptchaError::SnapshotLimit);
+        }
+        let permit = crate::parser_memory::global()
+            .try_reserve(total)
+            .map_err(|_| CaptchaError::MemoryAdmission)?;
+        // Zeroizing from the start: a failed allocation wipes the strings copied so far.
+        let mut snapshot = zeroize::Zeroizing::new(Vec::<String>::new());
+        snapshot
+            .try_reserve_exact(values.len())
+            .map_err(|_| CaptchaError::MemoryAdmission)?;
+        for value in values.iter() {
+            let source = value.expose();
+            let mut copy = String::new();
+            copy.try_reserve_exact(source.len())
+                .map_err(|_| CaptchaError::MemoryAdmission)?;
+            copy.push_str(source);
+            snapshot.push(copy);
+        }
+        Ok(crate::parser_memory::Budgeted::new(snapshot, permit))
     }
 
     /// Capture this scoped registry in a bounded, incremental literal scanner.

@@ -7,6 +7,10 @@ use serde_json::json;
 use std::time::Duration;
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn run_serves_bootstrap_keys_over_http() {
     let port = {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -88,6 +92,10 @@ async fn run_serves_bootstrap_keys_over_http() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn run_until_drains_when_the_token_is_cancelled() {
     let port = {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

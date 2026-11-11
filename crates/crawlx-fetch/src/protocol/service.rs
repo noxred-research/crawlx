@@ -387,6 +387,10 @@ impl ServiceAdapter {
     /// # Errors
     /// Refuses replay, wrong scope/schema/audience, unknown peers, wrong keys and response/elapsed bounds. Never falls back.
     /// Lease expiry returns [`ProtocolError::Deadline`] while waiting for headers or body bytes.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "bounded protocol service adapter builds the raw reqwest client"
+    )]
     #[allow(clippy::too_many_arguments)]
     pub async fn acquire(
         &self,

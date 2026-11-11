@@ -54,6 +54,7 @@ pub mod gates;
 pub mod golden;
 pub mod gym;
 pub mod load;
+pub mod migration_contract;
 pub mod netfault;
 pub mod oracle;
 pub mod policy;

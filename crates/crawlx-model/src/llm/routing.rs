@@ -16,13 +16,14 @@
 //! A routed request that fails on the provider (transport, status, timeout, unusable output) is
 //! answered by the default model instead, as upstream does ("per-request fallback").
 
-use super::extractor::{Completion, ExtractDocument, LlmError, LlmExtractor};
+use super::extractor::{Completion, CompletionLimits, ExtractDocument, LlmError, LlmExtractor};
 use async_trait::async_trait;
 use crawlx_core::scrape::QueryMode;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 /// Default `max_input_bytes`: larger inputs stay on the default model (upstream 400 000).
 pub const DEFAULT_MAX_INPUT_BYTES: usize = 400_000;
@@ -226,6 +227,18 @@ impl LlmExtractor for PerStep {
     ) -> Result<Completion<Value>, LlmError> {
         self.default.complete(system, user, schema).await
     }
+    async fn complete_bounded(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        self.default
+            .complete_bounded(system, user, schema, limits, cancel)
+            .await
+    }
 
     fn max_input_chars(&self) -> usize {
         self.default.max_input_chars()
@@ -316,6 +329,19 @@ impl LlmExtractor for Fallback {
             }
         }
     }
+    async fn complete_bounded(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        // A per-call budget never authorizes a second provider call after failure.
+        self.primary
+            .complete_bounded(system, user, schema, limits, cancel)
+            .await
+    }
 
     fn max_input_chars(&self) -> usize {
         self.primary.max_input_chars()
@@ -374,6 +400,19 @@ impl LlmExtractor for Shadow {
             }
         });
         self.primary.complete(system, user, schema).await
+    }
+    async fn complete_bounded(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        // Bounded calls authorize one provider, never an uncharged background mirror.
+        self.primary
+            .complete_bounded(system, user, schema, limits, cancel)
+            .await
     }
 
     fn max_input_chars(&self) -> usize {

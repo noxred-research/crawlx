@@ -20,6 +20,10 @@ pub const DEFAULT_ENDPOINT: &str = "https://www.searchapi.io/api/v1/search"; // 
 const MAX_NUM: usize = 100;
 
 /// A hosted SERP API client for one engine id of that API.
+#[allow(
+    clippy::disallowed_types,
+    reason = "SERP HTTP adapter owns the raw reqwest client"
+)]
 #[derive(Clone)]
 pub struct SerpProvider {
     client: reqwest::Client,
@@ -44,6 +48,10 @@ impl SerpProvider {
     /// # Errors
     /// [`SearchError::Transport`] when `endpoint` is not an absolute http(s) URL or the HTTP
     /// client cannot be built.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "SERP HTTP adapter builds the raw reqwest client"
+    )]
     pub fn new(api_key: &str, engine: &str, endpoint: Option<&str>) -> Result<Self, SearchError> {
         let endpoint = endpoint.unwrap_or(DEFAULT_ENDPOINT);
         let url = url::Url::parse(endpoint)

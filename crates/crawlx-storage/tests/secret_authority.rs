@@ -617,13 +617,13 @@ async fn changed_retry_before_redis_mutation_cannot_poison_the_original_registra
 }
 
 #[tokio::test]
-async fn native_deadline_is_absolute_and_earlier_than_the_durable_deadline() {
+async fn native_deadline_is_absolute_and_earlier_than_the_frozen_retention_ceiling() {
     let Some(mut f) = fixture().await else {
         return;
     };
     f.first.initialize(&f.lease).await.unwrap();
     let deadline: chrono::DateTime<chrono::Utc> =
-        sqlx::query_scalar("SELECT expires_at FROM run_secret_authority")
+        sqlx::query_scalar("SELECT retention_ceiling FROM run_secret_authority")
             .fetch_one(f.pg.pool())
             .await
             .unwrap();
@@ -633,6 +633,15 @@ async fn native_deadline_is_absolute_and_earlier_than_the_durable_deadline() {
         .await
         .unwrap();
     assert_eq!(native, deadline.timestamp_millis() - 2000);
+    let use_deadline: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT expires_at FROM run_secret_authority")
+            .fetch_one(f.pg.pool())
+            .await
+            .unwrap();
+    assert!(
+        use_deadline <= deadline,
+        "renewable use authority never exceeds original retention"
+    );
     let late_key = format!("{}:late-init", f.redis_key);
     let incarnation = Uuid::now_v7();
     let expired_deadline = f.pg.now().await.unwrap().timestamp_millis() - 1000;

@@ -201,6 +201,10 @@ type OtlpLog = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
 /// An HTTP/2 server that records every gRPC request body and answers `grpc-status: 0` with an
 /// empty response message, which is what `ExportTraceServiceResponse` / `ExportMetricsServiceResponse`
 /// encode to.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn otlp_stub() -> (String, OtlpLog) {
     let log: OtlpLog = Arc::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

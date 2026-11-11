@@ -235,8 +235,10 @@ impl EgressConfig {
 
     /// The egress policy of `crawl` when it runs without an authorization record. See
     /// [`Self::policy_for_run`].
-    #[must_use]
-    pub fn policy_for(&self, crawl: &CreateCrawl) -> EgressPolicy {
+    ///
+    /// # Errors
+    /// Returns an error when caller host exclusions cannot be compiled.
+    pub fn policy_for(&self, crawl: &CreateCrawl) -> Result<EgressPolicy, WorkerError> {
         self.policy_for_run(crawl, None)
     }
 
@@ -246,21 +248,26 @@ impl EgressConfig {
     /// attached as the policy's [`RecordScope`](crawlx_policy::RecordScope), so a redirect hop or a
     /// browser request outside it is refused with [`DenyRule::AuthorizationScope`](crawlx_policy::DenyRule).
     /// With `allowPrivateNetworks` the private ranges the run may reach are the record's
-    /// `authorizedNetworks` (the worker's own `extra_allow` only applies to a run without a
-    /// record, or to a record that lists none); the deployment lists bound them further.
-    #[must_use]
-    pub fn policy_for_run(&self, crawl: &CreateCrawl, record: Option<&AuthorizationRecord>) -> EgressPolicy {
-        let mut policy =
-            EgressPolicy::new(crawl.safety.allow_private_networks).with_seed_port(&crawl.seed_url);
+    /// `authorizedNetworks`. Empty or absent signed networks grant no private access, and
+    /// the worker's `extra_allow` never substitutes for a record's networks. A run with no
+    /// record at all (local and fixture runs) is limited to the operator's explicit
+    /// `extra_allow` CIDRs. Caller host exclusions remain independent denials, including
+    /// `private-ips`, on every DNS answer and peer check.
+    ///
+    /// # Errors
+    /// Returns an error when caller host exclusions cannot be compiled.
+    pub fn policy_for_run(
+        &self,
+        crawl: &CreateCrawl,
+        record: Option<&AuthorizationRecord>,
+    ) -> Result<EgressPolicy, WorkerError> {
+        let exclusions = crawlx_policy::ExcludeHosts::new(&crawl.scope.exclude_hosts)?;
+        let mut policy = EgressPolicy::new(false)
+            .with_seed_port(&crawl.seed_url)
+            .with_host_exclusions(exclusions);
         for role in &crawl.roles {
             if let Some(u) = &role.replica_base_url {
                 policy = policy.with_seed_port(u);
-            }
-        }
-        if crawl.safety.allow_private_networks {
-            match record.filter(|r| !r.authorized_networks.is_empty()) {
-                Some(record) => policy.extra_allow.clone_from(&record.authorized_networks),
-                None => policy.extra_allow.clone_from(&self.extra_allow),
             }
         }
         policy.extra_deny.clone_from(&self.extra_deny);
@@ -268,7 +275,18 @@ impl EgressConfig {
             policy = policy.with_lists(lists.clone());
         }
         if let Some(record) = record {
-            policy = policy.with_record_scope(record.scope());
+            policy = if crawl.safety.allow_private_networks {
+                policy.with_private_host_scope(crawlx_policy::egress::PrivateHostScope::new(record))
+            } else {
+                policy
+                    .with_record_scope(record.scope())
+                    .with_authorized_private_networks(Vec::new())
+            };
+        } else if crawl.safety.allow_private_networks {
+            // No signed record exists to widen or contradict (local and fixture runs only;
+            // production admission requires a record): the operator's explicit CIDR
+            // allowance is the typed authorized list, never a boolean "all private".
+            policy = policy.with_authorized_private_networks(self.extra_allow.clone());
         }
         policy.fixture_scope.clone_from(&self.fixture_scope);
         policy.deployment_exempt = crawl.safety.profile == SafetyProfile::TestEnvironment;
@@ -277,7 +295,7 @@ impl EgressConfig {
                 policy.extra_ports.push(*p);
             }
         }
-        policy
+        Ok(policy)
     }
 
     /// The operator's encrypted resolver, otherwise the injected or system resolver.
@@ -342,7 +360,7 @@ impl EgressConfig {
                 None => options,
             },
         };
-        Ok(EgressProxy::serve_with(Arc::new(self.policy_for_run(crawl, record)), resolver, options).await?)
+        Ok(EgressProxy::serve_with(Arc::new(self.policy_for_run(crawl, record)?), resolver, options).await?)
     }
 
     /// Select only an operator route already approved by this generation.
@@ -391,7 +409,7 @@ impl EgressConfig {
             }
             _ => return Err(WorkerError::Config("session proxy binding unavailable".into())),
         };
-        Ok(EgressProxy::serve_with(Arc::new(self.policy_for_run(crawl, record)), resolver, options).await?)
+        Ok(EgressProxy::serve_with(Arc::new(self.policy_for_run(crawl, record)?), resolver, options).await?)
     }
 }
 
@@ -490,9 +508,10 @@ pub struct WorkerConfig {
     /// Endpoint of the persistence-free Redis-compatible store holding each run's volatile
     /// secret registry (`CRAWLX_SECRET_REDIS_URL` / `_FILE`); never serialized or logged.
     pub secret_redis_url: Option<crawlx_core::secret::SecretOr<String>>,
-    /// Lifetime of one run's volatile secret authority (`CRAWLX_SECRET_AUTHORITY_TTL_SECS`).
-    /// There is no renewal: after expiry durable content writes of the run fail closed.
+    /// Renewable use window for volatile secret authority (`CRAWLX_SECRET_AUTHORITY_TTL_SECS`).
     pub secret_authority_ttl: Duration,
+    /// Absolute operator ceiling; renewal never extends the original physical secret expiry.
+    pub secret_authority_hard_max: Duration,
     /// Root of the filesystem artifact store.
     pub artifacts_dir: PathBuf,
     /// Bounded memory-only upload spool shared by this worker's artifact store.
@@ -520,6 +539,8 @@ pub struct WorkerConfig {
     pub model: Option<ModelConfig>,
     /// Approved offline article-language model, loaded once by the operator on this worker.
     pub article_language_detector: Option<crawlx_core::article_language::ArticleLanguageHandle>,
+    /// Operator-approved bounded source traversal and finalized metadata projection.
+    pub source_dispatch: Option<Arc<crate::source_dispatch::SourceDispatcher>>,
     /// LLM planner endpoint; `None` runs without a planner (`dynamic.llmPlanner` is then ignored).
     pub planner: Option<PlannerConfig>,
     /// Milestone gates the run may rely on. Default grants none.
@@ -564,6 +585,8 @@ pub struct WorkerConfig {
     pub form_ai: Option<Arc<dyn FormAi>>,
     /// Optional in-memory actual-action evidence for bounded benchmark runs.
     pub action_trace: Option<Arc<crate::action_trace::ActionTrace>>,
+    /// Optional process-local interactive registry shared with the loopback API.
+    pub interactive_profiles: Option<Arc<crate::interactive_profiles::InteractiveProfiles>>,
     /// The document LLM behind the compatibility-API scrape formats `json`, `summary`, `question`,
     /// `highlights`, `query` and `changeTracking`'s `json` mode. `None`: a page that asks for
     /// one of them fails with `llm_not_configured`.
@@ -610,7 +633,8 @@ impl Default for WorkerConfig {
             checkpoint_keys: None,
             artifact_keys: None,
             secret_redis_url: None,
-            secret_authority_ttl: crawlx_storage::custody::MAX_AUTHORITY_TTL,
+            secret_authority_ttl: Duration::from_secs(3600),
+            secret_authority_hard_max: Duration::from_secs(259_200),
             artifacts_dir: PathBuf::from("./crawlx-artifacts"),
             artifact_spool: crawlx_storage::UploadSpoolConfig::default(),
             delivery: Arc::new(crate::delivery::DeliveryRegistry::new()),
@@ -624,6 +648,7 @@ impl Default for WorkerConfig {
             idle_exit_after: None,
             model: None,
             article_language_detector: None,
+            source_dispatch: None,
             planner: None,
             gates: Gates::none(),
             cdp_ws_url: None,
@@ -637,6 +662,7 @@ impl Default for WorkerConfig {
             secret_validators: None,
             form_ai: None,
             action_trace: None,
+            interactive_profiles: None,
             llm: None,
             extraction_llm: None,
             branding_llm: None,
@@ -706,6 +732,19 @@ impl WorkerConfig {
             self.secret_authority_ttl = Duration::from_secs(seconds.ok_or_else(|| {
                 WorkerError::Config("CRAWLX_SECRET_AUTHORITY_TTL_SECS must be an integer in 1..=86400".into())
             })?);
+        }
+        if let Some(raw) = getenv("CRAWLX_SECRET_AUTHORITY_HARD_MAX_SECS") {
+            let seconds = raw
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| (1..=259_200).contains(seconds))
+                .ok_or_else(|| {
+                    WorkerError::Config(
+                        "CRAWLX_SECRET_AUTHORITY_HARD_MAX_SECS must be an integer in 1..=259200".into(),
+                    )
+                })?;
+            self.secret_authority_hard_max = Duration::from_secs(seconds);
         }
         Ok(())
     }
@@ -1004,6 +1043,26 @@ impl fmt::Debug for WorkerConfig {
 }
 
 impl WorkerConfig {
+    /// Compile bounded source traversal and metadata projection from operator-local configuration.
+    /// No configuration is loaded from fetched content or tenant request fields.
+    ///
+    /// # Errors
+    /// Refuses duplicate configuration, unreadable files, unsupported versions and invalid limits.
+    pub fn load_source_dispatch_from_lookup(
+        &mut self,
+        getenv: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<(), WorkerError> {
+        if self.source_dispatch.is_some() && getenv("CRAWLX_SOURCE_DISPATCH_CONFIG").is_some() {
+            return Err(WorkerError::Config("source dispatcher configured twice".into()));
+        }
+        if self.source_dispatch.is_none() {
+            self.source_dispatch =
+                crate::source_dispatch::SourceDispatcher::from_env(getenv).map_err(|_| {
+                    WorkerError::Config("source dispatcher configuration unavailable or invalid".into())
+                })?;
+        }
+        Ok(())
+    }
     /// Load the explicitly installed language bundle on this worker's existing CPU pool.
     /// No file or model is downloaded. The path is operator configuration, never HTTP input.
     ///
@@ -1087,14 +1146,7 @@ impl WorkerConfig {
                 "approved recipes require the native Session Actor renderer".to_owned(),
             ));
         }
-        let registry = match &self.archive_behaviors {
-            Some(registry) => Arc::clone(registry),
-            None => {
-                let path = std::env::var_os("CRAWLX_RECIPE_REGISTRY")
-                    .ok_or_else(|| WorkerError::Config("operator recipe registry absent".to_owned()))?;
-                crate::archive_behaviors::RecipeRegistry::from_file(std::path::Path::new(&path)).await?
-            }
-        };
+        let registry = self.approved_recipe_registry().await?;
         let recipe = registry.resolve(reference, tenant)?;
         if recipe
             .entry_url
@@ -1107,6 +1159,47 @@ impl WorkerConfig {
             ));
         }
         Ok(Some(recipe))
+    }
+
+    async fn approved_recipe_registry(
+        &self,
+    ) -> Result<Arc<crate::archive_behaviors::RecipeRegistry>, WorkerError> {
+        match &self.archive_behaviors {
+            Some(registry) => Ok(Arc::clone(registry)),
+            None => {
+                let path = std::env::var_os("CRAWLX_RECIPE_REGISTRY")
+                    .ok_or_else(|| WorkerError::Config("operator recipe registry absent".into()))?;
+                crate::archive_behaviors::RecipeRegistry::from_file(std::path::Path::new(&path)).await
+            }
+        }
+    }
+
+    /// Resolve the actor recipe only through the operator's existing tenant-approved registry.
+    ///
+    /// # Errors
+    /// Rejects invalid recipes, ZDR, injected renderers and missing or mismatched approval pins.
+    pub async fn resolve_extension_actor_recipe(
+        &self,
+        crawl: &CreateCrawl,
+        tenant: crawlx_core::TenantId,
+    ) -> Result<Option<Arc<crawlx_core::archive_behaviors::RecipeV1>>, WorkerError> {
+        let Some(spec) = &crawl.extension_recipe else {
+            return Ok(None);
+        };
+        let compiled = crate::extension_recipes::CompiledExtensionRecipe::new(spec.clone())
+            .map_err(|error| WorkerError::Config(error.to_string()))?;
+        if compiled.actor().steps.is_empty() {
+            return Ok(None);
+        }
+        if crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr || self.renderer.is_some() {
+            return Err(WorkerError::Config(
+                "actor recipe requires retained native execution".into(),
+            ));
+        }
+        let reference = crawlx_core::archive_behaviors::RecipeReferenceV1::for_recipe(compiled.actor())
+            .map_err(|error| WorkerError::Config(error.to_string()))?;
+        let registry = self.approved_recipe_registry().await?;
+        Ok(Some(registry.resolve(&reference, tenant)?))
     }
 }
 
@@ -1316,21 +1409,44 @@ mod tests {
     }
 
     #[test]
-    fn policy_carries_seed_port_and_private_flag() {
+    fn policy_carries_seed_port_without_unsigned_private_authority() {
         let mut crawl = CreateCrawl::new(url::Url::parse("http://127.0.0.1:8123/").unwrap());
         crawl.safety.allow_private_networks = true;
         let cfg = EgressConfig {
             extra_ports: vec![9000],
             ..EgressConfig::default()
         };
-        let p = cfg.policy_for(&crawl);
-        assert!(p.allow_private);
+        let p = cfg.policy_for(&crawl).unwrap();
+        assert!(!p.allow_private);
         assert_eq!(p.extra_ports, vec![8123, 9000]);
-        assert!(p.check_ip("127.0.0.1".parse().unwrap()).is_ok());
-        let strict = cfg.policy_for(&CreateCrawl::new(
-            url::Url::parse("https://example.com/").unwrap(),
-        ));
+        assert!(p.check_ip("127.0.0.1".parse().unwrap()).is_err());
+        let strict = cfg
+            .policy_for(&CreateCrawl::new(
+                url::Url::parse("https://example.com/").unwrap(),
+            ))
+            .unwrap();
         assert!(strict.check_ip("127.0.0.1".parse().unwrap()).is_err());
+    }
+
+    #[test]
+    fn a_run_without_a_record_reaches_only_the_operators_explicit_networks() {
+        let mut crawl = CreateCrawl::new(url::Url::parse("http://127.0.0.1:8123/").unwrap());
+        crawl.safety.allow_private_networks = true;
+        let cfg = EgressConfig {
+            extra_allow: vec!["127.0.0.1/32".parse().unwrap()],
+            ..EgressConfig::default()
+        };
+        let p = cfg.policy_for(&crawl).unwrap();
+        assert!(p.check_ip("127.0.0.1".parse().unwrap()).is_ok());
+        assert!(p.check_ip("127.0.0.2".parse().unwrap()).is_err());
+        assert!(p.check_ip("10.0.0.5".parse().unwrap()).is_err());
+        assert!(p.check_ip("169.254.169.254".parse().unwrap()).is_err());
+        crawl.safety.allow_private_networks = false;
+        assert!(cfg
+            .policy_for(&crawl)
+            .unwrap()
+            .check_ip("127.0.0.1".parse().unwrap())
+            .is_err());
     }
 
     #[test]
@@ -1351,7 +1467,7 @@ mod tests {
         let mut crawl = CreateCrawl::new(url::Url::parse("https://a.example.test/").unwrap());
         crawl.safety.allow_private_networks = true;
 
-        let bounded = cfg.policy_for_run(&crawl, Some(&record));
+        let bounded = cfg.policy_for_run(&crawl, Some(&record)).unwrap();
         let url = |s: &str| url::Url::parse(s).unwrap();
         assert!(bounded.check_url(&url("https://a.example.test/app")).is_ok());
         for outside in ["https://b.example.test/", "https://a.example.test/billing/x"] {
@@ -1359,19 +1475,57 @@ mod tests {
             assert_eq!(denied.rule, DenyRule::AuthorizationScope, "{outside}");
         }
         // the record's networks, not the worker's, are what the run may reach
-        assert_eq!(bounded.extra_allow, record.authorized_networks);
+        assert_eq!(
+            bounded.authorized_private_networks(),
+            Some(record.authorized_networks.as_slice())
+        );
         assert!(bounded.check_ip("10.20.1.1".parse().unwrap()).is_ok());
         assert!(bounded.check_ip("127.0.0.1".parse().unwrap()).is_err());
 
-        // a run with no record keeps the worker's own list and no target bound
-        let unbounded = cfg.policy_for(&crawl);
-        assert_eq!(unbounded.extra_allow, cfg.extra_allow);
+        // Without a record the run is limited to the operator's explicit `extra_allow` CIDRs
+        // (see `policy_for_run`): exactly those, never "all private".
+        let unbounded = cfg.policy_for(&crawl).unwrap();
+        assert!(unbounded.extra_allow.is_empty());
+        assert!(unbounded.check_ip("127.0.0.1".parse().unwrap()).is_ok());
+        assert!(unbounded.check_ip("10.20.1.1".parse().unwrap()).is_err());
         assert!(unbounded.check_url(&url("https://b.example.test/")).is_ok());
+        // A request boolean that is off grants no private access whatever the operator allows.
+        let mut public_only = crawl.clone();
+        public_only.safety.allow_private_networks = false;
+        let denied = cfg.policy_for(&public_only).unwrap();
+        assert!(denied.check_ip("127.0.0.1".parse().unwrap()).is_err());
 
-        // a record that lists no network leaves the worker's list in force
+        // An empty signed network list grants no private access.
         record.authorized_networks.clear();
-        let fallback = cfg.policy_for_run(&crawl, Some(&record));
-        assert_eq!(fallback.extra_allow, cfg.extra_allow);
+        let fallback = cfg.policy_for_run(&crawl, Some(&record)).unwrap();
+        assert!(fallback.extra_allow.is_empty());
+        assert!(fallback.check_ip("127.0.0.1".parse().unwrap()).is_err());
+        assert!(fallback.check_ip("10.20.1.1".parse().unwrap()).is_err());
+        assert!(fallback
+            .authorized_private_networks()
+            .is_some_and(|networks| networks.is_empty()));
+
+        record.authorized_networks = vec!["10.20.0.0/16".parse().unwrap()];
+        crawl.scope.exclude_hosts = vec!["^a\\.example\\.test$".to_owned()];
+        let excluded = cfg.policy_for_run(&crawl, Some(&record)).unwrap();
+        assert_eq!(
+            excluded
+                .check_all("a.example.test", &["10.20.1.1".parse().unwrap()])
+                .unwrap_err()
+                .rule,
+            DenyRule::HostExcluded
+        );
+        crawl.scope.exclude_hosts = vec!["private-ips".to_owned()];
+        let private_excluded = cfg.policy_for_run(&crawl, Some(&record)).unwrap();
+        assert_eq!(
+            private_excluded
+                .check_all("a.example.test", &["10.20.1.1".parse().unwrap()])
+                .unwrap_err()
+                .rule,
+            DenyRule::HostExcluded
+        );
+        crawl.scope.exclude_hosts = vec!["[".to_owned()];
+        assert!(cfg.policy_for_run(&crawl, Some(&record)).is_err());
     }
 
     #[test]

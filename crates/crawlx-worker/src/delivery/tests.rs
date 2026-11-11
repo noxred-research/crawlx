@@ -723,7 +723,7 @@ async fn approved_local_sink_retries_same_batch_without_overwrite_or_duplicate_f
     let bytes = Bytes::from(artifacts.get(batch.content.artifact()).await.unwrap());
     let cfg = crate::WorkerConfig::default();
     let authority = DeliveryAuthority {
-        policy: Arc::new(cfg.egress.policy_for_run(&run.config, None)),
+        policy: Arc::new(cfg.egress.policy_for_run(&run.config, None).unwrap()),
         resolver: cfg.egress.resolver_for(&run.config).unwrap(),
         governor: Arc::new(crawlx_fetch::OriginGovernor::new(
             crawlx_fetch::GovernorConfig::from_politeness(&run.config.politeness, run.seed),
@@ -908,7 +908,7 @@ async fn real_registry_drain_retries_after_local_send_receipt_crash_without_losi
         .unwrap();
     let cfg = crate::WorkerConfig::default();
     let authority = DeliveryAuthority {
-        policy: Arc::new(cfg.egress.policy_for_run(&run.config, None)),
+        policy: Arc::new(cfg.egress.policy_for_run(&run.config, None).unwrap()),
         resolver: cfg.egress.resolver_for(&run.config).unwrap(),
         governor: Arc::new(crawlx_fetch::OriginGovernor::new(
             crawlx_fetch::GovernorConfig::from_politeness(&run.config.politeness, run.seed),

@@ -20,6 +20,7 @@ mod state;
 
 pub(crate) use journal::{flip_intended_to_unknown, traffic_attribution};
 pub(crate) use ledger::{key_from_row, KEY_COLS};
+pub(crate) use safety::write_decision;
 pub(crate) use state::{pick_successor, split_event};
 
 use crate::codec::{conv, get, parse_label};

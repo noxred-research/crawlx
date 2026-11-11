@@ -12,6 +12,360 @@ pub const MAX_EXTENSIONS: usize = 32;
 /// Hard serialized configuration and item limit.
 pub const MAX_EXTENSION_BYTES: usize = 1_048_576;
 
+/// Safe response facts. No arbitrary headers, URLs, cookies or bodies are representable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct HeaderFactsV1 {
+    /// HTTP response status.
+    pub status: u16,
+    /// Lowercase MIME essence without parameters.
+    pub content_type: Option<String>,
+    /// Declared wire body length, not measured downloaded bytes.
+    pub content_length: Option<u64>,
+}
+impl HeaderFactsV1 {
+    /// Project bounded non-secret facts from an admitted response.
+    ///
+    /// # Errors
+    /// Rejects invalid status or malformed/oversized MIME essence.
+    pub fn new(
+        status: u16,
+        content_type: Option<&str>,
+        content_length: Option<u64>,
+    ) -> Result<Self, ExtensionError> {
+        let essence = content_type.map(|value| value.split(';').next().unwrap_or("").trim());
+        if !(100..=599).contains(&status) || essence.is_some_and(|value| !valid_mime(value)) {
+            return Err(ExtensionError::Rejected);
+        }
+        Ok(Self {
+            status,
+            content_type: essence.map(str::to_ascii_lowercase),
+            content_length,
+        })
+    }
+    /// Check facts received through deserialization before dispatch.
+    ///
+    /// # Errors
+    /// Rejects facts which are not the canonical privacy-safe projection.
+    pub fn validate(&self) -> Result<(), ExtensionError> {
+        let projected = Self::new(self.status, self.content_type.as_deref(), self.content_length)?;
+        if &projected != self {
+            return Err(ExtensionError::Rejected);
+        }
+        Ok(())
+    }
+}
+fn valid_mime(value: &str) -> bool {
+    value.len() <= 127
+        && value
+            .split_once('/')
+            .is_some_and(|(left, right)| !left.is_empty() && !right.is_empty() && !right.contains('/'))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$&^_.+-/".contains(&byte))
+}
+
+/// Compiled header gate. Every configured condition narrows admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct HeaderPolicyV1 {
+    /// Minimum allowed status, inclusive.
+    pub min_status: u16,
+    /// Maximum allowed status, inclusive.
+    pub max_status: u16,
+    /// Allowed lowercase MIME essences; empty means unrestricted.
+    pub content_types: BTreeSet<String>,
+    /// Maximum declared body length. Unknown length is refused when set.
+    pub max_content_length: Option<u64>,
+}
+impl Default for HeaderPolicyV1 {
+    fn default() -> Self {
+        Self {
+            min_status: 100,
+            max_status: 599,
+            content_types: BTreeSet::new(),
+            max_content_length: None,
+        }
+    }
+}
+impl HeaderPolicyV1 {
+    /// Validate immutable gate bounds.
+    ///
+    /// # Errors
+    /// Rejects invalid ranges, excessive selectors or noncanonical MIME essences.
+    pub fn validate(&self) -> Result<(), ExtensionError> {
+        if !(100..=599).contains(&self.min_status)
+            || !(self.min_status..=599).contains(&self.max_status)
+            || self.content_types.len() > 32
+            || self
+                .content_types
+                .iter()
+                .any(|value| !valid_mime(value) || value.bytes().any(|byte| byte.is_ascii_uppercase()))
+        {
+            return Err(ExtensionError::InvalidSpec);
+        }
+        Ok(())
+    }
+    /// Decide before reading response bytes.
+    ///
+    /// # Errors
+    /// Returns malformed policy/facts or a typed header-stage rejection.
+    pub fn check(&self, facts: &HeaderFactsV1) -> Result<(), ExtensionError> {
+        self.validate()?;
+        facts.validate()?;
+        if !(self.min_status..=self.max_status).contains(&facts.status)
+            || (!self.content_types.is_empty()
+                && facts
+                    .content_type
+                    .as_ref()
+                    .is_none_or(|value| !self.content_types.contains(value)))
+            || self
+                .max_content_length
+                .is_some_and(|limit| facts.content_length.is_none_or(|length| length > limit))
+        {
+            return Err(ExtensionError::Rejected);
+        }
+        Ok(())
+    }
+}
+
+/// Closed, content-free error/skip reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ExtensionReasonV1 {
+    /// Native policy refusal.
+    PolicyDenied,
+    /// Caller cancellation.
+    Cancelled,
+    /// Compiled callback failure.
+    HandlerFailed,
+    /// Compiled rejection or header abort.
+    Rejected,
+    /// Finite retry allowance exhausted.
+    RetryExhausted,
+    /// Bounded dispatcher capacity exhausted.
+    Capacity,
+    /// Caller processing failure without raw error data.
+    Processing,
+}
+/// One immutable terminal outcome per request attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "reason",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+#[non_exhaustive]
+pub enum ExtensionTerminalV1 {
+    /// Request completed.
+    Completed,
+    /// Request was skipped, never fabricated as success.
+    Skipped(ExtensionReasonV1),
+    /// Request failed.
+    Failed(ExtensionReasonV1),
+}
+/// Closed metadata-only lifecycle input. Public extensibility does not admit unknown JSON variants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "facts",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+#[non_exhaustive]
+pub enum ExtensionEventV1 {
+    /// Immutable pipeline configured.
+    Configure,
+    /// Validated proposal, without request bytes.
+    RequestProposed {
+        /// Whether the method is GET or HEAD; method text is not retained.
+        read_only: bool,
+    },
+    /// Replacement proposal boundary.
+    BeforeAcquisition,
+    /// Header gate, before body access.
+    HeadersReceived(HeaderFactsV1),
+    /// Response acquired.
+    Response,
+    /// HTML parsed.
+    Html,
+    /// XML parsed.
+    Xml,
+    /// Shared parse boundary.
+    Parse,
+    /// Item candidate boundary.
+    Item,
+    /// Feed processing boundary.
+    Feed,
+    /// Content-free failure.
+    Error(ExtensionReasonV1),
+    /// Exactly one skip decision for this attempt.
+    Skipped(ExtensionReasonV1),
+    /// Failed attempt notification.
+    Failed(ExtensionReasonV1),
+    /// Single terminal outcome.
+    Terminal(ExtensionTerminalV1),
+    /// Fenced persistence boundary, not persistence authority.
+    Checkpoint,
+    /// Owned-state cleanup boundary.
+    Close,
+    /// Before admitted browser launch.
+    BrowserPreLaunch,
+    /// After admitted browser launch.
+    BrowserPostLaunch,
+    /// Page creation boundary.
+    BrowserPageCreate,
+    /// Page close boundary.
+    BrowserPageClose,
+    /// Before admitted navigation.
+    BrowserPreNavigation,
+    /// After admitted navigation.
+    BrowserPostNavigation,
+    /// Browser owner cleanup; never recursively closes a shared pool.
+    BrowserClose,
+}
+impl ExtensionEventV1 {
+    /// Exact compiled selector for this input.
+    #[must_use]
+    pub const fn stage(&self) -> ExtensionStageV1 {
+        match self {
+            Self::Configure => ExtensionStageV1::Configure,
+            Self::RequestProposed { .. } => ExtensionStageV1::RequestProposed,
+            Self::BeforeAcquisition => ExtensionStageV1::BeforeAcquisition,
+            Self::HeadersReceived(_) => ExtensionStageV1::HeadersReceived,
+            Self::Response => ExtensionStageV1::Response,
+            Self::Html => ExtensionStageV1::Html,
+            Self::Xml => ExtensionStageV1::Xml,
+            Self::Parse => ExtensionStageV1::Parse,
+            Self::Item => ExtensionStageV1::Item,
+            Self::Feed => ExtensionStageV1::Feed,
+            Self::Error(_) => ExtensionStageV1::Error,
+            Self::Skipped(_) => ExtensionStageV1::Skipped,
+            Self::Failed(_) => ExtensionStageV1::Failed,
+            Self::Terminal(_) => ExtensionStageV1::Terminal,
+            Self::Checkpoint => ExtensionStageV1::Checkpoint,
+            Self::Close => ExtensionStageV1::Close,
+            Self::BrowserPreLaunch => ExtensionStageV1::BrowserPreLaunch,
+            Self::BrowserPostLaunch => ExtensionStageV1::BrowserPostLaunch,
+            Self::BrowserPageCreate => ExtensionStageV1::BrowserPageCreate,
+            Self::BrowserPageClose => ExtensionStageV1::BrowserPageClose,
+            Self::BrowserPreNavigation => ExtensionStageV1::BrowserPreNavigation,
+            Self::BrowserPostNavigation => ExtensionStageV1::BrowserPostNavigation,
+            Self::BrowserClose => ExtensionStageV1::BrowserClose,
+        }
+    }
+}
+/// Closed output of a compiled lifecycle callback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+#[non_exhaustive]
+pub enum ExtensionResultV1 {
+    /// Continue without granting authority.
+    Continue,
+    /// Bounded non-sensitive annotation identifier.
+    Annotation(String),
+    /// Skip this attempt.
+    Skip(ExtensionReasonV1),
+    /// Fail this attempt.
+    Fail(ExtensionReasonV1),
+}
+/// Stable callback receipt, identified by immutable registration position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ExtensionCallbackReceiptV1 {
+    /// Zero-based descriptor registration index.
+    pub registration: usize,
+    /// Compiled registry version; one denotes implementation 1.0.0.
+    pub version: u16,
+    /// Immutable selected configuration digest, computed once during compilation.
+    pub config_digest: Digest,
+    /// Typed callback output.
+    pub result: ExtensionResultV1,
+}
+/// Transferable replay record. No raw input, URL, body, headers or host handle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ExtensionReceiptV1 {
+    /// Contiguous one-based logical sequence; draining never resets it.
+    pub sequence: u64,
+    /// Closed event input.
+    pub event: ExtensionEventV1,
+    /// Actual executed callback outputs in execution order.
+    pub callbacks: Vec<ExtensionCallbackReceiptV1>,
+    /// Sticky dispatcher result.
+    pub result: ExtensionResultV1,
+}
+impl ExtensionReceiptV1 {
+    /// Construct a callback-executed record.
+    #[must_use]
+    pub fn new(
+        sequence: u64,
+        event: ExtensionEventV1,
+        callbacks: Vec<ExtensionCallbackReceiptV1>,
+        result: ExtensionResultV1,
+    ) -> Self {
+        Self {
+            sequence,
+            event,
+            callbacks,
+            result,
+        }
+    }
+}
+impl ExtensionCallbackReceiptV1 {
+    /// Construct a registered compiled callback receipt.
+    #[must_use]
+    pub fn new(registration: usize, config_digest: Digest, result: ExtensionResultV1) -> Self {
+        Self {
+            registration,
+            version: 1,
+            config_digest,
+            result,
+        }
+    }
+}
+/// Hard bounded per-attempt trail accounting, including drained receipts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ExtensionEventLimitsV1 {
+    /// Total event allowance, including reserved finalization callbacks.
+    pub events: usize,
+    /// Total serialized receipt bytes.
+    pub bytes: usize,
+}
+impl Default for ExtensionEventLimitsV1 {
+    fn default() -> Self {
+        Self {
+            events: 256,
+            bytes: MAX_EXTENSION_BYTES,
+        }
+    }
+}
+impl ExtensionEventLimitsV1 {
+    /// Construct bounded accounting with room for cancellation cleanup.
+    ///
+    /// # Errors
+    /// Rejects limits outside 8..=4096 events or 65536..=1048576 bytes.
+    pub fn new(events: usize, bytes: usize) -> Result<Self, ExtensionError> {
+        if !(8..=4096).contains(&events) || !(65_536..=MAX_EXTENSION_BYTES).contains(&bytes) {
+            return Err(ExtensionError::Limit);
+        }
+        Ok(Self { events, bytes })
+    }
+}
+
 /// Fixed lifecycle boundaries, separate from discovery's RouteLearner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +379,34 @@ pub enum ExtensionStageV1 {
     BeforeAcquisition,
     /// Inspect bounded header facts, never cookies.
     HeadersReceived,
+    /// Inspect response facts after admitted headers.
+    Response,
+    /// Observe an HTML document without receiving its bytes.
+    Html,
+    /// Observe an XML document without receiving its bytes.
+    Xml,
+    /// Observe a feed item batch.
+    Feed,
+    /// Observe a typed processing error.
+    Error,
+    /// Observe a skipped decision.
+    Skipped,
+    /// Observe a failed attempt.
+    Failed,
+    /// Before launching an admitted browser.
+    BrowserPreLaunch,
+    /// After launching an admitted browser.
+    BrowserPostLaunch,
+    /// Before creating a browser page.
+    BrowserPageCreate,
+    /// After closing a browser page.
+    BrowserPageClose,
+    /// Before admitted navigation.
+    BrowserPreNavigation,
+    /// After admitted navigation.
+    BrowserPostNavigation,
+    /// Before closing an owned browser.
+    BrowserClose,
     /// Project shared parsed document metadata.
     Parse,
     /// Run the explicit label handler.
@@ -51,6 +433,8 @@ pub enum ExtensionCapabilityV1 {
     DocumentRead,
     /// Create or transform an ephemeral item.
     ItemTransform,
+    /// Read closed lifecycle facts and return bounded annotations.
+    LifecycleRead,
 }
 /// Explicit failure behavior. Neither choice can erase a policy denial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +498,28 @@ pub enum ExtensionConfigV1 {
     TrimTitle {},
     /// Reject a candidate without a nonempty title.
     RequireTitle {},
+    /// Inspect only admitted, non-secret response header facts.
+    HeaderPolicy {
+        /// Immutable narrowing policy.
+        policy: HeaderPolicyV1,
+    },
+    /// Execute a compiled annotation callback at one lifecycle boundary.
+    Annotate {
+        /// Selected boundary.
+        stage: ExtensionStageV1,
+        /// Bounded identifier, never arbitrary text or content.
+        code: String,
+    },
+    /// Execute a compiled failure callback at one lifecycle boundary.
+    FailStage {
+        /// Selected boundary.
+        stage: ExtensionStageV1,
+    },
+    /// Execute a compiled candidate rejection callback at one boundary.
+    RejectStage {
+        /// Selected boundary.
+        stage: ExtensionStageV1,
+    },
 }
 impl ExtensionConfigV1 {
     /// Exact compiled implementation identifier.
@@ -125,6 +531,10 @@ impl ExtensionConfigV1 {
             Self::RequireQuality {} => "native.require_quality",
             Self::TrimTitle {} => "native.trim_title",
             Self::RequireTitle {} => "native.require_title",
+            Self::HeaderPolicy { .. } => "native.header_policy",
+            Self::Annotate { .. } => "native.annotate",
+            Self::FailStage { .. } => "native.fail_stage",
+            Self::RejectStage { .. } => "native.reject_stage",
         }
     }
     /// Single stage accepted by this reviewed implementation.
@@ -135,6 +545,8 @@ impl ExtensionConfigV1 {
             Self::ReplaceRequest { .. } => ExtensionStageV1::BeforeAcquisition,
             Self::RequireQuality {} => ExtensionStageV1::Parse,
             Self::TrimTitle {} | Self::RequireTitle {} => ExtensionStageV1::Item,
+            Self::HeaderPolicy { .. } => ExtensionStageV1::HeadersReceived,
+            Self::Annotate { stage, .. } | Self::FailStage { stage } | Self::RejectStage { stage } => *stage,
         }
     }
     /// Exact capabilities required by this implementation.
@@ -145,6 +557,10 @@ impl ExtensionConfigV1 {
             Self::ReplaceRequest { .. } => ExtensionCapabilityV1::RequestProposal,
             Self::RequireQuality {} => ExtensionCapabilityV1::DocumentRead,
             Self::TrimTitle {} | Self::RequireTitle {} => ExtensionCapabilityV1::ItemTransform,
+            Self::HeaderPolicy { .. }
+            | Self::Annotate { .. }
+            | Self::FailStage { .. }
+            | Self::RejectStage { .. } => ExtensionCapabilityV1::LifecycleRead,
         }]
         .into()
     }
@@ -220,6 +636,13 @@ impl ExtensionSpecV1 {
                 return Err(ExtensionError::Limit);
             }
         }
+        match &self.config {
+            ExtensionConfigV1::HeaderPolicy { policy } => policy.validate()?,
+            ExtensionConfigV1::Annotate { code, .. } if code.len() > 64 || !crate::request::safe_id(code) => {
+                return Err(ExtensionError::InvalidSpec);
+            }
+            _ => {}
+        }
         if json_size(&self.config)? > l.input_bytes {
             return Err(ExtensionError::Limit);
         }
@@ -274,6 +697,13 @@ impl Default for ExtensionPipelineV1 {
     }
 }
 impl ExtensionPipelineV1 {
+    /// Extract immutable core header policies without depending on worker or fetch.
+    pub fn header_policies(&self) -> impl Iterator<Item = &HeaderPolicyV1> {
+        self.extensions.iter().filter_map(|entry| match &entry.config {
+            ExtensionConfigV1::HeaderPolicy { policy } => Some(policy),
+            _ => None,
+        })
+    }
     /// Whether configuration opts into behavior beyond the legacy default label.
     #[must_use]
     pub fn configured(&self) -> bool {
@@ -302,7 +732,7 @@ impl ExtensionPipelineV1 {
     /// Validate all bounds and registry references before work.
     ///
     /// # Errors
-    /// Rejects unsupported versions, duplicate implementation identities and oversized config.
+    /// Rejects unsupported versions, mutable duplicate selectors and oversized config.
     pub fn validate(&self) -> Result<(), ExtensionError> {
         if self.version != 1
             || self.extensions.len() > MAX_EXTENSIONS
@@ -315,10 +745,14 @@ impl ExtensionPipelineV1 {
         {
             return Err(ExtensionError::InvalidSpec);
         }
-        let mut seen = BTreeSet::new();
+        let mut seen = BTreeMap::new();
         for entry in &self.extensions {
             entry.validate()?;
-            if !seen.insert((&entry.id, &entry.implementation_version)) {
+            let key = (&entry.id, entry.stage, &entry.implementation_version);
+            if seen
+                .insert(key, &entry.config)
+                .is_some_and(|old| old != &entry.config)
+            {
                 return Err(ExtensionError::InvalidSpec);
             }
         }
@@ -342,14 +776,8 @@ impl ExtensionPipelineV1 {
     #[must_use]
     pub fn ordered(&self) -> Vec<&ExtensionSpecV1> {
         let mut entries: Vec<_> = self.extensions.iter().collect();
-        entries.sort_unstable_by(|a, b| {
-            (a.stage, a.order, &a.id, &a.implementation_version).cmp(&(
-                b.stage,
-                b.order,
-                &b.id,
-                &b.implementation_version,
-            ))
-        });
+        // Stable sort preserves registration order for equal stage/order selectors.
+        entries.sort_by_key(|entry| (entry.stage, entry.order));
         entries
     }
     /// Safe selected capabilities, versions and digests, never config values.
@@ -409,6 +837,84 @@ pub fn document_item(
     Ok(value)
 }
 
+/// Validate complete content-free attempt receipts before a fenced commit.
+/// Empty receipts represent an attempt without configured extensions.
+///
+/// # Errors
+/// Rejects gaps, unbounded data, duplicate terminals and invalid cleanup order.
+pub fn validate_extension_receipts(receipts: &[ExtensionReceiptV1]) -> Result<(), ExtensionError> {
+    if receipts.is_empty() {
+        return Ok(());
+    }
+    if receipts.len() > 4096 || json_size(&receipts)? > MAX_EXTENSION_BYTES {
+        return Err(ExtensionError::Limit);
+    }
+    let mut expected = 1_u64;
+    let mut phase = 0_u8;
+    let mut previous_result = ExtensionResultV1::Continue;
+    for receipt in receipts {
+        if receipt.sequence != expected || receipt.callbacks.len() > MAX_EXTENSIONS {
+            return Err(ExtensionError::Rejected);
+        }
+        expected = expected.checked_add(1).ok_or(ExtensionError::Limit)?;
+        let mut seen = BTreeSet::new();
+        for callback in &receipt.callbacks {
+            if callback.registration >= MAX_EXTENSIONS
+                || callback.version != 1
+                || !seen.insert(callback.registration)
+            {
+                return Err(ExtensionError::Rejected);
+            }
+            if let ExtensionResultV1::Annotation(code) = &callback.result {
+                if code.len() > 64 || !crate::request::safe_id(code) {
+                    return Err(ExtensionError::Rejected);
+                }
+            }
+        }
+        if let ExtensionEventV1::HeadersReceived(facts) = &receipt.event {
+            facts.validate()?;
+        }
+        if matches!(receipt.result, ExtensionResultV1::Annotation(_)) {
+            return Err(ExtensionError::Rejected);
+        }
+        match (&receipt.event, phase) {
+            (ExtensionEventV1::Configure, 0) => phase = 1,
+            (ExtensionEventV1::Error(_), 1) => phase = 2,
+            (ExtensionEventV1::Skipped(_) | ExtensionEventV1::Failed(_), 2) => phase = 3,
+            (ExtensionEventV1::Terminal(outcome), 1 | 3) => {
+                let expected = match previous_result {
+                    ExtensionResultV1::Skip(reason) => ExtensionTerminalV1::Skipped(reason),
+                    ExtensionResultV1::Fail(reason) => ExtensionTerminalV1::Failed(reason),
+                    _ => ExtensionTerminalV1::Completed,
+                };
+                if *outcome != expected {
+                    return Err(ExtensionError::Rejected);
+                }
+                phase = 4;
+            }
+            (ExtensionEventV1::Checkpoint, 4) => phase = 5,
+            (ExtensionEventV1::Close, 5) => phase = 6,
+            (
+                ExtensionEventV1::Configure
+                | ExtensionEventV1::Error(_)
+                | ExtensionEventV1::Skipped(_)
+                | ExtensionEventV1::Failed(_)
+                | ExtensionEventV1::Terminal(_)
+                | ExtensionEventV1::Checkpoint
+                | ExtensionEventV1::Close,
+                _,
+            ) => return Err(ExtensionError::Rejected),
+            (_, 1) => {}
+            _ => return Err(ExtensionError::Rejected),
+        }
+        previous_result = receipt.result.clone();
+    }
+    if phase != 6 {
+        return Err(ExtensionError::Rejected);
+    }
+    Ok(())
+}
+
 /// Count serialized JSON without allocating or cloning a content buffer.
 ///
 /// # Errors
@@ -439,6 +945,19 @@ pub fn registry_publication() -> serde_json::Value {
         ExtensionConfigV1::RequireQuality {},
         ExtensionConfigV1::TrimTitle {},
         ExtensionConfigV1::RequireTitle {},
+        ExtensionConfigV1::HeaderPolicy {
+            policy: HeaderPolicyV1::default(),
+        },
+        ExtensionConfigV1::Annotate {
+            stage: ExtensionStageV1::Configure,
+            code: "annotation".into(),
+        },
+        ExtensionConfigV1::FailStage {
+            stage: ExtensionStageV1::Response,
+        },
+        ExtensionConfigV1::RejectStage {
+            stage: ExtensionStageV1::Item,
+        },
     ];
     let mut entries: Vec<_> = configs
         .iter()
@@ -523,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_order_is_total_and_duplicate_implementations_are_refused() {
+    fn registry_preserves_registration_ties_and_immutable_duplicates() {
         let mut pipeline = ExtensionPipelineV1 {
             extensions: vec![
                 ExtensionSpecV1::new(ExtensionConfigV1::TrimTitle {}, 0),
@@ -539,12 +1058,12 @@ mod tests {
                 .iter()
                 .map(|e| e.id.as_str())
                 .collect::<Vec<_>>(),
-            ["native.read_only", "native.require_title", "native.trim_title"]
+            ["native.read_only", "native.trim_title", "native.require_title"]
         );
         pipeline
             .extensions
             .push(ExtensionSpecV1::new(ExtensionConfigV1::TrimTitle {}, 1));
-        assert!(pipeline.validate().is_err());
+        pipeline.validate().unwrap();
     }
 
     #[test]

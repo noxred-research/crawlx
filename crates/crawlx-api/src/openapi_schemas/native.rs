@@ -4,7 +4,7 @@ use super::{scrape::ContentPolicy, Schemas};
 use serde_json::{json, Map, Value};
 
 fn acquisition() -> Value {
-    let backend = json!({"type":"string", "enum":["native_http", "native_browser"]});
+    let backend = json!({"type":"string", "enum":["native_http", "native_browser", "acquisition_service"]});
     json!({
         "type":"object", "additionalProperties":false,
         "properties": {
@@ -291,7 +291,11 @@ fn fetch_controls() -> Value {
                         "properties":{"allow":statuses,"deny":statuses}}
                 }
             }]},
-            "oversize":{"type":["string","null"],"enum":[null,"truncate","refuse"]}
+            "oversize":{"type":["string","null"],"enum":[null,"truncate","refuse"]},
+            "identityProfile":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$",
+                "description":"Digest of the installed native HTTP identity profile. Requires URL-only static mode without custom TLS, User-Agent, headers, preflight, skip-TLS or acquisitionService."},
+            "acquisitionService":{"type":["string","null"],"minLength":1,"maxLength":128,
+                "description":"Operator registry id of an approved HTML acquisition service, never an endpoint. Requires URL-only static mode without headers, cookies, User-Agent, proxy, preflight or skip-TLS, and couples acquisition.backendIds to [acquisition_service]."}
         }
     })
 }
@@ -310,6 +314,7 @@ fn create(schemas: &mut Schemas) -> Value {
         "politeness",
         "fetch",
         "extensions",
+        "extensionRecipe",
         "datasets",
         "protocol",
     ] {
@@ -318,10 +323,22 @@ fn create(schemas: &mut Schemas) -> Value {
     properties.insert("fetch".into(), fetch_controls());
     properties.insert("dynamic".into(), json!({
         "type":"object",
-        "properties":{"maxPageRevisits":{
-            "type":"integer","minimum":0,"maximum":128,"default":8,
-            "description":"Additional observed renditions retained per canonical URL, keyed by observation epoch and explicit revisit generation. The first rendition remains canonical. Zero keeps only the first and marks later observations revisit_cap_reached; omission preserves existing specification hashes."
-        }}
+        "properties":{
+            "maxPageRevisits":{
+                "type":"integer","minimum":0,"maximum":128,"default":8,
+                "description":"Additional observed renditions retained per canonical URL, keyed by observation epoch and explicit revisit generation. The first rendition remains canonical. Zero keeps only the first and marks later observations revisit_cap_reached; omission preserves existing specification hashes."
+            },
+            "browserProfile":{
+                "type":["object","null"],
+                "properties":{
+                    "name":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},
+                    "saveChanges":{"type":"boolean","default":true},
+                    "generation":{"type":"integer","minimum":0,"maximum":9_223_372_036_854_775_807_i64,"default":0,
+                        "description":"Exact retained generation to restore. 0 creates the namespace and is refused when one exists; N >= 1 restores that generation or fails, never an empty profile. With saveChanges the run commits generation N + 1."}
+                },
+                "required":["name"]
+            }
+        }
     }));
     properties.insert(
         "datasets".into(),
@@ -629,7 +646,7 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                     }
                 }})
             } else {
-                json!({"type":"object","description":"Pinned declarative source export; source-specific fields are strictly validated."})
+                json!({"type":"object","description":"Pinned declarative source export. checkpoint_export_v1 uses the strict wrapper {version, source, producerEpoch, expectedCursor, endPosition, export}, with a pinned source export nested under export; source-specific fields are strictly validated."})
             };
             let name = if id == "appendRequests" { "requests" } else { "export" };
             let mut properties = Map::new();
@@ -637,6 +654,14 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
             properties.insert("producerEpoch".into(), json!({"type":"integer","minimum":1}));
             properties.insert("expectedCursor".into(), cursor());
             properties.insert("nextCursor".into(), cursor());
+            if id == "importRequests" {
+                properties.insert("format".into(), json!({
+                    "type":"string",
+                    "enum":["request_export_v1","checkpoint_export_v1"],
+                    "default":"request_export_v1",
+                    "description":"Checkpoint exports own their cursor transition; omit outer expectedCursor and nextCursor."
+                }));
+            }
             request_body(operation, json!({"type":"object","additionalProperties":false,
                 "required":[name,"producerEpoch"],"properties":properties}),
                 "Server derives tenant and principal; body authority fields are not accepted.");

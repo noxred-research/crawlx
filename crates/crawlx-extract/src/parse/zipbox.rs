@@ -71,6 +71,76 @@ impl<'a> ZipBox<'a> {
         })
     }
 
+    /// Number of physical entries, including directories and duplicate names.
+    pub(crate) fn len(&self) -> usize {
+        self.zip.len()
+    }
+
+    /// Physical entry sizes. Ordinals, rather than names, preserve duplicate-entry identity.
+    pub(crate) fn entry_info(&mut self, index: usize) -> Result<(u64, u64, bool), ParseError> {
+        let file = self
+            .zip
+            .by_index_raw(index)
+            .map_err(|error| map_zip(self.format, error))?;
+        Ok((file.size(), file.compressed_size(), file.is_dir()))
+    }
+
+    /// Supported media type inferred from extension; no archive name leaves the parser.
+    pub(crate) fn entry_mime(&mut self, index: usize) -> Result<Option<&'static str>, ParseError> {
+        let file = self
+            .zip
+            .by_index_raw(index)
+            .map_err(|error| map_zip(self.format, error))?;
+        let name = file.name().map_err(|error| map_zip(self.format, error))?;
+        Ok(name.rsplit_once('.').and_then(|(_, extension)| {
+            if extension.eq_ignore_ascii_case("rss") {
+                Some("application/rss+xml")
+            } else if extension.eq_ignore_ascii_case("atom") {
+                Some("application/atom+xml")
+            } else {
+                super::ParseFormat::from_extension(extension).map(|format| format.content_type())
+            }
+        }))
+    }
+
+    /// Read one physical entry under this container's shared byte budget.
+    /// `check` runs before each finite decompression chunk, including the first.
+    pub(crate) fn read_index(
+        &mut self,
+        index: usize,
+        mut check: impl FnMut() -> Result<(), ParseError>,
+    ) -> Result<Vec<u8>, ParseError> {
+        check()?;
+        let mut file = self
+            .zip
+            .by_index(index)
+            .map_err(|error| map_zip(self.format, error))?;
+        let mut output = Vec::new();
+        let mut chunk = [0_u8; 8192];
+        loop {
+            check()?;
+            let available = self.budget.saturating_add(1).min(chunk.len());
+            let read = file.read(&mut chunk[..available]).map_err(|error| {
+                ParseError::corrupt_from(self.format, "a zip entry cannot be inflated", error)
+            })?;
+            if read == 0 {
+                return Ok(output);
+            }
+            if read > self.budget {
+                return Err(ParseError::TooLarge {
+                    what: "uncompressed bytes",
+                    limit: self.limit,
+                    actual: self.limit.saturating_add(1),
+                });
+            }
+            output.try_reserve(read).map_err(|error| {
+                ParseError::corrupt_from(self.format, "entry buffer allocation failed", error)
+            })?;
+            output.extend_from_slice(&chunk[..read]);
+            self.budget -= read;
+        }
+    }
+
     /// Whether an entry named exactly `name` exists.
     pub(crate) fn has(&self, name: &str) -> bool {
         self.zip.file_names().any(|n| n.is_ok_and(|n| n == name))

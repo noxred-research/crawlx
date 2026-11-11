@@ -119,6 +119,10 @@ fn assert_capture(capture: &Value, label: &str, sdk_version: &str) {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn sdk_shape_diff_of_the_real_upstream_and_the_facade() {
     let Ok(upstream_url) = std::env::var("CRAWLX_UPSTREAM_URL") else {
         println!("skipping: CRAWLX_UPSTREAM_URL not set");

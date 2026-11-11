@@ -1,6 +1,7 @@
 //! Bounded offline archive QA. Missing baselines are never counted as equal.
 
 use crate::archive_replay::{ReplayCapture, ReplayError, ReplayReport};
+use crawlx_core::parser_memory::{global, AdmittedBytes, ByteAdmissionError, BytePermit};
 use image::{DynamicImage, ImageDecoder as _, ImageReader};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -55,15 +56,92 @@ pub struct QaDiff {
     pub capture: ReplayCapture,
 }
 
+/// Fixed allowance for the deflate compressor state. `flate2` 1.1 over `miniz_oxide` keeps a
+/// 32 KiB dictionary with its hash chains and a small Huffman table, a few hundred KiB; 1 MiB
+/// is a deliberate rounding-up, not a measurement.
+const PNG_COMPRESSOR_STATE_BYTES: usize = 1024 * 1024;
+
+/// Upper bound on what `image` 0.25 / `png` 0.18 allocate while encoding an `Rgba8` image with
+/// its default (balanced, adaptive-filter) settings, derived from their source and **not
+/// measured**: the previous-row buffer and the filtered-row buffer (two rows), the whole zlib
+/// stream held in a `Vec` before it is written out, and the compressor state.
+///
+/// The zlib stream cannot exceed the stored-block form of the filtered input (one filter byte
+/// per row plus `5` bytes per `65535`-byte block plus the `6`-byte zlib frame). A `Vec` that
+/// grows by doubling holds its old and its new buffer while it moves, so up to `3x` that size
+/// can be live at once. This is an admission bound; the allocator is still infallible, so the
+/// guarantee is only that the shared budget refuses the encode before it starts.
+fn png_encoder_bytes(width: u32, height: u32) -> Result<usize, ReplayError> {
+    let bound = || ReplayError::Refused("QA difference pixel bound");
+    let row = usize::try_from(width)
+        .ok()
+        .and_then(|w| w.checked_mul(4))
+        .ok_or_else(bound)?;
+    let rows = usize::try_from(height).map_err(|_| bound())?;
+    let filtered = row
+        .checked_add(1)
+        .and_then(|r| r.checked_mul(rows))
+        .ok_or_else(bound)?;
+    let stream = filtered
+        .checked_add(filtered.div_ceil(65_535).checked_mul(5).ok_or_else(bound)?)
+        .and_then(|n| n.checked_add(6))
+        .ok_or_else(bound)?;
+    stream
+        .checked_mul(3)
+        .and_then(|n| n.checked_add(row.checked_mul(2)?))
+        .and_then(|n| n.checked_add(PNG_COMPRESSOR_STATE_BYTES))
+        .ok_or_else(bound)
+}
+
+/// Reserve the encoder's bound before the encoder runs and hold it until it is dropped.
+fn png_encoder_guard(width: u32, height: u32) -> Result<BytePermit, ReplayError> {
+    global()
+        .try_reserve(png_encoder_bytes(width, height)?)
+        .map_err(|_| ReplayError::Refused("QA difference encoder byte admission"))
+}
+
+/// Bounded PNG sink that reserves every growth step before the buffer allocates it.
 struct BoundedPng {
     bytes: Vec<u8>,
+    permit: BytePermit,
     maximum: usize,
+}
+
+impl BoundedPng {
+    fn new(maximum: usize) -> Result<Self, ReplayError> {
+        let permit = global()
+            .try_reserve(0)
+            .map_err(|_| ReplayError::Refused("QA difference byte admission"))?;
+        Ok(Self {
+            bytes: Vec::new(),
+            permit,
+            maximum,
+        })
+    }
+
+    /// Hand the encoded bytes and the reservation covering their capacity to the caller.
+    fn finish(mut self) -> Result<AdmittedBytes, ReplayError> {
+        self.permit
+            .grow_to(self.bytes.capacity())
+            .map_err(|_| ReplayError::Refused("QA difference byte admission"))?;
+        Ok(AdmittedBytes::new(self.bytes, self.permit))
+    }
 }
 
 impl std::io::Write for BoundedPng {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > self.maximum.saturating_sub(self.bytes.len()) {
             return Err(std::io::Error::other("QA difference PNG byte bound"));
+        }
+        let needed = self.bytes.len() + bytes.len();
+        if needed > self.bytes.capacity() {
+            let target = needed
+                .max(self.bytes.capacity().saturating_mul(2))
+                .min(self.maximum);
+            self.permit
+                .grow_to(target)
+                .map_err(|_| std::io::Error::other("QA difference byte admission"))?;
+            self.bytes.reserve_exact(target - self.bytes.len());
         }
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -133,6 +211,9 @@ pub fn diff_images(actual: &ReplayReport, baseline: &ReplayReport) -> Result<Vec
             if u64::from(width) * u64::from(height) > 16_777_216 {
                 return Err(ReplayError::Refused("QA difference pixel bound"));
             }
+            let _canvas = global()
+                .try_reserve(rgba_bytes(width, height)?)
+                .map_err(admission)?;
             let image = image::RgbaImage::from_fn(width, height, |x, y| {
                 match (left.get_pixel_checked(x, y), right.get_pixel_checked(x, y)) {
                     (Some(a), Some(b)) => {
@@ -147,24 +228,24 @@ pub fn diff_images(actual: &ReplayReport, baseline: &ReplayReport) -> Result<Vec
                     _ => image::Rgba([255, 0, 255, 255]),
                 }
             });
-            let mut output = BoundedPng {
-                bytes: Vec::new(),
-                maximum: remaining.min(16 * 1024 * 1024),
-            };
+            let _encoder_memory = png_encoder_guard(width, height)?;
+            let mut output = BoundedPng::new(remaining.min(16 * 1024 * 1024))?;
             image::codecs::png::PngEncoder::new(&mut output)
                 .write_image(image.as_raw(), width, height, image::ExtendedColorType::Rgba8)
                 .map_err(ReplayError::Image)?;
-            remaining = remaining.saturating_sub(output.bytes.len());
+            let digest = format!("sha256:{}", hex::encode(Sha256::digest(&output.bytes)));
+            let length = output.bytes.len();
+            remaining = remaining.saturating_sub(length);
             differences.push(QaDiff {
                 page: page.ordinal,
                 phase: phase.into(),
                 capture: ReplayCapture {
                     kind: format!("diff_{phase}"),
-                    digest: format!("sha256:{}", hex::encode(Sha256::digest(&output.bytes))),
+                    digest,
                     media_type: "image/png".into(),
-                    length: output.bytes.len(),
+                    length,
                     truncated: false,
-                    bytes: output.bytes,
+                    bytes: output.finish()?,
                 },
             });
         }
@@ -182,7 +263,34 @@ fn checked_bytes(capture: &ReplayCapture) -> Result<(), ReplayError> {
     Ok(())
 }
 
-fn pixels(bytes: &[u8]) -> Result<image::RgbaImage, ReplayError> {
+/// A decoded RGBA image that keeps the reservation covering its pixel buffer.
+struct ChargedImage {
+    image: image::RgbaImage,
+    _permit: BytePermit,
+}
+
+impl std::ops::Deref for ChargedImage {
+    type Target = image::RgbaImage;
+    fn deref(&self) -> &image::RgbaImage {
+        &self.image
+    }
+}
+
+fn rgba_bytes(width: u32, height: u32) -> Result<usize, ReplayError> {
+    usize::try_from(u64::from(width) * u64::from(height))
+        .ok()
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(ReplayError::Refused("QA image pixel bound"))
+}
+
+fn admission(_: ByteAdmissionError) -> ReplayError {
+    ReplayError::Refused("QA image byte admission")
+}
+
+/// Decode a PNG to RGBA. The decoder's native buffer (up to 16-bit samples) and the converted
+/// RGBA8 buffer are both reserved from the declared dimensions before any pixel is allocated;
+/// once converted, only the RGBA8 share stays reserved.
+fn pixels(bytes: &[u8]) -> Result<ChargedImage, ReplayError> {
     let decoder = ImageReader::with_format(Cursor::new(bytes), image::ImageFormat::Png)
         .into_decoder()
         .map_err(|_| ReplayError::Refused("invalid QA PNG"))?;
@@ -190,9 +298,20 @@ fn pixels(bytes: &[u8]) -> Result<image::RgbaImage, ReplayError> {
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 16_777_216 {
         return Err(ReplayError::Refused("QA image pixel bound"));
     }
-    DynamicImage::from_decoder(decoder)
-        .map(|image| image.into_rgba8())
-        .map_err(|_| ReplayError::Refused("QA image decoding failed"))
+    let rgba = rgba_bytes(width, height)?;
+    let native =
+        usize::try_from(decoder.total_bytes()).map_err(|_| ReplayError::Refused("QA image pixel bound"))?;
+    let total = native
+        .checked_add(rgba)
+        .ok_or(ReplayError::Refused("QA image pixel bound"))?;
+    let mut permit = global().try_reserve(total).map_err(admission)?;
+    let image = DynamicImage::from_decoder(decoder)
+        .map(DynamicImage::into_rgba8)
+        .map_err(|_| ReplayError::Refused("QA image decoding failed"))?;
+    // The conversion may reuse or replace the native buffer; keep exactly the RGBA8 share.
+    let kept = permit.split(rgba).map_err(admission)?;
+    drop(permit);
+    Ok(ChargedImage { image, _permit: kept })
 }
 
 fn pixel_distance(left: &[u8], right: &[u8]) -> Result<f64, ReplayError> {
@@ -213,22 +332,61 @@ fn pixel_distance(left: &[u8], right: &[u8]) -> Result<f64, ReplayError> {
     Ok(sum as f64 / (a.as_raw().len() as f64 * 255.0))
 }
 
-fn normalized(bytes: &[u8]) -> Result<String, ReplayError> {
+/// Largest QA text accepted for distance work, in bytes.
+const QA_TEXT_BYTES: usize = 262_144;
+
+fn grow(permit: &mut BytePermit, bytes: usize) -> Result<(), ReplayError> {
+    permit
+        .grow_by(bytes)
+        .map_err(|_| ReplayError::Refused("QA text byte admission"))
+}
+
+/// Whitespace-normalize `bytes` into a string whose exact capacity was added to `permit`
+/// first. Normalization only removes or shrinks whitespace runs to one space, so the result
+/// never exceeds the input length; that bound is the reservation.
+fn normalized(bytes: &[u8], permit: &mut BytePermit) -> Result<String, ReplayError> {
     let text = std::str::from_utf8(bytes).map_err(|_| ReplayError::Refused("QA text is not UTF-8"))?;
-    if text.len() > 262_144 {
+    if text.len() > QA_TEXT_BYTES {
         return Err(ReplayError::Refused("QA text byte bound"));
     }
-    Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
+    grow(permit, text.len())?;
+    let mut out = String::with_capacity(text.len());
+    for word in text.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    Ok(out)
+}
+
+/// Characters of `text` in a vector whose exact size was added to `permit` first.
+fn chars_of(text: &str, permit: &mut BytePermit) -> Result<Vec<char>, ReplayError> {
+    let count = text.chars().count();
+    grow(
+        permit,
+        count
+            .checked_mul(std::mem::size_of::<char>())
+            .ok_or(ReplayError::Refused("QA text byte bound"))?,
+    )?;
+    let mut chars = Vec::with_capacity(count);
+    chars.extend(text.chars());
+    Ok(chars)
 }
 
 fn text_distance(left: &[u8], right: &[u8]) -> Result<f64, ReplayError> {
-    let left = normalized(left)?;
-    let right = normalized(right)?;
+    // Every buffer below is reserved, with checked exact sizes, before it is allocated and
+    // stays reserved until the distance is computed.
+    let mut permit = global()
+        .try_reserve(0)
+        .map_err(|_| ReplayError::Refused("QA text byte admission"))?;
+    let left = normalized(left, &mut permit)?;
+    let right = normalized(right, &mut permit)?;
     if left == right {
         return Ok(0.0);
     }
-    let a: Vec<char> = left.chars().collect();
-    let b: Vec<char> = right.chars().collect();
+    let a = chars_of(&left, &mut permit)?;
+    let b = chars_of(&right, &mut permit)?;
     let length = a.len().max(b.len());
     if length == 0 {
         return Ok(0.0);
@@ -247,8 +405,18 @@ fn text_distance(left: &[u8], right: &[u8]) -> Result<f64, ReplayError> {
     if a.len().saturating_mul(b.len()) > 4_194_304 {
         return Err(ReplayError::Refused("QA text distance operation bound"));
     }
-    let mut previous: Vec<usize> = (0..=b.len()).collect();
-    let mut current = vec![0usize; b.len() + 1];
+    let row = b
+        .len()
+        .checked_add(1)
+        .ok_or(ReplayError::Refused("QA text byte bound"))?;
+    grow(
+        &mut permit,
+        row.checked_mul(std::mem::size_of::<usize>() * 2)
+            .ok_or(ReplayError::Refused("QA text byte bound"))?,
+    )?;
+    let mut previous: Vec<usize> = Vec::with_capacity(row);
+    previous.extend(0..=b.len());
+    let mut current = vec![0usize; row];
     for (i, ca) in a.iter().enumerate() {
         current[0] = i + 1;
         for (j, cb) in b.iter().enumerate() {
@@ -477,7 +645,7 @@ mod tests {
                     media_type: "image/png".into(),
                     length: bytes.len(),
                     truncated: false,
-                    bytes,
+                    bytes: AdmittedBytes::new(bytes.clone(), global().try_reserve(bytes.len()).unwrap()),
                 }],
             }],
             resources: Vec::new(),
@@ -530,10 +698,7 @@ mod tests {
     #[test]
     fn difference_encoder_rejects_growth_before_appending() {
         use std::io::Write as _;
-        let mut output = BoundedPng {
-            bytes: Vec::new(),
-            maximum: 2,
-        };
+        let mut output = BoundedPng::new(2).unwrap();
         output.write_all(b"ab").unwrap();
         assert!(output.write_all(b"c").is_err());
         assert_eq!(output.bytes, b"ab");
@@ -544,6 +709,38 @@ mod tests {
         assert_eq!(text_distance(b"alpha  beta", b"alpha beta").unwrap(), 0.0);
         assert!(text_distance(b"alpha", b"omega").unwrap() > 0.0);
         assert_eq!(text_distance(b"", b"hello").unwrap(), 1.0);
+    }
+
+    #[test]
+    fn png_encoder_bound_covers_stream_rows_and_state_and_never_wraps() {
+        // 1x1: two rows (8) + 3 x (filtered 5 + 5 + 6) + 1 MiB state.
+        assert_eq!(
+            png_encoder_bytes(1, 1).unwrap(),
+            8 + 3 * 16 + PNG_COMPRESSOR_STATE_BYTES
+        );
+        let large = png_encoder_bytes(4096, 4096).unwrap();
+        assert!(
+            large > 3 * 4096 * 4096 * 4,
+            "stored-block form is the floor of the bound"
+        );
+        assert!(png_encoder_bytes(u32::MAX, u32::MAX).is_err());
+    }
+
+    #[test]
+    fn png_encoder_guard_refuses_before_encoding_and_holds_until_dropped() {
+        let budget = std::sync::Arc::new(crawlx_core::parser_memory::ByteBudget::new(10));
+        assert!(budget.try_reserve(png_encoder_bytes(2, 2).unwrap()).is_err());
+        assert_eq!(budget.used(), 0, "refusal reserves nothing");
+    }
+
+    #[test]
+    fn text_distance_normalizes_without_growing_and_matches_levenshtein() {
+        let mut permit = global().try_reserve(0).unwrap();
+        let input = b" a \t b\n\nc ";
+        assert_eq!(normalized(input, &mut permit).unwrap(), "a b c");
+        assert_eq!(permit.bytes(), input.len(), "reserved exactly the input length");
+        assert!(normalized(&vec![b'a'; QA_TEXT_BYTES + 1], &mut permit).is_err());
+        assert_eq!(text_distance(b"kitten", b"sitting").unwrap(), 3.0 / 7.0);
     }
 
     #[test]

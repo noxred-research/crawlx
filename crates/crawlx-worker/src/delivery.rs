@@ -53,6 +53,10 @@ pub struct DeliveryAuthority {
 
 /// Delivery failures omit endpoints, credentials, payloads and provider error bodies.
 #[derive(Debug, thiserror::Error)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "feed delivery failures wrap the raw reqwest error as their source"
+)]
 #[non_exhaustive]
 pub enum DeliveryError {
     /// Existing repository/artifact policy refused work.
@@ -1001,6 +1005,10 @@ impl DeliveryDestination for HttpDestination {
         };
         input.checked_mul(factor)?.checked_add(256 * 1024)
     }
+    #[allow(
+        clippy::disallowed_types,
+        reason = "authorized feed delivery builds the raw reqwest client"
+    )]
     async fn send(
         &self,
         authority: &DeliveryAuthority,

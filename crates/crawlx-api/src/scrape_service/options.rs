@@ -10,9 +10,9 @@ use crate::resources::Warning;
 use crawlx_core::config::{BrowserProfile, CreateCrawl, OutputFormat, RetentionMode, SafetyProfile};
 use crawlx_core::page_op::SelectorState;
 use crawlx_core::scrape::{
-    AttributeSelector, ChangeMode, FormatSpec, JobKind, Location, ParserSpec, PdfMode, PiiEntity, PiiMode,
-    PiiReplaceStyle, QueryMode, RedactPii, ScrapeAction, ScrapeJob, ScrapeOptions, ScreenshotViewport,
-    ScrollDirection,
+    AttributeSelector, ChangeMode, ContentStrategySpecV1, FormatSpec, JobKind, Location, ParserSpec, PdfMode,
+    PiiEntity, PiiMode, PiiReplaceStyle, QueryMode, RedactPii, ScrapeAction, ScrapeJob, ScrapeOptions,
+    ScreenshotViewport, ScrollDirection,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -25,7 +25,7 @@ const MAX_PROMPT_CHARS: usize = 10_000;
 
 /// Scrape option keys (compat v2 plus the v1 `extract` / `jsonOptions` aliases and the
 /// request-level `zeroDataRetention`).
-const SCRAPE_KEYS: [&str; 31] = [
+const SCRAPE_KEYS: [&str; 32] = [
     "formats",
     "onlyMainContent",
     "contentPolicy",
@@ -54,6 +54,7 @@ const SCRAPE_KEYS: [&str; 31] = [
     "extract",
     "jsonOptions",
     "onlyCleanContent",
+    "contentStrategy",
     "checkPromptInjection",
     "redactPII",
     "profile",
@@ -85,6 +86,10 @@ impl ParsedScrape {
     #[must_use]
     pub fn needs_llm(&self) -> bool {
         self.options.formats.iter().any(FormatSpec::needs_llm)
+            || matches!(
+                self.options.content_strategy,
+                Some(ContentStrategySpecV1::ModelV1 { .. })
+            )
     }
 
     /// Fill `crawl` from the options: `scrape` (a job of `kind`; the urls and webhook values of an
@@ -483,6 +488,7 @@ pub fn parse_scrape_options_in(
     if let Some(b) = cx.boolean(obj, "onlyCleanContent") {
         o.only_clean_content = b;
     }
+    parse_content_strategy(&mut cx, obj, &mut o);
     o.check_prompt_injection =
         cx.boolean(obj, "checkPromptInjection").unwrap_or(false) || cx.lifted_injection_check;
     if let Some(v) = obj.get("redactPII") {
@@ -494,6 +500,14 @@ pub fn parse_scrape_options_in(
             at,
             "unsupported_with_zdr",
             "onlyCleanContent is not supported on zero-data-retention requests",
+        );
+    }
+    if zdr && matches!(o.content_strategy, Some(ContentStrategySpecV1::ModelV1 { .. })) {
+        let at = cx.at("contentStrategy");
+        cx.bad(
+            at,
+            "unsupported_with_zdr",
+            "contentStrategy modelV1 is not supported on zero-data-retention requests",
         );
     }
     if !headers.is_empty() || !o.actions.is_empty() {
@@ -525,6 +539,36 @@ pub fn parse_scrape_options_in(
     }
 }
 
+/// `contentStrategy`: the strict versioned union (`nativeV1` or `modelV1`). Malformed input,
+/// unknown fields and unknown versions are errors; none is ignored or downgraded to native.
+fn parse_content_strategy(cx: &mut Cx, obj: &Map<String, Value>, o: &mut ScrapeOptions) {
+    let Some(value) = obj.get("contentStrategy").filter(|value| !value.is_null()) else {
+        return;
+    };
+    let parsed = serde_json::from_value::<ContentStrategySpecV1>(value.clone()).and_then(|spec| {
+        // serde ignores sibling keys of an internally tagged unit variant even with
+        // `deny_unknown_fields`, so `nativeV1` with extra fields would pass as native.
+        match (&spec, value.as_object()) {
+            (ContentStrategySpecV1::NativeV1, Some(fields)) if fields.len() != 1 => {
+                Err(serde::de::Error::custom("unknown field"))
+            }
+            _ => Ok(spec),
+        }
+    });
+    match parsed {
+        Ok(spec) => o.content_strategy = Some(spec),
+        // serde diagnostics can echo request values; report a static classification only
+        Err(_) => {
+            let at = cx.at("contentStrategy");
+            cx.bad(
+                at,
+                "invalid_content_strategy",
+                "invalid content strategy: unknown strategy version, unknown field or wrong type",
+            );
+        }
+    }
+}
+
 /// The JSON Pointer a [`ScrapeOptions::validate`] message is about.
 fn validation_path(base: &str, o: &ScrapeOptions, msg: &str) -> String {
     let field = if msg.starts_with("waitFor and wait actions") {
@@ -541,6 +585,7 @@ fn validation_path(base: &str, o: &ScrapeOptions, msg: &str) -> String {
             "timeout",
             "waitFor",
             "checkPromptInjection",
+            "contentStrategy",
             "redactPII",
         ]
         .into_iter()
@@ -626,6 +671,8 @@ fn parse_profile(cx: &mut Cx, obj: &Map<String, Value>, o: &mut ScrapeOptions) {
     o.profile = Some(BrowserProfile {
         name: name.to_owned(),
         save_changes,
+        // The compat body has no generation: it starts a new profile namespace.
+        generation: 0,
     });
 }
 

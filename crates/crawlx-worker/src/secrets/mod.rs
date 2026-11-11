@@ -39,6 +39,10 @@ use std::sync::Arc;
 /// `totp://` references (whose reference *is* the secret) they do not carry the reference
 /// either.
 #[derive(Debug, thiserror::Error)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "secret-provider failures wrap the raw reqwest error as their source"
+)]
 #[non_exhaustive]
 pub enum SecretError {
     /// The reference has no `scheme://` prefix.

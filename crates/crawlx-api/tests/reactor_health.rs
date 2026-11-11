@@ -10,6 +10,10 @@
 mod common;
 
 use axum::body::Body;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{Method, Request, StatusCode};
 use common::{env, simple_body};
 use parking_lot::Mutex;

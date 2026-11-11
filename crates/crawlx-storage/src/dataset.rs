@@ -1051,10 +1051,14 @@ impl DeliveryOutboxRepo for Pg {
         let (tenant, zdr) = self.privacy_scope(run).await?;
         check_tenant(tenant)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
-        sqlx::query("SELECT delivery_id FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND fence=$4 AND (state='delivered' OR (state='leased' AND lease_expires_at>now() AND expires_at>now())) FOR UPDATE")
+        crate::report_history::lock_pipeline_ack_run(&mut tx, tenant, run).await?;
+        let row = sqlx::query("SELECT state FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND fence=$4 AND (state='delivered' OR (state='leased' AND lease_expires_at>now() AND expires_at>now())) FOR UPDATE")
             .bind(tenant.0).bind(run.0).bind(id).bind(fence).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(StoreError::LeaseLost)?;
         sqlx::query("UPDATE dataset_delivery_outbox SET state='delivered',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND delivery_id=$2 AND fence=$3")
             .bind(tenant.0).bind(id).bind(fence).execute(&mut *tx).await.map_err(db)?;
+        if get::<String>(&row, "state")? != "delivered" {
+            crate::report_history::acknowledge_pipeline_pg(&mut tx, tenant, run, id).await?;
+        }
         // Commit the receipt before erasing content. A crash can only leave retriable cleanup.
         tx.commit().await.map_err(db)?;
         if zdr {

@@ -8,11 +8,14 @@
 //! call's token accounting. The API key is sent only as a bearer header, redirects are not
 //! followed, the response is size-capped, and neither prompts nor replies are logged.
 
-use super::extractor::{Completion, LlmError, LlmExtractor, TokenUsage, DEFAULT_MAX_INPUT_CHARS};
+use super::extractor::{
+    Completion, CompletionLimits, LlmError, LlmExtractor, TokenUsage, DEFAULT_MAX_INPUT_CHARS,
+};
 use async_trait::async_trait;
 use crawlx_core::secret::SecretOr;
 use serde_json::{json, Value};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 /// Largest response body accepted from the endpoint.
 pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -113,6 +116,7 @@ impl LlmConfig {
 
 /// Chat-completions client implementing [`LlmExtractor`].
 pub struct ChatCompletionsClient {
+    #[allow(clippy::disallowed_types, reason = "HTTP provider adapter boundary")]
     client: reqwest::Client,
     url: reqwest::Url,
     model: String,
@@ -228,6 +232,7 @@ impl ChatCompletionsClient {
     /// # Errors
     /// [`LlmError::InvalidRequest`] for a malformed or non-HTTP endpoint,
     /// [`LlmError::Transport`] when the HTTP client cannot be built.
+    #[allow(clippy::disallowed_types, reason = "HTTP provider adapter boundary")]
     pub fn new(config: LlmConfig) -> Result<Self, LlmError> {
         let url = completions_url(&config.endpoint)?;
         let transcribe_url = config
@@ -258,7 +263,13 @@ impl ChatCompletionsClient {
         })
     }
 
-    fn request_body(&self, system: &str, user: &str, schema: Option<&Value>) -> Value {
+    fn request_body(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+    ) -> Value {
         let response_format = match schema {
             Some(s) => json!({
                 "type": "json_schema",
@@ -269,6 +280,8 @@ impl ChatCompletionsClient {
         json!({
             "model": self.model,
             "temperature": 0,
+            "max_tokens": limits.max_output_tokens().get(),
+            "stream": false,
             "response_format": response_format,
             "messages": [
                 { "role": "system", "content": system },
@@ -277,6 +290,7 @@ impl ChatCompletionsClient {
         })
     }
 
+    #[allow(clippy::disallowed_types, reason = "HTTP provider adapter boundary")]
     fn map_err(&self, e: reqwest::Error) -> LlmError {
         let e = e.without_url();
         if e.is_timeout() {
@@ -288,23 +302,141 @@ impl ChatCompletionsClient {
         }
     }
 
-    /// The whole body of `response`, refused when it exceeds [`MAX_RESPONSE_BYTES`].
-    async fn read_body(&self, mut response: reqwest::Response) -> Result<Vec<u8>, LlmError> {
+    /// Read chunks under a finite decoded-byte ceiling, without trusting Content-Length.
+    #[allow(clippy::disallowed_types, reason = "HTTP provider adapter boundary")]
+    async fn read_body(&self, mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, LlmError> {
+        if response
+            .content_length()
+            .is_some_and(|length| length > u64::try_from(max).unwrap_or(u64::MAX))
+        {
+            return Err(LlmError::ResponseBytesExceeded { max });
+        }
         let mut bytes: Vec<u8> = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|e| self.map_err(e))? {
-            if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                return Err(LlmError::InvalidOutput(format!(
-                    "response exceeds {MAX_RESPONSE_BYTES} bytes"
-                )));
+            if chunk.len() > max.saturating_sub(bytes.len()) {
+                return Err(LlmError::ResponseBytesExceeded { max });
+            }
+            let required = bytes
+                .len()
+                .checked_add(chunk.len())
+                .ok_or(LlmError::ResponseBytesExceeded { max })?;
+            if required > bytes.capacity() {
+                let capacity = bytes
+                    .capacity()
+                    .saturating_mul(2)
+                    .max(4096)
+                    .min(max)
+                    .max(required);
+                bytes
+                    .try_reserve_exact(capacity.saturating_sub(bytes.len()))
+                    .map_err(|_| LlmError::InvalidOutput("response allocation failed".to_owned()))?;
             }
             bytes.extend_from_slice(&chunk);
         }
         Ok(bytes)
     }
+
+    async fn bounded_request(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+    ) -> Result<Completion<Value>, LlmError> {
+        let mut request = self
+            .client
+            .post(self.url.clone())
+            .json(&self.request_body(system, user, schema, limits));
+        if let Some(key) = &self.api_key {
+            request = request.bearer_auth(key.expose());
+        }
+        let response = request.send().await.map_err(|e| self.map_err(e))?;
+        let status = response.status();
+        if !status.is_success() {
+            // Never read or retain a provider error body: it can echo the prompt.
+            return Err(LlmError::Status {
+                status: status.as_u16(),
+            });
+        }
+        // A repeated header must not hide an event stream behind an earlier JSON value.
+        if response
+            .headers()
+            .get_all(reqwest::header::CONTENT_TYPE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .any(|v| {
+                v.split(';')
+                    .next()
+                    .is_some_and(|t| t.trim().eq_ignore_ascii_case("text/event-stream"))
+            })
+        {
+            return Err(LlmError::UnsupportedOutputBudget);
+        }
+        let bytes = self.read_body(response, limits.max_response_bytes()).await?;
+        let body: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| LlmError::InvalidOutput("response is not JSON".to_owned()))?;
+        if body
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_none_or(|v| v.len() != 1)
+        {
+            return Err(LlmError::InvalidOutput(
+                "response has no message content or multiple choices".to_owned(),
+            ));
+        }
+        if body.pointer("/choices/0/finish_reason").and_then(Value::as_str) != Some("stop")
+            || body
+                .pointer("/choices/0/message/refusal")
+                .is_some_and(|v| !v.is_null())
+            || body
+                .pointer("/choices/0/message/tool_calls")
+                .is_some_and(|v| !v.is_null())
+        {
+            return Err(LlmError::TruncatedOutput);
+        }
+        let content = body
+            .pointer("/choices/0/message/content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| LlmError::InvalidOutput("response has no message content".to_owned()))?;
+        let value: Value = serde_json::from_str(strip_fence(content))
+            .map_err(|_| LlmError::InvalidOutput("message is not JSON".to_owned()))?;
+        let usage = checked_usage(&body, limits)?;
+        Ok(Completion { value, usage })
+    }
 }
 
 fn token(usage: &Value, key: &str) -> u64 {
     usage.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn checked_usage(body: &Value, limits: CompletionLimits) -> Result<TokenUsage, LlmError> {
+    let usage = body.get("usage").ok_or(LlmError::InvalidUsage)?;
+    let prompt_tokens = usage
+        .get("prompt_tokens")
+        .and_then(Value::as_u64)
+        .ok_or(LlmError::InvalidUsage)?;
+    let completion_tokens = usage
+        .get("completion_tokens")
+        .and_then(Value::as_u64)
+        .ok_or(LlmError::InvalidUsage)?;
+    if completion_tokens > u64::from(limits.max_output_tokens().get()) {
+        return Err(LlmError::OutputTokenLimitExceeded {
+            max: limits.max_output_tokens().get(),
+        });
+    }
+    let sum = prompt_tokens
+        .checked_add(completion_tokens)
+        .ok_or(LlmError::InvalidUsage)?;
+    if usage
+        .get("total_tokens")
+        .is_some_and(|total| total.as_u64() != Some(sum))
+    {
+        return Err(LlmError::InvalidUsage);
+    }
+    Ok(TokenUsage {
+        prompt_tokens,
+        completion_tokens,
+    })
 }
 
 #[async_trait]
@@ -315,37 +447,34 @@ impl LlmExtractor for ChatCompletionsClient {
         user: &str,
         schema: Option<&Value>,
     ) -> Result<Completion<Value>, LlmError> {
-        let mut request = self
-            .client
-            .post(self.url.clone())
-            .json(&self.request_body(system, user, schema));
-        if let Some(key) = &self.api_key {
-            request = request.bearer_auth(key.expose());
+        self.complete_bounded(
+            system,
+            user,
+            schema,
+            CompletionLimits::default(),
+            &CancellationToken::new(),
+        )
+        .await
+    }
+
+    async fn complete_bounded(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => Err(LlmError::Cancelled),
+            result = self.bounded_request(system, user, schema, limits) => {
+                if cancel.is_cancelled() {
+                    return Err(LlmError::Cancelled);
+                }
+                result
+            }
         }
-        let response = request.send().await.map_err(|e| self.map_err(e))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(LlmError::Status {
-                status: status.as_u16(),
-            });
-        }
-        let bytes = self.read_body(response).await?;
-        let body: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| LlmError::InvalidOutput(format!("response is not JSON: {e}")))?;
-        let content = body
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .ok_or_else(|| LlmError::InvalidOutput("response has no message content".to_owned()))?;
-        let value: Value = serde_json::from_str(strip_fence(content))
-            .map_err(|e| LlmError::InvalidOutput(format!("message is not JSON: {e}")))?;
-        let usage = body.get("usage").cloned().unwrap_or(Value::Null);
-        Ok(Completion {
-            value,
-            usage: TokenUsage {
-                prompt_tokens: token(&usage, "prompt_tokens"),
-                completion_tokens: token(&usage, "completion_tokens"),
-            },
-        })
     }
 
     fn max_input_chars(&self) -> usize {
@@ -390,9 +519,9 @@ impl LlmExtractor for ChatCompletionsClient {
                 status: status.as_u16(),
             });
         }
-        let bytes = self.read_body(response).await?;
+        let bytes = self.read_body(response, MAX_RESPONSE_BYTES).await?;
         let body: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| LlmError::InvalidOutput(format!("response is not JSON: {e}")))?;
+            .map_err(|_| LlmError::InvalidOutput("response is not JSON".to_owned()))?;
         let text = body
             .get("text")
             .and_then(Value::as_str)
@@ -418,7 +547,7 @@ mod tests {
 
     fn reply(content: &str) -> ResponseTemplate {
         ResponseTemplate::new(200).set_body_json(json!({
-            "choices": [{"message": {"role": "assistant", "content": content}}],
+            "choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": content}}],
             "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
         }))
     }

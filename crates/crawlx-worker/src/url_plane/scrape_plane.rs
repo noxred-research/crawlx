@@ -13,8 +13,9 @@
 //! * runs under the configuration [`adapt`] derives: no default extension filter, no
 //!   URL-shape similarity filter for `scrape` and `batch` jobs (a caller who names a `.pdf` or
 //!   a third page of the same shape wants it; a crawl keeps the filter its request asked for
-//!   with `deduplicateSimilarURLs`), no `robots.txt` gate for `scrape` and `batch` jobs
-//!   (the compatibility API scrapes the URLs it is given) and no seed-path restriction for `batch` jobs.
+//!   with `deduplicateSimilarURLs`), no `robots.txt` gate for `scrape` and `batch` jobs unless the job
+//!   sets `honorRobotsTxt` (the compatibility API scrapes the URLs it is given; the single-page
+//!   commands do not lower the gate) and no seed-path restriction for `batch` jobs.
 
 use super::{Future, NativeHopAdmission, RequestPublication, RequestSource, UrlPlaneRunner};
 use crate::counters::{Attempt, Plane};
@@ -47,7 +48,7 @@ pub(super) fn adapt(mut crawl: CreateCrawl) -> CreateCrawl {
         // links, so only a crawl honours `deduplicateSimilarURLs` (`scope.filterSimilar`)
         crawl.scope.filter_similar = false;
     }
-    if kind != JobKind::Crawl {
+    if kind != JobKind::Crawl && !crawl.scrape.as_ref().is_some_and(|job| job.honor_robots_txt) {
         crawl.safety.respect_robots_txt = false;
     }
     if kind == JobKind::Batch {
@@ -302,6 +303,19 @@ impl UrlPlaneRunner {
                     content_dedupe,
                     local_dedupe,
                 } = *page;
+                // The scrape engine owns acquisition; the boundaries its page really crossed are
+                // dispatched here, before anything is stored or discovered.
+                if let Some(stop) = self.dispatch_many(
+                    entry.id,
+                    [
+                        crawlx_core::extensions::ExtensionEventV1::Response,
+                        crawlx_core::extensions::ExtensionEventV1::Html,
+                        crawlx_core::extensions::ExtensionEventV1::Parse,
+                    ],
+                    cancel,
+                ) {
+                    return self.stop_request(entry, stop).await;
+                }
                 if let Some(reason) = discovery {
                     if engine.kind() == JobKind::Crawl && self.crawl.scope.sitemap != SitemapMode::Only {
                         self.expand_endpoints(entry, &final_url, &links, Vec::new())

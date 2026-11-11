@@ -189,6 +189,13 @@ pub struct Document {
     /// Unresolved expressions counted beyond the report cap.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub discovery_unresolved_dropped: usize,
+    /// Typed authored source relations from the already parsed tree, after privacy projection.
+    /// Proposals only: every target must re-enter scope, robots, budget and method admission.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_hops: Vec<crate::source_policy::SourceHop>,
+    /// The explicit source-hop count cap omitted later relations.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub source_hops_truncated: bool,
     /// Versioned article metadata. Content/PII, never unrestricted structural telemetry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub article: Option<crawlx_core::extraction::DocumentEnvelopeV1>,

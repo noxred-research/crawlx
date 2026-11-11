@@ -289,9 +289,71 @@ fn derive_origin(run: &CrawlxRun, given: Option<Url>) -> Result<Url, String> {
         .ok_or_else(|| "--crawlx-origin is required when the run has no pages".to_owned())
 }
 
+async fn contract_file(path: &str) -> Result<Vec<u8>, String> {
+    use tokio::io::AsyncReadExt;
+    const CAP: u64 = 262_144;
+    let metadata = tokio::fs::symlink_metadata(path)
+        .await
+        .map_err(|_| "cannot read contract input metadata".to_owned())?;
+    if !metadata.file_type().is_file() || metadata.len() > CAP {
+        return Err("contract inputs must be regular files no larger than 256 KiB".into());
+    }
+    let capacity = usize::try_from(metadata.len()).map_err(|_| "contract input exceeds limit")?;
+    let mut bytes = Vec::with_capacity(capacity + 1);
+    tokio::fs::File::open(path)
+        .await
+        .map_err(|_| "cannot open contract input".to_owned())?
+        .take(CAP + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|_| "cannot read contract input".to_owned())?;
+    if u64::try_from(bytes.len()).map_err(|_| "contract input exceeds limit")? > CAP {
+        return Err("contract input exceeds limit".into());
+    }
+    Ok(bytes)
+}
+
+async fn run_contract(args: impl Iterator<Item = String>) -> Result<u8, String> {
+    use crawlx_bench::migration_contract::compile_fixture;
+    use crawlx_core::hash::Digest;
+    use tokio_util::sync::CancellationToken;
+    let args: Vec<_> = args.take(7).collect();
+    if args.len() != 6 {
+        return Err("usage: crawlx-differential contract CONTRACT GOLDEN NATIVE ITEMS CONTRACT_PIN GOLDEN_PIN\nexit codes: 0 local pass, 1 assertion failure, 2 invalid input; external parity remains external_required".into());
+    }
+    let pins = [
+        Digest::from_hex(&args[4]).map_err(|_| "invalid contract pin")?,
+        Digest::from_hex(&args[5]).map_err(|_| "invalid golden pin")?,
+    ];
+    let contract = contract_file(&args[0]).await?;
+    let golden = contract_file(&args[1]).await?;
+    let native = contract_file(&args[2]).await?;
+    let items = contract_file(&args[3]).await?;
+    let cancel = CancellationToken::new();
+    let fixture = compile_fixture(&contract, &golden, pins, &cancel).map_err(|error| error.to_string())?;
+    let report = fixture
+        .evaluate(&native, &items, &cancel)
+        .map_err(|error| error.to_string())?;
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    serde_json::to_writer_pretty(&mut out, &report).map_err(|_| "cannot write contract report")?;
+    std::io::Write::write_all(&mut out, b"\n").map_err(|_| "cannot write contract report")?;
+    Ok(u8::from(!report.passed()))
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let mut argv = std::env::args().skip(1).peekable();
+    if argv.peek().map(String::as_str) == Some("contract") {
+        argv.next();
+        return match run_contract(argv).await {
+            Ok(code) => ExitCode::from(code),
+            Err(message) => {
+                eprintln!("crawlx-differential contract: {message}");
+                ExitCode::from(2)
+            }
+        };
+    }
     if argv.peek().map(String::as_str) == Some("wire") {
         argv.next();
         return match crawlx_bench::differential::wire::cli::main(argv).await {

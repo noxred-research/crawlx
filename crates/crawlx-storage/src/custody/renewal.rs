@@ -1,9 +1,8 @@
-//! Read-only recovery receipts for previously applied lifetime extensions.
+//! Linearizable renewal of durable use windows without a Redis TTL mutation.
 //!
-//! New extensions are unavailable: Redis cannot atomically observe PostgreSQL
-//! cancellation or producer fencing when a queued command executes. No request
-//! in this module extends volatile retention. Existing exact receipts may recover
-//! durable state; a missing Redis key is never rebuilt.
+//! The database owns renewable use authority. Redis retains raw values only until
+//! the immutable original ceiling, set once at initialization. Historical remote
+//! receipts remain proof-only recovery; new commands never extend retention.
 
 use super::{
     database_now, denied, live, AuthorityRow, PgSecretAuthority, EXPIRY_MARGIN_MS, MAX_AUTHORITY_TTL,
@@ -32,7 +31,7 @@ async fn authority(
         .bind(lease.tenant.0).bind(lease.run.0).fetch_optional(&mut **tx).await.map_err(db)?
         .ok_or_else(|| denied("secret renewal authority missing or sealed"))?;
     if get::<Option<Uuid>>(&row, "pending_operation")?.is_some() {
-        return Err(denied("secret renewal blocked by pending registration"));
+        return Err(denied(super::REGISTER_STALE));
     }
     Ok((
         AuthorityRow::parse(lease.tenant, lease.run, &row)?,
@@ -93,25 +92,18 @@ async fn authorized_deadline(
 }
 
 impl PgSecretAuthority {
-    /// Recover an exact, previously applied absolute-deadline renewal receipt.
+    /// Renew a live durable use window under its frozen original retention ceiling.
     ///
-    /// New or unapplied renewal requests fail closed. PostgreSQL and Redis cannot
-    /// atomically revoke a queued lifetime extension after producer loss or run
-    /// cancellation. Long-running renewal remains an explicit integration gap;
-    /// callers must not interpret this API as production renewal support.
-    ///
-    /// Persist operation/deadline and retry both unchanged after an unknown
-    /// historical outcome. Completed requests return the current committed
-    /// snapshot, which may have a later registration epoch than `expected`.
-    /// Recovery never extends Redis expiry or recreates missing state.
-    ///
-    /// PostgreSQL and Redis clocks must remain within one second without backward
-    /// steps. Samples reject observed violations; deployment must prevent steps
-    /// between samples. Redis expires two seconds before the durable deadline.
+    /// The transaction locks the run, authorization, producer and authority rows.
+    /// Redis is read-only throughout renewal, so a delayed response cannot extend
+    /// retention after lease loss. Recheck all fences and deadlines after that read.
+    /// Persist and reuse operation, epoch and deadline after unknown commit outcomes.
+    /// Completed requests return the current committed epoch after later registration.
+    /// Historical authorities support only exact already-applied receipt recovery.
     ///
     /// # Errors
-    /// Rejects new/unapplied requests, expired fences, cancellation, purge, revoked
-    /// authorization, changed requests, corrupt state and unproven outcomes.
+    /// Rejects expired windows, stale fences, cancellation, purge, revoked
+    /// authorization, changed requests, original policy ceilings and lost state.
     pub async fn renew_authority(
         &self,
         lease: &CustodyLease,
@@ -126,6 +118,14 @@ impl PgSecretAuthority {
         }
         let mut tx = self.transaction().await?;
         let (row, pending, pending_deadline) = authority(&mut tx, lease).await?;
+        if row.use_window_ms.is_some() {
+            if pending.is_some() {
+                return Err(denied("secret renewal blocked by legacy pending operation"));
+            }
+            return self
+                .renew_window_on(tx, lease, &row, expected, operation, deadline)
+                .await;
+        }
         if expected.tenant != lease.tenant
             || expected.run != lease.run
             || expected.incarnation != row.incarnation
@@ -174,6 +174,77 @@ impl PgSecretAuthority {
         }
         tx.commit().await.map_err(db)?;
         self.complete_renewal(lease, expected, operation, deadline).await
+    }
+
+    async fn renew_window_on(
+        &self,
+        mut tx: Transaction<'_, Postgres>,
+        lease: &CustodyLease,
+        row: &AuthorityRow,
+        expected: SecretEpoch,
+        operation: Uuid,
+        deadline: Timestamp,
+    ) -> Result<RunSecretSnapshot, StoreError> {
+        super::check_version(lease, expected, row)?;
+        let now = self.renewal_clock(&mut tx).await?;
+        if row.expires_at <= now {
+            return Err(denied("secret authority expired; renewal cannot resurrect it"));
+        }
+        authorized_deadline(&mut tx, lease, deadline).await?;
+        let prior = request(&mut tx, lease, expected, operation, deadline).await?;
+        if let Some(prior) = &prior {
+            if !prior.completed || row.expires_at < prior.deadline {
+                return Err(denied("secret renewal receipt corrupt or pending"));
+            }
+        } else {
+            let window = row
+                .use_window_ms
+                .ok_or_else(|| denied("secret authority use window missing"))?;
+            let maximum = now
+                .checked_add_signed(chrono::Duration::milliseconds(window))
+                .ok_or_else(|| denied("secret renewal deadline overflow"))?;
+            if expected.epoch != row.epoch || row.pending.is_some() {
+                return Err(denied(super::REGISTER_STALE));
+            }
+            if deadline <= now || deadline > maximum || deadline > row.retention_ceiling {
+                return Err(denied(
+                    "secret renewal exceeds live window or original retention ceiling",
+                ));
+            }
+            if deadline <= row.expires_at {
+                // Another valid producer may already cover this proposal.
+                // No receipt or extension occurred; refresh before a new request.
+                return Err(denied(super::REGISTER_STALE));
+            }
+        }
+        // This remote operation cannot mutate retention. Holding durable locks
+        // serializes registration, purge, lease takeover and authorization revocation.
+        let snapshot =
+            super::locally_live(lease, self.invoke(row, "snapshot", row.epoch, Uuid::nil(), "", 0)).await?;
+        snapshot.check(row.commitment.as_deref())?;
+        live(&mut tx, lease).await?;
+        authorized_deadline(&mut tx, lease, deadline).await?;
+        let after = database_now(&mut tx).await?;
+        if row.expires_at <= after || deadline <= after {
+            return Err(denied("secret authority expired while renewing"));
+        }
+        if prior.is_none() {
+            sqlx::query("INSERT INTO run_secret_authority_renewals(tenant_id,run_id,operation,incarnation,secret_epoch,previous_deadline,deadline,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+                .bind(lease.tenant.0).bind(lease.run.0).bind(operation).bind(expected.incarnation)
+                .bind(expected.epoch).bind(row.expires_at).bind(deadline).bind(after)
+                .execute(&mut *tx).await.map_err(db)?;
+            sqlx::query("UPDATE run_secret_authority SET expires_at=$3 WHERE tenant_id=$1 AND run_id=$2")
+                .bind(lease.tenant.0)
+                .bind(lease.run.0)
+                .bind(deadline)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        lease.check_local_cancellation()?;
+        tx.commit().await.map_err(db)?;
+        lease.check_local_cancellation()?;
+        Ok(snapshot.snapshot)
     }
 
     async fn complete_renewal(

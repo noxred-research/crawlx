@@ -167,6 +167,11 @@ async fn ignore_robots_txt_needs_the_facade_record_and_then_lowers_the_gate() {
         ..RigConfig::default()
     })
     .await;
+    // A signed record authorizes exact origins and networks; the worker never widens it
+    // with its own unsigned loopback allowance, so name the fixture origin and network.
+    let mut ok = ok;
+    ok.url_prefixes = vec![rig.url("")];
+    ok.authorized_networks = vec!["127.0.0.0/8".parse().unwrap()];
     rig.env.api.add_authorization(ok);
     let seed = rig.url("/private/x");
     let id = start_crawl(&rig, &json!({"url": seed, "ignoreRobotsTxt": true, "limit": 1})).await;

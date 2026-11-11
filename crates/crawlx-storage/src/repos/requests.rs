@@ -1,6 +1,7 @@
 //! Request extensions of the authoritative URL frontier.
 use super::*;
 use crawlx_core::acquisition::{AcquisitionAllowanceV1, AcquisitionUsageV1};
+use crawlx_core::extensions::ExtensionReceiptV1;
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::*;
 use crawlx_core::repo::RunRepo;
@@ -50,6 +51,93 @@ pub(super) async fn lock_run(
     let row = sqlx::query("SELECT tenant_id, retention_mode = 'zdr' AS zdr, status::text AS status, deadline_at FROM crawl_runs WHERE run_id=$1 FOR UPDATE")
         .bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| not_found("crawl run", run))?;
     Ok((TenantId(get(&row, "tenant_id")?), get(&row, "zdr")?))
+}
+
+/// Exact scope of one callback trail. Every field is part of the durable dedupe key.
+#[derive(Clone, Copy)]
+struct ExtensionAttemptKey {
+    tenant: TenantId,
+    run: CrawlRunId,
+    request_id: i64,
+    fence: i64,
+    attempt: u32,
+}
+
+fn validate_extension_trail(receipts: &[ExtensionReceiptV1]) -> Result<(), StoreError> {
+    crawlx_core::extensions::validate_extension_receipts(receipts)
+        .map_err(|_| StoreError::Conflict("invalid extension attempt receipts".into()))
+}
+
+fn extension_digest(receipts: &[ExtensionReceiptV1]) -> Result<Digest, StoreError> {
+    Digest::of_value("crawlx/extension-attempt/v1", &receipts)
+        .map_err(|error| StoreError::Serialization(error.to_string()))
+}
+
+/// Persist one complete callback trail inside a transaction that already holds the run lock and
+/// the live request-row lock for exactly this fence and attempt. The digest row is the only
+/// dedupe authority; the receipts themselves are a typed `extension_attempt` event, which the
+/// existing ZDR projection already withholds. PostgreSQL row locks and the sequence-backed
+/// event allocator are confined to this helper.
+async fn persist_extension_attempt(
+    pg: &Pg,
+    tx: &mut Transaction<'_, Postgres>,
+    key: ExtensionAttemptKey,
+    receipts: &[ExtensionReceiptV1],
+) -> Result<(), StoreError> {
+    let attempt = i32::try_from(key.attempt)
+        .ok()
+        .filter(|attempt| (1..=i32::from(i16::MAX)).contains(attempt))
+        .ok_or_else(|| StoreError::Conflict("invalid extension attempt".into()))?;
+    let digest = extension_digest(receipts)?;
+    let stored: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT digest FROM extension_attempts WHERE tenant_id=$1 AND run_id=$2 AND request_id=$3 AND fence=$4 AND attempt=$5",
+    )
+    .bind(key.tenant.0)
+    .bind(key.run.0)
+    .bind(key.request_id)
+    .bind(key.fence)
+    .bind(attempt)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db)?;
+    if let Some(stored) = stored {
+        return if stored.as_slice() == digest.0.as_slice() {
+            Ok(())
+        } else {
+            Err(StoreError::Conflict("extension attempt receipts changed".into()))
+        };
+    }
+    if receipts.is_empty() {
+        return Ok(());
+    }
+    let mut payload = serde_json::Map::new();
+    payload.insert("requestId".into(), key.request_id.into());
+    payload.insert("fence".into(), key.fence.into());
+    payload.insert("attempt".into(), key.attempt.into());
+    payload.insert("digest".into(), digest.to_hex().into());
+    payload.insert("receipts".into(), serde_json::to_value(receipts)?);
+    let seq = crate::repos::event::append_event(
+        pg,
+        tx,
+        key.run,
+        "extension_attempt",
+        serde_json::Value::Object(payload),
+    )
+    .await?;
+    sqlx::query(
+        "INSERT INTO extension_attempts (tenant_id,run_id,request_id,fence,attempt,digest,event_seq) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    )
+    .bind(key.tenant.0)
+    .bind(key.run.0)
+    .bind(key.request_id)
+    .bind(key.fence)
+    .bind(attempt)
+    .bind(digest.0.as_slice())
+    .bind(conv::<u64, i64>(seq, "event seq")?)
+    .execute(&mut **tx)
+    .await
+    .map_err(db)?;
+    Ok(())
 }
 
 pub(super) async fn append(
@@ -1048,10 +1136,49 @@ impl RequestCommitRepo for Pg {
         .await
         .map_err(|error| StoreError::Backend(format!("HEAD response commit task failed: {error}")))?
     }
+    async fn record_extension_attempt(
+        &self,
+        run: CrawlRunId,
+        request_id: i64,
+        fence: i64,
+        attempt: u32,
+        receipts: &[ExtensionReceiptV1],
+    ) -> Result<(), StoreError> {
+        validate_extension_trail(receipts)?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        // Same order as the terminal result: run row first, then the request row.
+        let (tenant, _) = lock_run(self, &mut tx, run).await?;
+        if crate::tenant::current().is_some_and(|current| current != tenant) {
+            return Err(StoreError::AccessDenied(
+                "extension attempt tenant mismatch".into(),
+            ));
+        }
+        let row = sqlx::query("SELECT attempts,status::text AS status,fencing_token,lease_expires_at>clock_timestamp() AS live_lease FROM url_frontier WHERE frontier_id=$1 AND run_id=$2 AND tenant_id=$3 FOR UPDATE")
+            .bind(request_id).bind(run.0).bind(tenant.0)
+            .fetch_optional(&mut *tx).await.map_err(db)?.ok_or(StoreError::LeaseLost)?;
+        if get::<String>(&row, "status")? != "leased"
+            || get::<Option<i64>>(&row, "fencing_token")? != Some(fence)
+            || get::<Option<bool>>(&row, "live_lease")? != Some(true)
+            || u32::try_from(get::<i16>(&row, "attempts")?).ok() != Some(attempt)
+        {
+            return Err(StoreError::LeaseLost);
+        }
+        let key = ExtensionAttemptKey {
+            tenant,
+            run,
+            request_id,
+            fence,
+            attempt,
+        };
+        persist_extension_attempt(self, &mut tx, key, receipts).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(())
+    }
 }
 
 impl Pg {
     async fn commit_request_owned(&self, mut commit: RequestCommitV1) -> Result<(), StoreError> {
+        commit.validate_processing_evidence()?;
         if matches!(commit.status, FrontierStatus::Pending | FrontierStatus::Leased)
             || commit.reason.as_deref().is_some_and(|reason| {
                 reason.len() > 128
@@ -1140,7 +1267,7 @@ impl Pg {
                 return Err(StoreError::AccessDenied("HEAD response tenant mismatch".into()));
             }
         }
-        let result = sqlx::query("SELECT state_version,head_response_receipt,route_id,principal,lease_owner,via,status::text AS status,fencing_token,lease_expires_at>clock_timestamp() AS live_lease FROM url_frontier WHERE frontier_id=$1 AND run_id=$2 FOR UPDATE")
+        let result = sqlx::query("SELECT attempts,state_version,head_response_receipt,route_id,principal,lease_owner,via,status::text AS status,fencing_token,lease_expires_at>clock_timestamp() AS live_lease FROM url_frontier WHERE frontier_id=$1 AND run_id=$2 FOR UPDATE")
             .bind(commit.request_id).bind(commit.run.0)
             .fetch_optional(&mut *tx).await.map_err(db)?.ok_or(StoreError::LeaseLost)?;
         if let Some(stored) = get::<Option<Vec<u8>>>(&result, "head_response_receipt")? {
@@ -1272,7 +1399,10 @@ impl Pg {
         }
         if let (Some(policy), Some(current)) = (
             &cfg.recrawl,
-            current.filter(|_| commit.status == FrontierStatus::Succeeded && observed_principal.is_none()),
+            current.filter(|_| {
+                matches!(commit.status, FrontierStatus::Succeeded | FrontierStatus::Failed)
+                    && observed_principal.is_none()
+            }),
         ) {
             let authority = sqlx::query("SELECT a.record_id,a.revoked_at,a.valid_from,a.valid_to,a.body_digest,r.authorization_body_digest FROM crawl_runs r JOIN authorization_records a ON a.record_id=r.authorization_record_id AND a.tenant_id=r.tenant_id WHERE r.run_id=$1 FOR SHARE OF a")
                 .bind(commit.run.0).fetch_optional(&mut *tx).await.map_err(db)?;
@@ -1291,7 +1421,10 @@ impl Pg {
             let deadline = run.started_at.unwrap_or(run.created_at)
                 + chrono::Duration::seconds(i64::from(run.config.limits.duration_seconds));
             if allowed {
-                if let Some(next) = policy.next_visit(&current.envelope, commit.request_id, now, deadline)? {
+                if let Some(decision) =
+                    policy.next_visit_after_commit(&current.envelope, &commit, now, deadline, None)?
+                {
+                    let next = decision.request;
                     let principal: String =
                         sqlx::query_scalar("SELECT principal FROM url_frontier WHERE frontier_id=$1")
                             .bind(commit.request_id)
@@ -1335,6 +1468,20 @@ impl Pg {
             &commit.outbox,
         )
         .await?;
+        if !commit.extensions.is_empty() {
+            let attempt = u32::try_from(get::<i16>(&result, "attempts")?)
+                .map_err(|_| StoreError::Conflict("invalid extension attempt".into()))?;
+            let key = ExtensionAttemptKey {
+                tenant,
+                run: commit.run,
+                request_id: commit.request_id,
+                fence: commit.fence,
+                attempt,
+            };
+            persist_extension_attempt(self, &mut tx, key, &commit.extensions).await?;
+        }
+        // Facts share the fenced result transaction and run before any commit field is moved.
+        crate::report_history::append_commit_facts_pg(&mut tx, &commit, tenant).await?;
         if let Some(page) = commit.page {
             // Duplicate results retain their own immutable capture, never replace another page.
             if !digest_outcome

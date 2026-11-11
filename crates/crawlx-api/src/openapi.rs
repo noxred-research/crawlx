@@ -66,6 +66,41 @@ const OPERATIONS: &[Operation] = &[
         "Effective reviewed extension pipeline and configuration digests", "crawls:read", "200",
     ),
     (
+        "get", "/v1/interactive-profiles/ui", "getInteractiveProfileUi",
+        "Data-free loopback-only profile control shell; controls require authentication and the exact shared local worker registry",
+        "", "200",
+    ),
+    (
+        "post", "/v1/crawls/{id}/interactive-profiles/{session}/start", "startInteractiveProfile",
+        "Start explicitly consented local profile control under exact generation and leaseFence; Origin and X-CrawlX-Interactive required",
+        "crawls:write", "200",
+    ),
+    (
+        "post", "/v1/crawls/{id}/interactive-profiles/{session}/status", "getInteractiveProfileStatus",
+        "Read local control status after live ownership and Origin checks; no browser or secret contents",
+        "crawls:write", "200",
+    ),
+    (
+        "post", "/v1/crawls/{id}/interactive-profiles/{session}/input", "inputInteractiveProfile",
+        "Propose bounded typed input through fresh target, safety, approval and journal admission; never raw control protocol",
+        "crawls:write", "200",
+    ),
+    (
+        "post", "/v1/crawls/{id}/interactive-profiles/{session}/finish", "finishInteractiveProfile",
+        "Commit encrypted structured storage and confirm owned browser cleanup before reporting success",
+        "crawls:write", "200",
+    ),
+    (
+        "post", "/v1/crawls/{id}/interactive-profiles/{session}/cancel", "cancelInteractiveProfile",
+        "Cancel exact local session scope without retaining profile bytes",
+        "crawls:write", "200",
+    ),
+    (
+        "post", "/v1/crawls/{id}/sessions/{session}/screencast", "subscribeInteractiveSuppression",
+        "Explicit capture/privacy consent returns bounded ephemeral SSE suppression statuses; unproven pixel privacy prevents capture",
+        "crawls:write", "200",
+    ),
+    (
         "get", "/v1/crawls/{id}/datasets", "listDatasets",
         "Declared run-local datasets", "crawls:read", "200",
     ),
@@ -401,7 +436,15 @@ const OPERATIONS: &[Operation] = &[
 
 fn operation(id: &str, summary: &str, scope: &str, success: &str, path: &str) -> Value {
     let mut params: Vec<Value> = Vec::new();
-    for name in ["id", "approvalId", "artifactId", "jobId", "monitorId", "checkId"] {
+    for name in [
+        "id",
+        "approvalId",
+        "artifactId",
+        "jobId",
+        "monitorId",
+        "checkId",
+        "session",
+    ] {
         if path.contains(&format!("{{{name}}}")) {
             params.push(json!({ "name": name, "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }));
         }

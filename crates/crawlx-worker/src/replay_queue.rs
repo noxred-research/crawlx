@@ -881,8 +881,21 @@ pub(crate) async fn run_session(
     spec: Value,
 ) -> SessionEnd {
     let producer = rc.stores.session_producer(rc.run, &lease);
-    crawlx_core::custody::with_producer(producer, Box::pin(run_session_scoped(rc, scheduler, lease, spec)))
-        .await
+    let authority = rc.stores.pg_secret_authority.clone();
+    let result = crawlx_core::custody::with_producer(
+        producer.clone(),
+        crate::custody_renewal::with_custody_renewal(authority, producer, async {
+            Ok::<_, WorkerError>(Box::pin(run_session_scoped(rc, scheduler, lease, spec)).await)
+        }),
+    )
+    .await;
+    match result {
+        Ok(end) => end,
+        Err(error) => SessionEnd {
+            terminal: TerminalReason::FatalError,
+            error: Some(error.to_string()),
+        },
+    }
 }
 
 async fn run_session_scoped(

@@ -36,6 +36,10 @@ struct LoopbackFixture {
 }
 
 impl LoopbackFixture {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "owned loopback resolver fixture receives raw HTTP requests and builds bounded authored responses"
+    )]
     async fn start(behavior: Behavior) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

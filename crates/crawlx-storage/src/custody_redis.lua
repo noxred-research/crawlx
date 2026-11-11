@@ -1,5 +1,5 @@
--- One hash is one bounded run incarnation. Lifetime changes require an explicit
--- durable renewal barrier. No plaintext fallback or implicit resurrection.
+-- One hash is one bounded run incarnation. Its initial absolute retention ceiling
+-- never moves; renewable use windows belong only to the durable authority.
 local key = KEYS[1]
 local action, incarnation = ARGV[1], ARGV[2]
 local expected, operation, value, deadline = ARGV[3], ARGV[4], ARGV[5], tonumber(ARGV[6])
@@ -12,7 +12,9 @@ if action == 'renew' or action == 'renew_prepare' then return denied() end
 if action == 'init' and redis.call('EXISTS', key) == 0 then
     local now = redis.call('TIME')
     local now_ms = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
-    if not deadline or deadline <= now_ms or deadline > now_ms + 86400000 then return denied() end
+    -- The durable authority approves the original policy ceiling. A relative
+    -- one-day cap here would reject explicitly authorized longer retention.
+    if not deadline or deadline ~= math.floor(deadline) or deadline <= now_ms or deadline > max_epoch then return denied() end
     if not ARGV[7] or #ARGV[7] ~= 36 then return denied() end
     redis.call('HSET', key, 'incarnation', incarnation, 'epoch', '1', 'count', '0', 'bytes', '0', 'operation', operation, 'value', '', 'salt', ARGV[7])
     redis.call('PEXPIREAT', key, deadline)

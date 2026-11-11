@@ -230,6 +230,11 @@ pub(crate) async fn render(
     ) {
         data.insert("outputs".to_owned(), outputs);
     }
+    if let (Some(model), Some(crawlx_core::scrape::ContentStrategySpecV1::ModelV1 { .. })) =
+        (doc.model_content.take(), &o.content_strategy)
+    {
+        data.insert("modelContent".to_owned(), model);
+    }
     if let Some(w) = &doc.warning {
         data.insert("warning".to_owned(), json!(w));
     }

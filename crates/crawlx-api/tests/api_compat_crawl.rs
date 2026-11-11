@@ -1100,6 +1100,10 @@ async fn fc_keys_authenticate_the_compat_routes_only_when_enabled() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn bootstrap_accepts_fc_keys_only_when_enabled() {
     let dir = tempfile::tempdir().unwrap();
     let fc = generate_compat_key();

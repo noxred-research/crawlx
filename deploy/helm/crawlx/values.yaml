@@ -59,7 +59,7 @@ config:
     per_origin_inflight: 1
     min_spacing_ms: 250
   egress:
-    mode: proxy # proxy | netns
+    mode: proxy # proxy | netns | netns-rootless
     # See docs/ops/runbooks.md#rb-10 (step 5). Hosts (with their subdomains), IPs and CIDRs no run may reach.
     operator_blocklist: []
     # Also available (unset here): `deployment_allowlist: [10.20.0.0/16]` bounds the private networks
@@ -126,7 +126,7 @@ artifactCustody:
   keyFileSecret: "" # key: artifact_key
   secretRedis:
     existingSecret: "" # key: url (mounted as secret_redis_url -> CRAWLX_SECRET_REDIS_URL_FILE)
-    ttlSeconds: 86400 # volatile per-run authority lifetime, 1..86400; no renewal; writes fail closed after expiry
+    ttlSeconds: 3600 # renewable fenced use window, 1..86400; original absolute secret TTL never extends
     managed:
       enabled: false # opt in to a chart-managed volatile Valkey; otherwise the operator supplies one
       image: valkey/valkey:8.1.3-alpine

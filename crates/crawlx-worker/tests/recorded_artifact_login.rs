@@ -690,10 +690,18 @@ async fn artifact_login_types_resolved_credentials_through_pinned_chromium() {
         extra_allow: vec!["127.0.0.1/32".parse().unwrap()],
         ..crawlx_worker::EgressConfig::default()
     };
-    let proxy =
-        crawlx_fetch::EgressProxy::serve(Arc::new(egress.policy_for(&crawl)), egress.resolver().unwrap())
-            .await
-            .unwrap();
+    let mut proxy_record = crawlx_policy::testkit::sample_record(
+        "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+        "2026-01-01T00:00:00Z".parse().unwrap(),
+        &[&url.origin().ascii_serialization()],
+    );
+    proxy_record.authorized_networks = vec!["127.0.0.1/32".parse().unwrap()];
+    let proxy = crawlx_fetch::EgressProxy::serve(
+        Arc::new(egress.policy_for_run(&crawl, Some(&proxy_record)).unwrap()),
+        egress.resolver().unwrap(),
+    )
+    .await
+    .unwrap();
     let mut launch = crawlx_browser::LaunchConfig::new();
     launch.executable = executable.into();
     launch.egress_proxy_port = Some(proxy.port());

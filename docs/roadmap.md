@@ -17,22 +17,22 @@ crates.io packages are not part of the initial distribution.
 
 ## Safety and policy
 
-- **Approvals end to end.** The kernel enforces single-use, parameter-bound approvals, but its approval
-  store is in-process and a decision made through the API route does not reach it, so `approval_required`
-  behaves as `deny`. Connect the two.
-- **Browser robots coverage.** Robots is checked for main-frame navigations but not for subresources and
-  embedded frames. Decide and document the boundary, or extend it.
-- **Network-namespace egress mode.** The configuration enum and a deployment example exist; the worker
-  does not implement the mode.
+- **Durable approvals.** API reviewer decisions bind the original parked action and current
+  session fence; kernel reclassification and live confirmation remain mandatory.
+- **Browser robots boundary.** Robots applies to main-frame document navigations and redirects,
+  not every subresource or embedded frame. Egress authorization and private-address checks
+  apply independently to mediated traffic. CONNECT cannot inspect encrypted URL paths.
+- **Network isolation deployment.** The worker supports verified namespace launch and fails
+  closed without its privileged helper. Host namespace/CNI deployment proof remains external.
 
 ## Data and secrets
 
 - **Retention operations.** `crawlx admin sweep-retention --every 5m` runs the built-in scheduled
   sweeper; monitor its failures and overdue artifacts ([operations](ops/README.md#scheduled-retention-sweeper)).
-- **Secret authority renewal.** The run-wide secret registry lives at most 24 hours with no mid-run renewal;
-  after expiry, durable content writes of that run fail closed.
-- **Retained browser profiles.** Unavailable while encrypted artifact custody is enabled; bring profiles
-  under custody.
+- **Secret authority renewal.** Fenced renewable use windows preserve the original absolute
+  retention ceiling; Redis secret TTL never extends.
+- **Retained browser profiles.** Structured encrypted cookie/web-storage custody is available
+  under explicit operator approval; arbitrary browser directories remain unavailable.
 - **Fallible HTML parsing.** Parse memory is bounded by a measured ceiling and a process budget rather
   than by fully fallible allocation.
 

@@ -5,6 +5,10 @@
 //! and, when `CRAWLX_TEST_DATABASE_URL` is set, again on PostgreSQL in its own schema.
 
 use axum::body::Body;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::Router;
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};

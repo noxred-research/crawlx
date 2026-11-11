@@ -12,6 +12,13 @@ use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+#[path = "pool_extensions.rs"]
+mod hooks;
+
+use crawlx_core::extensions::{ExtensionEventV1, ExtensionTerminalV1};
+use hooks::BrowserAttempt;
+pub use hooks::{PoolExtensions, BROWSER_EVENT_KIND};
+
 /// Pool sizing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PoolConfig {
@@ -156,6 +163,9 @@ pub type ContextWrapper =
 pub struct BrowserPool {
     inner: Arc<Inner>,
     wrap: Option<ContextWrapper>,
+    /// Typed lifecycle hooks of the run this handle belongs to; never shared across clones of
+    /// other runs, so the process table stays hook-free.
+    ext: Option<PoolExtensions>,
 }
 
 /// A leased context. Explicit confirmed cleanup returns capacity; dropping quarantines it.
@@ -174,11 +184,6 @@ impl PooledContext {
         (self.ctx, self.build, self.lease)
     }
 
-    pub(crate) fn with_profile(mut self, profile: crate::profile_lifecycle::ProfileRun) -> Self {
-        self.lease.profile = Some(profile);
-        self
-    }
-
     pub(crate) fn with_session_proxy(mut self, proxy: crawlx_fetch::EgressProxyHandle) -> Self {
         self.lease.proxy = Some(proxy);
         self
@@ -192,8 +197,8 @@ pub struct Lease {
     session: crawlx_core::SessionId,
     exclusive: bool,
     permit: Option<OwnedSemaphorePermit>,
-    profile: Option<crate::profile_lifecycle::ProfileRun>,
     proxy: Option<crawlx_fetch::EgressProxyHandle>,
+    attempt: Option<BrowserAttempt>,
 }
 
 impl Lease {
@@ -203,10 +208,38 @@ impl Lease {
     /// # Errors
     /// Returns cleanup/lease/profile generation errors without releasing uncertain capacity.
     pub async fn release(mut self, context_closed: bool) -> Result<(), crate::error::SessionError> {
+        let mut attempt = self.attempt.take();
+        if context_closed {
+            if let Some(attempt) = attempt.as_mut() {
+                // Only a confirmed closure is reported. A refusal cannot undo it and stays
+                // sticky in the terminal outcome. The hook has no pool reference.
+                attempt.observe(ExtensionEventV1::BrowserPageClose);
+            }
+        }
+        let result = self.release_resources(context_closed).await;
+        if let Some(mut attempt) = attempt {
+            match &result {
+                Ok(owned_process_closed) => {
+                    if *owned_process_closed {
+                        attempt.observe(ExtensionEventV1::BrowserClose);
+                    }
+                    attempt.finish(ExtensionTerminalV1::Completed).await;
+                }
+                Err(_) => {
+                    let outcome = attempt.failure_outcome();
+                    attempt.finish(outcome).await;
+                }
+            }
+        }
+        result.map(|_| ())
+    }
+
+    /// Returns whether a process this pool owns was shut down with confirmed death.
+    async fn release_resources(&mut self, context_closed: bool) -> Result<bool, crate::error::SessionError> {
         let backend = {
             let mut slots = self.pool.slots.lock();
             let Some(slot) = slots.iter_mut().find(|slot| slot.id == self.slot) else {
-                return Ok(());
+                return Ok(false);
             };
             let final_context = slot.contexts.available_permits().saturating_add(1) == slot.capacity;
             if self.pool.launcher.owns_backends() && (self.exclusive || (slot.draining && final_context)) {
@@ -216,19 +249,18 @@ impl Lease {
                 None
             }
         };
+        let mut process_closed = false;
         if let Some(backend) = backend {
             // No timeout around this future: cancellation must not drop an owned Child and
             // pretend resource death. The backend itself has bounded graceful/kill waits.
             backend.shutdown_confirmed().await?;
+            process_closed = true;
             self.pool.slots.lock().retain(|slot| slot.id != self.slot);
             self.permit.take();
             self.pool
                 .active_sessions
                 .lock()
                 .retain(|_, slot| *slot != self.slot);
-            if let Some(profile) = self.profile.take() {
-                profile.finish().await?;
-            }
         } else if context_closed {
             if self.exclusive {
                 self.pool.slots.lock().retain(|slot| slot.id != self.slot);
@@ -253,7 +285,7 @@ impl Lease {
             proxy.shutdown().await;
         }
         // Failed cleanup reaches Drop and keeps its permit in bounded quarantine.
-        Ok(())
+        Ok(process_closed)
     }
 }
 
@@ -339,6 +371,7 @@ impl BrowserPool {
                 cleanup: Mutex::new(tokio::task::JoinSet::new()),
             }),
             wrap: None,
+            ext: None,
         }
     }
 
@@ -364,6 +397,14 @@ impl BrowserPool {
     #[must_use]
     pub fn with_context_wrapper(mut self, wrap: ContextWrapper) -> Self {
         self.wrap = Some(wrap);
+        self
+    }
+
+    /// Bind this run's typed lifecycle hooks to a handle of the pool. The process table is
+    /// shared with the original; only acquisitions through the returned handle run hooks.
+    #[must_use]
+    pub fn with_extensions(mut self, ext: PoolExtensions) -> Self {
+        self.ext = Some(ext);
         self
     }
 
@@ -468,6 +509,34 @@ impl BrowserPool {
         config: ContextConfig,
         exclusive: bool,
     ) -> Result<PooledContext, BrowserError> {
+        let mut attempt = match &self.ext {
+            Some(ext) => ext.attempt(&config)?,
+            None => None,
+        };
+        let result = self.acquire_attempt(config, exclusive, &mut attempt).await;
+        let Some(mut attempt) = attempt else {
+            return result;
+        };
+        match result {
+            Ok(mut pooled) => {
+                attempt.flush().await;
+                pooled.lease.attempt = Some(attempt);
+                Ok(pooled)
+            }
+            Err(error) => {
+                let outcome = attempt.failure_outcome();
+                attempt.finish(outcome).await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn acquire_attempt(
+        &self,
+        config: ContextConfig,
+        exclusive: bool,
+        attempt: &mut Option<BrowserAttempt>,
+    ) -> Result<PooledContext, BrowserError> {
         if self.inner.active_sessions.lock().contains_key(&config.session_id) {
             return Err(BrowserError::Unsupported(
                 "session_unavailable: binding already has an actor".into(),
@@ -484,7 +553,7 @@ impl BrowserPool {
             egress_port: config.egress_proxy_port,
             persistent: config.browser_profile.clone(),
         };
-        let (slot_id, backend, permit, is_exclusive) = self.reserve_context(&key, exclusive).await?;
+        let (slot_id, backend, permit, is_exclusive) = self.reserve_context(&key, exclusive, attempt).await?;
         {
             let mut sessions = self.inner.active_sessions.lock();
             if sessions.contains_key(&config.session_id) {
@@ -505,9 +574,18 @@ impl BrowserPool {
             session: config.session_id,
             exclusive: is_exclusive,
             permit: Some(permit),
-            profile: None,
             proxy: None,
+            attempt: None,
         };
+        if let Some(attempt) = attempt.as_mut() {
+            if let Err(error) = attempt.dispatch(ExtensionEventV1::BrowserPageCreate) {
+                // No page was requested, so the reserved capacity is provably unused.
+                if let Err(cleanup) = lease.release(true).await {
+                    tracing::warn!(error = %cleanup, "refused context creation left quarantined capacity");
+                }
+                return Err(error);
+            }
+        }
         let created = match tokio::time::timeout(
             std::time::Duration::from_secs(30),
             backend.new_context(config.clone()),
@@ -571,9 +649,10 @@ impl BrowserPool {
         &self,
         key: &Key,
         exclusive: bool,
+        attempt: &mut Option<BrowserAttempt>,
     ) -> Result<(u64, Arc<dyn BrowserBackend>, OwnedSemaphorePermit, bool), BrowserError> {
         Ok(loop {
-            let (slot_id, backend, sem, is_exclusive) = self.pick(key, exclusive).await?;
+            let (slot_id, backend, sem, is_exclusive) = self.pick(key, exclusive, attempt).await?;
             let permit = sem
                 .acquire_owned()
                 .await
@@ -632,7 +711,35 @@ impl BrowserPool {
         }
     }
 
-    async fn pick(&self, key: &Key, exclusive: bool) -> Result<Picked, BrowserError> {
+    /// Forget an exclusive process that no session will ever use (hook refusal after launch).
+    /// An attached backend is never killed; an owned one is retired only after confirmed death.
+    async fn discard_unused_exclusive(&self, slot_id: u64) {
+        let backend = self
+            .inner
+            .slots
+            .lock()
+            .iter_mut()
+            .find(|slot| slot.id == slot_id)
+            .map(|slot| {
+                slot.draining = true;
+                Arc::clone(&slot.backend)
+            });
+        let Some(backend) = backend else {
+            return;
+        };
+        if self.inner.launcher.owns_backends() && backend.shutdown_confirmed().await.is_err() {
+            // Death is unproved: the slot stays draining and charged until retirement confirms it.
+            return;
+        }
+        self.inner.slots.lock().retain(|slot| slot.id != slot_id);
+    }
+
+    async fn pick(
+        &self,
+        key: &Key,
+        exclusive: bool,
+        attempt: &mut Option<BrowserAttempt>,
+    ) -> Result<Picked, BrowserError> {
         self.retire_expired().await;
         let find = |slots: &[Slot]| -> Option<Picked> {
             slots
@@ -686,6 +793,13 @@ impl BrowserPool {
                 "session_unavailable: browser capacity quarantined or incompatible".into(),
             ));
         }
+        // Launch hooks describe only a real process start; an attached backend is not launched.
+        let launching = self.inner.launcher.owns_backends();
+        if launching {
+            if let Some(attempt) = attempt.as_mut() {
+                attempt.dispatch(ExtensionEventV1::BrowserPreLaunch)?;
+            }
+        }
         self.inner
             .unconfirmed_launches
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -726,6 +840,17 @@ impl BrowserPool {
         self.inner
             .unconfirmed_launches
             .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if launching {
+            if let Some(attempt) = attempt.as_mut() {
+                if let Err(error) = attempt.dispatch(ExtensionEventV1::BrowserPostLaunch) {
+                    // The process is real and already registered; a shared one stays usable.
+                    if exclusive {
+                        self.discard_unused_exclusive(id).await;
+                    }
+                    return Err(error);
+                }
+            }
+        }
         Ok((id, backend, contexts, exclusive))
     }
 }
@@ -978,5 +1103,261 @@ mod tests {
         ));
         close(first).await;
         close(pool.acquire(config, false).await.unwrap()).await;
+    }
+
+    // ---- typed browser lifecycle hooks -------------------------------------------------
+
+    use crawlx_core::extensions::{
+        ExtensionConfigV1, ExtensionPipelineV1, ExtensionSpecV1, ExtensionStageV1,
+    };
+    use crawlx_core::repo::RunEvent;
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<serde_json::Value>>);
+
+    #[async_trait]
+    impl crawlx_core::repo::EventRepo for Recorder {
+        async fn append(
+            &self,
+            _run: crawlx_core::CrawlRunId,
+            kind: &str,
+            payload: serde_json::Value,
+        ) -> Result<u64, crawlx_core::StoreError> {
+            assert_eq!(kind, BROWSER_EVENT_KIND);
+            let mut events = self.0.lock();
+            events.push(payload);
+            Ok(events.len() as u64)
+        }
+
+        async fn list_after(
+            &self,
+            _run: crawlx_core::CrawlRunId,
+            _after: u64,
+            _limit: u32,
+        ) -> Result<Vec<RunEvent>, crawlx_core::StoreError> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl Recorder {
+        fn stages(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .iter()
+                .map(|payload| payload["receipt"]["event"]["kind"].as_str().unwrap().to_owned())
+                .collect()
+        }
+
+        fn terminal(&self) -> Option<serde_json::Value> {
+            self.0
+                .lock()
+                .iter()
+                .find(|payload| payload["receipt"]["event"]["kind"] == "terminal")
+                .map(|payload| payload["receipt"]["event"]["facts"].clone())
+        }
+    }
+
+    fn hooked(
+        pipeline: &ExtensionPipelineV1,
+        pool: BrowserPool,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> (BrowserPool, Arc<Recorder>) {
+        let events = Arc::new(Recorder::default());
+        let ext =
+            PoolExtensions::new(pipeline, events.clone(), crawlx_core::CrawlRunId::new(), cancel).unwrap();
+        (pool.with_extensions(ext), events)
+    }
+
+    fn pipeline(entries: Vec<ExtensionSpecV1>) -> ExtensionPipelineV1 {
+        let mut pipeline = ExtensionPipelineV1::default();
+        pipeline.extensions = entries;
+        pipeline
+    }
+
+    fn annotate(stage: ExtensionStageV1) -> ExtensionSpecV1 {
+        ExtensionSpecV1::new(
+            ExtensionConfigV1::Annotate {
+                stage,
+                code: "seen".into(),
+            },
+            0,
+        )
+    }
+
+    fn owned_pool() -> (BrowserPool, Arc<Mutex<Vec<Arc<RetiringBackend>>>>) {
+        let launched = Arc::new(Mutex::new(Vec::new()));
+        let pool = BrowserPool::build(
+            Box::new(RetiringLauncher(Arc::clone(&launched))),
+            PoolConfig {
+                max_browsers: 2,
+                contexts_per_browser: 2,
+            },
+        );
+        (pool, launched)
+    }
+
+    #[tokio::test]
+    async fn owned_launch_page_and_close_hooks_run_in_real_effect_order() {
+        let (pool, _) = owned_pool();
+        let (pool, events) = hooked(
+            &pipeline(vec![annotate(ExtensionStageV1::BrowserPreLaunch)]),
+            pool,
+            Default::default(),
+        );
+        let pooled = pool.acquire(cfg(), true).await.unwrap();
+        assert_eq!(
+            events.stages(),
+            [
+                "configure",
+                "browser_pre_launch",
+                "browser_post_launch",
+                "browser_page_create"
+            ]
+        );
+        close(pooled).await;
+        assert_eq!(
+            events.stages(),
+            [
+                "configure",
+                "browser_pre_launch",
+                "browser_post_launch",
+                "browser_page_create",
+                "browser_page_close",
+                "browser_close",
+                "terminal",
+                "checkpoint",
+                "close"
+            ]
+        );
+        assert_eq!(events.terminal().unwrap()["kind"], "completed");
+        assert_eq!(
+            pool.browsers(),
+            0,
+            "owner close happened once, with no pool recursion"
+        );
+    }
+
+    #[tokio::test]
+    async fn attached_or_reused_backend_is_never_reported_as_a_launch_or_owner_close() {
+        let (pool, events) = hooked(
+            &pipeline(vec![annotate(ExtensionStageV1::BrowserPageCreate)]),
+            BrowserPool::with_backend(fake()),
+            Default::default(),
+        );
+        close(pool.acquire(cfg(), false).await.unwrap()).await;
+        let stages = events.stages();
+        assert!(stages.contains(&"browser_page_create".to_owned()));
+        assert!(stages.contains(&"browser_page_close".to_owned()));
+        assert!(!stages.iter().any(|stage| matches!(
+            stage.as_str(),
+            "browser_pre_launch" | "browser_post_launch" | "browser_close"
+        )));
+    }
+
+    #[tokio::test]
+    async fn pre_launch_rejection_stops_the_launch_and_leaks_no_capacity() {
+        let (pool, launched) = owned_pool();
+        let denial = ExtensionSpecV1::new(
+            ExtensionConfigV1::RejectStage {
+                stage: ExtensionStageV1::BrowserPreLaunch,
+            },
+            0,
+        );
+        let (pool, events) = hooked(&pipeline(vec![denial]), pool, Default::default());
+        assert!(pool.acquire(cfg(), false).await.is_err());
+        assert!(launched.lock().is_empty(), "a refused hook launches nothing");
+        assert_eq!(pool.launches(), 0);
+        assert_eq!(pool.browsers(), 0);
+        assert_eq!(pool.quarantined_contexts(), 0);
+        assert!(!events.stages().contains(&"browser_post_launch".to_owned()));
+        assert_eq!(events.terminal().unwrap()["kind"], "skipped");
+    }
+
+    #[tokio::test]
+    async fn page_create_failure_retires_the_unused_owned_process_and_releases_the_permit() {
+        let (pool, launched) = owned_pool();
+        let failure = ExtensionSpecV1::new(
+            ExtensionConfigV1::FailStage {
+                stage: ExtensionStageV1::BrowserPageCreate,
+            },
+            0,
+        );
+        let (pool, events) = hooked(&pipeline(vec![failure]), pool, Default::default());
+        assert!(pool.acquire(cfg(), true).await.is_err());
+        assert_eq!(launched.lock().len(), 1);
+        assert!(launched.lock()[0]
+            .stopped
+            .load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            launched.lock()[0].backend.contexts_created(),
+            0,
+            "no page was requested"
+        );
+        assert_eq!(pool.browsers(), 0);
+        assert_eq!(pool.quarantined_contexts(), 0);
+        assert_eq!(events.terminal().unwrap()["kind"], "failed");
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_launch_is_a_cancelled_skip_without_effects() {
+        let (pool, launched) = owned_pool();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let (pool, events) = hooked(
+            &pipeline(vec![annotate(ExtensionStageV1::BrowserPreLaunch)]),
+            pool,
+            cancel.clone(),
+        );
+        cancel.cancel();
+        assert!(pool.acquire(cfg(), false).await.is_err());
+        assert!(launched.lock().is_empty());
+        assert_eq!(pool.quarantined_contexts(), 0);
+        let terminal = events.terminal().unwrap();
+        assert_eq!(terminal["kind"], "skipped");
+        assert_eq!(terminal["reason"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn failing_browser_close_hook_cannot_block_or_recurse_into_pool_close() {
+        let (pool, _) = owned_pool();
+        let failure = ExtensionSpecV1::new(
+            ExtensionConfigV1::FailStage {
+                stage: ExtensionStageV1::BrowserClose,
+            },
+            0,
+        );
+        let (pool, events) = hooked(&pipeline(vec![failure]), pool, Default::default());
+        let pooled = pool.acquire(cfg(), true).await.unwrap();
+        let (context, _, lease) = pooled.into_parts();
+        context.close().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), lease.release(true))
+            .await
+            .expect("hook cannot re-enter the pool")
+            .unwrap();
+        assert_eq!(
+            pool.browsers(),
+            0,
+            "the real close effect is not undone by a hook"
+        );
+        assert_eq!(events.terminal().unwrap()["kind"], "failed");
+        close(pool.acquire(cfg(), false).await.unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn dropped_lease_seals_receipts_as_cancelled_and_keeps_capacity_quarantined() {
+        let (pool, events) = hooked(
+            &pipeline(vec![annotate(ExtensionStageV1::BrowserPageCreate)]),
+            BrowserPool::with_backend(fake()),
+            Default::default(),
+        );
+        drop(pool.acquire(cfg(), false).await.unwrap());
+        assert_eq!(pool.quarantined_contexts(), 1);
+        for _ in 0..100 {
+            if events.terminal().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let terminal = events.terminal().expect("drop must persist the sealed trail");
+        assert_eq!(terminal["reason"], "cancelled");
     }
 }

@@ -42,6 +42,10 @@ fn contains(bytes: &[u8], needle: &[u8]) -> bool {
     bytes.windows(needle.len()).any(|window| window == needle)
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture constructs only the reviewed checkpoint-custody SDK adapter"
+)]
 fn kms(fixture: &LoopbackKms) -> KmsCheckpointKeys {
     let http = aws_smithy_http_client::Builder::new()
         .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))

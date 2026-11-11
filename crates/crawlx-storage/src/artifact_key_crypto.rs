@@ -22,6 +22,10 @@ use crate::{
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_sdk_kms::config::endpoint::{Endpoint, EndpointFuture, Params, ResolveEndpoint};
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed key-custody adapter owns the raw client and redacts all provider failures"
+)]
 use aws_sdk_kms::{primitives::Blob, types::DataKeySpec, Client};
 use aws_smithy_http_client::tls;
 use ring::{
@@ -151,6 +155,10 @@ pub enum ArtifactKeyError {
 /// Durable symmetric cloud KMS custody using the approved rustls+ring connector.
 #[non_exhaustive]
 pub struct KmsArtifactKeys {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "private raw client is confined to the reviewed key-custody adapter"
+    )]
     client: Client,
     key_id: String,
 }
@@ -172,6 +180,10 @@ impl KmsArtifactKeys {
     ///
     /// # Errors
     /// Rejects aliases, bare IDs, malformed key ARNs and unsupported partitions.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "construct the private key-custody client only at this reviewed adapter boundary"
+    )]
     pub async fn from_environment(key_id: String) -> Result<Self, ArtifactKeyError> {
         let endpoint = trusted_endpoint(&key_id)?;
         let http = aws_smithy_http_client::Builder::new()

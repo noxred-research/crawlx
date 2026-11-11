@@ -46,6 +46,10 @@ impl std::fmt::Debug for ProtocolResource {
 }
 
 /// Closed protocol failure, with no secret-bearing response or URLs in messages.
+#[allow(
+    clippy::disallowed_types,
+    reason = "typed protocol failures wrap the raw reqwest error as their source"
+)]
 #[derive(Debug, thiserror::Error)]
 pub enum ProtocolError {
     /// Missing approved capability or incompatible request.

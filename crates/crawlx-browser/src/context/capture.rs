@@ -46,13 +46,14 @@ pub(super) async fn retain(
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         let response = ctl
             .client
-            .call(
+            .call_budgeted(
                 "Network.getResponseBody",
                 Some(session),
                 json!({ "requestId": request_id }),
             )
             .await
             .map_err(|_| "unavailable")?;
+        let response = response.value();
         let body = response
             .get("body")
             .and_then(serde_json::Value::as_str)
@@ -139,7 +140,7 @@ pub(super) async fn retain_prefix(
         let mut prefix = Vec::with_capacity(TEXT_PREFIX_BYTES + 2);
         let streamed = ctl
             .client
-            .call(
+            .call_budgeted(
                 "Network.streamResourceContent",
                 Some(session),
                 json!({ "requestId": request_id }),
@@ -147,6 +148,7 @@ pub(super) async fn retain_prefix(
             .await;
         match streamed {
             Ok(response) => {
+                let response = response.value();
                 let buffered = response
                     .get("bufferedData")
                     .and_then(serde_json::Value::as_str)
@@ -191,13 +193,14 @@ pub(super) async fn retain_prefix(
                 // Chromium's resource buffer still bounds this fallback to 1 MiB.
                 let response = ctl
                     .client
-                    .call(
+                    .call_budgeted(
                         "Network.getResponseBody",
                         Some(session),
                         json!({ "requestId": request_id }),
                     )
                     .await
                     .map_err(|_| "unavailable")?;
+                let response = response.value();
                 let body = response
                     .get("body")
                     .and_then(serde_json::Value::as_str)

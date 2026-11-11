@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "fixture_provenance": "authored_local_snapshot",
+  "source_revision_role": "synthetic_fixture_revision_not_an_external_runtime_pin",
+  "digest_domain": "crawlx/migration-contract-fixture/v1",
+  "pins": {
+    "contract.json": "daea264c783724e8a1596c9635d5e687dde3dcb2371c6fec548f96f03d64a719",
+    "golden.json": "8b26ae051699b5b6ea3fe1765e952060b4d387c5866880bc1b5dd683298ae5e4",
+    "native.json": "bf1387bc7c85909417267b97f82e97fc6da1c133c690b20a10cacf1de787f704",
+    "items.json": "addd3702d4e2d5bcc39d1bdf2539f3e787620e219a7b7e45e6ba47fb4111feb0"
+  },
+  "command": "crawlx-differential contract bench/differential/migration/contract.json bench/differential/migration/golden.json bench/differential/migration/native.json bench/differential/migration/items.json daea264c783724e8a1596c9635d5e687dde3dcb2371c6fec548f96f03d64a719 8b26ae051699b5b6ea3fe1765e952060b4d387c5866880bc1b5dd683298ae5e4",
+  "external_runtime_export": "external_required",
+  "external_runtime_performance": "external_required",
+  "local_metrics": ["evaluation_micros", "pages", "items", "schema_failures", "differential_findings"],
+  "local_thresholds": {
+    "url_set": "exact_with_resource_query",
+    "item_count": "inclusive_contract_interval",
+    "schema_failures": 0,
+    "differential_findings": 0,
+    "evaluation_micros": "measured_against_contract_ceiling_not_a_runtime_benchmark"
+  },
+  "limits": {"input_bytes": 262144, "json_depth": 24, "structural_nodes": 16384, "pages": 128, "items": 1024},
+  "execution": "offline_data_only_no_network_no_source_execution"
+}

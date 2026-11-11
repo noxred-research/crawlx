@@ -682,6 +682,109 @@ pub(super) struct WordChunkEnvelope {
     ranges: Vec<WordChunkRange>,
 }
 
+/// Which content operation a `modelV1` content strategy performs.
+#[derive(JsonSchema)]
+pub(super) enum ContentStrategyTarget {
+    /// Normalize tables into `modelContent.tables`; the native markdown is kept.
+    #[serde(rename = "tables")]
+    Tables,
+    /// Replace the markdown with model-selected page content (also in `modelContent.markdown`).
+    #[serde(rename = "content")]
+    Content,
+    /// Both: model-selected content and normalized tables.
+    #[serde(rename = "tablesAndContent")]
+    TablesAndContent,
+}
+
+/// Opt-in versioned content strategy. Omission is equivalent to `nativeV1`. An unknown strategy
+/// version, an unknown field or a malformed value is a `400`; none is ignored. `modelV1` sends the
+/// page content to the configured external model provider, so it needs explicit consent, cannot be
+/// combined with `onlyCleanContent` or the `rawBase64` format, and is refused with zero data
+/// retention (`unsupported_with_zdr`) before any provider call. A model failure fails the page
+/// (`llm_failed` / `llm_not_configured`); it never falls back to the native result.
+#[derive(JsonSchema)]
+#[serde(tag = "strategy", rename_all = "camelCase", deny_unknown_fields)]
+pub(super) enum ContentStrategy {
+    /// The deterministic native parser; no model provider is involved.
+    NativeV1 {},
+    /// One bounded model call over the page content.
+    ModelV1 {
+        /// The requested content operation.
+        target: ContentStrategyTarget,
+        /// Provider completion-token ceiling.
+        #[serde(rename = "maxOutputTokens")]
+        #[schemars(range(min = 1, max = 65536))]
+        max_output_tokens: u32,
+        /// Decoded provider response-byte ceiling.
+        #[serde(rename = "maxResponseBytes")]
+        #[schemars(range(min = 1, max = 8388608))]
+        max_response_bytes: u64,
+        /// Must be `true`: explicit consent to external model processing of the page content.
+        #[serde(rename = "externalProcessingConsent")]
+        #[schemars(extend("const" = true))]
+        external_processing_consent: bool,
+    },
+}
+
+/// A table the model could not resolve confidently: no invented headers or rows.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ModelAmbiguousTable {
+    /// Always empty.
+    #[schemars(length(max = 0))]
+    headers: Vec<String>,
+    /// Always empty.
+    #[schemars(length(max = 0))]
+    rows: Vec<Vec<String>>,
+    /// Always `true`.
+    #[schemars(extend("const" = true))]
+    ambiguous: bool,
+}
+
+/// A rectangular model table: every row has exactly as many cells as there are headers.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ModelResolvedTable {
+    /// Column labels in source order (1 to 32).
+    #[schemars(length(min = 1, max = 32), inner(length(max = 4096)))]
+    headers: Vec<String>,
+    /// Body rows in source order (at most 128 rows of at most 32 cells).
+    #[schemars(length(max = 128), inner(length(max = 32), inner(length(max = 4096))))]
+    rows: Vec<Vec<String>>,
+    /// Always `false`.
+    #[schemars(extend("const" = false))]
+    ambiguous: bool,
+}
+
+/// One normalized model table.
+#[derive(JsonSchema)]
+#[serde(untagged)]
+pub(super) enum ModelTable {
+    /// Resolved, rectangular.
+    Resolved(ModelResolvedTable),
+    /// Ambiguous, empty.
+    Ambiguous(ModelAmbiguousTable),
+}
+
+/// `modelContent`: GENERATED content of the `modelV1` content strategy, after schema checks and
+/// privacy projection. It is untrusted model output, not native source evidence: native `outputs`,
+/// article envelopes, source ranges and discovery links never derive from it, and it grants no
+/// navigation or action authority. The markdown and the combined cell text together are at most
+/// 262144 UTF-8 bytes.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ModelContent {
+    /// Always `1`.
+    #[schemars(extend("const" = 1))]
+    version: u16,
+    /// Selected page content; empty for the `tables` target.
+    #[schemars(length(max = 262144))]
+    markdown: String,
+    /// Normalized tables (at most 16); empty for the `content` target.
+    #[schemars(length(max = 16))]
+    tables: Vec<ModelTable>,
+}
+
 /// The scrape options of a scrape request, of `scrapeOptions` in crawl, search, extract and monitor
 /// requests, and of a batch request. Keys outside this list are ignored and reported as
 /// `unsupported_option` in the response `warnings`.
@@ -761,6 +864,9 @@ pub(super) struct ScrapeOptions {
     /// LLM cleanup pass that drops page chrome from the Markdown (not with zero data retention).
     #[serde(rename = "onlyCleanContent")]
     only_clean_content: Option<bool>,
+    /// Opt-in versioned content strategy (`nativeV1` default, or `modelV1`).
+    #[serde(rename = "contentStrategy")]
+    content_strategy: Option<ContentStrategy>,
     /// Scan the content for prompt injection before an LLM format runs.
     #[serde(rename = "checkPromptInjection")]
     check_prompt_injection: Option<bool>,

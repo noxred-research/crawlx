@@ -28,10 +28,19 @@ fn resolver() -> StaticResolver {
         .with("mixed.test", [IpAddr::from([93, 184, 216, 34]), LOOPBACK])
 }
 
-async fn start_proxy_with_capture(allow_private: bool) -> (EgressProxyHandle, mpsc::Receiver<ProxyFlow>) {
+fn fixture_policy(allow_private: bool, ports: &[u16]) -> EgressPolicy {
+    let mut policy = EgressPolicy::new(allow_private);
+    policy.extra_ports.extend_from_slice(ports);
+    policy
+}
+
+async fn start_proxy_with_capture(
+    allow_private: bool,
+    ports: &[u16],
+) -> (EgressProxyHandle, mpsc::Receiver<ProxyFlow>) {
     let (tx, rx) = mpsc::channel(64);
     let proxy = EgressProxy::serve_with_capture(
-        Arc::new(EgressPolicy::new(allow_private)),
+        Arc::new(fixture_policy(allow_private, ports)),
         Arc::new(resolver()),
         tx,
     )
@@ -47,15 +56,19 @@ async fn next_flow(rx: &mut mpsc::Receiver<ProxyFlow>) -> ProxyFlow {
         .expect("capture channel open")
 }
 
-async fn start_proxy(allow_private: bool) -> EgressProxyHandle {
+async fn start_proxy(allow_private: bool, ports: &[u16]) -> EgressProxyHandle {
     let resolver = StaticResolver::new()
         .with("pub.test", [LOOPBACK])
         .with("mixed.test", [IpAddr::from([93, 184, 216, 34]), LOOPBACK]);
-    EgressProxy::serve(Arc::new(EgressPolicy::new(allow_private)), Arc::new(resolver))
+    EgressProxy::serve(Arc::new(fixture_policy(allow_private, ports)), Arc::new(resolver))
         .await
         .unwrap()
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: a raw reqwest client plays the browser against the egress proxy and never crosses a typed fetch boundary"
+)]
 fn proxied_client(proxy: &EgressProxyHandle) -> reqwest::Client {
     reqwest::Client::builder()
         .proxy(reqwest::Proxy::http(format!("http://127.0.0.1:{}", proxy.port())).unwrap())
@@ -95,7 +108,7 @@ async fn forwards_http_to_pinned_address_when_private_allowed() {
         .respond_with(ResponseTemplate::new(201))
         .mount(&server)
         .await;
-    let proxy = start_proxy(true).await;
+    let proxy = start_proxy(true, &[server.address().port()]).await;
     let client = proxied_client(&proxy);
     let port = server.address().port();
 
@@ -134,7 +147,7 @@ async fn refuses_http_to_private_address_by_default() {
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
         .await;
-    let proxy = start_proxy(false).await;
+    let proxy = start_proxy(false, &[server.address().port()]).await;
     let client = proxied_client(&proxy);
     let port = server.address().port();
 
@@ -167,7 +180,7 @@ async fn refuses_http_to_private_address_by_default() {
 
 #[tokio::test]
 async fn mixed_answer_is_denied_for_the_whole_name() {
-    let proxy = start_proxy(false).await;
+    let proxy = start_proxy(false, &[]).await;
     let (head, _s) = raw_head(
         &proxy,
         "CONNECT mixed.test:443 HTTP/1.1\r\nHost: mixed.test:443\r\n\r\n",
@@ -179,7 +192,8 @@ async fn mixed_answer_is_denied_for_the_whole_name() {
 
 #[tokio::test]
 async fn connect_to_denied_hosts_returns_403() {
-    let proxy = start_proxy(false).await;
+    // 8080 is listed so the unlisted-port rule does not pre-empt the hostname rule for `localhost`.
+    let proxy = start_proxy(false, &[8080]).await;
     let denials = Metrics::global().counter(names::EGRESS_DENIALS);
     let metadata = [("plane", "browser"), ("reason", "metadata")];
     let metadata_before = denials.get(&metadata);
@@ -221,7 +235,7 @@ async fn connect_tunnels_bytes_to_pinned_address_when_allowed() {
         .respond_with(ResponseTemplate::new(200).set_body_string("tunnelled"))
         .mount(&server)
         .await;
-    let proxy = start_proxy(true).await;
+    let proxy = start_proxy(true, &[server.address().port()]).await;
     let port = server.address().port();
     let (head, mut s) = raw_head(
         &proxy,
@@ -244,7 +258,7 @@ async fn connect_tunnels_bytes_to_pinned_address_when_allowed() {
 
 #[tokio::test]
 async fn unresolvable_target_is_bad_gateway_not_a_denial() {
-    let proxy = start_proxy(true).await;
+    let proxy = start_proxy(true, &[]).await;
     let (head, _s) = raw_head(
         &proxy,
         "CONNECT nowhere.test:443 HTTP/1.1\r\nHost: nowhere.test:443\r\n\r\n",
@@ -256,7 +270,7 @@ async fn unresolvable_target_is_bad_gateway_not_a_denial() {
 
 #[tokio::test]
 async fn origin_form_and_https_absolute_requests_are_rejected() {
-    let proxy = start_proxy(true).await;
+    let proxy = start_proxy(true, &[]).await;
     let (head, _s) = raw_head(&proxy, "GET /plain HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").await;
     assert!(head.starts_with("HTTP/1.1 400"), "{head}");
     let (head, _s) = raw_head(&proxy, "GET https://pub.test/ HTTP/1.1\r\nHost: pub.test\r\n\r\n").await;
@@ -265,7 +279,7 @@ async fn origin_form_and_https_absolute_requests_are_rejected() {
 
 #[tokio::test]
 async fn binds_loopback_only_and_stops_on_shutdown() {
-    let proxy = start_proxy(false).await;
+    let proxy = start_proxy(false, &[]).await;
     assert!(proxy.addr().ip().is_loopback());
     assert_ne!(proxy.port(), 0);
     let port = proxy.port();
@@ -296,7 +310,7 @@ async fn capture_reports_one_flow_per_forwarded_request_and_per_tunnel() {
         .respond_with(ResponseTemplate::new(200).set_body_string("tunnelled"))
         .mount(&server)
         .await;
-    let (proxy, mut rx) = start_proxy_with_capture(true).await;
+    let (proxy, mut rx) = start_proxy_with_capture(true, &[server.address().port()]).await;
     let client = proxied_client(&proxy);
     let port = server.address().port();
 
@@ -387,9 +401,13 @@ async fn full_capture_channel_drops_flows_and_counts_them_without_blocking() {
         .mount(&server)
         .await;
     let (tx, _rx) = mpsc::channel(1);
-    let proxy = EgressProxy::serve_with_capture(Arc::new(EgressPolicy::new(true)), Arc::new(resolver()), tx)
-        .await
-        .unwrap();
+    let proxy = EgressProxy::serve_with_capture(
+        Arc::new(fixture_policy(true, &[server.address().port()])),
+        Arc::new(resolver()),
+        tx,
+    )
+    .await
+    .unwrap();
     let client = proxied_client(&proxy);
     let port = server.address().port();
     for i in 0..3 {
@@ -406,6 +424,10 @@ async fn full_capture_channel_drops_flows_and_counts_them_without_blocking() {
 }
 
 /// Prior-knowledge HTTP/2 origin on loopback; returns its port.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: the in-process H2 origin serves raw hyper/http messages and never crosses a typed fetch boundary"
+)]
 async fn h2_origin() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -430,9 +452,13 @@ async fn h2_origin() -> u16 {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary: the raw hyper/http H2 client drives the egress proxy and never crosses a typed fetch boundary"
+)]
 async fn h2_client_is_forwarded_to_an_h2_origin_and_the_flow_records_h2() {
     let origin = h2_origin().await;
-    let (proxy, mut rx) = start_proxy_with_capture(true).await;
+    let (proxy, mut rx) = start_proxy_with_capture(true, &[origin]).await;
     let stream = TcpStream::connect(("127.0.0.1", proxy.port())).await.unwrap();
     let (mut sender, conn) = hyper::client::conn::http2::handshake::<_, _, Full<Bytes>>(
         TokioExecutor::new(),
