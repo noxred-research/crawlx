@@ -572,7 +572,12 @@ impl Extractor {
                     .as_ref()
                     .and_then(|policy| policy.item_loader.as_ref()),
             ) {
-                item_loader::project_outcome(outcome, spec, project)?;
+                // The extractor's projection answers `None` for an unchanged string; the item
+                // projector reads `None` as "withhold this value", so unchanged text is passed
+                // through explicitly.
+                item_loader::project_outcome(outcome, spec, &|value| {
+                    Some(project(value).unwrap_or_else(|| value.to_owned()))
+                })?;
             }
         }
         if let Some(policy) = &opts.content {

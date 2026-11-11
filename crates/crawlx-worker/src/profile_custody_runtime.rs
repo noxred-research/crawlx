@@ -25,7 +25,6 @@ use crawlx_core::session_binding::SessionIdentityV1;
 use crawlx_core::{BrowserError, SecretOr, SessionId, Timestamp};
 use crawlx_storage::artifact_key_crypto::ArtifactKeys;
 use crawlx_storage::custody::profiles::{CustodyProfileInspection, CustodyProfiles};
-use crawlx_storage::custody::PgSecretAuthority;
 use crawlx_storage::profiles::{ProfileScopeV1, SupportedStorageState};
 use crawlx_storage::SessionLease;
 use serde_json::Value;
@@ -435,7 +434,7 @@ impl ProfileStart {
 /// Authorities and facts of one retained-profile session.
 pub(crate) struct ProfileCustodyInputs {
     /// The run's shared secret authority.
-    pub(crate) authority: Arc<PgSecretAuthority>,
+    pub(crate) authority: Arc<crate::durable::DurableAuthority>,
     /// Durable artifact key provider.
     pub(crate) keys: Arc<dyn ArtifactKeys>,
     /// The session's scheduler lease.
@@ -491,7 +490,7 @@ impl ProfileCustodyRuntime {
     ///
     /// # Errors
     /// `profile_unavailable` unless the run requests a retained profile, is not ZDR, has operator
-    /// permission, PostgreSQL custody with durable keys, and runs under its producer lease.
+    /// permission, database custody with durable keys, and runs under its producer lease.
     pub(crate) async fn from_run(rc: &RunContext, lease: &SessionLease) -> Result<Self, WorkerError> {
         let requested = rc
             .crawl
@@ -510,16 +509,21 @@ impl ProfileCustodyRuntime {
             return Err(unavailable("durable profiles forbidden under zdr"));
         }
         let (Some(authority), Some(keys)) = (
-            rc.stores.pg_secret_authority.clone(),
+            rc.stores.secret_authority.clone(),
             rc.stores.artifact_keys.clone(),
         ) else {
-            return Err(unavailable("custody-enabled PostgreSQL required"));
+            return Err(unavailable("custody-enabled database required"));
         };
         let custody = crawlx_core::custody::current_producer()
             .ok_or_else(|| unavailable("session producer lease required"))?;
         let run = rc.stores.runs.get_metadata(rc.run).await?;
         let retention_end = run.created_at + chrono::Duration::days(i64::from(rc.crawl.retention.days));
         let ttl = i64::try_from(policy.max_ttl.as_secs()).map_err(|_| unavailable("profile TTL overflow"))?;
+        // The catalog stores whole microseconds; the authenticated header must carry exactly the
+        // value the row will read back, or no later restore can match it.
+        let fresh_expiry = (rc.clock.now() + chrono::Duration::seconds(ttl)).min(retention_end);
+        let fresh_expiry = Timestamp::from_timestamp_micros(fresh_expiry.timestamp_micros())
+            .ok_or_else(|| unavailable("profile expiry out of range"))?;
         Self::new(ProfileCustodyInputs {
             authority,
             keys,
@@ -529,7 +533,7 @@ impl ProfileCustodyRuntime {
             name: requested.name.clone(),
             origins: BTreeSet::from([rc.seed_origin()]),
             save_changes: requested.save_changes,
-            fresh_expiry: (rc.clock.now() + chrono::Duration::seconds(ttl)).min(retention_end),
+            fresh_expiry,
         })
     }
 
@@ -575,9 +579,11 @@ impl ProfileCustodyRuntime {
         generation: u64,
     ) -> Result<ProfileStart, WorkerError> {
         let scope = self.scope(identity)?;
-        let acquired = CustodyProfiles::new(self.inputs.authority.as_ref(), self.inputs.keys.as_ref())
-            .acquire(&self.inputs.lease, &self.inputs.custody, &scope, generation, true)
-            .await?;
+        let acquired = crate::on_authority!(self.inputs.authority.as_ref(), authority => {
+            CustodyProfiles::new(authority, self.inputs.keys.as_ref())
+                .acquire(&self.inputs.lease, &self.inputs.custody, &scope, generation, true)
+                .await?
+        });
         let Some((inspection, state)) = acquired else {
             if generation != 0 {
                 return Err(unavailable("requested profile generation unavailable"));
@@ -626,19 +632,21 @@ impl ProfileCustodyRuntime {
             ));
         }
         let expires_at = start.expires_at().unwrap_or(self.inputs.fresh_expiry);
-        CustodyProfiles::new(self.inputs.authority.as_ref(), self.inputs.keys.as_ref())
-            .commit(
-                &self.inputs.lease,
-                &self.inputs.custody,
-                &start.scope,
-                start.generation,
-                expires_at,
-                true,
-                storage,
-            )
-            .await
-            .map(Some)
-            .map_err(WorkerError::from)
+        crate::on_authority!(self.inputs.authority.as_ref(), authority => {
+            CustodyProfiles::new(authority, self.inputs.keys.as_ref())
+                .commit(
+                    &self.inputs.lease,
+                    &self.inputs.custody,
+                    &start.scope,
+                    start.generation,
+                    expires_at,
+                    true,
+                    storage,
+                )
+                .await
+                .map(Some)
+                .map_err(WorkerError::from)
+        })
     }
 }
 

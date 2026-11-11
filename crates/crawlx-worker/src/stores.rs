@@ -1,8 +1,10 @@
-//! The repositories of one worker process: PostgreSQL when `database_url` is set, otherwise
-//! the in-memory store (CLI local runs and tests). Artifacts always go to the filesystem store.
+//! The repositories of one worker process: the configured database (PostgreSQL, MariaDB or
+//! SQLite) when `database_url` is set, otherwise the in-memory store (CLI local runs and tests).
+//! Artifacts always go to the filesystem store.
 
-use crate::authorization::{AuthorizationSource, PgAuthorizationSource};
+use crate::authorization::{AuthorizationSource, DatabaseAuthorizationSource};
 use crate::config::WorkerConfig;
+use crate::durable::{DurableAuthority, DurableStore, OriginAdmissions};
 use crate::error::WorkerError;
 use crawlx_core::dataset::{DatasetRepo, DeliveryOutboxRepo, KvRepo};
 use crawlx_core::orchestration::RequestCommitRepo;
@@ -12,10 +14,11 @@ use crawlx_core::repo::{
 };
 use crawlx_core::{Clock, SystemClock, TenantId};
 use crawlx_storage::artifact_key_crypto::{ArtifactKeys, MemoryArtifactKeys, UnavailableArtifactKeys};
-use crawlx_storage::custody::PgSecretAuthority;
+use crawlx_storage::sql::Sql;
 use crawlx_storage::{
-    ArtifactCustody, BufferLimits, CustodyWrites, DeliveryBuffer, FsArtifactStore, LeaseRepo,
-    LeasedSecretRegistrar, LocalArtifactCustody, MemoryStore, Pg, PgArtifactCustody, PgConfig, UploadSpool,
+    ArtifactCustody, BackendRefusal, BufferLimits, CustodyWrites, Database, DeliveryBuffer, FsArtifactStore,
+    LeaseRepo, LeasedSecretRegistrar, LocalArtifactCustody, MemoryStore, S3ArtifactStore, S3Blobs, S3Config,
+    Store, UploadSpool, WorkerLock,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -78,7 +81,7 @@ pub struct Stores {
     /// their CAPTCHA tokens stay in the run-local registry.
     pub custody: Option<Arc<dyn ArtifactCustody>>,
     /// Shared renewable authority; absent for memory and read-only stores.
-    pub pg_secret_authority: Option<Arc<PgSecretAuthority>>,
+    pub secret_authority: Option<Arc<DurableAuthority>>,
     /// Exact artifact key provider shared by structured profile custody.
     pub artifact_keys: Option<Arc<dyn ArtifactKeys>>,
     /// Same quota authority used by artifact writes; required before dispatching delivery content.
@@ -87,13 +90,15 @@ pub struct Stores {
     pub tenant: TenantId,
     /// Set for in-memory stores.
     pub memory: Option<Arc<MemoryStore>>,
-    /// Set for PostgreSQL stores.
-    pub pg: Option<Pg>,
+    /// Set for database stores, whatever the engine.
+    pub durable: Option<DurableStore>,
     /// Deployment admission pools shared by all runs backed by this store.
-    pub origin_admission: Option<Arc<crawlx_storage::origin::PgOriginAdmission>>,
+    pub origin_admission: Option<Arc<OriginAdmissions>>,
+    /// The exclusive worker lock of a SQLite database file, held while these stores live.
+    pub worker_lock: Option<Arc<WorkerLock>>,
     /// Where a running worker re-reads the authorization record of a run: the stored record in
-    /// PostgreSQL ([`PgAuthorizationSource`]), `None` for in-memory stores until a test or an
-    /// in-process run installs one ([`Self::with_authorization_source`]).
+    /// a database deployment ([`DatabaseAuthorizationSource`]), `None` for in-memory stores until a
+    /// test or an in-process run installs one ([`Self::with_authorization_source`]).
     pub authorization: Option<Arc<dyn AuthorizationSource>>,
 }
 
@@ -110,11 +115,6 @@ fn journal_with_failpoints(journal: Arc<dyn ActionJournal>) -> Arc<dyn ActionJou
     }
 }
 
-/// What a PostgreSQL worker lacks when it cannot seal the artifacts it publishes.
-const CUSTODY_CONFIG_HELP: &str = "encrypted artifact custody is not configured: set exactly one of \
-     CRAWLX_ARTIFACT_KMS_KEY_ID or CRAWLX_ARTIFACT_KEY_FILE, and CRAWLX_SECRET_REDIS_URL (or \
-     CRAWLX_SECRET_REDIS_URL_FILE) naming the persistence-free secret registry";
-
 impl Stores {
     /// Revoke recovery content at the terminal transition, then erase its physical objects.
     /// Backend failure remains an error; the artifact index retains the erasure cursor.
@@ -123,6 +123,7 @@ impl Stores {
         run: crawlx_core::CrawlRunId,
         reason: crawlx_core::counters::TerminalReason,
         cpu: &crate::runtime::CpuPool,
+        worker: crawlx_core::WorkerId,
     ) -> Result<(), crawlx_core::StoreError> {
         let Some(reason) = self
             .request_commits
@@ -134,7 +135,7 @@ impl Stores {
         };
         self.delivery.maintain(run).await?;
         let owner = Box::new(self.runs.get(run).await?);
-        Box::pin(crate::delivery::finalize_feeds(self, &owner, reason, cpu)).await?;
+        Box::pin(crate::delivery::finalize_feeds(self, &owner, reason, cpu, worker)).await?;
         self.artifacts.erase_run_credentials(run).await?;
         Ok(())
     }
@@ -234,27 +235,29 @@ impl Stores {
                 .map_err(crate::error::SessionError::from)?,
             artifacts: Arc::new(artifacts),
             custody,
-            pg_secret_authority: None,
+            secret_authority: None,
             artifact_keys,
             delivery_spool: Some(spool),
             tenant: TenantId::new(),
             memory: Some(store),
             authorization: None,
-            pg: None,
+            durable: None,
             origin_admission: None,
+            worker_lock: None,
         })
     }
 
     /// Open the stores `cfg` asks for.
     ///
-    /// Every artifact a worker publishes is sealed through run-wide custody: PostgreSQL mode
+    /// Every artifact a worker publishes is sealed through run-wide custody: database mode
     /// requires the key provider and the secret registry endpoint (see
     /// [`WorkerConfig::load_artifact_custody_from_lookup`]); in-memory mode uses a
     /// single-process authority and the configured key provider, or an ephemeral one.
     ///
     /// # Errors
-    /// Fails when custody is not configured in PostgreSQL mode, or when a storage, browser or
-    /// network operation it depends on fails.
+    /// Fails with the `custody_missing` refusal when custody is not configured in database mode,
+    /// with the engine's refusals (a second worker on one SQLite file, unsupported servers) and
+    /// when a storage, browser or network operation it depends on fails.
     pub async fn open(cfg: &WorkerConfig) -> Result<Self, WorkerError> {
         match &cfg.database_url {
             None => {
@@ -274,31 +277,37 @@ impl Stores {
                 let keys = cfg
                     .artifact_keys
                     .clone()
-                    .ok_or_else(|| WorkerError::Config(CUSTODY_CONFIG_HELP.into()))?;
+                    .ok_or_else(|| WorkerError::Refused(BackendRefusal::custody_missing()))?;
                 let registry = cfg
                     .secret_redis_url
                     .as_ref()
-                    .ok_or_else(|| WorkerError::Config(CUSTODY_CONFIG_HELP.into()))?;
-                let pg = Pg::connect(url, PgConfig::default()).await?;
-                let authority = PgSecretAuthority::open_with_policy(
-                    pg.clone(),
+                    .ok_or_else(|| WorkerError::Refused(BackendRefusal::custody_missing()))?;
+                let database = Database::open(url, cfg.store.clone()).await?;
+                crate::durable::check_sqlite_single_tenant(&database, &[]).await?;
+                let worker_lock = database.acquire_worker_lock()?.map(Arc::new);
+                let durable = DurableStore::open(&database)?;
+                let authority = DurableAuthority::open_with_policy(
+                    &durable,
                     registry.expose(),
                     cfg.secret_authority_ttl,
                     cfg.secret_authority_hard_max,
                 )
                 .await
                 .map_err(|error| WorkerError::Config(format!("secret registry is unavailable: {error}")))?;
-                let custody: Arc<dyn ArtifactCustody> = Arc::new(PgArtifactCustody::new(authority.clone()));
-                let mut stores = Self::open_pg(cfg, pg, custody, keys, CustodyWrites::Required).await?;
-                stores.pg_secret_authority = Some(Arc::new(authority));
+                let custody = authority.custody();
+                let mut stores =
+                    Self::open_durable(cfg, durable, custody, keys, CustodyWrites::Required).await?;
+                stores.secret_authority = Some(Arc::new(authority));
+                stores.worker_lock = worker_lock;
                 Ok(stores)
             }
         }
     }
 
-    /// Open PostgreSQL stores that only read artifacts: reports and exports decrypt sealed
+    /// Open database stores that only read artifacts: reports and exports decrypt sealed
     /// artifacts through the catalog but never publish, so no secret registry is needed. A
-    /// missing key provider leaves sealed artifacts unreadable with a clear error.
+    /// missing key provider leaves sealed artifacts unreadable with a clear error. A SQLite
+    /// file that does not exist is an error, not a new database, and no worker lock is taken.
     ///
     /// # Errors
     /// Fails when a storage operation fails.
@@ -310,81 +319,117 @@ impl Stores {
             Some(keys) => Arc::clone(keys),
             None => Arc::new(UnavailableArtifactKeys),
         };
-        let pg = Pg::connect(url, PgConfig::default()).await?;
-        let custody: Arc<dyn ArtifactCustody> = Arc::new(PgArtifactCustody::new(
-            PgSecretAuthority::finalized_reads(pg.clone()),
-        ));
-        Self::open_pg(cfg, pg, custody, keys, CustodyWrites::ReadOnly).await
+        let mut store_cfg = cfg.store.clone();
+        store_cfg.create_if_missing = false;
+        let database = Database::open(url, store_cfg).await?;
+        let durable = DurableStore::open(&database)?;
+        let custody = DurableAuthority::finalized_reads(&durable).custody();
+        Self::open_durable(cfg, durable, custody, keys, CustodyWrites::ReadOnly).await
     }
 
-    async fn open_pg(
+    async fn open_durable(
         cfg: &WorkerConfig,
-        pg: Pg,
+        durable: DurableStore,
         custody: Arc<dyn ArtifactCustody>,
         keys: Arc<dyn ArtifactKeys>,
         writes: CustodyWrites,
     ) -> Result<Self, WorkerError> {
+        async fn artifact_store<B: Sql>(
+            store: &Store<B>,
+            choice: &ObjectStoreChoice,
+            parts: ArtifactParts,
+        ) -> Result<Arc<dyn ArtifactStore>, WorkerError> {
+            let runs: Arc<dyn RunRepo> = Arc::new(store.clone());
+            Ok(match choice {
+                ObjectStoreChoice::Filesystem(dir) => Arc::new(
+                    FsArtifactStore::open(dir, runs, parts.clock)
+                        .await?
+                        .with_index(Arc::new(store.clone()))
+                        .with_zdr_buffer(parts.zdr)
+                        .with_upload_spool(parts.spool)
+                        .with_custody(parts.custody, parts.keys, parts.writes),
+                ),
+                ObjectStoreChoice::S3(config) => Arc::new(
+                    S3ArtifactStore::new(S3Blobs::new(config).map_err(s3_error)?, runs, parts.clock)
+                        .with_index(Arc::new(store.clone()))
+                        .with_zdr_buffer(parts.zdr)
+                        .with_upload_spool(parts.spool)
+                        .with_custody(parts.custody, parts.keys, parts.writes),
+                ),
+            })
+        }
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let zdr = Arc::new(DeliveryBuffer::open_runtime(clock.clone(), BufferLimits::default()).await?);
-        let pg = pg.with_delivery_buffer(zdr.clone());
-        let runs: Arc<dyn RunRepo> = Arc::new(pg.clone());
+        let durable = durable.with_delivery_buffer(zdr.clone());
         let spool = Arc::new(UploadSpool::new(cfg.artifact_spool.clone())?);
-        let artifact_keys = Arc::clone(&keys);
-        let artifacts = FsArtifactStore::open(&cfg.artifacts_dir, runs, clock)
-            .await?
-            .with_index(Arc::new(pg.clone()))
-            .with_zdr_buffer(zdr)
-            .with_upload_spool(spool.clone())
-            .with_custody(Arc::clone(&custody), keys, writes);
-        let mut stores = Self::over_pg(pg, Arc::new(artifacts), TenantId::new());
+        let parts = ArtifactParts {
+            clock,
+            zdr,
+            spool: spool.clone(),
+            custody: Arc::clone(&custody),
+            keys: Arc::clone(&keys),
+            writes,
+        };
+        let choice = ObjectStoreChoice::from_lookup(&cfg.artifacts_dir, &|name| std::env::var(name).ok())?;
+        let artifacts = crate::on_store!(&durable, store => artifact_store(store, &choice, parts).await?);
+        let mut stores = Self::over_durable(durable, artifacts, TenantId::new());
         stores.delivery_spool = Some(spool);
         stores.custody = Some(custody);
-        stores.artifact_keys = Some(artifact_keys);
+        stores.artifact_keys = Some(keys);
         Ok(stores)
     }
 
-    /// Stores over an already connected `pg`.
+    /// Stores over an already connected `durable` database of any engine.
     #[must_use]
-    pub fn over_pg(pg: Pg, artifacts: Arc<dyn ArtifactStore>, tenant: TenantId) -> Self {
-        Self {
-            runs: Arc::new(pg.clone()),
-            frontier: Arc::new(pg.clone()),
-            request_commits: Arc::new(pg.clone()),
-            approvals: Arc::new(pg.clone()),
-            report_history: Arc::new(pg.clone()),
-            url_graph: Arc::new(pg.clone()),
-            datasets: Arc::new(pg.clone()),
-            kv: Arc::new(pg.clone()),
-            source_memo: Arc::new(pg.clone()),
-            delivery: Arc::new(pg.clone()),
-            adaptive_selectors: Arc::new(pg.clone()),
-            archives: Arc::new(pg.clone()),
-            pages: Arc::new(pg.clone()),
-            journal: journal_with_failpoints(Arc::new(pg.clone())),
-            states: Arc::new(pg.clone()),
-            edges: Arc::new(pg.clone()),
-            ledger: Arc::new(pg.clone()),
-            audit: Arc::new(pg.clone()),
-            events: Arc::new(pg.clone()),
-            identity_aliases: Arc::new(pg.clone()),
-            model_decisions: Arc::new(pg.clone()),
-            leases: Arc::new(pg.clone()),
-            checkpoints: Arc::new(pg.clone()),
-            checkpoint_keys: Arc::new(crawlx_storage::checkpoint_crypto::UnavailableCheckpointKeys),
-            artifacts,
-            delivery_spool: None,
-            custody: None,
-            pg_secret_authority: None,
-            artifact_keys: None,
-            tenant,
-            memory: None,
-            authorization: Some(Arc::new(PgAuthorizationSource::new(pg.clone()))),
-            origin_admission: Some(Arc::new(crawlx_storage::origin::PgOriginAdmission::new(
-                pg.clone(),
-                crawlx_fetch::GlobalOriginCap::DEFAULT_LIMIT,
-            ))),
-            pg: Some(pg),
+    pub fn over_durable(durable: DurableStore, artifacts: Arc<dyn ArtifactStore>, tenant: TenantId) -> Self {
+        fn repos<B: Sql>(
+            store: &Store<B>,
+            durable: DurableStore,
+            artifacts: Arc<dyn ArtifactStore>,
+            tenant: TenantId,
+        ) -> Stores {
+            let store = store.clone();
+            Stores {
+                runs: Arc::new(store.clone()),
+                frontier: Arc::new(store.clone()),
+                request_commits: Arc::new(store.clone()),
+                approvals: Arc::new(store.clone()),
+                report_history: Arc::new(store.clone()),
+                url_graph: Arc::new(store.clone()),
+                datasets: Arc::new(store.clone()),
+                kv: Arc::new(store.clone()),
+                source_memo: Arc::new(store.clone()),
+                delivery: Arc::new(store.clone()),
+                adaptive_selectors: Arc::new(store.clone()),
+                archives: Arc::new(store.clone()),
+                pages: Arc::new(store.clone()),
+                journal: journal_with_failpoints(Arc::new(store.clone())),
+                states: Arc::new(store.clone()),
+                edges: Arc::new(store.clone()),
+                ledger: Arc::new(store.clone()),
+                audit: Arc::new(store.clone()),
+                events: Arc::new(store.clone()),
+                identity_aliases: Arc::new(store.clone()),
+                model_decisions: Arc::new(store.clone()),
+                leases: Arc::new(store.clone()),
+                checkpoints: Arc::new(store),
+                checkpoint_keys: Arc::new(crawlx_storage::checkpoint_crypto::UnavailableCheckpointKeys),
+                artifacts,
+                delivery_spool: None,
+                custody: None,
+                secret_authority: None,
+                artifact_keys: None,
+                tenant,
+                memory: None,
+                authorization: Some(Arc::new(DatabaseAuthorizationSource::new(durable.clone()))),
+                origin_admission: Some(Arc::new(
+                    durable.origin_admission(crawlx_fetch::GlobalOriginCap::DEFAULT_LIMIT),
+                )),
+                worker_lock: None,
+                durable: Some(durable),
+            }
         }
+        crate::on_store!(&durable, store => repos(store, durable.clone(), artifacts, tenant))
     }
 
     /// Origin capacity for one run, sharing the deployment authority across tenants.
@@ -396,15 +441,9 @@ impl Stores {
         per_run_limit: usize,
     ) -> Arc<crawlx_fetch::GlobalOriginCap> {
         match &self.origin_admission {
-            Some(store) => Arc::new(crawlx_fetch::GlobalOriginCap::with_shared_admission(
+            Some(admission) => Arc::new(crawlx_fetch::GlobalOriginCap::with_shared_admission(
                 Arc::clone(&cfg.origin_cap),
-                Arc::new(
-                    store
-                        .as_ref()
-                        .clone()
-                        .with_limit(cfg.origin_cap.limit())
-                        .for_run(run, per_run_limit),
-                ),
+                admission.for_run(cfg.origin_cap.limit(), run, per_run_limit),
             )),
             None => Arc::clone(&cfg.origin_cap),
         }
@@ -451,6 +490,85 @@ impl Stores {
     }
 }
 
+/// What the artifact store of one engine is built from.
+struct ArtifactParts {
+    clock: Arc<dyn Clock>,
+    zdr: Arc<DeliveryBuffer>,
+    spool: Arc<UploadSpool>,
+    custody: Arc<dyn ArtifactCustody>,
+    keys: Arc<dyn ArtifactKeys>,
+    writes: CustodyWrites,
+}
+
+/// Where a process keeps artifact objects: an S3-compatible bucket when `CRAWLX_S3_BUCKET` is
+/// set (settings and `CRAWLX_S3_PROFILE` as in `docs/ops/object-storage.md`), otherwise the
+/// filesystem root.
+#[derive(Clone, Debug)]
+pub enum ObjectStoreChoice {
+    /// Objects under this directory.
+    Filesystem(std::path::PathBuf),
+    /// Objects in the bucket the configuration names.
+    S3(S3Config),
+}
+
+impl ObjectStoreChoice {
+    /// Choose from `get`, a lookup of environment variables; `dir` is the filesystem root used
+    /// when no bucket is configured.
+    ///
+    /// # Errors
+    /// [`WorkerError::Config`] when a bucket is named but the S3 settings are invalid.
+    pub fn from_lookup(dir: &Path, get: &dyn Fn(&str) -> Option<String>) -> Result<Self, WorkerError> {
+        if get("CRAWLX_S3_BUCKET").is_some_and(|bucket| !bucket.trim().is_empty()) {
+            return S3Config::from_lookup(get).map(Self::S3).map_err(s3_error);
+        }
+        Ok(Self::Filesystem(dir.to_path_buf()))
+    }
+
+    /// Whether objects go to a bucket.
+    #[must_use]
+    pub const fn is_s3(&self) -> bool {
+        matches!(self, Self::S3(_))
+    }
+}
+
+fn s3_error(error: crawlx_storage::s3::S3ConfigError) -> WorkerError {
+    WorkerError::Config(format!("object store: {error}"))
+}
+
 fn custody_error(error: impl std::fmt::Display) -> WorkerError {
     WorkerError::Config(format!("artifact key custody: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    #[test]
+    fn object_store_follows_the_bucket_setting() {
+        let dir = Path::new("/tmp/artifacts");
+        let none = |_: &str| None;
+        assert!(matches!(
+            ObjectStoreChoice::from_lookup(dir, &none).unwrap(),
+            ObjectStoreChoice::Filesystem(path) if path == dir
+        ));
+        let blank = |name: &str| (name == "CRAWLX_S3_BUCKET").then(|| "  ".to_owned());
+        assert!(!ObjectStoreChoice::from_lookup(dir, &blank).unwrap().is_s3());
+        let s3 = |name: &str| match name {
+            "CRAWLX_S3_BUCKET" => Some("b".to_owned()),
+            "CRAWLX_S3_PROFILE" => Some("self-hosted".to_owned()),
+            "CRAWLX_S3_ENDPOINT" => Some("http://127.0.0.1:9000".to_owned()),
+            _ => None,
+        };
+        assert!(ObjectStoreChoice::from_lookup(dir, &s3).unwrap().is_s3());
+        let bad = |name: &str| match name {
+            "CRAWLX_S3_BUCKET" => Some("b".to_owned()),
+            "CRAWLX_S3_PROFILE" => Some("compatible".to_owned()),
+            _ => None,
+        };
+        assert!(
+            ObjectStoreChoice::from_lookup(dir, &bad).is_err(),
+            "compatible needs an endpoint"
+        );
+    }
 }

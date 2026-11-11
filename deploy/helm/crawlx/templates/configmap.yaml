@@ -1,3 +1,4 @@
+{{- include "crawlx.storageValidate" . -}}
 {{- if and .Values.gym.enabled (eq .Values.environment "prod") -}}
 {{- fail "gym.enabled is not allowed when environment is prod: crawlx-gym never runs in production namespaces" -}}
 {{- end -}}

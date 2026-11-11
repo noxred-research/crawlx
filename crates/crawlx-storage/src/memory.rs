@@ -445,6 +445,27 @@ impl MemoryStore {
         }
         let mut stored = run.clone();
         stored.config.fetch = run.config.fetch.durable();
+        // A zero-retention run's operational configuration lives only in the volatile buffer,
+        // as on the database engines. Its absence later means the run's content has expired,
+        // which feed finalization retires the run for; only a run with feeds finalizes any.
+        if run.config.retention.mode == crawlx_core::config::RetentionMode::Zdr
+            && !run.config.datasets.feeds.is_empty()
+        {
+            let buffer = self.dataset_delivery.lock().clone();
+            if let Some(buffer) = buffer {
+                let bytes = serde_json::to_vec(&stored.config)?;
+                buffer
+                    .insert(
+                        run.tenant,
+                        run.id,
+                        i64::MIN,
+                        "run_config",
+                        "application/json",
+                        &bytes,
+                    )
+                    .await?;
+            }
+        }
         Ok(stored)
     }
 
@@ -1376,7 +1397,7 @@ impl FrontierRepo for MemoryStore {
                 return Err(StoreError::Conflict(format!(
                     "a discovery denial must be policy_blocked or robots_blocked, got {}",
                     other.as_str()
-                )))
+                )));
             }
         };
         let now = self.clock.now();
@@ -2406,7 +2427,7 @@ impl ActionJournal for MemoryStore {
                 return Err(StoreError::IllegalTransition {
                     from: status.as_str().to_owned(),
                     to: "intended".to_owned(),
-                })
+                });
             }
         };
         let before = g

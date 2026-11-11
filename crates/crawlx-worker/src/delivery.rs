@@ -221,13 +221,17 @@ impl DeliveryRegistry {
         }
         Ok(())
     }
-    /// Return bounded destination IDs and their explicit volatile-retention allowance.
+    /// Return bounded destination IDs, retention allowances and compressed-byte support.
     #[must_use]
-    pub fn capabilities(&self) -> BTreeMap<String, bool> {
-        self.destinations
-            .iter()
-            .map(|(id, destination)| (id.clone(), destination.permits_zdr()))
-            .collect()
+    pub fn capabilities(&self) -> crawlx_core::data_capabilities::WorkerDataCapabilitiesV1 {
+        let mut facts = crawlx_core::data_capabilities::WorkerDataCapabilitiesV1::default();
+        for (id, destination) in &self.destinations {
+            facts.destinations.insert(id.clone(), destination.permits_zdr());
+            if destination.permits_feed_compression() {
+                facts.compressed_destinations.insert(id.clone());
+            }
+        }
+        facts
     }
     /// Claim and deliver at most one record under existing repository leases.
     ///

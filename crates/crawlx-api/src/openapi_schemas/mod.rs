@@ -302,18 +302,28 @@ impl Spec {
 /// What an error status means on the facade.
 fn error_text(status: u16) -> &'static str {
     match status {
-        400 => "BAD_REQUEST or malformed_request: invalid JSON, option, path or query value (`details[]` lists every violation)",
+        400 => {
+            "BAD_REQUEST or malformed_request: invalid JSON, option, path or query value (`details[]` lists every violation)"
+        }
         401 => "unauthenticated: the API key is missing, invalid or revoked",
         403 => "scope_missing, UNSUPPORTED_SITE (egress policy), SCRAPE_PROMPT_INJECTION_DETECTED",
-        404 => "not_found: unknown id, another tenant's resource or a resource of another kind; no cached scrape for minAge or lockdown",
+        404 => {
+            "not_found: unknown id, another tenant's resource or a resource of another kind; no cached scrape for minAge or lockdown"
+        }
         408 => "SCRAPE_TIMEOUT: the request outlived its `timeout`",
-        409 => "conflict: engine_mismatch, invalid_state, duplicate_request, request_in_flight, agent_finished, agent_cancelled",
+        409 => {
+            "conflict: engine_mismatch, invalid_state, duplicate_request, request_in_flight, agent_finished, agent_cancelled"
+        }
         410 => "zdr_expired: the zero-data-retention result was deleted",
         413 => "payload_too_large: the body or upload exceeds its limit",
         415 => "unsupported_content_type: the uploaded file type is not supported",
-        422 => "validation_failed, idempotency_key_reuse, url_denied or a document the parser cannot read (`details[]`)",
+        422 => {
+            "validation_failed, idempotency_key_reuse, url_denied or a document the parser cannot read (`details[]`)"
+        }
         429 => "rate_limited or quota_exceeded (concurrency limit reached)",
-        500 => "internal, or the failure code of a scraped page (SCRAPE_SITE_ERROR, SCRAPE_ALL_ENGINES_FAILED, ...)",
+        500 => {
+            "internal, or the failure code of a scraped page (SCRAPE_SITE_ERROR, SCRAPE_ALL_ENGINES_FAILED, ...)"
+        }
         502 => "search_unavailable or an LLM failure",
         503 => "llm_not_configured, search_not_configured, scrape_unavailable or storage unavailable",
         504 => "search_timeout or an LLM timeout",

@@ -1,0 +1,116 @@
+# SQLite as the system of record: one database file on one host, no database service.
+#
+#   CRAWLX_STORAGE_ENGINE=sqlite docker/init-compose.sh
+#   docker compose -f docker/docker-compose.yml -f docker/compose.sqlite.yml up -d --build --wait
+#
+# Overlay on docker/docker-compose.yml. Compose cannot delete a service, so `postgres` and
+# `api-role-init` move into the `postgres-engine` profile, which this stack never enables.
+#
+# What changes against the PostgreSQL stack, and why (docs/ops/storage-backends.md):
+#   * The database is the file /var/lib/crawlx/db/crawlx.sqlite on the `dbdata` volume that
+#     `migrate`, `api`, `worker` and `admin` share. SQLite runs in WAL mode, which needs shared
+#     memory on one host: this stack is single host by construction (`refused: sqlite_not_local`
+#     when the file is on a network filesystem).
+#   * Exactly one `worker` process may hold the file (`<file>.worker.lock`): a second one is
+#     refused with `refused: sqlite_second_worker`. The worker service is pinned to one replica;
+#     do not scale it. Use the MariaDB or PostgreSQL stack for several workers.
+#   * SQLite has no database roles: `crawlx serve` refuses `CRAWLX_API_DATABASE_URL` with
+#     `refused: sqlite_no_roles`, so the API carries neither that variable nor the
+#     `database_url_api` secret, and tenant isolation is application-enforced only. With
+#     `CRAWLX_ENVIRONMENT=prod` a second tenant is refused (`refused: sqlite_multi_tenant`) unless
+#     `CRAWLX_SQLITE_ALLOW_MULTI_TENANT=1` is set on every service that opens the file.
+#   * The independent safety auditor (`crawlx admin safety-audit`) needs two database identities
+#     and is refused (`refused: sqlite_safety_auditor`).
+#   * `database.statement_timeout_ms` is not applicable: SQLite has no server-side statement
+#     timeout and a non-default value is refused at startup.
+services:
+  postgres:
+    profiles: [postgres-engine]
+  api-role-init:
+    profiles: [postgres-engine]
+    depends_on: !reset {}
+
+  db-init:
+    # The `dbdata` volume is root-owned when new, and the images ship different uids: give the
+    # directory to uid 10001, which `api` and `worker` run as (the same step as `artifacts-init`).
+    image: ${CRAWLX_REGISTRY:-ghcr.io/noxred-research}/crawlx-worker:${CRAWLX_TAG:-v0.1.0}-chromium${CRAWLX_CHROMIUM_VERSION:-155.0.8059.84}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/bash", "-ceu"]
+    command:
+      - mkdir -p /var/lib/crawlx/db && chown 10001:10001 /var/lib/crawlx/db && chmod 0770 /var/lib/crawlx/db
+    volumes:
+      - dbdata:/var/lib/crawlx/db
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  migrate:
+    user: "10001:10001"
+    volumes:
+      - dbdata:/var/lib/crawlx/db
+    depends_on: !override
+      db-init:
+        condition: service_completed_successfully
+
+  api:
+    environment:
+      CRAWLX_API_DATABASE_URL_FILE: !reset null
+    secrets: !override
+      - database_url
+      - webhook_signing_key
+      - artifact_key
+    volumes:
+      - artifacts:/var/lib/crawlx/artifacts
+      - dbdata:/var/lib/crawlx/db
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      artifacts-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    deploy:
+      replicas: 1
+    volumes:
+      - artifacts:/var/lib/crawlx/artifacts
+      - ${CRAWLX_GATES_HOST_DIR:-./gates}:/etc/crawlx/gates:ro
+      - dbdata:/var/lib/crawlx/db
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      artifacts-init:
+        condition: service_completed_successfully
+      secret-custody:
+        condition: service_healthy
+
+  admin:
+    volumes:
+      - artifacts:/var/lib/crawlx/artifacts
+      - dbdata:/var/lib/crawlx/db
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  dbdata: {}
+
+secrets:
+  database_url:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/database_url_sqlite
+  database_url_migrate:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/database_url_sqlite

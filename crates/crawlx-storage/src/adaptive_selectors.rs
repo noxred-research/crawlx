@@ -2,9 +2,10 @@
 //! ZDR rows contain only lookup metadata; descriptor bytes use the shared volatile buffer.
 
 use super::MemoryStore;
-use crate::codec::{from_json, get, to_json};
-use crate::error::db;
-use crate::Pg;
+use crate::backend::{Dialect, LockMode, RowLock};
+use crate::codec::{from_json, to_json};
+use crate::sql::{stmt, Sql, SqlRow};
+use crate::store::Store;
 use async_trait::async_trait;
 use chrono::Duration;
 use crawlx_core::cache::{AdaptiveSelectorRecordV1, AdaptiveSelectorRepo};
@@ -222,9 +223,10 @@ impl AdaptiveSelectorRepo for MemoryStore {
 }
 
 #[async_trait]
-impl AdaptiveSelectorRepo for Pg {
+impl<B: Sql> AdaptiveSelectorRepo for Store<B> {
     async fn put(&self, record: &AdaptiveSelectorRecordV1) -> Result<(), StoreError> {
         let (tenant, key) = identity(&record.spec.scope, &record.spec.selector_id)?;
+        self.scope()?.authorize(tenant)?;
         let run = RunRepo::get(self, record.run).await?;
         if run.tenant != tenant {
             return Err(StoreError::AccessDenied(
@@ -249,19 +251,67 @@ impl AdaptiveSelectorRepo for Pg {
         } else {
             None
         };
-        let saved = sqlx::query("INSERT INTO adaptive_selectors(tenant_id,scope_key,run_id,payload,volatile_page,expires_at) \
-            SELECT $1,$2,$3,$4,$5,$6 FROM crawl_runs WHERE tenant_id=$1 AND run_id=$3 AND purge_requested_at IS NULL \
-            ON CONFLICT(tenant_id,scope_key) DO UPDATE SET run_id=EXCLUDED.run_id,payload=EXCLUDED.payload, \
-            volatile_page=EXCLUDED.volatile_page,expires_at=CASE WHEN adaptive_selectors.run_id=EXCLUDED.run_id \
-            THEN LEAST(adaptive_selectors.expires_at,EXCLUDED.expires_at) ELSE EXCLUDED.expires_at END")
-            .bind(tenant.0).bind(key).bind(record.run.0).bind(payload).bind(volatile_page).bind(expires_at)
-            .execute(&self.pool).await.map_err(db)?;
-        if saved.rows_affected() == 0 {
+        let mut tx = self.begin_write().await?;
+        // One writer per tenant decides the fixed expiry of a replaced descriptor.
+        B::xact_lock(
+            tx.conn(),
+            &format!("adaptive-selector:{tenant}"),
+            LockMode::Exclusive,
+        )
+        .await?;
+        let available = stmt!(
+            B,
+            format!(
+                "SELECT run_id FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 AND purge_requested_at IS NULL{}",
+                <B::Dialect as Dialect>::row_lock(RowLock::Share)
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(record.run.0)
+        .fetch_optional(tx.conn())
+        .await?;
+        if available.is_none() {
             return Err(StoreError::RetentionDenied(
                 "selector source run is unavailable or purging".into(),
             ));
         }
-        Ok(())
+        let previous = stmt!(
+            B,
+            format!(
+                "SELECT run_id,expires_at FROM adaptive_selectors WHERE tenant_id=$1 AND scope_key=$2{}",
+                <B::Dialect as Dialect>::row_lock(RowLock::Update)
+            )
+        )
+        .uuid(tenant.0)
+        .text(&key)
+        .fetch_optional(tx.conn())
+        .await?;
+        // A replacement from the same source run never extends the descriptor's expiry.
+        let expires_at = match previous {
+            Some(row) if row.uuid("run_id")? == record.run.0 => row.ts("expires_at")?.min(expires_at),
+            _ => expires_at,
+        };
+        stmt!(
+            B,
+            format!(
+                "INSERT INTO adaptive_selectors(tenant_id,scope_key,run_id,payload,volatile_page,expires_at) \
+                 VALUES($1,$2,$3,$4,$5,$6) {}",
+                <B::Dialect as Dialect>::upsert_update(
+                    &["tenant_id", "scope_key"],
+                    &["run_id", "payload", "volatile_page", "expires_at"],
+                    None
+                )
+            )
+        )
+        .uuid(tenant.0)
+        .text(&key)
+        .uuid(record.run.0)
+        .opt_json(payload.as_ref())
+        .opt_i64(volatile_page)
+        .ts(expires_at)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await
     }
     async fn get(
         &self,
@@ -270,45 +320,57 @@ impl AdaptiveSelectorRepo for Pg {
         now: Timestamp,
     ) -> Result<Option<AdaptiveSelectorRecordV1>, StoreError> {
         let (tenant, key) = identity(scope, selector_id)?;
-        let row = sqlx::query(
-            "SELECT a.* FROM adaptive_selectors a JOIN crawl_runs r USING(tenant_id,run_id) \
-            WHERE a.tenant_id=$1 AND a.scope_key=$2 AND a.expires_at>$3 AND r.purge_requested_at IS NULL \
-            AND (r.expires_at IS NULL OR r.expires_at>$3)",
+        self.scope()?.authorize(tenant)?;
+        let row = stmt!(
+            B,
+            "SELECT a.run_id,a.payload,a.volatile_page,a.expires_at FROM adaptive_selectors a \
+             JOIN crawl_runs r ON r.tenant_id=a.tenant_id AND r.run_id=a.run_id \
+             WHERE a.tenant_id=$1 AND a.scope_key=$2 AND a.expires_at>$3 AND r.purge_requested_at IS NULL \
+             AND (r.expires_at IS NULL OR r.expires_at>$3)"
         )
-        .bind(tenant.0)
-        .bind(key)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
+        .uuid(tenant.0)
+        .text(&key)
+        .ts(now)
+        .fetch_optional_pool(&self.pool)
+        .await?;
         let Some(row) = row else {
             return Ok(None);
         };
-        let payload: Option<serde_json::Value> = get(&row, "payload")?;
         let stored = StoredDescriptor {
-            run: CrawlRunId(get(&row, "run_id")?),
-            expires_at: get(&row, "expires_at")?,
-            record: payload.map(from_json).transpose()?,
-            volatile_page: get(&row, "volatile_page")?,
+            run: CrawlRunId(row.uuid("run_id")?),
+            expires_at: row.ts("expires_at")?,
+            record: row.opt_json("payload")?.map(from_json).transpose()?,
+            volatile_page: row.opt_i64("volatile_page")?,
         };
         let found = materialize(self.delivery.as_deref(), tenant, stored, now).await?;
         Ok(found.filter(|r| &r.spec.scope == scope && r.spec.selector_id == selector_id))
     }
     async fn delete_run(&self, run: CrawlRunId) -> Result<(), StoreError> {
-        sqlx::query("DELETE FROM adaptive_selectors WHERE run_id=$1")
-            .bind(run.0)
-            .execute(&self.pool)
-            .await
-            .map_err(db)?;
+        let scope = self.scope()?;
+        scope
+            .bind(
+                crate::sql::Stmt::<B>::dynamic(&format!(
+                    "DELETE FROM adaptive_selectors WHERE run_id=$1{}",
+                    scope.and("adaptive_selectors", "", 2)?
+                ))
+                .uuid(run.0),
+            )
+            .execute_write(&self.pool)
+            .await?;
         Ok(())
     }
     async fn sweep(&self, now: Timestamp) -> Result<u64, StoreError> {
-        Ok(sqlx::query("DELETE FROM adaptive_selectors WHERE expires_at<=$1")
-            .bind(now)
-            .execute(&self.pool)
+        let scope = self.scope()?;
+        scope
+            .bind(
+                crate::sql::Stmt::<B>::dynamic(&format!(
+                    "DELETE FROM adaptive_selectors WHERE expires_at<=$1{}",
+                    scope.and("adaptive_selectors", "", 2)?
+                ))
+                .ts(now),
+            )
+            .execute_write(&self.pool)
             .await
-            .map_err(db)?
-            .rows_affected())
     }
 }
 

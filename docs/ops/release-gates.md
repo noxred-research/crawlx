@@ -196,6 +196,13 @@ Missing evidence stays blocking:
   drill, severity-classified security findings or release model calibration.
 - The previous-release pin baseline must come from an actual release, not a copy of the current
   pin. A candidate-browser canary report does not establish the complete Chromium upgrade suite.
+- Same-seed G1 traces do not depend on how many proposals go stale. A proposal dropped before it
+  runs (`stale_epoch`, identity change, not actionable) is not journaled, so it no longer
+  advances the seeded decision stream the arbiter's tie-break draws from; two runs that journal
+  the same actions draw identically. The `d1` fixture's ticker and status line advance once per
+  recorded interaction instead of on wall-clock timers; `/d1/?live=1` keeps the 250 ms / 1 s
+  timers for volatile-region tests. `g1-report` prints the stale-dropped proposal count after
+  each run.
 
 The generated transfer report lists the exact missing producer for every expected evidence
 path. It creates no suite results, passing metrics or waivers.

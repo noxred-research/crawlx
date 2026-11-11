@@ -30,7 +30,7 @@ use crawlx_core::{AuthorizationRecordId, Clock, CrawlRunId, SessionId, StoreErro
 use crawlx_fetch::StaticResolver;
 use crawlx_policy::{testkit::sample_record, AdmissionPolicy, AuthorizationRecord};
 use crawlx_storage::checkpoint_crypto::{CheckpointKeys, MemoryCheckpointKeys};
-use crawlx_storage::{DeliveryBuffer, FsArtifactStore, MemoryArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{DeliveryBuffer, FsArtifactStore, MemoryArtifactStore, MemoryStore, Pg, StoreConfig};
 use crawlx_worker::lease_loop::run_with;
 use crawlx_worker::{AuthorizationSource, EgressConfig, Stores, WorkerConfig, WorkerError};
 use parking_lot::Mutex;
@@ -186,10 +186,10 @@ enum Backing {
     },
 }
 
-fn pg_config(schema: &str) -> PgConfig {
-    PgConfig {
+fn pg_config(schema: &str) -> StoreConfig {
+    StoreConfig {
         schema: Some(schema.to_owned()),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     }
 }
 
@@ -217,7 +217,11 @@ impl Backing {
                 ..
             } => {
                 let pg = Pg::connect(url, pg_config(schema)).await.unwrap();
-                let mut stores = Stores::over_pg(pg, artifacts.clone(), tenant_id_for("acme"));
+                let mut stores = Stores::over_durable(
+                    crawlx_worker::DurableStore::Postgres(pg),
+                    artifacts.clone(),
+                    tenant_id_for("acme"),
+                );
                 stores.checkpoint_keys = Arc::clone(checkpoint_keys);
                 stores
             }
@@ -296,7 +300,7 @@ impl FacadeRig {
                         .with_index(Arc::new(admin.clone()))
                         .with_zdr_buffer(zdr.clone()),
                 );
-                (Repos::pg(admin, artifacts.clone()), artifacts)
+                (Repos::over_store(admin, artifacts.clone()), artifacts)
             }
         };
         let key = generate_compat_key();

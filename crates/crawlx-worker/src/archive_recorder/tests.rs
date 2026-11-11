@@ -11,7 +11,7 @@ use crawlx_core::time::ManualClock;
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::{TenantId, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use std::fs::File;
 use std::path::Path;
 
@@ -92,7 +92,7 @@ async fn generations(
         stores.request_commits.commit_fenced(commit).await.unwrap();
         pages.push(page);
         if pages.len() == 1 {
-            if stores.pg.is_some() {
+            if stores.durable.is_some() {
                 tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
             }
             clock.advance_ms(1000);
@@ -407,9 +407,9 @@ async fn postgres_archive_recorder_keeps_all_generations_through_publication_rec
     let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("archive_generations_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -423,7 +423,11 @@ async fn postgres_archive_recorder_keeps_all_generations_through_publication_rec
             .unwrap()
             .with_index(Arc::new(pg.clone())),
     );
-    let stores = Stores::over_pg(pg.clone(), artifacts.clone(), tenant);
+    let stores = Stores::over_durable(
+        crate::durable::DurableStore::Postgres(pg.clone()),
+        artifacts.clone(),
+        tenant,
+    );
     let run = recovery(&stores, clock, root.path()).await;
     crawlx_storage::retention::RetentionSweeper::new(pg.clone())
         .with_artifacts(artifacts)

@@ -462,10 +462,10 @@ async fn pg_two_schedulers_claim_each_due_monitor_once() {
     let schema = format!("t_{}", Uuid::now_v7().simple());
     let pg = crawlx_storage::Pg::connect(
         &url,
-        crawlx_storage::PgConfig {
+        crawlx_storage::StoreConfig {
             schema: Some(schema),
             max_connections: 8,
-            ..crawlx_storage::PgConfig::default()
+            ..crawlx_storage::StoreConfig::default()
         },
     )
     .await

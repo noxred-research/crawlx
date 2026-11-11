@@ -1,0 +1,119 @@
+# MariaDB (10.6 or newer) as the system of record instead of PostgreSQL.
+#
+#   CRAWLX_STORAGE_ENGINE=mariadb docker/init-compose.sh
+#   docker compose -f docker/docker-compose.yml -f docker/compose.mariadb.yml up -d --build --wait
+#
+# Overlay on docker/docker-compose.yml. Compose cannot delete a service, so `postgres` and
+# `api-role-init` move into the `postgres-engine` profile, which this stack never enables.
+#
+# What changes against the PostgreSQL stack, and why (docs/ops/storage-backends.md):
+#   * `crawlx migrate`, `api`, `worker` and `admin` read `database_url` / `database_url_migrate`
+#     from `secrets/database_url_mariadb`, a `mysql://` URL of the one `crawlx` login that
+#     docker/init-compose.sh generated for `CRAWLX_STORAGE_ENGINE=mariadb`.
+#   * There is no restricted request login: MariaDB tenant isolation is application-enforced
+#     and `crawlx serve` refuses `CRAWLX_API_DATABASE_URL` for it with
+#     `refused: backend_unimplemented`. The API therefore carries neither that variable nor the
+#     `database_url_api` secret.
+#   * Several workers may share the database; scale `worker` as on PostgreSQL.
+#   * The independent safety auditor (`crawlx admin safety-audit`) is PostgreSQL only.
+#   * `server` settings the storage layer checks at open: `innodb_default_row_format=DYNAMIC`,
+#     `binlog_format` not STATEMENT, `sysdate_is_now` off, no multi-primary replication.
+#     The flags below pin the first two explicitly.
+services:
+  postgres:
+    profiles: [postgres-engine]
+  api-role-init:
+    profiles: [postgres-engine]
+    depends_on: !reset {}
+
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/mariadb_root_password
+      MARIADB_DATABASE: crawlx
+      MARIADB_USER: crawlx
+      MARIADB_PASSWORD_FILE: /run/secrets/mariadb_password
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-default-row-format=dynamic
+      - --binlog-format=ROW
+      - --transaction-isolation=READ-COMMITTED
+    secrets:
+      - mariadb_root_password
+      - mariadb_password
+    volumes:
+      - mariadata:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "5"
+
+  migrate:
+    depends_on: !override
+      mariadb:
+        condition: service_healthy
+
+  api:
+    environment:
+      CRAWLX_API_DATABASE_URL_FILE: !reset null
+    secrets: !override
+      - database_url
+      - webhook_signing_key
+      - artifact_key
+    depends_on: !override
+      mariadb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      artifacts-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    depends_on: !override
+      mariadb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      artifacts-init:
+        condition: service_completed_successfully
+      secret-custody:
+        condition: service_healthy
+
+  admin:
+    depends_on: !override
+      mariadb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
+volumes:
+  mariadata: {}
+
+secrets:
+  mariadb_root_password:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/mariadb_root_password
+  mariadb_password:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/mariadb_password
+  database_url:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/database_url_mariadb
+  database_url_migrate:
+    file: ${CRAWLX_SECRETS_DIR:-./secrets}/database_url_mariadb

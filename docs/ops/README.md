@@ -10,6 +10,7 @@ production qualification is in progress; see the [README](../../README.md#releas
 | [`runbooks.md`](runbooks.md) | Numbered runbooks RB-01 to RB-12 (stuck crawl, unknown-outcome reconciliation, browser crash loop, lease storm, model provider failure, object-store outage, database failover, retention and ZDR cleanup, webhook backlog, hot target, emergency stop, SEV-1 containment), one card per alert rule, the `crawlx admin` command table, the independent safety auditor, backup, restore and rollback |
 | [`release-gates.md`](release-gates.md) | The release-gate checklist computed by CI from evidence files (`release-gate check`), its items, thresholds, evidence layout and waivers |
 | [`flaky-tests.md`](flaky-tests.md) | Flake handling: one classifying rerun, quarantine to the nightly suite after 3 events in 14 days, the 30-day flake rate and the `flake-report` tool |
+| [`storage-backends.md`](storage-backends.md) | Database engines (PostgreSQL, MariaDB, SQLite): URLs, what each provides, pool size and statement timeout, startup refusals, Compose overlays, chart values |
 | [`object-storage.md`](object-storage.md) | Filesystem and S3-compatible store profiles, credentials, admission and deployment checks |
 | This file | Provisioning, validation and rotation of the optional operator capabilities (request-identity key, protocol and delivery registries, language bundle) |
 
@@ -23,6 +24,40 @@ production qualification is in progress; see the [README](../../README.md#releas
 | Operator commands | `crawlx admin ...`, `crawlx inspect trail <run-id>`, `crawlx healthcheck`, `crawlx config check`, `crawlx migrate`; the command table is in [`runbooks.md`](runbooks.md#before-any-runbook) |
 | Runbooks, backup, restore, rollback | [`runbooks.md`](runbooks.md) |
 | Safety, retention and secret behavior | [`../design/safety-model.md`](../design/safety-model.md), [`../design/data-and-secrets.md`](../design/data-and-secrets.md) |
+
+## Storage engines
+
+PostgreSQL, MariaDB and SQLite all run `serve`, `worker`, `migrate`, `inspect` and the
+`admin` commands; the engine is chosen by the scheme of the database URL. What each engine
+provides, and what it refuses, is in [`storage-backends.md`](storage-backends.md). On
+PostgreSQL, API requests require a restricted non-owner login; provision its grants with
+[`docker/provision-api-role.sql`](../../docker/provision-api-role.sql) after migrations.
+Never use the migration/worker owner login as the API request login. Unknown schemes
+return `refused: scheme`. No command silently substitutes an in-memory repository.
+
+Foreground `crawlx crawl` needs no database and writes its local output directory.
+Without a database, `crawlx serve` keeps queued runs only in its own process: it
+does not execute them, a separate worker cannot see them, and exiting loses them.
+The health readiness response in this mode checks the in-memory store, not worker
+availability or durable storage.
+
+## API keys, admission and rate limits
+
+Native keys are `cx_live_` followed by exactly 26 characters from lowercase `a-z`
+and digits `2-7`. With `--compat-keys`, an `fc-` key containing 16 to 64 ASCII
+letters or digits works only under `/compat/`. Native keys work on both surfaces.
+Prefer secret files and environment variables over literal command arguments;
+secret environment values are hidden in `--help`.
+
+`crawlx serve --rate-limit-per-minute N` uses a token bucket per **tenant**, shared
+by all of that tenant's keys. Capacity and refill are `N` per minute, default 6000;
+`0` explicitly disables this API request limit. Responses expose `RateLimit-Limit`,
+`RateLimit-Remaining` and `RateLimit-Reset`; exhaustion is `429` with `Retry-After`.
+These limits do not replace target-side crawl pacing or concurrency admission.
+
+`/v0/health/liveness`, `/v0/health/readiness` and `/v1/openapi.json` need no key.
+The main `/metrics` route does require a key with `metrics:read`; the separately
+configured loopback metrics listener is unauthenticated.
 
 ## Scheduled retention sweeper
 
@@ -98,11 +133,26 @@ unsafe switch), and the tests that exercise it. The manifest ships in the binary
 (`crates/crawlx-cli/data/feature-manifest.json`); a test fails when a row names a flag, a
 spelling or a test that does not exist, or when a compatibility spelling has no row.
 
+`config check --format json` returns `ok`, `effective`, `sources`, `secrets` and
+`findings` (each finding has `key`, `message` and an `error` boolean), plus capability
+diagnostics. Load failures instead return `{"ok":false,"error":"..."}`. The default
+environment is `prod`; local inspection can use `CRAWLX_ENVIRONMENT=dev`.
+Malformed TOML reports its location without printing source lines that may hold secrets.
+
+No `doctor` or shell-completion command is provided. Use `config check`,
+`crawl ... --health-check`, `protocol --probe`, `healthcheck` and `admin status`
+for their distinct diagnostic purposes; `protocol --probe` performs no network check.
+
 `crawlx extract --input-dir DIR --list` prints one JSON line per discovered entry and extracts
 nothing. `--backup-dir NEW_DIR` copies each admitted input, with its relative path, into a new
 owner-only directory outside the source tree; copies are created exclusively, so two files with
 the same name in different directories stay separate and nothing is overwritten. `--zero-retention`
 declares that no disk sink may be used and refuses `--output` and `--backup-dir`.
+
+`crawlx extract --extract-config FILE` (also on `crawlx corpus` and `crawlx protocol`) reads a JSON
+object of at most 64 KiB with the request's `extract.outputs`, `extract.decode` and `extract.markup`
+members, validated by the same code as online runs; unknown members are refused. `--request FILE`
+remains the native content policy.
 
 `crawlx source-import` of a Go-collector-style manifest accepts an exported `env` object. Every
 supported variable of the pinned release appears in the report with its effective source
@@ -474,3 +524,45 @@ new source identity rather than an edited cursor. `DELETE
 and category-cache state; it does not purge frontier work or loader progress.
 See [the reference](../reference.md#dataset-feed-selection-batching-and-compression)
 for feed filters, terminal batching, empty-feed policy and codec bounds.
+
+## Metrics, traces and process memory
+
+`crawlx serve` exposes authenticated `GET /metrics` with the `metrics:read` scope.
+Both `serve` and `worker` accept `--metrics-bind 127.0.0.1:9464`
+(`CRAWLX_METRICS_BIND`) for an optional unauthenticated, loopback-only scraper
+listener. Give each process a different port when they share a host. Scrape both:
+metrics are process-local, not database aggregates. API metrics count accepted jobs
+and HTTP routes; worker metrics count URL acquisition, browser and scheduling work.
+A fresh process has no samples for counters or histograms it has not observed.
+
+The authoritative metric catalog is
+`crates/crawlx-telemetry/src/metrics/catalog.rs`. Exported names replace dots with
+underscores, add `_total` for counters and `_seconds` for duration units.
+Request route labels are templates such as `/v1/crawls/{id}`, never raw paths.
+Validate the shipped rules with `promtool check rules
+deploy/alerts/crawlx-rules.yaml` and their fixtures with `promtool test rules
+deploy/alerts/crawlx-rules.test.yaml`.
+
+`crawlx_browser_rss_bytes` sums the latest sampled resident sizes of live launched
+browser trees in this process. Samples arrive every five seconds. A stopped
+sampler removes its contribution; after the last browser closes the gauge is zero.
+Failed samples clear that browser's contribution, not another browser's reading.
+The worker's startup capability probe also launches and closes a browser, even
+before static work. Attached browsers are not sampled. These are observed process
+sizes, not per-request allocation or allocator statistics.
+
+Logs go to stderr and retain structured fields through the redacting formatter.
+`--log info` or `--log debug` raises the CLI's default warning-level filter.
+`--otlp-endpoint` (`CRAWLX_OTLP_ENDPOINT`) exports only in a binary built with
+`--features otlp`; a binary without it warns instead of claiming an export.
+Do not treat registered-secret redaction as permission to log page bodies or
+credentials. Report APIs deliberately withhold raw URLs and diagnostic text.
+
+The optional pprof listener is unauthenticated and separate from the API and
+metrics ports. Keep `--pprof-bind` on loopback; `--pprof-allow-non-loopback`
+requires operator-provided access control. CPU profiles at
+`/debug/pprof/profile?seconds=N` use protobuf, default to 10 seconds and clamp
+to 1–120 seconds. Concurrent profiles return `409`; malformed durations return
+`400`. `/debug/pprof/heap` is a JSON OS memory summary, not a heap profile;
+`?debug=1` returns text. Neither summary contains allocation contents.
+

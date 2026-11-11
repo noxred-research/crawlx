@@ -4,9 +4,11 @@
 //! this loop; no detached renewal task can outlive a producer. Unknown commit
 //! outcomes retry the same operation and absolute deadline, never a new grant.
 
+use crate::durable::DurableAuthority;
 use crawlx_core::custody::{CustodyLease, CustodyRenewalWindow};
 use crawlx_core::{StoreError, Timestamp};
-use crawlx_storage::custody::PgSecretAuthority;
+use crawlx_storage::custody::SecretAuthority;
+use crawlx_storage::sql::Sql;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,8 +43,8 @@ fn schedule(window: &CustodyRenewalWindow) -> Result<(Duration, Timestamp), Stor
     ))
 }
 
-async fn renew_same_request(
-    authority: &PgSecretAuthority,
+async fn renew_same_request<B: Sql>(
+    authority: &SecretAuthority<B>,
     lease: &CustodyLease,
     window: &CustodyRenewalWindow,
     deadline: Timestamp,
@@ -69,8 +71,8 @@ async fn renew_same_request(
     ))
 }
 
-async fn inspect_window(
-    authority: &PgSecretAuthority,
+async fn inspect_window<B: Sql>(
+    authority: &SecretAuthority<B>,
     lease: &CustodyLease,
 ) -> Result<CustodyRenewalWindow, StoreError> {
     // Pending registration blocks renewal, not valid producer work. Every poll
@@ -91,7 +93,10 @@ async fn inspect_window(
     }
 }
 
-async fn renewal_loop(authority: &PgSecretAuthority, lease: &CustodyLease) -> Result<(), StoreError> {
+async fn renewal_loop_on<B: Sql>(
+    authority: &SecretAuthority<B>,
+    lease: &CustodyLease,
+) -> Result<(), StoreError> {
     loop {
         let window = inspect_window(authority, lease).await?;
         let (delay, _) = schedule(&window)?;
@@ -121,6 +126,10 @@ async fn renewal_loop(authority: &PgSecretAuthority, lease: &CustodyLease) -> Re
     }
 }
 
+async fn renewal_loop(authority: &DurableAuthority, lease: &CustodyLease) -> Result<(), StoreError> {
+    crate::on_authority!(authority, authority => renewal_loop_on(authority, lease).await)
+}
+
 /// Keep one producer's work and renewal inside the same structured lifetime.
 ///
 /// The caller must supply its actual existing lease and cancellation binding.
@@ -130,7 +139,7 @@ async fn renewal_loop(authority: &PgSecretAuthority, lease: &CustodyLease) -> Re
 /// Returns the work error or a failed authority/renewal check. Renewal failure
 /// cancels work by dropping its future; storage still checks every queued effect.
 pub async fn with_custody_renewal<T, E, F>(
-    authority: Option<Arc<PgSecretAuthority>>,
+    authority: Option<Arc<DurableAuthority>>,
     lease: CustodyLease,
     work: F,
 ) -> Result<T, E>
@@ -141,8 +150,8 @@ where
     let Some(authority) = authority else {
         return work.await;
     };
-    let initializer = crawlx_storage::PgArtifactCustody::new(authority.as_ref().clone());
-    crawlx_storage::ArtifactCustody::snapshot(&initializer, &lease)
+    let initializer = authority.custody();
+    crawlx_storage::ArtifactCustody::snapshot(initializer.as_ref(), &lease)
         .await
         .map_err(E::from)?;
     // Keep database renewal state out of the work branch's polling stack,

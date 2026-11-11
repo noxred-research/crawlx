@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use super::*;
+use crawlx_storage::{Pg, StoreConfig};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pg_blackholed_journal_read_preserves_observed_trail_violation() {
     let Ok(database_url) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
@@ -12,9 +13,9 @@ async fn pg_blackholed_journal_read_preserves_observed_trail_violation() {
     let schema = format!("soak_audit_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &database_url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -25,7 +26,11 @@ async fn pg_blackholed_journal_read_preserves_observed_trail_violation() {
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), record.tenant);
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        record.tenant,
+    );
     stores.checkpoint_keys =
         Arc::new(crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap());
     let mut worker = worker_config(&FixtureManifest::embedded("g01").unwrap(), dir.path()).unwrap();
@@ -42,8 +47,16 @@ async fn pg_blackholed_journal_read_preserves_observed_trail_violation() {
         worker_config: worker,
         gym: None,
         base_url: "https://gym.test".into(),
-        store: Store::Pg(Box::new(PgStore {
-            pg: pg.clone(),
+        store: Store::Database(Box::new(DatabaseStore {
+            database: Database::open(
+                &database_url,
+                StoreConfig {
+                    schema: Some(schema.clone()),
+                    ..StoreConfig::default()
+                },
+            )
+            .await
+            .unwrap(),
             stores,
             record,
         })),
@@ -91,12 +104,12 @@ async fn pg_blackholed_journal_read_preserves_observed_trail_violation() {
         .unwrap();
     let fault_pg = Pg::connect_existing(
         &netfault::rewrite_url(&database_url, proxy.addr()).unwrap(),
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
             max_connections: 1,
             acquire_timeout: Duration::from_millis(100),
             test_before_acquire: false,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

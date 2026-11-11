@@ -249,9 +249,9 @@ async fn postgres_100k_keyset_resumes_after_reconnect_without_loss_or_duplicate(
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("dataset_scale_{}", CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -523,9 +523,9 @@ async fn postgres_kv_metadata_continuation_expiry_mime_and_quotas() {
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("dataset_kv_contract_{}", CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

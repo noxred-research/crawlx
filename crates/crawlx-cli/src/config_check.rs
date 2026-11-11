@@ -76,7 +76,10 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_CHROMIUM_PATH",
     "CRAWLX_ALLOW_UNPINNED",
     "CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI",
+    "CRAWLX_FAILPOINTS",
+    "CRAWLX_SQLITE_ALLOW_MULTI_TENANT",
     "CRAWLX_TEST_DATABASE_URL",
+    "CRAWLX_TEST_MARIADB_URL",
     "CRAWLX_TEST_ZDR_REDIS_URL",
     "CRAWLX_TEST_SECRET_REDIS_URL",
     "CRAWLX_S3_ENDPOINT",
@@ -116,6 +119,14 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_REQUEST_IDENTITY_KEY_FILE",
     "CRAWLX_CHECKPOINT_KMS_KEY_ID",
     "CRAWLX_ARTIFACT_KMS_KEY_ID",
+    "CRAWLX_PARSE_MEMORY_BYTES",
+    "CRAWLX_PARSER_HELPER",
+    "CRAWLX_PARSER_IN_PROCESS_MAX_BYTES",
+    "CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES",
+    "CRAWLX_PARSER_HELPER_CPU_SECONDS",
+    "CRAWLX_PARSER_HELPER_TIMEOUT_MS",
+    "CRAWLX_PARSER_HELPER_MAX_RESPONSE_BYTES",
+    "CRAWLX_PARSER_HELPER_MAX_CONCURRENT",
     "CRAWLX_ARTIFACT_KEY_FILE",
     "CRAWLX_SECRET_REDIS_URL",
     "CRAWLX_SECRET_REDIS_URL_FILE",
@@ -206,7 +217,7 @@ macro_rules! section {
 
 section!(/// `[database]`.
 Database {
-    /// File holding the PostgreSQL DSN (secret).
+    /// File holding the database URL (secret): postgres:, mysql:/mariadb: or sqlite:.
     url_file: Option<PathBuf> = None,
     /// Pool size per process.
     pool_max: u32 = 32,
@@ -578,7 +589,7 @@ CrawlxConfig {
 pub enum CheckFormat {
     /// Human-readable TOML of the effective values.
     Toml,
-    /// `{ "effective": …, "sources": …, "secrets": …, "warnings": [] }`.
+    /// JSON including `ok`, `effective`, `sources`, `secrets` and `findings` with an `error` boolean.
     Json,
 }
 
@@ -720,8 +731,26 @@ pub fn load_from(file: Option<&Path>, vars: &[(String, String)]) -> anyhow::Resu
             let text =
                 std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
             // TOML diagnostics include source lines, which may contain proxy credentials.
-            text.parse::<toml::Table>()
-                .map_err(|_| anyhow!("parsing {}: invalid TOML configuration", path.display()))?
+            text.parse::<toml::Table>().map_err(|error| {
+                if let Some(span) = error.span() {
+                    let (line, column) = text
+                        .char_indices()
+                        .take_while(|(offset, _)| *offset < span.start)
+                        .fold((1_usize, 1_usize), |(line, column), (_, ch)| {
+                            if ch == '\n' {
+                                (line.saturating_add(1), 1)
+                            } else {
+                                (line, column.saturating_add(1))
+                            }
+                        });
+                    anyhow!(
+                        "parsing {}: invalid TOML configuration at line {line}, column {column}",
+                        path.display()
+                    )
+                } else {
+                    anyhow!("parsing {}: invalid TOML configuration", path.display())
+                }
+            })?
         }
         None => toml::Table::new(),
     };
@@ -1183,7 +1212,7 @@ fn validate_capability_inputs(loaded: &Loaded, findings: &mut Vec<Finding>) {
             {
                 findings.push(finding(
                     "capabilities.retained_profiles",
-                    "retained profiles are unavailable while encrypted artifact custody is enabled; PostgreSQL workers always enable it",
+                    "retained profiles are unavailable while encrypted artifact custody is enabled; database workers always enable it",
                     true,
                 ));
             }
@@ -1192,7 +1221,7 @@ fn validate_capability_inputs(loaded: &Loaded, findings: &mut Vec<Finding>) {
             {
                 findings.push(finding(
                     "capabilities.retained_profiles",
-                    "retained profiles require PostgreSQL configuration",
+                    "retained profiles require a database configuration",
                     true,
                 ));
             }
@@ -1255,7 +1284,7 @@ async fn validate_checkpoint_keys(loaded: &Loaded, findings: &mut Vec<Finding>) 
 }
 
 /// Encrypted artifact custody: a malformed or contradictory setting is an error. A
-/// PostgreSQL deployment without the key provider or the registry endpoint is a warning here
+/// database deployment without the key provider or the registry endpoint is a warning here
 /// (the API runs without the endpoint); workers refuse to start without both.
 async fn validate_artifact_custody(loaded: &Loaded, findings: &mut Vec<Finding>) {
     let lookup = |name: &str| loaded.passthrough.get(name).cloned();
@@ -1264,20 +1293,91 @@ async fn validate_artifact_custody(loaded: &Loaded, findings: &mut Vec<Finding>)
         findings.push(finding("capabilities.artifact_custody", error.to_string(), true));
         return;
     }
-    let postgres =
+    let database =
         loaded.config.database.url_file.is_some() || loaded.passthrough.contains_key("CRAWLX_DATABASE_URL");
-    if postgres && worker.artifact_keys.is_none() {
+    if database && worker.artifact_keys.is_none() {
         findings.push(finding(
             "capabilities.artifact_custody",
             "set exactly one of CRAWLX_ARTIFACT_KMS_KEY_ID or CRAWLX_ARTIFACT_KEY_FILE: sealed artifacts cannot be read or written without a key provider",
             false,
         ));
     }
-    if postgres && worker.secret_redis_url.is_none() {
+    if database && worker.secret_redis_url.is_none() {
         findings.push(finding(
             "capabilities.artifact_custody",
             "workers require CRAWLX_SECRET_REDIS_URL (or _FILE), the persistence-free secret registry; they refuse to start without it",
             false,
+        ));
+    }
+}
+
+/// Object-store settings of `serve` and `worker`: when `CRAWLX_S3_BUCKET` names a bucket the
+/// profile and every `CRAWLX_S3_*` setting must parse, exactly as the runtime reads them.
+fn validate_object_store(loaded: &Loaded, findings: &mut Vec<Finding>) {
+    let lookup = |name: &str| loaded.passthrough.get(name).cloned();
+    if lookup("CRAWLX_S3_BUCKET").is_none_or(|bucket| bucket.trim().is_empty()) {
+        return;
+    }
+    if let Err(error) = crawlx_storage::S3Config::from_lookup(&lookup) {
+        findings.push(finding("object_store", error.to_string(), true));
+    }
+}
+
+/// The refusals of the selected database engine that can be decided without connecting: an
+/// unknown scheme, an in-memory SQLite database, a request login next to SQLite and a statement
+/// timeout SQLite cannot honour.
+fn validate_database_url(loaded: &Loaded, findings: &mut Vec<Finding>) {
+    let url = loaded
+        .passthrough
+        .get("CRAWLX_DATABASE_URL")
+        .cloned()
+        .or_else(|| {
+            loaded
+                .config
+                .database
+                .url_file
+                .as_deref()
+                .and_then(|path| read_secret(path).ok())
+        });
+    let Some(url) = url else {
+        return;
+    };
+    let parsed = match crawlx_storage::DatabaseUrl::parse(&url) {
+        Ok(parsed) => parsed,
+        Err(refusal) => {
+            findings.push(finding("database.url_file", refusal.to_string(), true));
+            return;
+        }
+    };
+    if parsed.kind() != crawlx_storage::BackendKind::Sqlite {
+        return;
+    }
+    if parsed.is_sqlite_memory() {
+        findings.push(finding(
+            "database.url_file",
+            crawlx_storage::BackendRefusal::sqlite_not_local(":memory:").to_string(),
+            true,
+        ));
+    }
+    if ["CRAWLX_API_DATABASE_URL", "CRAWLX_API_DATABASE_URL_FILE"]
+        .iter()
+        .any(|name| loaded.passthrough.contains_key(*name))
+    {
+        findings.push(finding(
+            "database.url_file",
+            crawlx_storage::BackendRefusal::sqlite_no_roles().to_string(),
+            true,
+        ));
+    }
+    if loaded.config.database.statement_timeout_ms != Database::default().statement_timeout_ms {
+        findings.push(finding(
+            "database.statement_timeout_ms",
+            format!(
+                "database.statement_timeout_ms is {} but sqlite has no server-side statement timeout; \
+                 remove the setting or use postgres or mariadb",
+                loaded.config.database.statement_timeout_ms
+            ),
+            true,
         ));
     }
 }
@@ -1563,6 +1663,8 @@ async fn check(args: &ConfigCheckArgs, out: &mut dyn Write) -> anyhow::Result<Ex
             crawlx_worker::ChainResolver::from_env(std::sync::Arc::new(crawlx_core::SystemClock)).await;
         validate_capability_secrets(&loaded, &mut findings, &resolver).await;
     }
+    validate_database_url(&loaded, &mut findings);
+    validate_object_store(&loaded, &mut findings);
     validate_artifact_custody(&loaded, &mut findings).await;
     validate_checkpoint_keys(&loaded, &mut findings).await;
     validate_article_language_bundle(&loaded, &mut findings).await;
@@ -1680,6 +1782,56 @@ pub fn database_url(flag: Option<&str>) -> anyhow::Result<Option<String>> {
             },
             |u| Ok(Some(u)),
         )
+}
+
+/// Pool settings of the `[database]` section of the loaded surface for a connection to
+/// `url`: `pool_max` and `statement_timeout_ms`.
+///
+/// Only `CRAWLX_DATABASE__*` overrides are read here: commands that open a database (`crawl`,
+/// `serve`, `worker`, `inspect`) also run with development and integration variables that
+/// are not configuration keys, and those must not stop them. `config check` validates the
+/// whole environment.
+///
+/// SQLite has no server-side statement timeout, so a `statement_timeout_ms` other than the
+/// default is refused for a `sqlite:` URL instead of being ignored.
+///
+/// # Errors
+/// Fails when the configuration cannot be loaded, the URL scheme is unknown, or a SQLite
+/// URL comes with a non-default `statement_timeout_ms`.
+pub fn store_config(url: Option<&str>) -> anyhow::Result<crawlx_storage::StoreConfig> {
+    let mut vars = Vec::new();
+    for (name, value) in std::env::vars_os() {
+        let Some(name) = name.to_str().filter(|name| name.starts_with("CRAWLX_DATABASE__")) else {
+            continue;
+        };
+        let value = value
+            .into_string()
+            .map_err(|_| anyhow!("CRAWLX configuration values must be valid Unicode"))?;
+        vars.push((name.to_owned(), value));
+    }
+    let database = load_from(None, &vars)?.config.database;
+    let default = Database::default().statement_timeout_ms;
+    let sqlite = match url {
+        Some(url) => {
+            crawlx_storage::DatabaseUrl::parse(url)
+                .map_err(|refusal| anyhow::anyhow!("{refusal}"))?
+                .kind()
+                == crawlx_storage::BackendKind::Sqlite
+        }
+        None => false,
+    };
+    if sqlite && database.statement_timeout_ms != default {
+        bail!(
+            "database.statement_timeout_ms is {} but sqlite has no server-side statement timeout; \
+             remove the setting or use postgres or mariadb",
+            database.statement_timeout_ms
+        );
+    }
+    Ok(crawlx_storage::StoreConfig {
+        max_connections: database.pool_max,
+        statement_timeout: (!sqlite).then(|| std::time::Duration::from_millis(database.statement_timeout_ms)),
+        ..crawlx_storage::StoreConfig::default()
+    })
 }
 
 /// The webhook signing secret for `serve`: the flag/`CRAWLX_WEBHOOK_SECRET`, else
@@ -2134,6 +2286,58 @@ mod tests {
     }
 
     #[test]
+    fn database_engine_refusals_are_findings_without_connecting() {
+        let dir = tempfile::tempdir().unwrap();
+        let findings = |url: &str, timeout: Option<u64>, extra: &[(&str, &str)]| {
+            let mut text = String::from("environment = \"dev\"\n[database]\n");
+            if let Some(ms) = timeout {
+                text.push_str(&format!("statement_timeout_ms = {ms}\n"));
+            }
+            let file = write(&dir, "crawlx.toml", &text);
+            let mut env = vec![("CRAWLX_DATABASE_URL", url)];
+            env.extend_from_slice(extra);
+            let l = load_from(Some(&file), &vars(&env)).unwrap();
+            let mut found = Vec::new();
+            validate_database_url(&l, &mut found);
+            found
+                .into_iter()
+                .filter(|f| f.error)
+                .map(|f| format!("{}: {}", f.key, f.message))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            findings("oracle://x/y", None, &[]),
+            [
+                "database.url_file: refused: scheme: unsupported database url scheme; expected postgres, mariadb or sqlite"
+            ]
+        );
+        assert!(findings("postgres://x/y", Some(9000), &[]).is_empty());
+        assert!(findings("mysql://x/y", Some(9000), &[]).is_empty());
+        assert!(findings("sqlite:/tmp/crawlx.sqlite", None, &[]).is_empty());
+        assert_eq!(
+            findings("sqlite:/tmp/crawlx.sqlite", Some(9000), &[]),
+            [
+                "database.statement_timeout_ms: database.statement_timeout_ms is 9000 but sqlite has no \
+              server-side statement timeout; remove the setting or use postgres or mariadb"
+            ]
+        );
+        let memory = findings("sqlite::memory:", None, &[]);
+        assert!(
+            memory.len() == 1 && memory[0].contains("refused: sqlite_not_local"),
+            "{memory:?}"
+        );
+        let roles = findings(
+            "sqlite:/tmp/crawlx.sqlite",
+            None,
+            &[("CRAWLX_API_DATABASE_URL", "postgres://api@x/y")],
+        );
+        assert!(
+            roles.len() == 1 && roles[0].contains("refused: sqlite_no_roles"),
+            "{roles:?}"
+        );
+    }
+
+    #[test]
     fn egress_lists_read_the_file_the_environment_and_a_file_replaces_the_static_list() {
         let dir = tempfile::tempdir().unwrap();
         let block = write(&dir, "block.txt", "# takedowns\nfile.test\n203.0.113.0/24\n");
@@ -2258,6 +2462,27 @@ mod tests {
         assert!(source.allowlist_static.is_none());
         let strict = load_from(Some(&file), &vars(&[("CRAWLX_SOMETHING_ELSE", "1")]));
         assert!(strict.is_err(), "`config check` stays the strict reader");
+    }
+
+    #[test]
+    fn parser_helper_and_parse_memory_overrides_are_known_operator_variables() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write(&dir, "crawlx.toml", "");
+        let names = [
+            "CRAWLX_PARSE_MEMORY_BYTES",
+            "CRAWLX_PARSER_HELPER",
+            "CRAWLX_PARSER_IN_PROCESS_MAX_BYTES",
+            "CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES",
+            "CRAWLX_PARSER_HELPER_CPU_SECONDS",
+            "CRAWLX_PARSER_HELPER_TIMEOUT_MS",
+            "CRAWLX_PARSER_HELPER_MAX_RESPONSE_BYTES",
+            "CRAWLX_PARSER_HELPER_MAX_CONCURRENT",
+        ];
+        let pairs: Vec<(&str, &str)> = names.iter().map(|name| (*name, "1")).collect();
+        let loaded = load_from(Some(&file), &vars(&pairs)).unwrap();
+        for name in names {
+            assert!(loaded.passthrough.contains_key(name), "{name}");
+        }
     }
 
     #[test]
@@ -2555,6 +2780,28 @@ mod tests {
         let error = format!("{:#}", load_from(Some(&malformed), &[]).unwrap_err());
         assert!(error.contains("invalid TOML"), "{error}");
         assert!(!error.contains("secret-"), "{error}");
+    }
+
+    #[test]
+    fn malformed_toml_reports_location_without_source_or_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write(
+            &dir,
+            "malformed.toml",
+            "environment = 'dev'\n[fetch]\nbasic_proxy_url = @secret-user:secret-password@secret-host.test\n",
+        );
+        let error = load_from(Some(&file), &[]).unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            format!(
+                "parsing {}: invalid TOML configuration at line 3, column 19",
+                file.display()
+            )
+        );
+        for output in [format!("{error:#}"), format!("{error:?}")] {
+            assert!(!output.contains("secret-"), "{output}");
+            assert!(!output.contains("basic_proxy_url"), "{output}");
+        }
     }
 
     #[test]

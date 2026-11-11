@@ -1,8 +1,8 @@
 //! Bounded read-only archive projection of existing tenant-owned traffic artifact references.
 
-use crate::codec::{digest, get};
-use crate::error::db;
-use crate::Pg;
+use crate::codec::digest;
+use crate::sql::{stmt, Sql, SqlRow};
+use crate::store::Store;
 use crawlx_core::{ArtifactId, ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 
 /// One chronological persisted traffic event. Headers and status are not reconstructed as wire data.
@@ -36,13 +36,13 @@ fn artifact(id: Option<uuid::Uuid>, hash: Option<Vec<u8>>) -> Result<Option<Arti
 ///
 /// # Errors
 /// Returns storage errors or a conflict when the bounded event count would be exceeded.
-pub async fn traffic(
-    pg: &Pg,
+pub async fn traffic<B: Sql>(
+    store: &Store<B>,
     tenant: TenantId,
     run: CrawlRunId,
     max: u32,
 ) -> Result<Vec<RecordedTraffic>, StoreError> {
-    let rows = traffic_after(pg, tenant, run, 0, i64::from(max) + 1).await?;
+    let rows = traffic_after(store, tenant, run, 0, i64::from(max) + 1).await?;
     if rows.len() as u64 > u64::from(max) {
         return Err(StoreError::Conflict(
             "archive traffic event bound exceeded".into(),
@@ -54,9 +54,9 @@ pub async fn traffic(
 /// Read at most 64 real events strictly after `after`, without loading the collection.
 ///
 /// # Errors
-/// Returns storage errors, an invalid page size, or an ordinal outside PostgreSQL bigint.
-pub async fn traffic_keyset(
-    pg: &Pg,
+/// Returns storage errors, an invalid page size, or an ordinal outside database bigint.
+pub async fn traffic_keyset<B: Sql>(
+    store: &Store<B>,
     tenant: TenantId,
     run: CrawlRunId,
     after: u64,
@@ -69,17 +69,18 @@ pub async fn traffic_keyset(
     }
     let after = i64::try_from(after)
         .map_err(|_| StoreError::Conflict("archive traffic ordinal exceeds bigint".into()))?;
-    traffic_after(pg, tenant, run, after, i64::from(limit)).await
+    traffic_after(store, tenant, run, after, i64::from(limit)).await
 }
 
-async fn traffic_after(
-    pg: &Pg,
+async fn traffic_after<B: Sql>(
+    store: &Store<B>,
     tenant: TenantId,
     run: CrawlRunId,
     after: i64,
     limit: i64,
 ) -> Result<Vec<RecordedTraffic>, StoreError> {
-    let rows = sqlx::query(
+    let rows = stmt!(
+        B,
         "SELECT t.event_id, t.occurred_at, t.url_redacted, \
            req.artifact_id AS request_id, req.content_digest AS request_digest, \
            resp.artifact_id AS response_id, resp.content_digest AS response_digest \
@@ -88,23 +89,22 @@ async fn traffic_after(
            AND req.run_id = t.run_id AND req.tenant_id = r.tenant_id AND req.deleted_at IS NULL \
          LEFT JOIN artifacts resp ON resp.artifact_id = t.body_artifact_id \
            AND resp.run_id = t.run_id AND resp.tenant_id = r.tenant_id AND resp.deleted_at IS NULL \
-         WHERE t.run_id = $1 AND r.tenant_id = $2 AND t.event_id > $3 ORDER BY t.event_id LIMIT $4",
+         WHERE t.run_id = $1 AND r.tenant_id = $2 AND t.event_id > $3 ORDER BY t.event_id LIMIT $4"
     )
-    .bind(run.0)
-    .bind(tenant.0)
-    .bind(after)
-    .bind(limit)
-    .fetch_all(&pg.pool)
-    .await
-    .map_err(db)?;
+    .uuid(run.0)
+    .uuid(tenant.0)
+    .i64(after)
+    .i64(limit)
+    .fetch_all_pool(&store.pool)
+    .await?;
     rows.iter()
         .map(|row| {
             Ok(RecordedTraffic {
-                event_id: get(row, "event_id")?,
-                url: get(row, "url_redacted")?,
-                captured_at: get(row, "occurred_at")?,
-                request_body: artifact(get(row, "request_id")?, get(row, "request_digest")?)?,
-                response_body: artifact(get(row, "response_id")?, get(row, "response_digest")?)?,
+                event_id: row.i64("event_id")?,
+                url: row.opt_text("url_redacted")?,
+                captured_at: row.ts("occurred_at")?,
+                request_body: artifact(row.opt_uuid("request_id")?, row.opt_bytes("request_digest")?)?,
+                response_body: artifact(row.opt_uuid("response_id")?, row.opt_bytes("response_digest")?)?,
             })
         })
         .collect()

@@ -768,7 +768,7 @@ pub struct UrlPlaneRunner {
     /// The run's immutable reviewed recipe, compiled once; proposals only, never authority.
     recipe: Option<Arc<crate::extension_recipes::CompiledExtensionRecipe>>,
     /// Remote custody authority renewing every producer's lease while its work runs.
-    custody_authority: Option<Arc<crawlx_storage::custody::PgSecretAuthority>>,
+    custody_authority: Option<Arc<crate::durable::DurableAuthority>>,
     /// Retained-only URL graph evidence sink and its explicit analysis policy.
     url_graph: Option<(
         Arc<crate::url_graph::UrlGraphProducer>,
@@ -1594,7 +1594,7 @@ impl UrlPlaneRunner {
     #[must_use]
     pub fn with_custody_authority(
         mut self,
-        authority: Option<Arc<crawlx_storage::custody::PgSecretAuthority>>,
+        authority: Option<Arc<crate::durable::DurableAuthority>>,
     ) -> Self {
         self.custody_authority = authority;
         self
@@ -1789,7 +1789,7 @@ impl UrlPlaneRunner {
             .transpose()
             .map_err(|e| e.to_string());
         self.admission_browser = Some(rc.pool.clone());
-        self.custody_authority.clone_from(&rc.stores.pg_secret_authority);
+        self.custody_authority.clone_from(&rc.stores.secret_authority);
         self.advisory = Some(Arc::clone(&rc.advisory_frontier));
         self.source_dispatch.clone_from(&rc.source_dispatch);
         self.url_graph = rc
@@ -1913,6 +1913,7 @@ impl UrlPlaneRunner {
     /// as `policy_blocked` rows with a `dedupe:` reason and counted as `deduplicated`. The
     /// `reason` label of a policy block is the bounded denial code (never the pattern the
     /// frontier row carries).
+    /// Deadline expiry returns its typed stop signal without adding a rejected frontier row.
     async fn discover(
         &self,
         url: CanonicalUrl,
@@ -1937,6 +1938,9 @@ impl UrlPlaneRunner {
         source: Option<RequestSource>,
         proposal: Option<crawlx_core::request::RequestEnvelopeV1>,
     ) -> Result<DiscoveryOutcome, StoreError> {
+        if self.deps.clock.now() >= self.budget.lock().deadline() {
+            return Err(StoreError::RunDeadlineReached);
+        }
         if self.ledger.lock().carried.contains(url.url.as_str()) {
             // a stopped run already fetched it (`seed_resume`)
             self.counters
@@ -1944,6 +1948,10 @@ impl UrlPlaneRunner {
             return Ok(DiscoveryOutcome::Duplicate);
         }
         let (denial, counted_as, code) = self.discovery_admission(&url, depth, from, action_bearing).await;
+        // Robots admission can await a response across the run deadline.
+        if self.deps.clock.now() >= self.budget.lock().deadline() {
+            return Err(StoreError::RunDeadlineReached);
+        }
         let head_seed = self.initial_request_method == http::Method::HEAD
             && depth == 0
             && from.is_none()
@@ -4119,12 +4127,15 @@ impl UrlPlaneRunner {
         acquisition_metadata
             .bound()
             .map_err(|e| WorkerError::Config(e.to_string()))?;
+        let mismatch_action = self
+            .crawl
+            .acquisition
+            .as_ref()
+            .map_or_else(Default::default, |policy| policy.validation.on_content_mismatch);
         if !method_head
-            && self.crawl.acquisition.as_ref().is_some_and(|policy| {
-                policy.validation.on_content_mismatch
-                    == crawlx_core::acquisition::ContentMismatchActionV1::Fail
-            })
-            && !acquisition_metadata.validation.content_accepted
+            && acquisition_metadata
+                .validation
+                .refuses_content(mismatch_action, Some(resp.status.as_u16()))
         {
             self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
                 .await?;
@@ -4171,10 +4182,9 @@ impl UrlPlaneRunner {
                     SecretLocation::Body { .. } => None,
                 })
                 .collect();
-            let validation_failed = self.crawl.acquisition.as_ref().is_some_and(|policy| {
-                policy.validation.on_content_mismatch
-                    == crawlx_core::acquisition::ContentMismatchActionV1::Fail
-            }) && !acquisition_metadata.validation.content_accepted;
+            let validation_failed = acquisition_metadata
+                .validation
+                .refuses_content(mismatch_action, Some(resp.status.as_u16()));
             let success = (resp.status.is_success() || resp.not_modified()) && !validation_failed;
             let redactor = crawlx_core::secret::Redactor::new();
             let mut response_headers = headers_json(&headers, &flagged, &self.fetcher.config().controls);
@@ -4499,6 +4509,29 @@ impl UrlPlaneRunner {
             );
             match extracted {
                 Ok(mut doc) => {
+                    // Structural evidence (a challenge form with no real content around it) exists
+                    // only on the parsed DOM, so the pre-parse validation above cannot see it. The
+                    // document's own validation decides before any dedupe claim, item or page.
+                    if let Some(validation) = doc
+                        .validation
+                        .as_ref()
+                        .filter(|validation| validation.refuses_content(mismatch_action, Some(code)))
+                    {
+                        record.metadata["acquisition"]["validation"] = serde_json::to_value(validation)
+                            .map_err(|e| WorkerError::Other(format!("validation metadata: {e}")))?;
+                        record.metadata["acquisition"]["extractionSucceeded"] = serde_json::json!(true);
+                        self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                            .await?;
+                        return self
+                            .fail(
+                                entry,
+                                "content_validation_failed",
+                                "content_validation_failed",
+                                Attempt::Failed,
+                                serde_json::json!({ "acquisition": record.metadata["acquisition"] }),
+                            )
+                            .await;
+                    }
                     if self.durable_dedupe {
                         content_dedupe = content_dedupe_claim(
                             tenant,
@@ -5613,6 +5646,7 @@ impl UrlPlaneRunner {
                 "developmentReplay",
                 "itemPipeline",
                 "extensions",
+                "url_list",
             ] {
                 if let Some(v) = record.metadata.get(key) {
                     obj.insert(key.to_owned(), v.clone());
@@ -5854,6 +5888,8 @@ impl UrlPlaneRunner {
     /// is reached, or the run is cancelled. Durable selection applies explicit request
     /// priority and the configured strategy before limiting the leased set. DFS and
     /// surface-priority dispatch reconsider the frontier after each response.
+    /// Deadline expiry during child admission is also a normal terminal outcome; unrelated
+    /// storage access denials still fail the run.
     ///
     /// # Errors
     /// Fails when a storage, browser or network operation it depends on fails.
@@ -5900,6 +5936,9 @@ impl UrlPlaneRunner {
                 u32::try_from(pending).map_or(f64::MAX, f64::from),
                 &[("plane", Plane::Urls.as_str())],
             );
+            if self.deps.clock.now() >= self.budget.lock().deadline() {
+                break TerminalReason::DeadlineReached;
+            }
             // Remote leases, future eligibility and open producers are never exhaustion.
             if self.deps.frontier.activity(self.run).await?
                 == crawlx_core::orchestration::FrontierActivityV1::Terminal
@@ -5977,7 +6016,13 @@ impl UrlPlaneRunner {
             };
             // nothing is renewed for a row nobody works on
             self.held.lock().clear();
-            processed?;
+            match processed {
+                // Storage closes the race between discovery's clock check and atomic append.
+                Err(WorkerError::Store(StoreError::RunDeadlineReached)) => {
+                    break TerminalReason::DeadlineReached;
+                }
+                result => result?,
+            }
         };
         // A stop/deadline closes continuous input too; already accepted rows remain durable.
         self.deps.frontier.seal(self.run, 1).await?;
@@ -6157,6 +6202,147 @@ fn raw_request_text(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[tokio::test]
+    async fn deadline_during_child_discovery_is_terminal_but_other_access_denials_are_fatal() {
+        use crawlx_core::time::ManualClock;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // A separate store clock models expiry after the worker's preflight check.
+        for (worker_expires, close_run, has_child) in [
+            (true, false, true),
+            (false, false, true),
+            (false, true, true),
+            (true, false, false),
+        ] {
+            let now = "2026-11-11T00:00:00Z".parse().unwrap();
+            let store_clock = Arc::new(ManualClock::new(now));
+            let worker_clock = if worker_expires {
+                store_clock.clone()
+            } else {
+                Arc::new(ManualClock::new(now))
+            };
+            let directory = tempfile::tempdir().unwrap();
+            let stores = crate::Stores::over_memory(
+                Arc::new(crawlx_storage::MemoryStore::with_clock(store_clock.clone())),
+                directory.path(),
+            )
+            .await
+            .unwrap();
+            let run_id = CrawlRunId::new();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let root_hits = hits.clone();
+            let child_hits = hits.clone();
+            let response_clock = store_clock.clone();
+            let runs = stores.runs.clone();
+            let app = axum::Router::new()
+                .route(
+                    "/",
+                    axum::routing::get(move || {
+                        let hits = root_hits.clone();
+                        let clock = response_clock.clone();
+                        let runs = runs.clone();
+                        async move {
+                            hits.fetch_add(1, Ordering::SeqCst);
+                            if close_run {
+                                runs.set_status(
+                                    run_id,
+                                    RunStatus::Completed,
+                                    Some(TerminalReason::FrontierExhausted),
+                                )
+                                .await
+                                .unwrap();
+                            }
+                            clock.advance_ms(1_000);
+                            (
+                                [(http::header::CONTENT_TYPE, "text/html")],
+                                if has_child {
+                                    "<html><title>Deadline</title><a href='/child'>child</a></html>"
+                                } else {
+                                    "<html><title>Deadline</title><p>No children</p></html>"
+                                },
+                            )
+                        }
+                    }),
+                )
+                .route(
+                    "/child",
+                    axum::routing::get(move || {
+                        let hits = child_hits.clone();
+                        async move {
+                            hits.fetch_add(1, Ordering::SeqCst);
+                            "child must not be requested"
+                        }
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let mut crawl = CreateCrawl::new(Url::parse(&format!("http://{address}/")).unwrap());
+            crawl.mode = CrawlMode::Static;
+            crawl.seed = Some(42);
+            crawl.limits.duration_seconds = 1;
+            crawl.safety.respect_robots_txt = false;
+            crawl.politeness.delay_ms = 0;
+            crawl.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
+            crawl.scope.known_files.clear();
+            let mut run = crawlx_storage::testkit::crawl_run(stores.tenant, crawl.clone());
+            run.id = run_id;
+            run.status = RunStatus::Running;
+            run.created_at = now;
+            run.started_at = Some(now);
+            stores.runs.create(&run, None).await.unwrap();
+            let mut policy = crawlx_policy::EgressPolicy::new(false);
+            policy.extra_allow = vec!["127.0.0.1/32".parse().unwrap()];
+            policy.extra_ports = vec![address.port()];
+            let fetcher = Arc::new(
+                Fetcher::new(
+                    crawlx_fetch::FetchConfig::default(),
+                    Arc::new(policy),
+                    Arc::new(crawlx_fetch::StaticResolver::new()),
+                )
+                .unwrap(),
+            );
+            let runner = UrlPlaneRunner::new(
+                run_id,
+                crawl,
+                WorkerId::new(),
+                UrlPlaneDeps {
+                    runs: stores.runs.clone(),
+                    frontier: stores.frontier.clone(),
+                    request_commits: stores.request_commits.clone(),
+                    source_memo: stores.source_memo.clone(),
+                    leases: stores.leases.clone(),
+                    pages: stores.pages.clone(),
+                    events: stores.events.clone(),
+                    artifacts: stores.artifacts.clone(),
+                    archives: stores.archives.clone(),
+                    clock: worker_clock,
+                },
+                fetcher,
+                RunCounters::default(),
+                CanonicalizeOptions::default(),
+            )
+            .unwrap();
+            runner.seed_if_empty().await.unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(5), runner.run(&CancellationToken::new()))
+                .await
+                .unwrap();
+            server.abort();
+            if close_run {
+                assert!(
+                    matches!(result, Err(WorkerError::Store(StoreError::AccessDenied(_)))),
+                    "{result:?}"
+                );
+            } else {
+                assert_eq!(result.unwrap().terminal, TerminalReason::DeadlineReached);
+            }
+            assert_eq!(hits.load(Ordering::SeqCst), 1);
+            let rows = stores.frontier.list(run_id).await.unwrap();
+            assert_eq!(rows.len(), 1, "expired discovery must not append child rows");
+            assert_eq!(rows[0].url.url.path(), "/");
+        }
+    }
 
     #[tokio::test]
     async fn head_refuses_selected_delegate_and_browser_routes_without_get_fallback() {

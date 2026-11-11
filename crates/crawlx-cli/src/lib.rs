@@ -99,7 +99,7 @@ pub use update::{UpdateStatus, DEFAULT_RELEASE_URL, RELEASE_URL_ENV, UPDATE_CHEC
     version,
     about = "crawlx: crawl a site with a static plane, a browser plane, or both",
     long_about = "crawlx crawls websites. `crawl` runs a crawl in-process; `serve` starts the REST API; \
-                  `worker` runs a lease-loop worker against PostgreSQL; `inspect`, `replay` and `export` \
+                  `worker` runs a lease-loop worker against the database; `inspect`, `replay` and `export` \
                   read a stored run; `migrate` applies the database migrations."
 )]
 pub struct Cli {
@@ -182,7 +182,7 @@ pub enum Command {
     /// every 60 s) bound every run; `CRAWLX_AUTHZ_OPERATOR_KEYS_FILE` holds the operator keys that
     /// verify `operator_signature` authorization records.
     Serve(ServeArgs),
-    /// Run a worker: lease sessions and URL batches from PostgreSQL. The deployment lists of
+    /// Run a worker: lease sessions and URL batches from the database. The deployment lists of
     /// `serve` apply to every run it leases.
     Worker(Box<WorkerArgs>),
     /// Apply the database migrations.

@@ -673,7 +673,7 @@ pub async fn paper(
                             "/k",
                             "out_of_range",
                             "expected 1 to 50",
-                        )]))
+                        )]));
                     }
                 },
             };
@@ -749,7 +749,7 @@ pub async fn similar(
                     "/k",
                     "out_of_range",
                     "expected 1 to 500",
-                )]))
+                )]));
             }
         },
     };

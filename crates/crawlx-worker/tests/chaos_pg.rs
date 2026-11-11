@@ -19,7 +19,7 @@ use crawlx_core::{SafetyProfile, SystemClock, TenantId};
 use crawlx_safety::Adjudication;
 use crawlx_scheduler::{Reaper, ReaperConfig};
 use crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys;
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use crawlx_worker::chaos;
 use crawlx_worker::{SessionError, ShutdownReason, StateAnalyzer, Stores};
 use std::sync::{Arc, LazyLock};
@@ -83,9 +83,9 @@ async fn pg() -> Option<Pg> {
     let schema = format!("t_chaos_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -101,7 +101,11 @@ async fn rig(pg: &Pg) -> RigCore {
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        TenantId::new(),
+    );
     stores.checkpoint_keys = Arc::new(MemoryCheckpointKeys::new().unwrap());
     let fake = Arc::new(
         FakeBackend::builder()
@@ -183,7 +187,10 @@ async fn drill(pg: &Pg, point: Point) {
         .execute(admitted, QuiescencePolicy::default())
         .await
         .unwrap_err();
-    assert!(matches!(err, SessionError::ActorGone), "{point:?}: {err:?}");
+    assert!(
+        matches!(&err, SessionError::ActorStopped(cause) if matches!(**cause, SessionError::ActorGone)),
+        "{point:?}: {err:?}"
+    );
     assert_eq!(chaos::hits(point.name), 1, "{point:?}");
     chaos::configure("");
 

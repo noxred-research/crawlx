@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct WorkerDataRequirementsV1 {
     /// Destination ID to whether its approved ZDR contract is required.
     pub destinations: BTreeMap<String, bool>,
+    /// Destinations that must accept already-compressed serialized bytes.
+    pub compressed_destinations: BTreeSet<String>,
     /// Exact installed detector bundle, when detection was explicitly selected.
     pub language_bundle: Option<Digest>,
 }
@@ -25,6 +27,11 @@ impl WorkerDataRequirementsV1 {
         let zdr = config.retention.mode == crate::config::RetentionMode::Zdr;
         for feed in &config.datasets.feeds {
             requirements.destinations.insert(feed.destination.clone(), zdr);
+            if feed.compression != crate::dataset::FeedCompressionV1::None {
+                requirements
+                    .compressed_destinations
+                    .insert(feed.destination.clone());
+            }
         }
         for policy in config
             .scrape
@@ -54,7 +61,12 @@ impl WorkerDataRequirementsV1 {
     /// # Errors
     /// Returns a conflict for too many destinations or invalid IDs.
     pub fn validate(&self) -> Result<(), StoreError> {
-        if self.destinations.len() > 64 {
+        if self.destinations.len() > 64
+            || !self
+                .compressed_destinations
+                .iter()
+                .all(|id| self.destinations.contains_key(id))
+        {
             return Err(StoreError::Conflict(
                 "worker data requirements exceed bounds".into(),
             ));
@@ -73,6 +85,8 @@ impl WorkerDataRequirementsV1 {
 pub struct WorkerDataCapabilitiesV1 {
     /// Installed approved destinations and their actual retention contract.
     pub destinations: BTreeMap<String, bool>,
+    /// Installed destinations that accept already-compressed serialized bytes.
+    pub compressed_destinations: BTreeSet<String>,
     /// Installed, digest-pinned language assets.
     pub language_bundles: BTreeSet<Digest>,
 }
@@ -88,6 +102,7 @@ impl WorkerDataCapabilitiesV1 {
         let value = Self {
             destinations,
             language_bundles,
+            compressed_destinations: BTreeSet::new(),
         };
         value.validate()?;
         Ok(value)
@@ -97,7 +112,13 @@ impl WorkerDataCapabilitiesV1 {
     /// # Errors
     /// Returns a conflict for malformed or unbounded evidence.
     pub fn validate(&self) -> Result<(), StoreError> {
-        if self.destinations.len() > 64 || self.language_bundles.len() > 8 {
+        if self.destinations.len() > 64
+            || self.language_bundles.len() > 8
+            || !self
+                .compressed_destinations
+                .iter()
+                .all(|id| self.destinations.contains_key(id))
+        {
             return Err(StoreError::Conflict(
                 "worker data capabilities exceed bounds".into(),
             ));
@@ -118,7 +139,48 @@ impl WorkerDataCapabilitiesV1 {
                     .is_some_and(|approved| !*zdr || *approved)
             })
             && requirements
+                .compressed_destinations
+                .is_subset(&self.compressed_destinations)
+            && requirements
                 .language_bundle
                 .is_none_or(|digest| self.language_bundles.contains(&digest))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    #[test]
+    fn compressed_feeds_require_explicit_support_on_the_same_worker() {
+        let config: CreateCrawl = serde_json::from_value(serde_json::json!({
+            "seedUrl":"https://fixture.test/",
+            "datasets":{
+                "stores":[{"name":"docs","schemaVersion":"document_v1","maxItems":10,"maxBytes":1048576}],
+                "feeds":[{"id":"out","source":"docs","serializer":"json","serializerVersion":1,
+                    "destination":"sink","compression":"gzip","maxBatchItems":10,"maxBatchBytes":1048576}]
+            }
+        }))
+        .unwrap();
+        let required = WorkerDataRequirementsV1::from_config(&config).unwrap();
+        assert!(required.compressed_destinations.contains("sink"));
+        let mut facts =
+            WorkerDataCapabilitiesV1::new(BTreeMap::from([("sink".to_owned(), false)]), BTreeSet::new())
+                .unwrap();
+        assert!(!facts.supports(&required));
+        facts.compressed_destinations.insert("sink".into());
+        assert!(facts.supports(&required));
+        facts.compressed_destinations.insert("unknown".into());
+        assert!(facts.validate().is_err());
+    }
+
+    #[test]
+    fn legacy_capabilities_do_not_claim_compressed_delivery() {
+        let facts: WorkerDataCapabilitiesV1 =
+            serde_json::from_value(serde_json::json!({"destinations":{"sink":false},"languageBundles":[]}))
+                .unwrap();
+        assert!(facts.compressed_destinations.is_empty());
+        facts.validate().unwrap();
     }
 }

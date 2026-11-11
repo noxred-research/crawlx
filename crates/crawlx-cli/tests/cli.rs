@@ -306,7 +306,7 @@ fn admin_help_lists_durability_audit() {
 async fn admin_durability_audit_reports_accepted_runs_without_a_row() {
     use crawlx_storage::retention::append_audit;
     use crawlx_storage::testkit::{crawl_run, create_crawl};
-    use crawlx_storage::{Pg, PgConfig};
+    use crawlx_storage::{Pg, StoreConfig};
     use crawlx_telemetry::metrics::names;
     use crawlx_telemetry::Metrics;
     use std::process::ExitCode;
@@ -318,10 +318,10 @@ async fn admin_durability_audit_reports_accepted_runs_without_a_row() {
     let schema = format!("t_dur_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &base,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
             max_connections: 4,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

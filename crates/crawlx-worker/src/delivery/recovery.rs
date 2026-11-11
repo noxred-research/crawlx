@@ -56,7 +56,14 @@ async fn recover_run(
     }
     cfg.delivery.validate(&run)?;
     if let Some(reason) = stores.request_commits.begin_feed_finalization(id, None).await? {
-        Box::pin(super::finalize_feeds(stores, &run, reason, &cfg.cpu_pool)).await?;
+        Box::pin(super::finalize_feeds(
+            stores,
+            &run,
+            reason,
+            &cfg.cpu_pool,
+            cfg.worker_id,
+        ))
+        .await?;
         stores.artifacts.erase_run_credentials(id).await?;
         *run = stores.runs.get(id).await?;
     }

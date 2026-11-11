@@ -143,7 +143,7 @@ pub(crate) fn resolve_seeds(
             _ if input.wants_stdin() => bail!("standard input held no URL"),
             _ => {
                 return Err(anyhow!(
-                    "a seed URL (positional, -u, --list, or `-` for stdin) or --request is required"
+                    "a seed URL (positional, -u, --list, or `-` for stdin), --request or --config with a seedUrl is required"
                 ))
             }
         }

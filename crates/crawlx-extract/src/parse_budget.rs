@@ -50,8 +50,10 @@ pub fn charge_bytes(input_len: usize) -> Option<usize> {
 }
 
 /// The budget refused a charge; nothing was reserved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("parse memory budget exhausted: requested {requested} bytes, {available} of {limit} available")]
+///
+/// `requested == usize::MAX` with `limit == 0` is the sentinel for an isolated parser helper that
+/// ran out of address space, CPU time or wall-clock time: no budget numbers exist for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ParseBudgetExhausted {
     /// Bytes the parse asked for (`usize::MAX` when the charge overflowed).
@@ -61,6 +63,27 @@ pub struct ParseBudgetExhausted {
     /// Configured size of the budget.
     pub limit: usize,
 }
+
+impl std::fmt::Display for ParseBudgetExhausted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.requested == usize::MAX && self.limit == 0 {
+            write!(
+                f,
+                "the isolated parser helper exhausted its address-space, CPU or time limit \
+                 (raise CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES, CRAWLX_PARSER_HELPER_CPU_SECONDS or \
+                 CRAWLX_PARSER_HELPER_TIMEOUT_MS for pages above the in-process size)"
+            )
+        } else {
+            write!(
+                f,
+                "parse memory budget exhausted: requested {} bytes, {} of {} available",
+                self.requested, self.available, self.limit
+            )
+        }
+    }
+}
+
+impl std::error::Error for ParseBudgetExhausted {}
 
 impl ParseBudgetExhausted {
     /// The request is larger than the whole budget, so it is refused no matter how many other
@@ -233,6 +256,31 @@ mod tests {
         assert_eq!(budget.used(), 4 * PARSE_BYTES_PER_INPUT_BYTE);
         drop(charge);
         assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn helper_resource_sentinel_names_the_limits_not_budget_numbers() {
+        let helper = ParseBudgetExhausted {
+            requested: usize::MAX,
+            available: 0,
+            limit: 0,
+        };
+        let text = helper.to_string();
+        assert!(text.contains("isolated parser helper"), "{text}");
+        assert!(
+            text.contains("CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES"),
+            "{text}"
+        );
+        assert!(!text.contains("18446744073709551615"), "{text}");
+        let real = ParseBudgetExhausted {
+            requested: 1000,
+            available: 10,
+            limit: 500,
+        };
+        assert_eq!(
+            real.to_string(),
+            "parse memory budget exhausted: requested 1000 bytes, 10 of 500 available"
+        );
     }
 
     #[test]

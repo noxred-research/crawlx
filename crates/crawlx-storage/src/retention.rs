@@ -12,9 +12,12 @@
 //! * [`ensure_traffic_partitions`] – monthly `traffic_events` partitions created ahead of time.
 
 use crate::artifacts::{ArtifactReaper, LiveArtifacts};
-use crate::codec::get;
+use crate::backend::strategy::{AuditEntry, Conn};
+use crate::backend::{Backend, BackendKind, Dialect, PgBackend, RowLock};
 use crate::error::db;
-use crate::pg::Pg;
+use crate::repos::effects::settle_run;
+use crate::sql::{stmt, Sql, SqlRow, Stmt};
+use crate::store::{Pg, Store};
 use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
 use crawlx_core::archive_catalog::ArchiveRepo;
 use crawlx_core::config::RetentionMode;
@@ -95,8 +98,8 @@ pub struct SweepReport {
 }
 
 /// Deletes expired data. Cheap to construct; call [`RetentionSweeper::sweep`] periodically.
-pub struct RetentionSweeper {
-    pg: Pg,
+pub struct RetentionSweeper<B: Sql = PgBackend> {
+    store: Store<B>,
     artifacts: Option<Arc<dyn ArtifactReaper>>,
     orphan_grace: Option<Duration>,
     /// Non-metadata artifacts of ZDR runs already counted under `crawlx.zdr.violations`
@@ -104,12 +107,12 @@ pub struct RetentionSweeper {
     zdr_seen: Mutex<BTreeSet<ArtifactId>>,
 }
 
-impl RetentionSweeper {
-    /// Sweeper over `pg` with no artifact store attached.
+impl<B: Sql> RetentionSweeper<B> {
+    /// Sweeper over `store` with no artifact store attached.
     #[must_use]
-    pub fn new(pg: Pg) -> Self {
+    pub fn new(store: Store<B>) -> Self {
         Self {
-            pg,
+            store,
             artifacts: None,
             orphan_grace: None,
             zdr_seen: Mutex::new(BTreeSet::new()),
@@ -143,14 +146,16 @@ impl RetentionSweeper {
         let Some(store) = &self.artifacts else {
             return Ok(0);
         };
-        let rows = sqlx::query("SELECT artifact_id, object_key FROM artifacts WHERE deleted_at IS NULL")
-            .fetch_all(&self.pg.pool)
-            .await
-            .map_err(db)?;
+        let rows = stmt!(
+            B,
+            "SELECT artifact_id, object_key FROM artifacts WHERE deleted_at IS NULL"
+        )
+        .fetch_all_pool(&self.store.pool)
+        .await?;
         let mut live = LiveArtifacts::default();
         for r in &rows {
-            live.ids.insert(crawlx_core::ArtifactId(get(r, "artifact_id")?));
-            live.object_keys.insert(get(r, "object_key")?);
+            live.ids.insert(crawlx_core::ArtifactId(r.uuid("artifact_id")?));
+            live.object_keys.insert(r.text("object_key")?);
         }
         let older_than = now
             .checked_sub_signed(grace)
@@ -204,15 +209,17 @@ impl RetentionSweeper {
     ///
     /// Returns an error if the query fails.
     pub async fn zdr_violations(&self) -> Result<Vec<ArtifactId>, StoreError> {
-        let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+        let rows = stmt!(
+            B,
             "SELECT a.artifact_id FROM artifacts a JOIN crawl_runs r ON r.run_id = a.run_id \
              WHERE r.retention_mode = 'zdr' AND a.sensitivity <> 'metadata' AND a.deleted_at IS NULL \
-             ORDER BY a.artifact_id",
+             ORDER BY a.artifact_id"
         )
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
-        Ok(ids.into_iter().map(ArtifactId).collect())
+        .fetch_all_pool(&self.store.pool)
+        .await?;
+        rows.iter()
+            .map(|r| r.uuid("artifact_id").map(ArtifactId))
+            .collect()
     }
 
     /// Artifacts past `expires_at` that are still present, grouped by the owning run's
@@ -222,67 +229,43 @@ impl RetentionSweeper {
     ///
     /// Returns an error if the query fails.
     pub async fn overdue_artifacts(&self, now: Timestamp) -> Result<BTreeMap<String, u64>, StoreError> {
-        let rows = sqlx::query(
+        let rows = stmt!(
+            B,
             "SELECT r.retention_mode::text AS kind, count(*) AS n FROM artifacts a \
              JOIN crawl_runs r ON r.run_id = a.run_id \
-             WHERE a.deleted_at IS NULL AND a.expires_at IS NOT NULL AND a.expires_at <= $1 GROUP BY 1",
+             WHERE a.deleted_at IS NULL AND a.expires_at IS NOT NULL AND a.expires_at <= $1 GROUP BY 1"
         )
-        .bind(now)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .ts(now)
+        .fetch_all_pool(&self.store.pool)
+        .await?;
         let mut out = BTreeMap::new();
         for r in &rows {
-            let kind: String = get(r, "kind")?;
-            let n: i64 = get(r, "n")?;
+            let kind = r.text("kind")?;
+            let n = r.i64("n")?;
             out.insert(kind, u64::try_from(n).unwrap_or(0));
         }
         Ok(out)
     }
 
     async fn sweep_inner(&self, now: Timestamp) -> Result<SweepReport, StoreError> {
-        self.pg.reap_profiles().await?;
-        self.pg.reap_profile_directories().await?;
+        self.store.reap_profiles().await?;
+        self.store.reap_profile_directories().await?;
         // Metadata expiry shares the existing sweeper cadence, not another background loop.
-        let _report_rows = self.pg.purge_expired_report_history().await?;
-        let _graph_rows = self.pg.purge_expired_url_graph().await?;
+        let _report_rows = self.store.purge_expired_report_history().await?;
+        let _graph_rows = self.store.purge_expired_url_graph().await?;
         let mut report = SweepReport::default();
         // Revoke dependency closure before deleting source content. Each object removal is
         // acknowledged separately, so cancellation leaves a resumable erasure cursor.
         // Changed source authority revokes derived objects even before the old export deadline.
-        let expired = sqlx::query(
-            "SELECT e.tenant_id,e.export_id FROM archive_exports e \
-             WHERE (e.state<>'deleted' AND (e.expires_at<=$1 OR EXISTS( \
-               SELECT 1 FROM archive_records s WHERE s.tenant_id=e.tenant_id AND s.export_id=e.export_id \
-               AND s.payload->'custody'->>'sensitivity'='sensitive' AND NOT EXISTS( \
-                 SELECT 1 FROM artifacts a WHERE a.artifact_id=(s.payload->'sourceArtifact'->>'id')::uuid \
-                 AND a.tenant_id=e.tenant_id AND a.run_id=e.run_id AND a.sensitivity='sensitive' \
-                 AND a.content_type=s.payload->>'mime' \
-                 AND a.content_digest=decode(s.payload->'sourceArtifact'->>'digest','hex') \
-                 AND a.expires_at=(s.payload->'custody'->>'expiresAt')::timestamptz \
-                 AND a.expires_at>$1 AND a.deleted_at IS NULL)))) OR (e.state='deleted' AND ( \
-               e.payload->'artifact'<>'null'::jsonb OR e.payload->'index'<>'null'::jsonb OR \
-               EXISTS(SELECT 1 FROM archive_records r WHERE r.tenant_id=e.tenant_id AND r.export_id=e.export_id))) \
-             ORDER BY e.expires_at,e.export_id LIMIT 64",
-        ).bind(now).fetch_all(&self.pg.pool).await.map_err(db)?;
-        for row in &expired {
-            let tenant = TenantId(get(row, "tenant_id")?);
-            let export = get(row, "export_id")?;
+        let expired = expired_exports::<B>(&self.store, now).await?;
+        for (tenant, export) in expired {
             report.artifacts_deleted = report
                 .artifacts_deleted
                 .saturating_add(self.purge_archives(tenant, export).await?);
         }
         // A source that expires while finalizing cannot resume from deleted content.
         // Close its durable lifecycle rather than strand a nonterminal run forever.
-        sqlx::query(
-            "UPDATE crawl_runs r SET status='failed',terminal_reason='fatal_error',finished_at=$1 \
-             WHERE r.expires_at<=$1 AND r.status NOT IN ('completed','failed','cancelled') \
-             AND EXISTS(SELECT 1 FROM archive_exports e WHERE e.tenant_id=r.tenant_id AND e.run_id=r.run_id)",
-        )
-        .bind(now)
-        .execute(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        self.fail_expired_exporting_runs(now).await?;
         if let Some(store) = &self.artifacts {
             report.artifacts_deleted = report
                 .artifacts_deleted
@@ -291,10 +274,11 @@ impl RetentionSweeper {
         if let Some(grace) = self.orphan_grace {
             report.orphans_collected = self.collect_orphans(now, grace).await?;
         }
-        report.pages_deleted = delete_batched(&self.pg, "pages", "expires_at <= $1", Some(now)).await?;
+        report.pages_deleted =
+            delete_batched::<B>(&self.store, "pages", "expires_at <= $1", Some(now)).await?;
         report.rows_deleted = report.rows_deleted.saturating_add(
-            delete_batched(
-                &self.pg,
+            delete_batched::<B>(
+                &self.store,
                 "page_captures",
                 "expires_at <= $1 OR run_id IN (SELECT run_id FROM crawl_runs WHERE expires_at <= $1 OR retention_mode='zdr')",
                 Some(now),
@@ -302,23 +286,52 @@ impl RetentionSweeper {
             .await?,
         );
         report.rows_deleted = report.rows_deleted.saturating_add(
-            delete_batched(&self.pg, "adaptive_selectors", "expires_at <= $1", Some(now)).await?,
+            delete_batched::<B>(&self.store, "adaptive_selectors", "expires_at <= $1", Some(now)).await?,
         );
-        let runs = sqlx::query(
+        let runs = stmt!(
+            B,
             "SELECT run_id FROM crawl_runs WHERE status::text IN ('completed','failed','cancelled') \
-             AND ((expires_at IS NOT NULL AND expires_at <= $1) OR purge_requested_at IS NOT NULL) ORDER BY run_id",
+             AND ((expires_at IS NOT NULL AND expires_at <= $1) OR purge_requested_at IS NOT NULL) ORDER BY run_id"
         )
-        .bind(now)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .ts(now)
+        .fetch_all_pool(&self.store.pool)
+        .await?;
         for r in &runs {
-            let run = CrawlRunId(get(r, "run_id")?);
+            let run = CrawlRunId(r.uuid("run_id")?);
             report.rows_deleted += self.purge_run(run).await?;
             report.runs_purged += 1;
         }
         report.authorizations_deleted = self.sweep_authorizations(now).await?;
         Ok(report)
+    }
+
+    /// Mark runs whose source expired while finalizing as failed, together with the credential
+    /// revocation their terminal status implies.
+    async fn fail_expired_exporting_runs(&self, now: Timestamp) -> Result<(), StoreError> {
+        let alias = alias_kw::<B>();
+        let condition = "r.expires_at<=$1 AND r.status NOT IN ('completed','failed','cancelled') \
+             AND EXISTS(SELECT 1 FROM archive_exports e WHERE e.tenant_id=r.tenant_id AND e.run_id=r.run_id)";
+        let update = format!(
+            "UPDATE crawl_runs{alias}r SET status='failed',terminal_reason='fatal_error',finished_at=$1 WHERE {condition}"
+        );
+        if !crate::repos::effects::in_rust::<B>() {
+            // PostgreSQL revokes the credentials in the same statement through its triggers
+            Stmt::<B>::dynamic(&update)
+                .ts(now)
+                .execute_write(&self.store.pool)
+                .await?;
+            return Ok(());
+        }
+        let mut tx = self.store.begin_write().await?;
+        let runs = Stmt::<B>::dynamic(&format!("SELECT r.run_id FROM crawl_runs r WHERE {condition}"))
+            .ts(now)
+            .fetch_all(tx.conn())
+            .await?;
+        Stmt::<B>::dynamic(&update).ts(now).execute(tx.conn()).await?;
+        for run in &runs {
+            settle_run::<B>(tx.conn(), CrawlRunId(run.uuid("run_id")?)).await?;
+        }
+        tx.commit().await
     }
 
     /// Remove at most 100 expired authorization records per pass.
@@ -333,33 +346,45 @@ impl RetentionSweeper {
         let cutoff = now.checked_sub_signed(Duration::days(1_096)).ok_or_else(|| {
             StoreError::Backend("authorization retention horizon is out of range".to_owned())
         })?;
-        let mut tx = self.pg.pool.begin().await.map_err(db)?;
-        let rows = sqlx::query(
-            "SELECT a.record_id, a.tenant_id, a.body_digest FROM authorization_records a \
-             WHERE GREATEST(a.valid_to, a.created_at, a.verified_at, a.revoked_at) <= $1 \
-             AND NOT EXISTS (SELECT 1 FROM crawl_runs r WHERE r.authorization_record_id = a.record_id) \
-             AND NOT EXISTS (SELECT 1 FROM safety_decisions d WHERE d.authorization_record_id = a.record_id) \
-             ORDER BY a.valid_to, a.record_id LIMIT 100 FOR UPDATE OF a SKIP LOCKED",
+        let mut tx = self.store.begin_write().await?;
+        let latest = <B::Dialect as Dialect>::greatest_ignoring_null(&[
+            "a.valid_to",
+            "a.created_at",
+            "a.verified_at",
+            "a.revoked_at",
+        ]);
+        let lock = if B::KIND == BackendKind::Postgres {
+            " FOR UPDATE OF a SKIP LOCKED"
+        } else {
+            <B::Dialect as Dialect>::row_lock(RowLock::UpdateSkipLocked)
+        };
+        let rows = stmt!(
+            B,
+            format!(
+                "SELECT a.record_id, a.tenant_id, a.body_digest FROM authorization_records a \
+                 WHERE {latest} <= $1 \
+                 AND NOT EXISTS (SELECT 1 FROM crawl_runs r WHERE r.authorization_record_id = a.record_id) \
+                 AND NOT EXISTS (SELECT 1 FROM safety_decisions d WHERE d.authorization_record_id = a.record_id) \
+                 ORDER BY a.valid_to, a.record_id LIMIT 100{lock}"
+            )
         )
-        .bind(cutoff)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
+        .ts(cutoff)
+        .fetch_all(tx.conn())
+        .await?;
         for row in &rows {
-            let id: uuid::Uuid = get(row, "record_id")?;
-            let tenant: uuid::Uuid = get(row, "tenant_id")?;
-            let digest: Vec<u8> = get(row, "body_digest")?;
-            sqlx::query("DELETE FROM authorization_records WHERE record_id = $1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-            append_audit_on(
-                &mut tx, Some(tenant), None, "retention_sweeper", "authorization.purged",
+            let id = row.uuid("record_id")?;
+            let tenant = row.uuid("tenant_id")?;
+            let digest = row.bytes("body_digest")?;
+            stmt!(B, "DELETE FROM authorization_records WHERE record_id = $1")
+                .uuid(id)
+                .execute(tx.conn())
+                .await?;
+            append_audit_in::<B>(
+                tx.conn(), Some(tenant), None, "retention_sweeper", "authorization.purged",
                 serde_json::json!({ "record_id": id, "bodyDigest": Digest(digest.try_into().map_err(|_| StoreError::Serialization("invalid authorization body digest length".to_owned()))?) }),
             ).await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         u64::try_from(rows.len()).map_err(|error| StoreError::Backend(error.to_string()))
     }
 
@@ -372,17 +397,36 @@ impl RetentionSweeper {
     /// # Errors
     /// Returns [`StoreError::NotFound`] for a missing run, or a database error.
     pub async fn begin_run_erasure(&self, run: CrawlRunId) -> Result<TenantId, StoreError> {
-        let tenant: Option<uuid::Uuid> = sqlx::query_scalar(
+        let clock = <B::Dialect as Dialect>::clock_timestamp();
+        let update = format!(
             "UPDATE crawl_runs SET status=CASE \
              WHEN status IN ('completed','failed','cancelled') THEN status ELSE 'cancelled' END, \
              terminal_reason=COALESCE(terminal_reason,'cancelled'), \
-             finished_at=COALESCE(finished_at,clock_timestamp()) \
-             WHERE run_id=$1 RETURNING tenant_id",
-        )
-        .bind(run.0)
-        .fetch_optional(&self.pg.pool)
-        .await
-        .map_err(db)?;
+             finished_at=COALESCE(finished_at,{clock}) \
+             WHERE run_id=$1"
+        );
+        let mut tx = self.store.begin_write().await?;
+        let tenant = if <B::Dialect as Dialect>::UPDATE_RETURNING {
+            stmt!(B, format!("{update} RETURNING tenant_id"))
+                .uuid(run.0)
+                .fetch_optional(tx.conn())
+                .await?
+                .map(|row| row.uuid("tenant_id"))
+                .transpose()?
+        } else if stmt!(B, update).uuid(run.0).execute(tx.conn()).await? == 0 {
+            None
+        } else {
+            stmt!(B, "SELECT tenant_id FROM crawl_runs WHERE run_id = $1")
+                .uuid(run.0)
+                .fetch_optional(tx.conn())
+                .await?
+                .map(|row| row.uuid("tenant_id"))
+                .transpose()?
+        };
+        if tenant.is_some() {
+            settle_run::<B>(tx.conn(), run).await?;
+        }
+        tx.commit().await?;
         tenant
             .map(TenantId)
             .ok_or_else(|| crate::error::not_found("crawl_run", run))
@@ -400,7 +444,7 @@ impl RetentionSweeper {
             Err(StoreError::NotFound { .. }) => (0, None),
             Err(error) => return Err(error),
         };
-        if let (Some(buffer), Some(tenant)) = (&self.pg.delivery, tenant) {
+        if let (Some(buffer), Some(tenant)) = (&self.store.delivery, tenant) {
             removed = removed.saturating_add(buffer.purge_run(tenant, run).await?);
         }
         if let Some(store) = &self.artifacts {
@@ -410,10 +454,10 @@ impl RetentionSweeper {
     }
 
     async fn purge_archives(&self, tenant: TenantId, export: uuid::Uuid) -> Result<u64, StoreError> {
-        self.pg.erase(tenant, export).await?;
+        ArchiveRepo::erase(&self.store, tenant, export).await?;
         let mut removed = 0u64;
         loop {
-            let artifacts = self.pg.erased_artifacts(tenant, 64).await?;
+            let artifacts = ArchiveRepo::erased_artifacts(&self.store, tenant, 64).await?;
             if artifacts.is_empty() {
                 return Ok(removed);
             }
@@ -422,7 +466,7 @@ impl RetentionSweeper {
             })?;
             for artifact in artifacts {
                 removed = removed.saturating_add(store.erase_artifact(&artifact).await?);
-                self.pg.acknowledge_erased(tenant, &artifact).await?;
+                ArchiveRepo::acknowledge_erased(&self.store, tenant, &artifact).await?;
             }
         }
     }
@@ -437,13 +481,13 @@ impl RetentionSweeper {
     pub async fn purge_run(&self, run: CrawlRunId) -> Result<u64, StoreError> {
         let tenant = self.begin_run_erasure(run).await?.0;
         self.purge_archives(TenantId(tenant), run.0).await?;
-        if let Some(buffer) = &self.pg.delivery {
+        if let Some(buffer) = &self.store.delivery {
             buffer.purge_run(TenantId(tenant), run).await?;
         }
         if let Some(store) = &self.artifacts {
             store.purge_run(run).await?;
         }
-        let pool = &self.pg.pool;
+        let pool = &self.store.pool;
         let mut total = 0u64;
         for table in [
             "webhook_deliveries",
@@ -452,26 +496,7 @@ impl RetentionSweeper {
             "workflow_runs",
             "checkpoints",
             "transitions",
-        ] {
-            total += delete_run_rows(&self.pg, table, run).await?;
-        }
-        loop {
-            let n = sqlx::query(
-                "DELETE FROM traffic_events WHERE (event_id, occurred_at) IN \
-                 (SELECT event_id, occurred_at FROM traffic_events WHERE run_id = $1 LIMIT $2)",
-            )
-            .bind(run.0)
-            .bind(PURGE_BATCH)
-            .execute(pool)
-            .await
-            .map_err(db)?
-            .rows_affected();
-            total += n;
-            if n == 0 {
-                break;
-            }
-        }
-        for table in [
+            "traffic_events",
             "network_epochs",
             "enablement_edges",
             "actions",
@@ -479,44 +504,39 @@ impl RetentionSweeper {
             "safety_decisions",
             "model_decisions",
         ] {
-            total += delete_run_rows(&self.pg, table, run).await?;
+            total += delete_run_rows::<B>(&self.store, table, run).await?;
         }
-        total += sqlx::query("DELETE FROM state_cluster_membership WHERE state_id IN (SELECT state_id FROM states WHERE run_id = $1)")
-            .bind(run.0)
-            .execute(pool)
-            .await
-            .map_err(db)?
-            .rows_affected();
-        total += sqlx::query("DELETE FROM state_clusters WHERE run_id = $1")
-            .bind(run.0)
-            .execute(pool)
-            .await
-            .map_err(db)?
-            .rows_affected();
+        total += stmt!(
+            B,
+            "DELETE FROM state_cluster_membership WHERE state_id IN (SELECT state_id FROM states WHERE run_id = $1)"
+        )
+        .uuid(run.0)
+        .execute_write(pool)
+        .await?;
+        total += stmt!(B, "DELETE FROM state_clusters WHERE run_id = $1")
+            .uuid(run.0)
+            .execute_write(pool)
+            .await?;
         for table in ["identity_aliases", "elements", "states", "pages", "page_captures"] {
-            total += delete_run_rows(&self.pg, table, run).await?;
+            total += delete_run_rows::<B>(&self.store, table, run).await?;
         }
-        sqlx::query("UPDATE url_frontier SET parent_id = NULL WHERE run_id = $1")
-            .bind(run.0)
-            .execute(pool)
-            .await
-            .map_err(db)?;
+        stmt!(B, "UPDATE url_frontier SET parent_id = NULL WHERE run_id = $1")
+            .uuid(run.0)
+            .execute_write(pool)
+            .await?;
         for table in ["url_frontier", "origin_leases", "artifacts", "crawl_sessions"] {
-            total += delete_run_rows(&self.pg, table, run).await?;
+            total += delete_run_rows::<B>(&self.store, table, run).await?;
         }
-        sqlx::query("DELETE FROM idempotency_keys WHERE run_id = $1")
-            .bind(run.0)
-            .execute(pool)
-            .await
-            .map_err(db)?;
-        total += sqlx::query("DELETE FROM crawl_runs WHERE run_id = $1")
-            .bind(run.0)
-            .execute(pool)
-            .await
-            .map_err(db)?
-            .rows_affected();
+        stmt!(B, "DELETE FROM idempotency_keys WHERE run_id = $1")
+            .uuid(run.0)
+            .execute_write(pool)
+            .await?;
+        total += stmt!(B, "DELETE FROM crawl_runs WHERE run_id = $1")
+            .uuid(run.0)
+            .execute_write(pool)
+            .await?;
         append_audit(
-            &self.pg,
+            &self.store,
             Some(tenant),
             Some(run.0),
             "retention_sweeper",
@@ -526,6 +546,65 @@ impl RetentionSweeper {
         .await?;
         Ok(total)
     }
+}
+
+/// ` ` before a table alias on PostgreSQL (as the statements always spelled it), ` AS ` on
+/// the engines whose `UPDATE` requires the keyword.
+const fn alias_kw<B: Backend>() -> &'static str {
+    if matches!(B::KIND, BackendKind::Postgres) {
+        " "
+    } else {
+        " AS "
+    }
+}
+
+/// Exports whose objects must be erased: past their deadline, whose source custody changed,
+/// or already deleted with leftovers. At most 64, oldest first.
+async fn expired_exports<B: Sql>(
+    store: &Store<B>,
+    now: Timestamp,
+) -> Result<Vec<(TenantId, uuid::Uuid)>, StoreError> {
+    let rows = if B::KIND == BackendKind::Postgres {
+        stmt!(
+            B,
+            "SELECT e.tenant_id,e.export_id FROM archive_exports e \
+             WHERE (e.state<>'deleted' AND (e.expires_at<=$1 OR EXISTS( \
+               SELECT 1 FROM archive_records s WHERE s.tenant_id=e.tenant_id AND s.export_id=e.export_id \
+               AND s.payload->'custody'->>'sensitivity'='sensitive' AND NOT EXISTS( \
+                 SELECT 1 FROM artifacts a WHERE a.artifact_id=(s.payload->'sourceArtifact'->>'id')::uuid \
+                 AND a.tenant_id=e.tenant_id AND a.run_id=e.run_id AND a.sensitivity='sensitive' \
+                 AND a.content_type=s.payload->>'mime' \
+                 AND a.content_digest=decode(s.payload->'sourceArtifact'->>'digest','hex') \
+                 AND a.expires_at=(s.payload->'custody'->>'expiresAt')::timestamptz \
+                 AND a.expires_at>$1 AND a.deleted_at IS NULL)))) OR (e.state='deleted' AND ( \
+               e.payload->'artifact'<>'null'::jsonb OR e.payload->'index'<>'null'::jsonb OR \
+               EXISTS(SELECT 1 FROM archive_records r WHERE r.tenant_id=e.tenant_id AND r.export_id=e.export_id))) \
+             ORDER BY e.expires_at,e.export_id LIMIT 64"
+        )
+    } else {
+        // The probes into `payload` are columns of the new engines' schemas.
+        stmt!(
+            B,
+            "SELECT e.tenant_id,e.export_id FROM archive_exports e \
+             WHERE (e.state<>'deleted' AND (e.expires_at<=$1 OR EXISTS( \
+               SELECT 1 FROM archive_records s WHERE s.tenant_id=e.tenant_id AND s.export_id=e.export_id \
+               AND s.custody_sensitivity='sensitive' AND NOT EXISTS( \
+                 SELECT 1 FROM artifacts a WHERE a.artifact_id=s.source_artifact_id \
+                 AND a.tenant_id=e.tenant_id AND a.run_id=e.run_id AND a.sensitivity='sensitive' \
+                 AND a.content_type=s.source_mime AND a.content_digest=s.source_digest \
+                 AND a.expires_at=s.custody_expires_at \
+                 AND a.expires_at>$1 AND a.deleted_at IS NULL)))) OR (e.state='deleted' AND ( \
+               e.package_artifact_id IS NOT NULL OR e.index_artifact_id IS NOT NULL OR \
+               EXISTS(SELECT 1 FROM archive_records r WHERE r.tenant_id=e.tenant_id AND r.export_id=e.export_id))) \
+             ORDER BY (e.expires_at IS NULL),e.expires_at,e.export_id LIMIT 64"
+        )
+    }
+    .ts(now)
+    .fetch_all_pool(&store.pool)
+    .await?;
+    rows.iter()
+        .map(|row| Ok((TenantId(row.uuid("tenant_id")?), row.uuid("export_id")?)))
+        .collect()
 }
 
 /// Shortest period between two passes of [`run_sweep_loop`]; a smaller request is raised to it.
@@ -636,7 +715,7 @@ where
     summary
 }
 
-impl RetentionSweeper {
+impl<B: Sql> RetentionSweeper<B> {
     /// [`run_sweep_loop`] over this sweeper, each pass stamped with the database clock.
     pub async fn run_loop<O>(
         &self,
@@ -651,7 +730,7 @@ impl RetentionSweeper {
             config,
             cancel,
             || async {
-                let now = self.pg.db_now().await?;
+                let now = db_now::<B>(&self.store).await?;
                 self.sweep(now).await
             },
             observe,
@@ -660,18 +739,55 @@ impl RetentionSweeper {
     }
 }
 
+/// The engine's own clock, as `SELECT now`.
+async fn db_now<B: Sql>(store: &Store<B>) -> Result<Timestamp, StoreError> {
+    stmt!(B, format!("SELECT {} AS v", <B::Dialect as Dialect>::now()))
+        .fetch_one_pool(&store.pool)
+        .await?
+        .ts("v")
+}
+
+/// One bounded `DELETE` of at most [`PURGE_BATCH`] rows of `table` matching `predicate`.
+///
+/// PostgreSQL addresses the rows by `ctid`, SQLite by `rowid`; MariaDB limits the `DELETE`
+/// itself. `table` and `predicate` are compile-time literals.
+fn batch_delete_sql<B: Backend>(table: &'static str, predicate: &str) -> String {
+    match B::KIND {
+        BackendKind::Postgres => format!(
+            "DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT {PURGE_BATCH})"
+        ),
+        BackendKind::MariaDb => format!("DELETE FROM {table} WHERE {predicate} LIMIT {PURGE_BATCH}"),
+        _ => format!(
+            "DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} WHERE {predicate} LIMIT {PURGE_BATCH})"
+        ),
+    }
+}
+
 /// `table` is `'static` so only compile-time literals can name the target of the
 /// interpolated `DELETE`.
-async fn delete_run_rows(pg: &Pg, table: &'static str, run: CrawlRunId) -> Result<u64, StoreError> {
+async fn delete_run_rows<B: Sql>(
+    store: &Store<B>,
+    table: &'static str,
+    run: CrawlRunId,
+) -> Result<u64, StoreError> {
     let mut total = 0;
     loop {
-        let sql = format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE run_id = $1 LIMIT {PURGE_BATCH})");
-        let n = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(run.0)
-            .execute(&pg.pool)
-            .await
-            .map_err(db)?
-            .rows_affected();
+        let n = if table == "traffic_events" && B::KIND == BackendKind::Postgres {
+            // a partitioned table: `ctid` is unique per partition only
+            Stmt::<B>::dynamic(
+                "DELETE FROM traffic_events WHERE (event_id, occurred_at) IN \
+                 (SELECT event_id, occurred_at FROM traffic_events WHERE run_id = $1 LIMIT $2)",
+            )
+            .uuid(run.0)
+            .i64(PURGE_BATCH)
+            .execute_write(&store.pool)
+            .await?
+        } else {
+            Stmt::<B>::dynamic(&batch_delete_sql::<B>(table, "run_id = $1"))
+                .uuid(run.0)
+                .execute_write(&store.pool)
+                .await?
+        };
         total += n;
         if n == 0 {
             return Ok(total);
@@ -679,20 +795,19 @@ async fn delete_run_rows(pg: &Pg, table: &'static str, run: CrawlRunId) -> Resul
     }
 }
 
-async fn delete_batched(
-    pg: &Pg,
+async fn delete_batched<B: Sql>(
+    store: &Store<B>,
     table: &'static str,
     predicate: &'static str,
     at: Option<Timestamp>,
 ) -> Result<u64, StoreError> {
     let mut total = 0;
     loop {
-        let sql = format!("DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE {predicate} LIMIT {PURGE_BATCH})");
-        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        let mut statement = Stmt::<B>::dynamic(&batch_delete_sql::<B>(table, predicate));
         if let Some(at) = at {
-            q = q.bind(at);
+            statement = statement.ts(at);
         }
-        let n = q.execute(&pg.pool).await.map_err(db)?.rows_affected();
+        let n = statement.execute_write(&store.pool).await?;
         total += n;
         if n == 0 {
             return Ok(total);
@@ -701,14 +816,15 @@ async fn delete_batched(
 }
 
 /// Append one hash-chained row to `audit_events`: `entry_hash` covers the
-/// previous hash and the canonical entry. Serialized by an advisory lock.
+/// previous hash and the canonical entry. Serialized by the engine's chain lock (an advisory
+/// lock on PostgreSQL, the head row elsewhere).
 ///
 /// # Errors
 ///
-/// Returns an error if the transaction, the advisory lock, the chain-head read or the insert
+/// Returns an error if the transaction, the chain lock, the chain-head read or the insert
 /// fails.
-pub async fn append_audit(
-    pg: &Pg,
+pub async fn append_audit<B: Sql>(
+    store: &Store<B>,
     tenant: Option<uuid::Uuid>,
     run: Option<uuid::Uuid>,
     actor: &str,
@@ -716,12 +832,16 @@ pub async fn append_audit(
     subject: serde_json::Value,
 ) -> Result<(), StoreError> {
     let confidential = if let Some(run) = run {
-        sqlx::query_scalar::<_, bool>("SELECT retention_mode = 'zdr' FROM crawl_runs WHERE run_id = $1")
-            .bind(run)
-            .fetch_optional(&pg.pool)
-            .await
-            .map_err(db)?
-            .unwrap_or(true)
+        stmt!(
+            B,
+            "SELECT retention_mode::text AS mode FROM crawl_runs WHERE run_id = $1"
+        )
+        .uuid(run)
+        .fetch_optional_pool(&store.pool)
+        .await?
+        .map(|row| row.text("mode"))
+        .transpose()?
+        .is_none_or(|mode| mode == "zdr")
     } else {
         false
     };
@@ -732,44 +852,35 @@ pub async fn append_audit(
     } else {
         subject
     };
-    let mut tx = pg.pool.begin().await.map_err(db)?;
-    append_audit_on(&mut tx, tenant, run, actor, event, subject).await?;
-    tx.commit().await.map_err(db)
+    let mut tx = store.begin_write().await?;
+    append_audit_in::<B>(tx.conn(), tenant, run, actor, event, subject).await?;
+    tx.commit().await
 }
 
-pub(crate) async fn append_audit_on(
-    connection: &mut PgConnection,
+/// [`append_audit`] inside the caller's write transaction on `connection`.
+///
+/// # Errors
+///
+/// Returns an error if the chain lock, the chain-head read or the insert fails.
+pub(crate) async fn append_audit_in<B: Sql>(
+    connection: &mut Conn<B>,
     tenant: Option<uuid::Uuid>,
     run: Option<uuid::Uuid>,
     actor: &str,
     event: &str,
     subject: serde_json::Value,
 ) -> Result<(), StoreError> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('crawlx_audit_chain'))")
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
-    let prev: Option<Vec<u8>> = sqlx::query_scalar("SELECT crawlx_audit_head()")
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(db)?;
-    let prev = prev.unwrap_or_else(|| vec![0u8; 32]);
-    let entry = serde_json::json!({ "tenant": tenant, "run": run, "actor": actor, "event": event, "subject": subject });
-    let entry_text = entry.to_string();
-    let bytes = [prev.as_slice(), entry_text.as_bytes()].concat();
-    let hash = Digest::of("crawlx/audit-chain/v1", &bytes);
-    sqlx::query("INSERT INTO audit_events (tenant_id, run_id, actor, event, subject, prev_hash, entry_hash) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-        .bind(tenant)
-        .bind(run)
-        .bind(actor)
-        .bind(event)
-        .bind(subject)
-        .bind(prev)
-        .bind(hash.0.to_vec())
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
-    Ok(())
+    B::append_audit_chain(
+        connection,
+        AuditEntry {
+            tenant,
+            run,
+            actor,
+            event,
+            subject: &subject,
+        },
+    )
+    .await
 }
 
 fn first_of_month(ts: Timestamp, add_months: u32) -> Option<NaiveDate> {

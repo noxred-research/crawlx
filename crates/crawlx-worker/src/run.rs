@@ -68,6 +68,56 @@ use tracing::Instrument as _;
 
 const MAX_SESSION_POOL_BINDINGS: usize = 1024;
 
+/// Preserve explicit native HTTP routing across browser links, redirects and popups.
+#[derive(Debug)]
+struct ProtocolNavigationGuard {
+    routes: Arc<crawlx_core::protocol::CompiledProtocolRoutes>,
+    inner: Option<Arc<dyn crawlx_core::browser::NavigationGuard>>,
+}
+
+impl ProtocolNavigationGuard {
+    fn http_only(&self, url: &url::Url) -> bool {
+        crate::protocol::select_route(&self.routes, url)
+            .is_some_and(|route| route.backend == crawlx_core::protocol::ProtocolBackendV1::Http)
+    }
+}
+
+#[async_trait::async_trait]
+impl crawlx_core::browser::NavigationGuard for ProtocolNavigationGuard {
+    async fn check(&self, url: &url::Url) -> crawlx_core::browser::NavigationVerdict {
+        if self.http_only(url) {
+            return crawlx_core::browser::NavigationVerdict::EgressDenied;
+        }
+        match &self.inner {
+            Some(inner) => inner.check(url).await,
+            None => crawlx_core::browser::NavigationVerdict::Allow,
+        }
+    }
+
+    async fn check_request(&self, url: &url::Url) -> crawlx_core::browser::NavigationVerdict {
+        if self.http_only(url) {
+            return crawlx_core::browser::NavigationVerdict::EgressDenied;
+        }
+        match &self.inner {
+            Some(inner) => inner.check_request(url).await,
+            None => crawlx_core::browser::NavigationVerdict::Allow,
+        }
+    }
+
+    fn intercepts_subresources(&self) -> bool {
+        self.inner
+            .as_ref()
+            .is_some_and(|inner| inner.intercepts_subresources())
+    }
+
+    async fn check_subresource(&self, url: &url::Url) -> crawlx_core::browser::NavigationVerdict {
+        match &self.inner {
+            Some(inner) => inner.check_subresource(url).await,
+            None => crawlx_core::browser::NavigationVerdict::Allow,
+        }
+    }
+}
+
 /// Close a context nobody will use and return its slot, confirming closure before capacity returns.
 async fn close_pooled(pooled: crate::pool::PooledContext) -> Result<(), WorkerError> {
     let (context, _, capacity) = pooled.into_parts();
@@ -128,6 +178,7 @@ pub struct RunContext {
     session_flow_capture: Option<tokio::sync::mpsc::Sender<crawlx_core::traffic::ProxyFlow>>,
     /// Worker-approved isolated acquisition services, never tenant-provided endpoints.
     pub protocol_registry: Option<Arc<crate::protocol::ProtocolRegistry>>,
+    protocol_routes: Arc<crawlx_core::protocol::CompiledProtocolRoutes>,
     /// Immutable tenant-approved recipe resolved at admission, outside tenant control.
     pub archive_behavior: Option<Arc<crawlx_core::archive_behaviors::RecipeV1>>,
     /// Operator-approved actor portion of the immutable extension recipe.
@@ -972,6 +1023,12 @@ impl RunContext {
         } else {
             cfg.check_gates(&run.config)?;
         }
+        if run.config.dynamic.llm_planner != crawlx_core::config::LlmPlannerMode::Off && cfg.planner.is_none()
+        {
+            return Err(WorkerError::Config(
+                "dynamic.llmPlanner requires --planner-endpoint".into(),
+            ));
+        }
         // A shared facade/worker store is not the run's owner; bind this wrapper to
         // the admitted run before constructing actor and checkpoint services.
         stores.tenant = run.tenant;
@@ -984,6 +1041,12 @@ impl RunContext {
         )?;
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let crawl = run.config.clone();
+        let protocol_routes = Arc::new(
+            crawl
+                .protocol
+                .compile()
+                .map_err(|error| WorkerError::Config(error.to_string()))?,
+        );
         let captcha_secrets = crawlx_core::captcha::CaptchaSecrets::default();
         let captcha = if let Some(config) = &crawl.crawl.captcha {
             config.validate().map_err(BrowserError::from)?;
@@ -1060,12 +1123,12 @@ impl RunContext {
         // durable key custody and the run's secret authority, never a profile directory.
         if crawl.dynamic.browser_profile.is_some() {
             if cfg.retained_profiles.is_none()
-                || stores.pg.is_none()
+                || stores.durable.is_none()
                 || crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr
             {
-                return Err(WorkerError::Config("profile_unavailable: retained profiles require operator approval and PostgreSQL fence; zdr forbids them".into()));
+                return Err(WorkerError::Config("profile_unavailable: retained profiles require operator approval and a database fence; zdr forbids them".into()));
             }
-            if stores.pg_secret_authority.is_none()
+            if stores.secret_authority.is_none()
                 || !stores
                     .artifact_keys
                     .as_ref()
@@ -1254,6 +1317,7 @@ impl RunContext {
             session_pool_bindings: Arc::new(Mutex::new(BTreeMap::new())),
             session_flow_capture: None,
             protocol_registry,
+            protocol_routes,
             archive_behavior,
             extension_actor_recipe,
             interactive_profiles: cfg.interactive_profiles.clone(),
@@ -1487,9 +1551,9 @@ impl RunContext {
         let pool = route
             .bind(binding, Some((policy, resolver)))?
             .ok_or_else(|| WorkerError::Config("session proxy binding unavailable".into()))?;
-        if let Some(pg) = &self.stores.pg {
+        if let Some(durable) = &self.stores.durable {
             pool.set_pin_authority(crate::session_pool_pins::authority(
-                pg.clone(),
+                durable.clone(),
                 lease.clone(),
                 binding.identity.tenant,
                 binding.generation,
@@ -1631,7 +1695,7 @@ impl RunContext {
             .as_ref()
             .and_then(crate::profile_custody_runtime::ProfileSession::expires_at)
             .map_or(expiry, |profile_expiry| expiry.min(profile_expiry));
-        let binding = if let Some(pg) = &self.stores.pg {
+        let binding = if let Some(pg) = &self.stores.durable {
             let binding = match pg.bind_session(lease, identity, expiry).await {
                 Ok(binding) => binding,
                 Err(error) => {
@@ -1782,6 +1846,12 @@ impl RunContext {
         if let Some(gate) = self.browser_guard() {
             // Robots remains a document-only guard; the signed network scope below covers all resources.
             c.navigation_guard = Some(Arc::new(gate.clone()));
+        }
+        if !self.crawl.protocol.routes.is_empty() {
+            c.navigation_guard = Some(Arc::new(ProtocolNavigationGuard {
+                routes: Arc::clone(&self.protocol_routes),
+                inner: c.navigation_guard.take(),
+            }));
         }
         c.navigation_guard = Some(Arc::new(crawlx_browser::network_guard::ScopedNetworkGuard::new(
             (*self.delivery_authority.policy).clone(),
@@ -1988,7 +2058,7 @@ pub async fn run_session(
         .stores
         .session_producer(rc.run, &lease)
         .with_cancellation(publication_cancel);
-    let authority = rc.stores.pg_secret_authority.clone();
+    let authority = rc.stores.secret_authority.clone();
     let outcome = crawlx_core::custody::with_producer(
         producer.clone(),
         crate::custody_renewal::with_custody_renewal(authority, producer, async {
@@ -2195,6 +2265,30 @@ async fn session_generation_body(
     if let Some(guard) = &rc.authorization {
         guard.check_now().await?;
     }
+    // The URL-plane handoff and seed fallback obey the same trusted scheduler facts.
+    start_requests.retain(|request| {
+        !crate::protocol::select_route(&rc.protocol_routes, &request.url.url)
+            .is_some_and(|route| route.backend == crawlx_core::protocol::ProtocolBackendV1::Http)
+    });
+    let seed = rc.seed_url()?;
+    let seed_is_http = crate::protocol::select_route(&rc.protocol_routes, &seed.url)
+        .is_some_and(|route| route.backend == crawlx_core::protocol::ProtocolBackendV1::Http);
+    let seed_request = if seed_is_http {
+        if start_requests.is_empty() {
+            return Ok(SessionEnd {
+                terminal: TerminalReason::FrontierExhausted,
+                error: None,
+            });
+        }
+        start_requests.remove(0)
+    } else {
+        // Preserve admitted handler labels; unmatched seeds keep the hybrid fallback.
+        start_requests
+            .iter()
+            .position(|request| request.url.url == seed.url)
+            .map(|index| start_requests.remove(index))
+            .unwrap_or_else(|| crawlx_core::request::RequestEnvelopeV1::get(seed, 0, None))
+    };
     let mut role_budget = crate::role_budget::RoleBudget::load(rc, session).await?;
     if let Some(terminal) = role_budget
         .exhausted(rc.clock.now())
@@ -2250,7 +2344,7 @@ async fn session_generation_body(
         rc.crawl.capture.clone(),
         (&rc.controls, &rc.captcha_secrets),
     ));
-    if rc.stores.pg.is_some() {
+    if rc.stores.durable.is_some() {
         rc.clusters.sync(rc.stores.states.as_ref(), rc.run).await?;
     }
     let handle = crate::actor::SessionActor::spawn(
@@ -2279,14 +2373,6 @@ async fn session_generation_body(
                 states: 0,
             });
         }
-        let seed = rc.seed_url()?;
-        // Reuse the actual admitted seed intent when the URL plane flagged it.
-        // Reconstructing a GET here would silently erase an imported handler label.
-        let seed_request = start_requests
-            .iter()
-            .position(|request| request.url.url == seed.url)
-            .map(|index| start_requests.remove(index))
-            .unwrap_or_else(|| crawlx_core::request::RequestEnvelopeV1::get(seed.clone(), 0, None));
         match handle.navigate(seed_request.clone()).await {
             Ok(_) => {
                 // Restored web storage is only observable once the origin has a document.
@@ -2295,7 +2381,8 @@ async fn session_generation_body(
             }
             // robots.txt disallows the seed itself: nothing was loaded and nothing is left to explore
             Err(SessionError::Browser(BrowserError::RobotsBlocked { reason, .. })) => {
-                crate::driver::record_robots_blocked(rc, Some(session.id), &seed, 0, reason).await;
+                crate::driver::record_robots_blocked(rc, Some(session.id), &seed_request.url, 0, reason)
+                    .await;
                 return Ok(DriverEnd {
                     terminal: TerminalReason::FrontierExhausted,
                     actions: 0,
@@ -2369,14 +2456,14 @@ async fn session_generation_body(
                     WorkerError::Config("interactive profiles require a bound session".into())
                 })?;
             let (authority, keys, custody_store) = match (
-                rc.stores.pg_secret_authority.clone(),
+                rc.stores.secret_authority.clone(),
                 rc.stores.artifact_keys.clone(),
                 rc.stores.custody.clone(),
             ) {
                 (Some(authority), Some(keys), Some(custody)) => (authority, keys, custody),
                 _ => {
                     return Err(WorkerError::Config(
-                        "interactive profiles require custody-enabled PostgreSQL".into(),
+                        "interactive profiles require custody-enabled database".into(),
                     ))
                 }
             };
@@ -2563,7 +2650,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     if let Some(record) = &authorization {
         stores.tenant = record.tenant;
     }
-    if let (Some(pg), Some(record)) = (&stores.pg, &authorization) {
+    if let (Some(pg), Some(record)) = (&stores.durable, &authorization) {
         let body = serde_json::to_value(record).map_err(|e| WorkerError::Other(e.to_string()))?;
         let digest = record.body_digest()?;
         pg.ensure_authorization_record(&crawlx_storage::AuthorizationRow {
@@ -2598,7 +2685,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
         finished_at: None,
         trace_id: None,
     };
-    if let Some(pg) = &stores.pg {
+    if let Some(pg) = &stores.durable {
         pg.ensure_tenant(stores.tenant, "local").await?;
     }
     stores.runs.create(&run, None).await?;
@@ -2607,14 +2694,12 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     let authz = match local_authorization(&run, authorization, &stores, &cfg, &clock).await {
         Ok(guard) => guard,
         Err(WorkerError::Authorization(stop)) => {
-            return finish_refused(&stores, run.id, &stop, &cfg.cpu_pool).await
+            return finish_refused(&stores, run.id, &stop, &cfg.cpu_pool, cfg.worker_id).await
         }
         Err(e) => {
-            if fixture_evaluation.is_some() {
-                stores
-                    .finish_run(run.id, TerminalReason::FatalError, &cfg.cpu_pool)
-                    .await?;
-            }
+            stores
+                .finish_run(run.id, TerminalReason::FatalError, &cfg.cpu_pool, cfg.worker_id)
+                .await?;
             return Err(e);
         }
     };
@@ -2630,7 +2715,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
         Ok(evaluation) => evaluation,
         Err(error) => {
             stores
-                .finish_run(run.id, TerminalReason::FatalError, &cfg.cpu_pool)
+                .finish_run(run.id, TerminalReason::FatalError, &cfg.cpu_pool, cfg.worker_id)
                 .await?;
             return Err(error);
         }
@@ -2733,13 +2818,13 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
         None
     };
     // this process owns every session of the run, so cluster ids can derive from the seed
-    let salt: &[u8] = if stores.pg.is_some() {
+    let salt: &[u8] = if stores.durable.is_some() {
         run.id.0.as_bytes()
     } else {
         &[]
     };
     let operator_backend = backend.is_some();
-    let mut rc = RunContext::build_with_fixture_evaluation(
+    let context = RunContext::build_with_fixture_evaluation(
         &run,
         &cfg,
         stores.clone(),
@@ -2751,7 +2836,19 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
         authz.clone(),
         fixture_evaluation.as_ref(),
     )
-    .await?
+    .await;
+    let mut rc = match context {
+        Ok(context) => context,
+        Err(error) => {
+            if let Some(proxy) = proxy {
+                proxy.shutdown().await;
+            }
+            stores
+                .finish_run(run.id, TerminalReason::FatalError, &cfg.cpu_pool, cfg.worker_id)
+                .await?;
+            return Err(error);
+        }
+    }
     .with_clusters(RunClusters::seeded(run.seed, salt))
     .with_session_flow_capture(flow_tx.clone());
     rc.origin_governor = origin_governor;
@@ -2777,7 +2874,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             )
             .await;
     }
-    rc.durable_dedupe = stores.pg.is_some();
+    rc.durable_dedupe = stores.durable.is_some();
     let durable_dedupe = rc.durable_dedupe;
     if let Some(plane) = &mut rc.browser_pages {
         Arc::get_mut(plane)
@@ -2935,7 +3032,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             }
         }
     }
-    stores.finish_run(run.id, reason, &rc.cpu_pool).await?;
+    stores.finish_run(run.id, reason, &rc.cpu_pool, rc.worker).await?;
     let mut report = build_report(&stores, run.id).await?;
     report.browser_launches = rc.pool.launches();
     report.resume = url_resume;
@@ -3114,9 +3211,10 @@ async fn finish_refused(
     run: CrawlRunId,
     stop: &AuthorizationStop,
     cpu: &crate::runtime::CpuPool,
+    worker: crawlx_core::WorkerId,
 ) -> Result<RunReport, WorkerError> {
     let reason = TerminalReason::AuthorizationRevoked;
-    stores.finish_run(run, reason, cpu).await?;
+    stores.finish_run(run, reason, cpu, worker).await?;
     let report = build_report(stores, run).await?;
     let _ = stores
         .events

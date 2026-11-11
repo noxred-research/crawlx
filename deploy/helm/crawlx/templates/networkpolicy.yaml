@@ -37,9 +37,11 @@ spec:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 8443 }
+    {{- if ne .Values.storage.engine "sqlite" }}
     - to:
-        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.postgresSelector }} }
-      ports: [{ protocol: TCP, port: 5432 }]
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.databaseSelector }} }
+      ports: [{ protocol: TCP, port: {{ include "crawlx.databasePort" . }} }]
+    {{- end }}
     {{- if .Values.zdr.enabled }}
     - to:
         - podSelector: { matchLabels: { app: crawlx-zdr, release: {{ .Release.Name }} } }
@@ -81,9 +83,11 @@ spec:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .Values.api.ingressNamespace }} } }
       ports: [{ protocol: TCP, port: {{ (splitList ":" .Values.config.api.listen) | last }} }]
   egress:
+    {{- if ne .Values.storage.engine "sqlite" }}
     - to:
-        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.postgresSelector }} }
-      ports: [{ protocol: TCP, port: 5432 }]
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.databaseSelector }} }
+      ports: [{ protocol: TCP, port: {{ include "crawlx.databasePort" . }} }]
+    {{- end }}
     {{- if .Values.zdr.enabled }}
     - to:
         - podSelector: { matchLabels: { app: crawlx-zdr, release: {{ .Release.Name }} } }

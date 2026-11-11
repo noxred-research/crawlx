@@ -164,6 +164,8 @@ pub struct ApiConfig {
     pub bind: SocketAddr,
     /// `None` runs on in-memory repositories (tests, development).
     pub database_url: Option<String>,
+    /// Pool size and timeouts of the connection to `database_url`.
+    pub store: crawlx_storage::StoreConfig,
     /// Restricted non-owner request connection (`CRAWLX_API_DATABASE_URL`). The
     /// `database_url` connection remains startup/worker/maintenance authority.
     pub api_database_url: Option<String>,
@@ -216,6 +218,7 @@ impl Default for ApiConfig {
         Self {
             bind: SocketAddr::from(([127, 0, 0, 1], 8080)),
             database_url: None,
+            store: crawlx_storage::StoreConfig::default(),
             api_database_url: None,
             allow_owner_api: false,
             artifacts_dir: PathBuf::from("./artifacts"),
@@ -260,6 +263,7 @@ impl std::fmt::Debug for ApiConfig {
         f.debug_struct("ApiConfig")
             .field("bind", &self.bind)
             .field("database_url", &self.database_url.as_ref().map(|_| "<redacted>"))
+            .field("store", &self.store)
             .field(
                 "api_database_url",
                 &self.api_database_url.as_ref().map(|_| "<redacted>"),

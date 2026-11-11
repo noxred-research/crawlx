@@ -114,7 +114,8 @@ fn frozen_output(
     content_type: &str,
     expires_at: Option<Timestamp>,
 ) -> Result<Option<(FrozenArchiveGrant, Option<Timestamp>)>, StoreError> {
-    if !run.status.is_terminal() {
+    // A feed finalizer seals under the live run-wide registry: its run is ending, never closed.
+    if !run.status.is_terminal() || matches!(lease.source, CustodySource::FeedFinalization(_)) {
         return Ok(None);
     }
     if !matches!(lease.source, CustodySource::ArchiveExport(_)) {
@@ -235,6 +236,9 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             )),
             // The grant itself is demanded by the sealed write, never a plaintext fallback.
             Some(CustodySource::ArchiveExport(_)) => Ok(Some(custody)),
+            // Recovery finalizes feeds of a run that already ended; the claim keeps the
+            // run-wide secret check, so it never falls back to plaintext.
+            Some(CustodySource::FeedFinalization(_)) => Ok(Some(custody)),
             _ => Ok(None),
         }
     }
@@ -461,7 +465,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             (None, None) => {
                 return Err(StoreError::Unavailable(
                     "secret authority snapshot unavailable".into(),
-                ))
+                ));
             }
         };
         let input = tokio::fs::File::open(file)

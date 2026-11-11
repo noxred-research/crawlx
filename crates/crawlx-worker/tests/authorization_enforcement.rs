@@ -1478,7 +1478,22 @@ async fn undeclared_credentials_refuse_local_lease_and_direct_context_admission(
             .create_sessions(&RunPlanner::sessions(run.id, &crawl))
             .await
             .unwrap();
-        let worker = run_with(cfg, stores, None, CancellationToken::new()).await;
-        assert!(matches!(worker, Err(WorkerError::Config(message)) if message.contains("testAccounts")));
+        let worker_cfg = WorkerConfig {
+            idle_exit_after: Some(Duration::from_millis(600)),
+            ..cfg
+        };
+        run_with(worker_cfg, stores.clone(), None, CancellationToken::new())
+            .await
+            .unwrap();
+        let refused = stores.runs.get(run.id).await.unwrap();
+        assert_eq!(refused.status, RunStatus::Failed);
+        assert_eq!(refused.terminal_reason, Some(TerminalReason::FatalError));
+        assert!(stores
+            .runs
+            .list_sessions(run.id)
+            .await
+            .unwrap()
+            .iter()
+            .all(|session| session.status == SessionStatus::Failed));
     }
 }

@@ -11,14 +11,14 @@ use crawlx_core::{TenantId, WorkerId};
 use crawlx_storage::leases::{LeaseRepo, SessionLease};
 use crawlx_storage::profiles::{BrowserProfileRepo, ProfileCipher, ProfileFiles, ProfileScopeV1};
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal, sessions};
-use crawlx_storage::{Pg, PgConfig};
+use crawlx_storage::{Pg, StoreConfig};
 use std::collections::{BTreeMap, BTreeSet};
 
 async fn fixture() -> Option<(Pg, Pg, TenantId, SessionLease, SessionLease)> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
-    let config = PgConfig {
+    let config = StoreConfig {
         schema: Some(format!("profile_{}", uuid::Uuid::now_v7().simple())),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let pg = Pg::connect(&url, config.clone()).await.unwrap();
     pg.migrate().await.unwrap();
@@ -499,9 +499,9 @@ async fn crashed_tmpfs_copy_is_reaped_only_by_its_database_authority_and_dead_fe
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").unwrap();
     let foreign = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("profile_foreign_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

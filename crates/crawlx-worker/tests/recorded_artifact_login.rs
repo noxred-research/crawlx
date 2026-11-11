@@ -14,7 +14,7 @@ use crawlx_core::secret::{CredentialRef, SecretOr, SecretResolver};
 use crawlx_core::{
     ArtifactId, ArtifactRef, BrowserBackend, Clock, CoreError, CrawlRunId, SystemClock, TenantId, Timestamp,
 };
-use crawlx_storage::{ArtifactIndex, FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{ArtifactIndex, FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use crawlx_worker::actor::ShutdownReason;
 use crawlx_worker::login::MAX_RECORDED_ARTIFACT_BYTES;
 use crawlx_worker::{RunContext, StateAnalyzer, Stores, WorkerConfig};
@@ -86,9 +86,9 @@ async fn fixture_with_browser(
         };
         let pg = Pg::connect(
             &database,
-            PgConfig {
+            StoreConfig {
                 schema: Some(format!("t_login_artifact_{}", uuid::Uuid::now_v7().simple())),
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await
@@ -101,7 +101,11 @@ async fn fixture_with_browser(
             .unwrap()
             .with_index(Arc::new(pg.clone()));
         (
-            Stores::over_pg(pg.clone(), Arc::new(artifacts), tenant),
+            Stores::over_durable(
+                crawlx_worker::DurableStore::Postgres(pg.clone()),
+                Arc::new(artifacts),
+                tenant,
+            ),
             Arc::new(pg),
         )
     } else {
@@ -131,7 +135,7 @@ async fn fixture_with_browser(
     }];
     crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
     let record = common::authorization::verified_record_with_clock(&crawl, stores.tenant, run_clock.as_ref());
-    if let Some(pg) = &stores.pg {
+    if let Some(crawlx_worker::DurableStore::Postgres(pg)) = &stores.durable {
         common::authorization::register_verified(pg, &record).await;
     }
     stores =
@@ -416,7 +420,7 @@ async fn contract_and_actor(mut f: Fixture) {
         owner.id = CrawlRunId::new();
         if foreign_tenant {
             owner.tenant = TenantId::new();
-            if let Some(pg) = &f.rc.stores.pg {
+            if let Some(crawlx_worker::DurableStore::Postgres(pg)) = &f.rc.stores.durable {
                 pg.ensure_tenant(owner.tenant, "foreign-login").await.unwrap();
                 // A foreign tenant cannot refer to this fixture's authorization row.
                 owner.config.safety.authorization_record_ref = None;

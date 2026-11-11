@@ -4,22 +4,22 @@
 //! profile cipher, plaintext key, partial export or unregistered restore is accepted.
 
 use super::{
-    check_version, database_now, denied, get, live, locally_live, locked, no_exposures, random_uuid,
-    ArtifactKeyEnvelope, PgSecretAuthority, PUBLISH_STALE,
+    check_version, database_now, denied, frag, live, locally_live, locked, no_exposures, random_uuid,
+    ArtifactKeyEnvelope, SecretAuthority, PUBLISH_STALE,
 };
 use crate::artifact_crypto::{ArtifactContext, ArtifactDecryption};
 use crate::artifact_custody::{crypto_error, key_error};
 use crate::artifact_key_crypto::ArtifactKeys;
+use crate::backend::strategy::Conn;
 use crate::codec::{from_json, to_json};
-use crate::error::db;
 use crate::leases::SessionLease;
 use crate::profiles::{ProfileScopeV1, MAX_PROFILE_BYTES};
-use crate::session_binding::lock_lease;
+use crate::session_binding::lock_lease_on;
+use crate::sql::{stmt, Sql, SqlRow};
 use crawlx_core::custody::{CustodyLease, CustodySource, RunSecretAuthority, SecretEpoch};
 use crawlx_core::hash::Digest;
 use crawlx_core::{ArtifactId, CrawlRunId, SecretOr, StoreError, Timestamp};
 use serde::{Deserialize, Serialize};
-use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -43,8 +43,8 @@ pub struct CustodyProfileInspection {
 
 /// Retained storage-state service sharing the run's real secret authority.
 #[non_exhaustive]
-pub struct CustodyProfiles<'a> {
-    authority: &'a PgSecretAuthority,
+pub struct CustodyProfiles<'a, B: Sql> {
+    authority: &'a SecretAuthority<B>,
     keys: &'a dyn ArtifactKeys,
 }
 
@@ -78,22 +78,26 @@ fn identity(lease: &SessionLease, custody: &CustodyLease, scope: &ProfileScopeV1
     Ok(())
 }
 
-async fn retention(
-    tx: &mut Transaction<'_, Postgres>,
+async fn retention<B: Sql>(
+    conn: &mut Conn<B>,
     lease: &CustodyLease,
     expires_at: Timestamp,
 ) -> Result<(), StoreError> {
-    let valid: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 \
+    let valid = stmt!(
+        B,
+        format!(
+            "SELECT EXISTS(SELECT 1 FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 \
          AND retention_mode<>'zdr' AND expires_at IS NOT NULL AND expires_at>=$3 \
-         AND $3>clock_timestamp())",
+         AND $3>{}) AS v",
+            frag::clock::<B>()
+        )
     )
-    .bind(lease.tenant.0)
-    .bind(lease.run.0)
-    .bind(expires_at)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(db)?;
+    .uuid(lease.tenant.0)
+    .uuid(lease.run.0)
+    .ts(expires_at)
+    .fetch_one(conn)
+    .await?
+    .bool("v")?;
     if !valid {
         return Err(StoreError::RetentionDenied(
             "profile retention denied or expired".into(),
@@ -102,15 +106,15 @@ async fn retention(
     Ok(())
 }
 
-async fn finish(
-    tx: &mut Transaction<'_, Postgres>,
+async fn finish<B: Sql>(
+    conn: &mut Conn<B>,
     custody: &CustodyLease,
     profile_expiry: Timestamp,
     authority_expiry: Timestamp,
 ) -> Result<(), StoreError> {
-    live(tx, custody).await?;
-    retention(tx, custody, profile_expiry).await?;
-    let now = database_now(tx).await?;
+    live::<B>(conn, custody).await?;
+    retention::<B>(conn, custody, profile_expiry).await?;
+    let now = database_now::<B>(conn).await?;
     if authority_expiry
         .timestamp_millis()
         .saturating_sub(super::EXPIRY_MARGIN_MS)
@@ -121,44 +125,49 @@ async fn finish(
     Ok(())
 }
 
-async fn compatible_holder(
-    tx: &mut Transaction<'_, Postgres>,
+async fn compatible_holder<B: Sql>(
+    conn: &mut Conn<B>,
     lease: &SessionLease,
     scope: &ProfileScopeV1,
-    row: &sqlx::postgres::PgRow,
+    row: &B::Row,
     committing: bool,
 ) -> Result<(), StoreError> {
-    let stored_scope: ProfileScopeV1 = from_json(get(row, "scope")?)?;
+    let stored_scope: ProfileScopeV1 = from_json(row.json("scope")?)?;
     if stored_scope != *scope {
         return Err(denied("profile origin, browser build or egress scope mismatch"));
     }
-    let session: Uuid = get(row, "session_id")?;
-    let fence: i64 = get(row, "lease_fence")?;
+    let session: Uuid = row.uuid("session_id")?;
+    let fence: i64 = row.i64("lease_fence")?;
     if session != lease.session.id.0 || fence != lease.fencing_token {
-        let busy: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM crawl_sessions WHERE session_id=$1 \
-             AND fencing_token=$2 AND lease_expires_at>clock_timestamp())",
+        let busy = stmt!(
+            B,
+            format!(
+                "SELECT EXISTS(SELECT 1 FROM crawl_sessions WHERE session_id=$1 \
+             AND fencing_token=$2 AND lease_expires_at>{}) AS v",
+                frag::clock::<B>()
+            )
         )
-        .bind(session)
-        .bind(fence)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+        .uuid(session)
+        .i64(fence)
+        .fetch_one(conn)
+        .await?
+        .bool("v")?;
         if busy {
             return Err(denied("profile lease conflict"));
         }
     }
     if committing || session != lease.session.id.0 {
-        let unresolved: bool = sqlx::query_scalar(
+        let unresolved = stmt!(
+            B,
             "SELECT EXISTS(SELECT 1 FROM actions a JOIN crawl_runs r USING(run_id) \
-             WHERE r.tenant_id=$1 AND a.session_id IN ($2,$3) AND a.status IN ('intended','unknown'))",
+             WHERE r.tenant_id=$1 AND a.session_id IN ($2,$3) AND a.status IN ('intended','unknown')) AS v"
         )
-        .bind(scope.tenant.0)
-        .bind(session)
-        .bind(lease.session.id.0)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+        .uuid(scope.tenant.0)
+        .uuid(session)
+        .uuid(lease.session.id.0)
+        .fetch_one(conn)
+        .await?
+        .bool("v")?;
         if unresolved {
             return Err(denied("profile transfer blocked by unresolved write"));
         }
@@ -166,38 +175,102 @@ async fn compatible_holder(
     Ok(())
 }
 
-async fn source_retained(
-    tx: &mut Transaction<'_, Postgres>,
+async fn source_retained<B: Sql>(
+    conn: &mut Conn<B>,
     scope: &ProfileScopeV1,
     owner: CrawlRunId,
     expiry: Timestamp,
 ) -> Result<(), StoreError> {
-    let valid: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM crawl_runs r WHERE r.tenant_id=$1 AND r.run_id=$2 \
+    let now = frag::clock::<B>();
+    let valid = stmt!(
+        B,
+        format!(
+            "SELECT EXISTS(SELECT 1 FROM crawl_runs r WHERE r.tenant_id=$1 AND r.run_id=$2 \
          AND r.retention_mode<>'zdr' AND r.status NOT IN ('failed','cancelled') \
          AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
-         AND r.expires_at IS NOT NULL AND r.expires_at>=$3 AND $3>clock_timestamp() \
+         AND r.expires_at IS NOT NULL AND r.expires_at>=$3 AND $3>{now} \
          AND (r.authorization_record_id IS NULL OR EXISTS(SELECT 1 FROM authorization_records a \
            WHERE a.record_id=r.authorization_record_id AND a.tenant_id=r.tenant_id \
-           AND a.revoked_at IS NULL AND a.valid_from<=clock_timestamp() AND a.valid_to>clock_timestamp() \
-           AND (r.authorization_body_digest IS NULL OR a.body_digest=r.authorization_body_digest))))",
+           AND a.revoked_at IS NULL AND a.valid_from<={now} AND a.valid_to>{now} \
+           AND (r.authorization_body_digest IS NULL OR a.body_digest=r.authorization_body_digest)))) AS v"
+        )
     )
-    .bind(scope.tenant.0)
-    .bind(owner.0)
-    .bind(expiry)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(db)?;
+    .uuid(scope.tenant.0)
+    .uuid(owner.0)
+    .ts(expiry)
+    .fetch_one(conn)
+    .await?
+    .bool("v")?;
     if !valid {
         return Err(denied("retained profile source unavailable or expired"));
     }
     Ok(())
 }
 
-impl<'a> CustodyProfiles<'a> {
+/// Insert or replace the custody generation of a profile; `true` when exactly the expected
+/// prior generation was replaced (or no row existed).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every column of the generation is explicit"
+)]
+async fn upsert_generation<B: Sql>(
+    conn: &mut Conn<B>,
+    scope: &ProfileScopeV1,
+    scope_json: &serde_json::Value,
+    envelope_json: &serde_json::Value,
+    next: i64,
+    prior: i64,
+    ciphertext: &[u8],
+    digest: &Digest,
+    expires_at: Timestamp,
+    run: CrawlRunId,
+    lease: &SessionLease,
+    artifact: ArtifactId,
+    expected: SecretEpoch,
+    existed: bool,
+) -> Result<bool, StoreError> {
+    if B::KIND == crate::backend::BackendKind::MariaDb {
+        // No conditional upsert: the row is already locked, so update or insert by what the
+        // locked read found.
+        let changed = if existed {
+            stmt!(B, "UPDATE browser_profiles SET generation=$4,scope=$5,encrypted_bundle=$6,digest=$7,expires_at=$8,owner_run=$9,session_id=$10,lease_fence=$11,custody_format=1,custody_artifact=$12,custody_envelope=$13,custody_incarnation=$14,custody_epoch=$15 \
+                 WHERE tenant_id=$1 AND principal=$2 AND name=$3 AND generation=$16 AND custody_format=1")
+                .uuid(scope.tenant.0).text(&scope.principal.0).text(&scope.name).i64(next)
+                .json(scope_json).bytes(ciphertext).bytes(digest.0.as_slice()).ts(expires_at)
+                .uuid(run.0).uuid(lease.session.id.0).i64(lease.fencing_token)
+                .uuid(artifact.0).json(envelope_json).uuid(expected.incarnation).i64(expected.epoch)
+                .i64(prior).execute(conn).await?
+        } else {
+            stmt!(B, "INSERT INTO browser_profiles(tenant_id,principal,name,generation,scope,encrypted_bundle,digest,expires_at,owner_run,session_id,lease_fence,custody_format,custody_artifact,custody_envelope,custody_incarnation,custody_epoch) \
+                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12,$13,$14,$15)")
+                .uuid(scope.tenant.0).text(&scope.principal.0).text(&scope.name).i64(next)
+                .json(scope_json).bytes(ciphertext).bytes(digest.0.as_slice()).ts(expires_at)
+                .uuid(run.0).uuid(lease.session.id.0).i64(lease.fencing_token)
+                .uuid(artifact.0).json(envelope_json).uuid(expected.incarnation).i64(expected.epoch)
+                .execute(conn).await?
+        };
+        return Ok(changed == 1);
+    }
+    let result = stmt!(B, "INSERT INTO browser_profiles(tenant_id,principal,name,generation,scope,encrypted_bundle,digest,expires_at,owner_run,session_id,lease_fence,custody_format,custody_artifact,custody_envelope,custody_incarnation,custody_epoch) \
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12,$13,$14,$15) \
+             ON CONFLICT(tenant_id,principal,name) DO UPDATE SET generation=EXCLUDED.generation,scope=EXCLUDED.scope, \
+             encrypted_bundle=EXCLUDED.encrypted_bundle,digest=EXCLUDED.digest,expires_at=EXCLUDED.expires_at, \
+             owner_run=EXCLUDED.owner_run,session_id=EXCLUDED.session_id,lease_fence=EXCLUDED.lease_fence, \
+             custody_format=1,custody_artifact=EXCLUDED.custody_artifact,custody_envelope=EXCLUDED.custody_envelope, \
+             custody_incarnation=EXCLUDED.custody_incarnation,custody_epoch=EXCLUDED.custody_epoch \
+             WHERE browser_profiles.generation=$16 AND browser_profiles.custody_format=1")
+        .uuid(scope.tenant.0).text(&scope.principal.0).text(&scope.name).i64(next)
+        .json(scope_json).bytes(ciphertext).bytes(digest.0.as_slice()).ts(expires_at)
+        .uuid(run.0).uuid(lease.session.id.0).i64(lease.fencing_token)
+        .uuid(artifact.0).json(envelope_json).uuid(expected.incarnation).i64(expected.epoch)
+        .i64(prior).execute(conn).await?;
+    Ok(result == 1)
+}
+
+impl<'a, B: Sql> CustodyProfiles<'a, B> {
     /// Use the existing distributed authority and explicitly configured durable keys.
     #[must_use]
-    pub fn new(authority: &'a PgSecretAuthority, keys: &'a dyn ArtifactKeys) -> Self {
+    pub fn new(authority: &'a SecretAuthority<B>, keys: &'a dyn ArtifactKeys) -> Self {
         Self { authority, keys }
     }
 
@@ -233,16 +306,16 @@ impl<'a> CustodyProfiles<'a> {
 
     async fn epoch(
         &self,
-        tx: &mut Transaction<'_, Postgres>,
+        conn: &mut Conn<B>,
         custody: &CustodyLease,
         expected: SecretEpoch,
     ) -> Result<Timestamp, StoreError> {
-        let row = locked(tx, custody).await?;
+        let row = locked::<B>(conn, custody).await?;
         check_version(custody, expected, &row)?;
         if row.pending.is_some() || row.epoch != expected.epoch {
             return Err(denied(PUBLISH_STALE));
         }
-        no_exposures(tx, custody.tenant, custody.run).await?;
+        no_exposures::<B>(conn, custody.tenant, custody.run).await?;
         let snapshot = locally_live(
             custody,
             self.authority
@@ -275,6 +348,8 @@ impl<'a> CustodyProfiles<'a> {
         storage: &[u8],
     ) -> Result<CustodyProfileInspection, StoreError> {
         identity(lease, custody, scope)?;
+        // Every engine stores microseconds; the authenticated header must hold what the row will.
+        let expires_at = crate::codec::ts_from_micros(crate::codec::ts_to_micros(expires_at))?;
         self.durable_keys()?;
         if !retained_profile_approved {
             return Err(StoreError::RetentionDenied(
@@ -289,17 +364,22 @@ impl<'a> CustodyProfiles<'a> {
         let state = SupportedStorageState::parse(storage, scope)?;
         // Reject policy before any registration or external key-provider request.
         let mut preflight = self.authority.transaction().await?;
-        live(&mut preflight, custody).await?;
-        lock_lease(&mut preflight, lease, scope.tenant).await?;
-        retention(&mut preflight, custody, expires_at).await?;
-        let unresolved: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM actions WHERE run_id=$1 AND session_id=$2 AND status IN ('intended','unknown'))",
-        ).bind(custody.run.0).bind(lease.session.id.0)
-            .fetch_one(&mut *preflight).await.map_err(db)?;
+        live::<B>(preflight.conn(), custody).await?;
+        lock_lease_on::<B>(preflight.conn(), lease, scope.tenant).await?;
+        retention::<B>(preflight.conn(), custody, expires_at).await?;
+        let unresolved = stmt!(
+            B,
+            "SELECT EXISTS(SELECT 1 FROM actions WHERE run_id=$1 AND session_id=$2 AND status IN ('intended','unknown')) AS v"
+        )
+        .uuid(custody.run.0)
+        .uuid(lease.session.id.0)
+        .fetch_one(preflight.conn())
+        .await?
+        .bool("v")?;
         if unresolved {
             return Err(denied("profile commit blocked by unresolved write"));
         }
-        preflight.commit().await.map_err(db)?;
+        preflight.commit().await?;
         let expected = self.register(custody, &state).await?;
         let header = PayloadHeader {
             version: 1,
@@ -338,24 +418,28 @@ impl<'a> CustodyProfiles<'a> {
         drop(sealed); // The raw single-use key never enters durable metadata.
         let digest = Digest::of(CIPHER_DOMAIN, &ciphertext);
         let mut tx = self.authority.transaction().await?;
-        let authority_expiry = self.epoch(&mut tx, custody, expected).await?;
-        lock_lease(&mut tx, lease, scope.tenant).await?;
-        retention(&mut tx, custody, expires_at).await?;
-        let existing = sqlx::query(
-            "SELECT * FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 FOR UPDATE",
+        let authority_expiry = self.epoch(tx.conn(), custody, expected).await?;
+        lock_lease_on::<B>(tx.conn(), lease, scope.tenant).await?;
+        retention::<B>(tx.conn(), custody, expires_at).await?;
+        let existing = stmt!(
+            B,
+            format!(
+                "SELECT * FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3{}",
+                frag::update::<B>()
+            )
         )
-        .bind(scope.tenant.0)
-        .bind(&scope.principal.0)
-        .bind(&scope.name)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(scope.tenant.0)
+        .text(&scope.principal.0)
+        .text(&scope.name)
+        .fetch_optional(tx.conn())
+        .await?;
+        let existed = existing.is_some();
         if let Some(row) = existing {
-            if get::<i64>(&row, "generation")? != prior_sql {
+            if row.i64("generation")? != prior_sql {
                 return Err(denied("profile generation conflict"));
             }
-            compatible_holder(&mut tx, lease, scope, &row, true).await?;
-            let format: i32 = get(&row, "custody_format")?;
+            compatible_holder::<B>(tx.conn(), lease, scope, &row, true).await?;
+            let format: i32 = row.i32("custody_format")?;
             if format != 1 {
                 return Err(denied("legacy directory profiles unavailable in custody mode"));
             }
@@ -363,34 +447,44 @@ impl<'a> CustodyProfiles<'a> {
             if expected_generation != 0 {
                 return Err(denied("profile generation conflict"));
             }
-            let unresolved: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM actions WHERE run_id=$1 AND session_id=$2 AND status IN ('intended','unknown'))",
-            ).bind(custody.run.0).bind(lease.session.id.0)
-                .fetch_one(&mut *tx).await.map_err(db)?;
+            let unresolved = stmt!(
+                B,
+                "SELECT EXISTS(SELECT 1 FROM actions WHERE run_id=$1 AND session_id=$2 AND status IN ('intended','unknown')) AS v"
+            )
+            .uuid(custody.run.0)
+            .uuid(lease.session.id.0)
+            .fetch_one(tx.conn())
+            .await?
+            .bool("v")?;
             if unresolved {
                 return Err(denied("profile commit blocked by unresolved write"));
             }
         }
-        let result = sqlx::query(
-            "INSERT INTO browser_profiles(tenant_id,principal,name,generation,scope,encrypted_bundle,digest,expires_at,owner_run,session_id,lease_fence,custody_format,custody_artifact,custody_envelope,custody_incarnation,custody_epoch) \
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12,$13,$14,$15) \
-             ON CONFLICT(tenant_id,principal,name) DO UPDATE SET generation=EXCLUDED.generation,scope=EXCLUDED.scope, \
-             encrypted_bundle=EXCLUDED.encrypted_bundle,digest=EXCLUDED.digest,expires_at=EXCLUDED.expires_at, \
-             owner_run=EXCLUDED.owner_run,session_id=EXCLUDED.session_id,lease_fence=EXCLUDED.lease_fence, \
-             custody_format=1,custody_artifact=EXCLUDED.custody_artifact,custody_envelope=EXCLUDED.custody_envelope, \
-             custody_incarnation=EXCLUDED.custody_incarnation,custody_epoch=EXCLUDED.custody_epoch \
-             WHERE browser_profiles.generation=$16 AND browser_profiles.custody_format=1",
-        ).bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name).bind(next_sql)
-            .bind(to_json(scope)?).bind(&ciphertext).bind(digest.0.as_slice()).bind(expires_at)
-            .bind(custody.run.0).bind(lease.session.id.0).bind(lease.fencing_token)
-            .bind(artifact.0).bind(to_json(&prepared.envelope)?).bind(expected.incarnation).bind(expected.epoch)
-            .bind(prior_sql).execute(&mut *tx).await.map_err(db)?;
-        if result.rows_affected() != 1 {
+        let scope_json = to_json(scope)?;
+        let envelope_json = to_json(&prepared.envelope)?;
+        let replaced = upsert_generation::<B>(
+            tx.conn(),
+            scope,
+            &scope_json,
+            &envelope_json,
+            next_sql,
+            prior_sql,
+            &ciphertext,
+            &digest,
+            expires_at,
+            custody.run,
+            lease,
+            artifact,
+            expected,
+            existed,
+        )
+        .await?;
+        if !replaced {
             return Err(denied("profile generation conflict"));
         }
-        crate::profiles::audit_profile(&mut tx, lease, scope, "profile.custody.commit", next).await?;
-        finish(&mut tx, custody, expires_at, authority_expiry).await?;
-        tx.commit().await.map_err(db)?;
+        crate::profiles::audit_profile::<B>(tx.conn(), lease, scope, "profile.custody.commit", next).await?;
+        finish::<B>(tx.conn(), custody, expires_at, authority_expiry).await?;
+        tx.commit().await?;
         custody.check_local_cancellation()?;
         Ok(CustodyProfileInspection {
             scope: scope.clone(),
@@ -428,21 +522,34 @@ impl<'a> CustodyProfiles<'a> {
         }
         let requested = self::generation(generation)?;
         let mut tx = self.authority.transaction().await?;
-        live(&mut tx, custody).await?;
-        lock_lease(&mut tx, lease, scope.tenant).await?;
-        let row = sqlx::query(
-            "SELECT * FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 FOR UPDATE",
+        live::<B>(tx.conn(), custody).await?;
+        lock_lease_on::<B>(tx.conn(), lease, scope.tenant).await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT * FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3{}",
+                frag::update::<B>()
+            )
         )
-        .bind(scope.tenant.0)
-        .bind(&scope.principal.0)
-        .bind(&scope.name)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(scope.tenant.0)
+        .text(&scope.principal.0)
+        .text(&scope.name)
+        .fetch_optional(tx.conn())
+        .await?;
         let Some(row) = row else {
             // Even an empty namespace cannot bypass the destination retention policy.
-            let retained: bool = sqlx::query_scalar("SELECT retention_mode<>'zdr' AND expires_at IS NOT NULL AND expires_at>clock_timestamp() FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2")
-                .bind(custody.run.0).bind(scope.tenant.0).fetch_one(&mut *tx).await.map_err(db)?;
+            let retained = stmt!(
+                B,
+                format!(
+                    "SELECT retention_mode<>'zdr' AND expires_at IS NOT NULL AND expires_at>{} AS v FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2",
+                    frag::clock::<B>()
+                )
+            )
+            .uuid(custody.run.0)
+            .uuid(scope.tenant.0)
+            .fetch_one(tx.conn())
+            .await?
+            .bool("v")?;
             if !retained {
                 return Err(StoreError::RetentionDenied(
                     "retained profiles forbidden under zdr".into(),
@@ -451,37 +558,37 @@ impl<'a> CustodyProfiles<'a> {
             if generation != 0 {
                 return Err(denied("requested profile generation unavailable"));
             }
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             custody.check_local_cancellation()?;
             return Ok(None);
         };
-        if get::<i32>(&row, "custody_format")? != 1 {
+        if row.i32("custody_format")? != 1 {
             return Err(denied("arbitrary directory profiles unavailable in custody mode"));
         }
-        if get::<i64>(&row, "generation")? != requested || generation == 0 {
+        if row.i64("generation")? != requested || generation == 0 {
             return Err(denied("profile generation conflict"));
         }
-        compatible_holder(&mut tx, lease, scope, &row, false).await?;
-        let expires_at: Timestamp = get(&row, "expires_at")?;
-        retention(&mut tx, custody, expires_at).await?;
-        let owner = CrawlRunId(get(&row, "owner_run")?);
-        source_retained(&mut tx, scope, owner, expires_at).await?;
-        let artifact = ArtifactId(get(&row, "custody_artifact")?);
-        let envelope: ArtifactKeyEnvelope = from_json(get(&row, "custody_envelope")?)?;
+        compatible_holder::<B>(tx.conn(), lease, scope, &row, false).await?;
+        let expires_at: Timestamp = row.ts("expires_at")?;
+        retention::<B>(tx.conn(), custody, expires_at).await?;
+        let owner = CrawlRunId(row.uuid("owner_run")?);
+        source_retained::<B>(tx.conn(), scope, owner, expires_at).await?;
+        let artifact = ArtifactId(row.uuid("custody_artifact")?);
+        let envelope: ArtifactKeyEnvelope = from_json(row.json("custody_envelope")?)?;
         envelope.validate(scope.tenant, owner, artifact)?;
-        let incarnation: Uuid = get(&row, "custody_incarnation")?;
-        let epoch: i64 = get(&row, "custody_epoch")?;
-        let ciphertext: Vec<u8> = get(&row, "encrypted_bundle")?;
-        let stored_digest: Vec<u8> = get(&row, "digest")?;
+        let incarnation: Uuid = row.uuid("custody_incarnation")?;
+        let epoch: i64 = row.i64("custody_epoch")?;
+        let ciphertext: Vec<u8> = row.bytes("encrypted_bundle")?;
+        let stored_digest: Vec<u8> = row.bytes("digest")?;
         let digest = Digest::of(CIPHER_DOMAIN, &ciphertext);
         if stored_digest.as_slice() != digest.0 || ciphertext.len() > crate::profiles::MAX_BUNDLE_BYTES {
             return Err(denied("profile ciphertext fixity mismatch"));
         }
-        sqlx::query("UPDATE browser_profiles SET session_id=$4,lease_fence=$5 WHERE tenant_id=$1 AND principal=$2 AND name=$3")
-            .bind(scope.tenant.0).bind(&scope.principal.0).bind(&scope.name)
-            .bind(lease.session.id.0).bind(lease.fencing_token).execute(&mut *tx).await.map_err(db)?;
-        live(&mut tx, custody).await?;
-        tx.commit().await.map_err(db)?;
+        stmt!(B, "UPDATE browser_profiles SET session_id=$4,lease_fence=$5 WHERE tenant_id=$1 AND principal=$2 AND name=$3")
+            .uuid(scope.tenant.0).text(&scope.principal.0).text(&scope.name)
+            .uuid(lease.session.id.0).i64(lease.fencing_token).execute(tx.conn()).await?;
+        live::<B>(tx.conn(), custody).await?;
+        tx.commit().await?;
         let context = ArtifactContext::new(scope.tenant, owner, artifact);
         let key = locally_live(custody, async {
             self.keys.open(&context, &envelope).await.map_err(key_error)
@@ -520,39 +627,44 @@ impl<'a> CustodyProfiles<'a> {
         // Registration uses independent transactions. Recheck claim and complete authority
         // afterward; a same-session writer can otherwise replace the claimed generation.
         let mut tx = self.authority.transaction().await?;
-        let authority_expiry = self.epoch(&mut tx, custody, expected).await?;
-        lock_lease(&mut tx, lease, scope.tenant).await?;
-        retention(&mut tx, custody, expires_at).await?;
-        source_retained(&mut tx, scope, owner, expires_at).await?;
-        let unchanged: bool = sqlx::query_scalar(
-            "SELECT true FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 \
+        let authority_expiry = self.epoch(tx.conn(), custody, expected).await?;
+        lock_lease_on::<B>(tx.conn(), lease, scope.tenant).await?;
+        retention::<B>(tx.conn(), custody, expires_at).await?;
+        source_retained::<B>(tx.conn(), scope, owner, expires_at).await?;
+        let scope_json = to_json(scope)?;
+        let unchanged = stmt!(
+            B,
+            format!(
+                "SELECT true AS v FROM browser_profiles WHERE tenant_id=$1 AND principal=$2 AND name=$3 \
              AND generation=$4 AND digest=$5 AND session_id=$6 AND lease_fence=$7 AND custody_format=1 \
              AND custody_artifact=$8 AND custody_incarnation=$9 AND custody_epoch=$10 AND expires_at=$11 \
-             AND scope=$12 AND owner_run=$13 FOR UPDATE",
+             AND scope=$12 AND owner_run=$13{}",
+                frag::update::<B>()
+            )
         )
-        .bind(scope.tenant.0)
-        .bind(&scope.principal.0)
-        .bind(&scope.name)
-        .bind(requested)
-        .bind(digest.0.as_slice())
-        .bind(lease.session.id.0)
-        .bind(lease.fencing_token)
-        .bind(artifact.0)
-        .bind(incarnation)
-        .bind(epoch)
-        .bind(expires_at)
-        .bind(to_json(scope)?)
-        .bind(owner.0)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
-        .unwrap_or(false);
-        if !unchanged || expires_at <= database_now(&mut tx).await? {
+        .uuid(scope.tenant.0)
+        .text(&scope.principal.0)
+        .text(&scope.name)
+        .i64(requested)
+        .bytes(digest.0.as_slice())
+        .uuid(lease.session.id.0)
+        .i64(lease.fencing_token)
+        .uuid(artifact.0)
+        .uuid(incarnation)
+        .i64(epoch)
+        .ts(expires_at)
+        .json(&scope_json)
+        .uuid(owner.0)
+        .fetch_optional(tx.conn())
+        .await?
+        .is_some();
+        if !unchanged || expires_at <= database_now::<B>(tx.conn()).await? {
             return Err(denied("profile changed or expired during secret registration"));
         }
-        crate::profiles::audit_profile(&mut tx, lease, scope, "profile.custody.acquire", generation).await?;
-        finish(&mut tx, custody, expires_at, authority_expiry).await?;
-        tx.commit().await.map_err(db)?;
+        crate::profiles::audit_profile::<B>(tx.conn(), lease, scope, "profile.custody.acquire", generation)
+            .await?;
+        finish::<B>(tx.conn(), custody, expires_at, authority_expiry).await?;
+        tx.commit().await?;
         custody.check_local_cancellation()?;
         Ok(Some((
             CustodyProfileInspection {

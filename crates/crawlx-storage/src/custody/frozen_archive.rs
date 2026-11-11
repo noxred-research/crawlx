@@ -13,19 +13,19 @@
 //! export; it can neither reopen the seal nor update key custody or retention.
 
 use super::{
-    database_now, denied, get, run_lock, scope, ArtifactKeyEnvelope, CiphertextIdentity, PgSecretAuthority,
-    PUBLISH_STALE,
+    database_now, denied, frag, insert_artifact, run_lock, scope, ArtifactKeyEnvelope, CiphertextIdentity,
+    SecretAuthority, PUBLISH_STALE,
 };
 use crate::artifact_custody::ArtifactCustody;
 use crate::artifacts::ArtifactRow;
-use crate::error::db;
+use crate::backend::strategy::Conn;
+use crate::sql::{stmt, Sql, SqlRow, Stmt};
 use crawlx_core::archive_catalog::{ArchiveCustodyV1, ArchiveExportV1};
 use crawlx_core::custody::{
     with_frozen_archive, CustodyLease, CustodySource, FrozenArchiveGrant, FrozenArchiveSource, SecretEpoch,
 };
 use crawlx_core::repo::Sensitivity;
 use crawlx_core::{StoreError, TenantId, Timestamp, WorkerId};
-use sqlx::{Postgres, Transaction};
 use std::collections::BTreeMap;
 use std::future::Future;
 use uuid::Uuid;
@@ -51,8 +51,8 @@ fn export_of(lease: &CustodyLease) -> Result<Uuid, StoreError> {
 
 /// Validate the claimed export, the terminal run and its closed authority, returning the
 /// exact epoch outputs are sealed under. Holds shared locks until the transaction ends.
-async fn frozen_epoch(
-    tx: &mut Transaction<'_, Postgres>,
+async fn frozen_epoch<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: crawlx_core::CrawlRunId,
     export: Uuid,
@@ -61,31 +61,40 @@ async fn frozen_epoch(
     if fence <= 0 {
         return Err(StoreError::LeaseLost);
     }
-    let lease_until: Option<Timestamp> = sqlx::query_scalar(
-        "SELECT lease_until FROM archive_exports WHERE tenant_id=$1 AND run_id=$2 AND export_id=$3 \
-         AND fence=$4 AND state='recording' AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE",
+    let now = frag::clock::<B>();
+    let lease_until = stmt!(
+        B,
+        format!(
+            "SELECT lease_until FROM archive_exports WHERE tenant_id=$1 AND run_id=$2 AND export_id=$3 \
+         AND fence=$4 AND state='recording' AND (expires_at IS NULL OR expires_at>{now}){}",
+            frag::share::<B>()
+        )
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .bind(export)
-    .bind(fence)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .uuid(export)
+    .i64(fence)
+    .fetch_optional(conn)
+    .await?;
+    let lease_until = lease_until.ok_or(StoreError::LeaseLost)?.opt_ts("lease_until")?;
     let lease_until = lease_until.ok_or(StoreError::LeaseLost)?;
-    if lease_until <= database_now(tx).await? {
+    if lease_until <= database_now::<B>(conn).await? {
         return Err(StoreError::LeaseLost);
     }
-    let state: Option<(String, String)> = sqlx::query_as(
-        "SELECT status::text, retention_mode::text FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 \
-         AND purge_requested_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE",
+    let state = stmt!(
+        B,
+        format!(
+            "SELECT status::text AS status, retention_mode::text AS retention FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 \
+         AND purge_requested_at IS NULL AND (expires_at IS NULL OR expires_at>{now}){}",
+            frag::share::<B>()
+        )
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
-    let (status, retention) = state.ok_or_else(|| denied("frozen archive run unavailable"))?;
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .fetch_optional(conn)
+    .await?;
+    let state = state.ok_or_else(|| denied("frozen archive run unavailable"))?;
+    let (status, retention) = (state.text("status")?, state.text("retention")?);
     if retention == "zdr" {
         return Err(StoreError::RetentionDenied(
             "zdr cannot publish retained artifact custody".into(),
@@ -94,64 +103,107 @@ async fn frozen_epoch(
     if !matches!(status.as_str(), "completed" | "failed" | "cancelled") {
         return Err(denied("frozen archive requires a terminal run"));
     }
-    let row = sqlx::query(
-        "SELECT incarnation,epoch,pending_operation,pending_renewal_operation FROM run_secret_authority \
-         WHERE tenant_id=$1 AND run_id=$2 FOR SHARE",
+    let row = stmt!(
+        B,
+        format!(
+            "SELECT incarnation,epoch,pending_operation,pending_renewal_operation FROM run_secret_authority \
+         WHERE tenant_id=$1 AND run_id=$2{}",
+            frag::share::<B>()
+        )
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .fetch_optional(conn)
+    .await?
     .ok_or_else(|| denied("frozen archive secret authority missing"))?;
-    let pending: Option<Uuid> = get(&row, "pending_operation")?;
-    let renewing: Option<Uuid> = get(&row, "pending_renewal_operation")?;
-    let epoch: i64 = get(&row, "epoch")?;
+    let pending = row.opt_uuid("pending_operation")?;
+    let renewing = row.opt_uuid("pending_renewal_operation")?;
+    let epoch: i64 = row.i64("epoch")?;
     if pending.is_some() || renewing.is_some() || epoch < 1 {
         return Err(denied("frozen archive secret epoch not closed"));
     }
-    Ok(SecretEpoch::new(tenant, run, get(&row, "incarnation")?, epoch))
+    Ok(SecretEpoch::new(tenant, run, row.uuid("incarnation")?, epoch))
+}
+
+/// The proofs of a frozen grant bound against the live catalog: identity, fixity, class and
+/// deadline of each artifact, and whether it is still bound to the exported run or to a live
+/// export it depends on.
+type LiveSources = BTreeMap<Uuid, (Vec<u8>, String, Option<Timestamp>, bool)>;
+
+/// Read the live catalog rows of `ids` for the export.
+async fn live_sources<B: Sql>(
+    conn: &mut Conn<B>,
+    lease: &CustodyLease,
+    export: Uuid,
+    ids: &[Uuid],
+) -> Result<LiveSources, StoreError> {
+    // A source must belong to the exported run, or be a committed record of this export or of a
+    // live (not erased) export it depends on. A caller-supplied list alone never widens that.
+    let rows = if frag::is_pg::<B>() {
+        stmt!(
+            B,
+            "SELECT a.artifact_id,a.content_digest,a.sensitivity::text AS class,a.expires_at,\
+         (a.run_id=$3 OR EXISTS(SELECT 1 FROM archive_records r JOIN archive_exports e \
+            ON e.tenant_id=r.tenant_id AND e.export_id=r.export_id \
+            WHERE r.tenant_id=a.tenant_id AND r.artifact_id=a.artifact_id AND e.state<>'deleted' \
+            AND (e.export_id=$4 OR e.export_id IN (SELECT d.source_export FROM archive_dependencies d \
+                WHERE d.tenant_id=a.tenant_id AND d.export_id=$4)))) AS bound \
+         FROM artifacts a WHERE a.tenant_id=$1 AND a.artifact_id=ANY($2) AND a.deleted_at IS NULL"
+        )
+        .uuid(lease.tenant.0)
+        .uuid_list(ids)
+        .uuid(lease.run.0)
+        .uuid(export)
+        .fetch_all(conn)
+        .await?
+    } else {
+        // engines without array parameters: the ids follow the three fixed parameters
+        let list = (0..ids.len())
+            .map(|at| format!("${}", at + 4))
+            .collect::<Vec<_>>()
+            .join(",");
+        let template = format!(
+            "SELECT a.artifact_id,a.content_digest,a.sensitivity AS class,a.expires_at,\
+         (a.run_id=$2 OR EXISTS(SELECT 1 FROM archive_records r JOIN archive_exports e \
+            ON e.tenant_id=r.tenant_id AND e.export_id=r.export_id \
+            WHERE r.tenant_id=a.tenant_id AND r.artifact_id=a.artifact_id AND e.state<>'deleted' \
+            AND (e.export_id=$3 OR e.export_id IN (SELECT d.source_export FROM archive_dependencies d \
+                WHERE d.tenant_id=a.tenant_id AND d.export_id=$3)))) AS bound \
+         FROM artifacts a WHERE a.tenant_id=$1 AND a.artifact_id IN ({list}) AND a.deleted_at IS NULL"
+        );
+        Stmt::<B>::dynamic(&template)
+            .uuid(lease.tenant.0)
+            .uuid(lease.run.0)
+            .uuid(export)
+            .uuid_list(ids)
+            .fetch_all(conn)
+            .await?
+    };
+    let mut live = LiveSources::new();
+    for row in &rows {
+        live.insert(
+            row.uuid("artifact_id")?,
+            (
+                row.bytes("content_digest")?,
+                row.text("class")?,
+                row.opt_ts("expires_at")?,
+                row.bool("bound")?,
+            ),
+        );
+    }
+    Ok(live)
 }
 
 /// Check every proof against its live catalog row: identity, fixity, class and deadline.
-async fn verify_sources(
-    tx: &mut Transaction<'_, Postgres>,
+async fn verify_sources<B: Sql>(
+    conn: &mut Conn<B>,
     lease: &CustodyLease,
     export: Uuid,
     sources: &[FrozenArchiveSource],
     now: Timestamp,
 ) -> Result<(), StoreError> {
     let ids: Vec<Uuid> = sources.iter().map(|source| source.artifact.id.0).collect();
-    // A source must belong to the exported run, or be a committed record of this export or of a
-    // live (not erased) export it depends on. A caller-supplied list alone never widens that.
-    let rows = sqlx::query(
-        "SELECT a.artifact_id,a.content_digest,a.sensitivity::text AS class,a.expires_at,\
-         (a.run_id=$3 OR EXISTS(SELECT 1 FROM archive_records r JOIN archive_exports e \
-            ON e.tenant_id=r.tenant_id AND e.export_id=r.export_id \
-            WHERE r.tenant_id=a.tenant_id AND r.artifact_id=a.artifact_id AND e.state<>'deleted' \
-            AND (e.export_id=$4 OR e.export_id IN (SELECT d.source_export FROM archive_dependencies d \
-                WHERE d.tenant_id=a.tenant_id AND d.export_id=$4)))) AS bound \
-         FROM artifacts a WHERE a.tenant_id=$1 AND a.artifact_id=ANY($2) AND a.deleted_at IS NULL",
-    )
-    .bind(lease.tenant.0)
-    .bind(&ids)
-    .bind(lease.run.0)
-    .bind(export)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(db)?;
-    let mut live: BTreeMap<Uuid, (Vec<u8>, String, Option<Timestamp>, bool)> = BTreeMap::new();
-    for row in &rows {
-        live.insert(
-            get(row, "artifact_id")?,
-            (
-                get(row, "content_digest")?,
-                get(row, "class")?,
-                get(row, "expires_at")?,
-                get(row, "bound")?,
-            ),
-        );
-    }
+    let live = live_sources::<B>(conn, lease, export, &ids).await?;
     for source in sources {
         let (digest, class, expires_at, bound) = live
             .get(&source.artifact.id.0)
@@ -177,7 +229,131 @@ async fn verify_sources(
     Ok(())
 }
 
-impl PgSecretAuthority {
+/// The grant-specific columns of `archive_frozen_grants` (the tenant, run and fence come from
+/// the producer lease).
+struct GrantRow<'a> {
+    export: Uuid,
+    binding: &'a [u8],
+    epoch: SecretEpoch,
+    class: &'a str,
+    expires_at: Option<Timestamp>,
+    count: i32,
+}
+
+/// Insert the grant row; `true` when this call created it, `false` for an identical retry.
+async fn insert_grant<B: Sql>(
+    conn: &mut Conn<B>,
+    lease: &CustodyLease,
+    row: &GrantRow<'_>,
+) -> Result<bool, StoreError> {
+    let GrantRow {
+        export,
+        binding,
+        epoch,
+        class,
+        expires_at,
+        count,
+    } = *row;
+    let insert = |nothing: &str| {
+        format!(
+            "INSERT INTO archive_frozen_grants(tenant_id,run_id,export_id,binding,fence,incarnation,secret_epoch,sensitivity,expires_at,source_count) \
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10){nothing}"
+        )
+    };
+    if B::KIND == crate::backend::BackendKind::MariaDb {
+        // A duplicate-key no-op update reports the row as matched, so a retry would look
+        // like a creation. Insert plainly and read a duplicate as the retry it is.
+        let bound = || {
+            stmt!(B, insert(""))
+                .uuid(lease.tenant.0)
+                .uuid(lease.run.0)
+                .uuid(export)
+                .bytes(binding)
+                .i64(lease.fence)
+                .uuid(epoch.incarnation)
+                .i64(epoch.epoch)
+                .text(class)
+                .opt_ts(expires_at)
+                .i32(count)
+        };
+        return match bound().execute(conn).await {
+            Ok(_) => Ok(true),
+            Err(StoreError::Conflict(_)) => {
+                let exists = stmt!(B, "SELECT EXISTS(SELECT 1 FROM archive_frozen_grants WHERE tenant_id=$1 AND export_id=$2 AND binding=$3) AS v")
+                    .uuid(lease.tenant.0).uuid(export).bytes(binding).fetch_one(conn).await?.bool("v")?;
+                if exists {
+                    Ok(false)
+                } else {
+                    Err(denied("frozen archive grant could not be recorded"))
+                }
+            }
+            Err(other) => Err(other),
+        };
+    }
+    let inserted = stmt!(
+        B,
+        insert(&format!(
+            " {}",
+            frag::on_conflict_nothing::<B>(&["tenant_id", "export_id", "binding"])
+        ))
+    )
+    .uuid(lease.tenant.0)
+    .uuid(lease.run.0)
+    .uuid(export)
+    .bytes(binding)
+    .i64(lease.fence)
+    .uuid(epoch.incarnation)
+    .i64(epoch.epoch)
+    .text(class)
+    .opt_ts(expires_at)
+    .i32(count)
+    .execute(conn)
+    .await?;
+    Ok(inserted == 1)
+}
+
+/// Insert the source proofs of a freshly created grant.
+async fn insert_sources<B: Sql>(
+    conn: &mut Conn<B>,
+    lease: &CustodyLease,
+    export: Uuid,
+    binding: &[u8],
+    sources: &[FrozenArchiveSource],
+) -> Result<(), StoreError> {
+    // multi-row VALUES, a bounded number of rows per statement (every engine)
+    for chunk in sources.chunks(200) {
+        let mut rows = Vec::with_capacity(chunk.len());
+        for at in 0..chunk.len() {
+            let first = 4 + at * 4;
+            rows.push(format!(
+                "($1,$2,$3,${},${},${},${})",
+                first,
+                first + 1,
+                first + 2,
+                first + 3
+            ));
+        }
+        let template = format!(
+            "INSERT INTO archive_frozen_sources(tenant_id,export_id,binding,artifact_id,digest,sensitivity,expires_at) VALUES {}",
+            rows.join(",")
+        );
+        let mut statement = Stmt::<B>::dynamic(&template)
+            .uuid(lease.tenant.0)
+            .uuid(export)
+            .bytes(binding);
+        for source in chunk {
+            statement = statement
+                .uuid(source.artifact.id.0)
+                .bytes(source.artifact.digest.0.as_slice())
+                .text(class_name(&source.custody)?)
+                .opt_ts(source.custody.expires_at);
+        }
+        statement.execute(conn).await?;
+    }
+    Ok(())
+}
+
+impl<B: Sql> SecretAuthority<B> {
     /// Persist a frozen archive grant for the claimed export of a terminal run.
     ///
     /// The aggregate class and deadline are `custody` narrowed by every source. Registers
@@ -198,64 +374,43 @@ impl PgSecretAuthority {
         lease.check_local_cancellation()?;
         let export = export_of(lease)?;
         let mut tx = self.transaction().await?;
-        run_lock(&mut tx, lease.tenant, lease.run, false).await?;
-        let epoch = frozen_epoch(&mut tx, lease.tenant, lease.run, export, lease.fence).await?;
-        let now = database_now(&mut tx).await?;
+        run_lock::<B>(tx.conn(), lease.tenant, lease.run, false).await?;
+        let epoch = frozen_epoch::<B>(tx.conn(), lease.tenant, lease.run, export, lease.fence).await?;
+        let now = database_now::<B>(tx.conn()).await?;
         let mut narrowed = *custody;
         narrowed.validate(now)?;
         for source in sources {
             narrowed = narrowed.narrow(source.custody, now)?;
         }
         let grant = FrozenArchiveGrant::new(lease, epoch, narrowed, sources.to_vec())?;
-        verify_sources(&mut tx, lease, export, grant.sources(), now).await?;
+        verify_sources::<B>(tx.conn(), lease, export, grant.sources(), now).await?;
         let count =
             i32::try_from(grant.sources().len()).map_err(|_| denied("frozen archive source count"))?;
-        let inserted = sqlx::query(
-            "INSERT INTO archive_frozen_grants(tenant_id,run_id,export_id,binding,fence,incarnation,secret_epoch,sensitivity,expires_at,source_count) \
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(tenant_id,export_id,binding) DO NOTHING",
+        let created = insert_grant::<B>(
+            tx.conn(),
+            lease,
+            &GrantRow {
+                export,
+                binding: grant.binding().0.as_slice(),
+                epoch,
+                class: class_name(&grant.custody)?,
+                expires_at: grant.custody.expires_at,
+                count,
+            },
         )
-        .bind(lease.tenant.0)
-        .bind(lease.run.0)
-        .bind(export)
-        .bind(grant.binding().0.as_slice())
-        .bind(lease.fence)
-        .bind(epoch.incarnation)
-        .bind(epoch.epoch)
-        .bind(class_name(&grant.custody)?)
-        .bind(grant.custody.expires_at)
-        .bind(count)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?
-        .rows_affected();
-        if inserted == 1 {
-            let mut artifacts = Vec::with_capacity(grant.sources().len());
-            let mut digests = Vec::with_capacity(grant.sources().len());
-            let mut classes = Vec::with_capacity(grant.sources().len());
-            let mut deadlines = Vec::with_capacity(grant.sources().len());
-            for source in grant.sources() {
-                artifacts.push(source.artifact.id.0);
-                digests.push(source.artifact.digest.0.to_vec());
-                classes.push(class_name(&source.custody)?);
-                deadlines.push(source.custody.expires_at);
-            }
-            sqlx::query(
-                "INSERT INTO archive_frozen_sources(tenant_id,export_id,binding,artifact_id,digest,sensitivity,expires_at) \
-                 SELECT $1,$2,$3,a,d,c,e FROM UNNEST($4::uuid[],$5::bytea[],$6::text[],$7::timestamptz[]) AS t(a,d,c,e)",
+        .await?;
+        if created {
+            insert_sources::<B>(
+                tx.conn(),
+                lease,
+                export,
+                grant.binding().0.as_slice(),
+                grant.sources(),
             )
-            .bind(lease.tenant.0)
-            .bind(export)
-            .bind(grant.binding().0.as_slice())
-            .bind(&artifacts)
-            .bind(&digests)
-            .bind(&classes)
-            .bind(&deadlines)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+            .await?;
         }
         lease.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         Ok(grant)
     }
@@ -314,57 +469,65 @@ impl PgSecretAuthority {
         let ciphertext_size =
             i64::try_from(ciphertext.size_bytes).map_err(|_| denied("artifact ciphertext size overflow"))?;
         let mut tx = self.transaction().await?;
-        run_lock(&mut tx, lease.tenant, lease.run, false).await?;
-        let epoch = frozen_epoch(&mut tx, lease.tenant, lease.run, export, lease.fence).await?;
+        run_lock::<B>(tx.conn(), lease.tenant, lease.run, false).await?;
+        let epoch = frozen_epoch::<B>(tx.conn(), lease.tenant, lease.run, export, lease.fence).await?;
         if epoch != grant.epoch {
             return Err(denied(PUBLISH_STALE));
         }
-        let now = database_now(&mut tx).await?;
+        let now = database_now::<B>(tx.conn()).await?;
         let binding = grant.binding();
-        let granted: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM archive_frozen_grants g WHERE g.tenant_id=$1 AND g.run_id=$2 \
+        let clock = frag::clock::<B>();
+        let same_deadline = frag::null_safe_eq::<B>("g.expires_at", "$9");
+        let granted = stmt!(
+            B,
+            format!(
+                "SELECT EXISTS(SELECT 1 FROM archive_frozen_grants g WHERE g.tenant_id=$1 AND g.run_id=$2 \
              AND g.export_id=$3 AND g.binding=$4 AND g.fence=$5 AND g.incarnation=$6 AND g.secret_epoch=$7 \
-             AND g.sensitivity=$8 AND g.expires_at IS NOT DISTINCT FROM $9 AND g.source_count=$10 \
-             AND (g.expires_at IS NULL OR g.expires_at>clock_timestamp()))",
+             AND g.sensitivity=$8 AND {same_deadline} AND g.source_count=$10 \
+             AND (g.expires_at IS NULL OR g.expires_at>{clock})) AS v"
+            )
         )
-        .bind(lease.tenant.0)
-        .bind(lease.run.0)
-        .bind(export)
-        .bind(binding.0.as_slice())
-        .bind(lease.fence)
-        .bind(epoch.incarnation)
-        .bind(epoch.epoch)
-        .bind(class_name(&grant.custody)?)
-        .bind(grant.custody.expires_at)
-        .bind(i32::try_from(grant.sources().len()).map_err(|_| denied("frozen archive source count"))?)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(lease.tenant.0)
+        .uuid(lease.run.0)
+        .uuid(export)
+        .bytes(binding.0.as_slice())
+        .i64(lease.fence)
+        .uuid(epoch.incarnation)
+        .i64(epoch.epoch)
+        .text(class_name(&grant.custody)?)
+        .opt_ts(grant.custody.expires_at)
+        .i32(i32::try_from(grant.sources().len()).map_err(|_| denied("frozen archive source count"))?)
+        .fetch_one(tx.conn())
+        .await?
+        .bool("v")?;
         if !granted {
             return Err(StoreError::LeaseLost);
         }
         // Sources stay bound to the run or to a live (not erased) record of this export or of an
         // export it depends on, so erasure of a source export revokes this grant.
-        let drifted: i64 = sqlx::query_scalar(
-            "SELECT (SELECT count(*) FROM archive_frozen_sources s WHERE s.tenant_id=$1 AND s.export_id=$2 AND s.binding=$3) \
+        let drifted = stmt!(
+            B,
+            format!(
+                "SELECT (SELECT count(*) FROM archive_frozen_sources s WHERE s.tenant_id=$1 AND s.export_id=$2 AND s.binding=$3) \
              - (SELECT count(*) FROM archive_frozen_sources s JOIN artifacts a ON a.artifact_id=s.artifact_id AND a.tenant_id=s.tenant_id \
                 WHERE s.tenant_id=$1 AND s.export_id=$2 AND s.binding=$3 AND a.deleted_at IS NULL \
-                AND (a.expires_at IS NULL OR a.expires_at>clock_timestamp()) \
+                AND (a.expires_at IS NULL OR a.expires_at>{clock}) \
                 AND a.content_digest=s.digest AND a.sensitivity::text=s.sensitivity \
-                AND (s.expires_at IS NULL OR s.expires_at>clock_timestamp()) \
+                AND (s.expires_at IS NULL OR s.expires_at>{clock}) \
                 AND (a.run_id=$4 OR EXISTS(SELECT 1 FROM archive_records r JOIN archive_exports e \
                     ON e.tenant_id=r.tenant_id AND e.export_id=r.export_id \
                     WHERE r.tenant_id=a.tenant_id AND r.artifact_id=a.artifact_id AND e.state<>'deleted' \
                     AND (e.export_id=$2 OR e.export_id IN (SELECT d.source_export FROM archive_dependencies d \
-                        WHERE d.tenant_id=a.tenant_id AND d.export_id=$2)))))",
+                        WHERE d.tenant_id=a.tenant_id AND d.export_id=$2))))) AS v"
+            )
         )
-        .bind(lease.tenant.0)
-        .bind(export)
-        .bind(binding.0.as_slice())
-        .bind(lease.run.0)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(lease.tenant.0)
+        .uuid(export)
+        .bytes(binding.0.as_slice())
+        .uuid(lease.run.0)
+        .fetch_one(tx.conn())
+        .await?
+        .i64("v")?;
         if drifted != 0 {
             return Err(StoreError::RetentionDenied(
                 "frozen archive source changed or was revoked".into(),
@@ -375,71 +538,66 @@ impl PgSecretAuthority {
                 "archive source expired before publication".into(),
             ));
         }
-        let existing = sqlx::query(
+        let existing = stmt!(
+            B,
             "SELECT artifact_payload,envelope,incarnation,secret_epoch,ciphertext_digest,ciphertext_size,object_key \
-             FROM artifact_key_custody WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3",
+             FROM artifact_key_custody WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3"
         )
-        .bind(lease.tenant.0)
-        .bind(lease.run.0)
-        .bind(artifact.id.0)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(lease.tenant.0)
+        .uuid(lease.run.0)
+        .uuid(artifact.id.0)
+        .fetch_optional(tx.conn())
+        .await?;
         lease.check_local_cancellation()?;
         if let Some(existing) = existing {
             // Idempotent retry only: the frozen epoch is never rewritten.
-            if get::<serde_json::Value>(&existing, "artifact_payload")? != row_json
-                || get::<serde_json::Value>(&existing, "envelope")? != envelope_json
-                || get::<Uuid>(&existing, "incarnation")? != epoch.incarnation
-                || get::<i64>(&existing, "secret_epoch")? != epoch.epoch
-                || get::<Vec<u8>>(&existing, "ciphertext_digest")?.as_slice()
-                    != ciphertext.digest.0.as_slice()
-                || get::<i64>(&existing, "ciphertext_size")? != ciphertext_size
-                || get::<String>(&existing, "object_key")? != artifact.object_key
+            if existing.json("artifact_payload")? != row_json
+                || existing.json("envelope")? != envelope_json
+                || existing.uuid("incarnation")? != epoch.incarnation
+                || existing.i64("secret_epoch")? != epoch.epoch
+                || existing.bytes("ciphertext_digest")?.as_slice() != ciphertext.digest.0.as_slice()
+                || existing.i64("ciphertext_size")? != ciphertext_size
+                || existing.text("object_key")? != artifact.object_key
             {
                 return Err(denied("artifact publication retry changed immutable custody"));
             }
         } else {
-            sqlx::query(
+            stmt!(
+                B,
                 "INSERT INTO archive_frozen_outputs(tenant_id,run_id,export_id,binding,artifact_id,kind,bucket,object_key,size_bytes,\
                  content_digest,content_type,sensitivity,created_at,expires_at,incarnation,secret_epoch,ciphertext_digest,ciphertext_size) \
-                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
+                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"
             )
-            .bind(lease.tenant.0)
-            .bind(lease.run.0)
-            .bind(export)
-            .bind(binding.0.as_slice())
-            .bind(artifact.id.0)
-            .bind(&artifact.kind)
-            .bind(&artifact.bucket)
-            .bind(&artifact.object_key)
-            .bind(plaintext_size)
-            .bind(artifact.digest.0.as_slice())
-            .bind(&artifact.content_type)
-            .bind(artifact.sensitivity.as_str())
-            .bind(artifact.created_at)
-            .bind(artifact.expires_at)
-            .bind(epoch.incarnation)
-            .bind(epoch.epoch)
-            .bind(ciphertext.digest.0.as_slice())
-            .bind(ciphertext_size)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-            sqlx::query("INSERT INTO artifacts(artifact_id,tenant_id,run_id,kind,bucket,object_key,size_bytes,content_digest,content_type,sensitivity,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text::sensitivity_class,$11,$12)")
-                .bind(artifact.id.0).bind(artifact.tenant.0).bind(artifact.run.0).bind(&artifact.kind).bind(&artifact.bucket)
-                .bind(&artifact.object_key).bind(plaintext_size).bind(artifact.digest.0.as_slice()).bind(&artifact.content_type)
-                .bind(artifact.sensitivity.as_str()).bind(artifact.created_at).bind(artifact.expires_at)
-                .execute(&mut *tx).await.map_err(db)?;
-            sqlx::query("INSERT INTO artifact_key_custody(artifact_id,tenant_id,run_id,incarnation,secret_epoch,object_key,plaintext_digest,plaintext_size,ciphertext_digest,ciphertext_size,envelope,artifact_payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
-                .bind(artifact.id.0).bind(lease.tenant.0).bind(lease.run.0).bind(epoch.incarnation).bind(epoch.epoch)
-                .bind(&artifact.object_key).bind(artifact.digest.0.as_slice()).bind(plaintext_size)
-                .bind(ciphertext.digest.0.as_slice()).bind(ciphertext_size)
-                .bind(envelope_json).bind(row_json).bind(artifact.created_at)
-                .execute(&mut *tx).await.map_err(db)?;
+            .uuid(lease.tenant.0)
+            .uuid(lease.run.0)
+            .uuid(export)
+            .bytes(binding.0.as_slice())
+            .uuid(artifact.id.0)
+            .text(&artifact.kind)
+            .text(&artifact.bucket)
+            .text(&artifact.object_key)
+            .i64(plaintext_size)
+            .bytes(artifact.digest.0.as_slice())
+            .text(&artifact.content_type)
+            .text(artifact.sensitivity.as_str())
+            .ts(artifact.created_at)
+            .opt_ts(artifact.expires_at)
+            .uuid(epoch.incarnation)
+            .i64(epoch.epoch)
+            .bytes(ciphertext.digest.0.as_slice())
+            .i64(ciphertext_size)
+            .execute(tx.conn())
+            .await?;
+            insert_artifact::<B>(tx.conn(), artifact, plaintext_size).await?;
+            stmt!(B, "INSERT INTO artifact_key_custody(artifact_id,tenant_id,run_id,incarnation,secret_epoch,object_key,plaintext_digest,plaintext_size,ciphertext_digest,ciphertext_size,envelope,artifact_payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
+                .uuid(artifact.id.0).uuid(lease.tenant.0).uuid(lease.run.0).uuid(epoch.incarnation).i64(epoch.epoch)
+                .text(&artifact.object_key).bytes(artifact.digest.0.as_slice()).i64(plaintext_size)
+                .bytes(ciphertext.digest.0.as_slice()).i64(ciphertext_size)
+                .json(&envelope_json).json(&row_json).ts(artifact.created_at)
+                .execute(tx.conn()).await?;
         }
         lease.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         Ok(())
     }
@@ -454,7 +612,7 @@ impl PgSecretAuthority {
 ///
 /// # Errors
 /// Fails closed with [`StoreError::Unavailable`] when a terminal run has no custody, and
-/// otherwise with the errors of [`PgSecretAuthority::issue_frozen_archive`].
+/// otherwise with the errors of [`SecretAuthority::issue_frozen_archive`].
 pub async fn with_terminal_grant<F: Future>(
     custody: Option<&dyn ArtifactCustody>,
     terminal: bool,

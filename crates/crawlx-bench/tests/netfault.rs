@@ -19,7 +19,7 @@ use crawlx_core::repo::{ActionJournal, RunRepo};
 use crawlx_core::{Clock, CrawlRunId, CreateCrawl, SystemClock, TenantId};
 use crawlx_fetch::StaticResolver;
 use crawlx_policy::testkit::sample_record;
-use crawlx_storage::{FsArtifactStore, LeaseRepo, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, LeaseRepo, Pg, StoreConfig};
 use crawlx_worker::{lease_loop, run_local_with, EgressConfig, LocalRun, Stores, WorkerConfig};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -198,10 +198,10 @@ async fn worker_survives_five_database_resets_with_the_journal_intact() {
     let schema = format!("t_netfault_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &proxied,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
             max_connections: 8,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -215,7 +215,11 @@ async fn worker_survives_five_database_resets_with_the_journal_intact() {
         .with_index(Arc::new(pg.clone()));
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "netfault").await.unwrap();
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), tenant);
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        tenant,
+    );
     stores.checkpoint_keys =
         Arc::new(crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap());
     let cfg = WorkerConfig {
@@ -362,8 +366,8 @@ async fn worker_survives_five_database_resets_with_the_journal_intact() {
     for id in run_ids {
         let report = verify_trail(
             CrawlRunId(id),
-            TrailStore::Pg {
-                pg: &pg,
+            TrailStore::Database {
+                store: &crawlx_worker::DurableStore::Postgres(pg.clone()),
                 artifacts: Some(stores.artifacts.as_ref()),
             },
         )

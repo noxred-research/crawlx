@@ -1375,6 +1375,36 @@ fn mime_groups_ignore_parameters_without_inventing_unknown_types() {
 }
 
 #[tokio::test]
+async fn report_host_keys_are_the_identity_producers_store_on_facts() {
+    let env = Env::new().await;
+    let run = env.run(false, false).await;
+    let (lease, _, url) = env.leased(&run, "a").await;
+    let host = url.url.host_str().unwrap();
+    assert_eq!(host_key(&url), Some(report_host_key(host)));
+    // a fact stored by a producer with the shared identity answers the digest a row of the
+    // `hosts` report shows
+    let mut fact = ReportFactV1::new(
+        &lease,
+        Digest::of("crawlx/report-route-fixture", b"shared-host"),
+        env.at(1),
+        wire(Some(1), None, Some(1)),
+    );
+    fact.url_key = Some(url.key);
+    fact.host_key = Some(report_host_key(host));
+    env.store.append_fact(&lease, &fact).await.unwrap();
+    let (_, hosts, _) = env.get(&format!("{}/hosts", Env::root(&run)), Some(KEY)).await;
+    let shown = hosts["rows"][0]["hostKey"].as_str().unwrap().to_owned();
+    assert_eq!(shown, report_host_key(host).to_hex());
+    let (_, facts, _) = env
+        .get(
+            &format!("{}/wire_history?hostKey={shown}", Env::root(&run)),
+            Some(KEY),
+        )
+        .await;
+    assert_eq!(facts["rows"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn availability_separates_missing_instrumentation_from_intentional_redaction() {
     let env = Env::new().await;
     let run = env.run(false, false).await;

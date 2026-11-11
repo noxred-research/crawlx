@@ -13,7 +13,7 @@ use crate::source_dispatch::{
 };
 use crawlx_core::discovery::{DiscoveryErrorV1, DiscoveryProviderV1, DiscoverySourceV1};
 use crawlx_core::extension_recipes::ExtensionRecipeV1;
-use crawlx_core::extraction::{DiscoveryPurposeV1, QualityStatusV1};
+use crawlx_core::extraction::{DiscoveryIntentV1, DiscoveryPurposeV1, QualityStatusV1};
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{LoaderCursorV1, RequestBatchV1};
 use crawlx_core::request::RequestEnvelopeV1;
@@ -151,6 +151,7 @@ struct DiscoveryLoader {
 #[derive(Clone, Copy)]
 enum SourceBatch<'a> {
     Urls(&'a [Url]),
+    Intents(&'a [DiscoveryIntentV1]),
     Recipe(&'a [RecipeCandidateV1]),
     Dispatch(&'a [SourceReferenceV1]),
 }
@@ -166,6 +167,7 @@ impl<'a> SourceBatch<'a> {
     fn len(self) -> usize {
         match self {
             Self::Urls(urls) => urls.len(),
+            Self::Intents(intents) => intents.len(),
             Self::Recipe(candidates) => candidates.len(),
             Self::Dispatch(references) => references.len(),
         }
@@ -174,6 +176,7 @@ impl<'a> SourceBatch<'a> {
     fn slice(self, start: usize, end: usize) -> Self {
         match self {
             Self::Urls(urls) => Self::Urls(&urls[start..end]),
+            Self::Intents(intents) => Self::Intents(&intents[start..end]),
             Self::Recipe(candidates) => Self::Recipe(&candidates[start..end]),
             Self::Dispatch(references) => Self::Dispatch(&references[start..end]),
         }
@@ -182,6 +185,7 @@ impl<'a> SourceBatch<'a> {
     fn iter(self) -> impl Iterator<Item = (&'a Url, Option<Proposal<'a>>)> {
         (0..self.len()).map(move |index| match self {
             Self::Urls(urls) => (&urls[index], None),
+            Self::Intents(intents) => (&intents[index].url, None),
             Self::Recipe(candidates) => (&candidates[index].url, Some(Proposal::Recipe(&candidates[index]))),
             Self::Dispatch(references) => (
                 &references[index].url,
@@ -516,6 +520,41 @@ impl UrlPlaneRunner {
         Ok(inserted)
     }
 
+    /// Resolve inline candidates once at the seed, using the normal fenced source admission.
+    async fn discover_url_list(
+        &self,
+        parent: &FrontierEntry,
+        record: &mut PageRecord,
+        expand: bool,
+    ) -> Result<(), WorkerError> {
+        if !expand
+            || parent.depth != 0
+            || self.crawl.cache_only()
+            || !self.source_enabled(DiscoverySourceV1::UrlList)
+        {
+            return Ok(());
+        }
+        let Some(list) = self
+            .crawl
+            .scope
+            .discovery
+            .as_ref()
+            .and_then(|policy| policy.url_list.as_ref())
+        else {
+            return Ok(());
+        };
+        let resolved = list.resolve(self.crawl.scope.max_known_urls)?;
+        let intents = resolved.intents();
+        let source_bytes = serde_json::to_vec(list).map_err(crawlx_core::CoreError::from)?;
+        let admitted = self
+            .append_source_candidates(SourceBatch::Intents(&intents), parent, "url_list", &source_bytes)
+            .await?;
+        record.metadata["url_list"] = serde_json::json!({
+            "candidates":intents.len(),"duplicates":resolved.duplicates,"admitted":admitted,
+        });
+        Ok(())
+    }
+
     /// Admit a parsed source as bounded atomic chunks, including rejected input positions.
     async fn append_source_urls(
         &self,
@@ -785,6 +824,7 @@ impl UrlPlaneRunner {
         let Some(policy) = &self.crawl.scope.discovery else {
             return Ok(false);
         };
+        self.discover_url_list(entry, record, expand).await?;
         let connector = policy.connectors.iter().find(|connector| {
             self.source_enabled(match connector.provider {
                 DiscoveryProviderV1::NewsSearch => DiscoverySourceV1::NewsSearch,

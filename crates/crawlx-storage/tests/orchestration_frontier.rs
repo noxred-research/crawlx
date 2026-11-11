@@ -12,7 +12,7 @@ use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::time::ManualClock;
 use crawlx_core::{Clock, StoreError, TenantId, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{LeaseRepo, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{LeaseRepo, MemoryStore, Pg, StoreConfig};
 use std::sync::Arc;
 
 fn run(tenant: TenantId, now: crawlx_core::Timestamp) -> CrawlRun {
@@ -41,6 +41,24 @@ fn batch(run: &CrawlRun, name: &str, paths: &[&str]) -> RequestBatchV1 {
 }
 
 async fn shared_contract<R: FrontierRepo + RunRepo + RequestCommitRepo>(repo: &R, tenant: TenantId) {
+    let mut expired = run(tenant, Utc::now() - Duration::days(1));
+    expired.config.limits.duration_seconds = 1;
+    repo.create(&expired, None).await.unwrap();
+    assert!(matches!(
+        repo.append_batch(batch(&expired, "expired", &["late"])).await,
+        Err(StoreError::RunDeadlineReached)
+    ));
+    repo.set_status(
+        expired.id,
+        crawlx_core::counters::RunStatus::Cancelled,
+        Some(crawlx_core::counters::TerminalReason::Cancelled),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        repo.append_batch(batch(&expired, "cancelled", &["late"])).await,
+        Err(StoreError::AccessDenied(_))
+    ));
     let run = run(tenant, Utc::now());
     repo.create(&run, None).await.unwrap();
     assert_eq!(
@@ -132,9 +150,9 @@ async fn postgres_request_frontier_contract() {
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("request_{}", crawlx_core::CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -637,9 +655,9 @@ async fn postgres_head_observation_commits_atomically_and_replays_once() {
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("head_{}", crawlx_core::CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -1431,9 +1449,9 @@ async fn postgres_strategies_survive_restart_and_backfill_without_changing_prior
     let Ok(url) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
         return;
     };
-    let config = PgConfig {
+    let config = StoreConfig {
         schema: Some(format!("strategy_{}", crawlx_core::CrawlRunId::new().0.simple())),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let pg = Pg::connect(&url, config.clone()).await.unwrap();
     pg.migrate().await.unwrap();
@@ -1508,12 +1526,12 @@ async fn postgres_priority_backfill_reads_volatile_original_method_and_fails_clo
     )));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!(
                 "strategy_zdr_{}",
                 crawlx_core::CrawlRunId::new().0.simple()
             )),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -1639,12 +1657,12 @@ async fn postgres_head_hydrates_reference_without_retaining_or_requiring_volatil
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!(
                 "head_reference_{}",
                 crawlx_core::CrawlRunId::new().0.simple()
             )),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

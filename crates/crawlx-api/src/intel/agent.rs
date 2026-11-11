@@ -1748,7 +1748,7 @@ impl Run {
                     Err(e) => {
                         return Ok(End::Failed(format!(
                             "the answer does not match the schema and the retry failed: {e}"
-                        )))
+                        )));
                     }
                 };
                 let again = schema_errors(&validator, &repaired);

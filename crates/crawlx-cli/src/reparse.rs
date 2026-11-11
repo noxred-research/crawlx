@@ -10,10 +10,10 @@ use crawlx_core::custody::{ArtifactReadState, RunSecretAuthority};
 use crawlx_core::extraction::ParserPipelineV1;
 use crawlx_core::{CrawlRunId, SystemClock, TenantId};
 use crawlx_extract::pipeline::ParserPipeline;
-use crawlx_storage::custody::PgSecretAuthority;
 use crawlx_worker::reparse::{
     privacy_from_original_run, ReparseIntent, ReparseServices, RetainedRepresentation,
 };
+use crawlx_worker::DurableAuthority;
 use serde_json::json;
 use std::{io::Write, path::PathBuf, process::ExitCode, sync::Arc};
 use tokio_util::sync::CancellationToken;
@@ -60,7 +60,7 @@ pub struct ReparseArgs {
     /// Versioned ParserPipelineV1 JSON, at most one MiB. Omit for the native pipeline.
     #[arg(long, value_name = "FILE")]
     pub pipeline: Option<PathBuf>,
-    /// Existing metadata database; migrations are never run by this command.
+    /// Existing metadata database (PostgreSQL, MariaDB or SQLite URL); migrations are never run by this command.
     #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     pub database_url: String,
     /// Existing artifact directory; symbolic links and missing roots are refused.
@@ -104,25 +104,25 @@ pub async fn execute(args: ReparseArgs, out: &mut dyn Write) -> anyhow::Result<E
     let mut cfg = crawlx_worker::WorkerConfig::default();
     cfg.load_artifact_custody_from_lookup(&|name| std::env::var(name).ok())
         .await?;
-    let pg = crawlx_storage::Pg::connect(&args.database_url, crawlx_storage::PgConfig::default()).await?;
+    let durable = crate::inspect::connect(Some(&args.database_url)).await?;
     let authority = match &cfg.secret_redis_url {
         Some(url) => {
-            PgSecretAuthority::open_with_policy(
-                pg.clone(),
+            DurableAuthority::open_with_policy(
+                &durable,
                 url.expose(),
                 cfg.secret_authority_ttl,
                 cfg.secret_authority_hard_max,
             )
             .await?
         }
-        None => PgSecretAuthority::finalized_reads(pg.clone()),
+        None => DurableAuthority::finalized_reads(&durable),
     };
     let keys = cfg
         .artifact_keys
         .take()
         .context("retained artifact key custody is unavailable")?;
-    let custody: Arc<dyn crawlx_storage::ArtifactCustody> =
-        Arc::new(crawlx_storage::PgArtifactCustody::new(authority.clone()));
+    let custody = authority.custody();
+    let run_authority = authority.run_authority();
     let cancel = CancellationToken::new();
     let mut watcher = tokio::task::JoinSet::new();
     let signal = cancel.clone();
@@ -132,15 +132,17 @@ pub async fn execute(args: ReparseArgs, out: &mut dyn Write) -> anyhow::Result<E
         }
     });
     crawlx_storage::tenant::scope(args.tenant, async {
-        let artifacts = crawlx_storage::FsArtifactStore::open(
-            &args.artifacts_dir,
-            Arc::new(pg.clone()),
-            Arc::new(SystemClock),
-        )
-        .await?
-        .with_index(Arc::new(pg.clone()))
-        .with_custody(custody, keys, crawlx_storage::CustodyWrites::ReadOnly);
-        let stores = crawlx_worker::Stores::over_pg(pg, Arc::new(artifacts), args.tenant);
+        let artifacts = crawlx_worker::on_store!(&durable, store => {
+            crawlx_storage::FsArtifactStore::open(
+                &args.artifacts_dir,
+                Arc::new(store.clone()),
+                Arc::new(SystemClock),
+            )
+            .await?
+            .with_index(Arc::new(store.clone()))
+            .with_custody(custody, keys, crawlx_storage::CustodyWrites::ReadOnly)
+        });
+        let stores = crawlx_worker::Stores::over_durable(durable.clone(), Arc::new(artifacts), args.tenant);
         let services = ReparseServices {
             runs: stores.runs.as_ref(),
             pages: stores.pages.as_ref(),
@@ -155,7 +157,7 @@ pub async fn execute(args: ReparseArgs, out: &mut dyn Write) -> anyhow::Result<E
             args.principal,
             args.representation.native(),
         );
-        execute_with_services(&services, &intent, parser, &authority, out, &cancel).await
+        execute_with_services(&services, &intent, parser, run_authority.as_ref(), out, &cancel).await
     })
     .await
 }

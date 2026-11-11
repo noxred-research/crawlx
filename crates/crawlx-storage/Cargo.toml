@@ -16,6 +16,9 @@ chaos = []
 fake-s3 = ["dep:axum"]
 # Explicit test-only loopback cloud KMS protocol fixture; never auto-selected.
 fake-kms = ["dep:axum", "dep:base64"]
+# Turns the application tenant guard off so the tenancy suite can prove it would fail without it (the mutation
+# guard of the isolation proofs); never enabled outside tests.
+unscoped-for-test = []
 
 [dependencies]
 axum = { workspace = true, optional = true }

@@ -1,0 +1,3 @@
+-- no-op: SQLite has no eligibility function; a run whose feed compresses its bytes is only
+-- eligible on a worker that published compressed-byte support for that destination, decided in
+-- the repository (`worker_eligibility`) from the same requirement and capability fields.

@@ -1,21 +1,41 @@
-//! `FrontierRepo` over `url_frontier`.
+//! `FrontierRepo` over `url_frontier`, generic over the engine.
 
-use crate::codec::{canonical_to_json, conv, from_json, get, parse_label};
-use crate::error::{db, not_found};
+use crate::backend::strategy::{FenceSeq, FrontierClaim};
+use crate::backend::{BackendKind, Dialect, RowLock};
+use crate::codec::{canonical_to_json, conv, from_json, parse_label};
+use crate::error::not_found;
 use crate::leases::secs;
-use crate::pg::Pg;
+use crate::sql::{returning, stmt, Sql, SqlRow, Stmt};
+use crate::store::Store;
+use crate::worker_eligibility::{claim_eligible, WorkerFacts};
 use async_trait::async_trait;
 use crawlx_core::repo::{
-    DiscoveryOutcome, FrontierEntry, FrontierRepo, FrontierStateCounts, FrontierStatus, DEDUPE_REASON_PREFIX,
+    DiscoveryOutcome, FrontierEntry, FrontierRepo, FrontierStateCounts, FrontierStatus, RunRepo,
+    DEDUPE_REASON_PREFIX,
 };
 use crawlx_core::url::CanonicalUrl;
 use crawlx_core::{CrawlRunId, StoreError, WorkerId};
-use sqlx::postgres::PgRow;
 
 #[path = "requests.rs"]
 mod requests;
+#[path = "requests_commit.rs"]
+mod requests_commit;
 
 const ENTRY_COLS: &str = "frontier_id, run_id, query_schema, depth, status, COALESCE(denial_reason, error_code) AS denial_reason, attempts, parent_id, priority";
+
+/// The column and value a frontier insert adds where the engine does not assign `tenant_id`
+/// itself: PostgreSQL does it in a trigger, the others take it from the owning run (the
+/// composite foreign key then rejects a mismatch). Both fragments use the insert's `$1` run.
+pub(crate) fn tenant_insert<B: Sql>() -> (&'static str, &'static str) {
+    if B::KIND.capabilities().database_enforced_tenancy {
+        ("", "")
+    } else {
+        (
+            ", tenant_id",
+            ", (SELECT tenant_id FROM crawl_runs WHERE run_id = $1)",
+        )
+    }
+}
 
 fn operational_page(frontier: i64) -> Result<i64, StoreError> {
     frontier
@@ -26,64 +46,90 @@ fn operational_page(frontier: i64) -> Result<i64, StoreError> {
         })
 }
 
-async fn entry_from_row(pg: &Pg, r: &PgRow) -> Result<FrontierEntry, StoreError> {
-    let run = CrawlRunId(get(r, "run_id")?);
-    let (tenant, zdr) = pg.privacy_scope(run).await?;
+async fn entry_from_row<B: Sql, R: SqlRow>(store: &Store<B>, r: &R) -> Result<FrontierEntry, StoreError> {
+    let run = CrawlRunId(r.uuid("run_id")?);
+    let (tenant, zdr) = store.privacy_scope(run).await?;
     let url = if zdr {
-        pg.ephemeral_get(
-            tenant,
-            run,
-            operational_page(get(r, "frontier_id")?)?,
-            "frontier_record",
-        )
-        .await?
+        store
+            .ephemeral_get(
+                tenant,
+                run,
+                operational_page(r.i64("frontier_id")?)?,
+                "frontier_record",
+            )
+            .await?
     } else {
-        from_json::<CanonicalUrl>(get::<serde_json::Value>(r, "query_schema")?)?
+        from_json::<CanonicalUrl>(r.json("query_schema")?)?
     };
     Ok(FrontierEntry {
-        id: get(r, "frontier_id")?,
+        id: r.i64("frontier_id")?,
         run,
         url,
-        depth: conv(get::<i16>(r, "depth")?, "depth")?,
-        status: parse_label(&get::<String>(r, "status")?)?,
-        denial_reason: get(r, "denial_reason")?,
-        attempts: conv(get::<i16>(r, "attempts")?, "attempts")?,
-        discovered_from: get(r, "parent_id")?,
+        depth: conv(r.i16("depth")?, "depth")?,
+        status: parse_label(&r.text("status")?)?,
+        denial_reason: r.opt_text("denial_reason")?,
+        attempts: conv(r.i16("attempts")?, "attempts")?,
+        discovered_from: r.opt_i64("parent_id")?,
     })
 }
 
-impl Pg {
+/// The acquisition backends and data capabilities a worker must offer to take URL leases of
+/// a run, from its admitted configuration.
+struct LeaseNeeds {
+    required: Vec<String>,
+    data_required: bool,
+}
+
+fn lease_needs(config: &crawlx_core::config::CreateCrawl) -> Result<LeaseNeeds, StoreError> {
+    let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(config)?;
+    let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
+    let required = if let Some(policy) = &config.acquisition {
+        policy
+            .validate()
+            .map_err(|error| StoreError::Conflict(error.to_string()))?;
+        policy.backend_ids.clone()
+    } else {
+        Vec::new()
+    };
+    Ok(LeaseNeeds {
+        required,
+        data_required,
+    })
+}
+
+impl<B: Sql> Store<B> {
     /// Backfill only pre-cutover open rows, through their existing retention boundary.
     async fn backfill_strategy_scores(&self, run: CrawlRunId) -> Result<(), StoreError> {
         loop {
-            let ids = sqlx::query_scalar::<_, i64>(
+            let rows = stmt!(
+                B,
                 "SELECT frontier_id FROM url_frontier WHERE run_id=$1 \
                  AND status IN ('pending','leased') AND strategy_score IS NULL \
-                 ORDER BY frontier_id LIMIT 256",
+                 ORDER BY frontier_id LIMIT 256"
             )
-            .bind(run.0)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-            if ids.is_empty() {
+            .uuid(run.0)
+            .fetch_all_pool(&self.pool)
+            .await?;
+            if rows.is_empty() {
                 return Ok(());
             }
-            for id in ids {
+            for row in &rows {
+                let id = row.i64("frontier_id")?;
                 let request = self.request_get(run, id).await?;
                 let score = crawlx_core::priority::priority_depth(
                     &request.envelope.url.url,
                     u32::from(request.envelope.depth),
                     request.envelope.method == "GET",
                 );
-                sqlx::query(
+                stmt!(
+                    B,
                     "UPDATE url_frontier SET strategy_score=$2 \
-                     WHERE frontier_id=$1 AND strategy_score IS NULL",
+                     WHERE frontier_id=$1 AND strategy_score IS NULL"
                 )
-                .bind(id)
-                .bind(conv::<u32, i32>(score, "strategy score")?)
-                .execute(&self.pool)
-                .await
-                .map_err(db)?;
+                .i64(id)
+                .i32(conv::<u32, i32>(score, "strategy score")?)
+                .execute_write(&self.pool)
+                .await?;
             }
         }
     }
@@ -107,30 +153,34 @@ impl Pg {
                 to: status.as_str().to_owned(),
             });
         }
-        let updated = sqlx::query(
-            "UPDATE url_frontier SET status = $2, \
-               denial_reason = CASE WHEN $4 THEN $3 ELSE denial_reason END, \
-               error_code = CASE WHEN $4 THEN error_code ELSE COALESCE($3, error_code) END, \
-               finished_at = now(), lease_owner = NULL, lease_expires_at = NULL \
-             WHERE frontier_id = $1 AND status = 'leased' AND lease_expires_at > now() AND ($5::bigint IS NULL OR fencing_token = $5) RETURNING frontier_id",
+        let updated = stmt!(
+            B,
+            format!(
+                "UPDATE url_frontier SET status = $2, \
+                   denial_reason = CASE WHEN $4 THEN $3 ELSE denial_reason END, \
+                   error_code = CASE WHEN $4 THEN error_code ELSE COALESCE($3, error_code) END, \
+                   finished_at = {now}, lease_owner = NULL, lease_expires_at = NULL \
+                 WHERE frontier_id = $1 AND status = 'leased' AND lease_expires_at > {now} AND ($5::bigint IS NULL OR fencing_token = $5){ret}",
+                now = <B::Dialect as Dialect>::now(),
+                ret = returning::<B>("frontier_id"),
+            )
         )
-        .bind(id)
-        .bind(status.as_str())
-        .bind(reason)
-        .bind(blocked)
-        .bind(token)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        if updated.is_some() {
+        .i64(id)
+        .text(status.as_str())
+        .opt_text(reason.as_deref())
+        .bool(blocked)
+        .opt_i64(token)
+        .matched_write(&self.pool)
+        .await?;
+        if updated {
             return Ok(());
         }
-        let current: Option<String> =
-            sqlx::query_scalar("SELECT status FROM url_frontier WHERE frontier_id = $1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db)?;
+        let current = stmt!(B, "SELECT status FROM url_frontier WHERE frontier_id = $1")
+            .i64(id)
+            .fetch_optional_pool(&self.pool)
+            .await?
+            .map(|row| row.text("status"))
+            .transpose()?;
         match current {
             None => Err(not_found("frontier row", id)),
             // a fenced holder that finds its row elsewhere (returned by the reaper, re-leased,
@@ -142,10 +192,108 @@ impl Pg {
             }),
         }
     }
+
+    /// Lease one named pending row where the engine cannot do the eligibility check and the
+    /// lease in one statement: everything is decided inside one write transaction.
+    async fn lease_one_portable(
+        &self,
+        run: CrawlRunId,
+        worker: WorkerId,
+        id: i64,
+        tenant: crawlx_core::TenantId,
+        duration_secs: f64,
+        needs: &LeaseNeeds,
+    ) -> Result<Option<(FrontierEntry, i64)>, StoreError> {
+        let now_sql = <B::Dialect as Dialect>::now();
+        let mut tx = self.begin_write().await?;
+        let now = B::db_now(&self.pool).await?;
+        let share = <B::Dialect as Dialect>::row_lock(RowLock::Share);
+        let ceiling = <B::Dialect as Dialect>::add_seconds("COALESCE(r.started_at, r.created_at)", "$3");
+        let Some(run_row) = Stmt::<B>::dynamic(&format!(
+            "SELECT r.mode, r.data_requirements FROM crawl_runs r WHERE r.run_id = $1 AND r.tenant_id = $2 \
+               AND r.status IN ('queued','running') AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
+               AND COALESCE(r.deadline_at, {ceiling}) > {now_sql}{share}"
+        ))
+        .uuid(run.0)
+        .uuid(tenant.0)
+        .f64(duration_secs)
+        .fetch_optional(tx.conn())
+        .await?
+        else {
+            return Ok(None);
+        };
+        if run_row.text("mode")? == "dynamic" {
+            return Ok(None);
+        }
+        let worker_row = stmt!(
+            B,
+            "SELECT capacity, draining, last_heartbeat_at FROM workers WHERE worker_id = $1"
+        )
+        .uuid(worker.0)
+        .fetch_optional(tx.conn())
+        .await?;
+        let facts = worker_row
+            .map(|row| {
+                Ok::<_, StoreError>(WorkerFacts {
+                    capacity: row.json("capacity")?,
+                    draining: row.bool("draining")?,
+                    last_heartbeat_at: row.ts("last_heartbeat_at")?,
+                })
+            })
+            .transpose()?;
+        if !claim_eligible(
+            facts.as_ref(),
+            run.0,
+            now,
+            &needs.required,
+            needs.data_required,
+            &run_row.json("data_requirements")?,
+        ) {
+            return Ok(None);
+        }
+        let lock = <B::Dialect as Dialect>::row_lock(RowLock::Update);
+        let pending = Stmt::<B>::dynamic(&format!(
+            "SELECT f.frontier_id FROM url_frontier f WHERE f.run_id = $1 AND f.frontier_id = $2 \
+               AND f.via <> 'interaction' AND f.status = 'pending' AND f.next_attempt_at <= {now_sql} \
+               AND f.attempts < 32767{lock}"
+        ))
+        .uuid(run.0)
+        .i64(id)
+        .fetch_optional(tx.conn())
+        .await?;
+        if pending.is_none() {
+            return Ok(None);
+        }
+        let fence = B::next_fence(tx.conn(), FenceSeq::Lease).await?;
+        let expires = <B::Dialect as Dialect>::add_seconds(now_sql, "$3");
+        Stmt::<B>::dynamic(&format!(
+            "UPDATE url_frontier SET status = 'leased', lease_owner = $2, lease_expires_at = {expires}, \
+               fencing_token = $4, attempts = attempts + 1 WHERE frontier_id = $1"
+        ))
+        .i64(id)
+        .uuid(worker.0)
+        .f64(secs(self.cfg.url_batch_ttl))
+        .i64(fence)
+        .execute(tx.conn())
+        .await?;
+        let row = stmt!(
+            B,
+            "SELECT frontier_id, run_id, query_schema, depth, status, COALESCE(denial_reason, error_code) AS denial_reason, \
+               attempts, parent_id, priority, fencing_token FROM url_frontier WHERE frontier_id = $1"
+        )
+        .i64(id)
+        .fetch_one(tx.conn())
+        .await?;
+        tx.commit().await?;
+        Ok(Some((
+            entry_from_row(self, &row).await?,
+            row.i64("fencing_token")?,
+        )))
+    }
 }
 
 #[async_trait]
-impl FrontierRepo for Pg {
+impl<B: Sql> FrontierRepo for Store<B> {
     async fn append_batch(
         &self,
         batch: crawlx_core::orchestration::RequestBatchV1,
@@ -282,7 +430,7 @@ impl FrontierRepo for Pg {
         } else {
             canonical_to_json(url)?
         };
-        let cfg = <Self as crawlx_core::repo::RunRepo>::get(self, run)
+        let cfg = RunRepo::get(self, run)
             .await?
             .config
             .orchestration
@@ -291,60 +439,91 @@ impl FrontierRepo for Pg {
         let envelope = crawlx_core::request::RequestEnvelopeV1::get(url.clone(), depth, from);
         let envelope_bytes = i64::try_from(serde_json::to_vec(&envelope)?.len())
             .map_err(|_| StoreError::Conflict("request size overflow".into()))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        requests::lock_run(self, &mut tx, run).await?;
-        let exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND canonical_key=$2 AND revisit_generation=0)"
-        ).bind(run.0).bind(url.key.0.as_slice()).fetch_one(&mut *tx).await.map_err(db)?;
+        let mut tx = self.begin_write().await?;
+        requests::lock_run::<B>(tx.conn(), run).await?;
+        let exists = stmt!(
+            B,
+            "SELECT EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND canonical_key=$2 AND revisit_generation=0) AS present"
+        )
+        .uuid(run.0)
+        .bytes(url.key.0.as_slice())
+        .fetch_one(tx.conn())
+        .await?
+        .flag("present")?;
         if exists {
             return Ok((DiscoveryOutcome::Duplicate, None));
         }
         if status == FrontierStatus::Pending {
-            let counts = sqlx::query(
-                "SELECT count(*) AS entries,COALESCE(sum(envelope_bytes),0)::bigint AS bytes \
-                 FROM url_frontier WHERE run_id=$1 AND status IN ('pending','leased')",
+            let counts = stmt!(
+                B,
+                format!(
+                    "SELECT count(*) AS entries,{bytes} AS bytes \
+                     FROM url_frontier WHERE run_id=$1 AND status IN ('pending','leased')",
+                    bytes = <B::Dialect as Dialect>::cast_i64("COALESCE(sum(envelope_bytes),0)"),
+                )
             )
-            .bind(run.0)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-            if u64::try_from(get::<i64>(&counts, "entries")?).unwrap_or(u64::MAX)
-                >= cfg.queue.max_pending_entries
-                || u64::try_from(get::<i64>(&counts, "bytes")?.saturating_add(envelope_bytes))
-                    .unwrap_or(u64::MAX)
+            .uuid(run.0)
+            .fetch_one(tx.conn())
+            .await?;
+            if u64::try_from(counts.i64("entries")?).unwrap_or(u64::MAX) >= cfg.queue.max_pending_entries
+                || u64::try_from(counts.i64("bytes")?.saturating_add(envelope_bytes)).unwrap_or(u64::MAX)
                     > cfg.queue.max_pending_envelope_bytes
             {
                 return Err(StoreError::Conflict("frontier quota exhausted".into()));
             }
         }
-        let row = sqlx::query(
-            "INSERT INTO url_frontier (run_id, canonical_key, canonical_url, origin, query_schema, depth, via, parent_id, status, denial_reason, finished_at, request_envelope, envelope_bytes, strategy_score) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CASE WHEN $11 THEN now() END, $12, $13, $14) \
-             ON CONFLICT (run_id, canonical_key, revisit_generation) DO NOTHING RETURNING frontier_id",
+        // The request key was just checked under the run lock, which every frontier insert
+        // takes, so the conflict clause only matters where it is free (MariaDB would answer
+        // an ignored duplicate with the existing row).
+        let conflict = if B::KIND == BackendKind::MariaDb {
+            String::new()
+        } else {
+            format!(
+                " {}",
+                <B::Dialect as Dialect>::upsert_do_nothing(&[
+                    "run_id",
+                    "canonical_key",
+                    "revisit_generation"
+                ])
+            )
+        };
+        let envelope_json = if zdr {
+            None
+        } else {
+            Some(serde_json::to_value(&envelope)?)
+        };
+        let row = stmt!(
+            B,
+            format!(
+                "INSERT INTO url_frontier (run_id, canonical_key, canonical_url, origin, query_schema, depth, via, parent_id, status, denial_reason, finished_at, request_envelope, envelope_bytes, strategy_score{tenant_column}) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CASE WHEN $11 THEN {now} END, $12, $13, $14{tenant_value}){conflict} RETURNING frontier_id",
+                now = <B::Dialect as Dialect>::now(),
+                tenant_column = tenant_insert::<B>().0,
+                tenant_value = tenant_insert::<B>().1,
+            )
         )
-        .bind(run.0)
-        .bind(url.key.0.to_vec())
-        .bind(canonical)
-        .bind(origin)
-        .bind(schema)
-        .bind(conv::<u16, i16>(depth, "depth")?)
-        .bind(via)
-        .bind(from)
-        .bind(status.as_str())
-        .bind(reason)
-        .bind(blocked)
-        .bind(if zdr { None } else { Some(serde_json::to_value(&envelope)?) })
-        .bind(envelope_bytes)
-        .bind(conv::<u32, i32>(
+        .uuid(run.0)
+        .bytes(url.key.0.as_slice())
+        .opt_text(canonical)
+        .text(origin)
+        .json(&schema)
+        .i16(conv::<u16, i16>(depth, "depth")?)
+        .text(via)
+        .opt_i64(from)
+        .text(status.as_str())
+        .opt_text(reason.as_deref())
+        .bool(blocked)
+        .opt_json(envelope_json.as_ref())
+        .i64(envelope_bytes)
+        .i32(conv::<u32, i32>(
             crawlx_core::priority::priority_depth(&url.url, u32::from(depth), true),
             "strategy score",
         )?)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .fetch_optional(tx.conn())
+        .await?;
         let result = match row {
             Some(r) => {
-                let id = get(&r, "frontier_id")?;
+                let id = r.i64("frontier_id")?;
                 if zdr {
                     self.ephemeral_put(tenant, run, operational_page(id)?, "frontier_record", url)
                         .await?;
@@ -355,7 +534,7 @@ impl FrontierRepo for Pg {
             }
             None => (DiscoveryOutcome::Duplicate, None),
         };
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(result)
     }
 
@@ -366,21 +545,12 @@ impl FrontierRepo for Pg {
         limit: u32,
     ) -> Result<Vec<(FrontierEntry, i64)>, StoreError> {
         let _timer = self.query_timer("frontier.lease_batch");
-        let admitted = <Self as crawlx_core::repo::RunRepo>::get(self, run).await?;
+        let admitted = RunRepo::get(self, run).await?;
         if admitted.config.mode == crawlx_core::CrawlMode::Dynamic {
             return Ok(Vec::new());
         }
-        let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(&admitted.config)?;
+        let needs = lease_needs(&admitted.config)?;
         let strategy = admitted.config.scope.strategy;
-        let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
-        let required = if let Some(policy) = admitted.config.acquisition {
-            policy
-                .validate()
-                .map_err(|error| StoreError::Conflict(error.to_string()))?;
-            policy.backend_ids
-        } else {
-            Vec::new()
-        };
         let limit = limit.min(admitted.config.orchestration.unwrap_or_default().queue.batch_size);
         if limit == 0 {
             return Ok(Vec::new());
@@ -393,45 +563,26 @@ impl FrontierRepo for Pg {
                 "priority"
             }
         };
-        let sql = "WITH picked AS ( \
-               SELECT frontier_id FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status = 'pending' AND next_attempt_at <= now() \
-               AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic' \
-               AND (cardinality($5::text[])=0 AND NOT $6::boolean OR EXISTS (SELECT 1 FROM workers w \
-                 WHERE w.worker_id=$2 AND NOT w.draining AND w.last_heartbeat_at<=clock_timestamp() \
-                   AND w.last_heartbeat_at>=clock_timestamp()-interval '90 seconds' \
-                   AND (w.capacity->'acceptsQueued'='true'::jsonb OR w.capacity->>'localRun'=$1::text) \
-                   AND NOT EXISTS(SELECT 1 FROM unnest($5::text[]) required(backend_id) \
-                     WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.capacity->'acquisition','[]'::jsonb)) fact \
-                       WHERE fact->>'backendId'=required.backend_id AND fact->'available'='true'::jsonb)))) \
-               AND crawlx_worker_data_eligible($2,(SELECT data_requirements FROM crawl_runs WHERE run_id=$1)) \
-               ORDER BY priority DESC, \
-                 CASE $7::text WHEN 'depth_first' THEN -depth::integer WHEN 'priority' THEN strategy_score ELSE depth::integer END, \
-                 CASE WHEN $7='priority' THEN depth::integer ELSE 0 END, \
-                 CASE WHEN $7='depth_first' THEN ~frontier_id ELSE frontier_id END \
-               LIMIT $3 FOR UPDATE SKIP LOCKED) \
-             UPDATE url_frontier f SET status = 'leased', lease_owner = $2, lease_expires_at = now() + make_interval(secs => $4), \
-               fencing_token = nextval('lease_fence_seq'), attempts = attempts + 1 \
-             FROM picked WHERE f.frontier_id = picked.frontier_id \
-             RETURNING f.frontier_id, f.run_id, f.query_schema, f.depth, f.status, COALESCE(f.denial_reason, f.error_code) AS denial_reason, \
-               f.attempts, f.parent_id, f.priority, COALESCE(f.strategy_score,0) AS strategy_score, f.fencing_token";
-        let rows = sqlx::query(sql)
-            .bind(run.0)
-            .bind(worker.0)
-            .bind(i64::from(limit))
-            .bind(secs(self.cfg.url_batch_ttl))
-            .bind(required)
-            .bind(data_required)
-            .bind(strategy_name)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
+        let rows = B::claim_frontier_batch(
+            &self.pool,
+            FrontierClaim {
+                run: run.0,
+                worker: worker.0,
+                limit: i64::from(limit),
+                ttl_secs: secs(self.cfg.url_batch_ttl),
+                required_backends: &needs.required,
+                data_required: needs.data_required,
+                strategy: strategy_name,
+            },
+        )
+        .await?;
         let mut out = Vec::with_capacity(rows.len());
         for row in &rows {
             out.push((
                 entry_from_row(self, row).await?,
-                get::<f32>(row, "priority")?,
-                conv::<i32, u32>(get(row, "strategy_score")?, "strategy score")?,
-                get::<i64>(row, "fencing_token")?,
+                row.f32("priority")?,
+                conv::<i32, u32>(row.i32("strategy_score")?, "strategy score")?,
+                row.i64("fencing_token")?,
             ));
         }
         out.sort_by(|a, b| {
@@ -451,7 +602,7 @@ impl FrontierRepo for Pg {
         id: i64,
     ) -> Result<Option<(FrontierEntry, i64)>, StoreError> {
         let _timer = self.query_timer("frontier.lease_one");
-        let admitted = <Self as crawlx_core::repo::RunRepo>::get(self, run).await?;
+        let admitted = RunRepo::get(self, run).await?;
         if admitted.config.mode == crawlx_core::CrawlMode::Dynamic {
             return Ok(None);
         }
@@ -463,18 +614,16 @@ impl FrontierRepo for Pg {
         {
             return Ok(None);
         }
-        let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(&admitted.config)?;
-        let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
-        let required = if let Some(policy) = admitted.config.acquisition {
-            policy
-                .validate()
-                .map_err(|error| StoreError::Conflict(error.to_string()))?;
-            policy.backend_ids
-        } else {
-            Vec::new()
-        };
+        let needs = lease_needs(&admitted.config)?;
+        let duration = f64::from(admitted.config.limits.duration_seconds);
+        if B::KIND != BackendKind::Postgres {
+            return self
+                .lease_one_portable(run, worker, id, admitted.tenant, duration, &needs)
+                .await;
+        }
         // PostgreSQL UPDATE rechecks a contended row; FOR SHARE holds the run lifecycle stable.
-        let row = sqlx::query(
+        let row = stmt!(
+            B,
             "UPDATE url_frontier f SET status='leased',lease_owner=$2, \
                lease_expires_at=now()+make_interval(secs=>$4), \
                fencing_token=nextval('lease_fence_seq'),attempts=attempts+1 \
@@ -496,23 +645,22 @@ impl FrontierRepo for Pg {
                AND crawlx_worker_data_eligible($2,(SELECT data_requirements FROM crawl_runs WHERE run_id=$1)) \
              RETURNING f.frontier_id,f.run_id,f.query_schema,f.depth,f.status, \
                COALESCE(f.denial_reason,f.error_code) AS denial_reason, \
-               f.attempts,f.parent_id,f.priority,f.fencing_token",
+               f.attempts,f.parent_id,f.priority,f.fencing_token"
         )
-        .bind(run.0)
-        .bind(worker.0)
-        .bind(id)
-        .bind(secs(self.cfg.url_batch_ttl))
-        .bind(required)
-        .bind(data_required)
-        .bind(admitted.tenant.0)
-        .bind(f64::from(admitted.config.limits.duration_seconds))
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
+        .uuid(run.0)
+        .uuid(worker.0)
+        .i64(id)
+        .f64(secs(self.cfg.url_batch_ttl))
+        .text_list(&needs.required)
+        .bool(needs.data_required)
+        .uuid(admitted.tenant.0)
+        .f64(duration)
+        .fetch_optional_write(&self.pool)
+        .await?;
         match row {
             Some(row) => Ok(Some((
                 entry_from_row(self, &row).await?,
-                get::<i64>(&row, "fencing_token")?,
+                row.i64("fencing_token")?,
             ))),
             None => Ok(None),
         }
@@ -539,25 +687,28 @@ impl FrontierRepo for Pg {
 
     async fn give_back(&self, id: i64, fence: i64) -> Result<(), StoreError> {
         let _timer = self.query_timer("frontier.give_back");
-        let released = sqlx::query(
-            "UPDATE url_frontier SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL, \
-               attempts = GREATEST(attempts - 1, 0) \
-             WHERE frontier_id = $1 AND status = 'leased' AND fencing_token = $2 AND lease_expires_at > now() RETURNING frontier_id",
+        let released = stmt!(
+            B,
+            format!(
+                "UPDATE url_frontier SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL, \
+                   attempts = {floor} \
+                 WHERE frontier_id = $1 AND status = 'leased' AND fencing_token = $2 AND lease_expires_at > {now}{ret}",
+                floor = <B::Dialect as Dialect>::greatest_ignoring_null(&["attempts - 1", "0"]),
+                now = <B::Dialect as Dialect>::now(),
+                ret = returning::<B>("frontier_id"),
+            )
         )
-        .bind(id)
-        .bind(fence)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        if released.is_some() {
+        .i64(id)
+        .i64(fence)
+        .matched_write(&self.pool)
+        .await?;
+        if released {
             return Ok(());
         }
-        let exists: Option<i64> =
-            sqlx::query_scalar("SELECT frontier_id FROM url_frontier WHERE frontier_id = $1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db)?;
+        let exists = stmt!(B, "SELECT frontier_id FROM url_frontier WHERE frontier_id = $1")
+            .i64(id)
+            .fetch_optional_pool(&self.pool)
+            .await?;
         match exists {
             None => Err(not_found("frontier row", id)),
             Some(_) => Err(StoreError::LeaseLost),
@@ -570,18 +721,23 @@ impl FrontierRepo for Pg {
         fence: i64,
         not_before: crawlx_core::Timestamp,
     ) -> Result<(), StoreError> {
-        let result = sqlx::query(
-            "UPDATE url_frontier SET status='pending',lease_owner=NULL,lease_expires_at=NULL, \
-             next_attempt_at=GREATEST(next_attempt_at,$3),attempts=GREATEST(attempts-1,0) \
-             WHERE frontier_id=$1 AND status='leased' AND fencing_token=$2 AND lease_expires_at>now()",
+        let result = stmt!(
+            B,
+            format!(
+                "UPDATE url_frontier SET status='pending',lease_owner=NULL,lease_expires_at=NULL, \
+                 next_attempt_at={later},attempts={floor} \
+                 WHERE frontier_id=$1 AND status='leased' AND fencing_token=$2 AND lease_expires_at>{now}",
+                later = <B::Dialect as Dialect>::greatest_ignoring_null(&["next_attempt_at", "$3"]),
+                floor = <B::Dialect as Dialect>::greatest_ignoring_null(&["attempts-1", "0"]),
+                now = <B::Dialect as Dialect>::now(),
+            )
         )
-        .bind(id)
-        .bind(fence)
-        .bind(not_before)
-        .execute(&self.pool)
-        .await
-        .map_err(db)?;
-        if result.rows_affected() != 1 {
+        .i64(id)
+        .i64(fence)
+        .ts(not_before)
+        .execute_write(&self.pool)
+        .await?;
+        if result != 1 {
             return Err(StoreError::LeaseLost);
         }
         Ok(())
@@ -589,51 +745,36 @@ impl FrontierRepo for Pg {
 
     async fn pending_count(&self, run: CrawlRunId) -> Result<u64, StoreError> {
         let _timer = self.query_timer("frontier.pending_count");
-        let n: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status = 'pending' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'")
-                .bind(run.0)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(db)?;
-        conv(n, "count")
+        let row = stmt!(
+            B,
+            "SELECT count(*) AS n FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status = 'pending' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'"
+        )
+        .uuid(run.0)
+        .fetch_one_pool(&self.pool)
+        .await?;
+        conv(row.i64("n")?, "count")
     }
 
     async fn open_count(&self, run: CrawlRunId) -> Result<u64, StoreError> {
         let _timer = self.query_timer("frontier.open_count");
-        let n: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status IN ('pending', 'leased') AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'",
+        let row = stmt!(
+            B,
+            "SELECT count(*) AS n FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status IN ('pending', 'leased') AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'"
         )
-        .bind(run.0)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db)?;
-        conv(n, "count")
+        .uuid(run.0)
+        .fetch_one_pool(&self.pool)
+        .await?;
+        conv(row.i64("n")?, "count")
     }
 
     async fn state_counts(&self, run: CrawlRunId) -> Result<FrontierStateCounts, StoreError> {
         let _timer = self.query_timer("frontier.state_counts");
-        let row = sqlx::query(
-            "SELECT \
-               count(*) FILTER (WHERE status = 'pending') AS pending, \
-               count(*) FILTER (WHERE status = 'leased') AS leased, \
-               count(*) FILTER (WHERE status = 'succeeded') AS succeeded, \
-               count(*) FILTER (WHERE status = 'failed') AS failed, \
-               count(*) FILTER (WHERE status = 'unreachable') AS unreachable, \
-               count(*) FILTER (WHERE status = 'abandoned') AS abandoned, \
-               count(*) FILTER (WHERE status = 'policy_blocked') AS policy_blocked, \
-               count(*) FILTER (WHERE status = 'robots_blocked') AS robots_blocked, \
-               count(*) FILTER (WHERE status = 'succeeded' \
-                 AND starts_with(COALESCE(denial_reason, error_code), $2)) AS succeeded_duplicate, \
-               count(*) FILTER (WHERE status = 'policy_blocked' \
-                 AND starts_with(COALESCE(denial_reason, error_code), $2)) AS policy_blocked_duplicate \
-             FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'",
-        )
-        .bind(run.0)
-        .bind(DEDUPE_REASON_PREFIX)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db)?;
-        let n = |column: &str| -> Result<u64, StoreError> { conv(get::<i64>(&row, column)?, "count") };
+        let row = stmt!(B, state_counts_sql::<B>())
+            .uuid(run.0)
+            .text(DEDUPE_REASON_PREFIX)
+            .fetch_one_pool(&self.pool)
+            .await?;
+        let n = |column: &str| -> Result<u64, StoreError> { conv(row.i64(column)?, "count") };
         Ok(FrontierStateCounts {
             pending: n("pending")?,
             leased: n("leased")?,
@@ -650,17 +791,53 @@ impl FrontierRepo for Pg {
 
     async fn list(&self, run: CrawlRunId) -> Result<Vec<FrontierEntry>, StoreError> {
         let _timer = self.query_timer("frontier.list");
-        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT {ENTRY_COLS} FROM url_frontier WHERE run_id = $1 ORDER BY frontier_id"
-        )))
-        .bind(run.0)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
+        let rows = stmt!(
+            B,
+            format!("SELECT {ENTRY_COLS} FROM url_frontier WHERE run_id = $1 ORDER BY frontier_id")
+        )
+        .uuid(run.0)
+        .fetch_all_pool(&self.pool)
+        .await?;
         let mut entries = Vec::with_capacity(rows.len());
         for row in &rows {
             entries.push(entry_from_row(self, row).await?);
         }
         Ok(entries)
     }
+}
+
+/// The per-state tally of one run's frontier (`$2` is the duplicate-reason prefix).
+fn state_counts_sql<B: Sql>() -> String {
+    let count = |status: &str| <B::Dialect as Dialect>::count_where(&format!("status = '{status}'"));
+    let duplicate = |status: &str| {
+        <B::Dialect as Dialect>::count_where(&format!(
+            "status = '{status}' \
+                 AND {}",
+            <B::Dialect as Dialect>::starts_with("COALESCE(denial_reason, error_code)", "$2")
+        ))
+    };
+    format!(
+        "SELECT \
+           {} AS pending, \
+           {} AS leased, \
+           {} AS succeeded, \
+           {} AS failed, \
+           {} AS unreachable, \
+           {} AS abandoned, \
+           {} AS policy_blocked, \
+           {} AS robots_blocked, \
+           {} AS succeeded_duplicate, \
+           {} AS policy_blocked_duplicate \
+         FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'",
+        count("pending"),
+        count("leased"),
+        count("succeeded"),
+        count("failed"),
+        count("unreachable"),
+        count("abandoned"),
+        count("policy_blocked"),
+        count("robots_blocked"),
+        duplicate("succeeded"),
+        duplicate("policy_blocked"),
+    )
 }

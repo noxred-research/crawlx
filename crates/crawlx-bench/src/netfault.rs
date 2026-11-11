@@ -313,20 +313,28 @@ where
     let _ = to.shutdown().await;
 }
 
-/// `host:port` of a `postgres://` URL resolved to one socket address (default port 5432).
+/// `host:port` of a `postgres://`, `mariadb://` or `mysql://` URL resolved to one socket address
+/// (default port 5432, or 3306 for MariaDB).
 ///
 /// # Errors
 /// [`BenchError::Url`] when the URL does not parse, [`BenchError::Ablation`] when it has no
-/// host or the host does not resolve.
+/// host (a SQLite file has no network endpoint to put a proxy in front of) or the host does
+/// not resolve.
 pub async fn upstream_of(database_url: &str) -> Result<SocketAddr, BenchError> {
     let url = url::Url::parse(database_url)?;
     let host = url
         .host_str()
-        .ok_or_else(|| BenchError::Ablation("database url has no host".to_owned()))?
+        .ok_or_else(|| BenchError::Ablation("database url has no network endpoint to fault".to_owned()))?
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_owned();
-    let port = url.port().unwrap_or(5432);
+    let port = url
+        .port()
+        .unwrap_or(if matches!(url.scheme(), "mariadb" | "mysql") {
+            3306
+        } else {
+            5432
+        });
     let mut addrs = tokio::net::lookup_host((host.as_str(), port))
         .await
         .map_err(|e| BenchError::Ablation(format!("resolve {host}:{port}: {e}")))?;

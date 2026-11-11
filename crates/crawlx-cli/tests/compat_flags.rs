@@ -298,6 +298,25 @@ fn crawl_order_defaults_to_breadth_first_in_request_files() {
 }
 
 #[test]
+fn config_json_body_supplies_the_seed_when_no_seed_is_given() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("crawl.json");
+    std::fs::write(
+        &path,
+        r#"{"seedUrl":"https://config.test/start","limits":{"urls":8}}"#,
+    )
+    .unwrap();
+    let argv = ["crawlx", "crawl", "--config", path.to_str().unwrap()];
+    let cli = crawlx_cli::Cli::try_parse_from(crawlx_cli::normalize_args(argv)).unwrap();
+    let crawlx_cli::Command::Crawl(args) = cli.command else {
+        panic!("crawl command");
+    };
+    let request = crawlx_cli::crawl::build_request(&args).unwrap();
+    assert_eq!(request.seed_url.as_str(), "https://config.test/start");
+    assert_eq!(request.limits.urls, 8);
+}
+
+#[test]
 fn compat_similarity_enables_and_backend_are_independent_in_every_order() {
     use crawlx_core::config::SimilarityMode;
     use crawlx_url::content_similarity::{Config, Index};

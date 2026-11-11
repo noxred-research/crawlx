@@ -43,7 +43,7 @@ pub struct ExtractArgs {
     #[arg(long, alias = "stdin")]
     pub stdin_html: bool,
     /// Validate an existing UTF-8 TEI document/corpus against the full pinned RELAX NG schema.
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["request", "validate_tei", "format", "base_url", "max_file_bytes"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["request", "extract_config", "validate_tei", "format", "base_url", "max_file_bytes"])]
     pub tei_input: Option<PathBuf>,
     /// Absolute HTTP(S) resolution base only. Never fetched. Required for HTML extraction.
     #[arg(long, value_name = "URL", required_unless_present_any = ["tei_input", "list"])]
@@ -51,6 +51,10 @@ pub struct ExtractArgs {
     /// JSON ExtractionPolicyV1 file, at most 64 KiB. Omit for legacy selection.
     #[arg(long, value_name = "POLICY")]
     pub request: Option<PathBuf>,
+    /// JSON file, at most 64 KiB, with the `extract` request options `outputs`, `decode` and
+    /// `markup` (same schema and validation as online runs). Omit to leave them unset.
+    #[arg(long, value_name = "CONFIG", conflicts_with_all = ["tei_input", "list"])]
+    pub extract_config: Option<PathBuf>,
     /// Shared article serializer. Batch formats have real collection/item boundaries.
     #[arg(long, value_enum, default_value = "json")]
     pub format: OfflineFormat,
@@ -140,7 +144,69 @@ async fn bounded_read(reader: impl AsyncRead + Unpin, limit: usize) -> anyhow::R
     Ok(bytes)
 }
 
-async fn regular_file(path: &Path, limit: usize, cancel: &CancellationToken) -> anyhow::Result<bytes::Bytes> {
+/// Request-schema `extract` options that an offline run honours: the same `outputs`, `decode`
+/// and `markup` members an online request carries in its `extract` section, compiled by the
+/// worker's own [`configure_extract`](crawlx_worker::acquisition::configure_extract). Unknown
+/// keys fail, so an option an offline run cannot honour is never silently ignored.
+#[derive(Debug, Default)]
+pub(crate) struct OfflineExtractConfig {
+    compiled: ExtractOptions,
+}
+
+impl OfflineExtractConfig {
+    /// Parse and validate a configuration document.
+    ///
+    /// # Errors
+    /// Fails on malformed JSON, unknown keys, invalid option values or invalid outputs.
+    pub(crate) fn parse(bytes: &[u8]) -> anyhow::Result<Self> {
+        // Struct deserialization also accepts positional arrays; this file's contract is an object.
+        if bytes.iter().copied().find(|byte| !byte.is_ascii_whitespace()) != Some(b'{') {
+            bail!("offline extract configuration must be a JSON object");
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Document {
+            outputs: Option<serde_json::Value>,
+            decode: Option<serde_json::Value>,
+            markup: Option<serde_json::Value>,
+        }
+        let document: Document =
+            serde_json::from_slice(bytes).context("reading offline extract configuration")?;
+        let extract = crawlx_core::config::Extract {
+            outputs: document.outputs,
+            decode: document.decode,
+            markup: document.markup,
+            ..crawlx_core::config::Extract::default()
+        };
+        let mut compiled = ExtractOptions::default();
+        crawlx_worker::acquisition::configure_extract(&mut compiled, &extract)?;
+        Ok(Self { compiled })
+    }
+
+    /// Read and parse the operator-selected file, or return the empty configuration.
+    ///
+    /// # Errors
+    /// Fails when the file is not a regular file of at most 64 KiB, or does not parse.
+    pub(crate) async fn load(path: Option<&Path>, cancel: &CancellationToken) -> anyhow::Result<Self> {
+        match path {
+            Some(path) => Self::parse(&regular_file(path, 65_536, cancel).await?),
+            None => Ok(Self::default()),
+        }
+    }
+
+    /// Set `outputs`, `decode` and `markup` on `options`.
+    pub(crate) fn apply(self, options: &mut ExtractOptions) {
+        options.outputs = self.compiled.outputs;
+        options.decode = self.compiled.decode;
+        options.markup = self.compiled.markup;
+    }
+}
+
+pub(crate) async fn regular_file(
+    path: &Path,
+    limit: usize,
+    cancel: &CancellationToken,
+) -> anyhow::Result<bytes::Bytes> {
     let name = path
         .file_name()
         .context("offline input must name a regular file")?;
@@ -163,7 +229,8 @@ async fn regular_file(path: &Path, limit: usize, cancel: &CancellationToken) -> 
             std::time::Duration::from_secs(30),
             cancel,
         )
-        .await?;
+        .await
+        .with_context(|| format!("reading offline input {}", path.display()))?;
     if !resource.children.is_empty() || url.path().ends_with('/') {
         bail!("offline input must be a regular file");
     }
@@ -362,11 +429,15 @@ async fn run_inner(
             return Ok(ExitCode::from(3));
         }
     };
-    let options = std::sync::Arc::new(ExtractOptions {
+    let mut options = ExtractOptions {
         content: policy,
         language_detector,
         ..ExtractOptions::default()
-    });
+    };
+    OfflineExtractConfig::load(args.extract_config.as_deref(), cancel)
+        .await?
+        .apply(&mut options);
+    let options = std::sync::Arc::new(options);
     let base = std::sync::Arc::new(base.clone());
     if let Some(mut batch) = batch {
         let mut stream = ArticleStream::begin(out, args.format.into())?;

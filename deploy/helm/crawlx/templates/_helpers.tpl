@@ -1,3 +1,60 @@
+{{/* Storage engine settings the chart can check at render time. Included once from configmap.yaml. */}}
+{{- define "crawlx.storageValidate" -}}
+{{- $engine := .Values.storage.engine -}}
+{{- if not (has $engine (list "postgres" "mariadb" "sqlite")) -}}
+{{- fail (printf "storage.engine must be postgres, mariadb or sqlite, got %q" $engine) -}}
+{{- end -}}
+{{- if and (eq $engine "sqlite") .Values.safetyAuditor.enabled -}}
+{{- fail "refused: sqlite_safety_auditor: the independent safety auditor needs two distinct database identities (reader and pauser); sqlite has none; set safetyAuditor.enabled=false" -}}
+{{- end -}}
+{{- if and (eq $engine "mariadb") .Values.safetyAuditor.enabled -}}
+{{- fail "refused: backend_unimplemented: the independent safety auditor is not available on mariadb yet; use postgres, or set safetyAuditor.enabled=false" -}}
+{{- end -}}
+{{- if eq $engine "sqlite" -}}
+{{- if or (gt (int .Values.api.replicas) 1) (gt (int .Values.worker.replicas) 1) .Values.worker.canary.enabled -}}
+{{- fail "refused: sqlite_second_worker: sqlite supports exactly one worker process per database file and one API replica on the same host; set api.replicas=1, worker.replicas=1 and worker.canary.enabled=false, or use mariadb or postgres" -}}
+{{- end -}}
+{{- if not .Values.storage.sqlite.existingClaim -}}
+{{- fail "storage.sqlite.existingClaim is required for storage.engine=sqlite" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Port of the database server for network policies. */}}
+{{- define "crawlx.databasePort" -}}
+{{- if gt (int .Values.storage.port) 0 -}}{{ int .Values.storage.port }}{{- else if eq .Values.storage.engine "mariadb" -}}3306{{- else -}}5432{{- end -}}
+{{- end -}}
+
+{{/* The restricted request login exists on PostgreSQL only. */}}
+{{- define "crawlx.requestLoginEnv" -}}
+{{- if eq .Values.storage.engine "postgres" }}
+- name: CRAWLX_API_DATABASE_URL_FILE
+  value: /run/secrets/crawlx/database_url_api
+{{- end }}
+{{- end -}}
+
+{{- define "crawlx.requestLoginSource" -}}
+{{- if eq .Values.storage.engine "postgres" }}
+- secret:
+    name: {{ .Values.secrets.databaseApi }}
+    items: [{ key: database_url_api, path: database_url_api }]
+{{- end }}
+{{- end -}}
+
+{{/* The SQLite file's volume, mounted by every pod that opens the database. */}}
+{{- define "crawlx.sqliteMount" -}}
+{{- if eq .Values.storage.engine "sqlite" }}
+- { name: database, mountPath: /var/lib/crawlx/db }
+{{- end }}
+{{- end -}}
+
+{{- define "crawlx.sqliteVolume" -}}
+{{- if eq .Values.storage.engine "sqlite" }}
+- name: database
+  persistentVolumeClaim: { claimName: {{ .Values.storage.sqlite.existingClaim | quote }} }
+{{- end }}
+{{- end -}}
+
 {{- define "crawlx.apiImage" -}}
 {{ .Values.image.registry }}/crawlx-api:{{ .Values.image.tag }}
 {{- end -}}

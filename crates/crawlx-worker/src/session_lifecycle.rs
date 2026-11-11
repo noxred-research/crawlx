@@ -45,7 +45,7 @@ impl ExistingSessionAuthority {
         if *self.current.lock() != *binding || binding.expires_at <= self.rc.clock.now() {
             return Err(unavailable());
         }
-        if let Some(pg) = &self.rc.stores.pg {
+        if let Some(pg) = &self.rc.stores.durable {
             let current = pg
                 .load_session_binding(&self.lease, self.tenant)
                 .await
@@ -99,7 +99,7 @@ impl HttpSessionAuthority for ExistingSessionAuthority {
         {
             return Err(unavailable());
         }
-        if let Some(pg) = &self.rc.stores.pg {
+        if let Some(pg) = &self.rc.stores.durable {
             pg.update_session_binding(&self.lease, before.state_version, after)
                 .await
                 .map_err(FetchError::OriginAdmission)?;
@@ -165,7 +165,7 @@ pub(crate) async fn register_http_session(
         .authorization
         .as_ref()
         .map_or(deadline, |guard| deadline.min(guard.record().valid_to));
-    let binding = if let Some(pg) = &rc.stores.pg {
+    let binding = if let Some(pg) = &rc.stores.durable {
         pg.bind_session(lease, identity, expiry).await?
     } else {
         rc.stores.leases.heartbeat(lease).await?;
@@ -264,7 +264,7 @@ pub(crate) async fn replace_retired_generation(
     if let Some(guard) = &rc.authorization {
         guard.check_now().await?;
     }
-    let replacement = if let Some(pg) = &rc.stores.pg {
+    let replacement = if let Some(pg) = &rc.stores.durable {
         let current = pg.load_session_binding(lease, retired.identity.tenant).await?;
         if current != *retired {
             return Err(StoreError::Conflict("session generation conflict".into()).into());
@@ -386,7 +386,7 @@ async fn run_local_http_plane_inner(
         let outcome = crawlx_core::custody::with_producer(
             producer.clone(),
             crate::custody_renewal::with_custody_renewal(
-                rc.stores.pg_secret_authority.clone(),
+                rc.stores.secret_authority.clone(),
                 producer,
                 Box::pin(plane.run(cancel)),
             ),

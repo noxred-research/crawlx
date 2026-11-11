@@ -17,7 +17,7 @@ use crawlx_storage::custody::{
 };
 use crawlx_storage::leases::LeaseRepo;
 use crawlx_storage::testkit::{crawl_run, create_crawl, sessions};
-use crawlx_storage::{ArtifactRow, Pg, PgConfig};
+use crawlx_storage::{ArtifactRow, Pg, StoreConfig};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -35,9 +35,9 @@ struct World {
 async fn world() -> Option<World> {
     let database = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let redis_url = std::env::var("CRAWLX_TEST_SECRET_REDIS_URL").ok()?;
-    let config = PgConfig {
+    let config = StoreConfig {
         schema: Some(format!("frozen_{}", Uuid::now_v7().simple())),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let pg = Pg::connect(&database, config).await.unwrap();
     pg.migrate().await.unwrap();

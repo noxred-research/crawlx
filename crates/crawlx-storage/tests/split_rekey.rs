@@ -14,7 +14,7 @@ use crawlx_core::{
 use crawlx_storage::testkit::{
     allow_verdict, crawl_run, create_crawl, new_state, proposal, sessions, signature,
 };
-use crawlx_storage::{LeaseRepo, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{LeaseRepo, MemoryStore, Pg, StoreConfig};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn epoch(m: u64) -> ObservationEpoch {
@@ -307,10 +307,10 @@ async fn pg_split_rekeys_action_contexts_and_conserves_totals() {
     let schema = format!("t_{}", CrawlRunId::new().0.simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
             max_connections: 8,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

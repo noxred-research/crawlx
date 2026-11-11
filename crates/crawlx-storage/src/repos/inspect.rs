@@ -2,14 +2,17 @@
 //! `transitions` for `crawlx inspect` and `crawlx replay`. SQL lives only here;
 //! the CLI shapes these rows into its output.
 
-use crate::codec::{conv, get, parse_label};
-use crate::error::db;
-use crate::pg::Pg;
+#![deny(clippy::disallowed_methods)]
+
+use crate::backend::PgBackend;
+use crate::codec::{conv, parse_label};
+use crate::sql::{SqlRow, Stmt};
+use crate::store::Store;
+use crate::tenant::Tenancy;
 use crawlx_core::traffic::TrustLane;
 use crawlx_core::{
     ActionId, CrawlRunId, NetworkEpochId, SessionId, StateId, StoreError, Timestamp, TransitionId,
 };
-use sqlx::postgres::PgRow;
 
 /// One `network_epochs` row.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -71,42 +74,42 @@ pub struct TransitionRow {
 
 /// Read-only run introspection over `network_epochs`, navigation events and `transitions`.
 #[derive(Clone, Debug)]
-pub struct InspectRepo {
-    pg: Pg,
+pub struct InspectRepo<B: Tenancy = PgBackend> {
+    store: Store<B>,
 }
 
-fn epoch_from_row(r: &PgRow) -> Result<EpochRow, StoreError> {
+fn epoch_from_row<R: SqlRow>(r: &R) -> Result<EpochRow, StoreError> {
     Ok(EpochRow {
-        epoch: NetworkEpochId(get(r, "epoch_id")?),
-        session: SessionId(get(r, "session_id")?),
-        action: get::<Option<uuid::Uuid>>(r, "action_id")?.map(ActionId),
-        lane: parse_label(&get::<String>(r, "lane")?)?,
-        started_at: get(r, "started_at")?,
-        settled_at: get(r, "settled_at")?,
-        request_count: conv(get::<i32>(r, "request_count")?, "request_count")?,
-        unique_operations: conv(get::<i32>(r, "unique_operations")?, "unique_operations")?,
-        settle_timeout: get(r, "settle_timeout")?,
+        epoch: NetworkEpochId(r.uuid("epoch_id")?),
+        session: SessionId(r.uuid("session_id")?),
+        action: r.opt_uuid("action_id")?.map(ActionId),
+        lane: parse_label(&r.text("lane")?)?,
+        started_at: r.ts("started_at")?,
+        settled_at: r.opt_ts("settled_at")?,
+        request_count: conv(r.i32("request_count")?, "request_count")?,
+        unique_operations: conv(r.i32("unique_operations")?, "unique_operations")?,
+        settle_timeout: r.bool("settle_timeout")?,
     })
 }
 
-fn transition_from_row(r: &PgRow) -> Result<TransitionRow, StoreError> {
+fn transition_from_row<R: SqlRow>(r: &R) -> Result<TransitionRow, StoreError> {
     Ok(TransitionRow {
-        id: TransitionId(get(r, "transition_id")?),
-        session: SessionId(get(r, "session_id")?),
-        before_state: StateId(get(r, "before_state_id")?),
-        action: ActionId(get(r, "action_id")?),
-        network_epoch: get::<Option<uuid::Uuid>>(r, "network_epoch_id")?.map(NetworkEpochId),
-        after_state: get::<Option<uuid::Uuid>>(r, "after_state_id")?.map(StateId),
-        lane: parse_label(&get::<String>(r, "lane")?)?,
-        settle_report: get(r, "settle_report")?,
+        id: TransitionId(r.uuid("transition_id")?),
+        session: SessionId(r.uuid("session_id")?),
+        before_state: StateId(r.uuid("before_state_id")?),
+        action: ActionId(r.uuid("action_id")?),
+        network_epoch: r.opt_uuid("network_epoch_id")?.map(NetworkEpochId),
+        after_state: r.opt_uuid("after_state_id")?.map(StateId),
+        lane: parse_label(&r.text("lane")?)?,
+        settle_report: r.json("settle_report")?,
     })
 }
 
-impl InspectRepo {
-    /// Introspection reads over `pg`.
+impl<B: Tenancy> InspectRepo<B> {
+    /// Introspection reads over `store`.
     #[must_use]
-    pub const fn new(pg: Pg) -> Self {
-        Self { pg }
+    pub const fn new(store: Store<B>) -> Self {
+        Self { store }
     }
 
     /// Every network epoch of `run` in `(started_at, epoch_id)` order.
@@ -115,15 +118,17 @@ impl InspectRepo {
     ///
     /// Returns an error if the query fails, a counter does not fit `u32` or a lane label is unknown.
     pub async fn epochs(&self, run: CrawlRunId) -> Result<Vec<EpochRow>, StoreError> {
-        let _timer = self.pg.query_timer("inspect.epochs");
-        let rows = sqlx::query(
+        let _timer = self.store.query_timer("inspect.epochs");
+        let scope = self.store.scope()?;
+        let sql = format!(
             "SELECT epoch_id, session_id, action_id, lane::text AS lane, started_at, settled_at, request_count, \
-             unique_operations, settle_timeout FROM network_epochs WHERE run_id = $1 ORDER BY started_at, epoch_id",
-        )
-        .bind(run.0)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+             unique_operations, settle_timeout FROM network_epochs WHERE run_id = $1{} ORDER BY started_at, epoch_id",
+            scope.and("network_epochs", "", 2)?
+        );
+        let rows = scope
+            .bind(Stmt::<B>::dynamic(&sql).uuid(run.0))
+            .fetch_all_pool(&self.store.pool)
+            .await?;
         rows.iter().map(epoch_from_row).collect()
     }
 
@@ -133,30 +138,32 @@ impl InspectRepo {
     ///
     /// Returns an error if the query fails or a sequence number does not fit `u64`.
     pub async fn navigations(&self, run: CrawlRunId) -> Result<Vec<NavigationEvent>, StoreError> {
-        let _timer = self.pg.query_timer("inspect.navigations");
-        let rows = sqlx::query(
-            "SELECT seq, payload, created_at FROM crawl_events WHERE run_id = $1 AND type = 'navigation' ORDER BY seq",
-        )
-        .bind(run.0)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
-        let (tenant, zdr) = self.pg.privacy_scope(run).await?;
+        let _timer = self.store.query_timer("inspect.navigations");
+        let scope = self.store.scope()?;
+        let sql = format!(
+            "SELECT seq, payload, created_at FROM crawl_events WHERE run_id = $1 AND type = 'navigation'{} ORDER BY seq",
+            scope.and("crawl_events", "", 2)?
+        );
+        let rows = scope
+            .bind(Stmt::<B>::dynamic(&sql).uuid(run.0))
+            .fetch_all_pool(&self.store.pool)
+            .await?;
+        let (tenant, zdr) = self.store.owned_privacy_scope(&scope, run).await?;
         let mut events = Vec::with_capacity(rows.len());
         for r in &rows {
-            let seq = conv(get::<i64>(r, "seq")?, "seq")?;
+            let seq = conv(r.i64("seq")?, "seq")?;
             let payload = if zdr {
                 let (_, payload): (String, serde_json::Value) = self
-                    .pg
+                    .store
                     .ephemeral_get(tenant, run, i64::MIN + 1, &format!("_event:{seq}"))
                     .await?;
                 payload
             } else {
-                get(r, "payload")?
+                r.json("payload")?
             };
             events.push(NavigationEvent {
                 seq,
-                at: get(r, "created_at")?,
+                at: r.ts("created_at")?,
                 payload,
             });
         }
@@ -169,15 +176,17 @@ impl InspectRepo {
     ///
     /// Returns an error if the query fails or a lane label is unknown.
     pub async fn transitions(&self, run: CrawlRunId) -> Result<Vec<TransitionRow>, StoreError> {
-        let _timer = self.pg.query_timer("inspect.transitions");
-        let rows = sqlx::query(
+        let _timer = self.store.query_timer("inspect.transitions");
+        let scope = self.store.scope()?;
+        let sql = format!(
             "SELECT transition_id, session_id, before_state_id, action_id, network_epoch_id, after_state_id, \
-             lane::text AS lane, settle_report FROM transitions WHERE run_id = $1 ORDER BY created_at, transition_id",
-        )
-        .bind(run.0)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+             lane::text AS lane, settle_report FROM transitions WHERE run_id = $1{} ORDER BY created_at, transition_id",
+            scope.and("transitions", "", 2)?
+        );
+        let rows = scope
+            .bind(Stmt::<B>::dynamic(&sql).uuid(run.0))
+            .fetch_all_pool(&self.store.pool)
+            .await?;
         rows.iter().map(transition_from_row).collect()
     }
 
@@ -192,14 +201,16 @@ impl InspectRepo {
         run: CrawlRunId,
         transition: TransitionId,
     ) -> Result<Option<ActionId>, StoreError> {
-        let _timer = self.pg.query_timer("inspect.transition_action");
-        let id: Option<uuid::Uuid> =
-            sqlx::query_scalar("SELECT action_id FROM transitions WHERE transition_id = $1 AND run_id = $2")
-                .bind(transition.0)
-                .bind(run.0)
-                .fetch_optional(&self.pg.pool)
-                .await
-                .map_err(db)?;
-        Ok(id.map(ActionId))
+        let _timer = self.store.query_timer("inspect.transition_action");
+        let scope = self.store.scope()?;
+        let sql = format!(
+            "SELECT action_id FROM transitions WHERE transition_id = $1 AND run_id = $2{}",
+            scope.and("transitions", "", 3)?
+        );
+        let row = scope
+            .bind(Stmt::<B>::dynamic(&sql).uuid(transition.0).uuid(run.0))
+            .fetch_optional_pool(&self.store.pool)
+            .await?;
+        row.map(|r| Ok(ActionId(r.uuid("action_id")?))).transpose()
     }
 }

@@ -22,6 +22,21 @@ zdr:
     requests: { cpu: 250m, memory: 256Mi }
     limits: { memory: 3Gi }
 
+# Storage engine of the system of record (docs/ops/storage-backends.md). The `database_url`
+# secrets (below) hold the matching URL: postgres://, mysql:// (MariaDB 10.6 or newer) or sqlite:.
+#  * postgres: database-enforced tenant isolation, restricted request login (`secrets.databaseApi`),
+#    several workers, the independent safety auditor.
+#  * mariadb: several workers; application-enforced tenant isolation; no restricted request login
+#    (`secrets.databaseApi` is not mounted); no safety auditor (`safetyAuditor.enabled: false`).
+#  * sqlite: one database file on `storage.sqlite.existingClaim`, one API and one worker replica, no
+#    canary pool, no safety auditor; tenant isolation is application-enforced. The chart refuses
+#    anything else.
+storage:
+  engine: postgres # postgres | mariadb | sqlite
+  port: 0 # database server port for the network policy; 0 = engine default (5432, 3306)
+  sqlite:
+    existingClaim: crawlx-db # ReadWriteOnce volume mounted at /var/lib/crawlx/db in API, worker and migrate job
+
 # `crawlx.toml`
 config:
   database:
@@ -106,7 +121,7 @@ config:
 # Secret names (created outside the chart; keys become the *_file paths above)
 secrets:
   database: crawlx-db          # key: database_url
-  databaseApi: crawlx-db-api   # key: database_url_api; non-owner NOBYPASSRLS request login
+  databaseApi: crawlx-db-api   # key: database_url_api; non-owner NOBYPASSRLS request login (postgres only)
   databaseMigrate: crawlx-db-migrate
   objectStore: crawlx-objectstore # key: object_store_credentials (optional)
   webhook: crawlx-webhook      # key: webhook_signing_key
@@ -210,7 +225,7 @@ artifacts:
 
 networkPolicy:
   enabled: true
-  postgresSelector: { app: crawlx-postgres }
+  databaseSelector: { app: crawlx-postgres } # the database server pods (unused for sqlite)
   modelSelector: { app: crawlx-model }
   objectStoreSelector: { app: crawlx-minio }
   # operator-supplied secret registry Redis (ignored when artifactCustody.secretRedis.managed.enabled)
@@ -230,6 +245,7 @@ configCheck:
   enabled: true # pre-install/pre-upgrade hook running `crawlx config check`
 
 # One independent safety audit per minute, no browser or worker credentials.
+# PostgreSQL only (two distinct database identities): set `enabled: false` for mariadb and sqlite.
 # Both secrets must exist before deployment; each has one `database_url` key.
 safetyAuditor:
   enabled: true

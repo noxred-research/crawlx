@@ -90,9 +90,6 @@ struct Baseline {
     #[serde(rename = "static")]
     static_plane: MazeScore,
     hybrid: Option<MazeScore>,
-    /// Reclassified targets not yet measured in the historical static run.
-    #[serde(default)]
-    unmeasured_static_additions: Vec<String>,
 }
 
 fn load_baseline() -> Baseline {
@@ -102,6 +99,14 @@ fn load_baseline() -> Baseline {
 
 fn record_baselines() -> bool {
     std::env::var_os("CRAWLX_RECORD_BASELINES").is_some()
+}
+
+/// Every plane present, so a plane with no targets is recorded as `0/0` rather than omitted.
+fn with_all_planes(mut score: MazeScore) -> MazeScore {
+    for plane in [MazePlane::Static, MazePlane::Browser, MazePlane::Deferred] {
+        score.per_plane.entry(plane).or_default();
+    }
+    score
 }
 
 fn save_baseline(b: &Baseline) {
@@ -319,23 +324,6 @@ fn baseline_counts_match_the_manifest() {
     let all: BTreeSet<&str> = m.expected.crawl_maze.iter().map(|t| t.path.as_str()).collect();
     let plane_count = |p: MazePlane| m.expected.crawl_maze.iter().filter(|t| t.plane == p).count();
     let b = load_baseline();
-    let unmeasured: BTreeSet<&str> = b.unmeasured_static_additions.iter().map(String::as_str).collect();
-    assert_eq!(
-        unmeasured.len(),
-        b.unmeasured_static_additions.len(),
-        "duplicate unmeasured target"
-    );
-    let missing_promotions: BTreeSet<&str> = b
-        .static_plane
-        .missing
-        .iter()
-        .map(String::as_str)
-        .filter(|target| PROMOTED.contains(target))
-        .collect();
-    assert_eq!(
-        unmeasured, missing_promotions,
-        "unmeasured promotions must match historical missing rows"
-    );
     let mut runs = vec![("static", &b.static_plane)];
     if let Some(h) = &b.hybrid {
         runs.push(("hybrid", h));
@@ -376,30 +364,17 @@ fn baseline_counts_match_the_manifest() {
             !found.contains(DESTRUCTIVE_TARGET),
             "{name}: the destructive target was recorded as requested"
         );
-        if name == "static" {
-            for target in &b.unmeasured_static_additions {
-                assert!(
-                    PROMOTED.contains(&target.as_str()),
-                    "unmeasured target outside the five promotions"
-                );
-                assert!(
-                    !found.contains(target.as_str()),
-                    "measured target still marked unmeasured"
-                );
-            }
-        }
     }
-    // Keep the measured historical floor intact; promotions are not fabricated server hits.
-    assert!(
-        b.static_plane.per_plane[&MazePlane::Static].found >= 61,
-        "historical static floor"
-    );
-    assert_eq!(
-        usize::try_from(b.static_plane.per_plane[&MazePlane::Static].found).unwrap()
-            + b.unmeasured_static_additions.len(),
-        usize::try_from(b.static_plane.per_plane[&MazePlane::Static].expected).unwrap(),
-        "static floor including explicitly unmeasured promotions"
-    );
+    // The static plane is fully measured: every static-plane target, the five promoted
+    // constructs included, was requested by the recorded run.
+    let recorded = &b.static_plane.per_plane[&MazePlane::Static];
+    assert_eq!(recorded.found, recorded.expected, "static plane floor");
+    for target in PROMOTED {
+        assert!(
+            b.static_plane.found.iter().any(|found| found == target),
+            "promoted target not recorded as found: {target}"
+        );
+    }
 }
 
 fn discover_without_script_mining(html: &str) -> Vec<crawlx_extract::endpoints::DiscoveredEndpoint> {
@@ -597,8 +572,7 @@ async fn static_plane_reaches_the_crawl_maze_floor() {
             "scope": { "knownFiles": ["robots_paths", "sitemap"], "noDefaultExtensionFilter": true, "jsEndpoints": true },
             "safety": { "profile": "read_only", "respectRobotsTxt": true }
         });
-        baseline.static_plane = s.clone();
-        baseline.unmeasured_static_additions.clear();
+        baseline.static_plane = with_all_planes(s.clone());
         save_baseline(&baseline);
     }
     // no regression against the committed numbers: the static plane is deterministic
@@ -706,7 +680,7 @@ async fn hybrid_plane_adds_browser_targets() {
             "limits": { "interactions": 400, "durationSeconds": 300 },
             "note": "browser run scoped to the javascript category and its .found endpoints; wall-clock bounded"
         });
-        baseline.hybrid = Some(s);
+        baseline.hybrid = Some(with_all_planes(s));
         save_baseline(&baseline);
     }
     gym.shutdown().await;

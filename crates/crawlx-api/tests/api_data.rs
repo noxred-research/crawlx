@@ -1012,7 +1012,8 @@ async fn approvals_can_be_decided_once() {
     let id = e.create_run(&json!({"seedUrl": "https://app.example.test/", "safety": {"profile": "test_environment", "destructiveActions": "approval"}})).await;
     let run = rid(&id);
     let a1 = approval(run, 3600);
-    let a2 = approval(run, 3600);
+    let mut a2 = approval(run, 3600);
+    a2.summary["element_role"] = json!("button");
     let expired = approval(run, -5);
     for a in [&a1, &a2, &expired] {
         e.api.add_approval(a.clone());
@@ -1031,7 +1032,15 @@ async fn approvals_can_be_decided_once() {
     assert_eq!(item["decision"], "pending");
     assert_eq!(item["riskClass"], "destructive");
     assert_eq!(item["profile"], "test_environment");
-    assert_eq!(item["summary"]["elementRole"], "member");
+    // A stored principal role is not an observed element role.
+    assert!(item["summary"]["elementRole"].is_null());
+    let explicit = v["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == a2.id.to_string().as_str())
+        .unwrap();
+    assert_eq!(explicit["summary"]["elementRole"], "button");
     assert_eq!(item["summary"]["routeTemplate"], "/orders/:id");
     assert_eq!(item["summary"]["actionKind"], "click");
     let (_, _, v) = e

@@ -1,8 +1,8 @@
-//! Durable archive catalog, memory parity and fenced PostgreSQL persistence.
+//! Durable archive catalog: memory parity and fenced persistence on every engine.
 
 mod memory;
 mod payload;
-mod pg;
+mod store;
 
 use crawlx_core::archive::ArchiveManifestV1;
 use crawlx_core::archive_catalog::{
@@ -163,6 +163,17 @@ fn history_key(key: &ArchiveHistoryKeyV1) -> Result<crawlx_core::hash::Digest, S
 }
 fn json<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, StoreError> {
     serde_json::to_value(value).map_err(|error| StoreError::Serialization(error.to_string()))
+}
+/// The payload of an export row. `custody.expiresAt` is written at the microsecond precision
+/// of the `expires_at` column: an engine that probes the JSON text in the database (the SQLite
+/// retention triggers) reads a fraction of any other width as a different instant.
+fn export_json(export: &ArchiveExportV1) -> Result<serde_json::Value, StoreError> {
+    let mut value = json(export)?;
+    if let (Some(expiry), Some(custody)) = (export.custody.expires_at, value.get_mut("custody")) {
+        custody["expiresAt"] =
+            serde_json::Value::String(expiry.to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
+    }
+    Ok(value)
 }
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, StoreError> {
     serde_json::from_value(value).map_err(|error| StoreError::Serialization(error.to_string()))

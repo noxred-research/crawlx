@@ -1,21 +1,27 @@
 //! Accepted-item, versioned KV and delivery receipt transactions (migration 0029).
 //!
-//! PostgreSQL helpers run inside the caller's request-completion transaction. Memory helpers
-//! stage metadata only; content bytes remain in the existing artifact/volatile store.
+//! The SQL helpers run inside the caller's request-completion transaction on any engine. The
+//! repositories are generic over the storage backend (`impl<B: Sql> .. for Store<B>`).
+//! Memory helpers stage metadata only; content bytes remain in the existing artifact/volatile
+//! store.
 
-use crate::codec::{from_json, get};
-use crate::error::{db, not_found};
-use crate::Pg;
+use crate::backend::strategy::{Conn, FenceSeq, OutboxClaim};
+use crate::backend::{Backend, BackendKind, Dialect, RowLock};
+use crate::codec::from_json;
+use crate::error::not_found;
+use crate::sql::{stmt, Sql, SqlRow};
+use crate::store::Store;
 use async_trait::async_trait;
 use crawlx_core::config::{CreateCrawl, RetentionMode};
 use crawlx_core::dataset::*;
 use crawlx_core::repo::{CrawlRun, Sensitivity};
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp, WorkerId};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{Postgres, Transaction};
 #[path = "dataset_state.rs"]
 mod state;
-pub(crate) use state::{apply_prepared, prepare_memory, prepare_memory_action, DatasetState};
+pub(crate) use state::{
+    apply_prepared, prepare_memory, prepare_memory_action, DatasetState, MemoryFinalizer,
+};
 #[path = "dataset_memo.rs"]
 pub(crate) mod memo;
 
@@ -264,21 +270,46 @@ fn delivery_valid(
     content_valid(&batch.content, zdr, Some(batch.expires_at), now)
 }
 
-pub(crate) async fn config_tx(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+/// Database time in the caller's transaction (`now()` on PostgreSQL).
+fn sql_now<B: Backend>() -> &'static str {
+    <B::Dialect as Dialect>::now()
+}
+
+/// The row locking clause of the engine, with a leading space (empty on SQLite).
+fn lock<B: Backend>(lock: RowLock) -> &'static str {
+    <B::Dialect as Dialect>::row_lock(lock)
+}
+
+/// The run's tenant, configuration and database time, with the run row locked.
+///
+/// The run is read by `run_id` only; the tenant comes from the row and is then checked
+/// against the current tenant scope.
+pub(crate) async fn config_tx<B: Sql>(
+    store: &Store<B>,
+    conn: &mut Conn<B>,
     run: CrawlRunId,
 ) -> Result<(TenantId, CreateCrawl, Timestamp), StoreError> {
-    let row = sqlx::query("SELECT tenant_id, config, retention_mode::text AS retention_mode, now() AS clock FROM crawl_runs WHERE run_id=$1 FOR UPDATE")
-        .bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| not_found("crawl_run", run))?;
-    let tenant = TenantId(get(&row, "tenant_id")?);
+    store.scope()?;
+    let row = stmt!(
+        B,
+        format!(
+            "SELECT tenant_id, config, retention_mode::text AS retention_mode, {} AS clock FROM crawl_runs WHERE run_id=$1{}",
+            sql_now::<B>(),
+            lock::<B>(RowLock::Update)
+        )
+    )
+    .uuid(run.0)
+    .fetch_optional(conn)
+    .await?
+    .ok_or_else(|| not_found("crawl_run", run))?;
+    let tenant = TenantId(row.uuid("tenant_id")?);
     check_tenant(tenant)?;
-    let config = if get::<String>(&row, "retention_mode")? == "zdr" {
-        pg.ephemeral_get(tenant, run, i64::MIN, "run_config").await?
+    let config = if row.text("retention_mode")? == "zdr" {
+        store.ephemeral_get(tenant, run, i64::MIN, "run_config").await?
     } else {
-        from_json(get(&row, "config")?)?
+        from_json(row.json("config")?)?
     };
-    Ok((tenant, config, get(&row, "clock")?))
+    Ok((tenant, config, row.ts("clock")?))
 }
 
 // Dedicated negative namespace, disjoint from frontier rows and reserved operational slots.
@@ -294,9 +325,9 @@ fn manifest_page(tag: u8, id: i64) -> Result<i64, StoreError> {
 
 // Keep transaction, tenant/run scope, and content retention checks explicit at each call site.
 #[allow(clippy::too_many_arguments)]
-async fn verify_content(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+async fn verify_content<B: Sql>(
+    store: &Store<B>,
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
     content: &DatasetContentV1,
@@ -306,15 +337,26 @@ async fn verify_content(
 ) -> Result<(), StoreError> {
     match content {
         DatasetContentV1::Durable { artifact } => {
-            let row = sqlx::query("SELECT size_bytes, content_digest, sensitivity::text AS sensitivity, expires_at FROM artifacts WHERE artifact_id=$1 AND tenant_id=$2 AND run_id=$3 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > now())")
-                .bind(artifact.id.0).bind(tenant.0).bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?
-                .ok_or_else(|| StoreError::RetentionDenied("dataset artifact unavailable".into()))?;
-            if unsigned(get(&row, "size_bytes")?)? != size
-                || get::<Vec<u8>>(&row, "content_digest")? != artifact.digest.0
-                || get::<Option<Timestamp>>(&row, "expires_at")?
+            let row = stmt!(
+                B,
+                format!(
+                    "SELECT size_bytes, content_digest, sensitivity::text AS sensitivity, expires_at FROM artifacts WHERE artifact_id=$1 AND tenant_id=$2 AND run_id=$3 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > {})",
+                    sql_now::<B>()
+                )
+            )
+            .uuid(artifact.id.0)
+            .uuid(tenant.0)
+            .uuid(run.0)
+            .fetch_optional(conn)
+            .await?
+            .ok_or_else(|| StoreError::RetentionDenied("dataset artifact unavailable".into()))?;
+            if unsigned(row.i64("size_bytes")?)? != size
+                || row.bytes("content_digest")? != artifact.digest.0
+                || row
+                    .opt_ts("expires_at")?
                     .is_some_and(|end| deadline.is_none_or(|deadline| deadline > end))
                 || matches!(
-                    get::<String>(&row, "sensitivity")?.as_str(),
+                    row.text("sensitivity")?.as_str(),
                     "sensitive" | "credential_bearing"
                 )
             {
@@ -328,7 +370,7 @@ async fn verify_content(
             artifact,
             expires_at,
         } => {
-            let buffer = pg.delivery.as_ref().ok_or_else(expired)?;
+            let buffer = store.delivery.as_ref().ok_or_else(expired)?;
             let (original_expiry, actual_size) = buffer
                 .content_metadata(tenant, run, *page, artifact)
                 .await?
@@ -340,15 +382,15 @@ async fn verify_content(
         _ => {
             return Err(StoreError::RetentionDenied(
                 "unsupported dataset content handle".into(),
-            ))
+            ));
         }
     }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn write_payload<T: Serialize + Sync>(
-    pg: &Pg,
+async fn write_payload<B: Backend, T: Serialize + Sync>(
+    store: &Store<B>,
     tenant: TenantId,
     run: CrawlRunId,
     page: i64,
@@ -361,7 +403,8 @@ async fn write_payload<T: Serialize + Sync>(
         let deadline = expires_at.ok_or_else(expired)?;
         let bytes =
             serde_json::to_vec(value).map_err(|error| StoreError::Serialization(error.to_string()))?;
-        pg.delivery
+        store
+            .delivery
             .as_ref()
             .ok_or_else(expired)?
             .insert_until(tenant, run, page, kind, "application/json", &bytes, deadline)
@@ -373,25 +416,53 @@ async fn write_payload<T: Serialize + Sync>(
             .map_err(|error| StoreError::Serialization(error.to_string()))
     }
 }
-pub(crate) async fn read_payload<T: DeserializeOwned>(
-    pg: &Pg,
-    tenant: TenantId,
-    run: CrawlRunId,
-    row: &sqlx::postgres::PgRow,
-    kind: &str,
-) -> Result<T, StoreError> {
-    match get::<Option<serde_json::Value>>(row, "payload")? {
-        Some(value) => from_json(value),
-        None => {
-            pg.ephemeral_get(tenant, run, get(row, "volatile_page")?, kind)
-                .await
+
+/// The `payload` and `volatile_page` columns of a row: the value itself, or for a
+/// zero-retention run the volatile page it was parked on.
+pub(crate) struct Stored {
+    json: Option<serde_json::Value>,
+    page: Option<i64>,
+}
+
+impl Stored {
+    /// Read the two columns of `row` (owned values, so no row is held across an await).
+    pub(crate) fn of<R: SqlRow>(row: &R) -> Result<Self, StoreError> {
+        Ok(Self {
+            json: row.opt_json("payload")?,
+            page: row.opt_i64("volatile_page")?,
+        })
+    }
+
+    /// The stored value of kind `kind`.
+    pub(crate) async fn read<B: Backend, T: DeserializeOwned>(
+        self,
+        store: &Store<B>,
+        tenant: TenantId,
+        run: CrawlRunId,
+        kind: &str,
+    ) -> Result<T, StoreError> {
+        match (self.json, self.page) {
+            (Some(value), _) => from_json(value),
+            (None, Some(page)) => store.ephemeral_get(tenant, run, page, kind).await,
+            (None, None) => Err(conflict("dataset row has neither payload nor volatile page")),
         }
     }
 }
 
-pub(crate) async fn verify_pg_delivery(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+/// The value of a row that carries `payload` or, for a zero-retention run, `volatile_page`.
+pub(crate) async fn read_payload<B: Backend, R: SqlRow, T: DeserializeOwned>(
+    store: &Store<B>,
+    tenant: TenantId,
+    run: CrawlRunId,
+    row: &R,
+    kind: &str,
+) -> Result<T, StoreError> {
+    Stored::of(row)?.read(store, tenant, run, kind).await
+}
+
+pub(crate) async fn verify_delivery<B: Sql>(
+    store: &Store<B>,
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
     config: &CreateCrawl,
@@ -405,8 +476,8 @@ pub(crate) async fn verify_pg_delivery(
         now,
     )?;
     verify_content(
-        pg,
-        tx,
+        store,
+        conn,
         tenant,
         run,
         &batch.content,
@@ -422,9 +493,21 @@ pub(crate) async fn verify_pg_delivery(
             .iter()
             .find(|feed| feed.id == batch.feed)
             .ok_or_else(|| conflict("undeclared delivery feed"))?;
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND i.ordinal BETWEEN $4 AND $5 AND (i.expires_at IS NULL OR i.expires_at>now())")
-            .bind(tenant.0).bind(run.0).bind(&feed.source).bind(signed(first)?).bind(signed(last)?)
-            .fetch_one(&mut **tx).await.map_err(db)?;
+        let count = stmt!(
+            B,
+            format!(
+                "SELECT count(*) AS n FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND i.ordinal BETWEEN $4 AND $5 AND (i.expires_at IS NULL OR i.expires_at>{})",
+                sql_now::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(&feed.source)
+        .i64(signed(first)?)
+        .i64(signed(last)?)
+        .fetch_one(conn)
+        .await?
+        .i64("n")?;
         let wanted = last
             .checked_sub(first)
             .and_then(|n| n.checked_add(1))
@@ -438,35 +521,56 @@ pub(crate) async fn verify_pg_delivery(
 
 /// Apply accepted items, state CAS and immutable outbox in the existing request transaction.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn apply_pg(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+pub(crate) async fn apply<B: Sql>(
+    store: &Store<B>,
+    conn: &mut Conn<B>,
     run: CrawlRunId,
     request: i64,
     accepted: &[AcceptedBatchV1],
     deltas: &[KvCasV1],
     outbox: &[DeliveryBatchV1],
 ) -> Result<(), StoreError> {
-    apply_pg_source(pg, tx, run, request, None, accepted, deltas, outbox).await
+    // The common empty commit never enters the large transaction body's stack frame.
+    if accepted.is_empty() && deltas.is_empty() && outbox.is_empty() {
+        return Ok(());
+    }
+    Box::pin(apply_source::<B>(
+        store, conn, run, request, None, accepted, deltas, outbox,
+    ))
+    .await
 }
 
+/// [`apply`] for an action-scoped source.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn apply_pg_action(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+pub(crate) async fn apply_action<B: Sql>(
+    store: &Store<B>,
+    conn: &mut Conn<B>,
     run: CrawlRunId,
     action: crawlx_core::ActionId,
     accepted: &[AcceptedBatchV1],
     deltas: &[KvCasV1],
     outbox: &[DeliveryBatchV1],
 ) -> Result<(), StoreError> {
-    apply_pg_source(pg, tx, run, 0, Some(action), accepted, deltas, outbox).await
+    if accepted.is_empty() && deltas.is_empty() && outbox.is_empty() {
+        return Ok(());
+    }
+    Box::pin(apply_source::<B>(
+        store,
+        conn,
+        run,
+        0,
+        Some(action),
+        accepted,
+        deltas,
+        outbox,
+    ))
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn apply_pg_source(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+pub(crate) async fn apply_source<B: Sql>(
+    store: &Store<B>,
+    conn: &mut Conn<B>,
     run: CrawlRunId,
     request: i64,
     action: Option<crawlx_core::ActionId>,
@@ -485,11 +589,17 @@ pub(crate) async fn apply_pg_source(
     if accepted.len() > 64 || count > MAX_BATCH_ITEMS {
         return Err(conflict("accepted item batch limit"));
     }
-    let (tenant, config, now) = config_tx(pg, tx, run).await?;
+    let (tenant, config, now) = config_tx(store, conn, run).await?;
     config.datasets.validate()?;
     if !accepted.is_empty() {
-        let sealed: bool = sqlx::query_scalar("SELECT feed_finalizing OR status IN ('completed','failed','cancelled') FROM crawl_runs WHERE run_id=$1")
-            .bind(run.0).fetch_one(&mut **tx).await.map_err(db)?;
+        let sealed = stmt!(
+            B,
+            "SELECT feed_finalizing OR status IN ('completed','failed','cancelled') AS sealed FROM crawl_runs WHERE run_id=$1"
+        )
+        .uuid(run.0)
+        .fetch_one(conn)
+        .await?
+        .flag("sealed")?;
         if sealed {
             return Err(conflict("feed source is sealed for finalization"));
         }
@@ -507,28 +617,43 @@ pub(crate) async fn apply_pg_source(
             .datasets
             .stores
             .iter()
-            .find(|store| store.name == batch.dataset)
+            .find(|declared| declared.name == batch.dataset)
             .ok_or_else(|| conflict("undeclared dataset namespace"))?;
-        sqlx::query("INSERT INTO datasets(tenant_id,run_id,name) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
-            .bind(tenant.0)
-            .bind(run.0)
-            .bind(&batch.dataset)
-            .execute(&mut **tx)
-            .await
-            .map_err(db)?;
-        let row = sqlx::query("SELECT dataset_id,next_ordinal,item_count,size_bytes FROM datasets WHERE tenant_id=$1 AND run_id=$2 AND name=$3 FOR UPDATE")
-            .bind(tenant.0).bind(run.0).bind(&batch.dataset).fetch_one(&mut **tx).await.map_err(db)?;
-        let dataset: i64 = get(&row, "dataset_id")?;
-        let mut ordinal: i64 = get(&row, "next_ordinal")?;
-        let mut count = unsigned(get(&row, "item_count")?)?;
-        let mut bytes = unsigned(get(&row, "size_bytes")?)?;
+        stmt!(
+            B,
+            format!(
+                "INSERT INTO datasets(tenant_id,run_id,name) VALUES($1,$2,$3) {}",
+                <B::Dialect as Dialect>::upsert_do_nothing(&["tenant_id", "run_id", "name"])
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(&batch.dataset)
+        .execute(conn)
+        .await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT dataset_id,next_ordinal,item_count,size_bytes FROM datasets WHERE tenant_id=$1 AND run_id=$2 AND name=$3{}",
+                lock::<B>(RowLock::Update)
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(&batch.dataset)
+        .fetch_one(conn)
+        .await?;
+        let dataset = row.i64("dataset_id")?;
+        let mut ordinal = row.i64("next_ordinal")?;
+        let mut count = unsigned(row.i64("item_count")?)?;
+        let mut bytes = unsigned(row.i64("size_bytes")?)?;
         for item in &batch.items {
             item_valid(item, zdr, now)?;
             fragments_valid(item, &config.datasets, &batch.dataset)?;
             for fragment in &item.feed_fragments {
                 verify_content(
-                    pg,
-                    tx,
+                    store,
+                    conn,
                     tenant,
                     run,
                     &fragment.content,
@@ -542,8 +667,8 @@ pub(crate) async fn apply_pg_source(
                 return Err(conflict("dataset schema mismatch"));
             }
             verify_content(
-                pg,
-                tx,
+                store,
+                conn,
                 tenant,
                 run,
                 &item.content,
@@ -557,11 +682,27 @@ pub(crate) async fn apply_pg_source(
                 &(&item.item_key, &item.transform_version),
             )
             .map_err(|error| StoreError::Serialization(error.to_string()))?;
-            let existing = sqlx::query("SELECT payload,volatile_page FROM dataset_items WHERE tenant_id=$1 AND dataset_id=$2 AND source_request_id IS NOT DISTINCT FROM $3 AND identity_key=$4 AND source_action_id IS NOT DISTINCT FROM $5")
-                .bind(tenant.0).bind(dataset).bind(action.is_none().then_some(request)).bind(identity.0.to_vec()).bind(action.map(|id| id.0))
-                .fetch_optional(&mut **tx).await.map_err(db)?;
+            let request_source = action.is_none().then_some(request);
+            let action_source = action.map(|id| id.0);
+            let existing = stmt!(
+                B,
+                format!(
+                    "SELECT payload,volatile_page FROM dataset_items WHERE tenant_id=$1 AND dataset_id=$2 AND {} AND identity_key=$4 AND {}",
+                    <B::Dialect as Dialect>::null_safe_eq("source_request_id", "$3"),
+                    <B::Dialect as Dialect>::null_safe_eq("source_action_id", "$5")
+                )
+            )
+            .uuid(tenant.0)
+            .i64(dataset)
+            .opt_i64(request_source)
+            .bytes(&identity.0)
+            .opt_uuid(action_source)
+            .fetch_optional(conn)
+            .await?;
             if let Some(existing) = existing {
-                let old: DatasetItemV1 = read_payload(pg, tenant, run, &existing, "dataset_item").await?;
+                let old: DatasetItemV1 = Stored::of(&existing)?
+                    .read(store, tenant, run, "dataset_item")
+                    .await?;
                 if old.item != *item {
                     return Err(conflict("accepted item identity changed"));
                 }
@@ -578,15 +719,36 @@ pub(crate) async fn apply_pg_source(
             }
             let mut record = DatasetItemV1::new(unsigned(ordinal)?, request, item.clone());
             record.source_action = action;
-            let row = sqlx::query("INSERT INTO dataset_items(tenant_id,run_id,dataset_id,ordinal,source_request_id,identity_key,payload,volatile_page,size_bytes,expires_at,source_action_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING item_id")
-                .bind(tenant.0).bind(run.0).bind(dataset).bind(ordinal).bind(action.is_none().then_some(request)).bind(identity.0.to_vec())
-                .bind(if zdr { None } else { Some(serde_json::to_value(&record).map_err(|error| StoreError::Serialization(error.to_string()))?) })
-                .bind(zdr.then_some(0i64)).bind(signed(item.size_bytes)?).bind(item.expires_at).bind(action.map(|id| id.0))
-                .fetch_one(&mut **tx).await.map_err(db)?;
+            let payload = if zdr {
+                None
+            } else {
+                Some(
+                    serde_json::to_value(&record)
+                        .map_err(|error| StoreError::Serialization(error.to_string()))?,
+                )
+            };
+            let inserted = stmt!(
+                B,
+                "INSERT INTO dataset_items(tenant_id,run_id,dataset_id,ordinal,source_request_id,identity_key,payload,volatile_page,size_bytes,expires_at,source_action_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING item_id"
+            )
+            .uuid(tenant.0)
+            .uuid(run.0)
+            .i64(dataset)
+            .i64(ordinal)
+            .opt_i64(request_source)
+            .bytes(&identity.0)
+            .opt_json(payload.as_ref())
+            .opt_i64(zdr.then_some(0i64))
+            .i64(signed(item.size_bytes)?)
+            .opt_ts(item.expires_at)
+            .opt_uuid(action_source)
+            .fetch_one(conn)
+            .await?;
             if zdr {
-                let page = manifest_page(1, get(&row, "item_id")?)?;
+                let item_id = inserted.i64("item_id")?;
+                let page = manifest_page(1, item_id)?;
                 write_payload(
-                    pg,
+                    store,
                     tenant,
                     run,
                     page,
@@ -596,23 +758,34 @@ pub(crate) async fn apply_pg_source(
                     item.expires_at,
                 )
                 .await?;
-                sqlx::query("UPDATE dataset_items SET volatile_page=$1 WHERE item_id=$2 AND tenant_id=$3")
-                    .bind(page)
-                    .bind(get::<i64>(&row, "item_id")?)
-                    .bind(tenant.0)
-                    .execute(&mut **tx)
-                    .await
-                    .map_err(db)?;
+                stmt!(
+                    B,
+                    "UPDATE dataset_items SET volatile_page=$1 WHERE item_id=$2 AND tenant_id=$3"
+                )
+                .i64(page)
+                .i64(item_id)
+                .uuid(tenant.0)
+                .execute(conn)
+                .await?;
             }
             ordinal = ordinal
                 .checked_add(1)
                 .ok_or_else(|| conflict("dataset ordinal overflow"))?;
         }
-        sqlx::query("UPDATE datasets SET next_ordinal=$1,item_count=$2,size_bytes=$3 WHERE dataset_id=$4 AND tenant_id=$5")
-            .bind(ordinal).bind(signed(count)?).bind(signed(bytes)?).bind(dataset).bind(tenant.0).execute(&mut **tx).await.map_err(db)?;
+        stmt!(
+            B,
+            "UPDATE datasets SET next_ordinal=$1,item_count=$2,size_bytes=$3 WHERE dataset_id=$4 AND tenant_id=$5"
+        )
+        .i64(ordinal)
+        .i64(signed(count)?)
+        .i64(signed(bytes)?)
+        .i64(dataset)
+        .uuid(tenant.0)
+        .execute(conn)
+        .await?;
     }
     for delta in deltas {
-        cas_pg(pg, tx, tenant, run, &config, delta, now).await?;
+        cas(store, conn, tenant, run, &config, delta, now).await?;
     }
     for batch in outbox {
         let mut resolved = batch.clone();
@@ -623,13 +796,27 @@ pub(crate) async fn apply_pg_source(
             .find(|feed| feed.id == batch.feed)
             .ok_or_else(|| conflict("undeclared delivery feed"))?;
         if matches!(resolved.range, DeliveryRangeV1::AcceptedRequest) {
-            let row = sqlx::query("SELECT min(i.ordinal) AS first,max(i.ordinal) AS last FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND i.source_request_id IS NOT DISTINCT FROM $4 AND i.source_action_id IS NOT DISTINCT FROM $5")
-                .bind(tenant.0).bind(run.0).bind(&feed.source).bind(action.is_none().then_some(request)).bind(action.map(|id| id.0))
-                .fetch_one(&mut **tx).await.map_err(db)?;
-            let first = get::<Option<i64>>(&row, "first")?
+            let row = stmt!(
+                B,
+                format!(
+                    "SELECT min(i.ordinal) AS first_ordinal,max(i.ordinal) AS last_ordinal FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND {} AND {}",
+                    <B::Dialect as Dialect>::null_safe_eq("i.source_request_id", "$4"),
+                    <B::Dialect as Dialect>::null_safe_eq("i.source_action_id", "$5")
+                )
+            )
+            .uuid(tenant.0)
+            .uuid(run.0)
+            .text(&feed.source)
+            .opt_i64(action.is_none().then_some(request))
+            .opt_uuid(action.map(|id| id.0))
+            .fetch_one(conn)
+            .await?;
+            let first = row
+                .opt_i64("first_ordinal")?
                 .ok_or_else(|| conflict("delivery source not committed"))?;
-            let last =
-                get::<Option<i64>>(&row, "last")?.ok_or_else(|| conflict("delivery source not committed"))?;
+            let last = row
+                .opt_i64("last_ordinal")?
+                .ok_or_else(|| conflict("delivery source not committed"))?;
             resolved.range = DeliveryRangeV1::Committed {
                 first: unsigned(first)?,
                 last: unsigned(last)?,
@@ -639,28 +826,58 @@ pub(crate) async fn apply_pg_source(
         if matches!(batch.range, DeliveryRangeV1::Empty) && (request != 0 || action.is_some()) {
             return Err(conflict("empty feed requires terminal transaction"));
         }
-        verify_pg_delivery(pg, tx, tenant, run, &config, batch, now).await?;
-        let old = sqlx::query("SELECT payload,volatile_page FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3 AND idempotency_key=$4")
-            .bind(tenant.0).bind(run.0).bind(&batch.feed).bind(&batch.idempotency_key).fetch_optional(&mut **tx).await.map_err(db)?;
+        verify_delivery(store, conn, tenant, run, &config, batch, now).await?;
+        let old = stmt!(
+            B,
+            "SELECT payload,volatile_page FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3 AND idempotency_key=$4"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(&batch.feed)
+        .text(&batch.idempotency_key)
+        .fetch_optional(conn)
+        .await?;
         if let Some(old) = old {
-            let previous: DeliveryBatchV1 = read_payload(pg, tenant, run, &old, "dataset_delivery").await?;
+            let previous: DeliveryBatchV1 = Stored::of(&old)?
+                .read(store, tenant, run, "dataset_delivery")
+                .await?;
             if previous != *batch {
                 return Err(conflict("delivery identity changed"));
             }
             continue;
         }
-        let id: i64 = sqlx::query_scalar("INSERT INTO dataset_delivery_outbox(tenant_id,run_id,source_request_id,feed,idempotency_key,payload,volatile_page,expires_at,source_action_id,content_page,terminal_source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING delivery_id")
-            .bind(tenant.0).bind(run.0).bind((action.is_none() && request != 0).then_some(request)).bind(&batch.feed).bind(&batch.idempotency_key)
-            .bind(if zdr { None } else { Some(serde_json::to_value(batch).map_err(|error| StoreError::Serialization(error.to_string()))?) })
-            .bind(zdr.then_some(0i64)).bind(batch.expires_at).bind(action.map(|id| id.0))
-            .bind(match &batch.content { DatasetContentV1::Volatile {page,..} => Some(*page),DatasetContentV1::Durable {..} => None,
-                _ => return Err(conflict("unsupported dataset content handle")) })
-            .bind(request == 0 && action.is_none())
-            .fetch_one(&mut **tx).await.map_err(db)?;
+        let payload = if zdr {
+            None
+        } else {
+            Some(serde_json::to_value(batch).map_err(|error| StoreError::Serialization(error.to_string()))?)
+        };
+        let content_page = match &batch.content {
+            DatasetContentV1::Volatile { page, .. } => Some(*page),
+            DatasetContentV1::Durable { .. } => None,
+            _ => return Err(conflict("unsupported dataset content handle")),
+        };
+        let id = stmt!(
+            B,
+            "INSERT INTO dataset_delivery_outbox(tenant_id,run_id,source_request_id,feed,idempotency_key,payload,volatile_page,expires_at,source_action_id,content_page,terminal_source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING delivery_id"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .opt_i64((action.is_none() && request != 0).then_some(request))
+        .text(&batch.feed)
+        .text(&batch.idempotency_key)
+        .opt_json(payload.as_ref())
+        .opt_i64(zdr.then_some(0i64))
+        .ts(batch.expires_at)
+        .opt_uuid(action.map(|id| id.0))
+        .opt_i64(content_page)
+        .bool(request == 0 && action.is_none())
+        .fetch_one(conn)
+        .await?
+        .i64("delivery_id")?;
         if zdr {
             let page = manifest_page(2, id)?;
             write_payload(
-                pg,
+                store,
                 tenant,
                 run,
                 page,
@@ -670,24 +887,24 @@ pub(crate) async fn apply_pg_source(
                 Some(batch.expires_at),
             )
             .await?;
-            sqlx::query(
-                "UPDATE dataset_delivery_outbox SET volatile_page=$1 WHERE delivery_id=$2 AND tenant_id=$3",
+            stmt!(
+                B,
+                "UPDATE dataset_delivery_outbox SET volatile_page=$1 WHERE delivery_id=$2 AND tenant_id=$3"
             )
-            .bind(page)
-            .bind(id)
-            .bind(tenant.0)
-            .execute(&mut **tx)
-            .await
-            .map_err(db)?;
+            .i64(page)
+            .i64(id)
+            .uuid(tenant.0)
+            .execute(conn)
+            .await?;
         }
     }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn cas_pg(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+async fn cas<B: Sql>(
+    store: &Store<B>,
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
     config: &CreateCrawl,
@@ -696,11 +913,11 @@ async fn cas_pg(
 ) -> Result<KvValueV1, StoreError> {
     let zdr = config.retention.mode == RetentionMode::Zdr;
     delta_valid(delta, &config.datasets, zdr, now)?;
-    kv_scope(pg, tx, tenant, run, &config.datasets, &delta.store).await?;
+    kv_scope::<B>(conn, tenant, run, &config.datasets, &delta.store).await?;
     if let Some(content) = &delta.content {
         verify_content(
-            pg,
-            tx,
+            store,
+            conn,
             tenant,
             run,
             content,
@@ -710,11 +927,23 @@ async fn cas_pg(
         )
         .await?;
     }
-    let old = sqlx::query("SELECT version,expires_at,payload,volatile_page FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND key=$4 FOR UPDATE")
-        .bind(tenant.0).bind(run.0).bind(&delta.store).bind(&delta.key).fetch_optional(&mut **tx).await.map_err(db)?;
+    let key = <B::Dialect as Dialect>::reserved_ident("key");
+    let old = stmt!(
+        B,
+        format!(
+            "SELECT version,expires_at,payload,volatile_page FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND {key}=$4{}",
+            lock::<B>(RowLock::Update)
+        )
+    )
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .text(&delta.store)
+    .text(&delta.key)
+    .fetch_optional(conn)
+    .await?;
     let old_version = old
         .as_ref()
-        .map(|row| get::<i64>(row, "version"))
+        .map(|row| row.i64("version"))
         .transpose()?
         .map(unsigned)
         .transpose()?
@@ -723,7 +952,7 @@ async fn cas_pg(
         return Err(conflict("kv compare-and-set collision"));
     }
     if let Some(old) = &old {
-        let expires: Option<Timestamp> = get(old, "expires_at")?;
+        let expires: Option<Timestamp> = old.opt_ts("expires_at")?;
         if expires.is_some_and(|end| end <= now) {
             return Err(expired());
         }
@@ -731,20 +960,31 @@ async fn cas_pg(
             return Err(conflict("kv expiry is immutable"));
         }
     }
-    let store = config
+    let declaration = config
         .datasets
         .kv_stores
         .iter()
-        .find(|store| store.name == delta.store)
+        .find(|declared| declared.name == delta.store)
         .ok_or_else(|| conflict("undeclared kv namespace"))?;
-    let usage = sqlx::query("SELECT count(*) AS keys,COALESCE(sum(size_bytes),0)::bigint AS bytes FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND key<>$4")
-        .bind(tenant.0).bind(run.0).bind(&delta.store).bind(&delta.key).fetch_one(&mut **tx).await.map_err(db)?;
-    if unsigned(get(&usage, "keys")?)?
+    let usage = stmt!(
+        B,
+        format!(
+            "SELECT count(*) AS key_count, {} AS total_bytes FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND {key}<>$4",
+            sum_as_integer::<B>("size_bytes")
+        )
+    )
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .text(&delta.store)
+    .text(&delta.key)
+    .fetch_one(conn)
+    .await?;
+    if unsigned(usage.i64("key_count")?)?
         .checked_add(1)
-        .is_none_or(|n| n > u64::from(store.max_keys))
-        || unsigned(get(&usage, "bytes")?)?
+        .is_none_or(|n| n > u64::from(declaration.max_keys))
+        || unsigned(usage.i64("total_bytes")?)?
             .checked_add(delta.size_bytes)
-            .is_none_or(|n| n > store.max_bytes)
+            .is_none_or(|n| n > declaration.max_bytes)
     {
         return Err(conflict("kv quota exhausted"));
     }
@@ -755,18 +995,16 @@ async fn cas_pg(
     let value = KvValueV1::new(version, delta.clone());
     // Never overwrite committed volatile metadata before this transaction commits.
     // Orphan generations expire independently; the relational deadline remains immutable.
+    // Every write takes a page of its own from the fence counter: strictly increasing and
+    // never repeated, on every engine, which keeps the tagged page namespace unique.
     let page = if zdr {
-        let next: i64 =
-            sqlx::query_scalar("SELECT nextval(pg_get_serial_sequence('dataset_items','item_id'))")
-                .fetch_one(&mut **tx)
-                .await
-                .map_err(db)?;
+        let next = B::next_fence(conn, FenceSeq::Lease).await?;
         Some(manifest_page(3, next)?)
     } else {
         None
     };
     let payload = write_payload(
-        pg,
+        store,
         tenant,
         run,
         page.unwrap_or(0),
@@ -776,14 +1014,42 @@ async fn cas_pg(
         delta.expires_at,
     )
     .await?;
-    sqlx::query("INSERT INTO dataset_kv(tenant_id,run_id,store,key,version,payload,volatile_page,size_bytes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(tenant_id,run_id,store,key) DO UPDATE SET version=EXCLUDED.version,payload=EXCLUDED.payload,volatile_page=EXCLUDED.volatile_page,size_bytes=EXCLUDED.size_bytes,expires_at=EXCLUDED.expires_at")
-        .bind(tenant.0).bind(run.0).bind(&delta.store).bind(&delta.key).bind(signed(version)?).bind(payload).bind(page)
-        .bind(signed(delta.size_bytes)?).bind(delta.expires_at).execute(&mut **tx).await.map_err(db)?;
+    stmt!(
+        B,
+        format!(
+            "INSERT INTO dataset_kv(tenant_id,run_id,store,{key},version,payload,volatile_page,size_bytes,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) {}",
+            <B::Dialect as Dialect>::upsert_update(
+                &["tenant_id", "run_id", "store", &key],
+                &["version", "payload", "volatile_page", "size_bytes", "expires_at"],
+                None
+            )
+        )
+    )
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .text(&delta.store)
+    .text(&delta.key)
+    .i64(signed(version)?)
+    .opt_json(payload.as_ref())
+    .opt_i64(page)
+    .i64(signed(delta.size_bytes)?)
+    .opt_ts(delta.expires_at)
+    .execute(conn)
+    .await?;
     Ok(value)
 }
 
+/// `COALESCE(sum(col), 0)` as an integer the row decoder reads: MariaDB sums to `DECIMAL`,
+/// so it is cast there; the other engines return an integer already.
+fn sum_as_integer<B: Backend>(col: &str) -> String {
+    match B::KIND {
+        BackendKind::MariaDb => format!("CAST(COALESCE(sum({col}), 0) AS SIGNED)"),
+        _ => format!("COALESCE(sum({col}), 0)::bigint"),
+    }
+}
+
 #[async_trait]
-impl DatasetRepo for Pg {
+impl<B: Sql> DatasetRepo for Store<B> {
     async fn items(
         &self,
         run: CrawlRunId,
@@ -793,22 +1059,31 @@ impl DatasetRepo for Pg {
     ) -> Result<Vec<DatasetItemV1>, StoreError> {
         bounds(limit)?;
         validate_identifier(dataset)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (tenant, config, now) = config_tx(self, &mut tx, run).await?;
+        let mut tx = self.begin_write().await?;
+        let (tenant, config, now) = config_tx(self, tx.conn(), run).await?;
         if !config.datasets.stores.iter().any(|store| store.name == dataset) {
             return Err(conflict("undeclared dataset namespace"));
         }
-        let rows = sqlx::query("SELECT i.payload,i.volatile_page,i.expires_at FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND i.ordinal>$4 ORDER BY i.ordinal LIMIT $5")
-            .bind(tenant.0).bind(run.0).bind(dataset).bind(signed(after)?).bind(i64::from(limit)).fetch_all(&mut *tx).await.map_err(db)?;
+        let rows = stmt!(
+            B,
+            "SELECT i.payload,i.volatile_page,i.expires_at FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND i.ordinal>$4 ORDER BY i.ordinal LIMIT $5"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(dataset)
+        .i64(signed(after)?)
+        .i64(i64::from(limit))
+        .fetch_all(tx.conn())
+        .await?;
         let mut output = Vec::with_capacity(rows.len());
         for row in rows {
-            if get::<Option<Timestamp>>(&row, "expires_at")?.is_some_and(|end| end <= now) {
+            if row.opt_ts("expires_at")?.is_some_and(|end| end <= now) {
                 return Err(expired());
             }
-            let item: DatasetItemV1 = read_payload(self, tenant, run, &row, "dataset_item").await?;
+            let item: DatasetItemV1 = Stored::of(&row)?.read(self, tenant, run, "dataset_item").await?;
             verify_content(
                 self,
-                &mut tx,
+                tx.conn(),
                 tenant,
                 run,
                 &item.item.content,
@@ -819,33 +1094,44 @@ impl DatasetRepo for Pg {
             .await?;
             output.push(item);
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(output)
     }
 }
 
 #[async_trait]
-impl KvRepo for Pg {
+impl<B: Sql> KvRepo for Store<B> {
     async fn value(&self, run: CrawlRunId, store: &str, key: &str) -> Result<Option<KvValueV1>, StoreError> {
         validate_identifier(store)?;
         validate_identifier(key)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (tenant, config, now) = config_tx(self, &mut tx, run).await?;
-        kv_scope(self, &mut tx, tenant, run, &config.datasets, store).await?;
-        let row = sqlx::query("SELECT payload,volatile_page,expires_at FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND key=$4")
-            .bind(tenant.0).bind(run.0).bind(store).bind(key).fetch_optional(&mut *tx).await.map_err(db)?;
+        let mut tx = self.begin_write().await?;
+        let (tenant, config, now) = config_tx(self, tx.conn(), run).await?;
+        kv_scope::<B>(tx.conn(), tenant, run, &config.datasets, store).await?;
+        let column = <B::Dialect as Dialect>::reserved_ident("key");
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT payload,volatile_page,expires_at FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND {column}=$4"
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(store)
+        .text(key)
+        .fetch_optional(tx.conn())
+        .await?;
         let Some(row) = row else {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(None);
         };
-        if get::<Option<Timestamp>>(&row, "expires_at")?.is_some_and(|end| end <= now) {
+        if row.opt_ts("expires_at")?.is_some_and(|end| end <= now) {
             return Err(expired());
         }
-        let value: KvValueV1 = read_payload(self, tenant, run, &row, "dataset_kv").await?;
+        let value: KvValueV1 = Stored::of(&row)?.read(self, tenant, run, "dataset_kv").await?;
         if let Some(content) = &value.value.content {
             verify_content(
                 self,
-                &mut tx,
+                tx.conn(),
                 tenant,
                 run,
                 content,
@@ -855,14 +1141,14 @@ impl KvRepo for Pg {
             )
             .await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(Some(value))
     }
     async fn compare_and_set(&self, run: CrawlRunId, delta: KvCasV1) -> Result<KvValueV1, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (tenant, config, now) = config_tx(self, &mut tx, run).await?;
-        let value = cas_pg(self, &mut tx, tenant, run, &config, &delta, now).await?;
-        tx.commit().await.map_err(db)?;
+        let mut tx = self.begin_write().await?;
+        let (tenant, config, now) = config_tx(self, tx.conn(), run).await?;
+        let value = cas(self, tx.conn(), tenant, run, &config, &delta, now).await?;
+        tx.commit().await?;
         Ok(value)
     }
     async fn keys(
@@ -877,18 +1163,31 @@ impl KvRepo for Pg {
         if !after.is_empty() {
             validate_identifier(after)?;
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (tenant, config, now) = config_tx(self, &mut tx, run).await?;
-        kv_scope(self, &mut tx, tenant, run, &config.datasets, store).await?;
-        let rows = sqlx::query("SELECT payload,volatile_page FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND key>$4 AND (expires_at IS NULL OR expires_at>now()) ORDER BY key LIMIT $5")
-            .bind(tenant.0).bind(run.0).bind(store).bind(after).bind(i64::from(limit)).fetch_all(&mut *tx).await.map_err(db)?;
+        let mut tx = self.begin_write().await?;
+        let (tenant, config, now) = config_tx(self, tx.conn(), run).await?;
+        kv_scope::<B>(tx.conn(), tenant, run, &config.datasets, store).await?;
+        let column = <B::Dialect as Dialect>::reserved_ident("key");
+        let rows = stmt!(
+            B,
+            format!(
+                "SELECT payload,volatile_page FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3 AND {column}>$4 AND (expires_at IS NULL OR expires_at>{}) ORDER BY {column} LIMIT $5",
+                sql_now::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(store)
+        .text(after)
+        .i64(i64::from(limit))
+        .fetch_all(tx.conn())
+        .await?;
         let mut values = Vec::with_capacity(rows.len());
         for row in rows {
-            let value: KvValueV1 = read_payload(self, tenant, run, &row, "dataset_kv").await?;
+            let value: KvValueV1 = Stored::of(&row)?.read(self, tenant, run, "dataset_kv").await?;
             if let Some(content) = &value.value.content {
                 verify_content(
                     self,
-                    &mut tx,
+                    tx.conn(),
                     tenant,
                     run,
                     content,
@@ -900,13 +1199,13 @@ impl KvRepo for Pg {
             }
             values.push(value);
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(values)
     }
     async fn drop_store(&self, run: CrawlRunId, store: &str) -> Result<(), StoreError> {
         validate_identifier(store)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (tenant, config, _) = config_tx(self, &mut tx, run).await?;
+        let mut tx = self.begin_write().await?;
+        let (tenant, config, _) = config_tx(self, tx.conn(), run).await?;
         if !config
             .datasets
             .kv_stores
@@ -915,29 +1214,33 @@ impl KvRepo for Pg {
         {
             return Err(conflict("undeclared kv namespace"));
         }
-        sqlx::query(
-            "INSERT INTO dataset_kv_drops(tenant_id,run_id,store) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+        stmt!(
+            B,
+            format!(
+                "INSERT INTO dataset_kv_drops(tenant_id,run_id,store) VALUES($1,$2,$3) {}",
+                <B::Dialect as Dialect>::upsert_do_nothing(&["tenant_id", "run_id", "store"])
+            )
         )
-        .bind(tenant.0)
-        .bind(run.0)
-        .bind(store)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        sqlx::query("DELETE FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3")
-            .bind(tenant.0)
-            .bind(run.0)
-            .bind(store)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        tx.commit().await.map_err(db)
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(store)
+        .execute(tx.conn())
+        .await?;
+        stmt!(
+            B,
+            "DELETE FROM dataset_kv WHERE tenant_id=$1 AND run_id=$2 AND store=$3"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .text(store)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await
     }
 }
 
-async fn kv_scope(
-    _pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+async fn kv_scope<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
     config: &DatasetConfigV1,
@@ -950,37 +1253,71 @@ async fn kv_scope(
     {
         return Err(conflict("undeclared kv namespace"));
     }
-    let dropped: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM dataset_kv_drops WHERE tenant_id=$1 AND run_id=$2 AND store=$3)",
+    let dropped = stmt!(
+        B,
+        "SELECT EXISTS(SELECT 1 FROM dataset_kv_drops WHERE tenant_id=$1 AND run_id=$2 AND store=$3) AS dropped"
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .bind(store)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(db)?;
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .text(store)
+    .fetch_one(conn)
+    .await?
+    .flag("dropped")?;
     if dropped {
         return Err(conflict("kv namespace dropped"));
     }
     Ok(())
 }
 
+/// A claimed outbox row, read out of the driver row before anything is awaited.
+struct Claimed {
+    id: i64,
+    fence: i64,
+    attempts: u32,
+    stored: Stored,
+}
+
+impl Claimed {
+    fn of<R: SqlRow>(row: &R) -> Result<Self, StoreError> {
+        Ok(Self {
+            id: row.i64("delivery_id")?,
+            fence: row.i64("fence")?,
+            attempts: u32::try_from(row.i32("attempts")?)
+                .map_err(|_| conflict("delivery attempts overflow"))?,
+            stored: Stored::of(row)?,
+        })
+    }
+}
+
 #[async_trait]
-impl DeliveryOutboxRepo for Pg {
+impl<B: Sql> DeliveryOutboxRepo for Store<B> {
     async fn ready_runs(&self, after: Option<CrawlRunId>, limit: u16) -> Result<Vec<CrawlRunId>, StoreError> {
         bounds(limit)?;
-        let rows:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT run_id FROM (SELECT run_id FROM dataset_delivery_outbox o WHERE ($2::uuid IS NULL OR run_id>$2) AND ($3::uuid IS NULL OR tenant_id=$3) AND ((state IN ('pending','leased') AND (expires_at<=now() OR ((NOT terminal_source OR EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=o.run_id AND r.feed_finalized)) AND not_before<=now() AND (lease_expires_at IS NULL OR lease_expires_at<=now())))) OR (state IN ('delivered','content_expired') AND erased_at IS NULL AND volatile_page IS NOT NULL)) UNION SELECT run_id FROM crawl_runs WHERE NOT feed_finalized AND (feed_finalizing OR (feed_required AND status IN ('completed','failed','cancelled'))) AND ($2::uuid IS NULL OR run_id>$2) AND ($3::uuid IS NULL OR tenant_id=$3)) pending GROUP BY run_id ORDER BY run_id LIMIT $1")
-            .bind(i64::from(limit)).bind(after.map(|run|run.0)).bind(crate::tenant::current().map(|tenant|tenant.0)).fetch_all(&self.pool).await.map_err(db)?;
-        Ok(rows.into_iter().map(CrawlRunId).collect())
+        self.scope()?;
+        let rows = stmt!(
+            B,
+            format!(
+                "SELECT run_id FROM (SELECT run_id FROM dataset_delivery_outbox o WHERE ($2::uuid IS NULL OR run_id>$2) AND ($3::uuid IS NULL OR tenant_id=$3) AND ((state IN ('pending','leased') AND (expires_at<={now} OR ((NOT terminal_source OR EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=o.run_id AND r.feed_finalized)) AND not_before<={now} AND (lease_expires_at IS NULL OR lease_expires_at<={now})))) OR (state IN ('delivered','content_expired') AND erased_at IS NULL AND volatile_page IS NOT NULL)) UNION SELECT run_id FROM crawl_runs WHERE NOT feed_finalized AND (feed_finalizing OR (feed_required AND status IN ('completed','failed','cancelled'))) AND ($2::uuid IS NULL OR run_id>$2) AND ($3::uuid IS NULL OR tenant_id=$3)) pending GROUP BY run_id ORDER BY run_id LIMIT $1",
+                now = sql_now::<B>()
+            )
+        )
+        .i64(i64::from(limit))
+        .opt_uuid(after.map(|run| run.0))
+        .opt_uuid(crate::tenant::current().map(|tenant| tenant.0))
+        .fetch_all_pool(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| row.uuid("run_id").map(CrawlRunId))
+            .collect()
     }
     async fn maintain(&self, run: CrawlRunId) -> Result<(), StoreError> {
+        self.scope()?;
         let (tenant, zdr) = self.privacy_scope(run).await?;
         check_tenant(tenant)?;
         let retired = self
             .retire_expired_feed_finalization_owned(run, tenant, zdr)
             .await?;
-        sqlx::query("WITH expired AS (SELECT delivery_id FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND state IN ('pending','leased') AND expires_at<=now() ORDER BY delivery_id LIMIT 1000 FOR UPDATE SKIP LOCKED) UPDATE dataset_delivery_outbox o SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL FROM expired WHERE o.delivery_id=expired.delivery_id")
-            .bind(tenant.0).bind(run.0).execute(&self.pool).await.map_err(db)?;
+        B::expire_outbox(&self.pool, tenant.0, run.0).await?;
         cleanup_delivered(self, tenant, run).await?;
         if retired {
             Err(StoreError::RetentionDenied("feed content_expired".into()))
@@ -989,15 +1326,41 @@ impl DeliveryOutboxRepo for Pg {
         }
     }
     async fn expire(&self, run: CrawlRunId, id: i64, fence: i64) -> Result<(), StoreError> {
+        self.scope()?;
         let (tenant, _) = self.privacy_scope(run).await?;
         check_tenant(tenant)?;
-        let row = sqlx::query("UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND fence=$4 AND state IN ('pending','leased','content_expired') AND expires_at<=now() RETURNING content_page,volatile_page")
-            .bind(tenant.0).bind(run.0).bind(id).bind(fence).fetch_optional(&self.pool).await.map_err(db)?.ok_or(StoreError::LeaseLost)?;
+        // Read the pages first: engines without `UPDATE .. RETURNING` cannot hand them back.
+        let mut tx = self.begin_write().await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT content_page,volatile_page FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND fence=$4 AND state IN ('pending','leased','content_expired') AND expires_at<={}{}",
+                sql_now::<B>(),
+                lock::<B>(RowLock::Update)
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .i64(id)
+        .i64(fence)
+        .fetch_optional(tx.conn())
+        .await?
+        .ok_or(StoreError::LeaseLost)?;
+        let pages = [row.opt_i64("content_page")?, row.opt_i64("volatile_page")?];
+        stmt!(
+            B,
+            "UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND fence=$4"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .i64(id)
+        .i64(fence)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await?;
         if let Some(buffer) = &self.delivery {
-            for column in ["content_page", "volatile_page"] {
-                if let Some(page) = get::<Option<i64>>(&row, column)? {
-                    buffer.ack(tenant, run, page).await?;
-                }
+            for page in pages.into_iter().flatten() {
+                buffer.ack(tenant, run, page).await?;
             }
         }
         Ok(())
@@ -1013,54 +1376,101 @@ impl DeliveryOutboxRepo for Pg {
         if lease_seconds == 0 || lease_seconds > 300 {
             return Err(conflict("invalid delivery lease duration"));
         }
+        self.scope()?;
         let (tenant, _) = self.privacy_scope(run).await?;
         check_tenant(tenant)?;
         cleanup_delivered(self, tenant, run).await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        sqlx::query("UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND state IN ('pending','leased') AND expires_at<=now()")
-            .bind(tenant.0).bind(run.0).execute(&mut *tx).await.map_err(db)?;
-        let rows = sqlx::query("WITH picked AS (SELECT delivery_id FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND expires_at>now() AND not_before<=now() AND (NOT terminal_source OR (SELECT feed_finalized FROM crawl_runs WHERE run_id=$2)) AND (state='pending' OR (state='leased' AND lease_expires_at<=now())) ORDER BY delivery_id FOR UPDATE SKIP LOCKED LIMIT $3) UPDATE dataset_delivery_outbox o SET state='leased',attempts=o.attempts+1,fence=o.fence+1,lease_owner=$4,lease_expires_at=now()+make_interval(secs=>$5) FROM picked WHERE o.delivery_id=picked.delivery_id RETURNING o.delivery_id,o.payload,o.volatile_page,o.fence,o.attempts")
-            .bind(tenant.0).bind(run.0).bind(i64::from(limit)).bind(worker.0).bind(f64::from(lease_seconds))
-            .fetch_all(&mut *tx).await.map_err(db)?;
-        let mut claims = Vec::with_capacity(rows.len());
-        for row in rows {
+        let mut tx = self.begin_write().await?;
+        stmt!(
+            B,
+            format!(
+                "UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND state IN ('pending','leased') AND expires_at<={}",
+                sql_now::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .execute(tx.conn())
+        .await?;
+        let claimed = B::claim_outbox(
+            tx.conn(),
+            OutboxClaim {
+                tenant: tenant.0,
+                run: run.0,
+                worker: worker.0,
+                limit: i64::from(limit),
+                lease_secs: f64::from(lease_seconds),
+            },
+        )
+        .await?
+        .into_iter()
+        .map(|row| Claimed::of(&row))
+        .collect::<Result<Vec<_>, _>>()?;
+        let mut claims = Vec::with_capacity(claimed.len());
+        for row in claimed {
             let batch: Result<DeliveryBatchV1, StoreError> =
-                read_payload(self, tenant, run, &row, "dataset_delivery").await;
+                row.stored.read(self, tenant, run, "dataset_delivery").await;
             match batch {
                 Ok(batch) => {
-                    let mut receipt = DurableDeliveryOutboxV1::pending(get(&row, "delivery_id")?, run, batch);
-                    receipt.fence = get(&row, "fence")?;
-                    receipt.attempts = u32::try_from(get::<i32>(&row, "attempts")?)
-                        .map_err(|_| conflict("delivery attempts overflow"))?;
+                    let mut receipt = DurableDeliveryOutboxV1::pending(row.id, run, batch);
+                    receipt.fence = row.fence;
+                    receipt.attempts = row.attempts;
                     receipt.state = DeliveryStateV1::Leased;
                     claims.push(receipt);
                 }
                 Err(StoreError::RetentionDenied(_)) => {
-                    sqlx::query("UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND delivery_id=$2")
-                        .bind(tenant.0).bind(get::<i64>(&row,"delivery_id")?).execute(&mut *tx).await.map_err(db)?;
+                    stmt!(
+                        B,
+                        "UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND delivery_id=$2"
+                    )
+                    .uuid(tenant.0)
+                    .i64(row.id)
+                    .execute(tx.conn())
+                    .await?;
                 }
                 Err(error) => return Err(error),
             }
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         cleanup_delivered(self, tenant, run).await?;
         claims.sort_by_key(|claim| claim.id);
         Ok(claims)
     }
     async fn acknowledge(&self, run: CrawlRunId, id: i64, fence: i64) -> Result<(), StoreError> {
+        self.scope()?;
         let (tenant, zdr) = self.privacy_scope(run).await?;
         check_tenant(tenant)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        crate::report_history::lock_pipeline_ack_run(&mut tx, tenant, run).await?;
-        let row = sqlx::query("SELECT state FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND fence=$4 AND (state='delivered' OR (state='leased' AND lease_expires_at>now() AND expires_at>now())) FOR UPDATE")
-            .bind(tenant.0).bind(run.0).bind(id).bind(fence).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(StoreError::LeaseLost)?;
-        sqlx::query("UPDATE dataset_delivery_outbox SET state='delivered',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND delivery_id=$2 AND fence=$3")
-            .bind(tenant.0).bind(id).bind(fence).execute(&mut *tx).await.map_err(db)?;
-        if get::<String>(&row, "state")? != "delivered" {
-            crate::report_history::acknowledge_pipeline_pg(&mut tx, tenant, run, id).await?;
+        let mut tx = self.begin_write().await?;
+        crate::report_history::lock_pipeline_ack_run::<B>(tx.conn(), tenant, run).await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT state FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND fence=$4 AND (state='delivered' OR (state='leased' AND lease_expires_at>{now} AND expires_at>{now})){}",
+                lock::<B>(RowLock::Update),
+                now = sql_now::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .i64(id)
+        .i64(fence)
+        .fetch_optional(tx.conn())
+        .await?
+        .ok_or(StoreError::LeaseLost)?;
+        stmt!(
+            B,
+            "UPDATE dataset_delivery_outbox SET state='delivered',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND delivery_id=$2 AND fence=$3"
+        )
+        .uuid(tenant.0)
+        .i64(id)
+        .i64(fence)
+        .execute(tx.conn())
+        .await?;
+        if row.text("state")? != "delivered" {
+            crate::report_history::acknowledge_pipeline::<B>(tx.conn(), tenant, run, id).await?;
         }
         // Commit the receipt before erasing content. A crash can only leave retriable cleanup.
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         if zdr {
             cleanup_delivered(self, tenant, run).await?;
         }
@@ -1073,36 +1483,81 @@ impl DeliveryOutboxRepo for Pg {
         fence: i64,
         not_before: Timestamp,
     ) -> Result<(), StoreError> {
+        self.scope()?;
         let (tenant, _) = self.privacy_scope(run).await?;
         check_tenant(tenant)?;
-        let updated = sqlx::query("UPDATE dataset_delivery_outbox SET state='pending',not_before=$5,lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND state='leased' AND fence=$4 AND lease_expires_at>now() AND expires_at>now() AND $5>=now() AND $5<=expires_at AND $5<=now()+interval '1 day'")
-            .bind(tenant.0).bind(run.0).bind(id).bind(fence).bind(not_before).execute(&self.pool).await.map_err(db)?;
-        if updated.rows_affected() != 1 {
+        let updated = stmt!(
+            B,
+            format!(
+                "UPDATE dataset_delivery_outbox SET state='pending',not_before=$5,lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND state='leased' AND fence=$4 AND lease_expires_at>{now} AND expires_at>{now} AND $5>={now} AND $5<=expires_at AND $5<=({later})",
+                now = sql_now::<B>(),
+                later = <B::Dialect as Dialect>::add_seconds(sql_now::<B>(), "86400")
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .i64(id)
+        .i64(fence)
+        .ts(not_before)
+        .execute_write(&self.pool)
+        .await?;
+        if updated != 1 {
             return Err(StoreError::LeaseLost);
         }
         Ok(())
     }
 }
 
-async fn cleanup_delivered(pg: &Pg, tenant: TenantId, run: CrawlRunId) -> Result<(), StoreError> {
-    let rows = sqlx::query("SELECT delivery_id,volatile_page,content_page FROM dataset_delivery_outbox o WHERE tenant_id=$1 AND run_id=$2 AND state IN ('delivered','content_expired') AND erased_at IS NULL AND volatile_page IS NOT NULL ORDER BY delivery_id LIMIT 1000")
-        .bind(tenant.0).bind(run.0).fetch_all(&pg.pool).await.map_err(db)?;
+async fn cleanup_delivered<B: Sql>(
+    store: &Store<B>,
+    tenant: TenantId,
+    run: CrawlRunId,
+) -> Result<(), StoreError> {
+    let rows = stmt!(
+        B,
+        "SELECT delivery_id,volatile_page,content_page FROM dataset_delivery_outbox o WHERE tenant_id=$1 AND run_id=$2 AND state IN ('delivered','content_expired') AND erased_at IS NULL AND volatile_page IS NOT NULL ORDER BY delivery_id LIMIT 1000"
+    )
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .fetch_all_pool(&store.pool)
+    .await?;
     if rows.is_empty() {
         return Ok(());
     }
-    let buffer = pg.delivery.as_ref().ok_or_else(expired)?;
+    let buffer = store.delivery.as_ref().ok_or_else(expired)?;
     for row in rows {
-        if let Some(page) = get::<Option<i64>>(&row, "content_page")? {
-            let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND content_page=$3 AND state IN ('pending','leased') AND expires_at>now())")
-                .bind(tenant.0).bind(run.0).bind(page).fetch_one(&pg.pool).await.map_err(db)?;
+        if let Some(page) = row.opt_i64("content_page")? {
+            let live = stmt!(
+                B,
+                format!(
+                    "SELECT EXISTS(SELECT 1 FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND content_page=$3 AND state IN ('pending','leased') AND expires_at>{}) AS live",
+                    sql_now::<B>()
+                )
+            )
+            .uuid(tenant.0)
+            .uuid(run.0)
+            .i64(page)
+            .fetch_one_pool(&store.pool)
+            .await?
+            .flag("live")?;
             if live {
                 continue;
             }
             buffer.ack(tenant, run, page).await?;
         }
-        buffer.ack(tenant, run, get(&row, "volatile_page")?).await?;
-        sqlx::query("UPDATE dataset_delivery_outbox SET erased_at=now() WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND state IN ('delivered','content_expired')")
-            .bind(tenant.0).bind(run.0).bind(get::<i64>(&row,"delivery_id")?).execute(&pg.pool).await.map_err(db)?;
+        buffer.ack(tenant, run, row.i64("volatile_page")?).await?;
+        stmt!(
+            B,
+            format!(
+                "UPDATE dataset_delivery_outbox SET erased_at={} WHERE tenant_id=$1 AND run_id=$2 AND delivery_id=$3 AND state IN ('delivered','content_expired')",
+                sql_now::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .i64(row.i64("delivery_id")?)
+        .execute_write(&store.pool)
+        .await?;
     }
     Ok(())
 }

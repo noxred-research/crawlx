@@ -1,6 +1,8 @@
 # CrawlX Kubernetes manifests
 
 Plain manifests mirroring the Helm chart in `deploy/helm/crawlx` for clusters that do not use Helm.
+These manifests are PostgreSQL only; MariaDB and SQLite deployments use the Helm chart
+(`storage.engine`, docs/ops/storage-backends.md).
 Apply in this order:
 
 ```sh
@@ -153,7 +155,7 @@ select these pods. Adapt the PostgreSQL selector when your database placement di
 
 Helm installs the same schedule and isolation policy by default. Configure
 `safetyAuditor.readerSecret` and `safetyAuditor.pauseSecret` for externally created secrets, each with
-key `database_url`; configure `networkPolicy.postgresSelector` for the PostgreSQL pods. Auditor isolation
+key `database_url`; configure `networkPolicy.databaseSelector` for the PostgreSQL pods. Auditor isolation
 remains enabled when general chart network policies are disabled. `safetyAuditor.enabled=false`
 disables the scheduled auditor and its policy; do not disable it in production without replacement.
 

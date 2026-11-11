@@ -8,6 +8,144 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed: terminal feed custody, cancelled-run admission and TEI validation deadline
+
+Terminal feed batches are sealed artifacts that are written after the last session or URL
+lease has ended, so finalization failed with `artifact custody producer lease required`.
+Each run row now carries a fenced finalizer claim (migration 0090). A worker claims it,
+renews it while it publishes, and releases it on failure; an expired claim is taken over
+with a higher fence, and completing the finalization ends it. The claim is the sealed
+writes' only producer authority, it survives a cancellation request or a reached
+deadline, and purge, expiry or a lost authorization record still revoke it. A worker whose
+session lease is fenced or cancelled while it admits a run now skips that lease and
+releases the run's egress proxy instead of exiting with `lease lost or fenced`. The TEI
+validator's per-document deadline is 60 seconds: every `xmllint` run first compiles the
+full pinned schema (8 to 9 seconds on an idle host), which a loaded host pushed past the
+previous 10-second cap.
+The worker's `delivery recovery deferred` warning now carries the delivery error code, so a
+receipt that stays pending (for example `provider_egress_policy_denied`) is diagnosable.
+
+
+### Fixed: extraction items and feed capability admission
+
+Unchanged item fields now survive the extractor's privacy projection, while changed
+values remain redacted. Offline extract configuration rejects positional arrays.
+Missing offline inputs name their path, and stdin dataset export refusals identify
+the one-based input row. Feed admission requires explicit compressed-byte support
+on the same worker as its destination and retention capabilities, preventing an
+unsupported compressed feed from terminating a worker.
+
+### Fixed: crawl discovery and local operator feedback
+
+Inline URL lists now enter worker discovery through the same scope and robots admission
+as feed candidates. A run deadline reached during child discovery now ends normally,
+without converting an expected stopping limit into an access-denied failure.
+JSON `--config` bodies can supply `seedUrl` without a redundant positional URL.
+Parser-helper resource refusals identify the operator limits instead of displaying
+synthetic maximum-integer budget values. Documentation clarifies dynamic Markdown
+output, seed-path scope, local resume, acquisition controls and crawl-maze scoring.
+Configuration validation now accepts the documented `CRAWLX_PARSE_MEMORY_BYTES` and
+`CRAWLX_PARSER_*` parser-helper overrides instead of rejecting them as unknown keys.
+Explicit HTTP protocol routes keep seeds, links, redirects and popups off the browser
+plane, and an enabled LLM planner without an endpoint is refused rather than ignored.
+
+### Fixed: failed session startup isolation
+
+Rejected local authorization and session-context admission now finalize the affected run
+instead of leaving executable queued work. Workers isolate run-specific configuration
+failures instead of exiting before unrelated work can proceed, and failed context startup
+releases its run-owned proxy.
+
+### Fixed: authorization setup and approval review
+
+Operator-signature verification now identifies missing API operator-key configuration.
+Approval reviewer summaries no longer mislabel a principal role as an observed element role.
+The local walkthrough names artifact custody and browser checkpoint prerequisites; authorization
+documentation explains evidence upload and immutable record amendments.
+
+### Fixed: interstitial challenge responses stored as pages
+
+A challenge page that arrives with a success status (a structural interstitial or an
+authoritative challenge header) is now refused as `content_validation_failed` (crawl) or
+`unsupported_content` (scrape) under the default `report` mismatch action too, instead of being
+written as a successful page. `report` still keeps other rejected content as compatibility
+documents.
+
+### Fixed: API deployment and operator surfaces
+
+Restricted PostgreSQL API logins can read tenant-owned state membership without exposing
+another tenant's rows. Database startup errors retain their source chains. Secret environment values and malformed bootstrap key
+arguments no longer appear in help or validation errors.
+
+Multipart parse options remain optional in OpenAPI without an invalid null default.
+Configuration parse errors identify a line and column without echoing secret-bearing
+source text. Operator help documents tenant-shared API rate limits, and in-memory API
+startup warns that queued work cannot be executed by a separate worker.
+
+### Fixed: operational report joins and browser memory
+
+Host identities now agree between DNS observations, host/frontier report rows and
+URL-attempt facts, so a returned `hostKey` filters measured history consistently;
+index and completion pipeline checkpoints now carry the attempt's host and URL keys.
+Browser RSS sums live browser trees instead of showing the last sampled browser
+forever after shutdown. Operations documentation explains separate process metrics
+listeners, sampling and profiling limits. Dropped (stale) proposals no longer advance the
+seeded decision stream, the `d1` gym ticker is seed-deterministic (`/d1/?live=1` keeps the
+wall-clock variant), and `g1-report` logs the stale-dropped proposal count after each run.
+
+### Fixed: archive replay and operator diagnostics
+
+Offline replay keeps the first representation at an equal capture timestamp, so an
+adjacent Markdown rendition cannot replace its retained HTML entry point. Archive
+downloads include a format-specific filename. Empty archive exports expose their
+omission reasons and sealed-artifact requirements; missing output directories are
+named before staging or browser launch. QA difference images require a baseline.
+Replay reports count refusals of browser-owned background requests separately
+(`browser_background_denials`), and archive QA compares only the remaining refusals,
+so a launch-dependent background host no longer fails an otherwise identical replay.
+The reference now documents retained-run export/import and the shared-process
+requirement for interactive suppression streams.
+
+### Added: storage backend foundation
+
+`crawlx-storage` opens PostgreSQL, MariaDB or SQLite from one `Database::open(url, cfg)` chosen by URL scheme, with typed startup refusals, per-engine SQL dialect fragments and concurrency strategies, and a conformance suite that runs on every engine. PostgreSQL behaviour is unchanged; MariaDB and SQLite repositories land in later changes and refuse unimplemented features with a typed error.
+
+### Added: core repositories and tenant isolation on every engine
+
+The run, page, state, edge, ledger, safety, event, checkpoint, identity-alias and model-decision repositories, and the request surface (API keys, idempotency, approvals, transitions, webhooks, authorization records, intel jobs and monitors, trusted corpus, trail and inspect reads), run on PostgreSQL, MariaDB and SQLite from one generic implementation. The Rust side replaces the PostgreSQL triggers MariaDB and SQLite lack: terminal, cancelled and purged runs and revoked authorization records revoke credential-bearing artifacts, checkpoints and session bindings in the same transaction, and the confidential content of zero-data-retention runs is projected away before it is bound, on every engine (safety evidence included).
+
+Engines without row-level security isolate tenants with an application predicate and a fail-closed request handle: a statement of the request surface runs only through `ScopedQuery`, which a resolved `Scope` (a request handle with a tenant scope) hands out, and a request without a tenant scope, also in a spawned task, is refused with `AccessDenied`. The crate's `clippy.toml` disallows the raw `sqlx` query functions and the execution methods of the unscoped statement type, the request-surface modules deny that lint, and a source gate and a mutation case (`unscoped-for-test`, a compile error in release builds) prove the guard. A MariaDB statement larger than the server's `max_allowed_packet` is refused before it is sent with a non-retryable typed error. `Database::tenant_count_excluding` counts tenants for the single-tenant SQLite refusal.
+
+### Added: MariaDB and SQLite deployments
+
+`crawlx migrate`, `crawl --database-url`, `serve`, `worker`, `inspect`, `admin`, `archive export`, `profiles`, `replay-response` and `reparse` run on PostgreSQL, MariaDB and SQLite; the engine is chosen by the scheme of the database URL (`postgres:`, `mysql:`/`mariadb:`, `sqlite:`). The worker, the API and the CLI hold one engine-neutral store handle instead of a PostgreSQL pool, and `crawlx archive export`, `profiles`, `replay-response` and `reparse` no longer refuse MariaDB and SQLite. `database.pool_max` and `database.statement_timeout_ms` reach every engine (`max_statement_time` on MariaDB; SQLite refuses a non-default timeout instead of ignoring it); `crawlx migrate` runs without the statement timeout, and commands that open a database read only the `CRAWLX_DATABASE__*` overrides, so development variables such as `CRAWLX_FAILPOINTS` never stop them. Startup refusals print as `refused: <code>: <message>`: `sqlite_second_worker`, `sqlite_not_local`, `sqlite_no_roles`, `sqlite_multi_tenant` (staging and production, unless `CRAWLX_SQLITE_ALLOW_MULTI_TENANT=1`), `sqlite_safety_auditor`, the `mariadb_*` server checks, `scheme` and `custody_missing`. The S3-compatible artifact store (`CRAWLX_S3_BUCKET`, profiles `standard`, `compatible`, `edge`, `self-hosted`) is used by `crawl --database-url`, `serve` and `worker` on every engine.
+
+Deployment: `docker/compose.mariadb.yml` and `docker/compose.sqlite.yml` overlay the PostgreSQL stack (`docker/init-compose.sh --engine mariadb|sqlite` writes the engine's secrets); the Helm chart selects the engine with `storage.engine`, renders the database network policy from `networkPolicy.databaseSelector` (renamed from `postgresSelector`) and `storage.port`, and refuses combinations an engine cannot serve (several SQLite workers or API replicas, the safety auditor off PostgreSQL). `docs/ops/storage-backends.md` lists engines, URLs, the statement timeout, refusals and the object-store profiles. The PostgreSQL-named configuration alias is gone: callers use `StoreConfig`.
+
+### Fixed: page capture expiry on SQLite and MariaDB
+
+SQLite and MariaDB: retained page captures now carry the source run's expiry. SQLite crawls failed with "page capture expiry must equal the source run expiry", and MariaDB stored captures with no expiry, so retention never purged them.
+
+### Fixed: database errors in CLI output
+
+CLI errors print the full cause chain (for example `crawl failed: ...: error returned from database: ...`) instead of only "database operation failed"; this covers `crawl`, `serve`, `worker`, `migrate`, `inspect` and `admin`, so a refusal such as `refused: sqlite_multi_tenant: ...` reaches the operator. `CRAWLX_TEST_MARIADB_URL` and `CRAWLX_SQLITE_ALLOW_MULTI_TENANT` are accepted by the configuration check like the other documented environment variables.
+
+### Fixed: restoring a retained browser profile
+
+A retained profile created by a run could not be restored by the next: its expiry kept sub-microsecond precision the catalog drops, so the authenticated header never matched the stored row, and the restoring session's own end-of-run commit then failed its binding check. A restore-and-save run now completes and advances the generation.
+
+### Fixed: replay link harvest through the isolated parser
+
+Replay parses the rendered HTML of each recorded observation through the same bounded, byte-admitted isolated parser pipeline as every other path, instead of a direct in-process link extraction. The static crawl-maze baseline now measures all 66 static-plane targets, including the five formerly unmeasured promotions.
+
+### Fixed: byte admission for retained browser captures
+
+MHTML snapshots and rendered text are metered against the shared byte budget before they are allocated and move into their artifact without a copy. An MHTML above 1 MiB is retained up to its configured limit; one over the limit or the budget is refused with the typed memory error. Redaction of retained text and response bodies is bounded and charged stage by stage.
+
+### Added: offline extract options and regex built-ins in `scrape`
+
+`crawlx extract`, `corpus` and `protocol` take `--extract-config FILE` with the request's `outputs`, `decode` and `markup`; `crawlx scrape` and `shell` accept regex built-in names (`--regex-builtin NAME`, `builtin NAME`, `{"type":"builtin"}`).
+
 ### Added: bounded lifecycle execution and immutable recipes
 
 Reviewed native extensions execute typed header, response, item, error, terminal,

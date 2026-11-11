@@ -31,7 +31,7 @@ use crawlx_core::{AuthorizationRecordId, Clock, CrawlRunId, StoreError, TenantId
 use crawlx_policy::{AuthorizationRecord, AuthzFailure, RecordScope};
 use crawlx_safety::RecordNarrowing;
 use crawlx_scheduler::HEARTBEAT_INTERVAL;
-use crawlx_storage::{memory::HeadResponseAuthorizer, Pg};
+use crawlx_storage::memory::HeadResponseAuthorizer;
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
@@ -64,25 +64,27 @@ pub trait AuthorizationSource: Send + Sync {
     async fn fetch(&self, record: AuthorizationRecordId) -> Result<Option<AuthorizationRecord>, WorkerError>;
 }
 
-/// The record store of a PostgreSQL deployment: `authorization_records`, with the lifecycle
-/// columns merged into the body ([`Pg::authorization_record_body`]).
+/// The record store of a database deployment: `authorization_records`, with the lifecycle
+/// columns merged into the body (`Store::authorization_record_body`).
 #[derive(Clone)]
-pub struct PgAuthorizationSource {
-    pg: Pg,
+pub struct DatabaseAuthorizationSource {
+    store: crate::durable::DurableStore,
 }
 
-impl PgAuthorizationSource {
-    /// A source reading through `pg`.
+impl DatabaseAuthorizationSource {
+    /// A source reading through `store`.
     #[must_use]
-    pub const fn new(pg: Pg) -> Self {
-        Self { pg }
+    pub const fn new(store: crate::durable::DurableStore) -> Self {
+        Self { store }
     }
 }
 
 #[async_trait]
-impl AuthorizationSource for PgAuthorizationSource {
+impl AuthorizationSource for DatabaseAuthorizationSource {
     async fn fetch(&self, record: AuthorizationRecordId) -> Result<Option<AuthorizationRecord>, WorkerError> {
-        let Some(body) = self.pg.authorization_record_body(record).await? else {
+        let Some(body) =
+            crate::on_store!(&self.store, store => store.authorization_record_body(record).await?)
+        else {
             return Ok(None);
         };
         serde_json::from_value(body)

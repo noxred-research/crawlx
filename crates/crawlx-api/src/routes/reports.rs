@@ -25,7 +25,8 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{FrontierEntry, FrontierStatus, PageRecord, RunEvent, RunMetadata};
 use crawlx_core::report_history::{
-    page_duration_percentile, ReportDataV1, ReportEntryV1, ReportKindV1, ReportQueryV1, StageOutcomeV1,
+    page_duration_percentile, report_host_key, ReportDataV1, ReportEntryV1, ReportKindV1, ReportQueryV1,
+    StageOutcomeV1,
 };
 use crawlx_core::{CrawlRunId, Timestamp};
 use serde::Serialize;
@@ -865,15 +866,9 @@ impl Query {
 
     fn check_ranges(&self, inclusive_time: bool) -> ApiResult<()> {
         let reversed_time =
-            self.since.zip(self.until).is_some_and(
-                |(min, max)| {
-                    if inclusive_time {
-                        min > max
-                    } else {
-                        min >= max
-                    }
-                },
-            );
+            self.since
+                .zip(self.until)
+                .is_some_and(|(min, max)| if inclusive_time { min > max } else { min >= max });
         if self.status.is_some_and(|status| !(100..=599).contains(&status))
             || self
                 .min_depth
@@ -955,9 +950,7 @@ impl Query {
 }
 
 fn host_key(url: &crawlx_core::url::CanonicalUrl) -> Option<Digest> {
-    url.url
-        .host_str()
-        .map(|host| Digest::of("crawlx/report-host/v1", host.as_bytes()))
+    url.url.host_str().map(report_host_key)
 }
 
 fn classify(row: &FrontierEntry) -> Option<Class> {

@@ -1,0 +1,58 @@
+# Lint configuration of crawlx-storage. Clippy reads the nearest `clippy.toml`, so this file
+# replaces the workspace one for this crate: its `rand` entries and `disallowed-types` list
+# mirror the workspace file (`<workspace>/clippy.toml`) entry for entry and must change
+# together with it.
+#
+# Tenant isolation: engines without row-level security stay isolated only because every
+# request-surface statement carries the tenant predicate. The request-surface modules
+# (`repos/{api,authorization,intel,inspect}.rs`, `trusted.rs`, `trail.rs`, `approvals.rs`)
+# therefore `#![deny(clippy::disallowed_methods)]` and may run a statement only through
+# `crawlx_storage::tenant::ScopedQuery`, which a resolved `Scope` (a request handle with a
+# tenant scope) hands out. `src/lib.rs` allows the lint crate-wide for operator-authority code.
+# The `Stmt` entries below are the guard: the execution methods of the unscoped statement
+# type. Raw `sqlx` query functions are not listed because test crates and operator tooling run
+# raw SQL by design; `tests/tenancy_lint.rs` forbids them in the request-surface modules.
+disallowed-methods = [
+  { path = "rand::thread_rng", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::random", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::rng", reason = "use the seeded RNG derived from crawl_seed (rand 0.10 name of thread_rng)", allow-invalid = true },
+  { path = "rand::random_range", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::random_bool", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+  { path = "rand::random_ratio", reason = "use the seeded RNG derived from crawl_seed", allow-invalid = true },
+
+  { path = "crawlx_storage::sql::Stmt::execute", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::execute_write", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::fetch_all", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::fetch_all_pool", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::fetch_one", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::fetch_one_pool", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::fetch_optional", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::fetch_optional_pool", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::fetch_optional_write", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::matched", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+  { path = "crawlx_storage::sql::Stmt::matched_write", reason = "an unscoped statement; use ScopedQuery", allow-invalid = true },
+]
+# Decision and hashing paths must be deterministic. The lint is
+# `warn` workspace-wide and `#![deny(clippy::disallowed_types)]` in crawlx-state, crawlx-graph
+# and crawlx-strategies; a lookup-only map that is never iterated may `#[allow]` it with a
+# reason on the item.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "use BTreeMap or a sorted Vec on decision and hashing paths; allow with a reason only for lookup-only maps" },
+  { path = "std::collections::HashSet", reason = "use BTreeSet or a sorted Vec on decision and hashing paths; allow with a reason only for lookup-only sets" },
+  { path = "reqwest::Client", reason = "raw HTTP clients belong only to justified transport adapter items" },
+  { path = "reqwest::ClientBuilder", reason = "raw HTTP builders belong only to justified transport adapter items" },
+  { path = "reqwest::Request", reason = "raw requests cannot cross typed transport boundaries" },
+  { path = "reqwest::RequestBuilder", reason = "raw request builders cannot cross typed transport boundaries" },
+  { path = "reqwest::Response", reason = "raw responses cannot cross typed transport boundaries" },
+  { path = "reqwest::Error", reason = "transport adapters must translate provider errors without sensitive data" },
+  { path = "wreq::Client", reason = "raw identity transports belong only to justified adapter items" },
+  { path = "wreq::ClientBuilder", reason = "raw identity transport builders belong only to justified adapter items" },
+  { path = "wreq::Request", reason = "raw identity requests cannot cross typed transport boundaries" },
+  { path = "wreq::RequestBuilder", reason = "raw identity request builders cannot cross typed transport boundaries" },
+  { path = "wreq::Response", reason = "raw identity responses cannot cross typed transport boundaries" },
+  { path = "wreq::Error", reason = "identity adapters must translate provider errors without sensitive data" },
+  { path = "hyper::Error", reason = "proxy adapters must translate raw transport failures" },
+  { path = "hyper::body::Incoming", reason = "raw proxy bodies belong only to justified transport adapters" },
+  { path = "aws_sdk_kms::Client", reason = "key-service clients belong only to justified custody adapters" },
+  { path = "aws_sdk_secretsmanager::Client", reason = "secret-provider clients belong only to justified resolution adapters" },
+]

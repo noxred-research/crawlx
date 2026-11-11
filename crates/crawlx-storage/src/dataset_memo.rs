@@ -96,48 +96,60 @@ struct ScopeRow {
     deadline: Timestamp,
     generation: i64,
 }
-async fn scope_tx(
-    pg: &Pg,
-    tx: &mut Transaction<'_, Postgres>,
+async fn scope_tx<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
 ) -> Result<ScopeRow, StoreError> {
     check_tenant(tenant)?;
-    let row = sqlx::query("SELECT tenant_id, retention_mode::text AS mode, retention_days, created_at, expires_at, purge_requested_at FROM crawl_runs WHERE run_id=$1 FOR UPDATE")
-        .bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| not_found("crawl_run", run))?;
-    if TenantId(get(&row, "tenant_id")?) != tenant {
+    let row = stmt!(
+        B,
+        format!(
+            "SELECT tenant_id, retention_mode::text AS retention_mode, retention_days, created_at, expires_at, purge_requested_at FROM crawl_runs WHERE run_id=$1{}",
+            lock::<B>(RowLock::Update)
+        )
+    )
+    .uuid(run.0)
+    .fetch_optional(conn)
+    .await?
+    .ok_or_else(|| not_found("crawl_run", run))?;
+    if TenantId(row.uuid("tenant_id")?) != tenant {
         return Err(StoreError::AccessDenied("source memo tenant mismatch".into()));
     }
-    if get::<Option<Timestamp>>(&row, "purge_requested_at")?.is_some() {
+    if row.opt_ts("purge_requested_at")?.is_some() {
         return Err(expired());
     }
-    let zdr = get::<String>(&row, "mode")? == "zdr";
-    let created: Timestamp = get(&row, "created_at")?;
+    let zdr = row.text("retention_mode")? == "zdr";
+    let created = row.ts("created_at")?;
     let duration = if zdr {
         chrono::Duration::hours(1)
     } else {
-        chrono::Duration::days(i64::from(get::<i32>(&row, "retention_days")?))
+        chrono::Duration::days(i64::from(row.i32("retention_days")?))
     };
     let deadline = created.checked_add_signed(duration).ok_or_else(expired)?;
-    let deadline =
-        get::<Option<Timestamp>>(&row, "expires_at")?.map_or(deadline, |value| value.min(deadline));
-    sqlx::query(
-        "INSERT INTO source_memo_control(tenant_id,run_id,generation) VALUES($1,$2,0) ON CONFLICT DO NOTHING",
+    let deadline = row
+        .opt_ts("expires_at")?
+        .map_or(deadline, |value| value.min(deadline));
+    stmt!(
+        B,
+        format!(
+            "INSERT INTO source_memo_control(tenant_id,run_id,generation) VALUES($1,$2,0) {}",
+            <B::Dialect as Dialect>::upsert_do_nothing(&["tenant_id", "run_id"])
+        )
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .execute(&mut **tx)
-    .await
-    .map_err(db)?;
-    let generation = sqlx::query_scalar::<_, i64>(
-        "SELECT generation FROM source_memo_control WHERE tenant_id=$1 AND run_id=$2",
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .execute(conn)
+    .await?;
+    let generation = stmt!(
+        B,
+        "SELECT generation FROM source_memo_control WHERE tenant_id=$1 AND run_id=$2"
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(db)?;
-    let _ = pg;
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .fetch_one(conn)
+    .await?
+    .i64("generation")?;
     Ok(ScopeRow {
         tenant,
         zdr,
@@ -145,8 +157,12 @@ async fn scope_tx(
         generation,
     })
 }
-async fn volatile_get(pg: &Pg, owner: &ScopeRow, run: CrawlRunId) -> Result<MemoState, StoreError> {
-    let buffer = pg.delivery.as_ref().ok_or_else(expired)?;
+async fn volatile_get<B: Backend>(
+    store: &Store<B>,
+    owner: &ScopeRow,
+    run: CrawlRunId,
+) -> Result<MemoState, StoreError> {
+    let buffer = store.delivery.as_ref().ok_or_else(expired)?;
     let Some(page) = buffer.get(owner.tenant, run, VOLATILE_PAGE).await? else {
         return Ok(MemoState::default());
     };
@@ -156,13 +172,13 @@ async fn volatile_get(pg: &Pg, owner: &ScopeRow, run: CrawlRunId) -> Result<Memo
     };
     serde_json::from_slice(&blob.bytes).map_err(|_| conflict("invalid volatile source memo"))
 }
-async fn volatile_put(
-    pg: &Pg,
+async fn volatile_put<B: Backend>(
+    store: &Store<B>,
     owner: &ScopeRow,
     run: CrawlRunId,
     state: &MemoState,
 ) -> Result<(), StoreError> {
-    let buffer = pg.delivery.as_ref().ok_or_else(expired)?;
+    let buffer = store.delivery.as_ref().ok_or_else(expired)?;
     let bytes = serde_json::to_vec(state).map_err(|_| conflict("source memo serialization failed"))?;
     let kind = format!("{VOLATILE_KIND}.{}", owner.generation);
     buffer
@@ -179,12 +195,35 @@ async fn volatile_put(
     Ok(())
 }
 
+/// Delete every row of `table` of the run past the newest `keep` (ordered by `order`,
+/// newest first, then by key). The ordering clause is a literal of this module.
+async fn evict<B: Sql>(
+    conn: &mut Conn<B>,
+    table: &str,
+    order: &str,
+    scope: &MemoScopeV1,
+    keep: i64,
+) -> Result<(), StoreError> {
+    // A derived table keeps the statement valid on every engine: MariaDB rejects `LIMIT`
+    // inside an `IN` subquery and `OFFSET` without `LIMIT`.
+    crate::sql::Stmt::<B>::dynamic(&format!(
+        "DELETE FROM {table} WHERE tenant_id=$1 AND run_id=$2 AND lookup_key IN (SELECT lookup_key FROM (SELECT lookup_key FROM {table} WHERE tenant_id=$1 AND run_id=$2 ORDER BY {order} DESC,lookup_key DESC LIMIT 9223372036854775807 OFFSET $3) evicted)"
+    ))
+    .uuid(scope.tenant.0)
+    .uuid(scope.run.0)
+    .i64(keep)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 #[async_trait]
-impl SourceMemoRepo for Pg {
+impl<B: Sql> SourceMemoRepo for Store<B> {
     async fn seen(&self, scope: &MemoScopeV1, article: Digest, now: Timestamp) -> Result<bool, StoreError> {
         let key = lookup(scope, article, false)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let owner = scope_tx(self, &mut tx, scope.tenant, scope.run).await?;
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let owner = scope_tx::<B>(tx.conn(), scope.tenant, scope.run).await?;
         if owner.deadline <= now {
             return Ok(false);
         }
@@ -194,10 +233,18 @@ impl SourceMemoRepo for Pg {
                 .seen
                 .contains_key(&key)
         } else {
-            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM source_memo_seen WHERE tenant_id=$1 AND run_id=$2 AND lookup_key=$3)")
-                .bind(scope.tenant.0).bind(scope.run.0).bind(key.to_hex()).fetch_one(&mut *tx).await.map_err(db)?
+            stmt!(
+                B,
+                "SELECT EXISTS(SELECT 1 FROM source_memo_seen WHERE tenant_id=$1 AND run_id=$2 AND lookup_key=$3) AS seen"
+            )
+            .uuid(scope.tenant.0)
+            .uuid(scope.run.0)
+            .text(&key.to_hex())
+            .fetch_one(tx.conn())
+            .await?
+            .flag("seen")?
         };
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(found)
     }
     async fn record_seen(
@@ -212,8 +259,9 @@ impl SourceMemoRepo for Pg {
             .iter()
             .map(|key| lookup(scope, *key, false))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let owner = scope_tx(self, &mut tx, scope.tenant, scope.run).await?;
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let owner = scope_tx::<B>(tx.conn(), scope.tenant, scope.run).await?;
         if owner.deadline <= now {
             return Err(expired());
         }
@@ -223,13 +271,30 @@ impl SourceMemoRepo for Pg {
             volatile_put(self, &owner, scope.run, &state).await?;
         } else {
             for key in keys {
-                sqlx::query("INSERT INTO source_memo_seen(tenant_id,run_id,lookup_key,recorded_at) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
-                    .bind(scope.tenant.0).bind(scope.run.0).bind(key.to_hex()).bind(now).execute(&mut *tx).await.map_err(db)?;
+                stmt!(
+                    B,
+                    format!(
+                        "INSERT INTO source_memo_seen(tenant_id,run_id,lookup_key,recorded_at) VALUES($1,$2,$3,$4) {}",
+                        <B::Dialect as Dialect>::upsert_do_nothing(&["tenant_id", "run_id", "lookup_key"])
+                    )
+                )
+                .uuid(scope.tenant.0)
+                .uuid(scope.run.0)
+                .text(&key.to_hex())
+                .ts(now)
+                .execute(tx.conn())
+                .await?;
             }
-            sqlx::query("DELETE FROM source_memo_seen WHERE tenant_id=$1 AND run_id=$2 AND lookup_key IN (SELECT lookup_key FROM source_memo_seen WHERE tenant_id=$1 AND run_id=$2 ORDER BY recorded_at DESC,lookup_key DESC OFFSET $3)")
-                .bind(scope.tenant.0).bind(scope.run.0).bind(i64::from(max_entries)).execute(&mut *tx).await.map_err(db)?;
+            evict::<B>(
+                tx.conn(),
+                "source_memo_seen",
+                "recorded_at",
+                scope,
+                i64::from(max_entries),
+            )
+            .await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
     async fn category(
@@ -239,8 +304,9 @@ impl SourceMemoRepo for Pg {
         now: Timestamp,
     ) -> Result<Option<CategoryCacheEntryV1>, StoreError> {
         let key = lookup(scope, representation, true)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let owner = scope_tx(self, &mut tx, scope.tenant, scope.run).await?;
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let owner = scope_tx::<B>(tx.conn(), scope.tenant, scope.run).await?;
         if owner.deadline <= now {
             return Ok(None);
         }
@@ -250,11 +316,20 @@ impl SourceMemoRepo for Pg {
                 .categories
                 .remove(&key)
         } else {
-            sqlx::query("SELECT payload FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 AND lookup_key=$3 AND expires_at>$4")
-                .bind(scope.tenant.0).bind(scope.run.0).bind(key.to_hex()).bind(now).fetch_optional(&mut *tx).await.map_err(db)?
-                .map(|row| from_json(get(&row,"payload")?)).transpose()?
+            stmt!(
+                B,
+                "SELECT payload FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 AND lookup_key=$3 AND expires_at>$4"
+            )
+            .uuid(scope.tenant.0)
+            .uuid(scope.run.0)
+            .text(&key.to_hex())
+            .ts(now)
+            .fetch_optional(tx.conn())
+            .await?
+            .map(|row| from_json(row.json("payload")?))
+            .transpose()?
         };
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(found.filter(|entry| entry.expires_at > now && entry.expires_at <= owner.deadline))
     }
     async fn cache_category(
@@ -265,12 +340,13 @@ impl SourceMemoRepo for Pg {
         now: Timestamp,
     ) -> Result<(), StoreError> {
         let key = lookup(scope, representation, true)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let owner = scope_tx(self, &mut tx, scope.tenant, scope.run).await?;
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let owner = scope_tx::<B>(tx.conn(), scope.tenant, scope.run).await?;
         category_valid(&entry, owner.zdr, owner.deadline, now)?;
         verify_content(
             self,
-            &mut tx,
+            tx.conn(),
             scope.tenant,
             scope.run,
             &entry.content,
@@ -284,58 +360,96 @@ impl SourceMemoRepo for Pg {
             state.cache(key, entry, now);
             volatile_put(self, &owner, scope.run, &state).await?;
         } else {
-            sqlx::query(
-                "DELETE FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 AND expires_at<=$3",
+            let lookup_key = key.to_hex();
+            stmt!(
+                B,
+                "DELETE FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 AND expires_at<=$3"
             )
-            .bind(scope.tenant.0)
-            .bind(scope.run.0)
-            .bind(now)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-            if let Some(old) = sqlx::query_scalar::<_, Timestamp>("SELECT expires_at FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 AND lookup_key=$3")
-                .bind(scope.tenant.0).bind(scope.run.0).bind(key.to_hex()).fetch_optional(&mut *tx).await.map_err(db)? {
-                entry.expires_at = entry.expires_at.min(old);
+            .uuid(scope.tenant.0)
+            .uuid(scope.run.0)
+            .ts(now)
+            .execute(tx.conn())
+            .await?;
+            if let Some(old) = stmt!(
+                B,
+                "SELECT expires_at FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 AND lookup_key=$3"
+            )
+            .uuid(scope.tenant.0)
+            .uuid(scope.run.0)
+            .text(&lookup_key)
+            .fetch_optional(tx.conn())
+            .await?
+            {
+                entry.expires_at = entry.expires_at.min(old.ts("expires_at")?);
             }
-            sqlx::query("INSERT INTO source_category_cache(tenant_id,run_id,lookup_key,payload,expires_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,run_id,lookup_key) DO UPDATE SET payload=EXCLUDED.payload,expires_at=EXCLUDED.expires_at")
-                .bind(scope.tenant.0).bind(scope.run.0).bind(key.to_hex()).bind(serde_json::to_value(&entry).map_err(|_| conflict("source category serialization failed"))?).bind(entry.expires_at).execute(&mut *tx).await.map_err(db)?;
-            sqlx::query("DELETE FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 AND lookup_key IN (SELECT lookup_key FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2 ORDER BY expires_at DESC,lookup_key DESC OFFSET $3)")
-                .bind(scope.tenant.0).bind(scope.run.0).bind(i64::try_from(MAX_CATEGORY_CACHE_ENTRIES).map_err(|_| conflict("category capacity overflow"))?).execute(&mut *tx).await.map_err(db)?;
+            let payload =
+                serde_json::to_value(&entry).map_err(|_| conflict("source category serialization failed"))?;
+            stmt!(
+                B,
+                format!(
+                    "INSERT INTO source_category_cache(tenant_id,run_id,lookup_key,payload,expires_at) VALUES($1,$2,$3,$4,$5) {}",
+                    <B::Dialect as Dialect>::upsert_update(
+                        &["tenant_id", "run_id", "lookup_key"],
+                        &["payload", "expires_at"],
+                        None
+                    )
+                )
+            )
+            .uuid(scope.tenant.0)
+            .uuid(scope.run.0)
+            .text(&lookup_key)
+            .json(&payload)
+            .ts(entry.expires_at)
+            .execute(tx.conn())
+            .await?;
+            evict::<B>(
+                tx.conn(),
+                "source_category_cache",
+                "expires_at",
+                scope,
+                i64::try_from(MAX_CATEGORY_CACHE_ENTRIES)
+                    .map_err(|_| conflict("category capacity overflow"))?,
+            )
+            .await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
     async fn reset(&self, tenant: TenantId, run: CrawlRunId) -> Result<(), StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let owner = scope_tx(self, &mut tx, tenant, run).await?;
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let owner = scope_tx::<B>(tx.conn(), tenant, run).await?;
         let generation = owner
             .generation
             .checked_add(1)
             .ok_or_else(|| conflict("source memo reset generation exhausted"))?;
-        sqlx::query("UPDATE source_memo_control SET generation=$3 WHERE tenant_id=$1 AND run_id=$2")
-            .bind(tenant.0)
-            .bind(run.0)
-            .bind(generation)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        stmt!(
+            B,
+            "UPDATE source_memo_control SET generation=$3 WHERE tenant_id=$1 AND run_id=$2"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .i64(generation)
+        .execute(tx.conn())
+        .await?;
         // The generation is operational metadata only. A delayed volatile write to the old
         // rendition cannot become visible after this transaction commits, even if cancelled.
         if !owner.zdr {
-            sqlx::query("DELETE FROM source_memo_seen WHERE tenant_id=$1 AND run_id=$2")
-                .bind(tenant.0)
-                .bind(run.0)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-            sqlx::query("DELETE FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2")
-                .bind(tenant.0)
-                .bind(run.0)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+            stmt!(B, "DELETE FROM source_memo_seen WHERE tenant_id=$1 AND run_id=$2")
+                .uuid(tenant.0)
+                .uuid(run.0)
+                .execute(tx.conn())
+                .await?;
+            stmt!(
+                B,
+                "DELETE FROM source_category_cache WHERE tenant_id=$1 AND run_id=$2"
+            )
+            .uuid(tenant.0)
+            .uuid(run.0)
+            .execute(tx.conn())
+            .await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(())
     }
 }

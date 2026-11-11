@@ -9,7 +9,7 @@ use crawlx_storage::artifacts::{ArtifactReaper, FsArtifactStore, FsBlobs, Object
 use crawlx_storage::checkpoint_crypto::{CheckpointContext, CheckpointKeys, MemoryCheckpointKeys};
 use crawlx_storage::retention::{append_audit, RetentionSweeper};
 use crawlx_storage::testkit::{crawl_run, create_crawl, sessions};
-use crawlx_storage::{Pg, PgConfig};
+use crawlx_storage::{Pg, StoreConfig};
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
@@ -20,9 +20,9 @@ async fn migration_0037_revokes_only_legacy_checkpoint_uses_and_sweeps_their_obj
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("checkpoint_cutover_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

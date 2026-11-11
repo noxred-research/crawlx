@@ -390,8 +390,8 @@ pub struct CrawlArgs {
     /// Navigate and observe only; send no click, type or key action.
     #[arg(long)]
     pub observe_only: bool,
-    /// Persist to PostgreSQL instead of memory (needed for `crawlx inspect`).
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    /// Persist to the database (`postgres:`, `mariadb:` or `sqlite:`) instead of memory (needed for `crawlx inspect`).
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     pub database_url: Option<String>,
     /// Role credential: `name=env://VAR` (value `user:password`). Repeat for several roles.
     #[arg(long = "role", value_name = "NAME=REF")]
@@ -1059,19 +1059,22 @@ impl Resolved {
         Ok(Self { args, layer, request })
     }
 
-    /// The `seedUrl` of the request file, if it has one.
+    /// The `seedUrl` of the request file, else of the `--config` body, if either has one.
     fn request_seed(&self) -> anyhow::Result<Option<Url>> {
-        let Some(text) = self
-            .request
-            .as_ref()
-            .and_then(|r| r.get("seedUrl"))
-            .and_then(Value::as_str)
-        else {
+        let found = [(&self.request, "--request"), (&self.layer, "--config")]
+            .into_iter()
+            .find_map(|(body, origin)| {
+                body.as_ref()
+                    .and_then(|b| b.get("seedUrl"))
+                    .and_then(Value::as_str)
+                    .map(|text| (text, origin))
+            });
+        let Some((text, origin)) = found else {
             return Ok(None);
         };
         Url::parse(text)
             .map(Some)
-            .with_context(|| format!("--request: invalid seedUrl {text:?}"))
+            .with_context(|| format!("{origin}: invalid seedUrl {text:?}"))
     }
 
     /// The seeds of the run: flags, list files, standard input (`-`), else the request's.

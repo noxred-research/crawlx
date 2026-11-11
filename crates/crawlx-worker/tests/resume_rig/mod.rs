@@ -25,7 +25,7 @@ use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;
 use crawlx_scheduler::{Reaper, ReaperConfig, RunPlanner};
 use crawlx_storage::checkpoint_crypto::{CheckpointKeys, MemoryCheckpointKeys};
-use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use crawlx_worker::lease_loop::run_with;
 use crawlx_worker::{EgressConfig, Stores, WorkerConfig};
 use std::collections::BTreeMap;
@@ -274,7 +274,11 @@ impl Rig {
                     .await
                     .unwrap()
                     .with_index(Arc::new(pg.clone()));
-                let mut stores = Stores::over_pg(pg, Arc::new(artifacts), self.tenant);
+                let mut stores = Stores::over_durable(
+                    crawlx_worker::DurableStore::Postgres(pg),
+                    Arc::new(artifacts),
+                    self.tenant,
+                );
                 stores.checkpoint_keys = Arc::clone(checkpoint_keys);
                 stores
             }
@@ -309,11 +313,11 @@ impl Rig {
     }
 }
 
-fn pg_config(schema: &str) -> PgConfig {
-    PgConfig {
+fn pg_config(schema: &str) -> StoreConfig {
+    StoreConfig {
         schema: Some(schema.to_owned()),
         url_batch_ttl: URL_TTL,
-        ..PgConfig::default()
+        ..StoreConfig::default()
     }
 }
 

@@ -26,6 +26,14 @@ pub(crate) struct MemoryDelivery {
     pub(crate) source_request_id: Option<i64>,
     pub(crate) source_action_id: Option<ActionId>,
 }
+/// Claimed terminal feed finalizer of one run; the in-memory twin of the PostgreSQL run-row claim.
+#[derive(Clone, Copy)]
+pub(crate) struct MemoryFinalizer {
+    pub(crate) id: uuid::Uuid,
+    pub(crate) owner: crawlx_core::WorkerId,
+    pub(crate) fence: i64,
+    pub(crate) expires_at: Timestamp,
+}
 #[derive(Clone, Copy, Default)]
 struct KvUsage {
     keys: u64,
@@ -44,6 +52,7 @@ pub(crate) struct DatasetState {
     pub(crate) feed_finalizing: std::collections::BTreeSet<CrawlRunId>,
     pub(crate) feed_finalized: BTreeMap<CrawlRunId, FeedFinalizationOutcomeV1>,
     pub(crate) feed_reasons: BTreeMap<CrawlRunId, crawlx_core::counters::TerminalReason>,
+    pub(crate) feed_finalizers: BTreeMap<CrawlRunId, MemoryFinalizer>,
     delivery_keys: BTreeMap<(CrawlRunId, String, String), i64>,
     next_delivery: i64,
 }
@@ -70,6 +79,7 @@ impl DatasetState {
         self.memo.remove(&run);
         self.feed_finalizing.remove(&run);
         self.feed_finalized.remove(&run);
+        self.feed_finalizers.remove(&run);
         self.feed_reasons.remove(&run);
         self.items.retain(|(owner, _), _| *owner != run);
         self.kv.retain(|(owner, _, _), _| *owner != run);

@@ -14,7 +14,7 @@ use crawlx_policy::testkit::sample_record;
 use crawlx_policy::{AuthorizationRecord, AuthzFailure, OwnershipProof};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
 use crawlx_storage::{
-    ApiKeyRow, AuthorizationInsert, AuthorizationRow, NewAuthorization, Pg, PgApiRepo, PgConfig,
+    ApiKeyRow, AuthorizationInsert, AuthorizationRow, NewAuthorization, Pg, PgApiRepo, StoreConfig,
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -28,10 +28,10 @@ async fn setup() -> Option<Env> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_{}", CrawlRunId::new().0.simple())),
             max_connections: 4,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

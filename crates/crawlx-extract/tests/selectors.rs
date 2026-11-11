@@ -159,3 +159,34 @@ fn explicit_null_default_differs_from_absent_default_and_survives_roundtrip() {
     assert!(output.item.get("absent").is_none());
     assert!(output.valid);
 }
+
+#[test]
+fn item_fields_survive_a_projection_that_leaves_them_unchanged() {
+    let policy: ExtractionPolicyV1 = serde_json::from_value(json!({"itemLoader":{"version":1,"fields":[
+        {"name":"title","selectors":[{"kind":"css","expression":"h1"}],"extraction":{"kind":"text"},"cardinality":"one","required":true},
+        {"name":"note","selectors":[{"kind":"css","expression":"p.note"}],"extraction":{"kind":"text"},"cardinality":"one"}
+    ]}}))
+    .unwrap();
+    let source = "<article><h1>Public title</h1><p>A paragraph with enough useful text to count as the main article block.</p>\
+                  <p class='note'>token_ABC123 stays private</p></article>";
+    let doc = Extractor::extract_bytes_with_projection(
+        source.as_bytes(),
+        &Url::parse("https://fixture.test/base").unwrap(),
+        &ExtractOptions {
+            content: Some(policy),
+            ..ExtractOptions::default()
+        },
+        // The extractor's projection answers `None` for text it leaves unchanged.
+        &|value| {
+            value
+                .contains("token_ABC123")
+                .then(|| value.replace("token_ABC123", "[REDACTED]"))
+        },
+    )
+    .unwrap();
+    let item = doc.item.unwrap();
+    assert!(item.valid, "{item:?}");
+    assert_eq!(item.item["title"], "Public title");
+    assert_eq!(item.item["note"], "[REDACTED] stays private");
+    assert!(item.fields.iter().all(|field| field.name != "redacted_field_0"));
+}

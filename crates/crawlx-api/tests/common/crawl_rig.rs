@@ -102,6 +102,27 @@ impl RequestCommitRepo for FailingPageCommits {
     ) -> Result<(), StoreError> {
         self.inner.finalize_run_feeds(run, status, reason, batches).await
     }
+    async fn claim_feed_finalizer(
+        &self,
+        run: crawlx_core::CrawlRunId,
+        worker: crawlx_core::WorkerId,
+        ttl: std::time::Duration,
+    ) -> Result<crawlx_core::custody::CustodyLease, StoreError> {
+        self.inner.claim_feed_finalizer(run, worker, ttl).await
+    }
+    async fn renew_feed_finalizer(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        self.inner.renew_feed_finalizer(lease, ttl).await
+    }
+    async fn release_feed_finalizer(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+    ) -> Result<(), StoreError> {
+        self.inner.release_feed_finalizer(lease).await
+    }
     async fn lease_observed_fenced(
         &self,
         lease: &crawlx_core::custody::CustodyLease,

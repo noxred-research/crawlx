@@ -13,7 +13,7 @@ use crawlx_core::traffic::TrustLane;
 use crawlx_core::{Clock, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::ArtifactIndex;
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use std::sync::Arc;
 
 fn fixture(tenant: TenantId, clock: &dyn Clock) -> CrawlRun {
@@ -262,10 +262,10 @@ async fn postgres_generations_survive_projection_replacement_and_reject_uncommit
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("page_history_{}", uuid::Uuid::now_v7().simple())),
             max_connections: 1,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -732,10 +732,10 @@ async fn postgres_observed_epochs_are_fenced_bounded_and_keep_first_canonical() 
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("observed_history_{}", uuid::Uuid::now_v7().simple())),
             max_connections: 4,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -976,7 +976,7 @@ where
             vec![envelope.clone()]
         ))
         .await,
-        Err(StoreError::AccessDenied(_))
+        Err(StoreError::RunDeadlineReached)
     ));
     assert!(matches!(
         repo.append_observed_fenced(ObservedRequestV1::new(
@@ -1133,10 +1133,10 @@ async fn postgres_observed_receipts_survive_drain_and_late_publication_without_n
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("observed_receipts_{}", uuid::Uuid::now_v7().simple())),
             max_connections: 1,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

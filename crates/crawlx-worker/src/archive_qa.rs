@@ -505,16 +505,24 @@ pub fn compare(
         }
         .into(),
     });
+    // Chromium starts background requests of its own (component updates, sign-in checks); their
+    // number and hosts vary between launches. They are refused and reported, but only refusals
+    // the archived page caused can differ between two replays of one archive.
+    let page_denials = |report: &ReplayReport| {
+        report
+            .denied_requests
+            .saturating_sub(report.browser_background_denials)
+    };
     comparisons.push(QaComparison {
         subject: "denied_requests".into(),
-        passed: baseline.map(|b| actual.denied_requests == b.denied_requests),
+        passed: baseline.map(|b| page_denials(actual) == page_denials(b)),
         distance: None,
         reason: baseline.map_or_else(
             || "baseline_absent".into(),
             |b| {
                 format!(
-            "actual_proxy_refusals actual={} baseline={}; actual_evidence={:?}; baseline_evidence={:?}",
-            actual.denied_requests, b.denied_requests, refusal_evidence(actual), refusal_evidence(b))
+            "actual_proxy_refusals actual={} baseline={}; browser_background actual={} baseline={}; actual_evidence={:?}; baseline_evidence={:?}",
+            page_denials(actual), page_denials(b), actual.browser_background_denials, b.browser_background_denials, refusal_evidence(actual), refusal_evidence(b))
             },
         ),
     });
@@ -650,6 +658,7 @@ mod tests {
             }],
             resources: Vec::new(),
             denied_requests: 0,
+            browser_background_denials: 0,
             denial_evidence: Vec::new(),
             limitations: Vec::new(),
         }
@@ -756,5 +765,34 @@ mod tests {
         assert_eq!(pixel_distance(&encode(20), &encode(20)).unwrap(), 0.0);
         assert!(pixel_distance(&encode(20), &encode(255)).unwrap() > 0.0);
         assert!(pixels(b"not a PNG").is_err());
+    }
+
+    #[test]
+    fn browser_background_refusals_do_not_fail_the_denial_comparison_but_page_refusals_do() {
+        let baseline = image_report(1, [1, 2, 3, 255]);
+        let denial = |report: &ReplayReport| {
+            compare(report, Some(&baseline), 0.0, 0.0)
+                .unwrap()
+                .comparisons
+                .into_iter()
+                .find(|c| c.subject == "denied_requests")
+                .unwrap()
+        };
+        let mut actual = image_report(1, [1, 2, 3, 255]);
+        assert_eq!(denial(&actual).passed, Some(true));
+
+        // two launch-dependent background refusals the baseline never saw
+        actual.denied_requests = 2;
+        actual.browser_background_denials = 2;
+        let background = denial(&actual);
+        assert_eq!(background.passed, Some(true), "{}", background.reason);
+        assert!(background
+            .reason
+            .contains("browser_background actual=2 baseline=0"));
+
+        // one refusal the page caused is still a difference
+        actual.denied_requests = 3;
+        let page = denial(&actual);
+        assert_eq!(page.passed, Some(false), "{}", page.reason);
     }
 }

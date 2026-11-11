@@ -1069,9 +1069,14 @@ impl ScrapeEngine {
                 .with_acquisition(acq.metadata),
             ));
         }
-        if self.acquisition.as_ref().is_some_and(|policy| {
-            policy.validation.on_content_mismatch == crawlx_core::acquisition::ContentMismatchActionV1::Fail
-        }) && !acq.metadata.validation.content_accepted
+        let mismatch_action = self
+            .acquisition
+            .as_ref()
+            .map_or_else(Default::default, |policy| policy.validation.on_content_mismatch);
+        if acq
+            .metadata
+            .validation
+            .refuses_content(mismatch_action, Some(acq.status))
         {
             return Ok(Outcome::Failed(
                 ScrapeFailure::new(

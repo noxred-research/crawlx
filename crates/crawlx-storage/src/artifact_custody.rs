@@ -17,10 +17,12 @@
 use crate::artifact_crypto::{ArtifactContext, ArtifactCryptoError, ArtifactDecryption};
 use crate::artifact_key_crypto::{ArtifactKeyError, ArtifactKeys};
 use crate::artifacts::{ArtifactRow, DIGEST_DOMAIN};
+use crate::backend::PgBackend;
 use crate::custody::{
-    encrypted_object_key, ArtifactKeyCustody, ArtifactKeyEnvelope, CiphertextIdentity, PgSecretAuthority,
+    encrypted_object_key, ArtifactKeyCustody, ArtifactKeyEnvelope, CiphertextIdentity, SecretAuthority,
     CIPHERTEXT_DIGEST_DOMAIN, PUBLISH_STALE, REGISTER_STALE, SNAPSHOT_PENDING,
 };
+use crate::sql::Sql;
 use async_trait::async_trait;
 use bytes::Bytes;
 use crawlx_core::archive_catalog::ArchiveCustodyV1;
@@ -189,27 +191,30 @@ fn backoff(round: usize) -> tokio::time::Sleep {
     tokio::time::sleep(Duration::from_millis(millis.min(500)))
 }
 
-/// Custody over PostgreSQL fencing and the shared volatile Redis registry.
+/// Custody over database fencing and the shared volatile Redis registry.
 ///
-/// Clones share PostgreSQL and Redis, never local secrets. Two instances (two
+/// Clones share the database and Redis, never local secrets. Two instances (two
 /// workers) observe each other's registrations through the shared authority.
 #[derive(Clone)]
-pub struct PgArtifactCustody {
-    authority: PgSecretAuthority,
+pub struct DbArtifactCustody<B: Sql> {
+    authority: SecretAuthority<B>,
 }
 
-impl fmt::Debug for PgArtifactCustody {
+/// [`DbArtifactCustody`] over PostgreSQL.
+pub type PgArtifactCustody = DbArtifactCustody<PgBackend>;
+
+impl<B: Sql> fmt::Debug for DbArtifactCustody<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PgArtifactCustody").finish_non_exhaustive()
+        f.debug_struct("DbArtifactCustody").finish_non_exhaustive()
     }
 }
 
-impl PgArtifactCustody {
-    /// Custody over an opened authority. [`PgSecretAuthority::finalized_reads`] suffices
+impl<B: Sql> DbArtifactCustody<B> {
+    /// Custody over an opened authority. [`SecretAuthority::finalized_reads`] suffices
     /// for read-only consumers such as the API: snapshot, register and publish then
     /// report `Unavailable`, while [`ArtifactCustody::custody`] works.
     #[must_use]
-    pub fn new(authority: PgSecretAuthority) -> Self {
+    pub fn new(authority: SecretAuthority<B>) -> Self {
         Self { authority }
     }
 
@@ -229,7 +234,7 @@ impl PgArtifactCustody {
 }
 
 #[async_trait]
-impl ArtifactCustody for PgArtifactCustody {
+impl<B: Sql> ArtifactCustody for DbArtifactCustody<B> {
     async fn snapshot(&self, lease: &CustodyLease) -> Result<RunSecretSnapshot, StoreError> {
         self.current(lease).await
     }
@@ -339,7 +344,7 @@ struct LocalState {
 /// Single-process custody for memory/CLI mode.
 ///
 /// Keeps one registry per run with a monotonic epoch and the same epoch-checked
-/// publication as [`PgArtifactCustody`] within one process. Nothing is durable:
+/// publication as [`DbArtifactCustody`] within one process. Nothing is durable:
 /// [`ArtifactKeys::is_durable`] providers do not make these rows survive a restart.
 /// The lock guards plain data and is never held across an await point.
 #[derive(Default)]

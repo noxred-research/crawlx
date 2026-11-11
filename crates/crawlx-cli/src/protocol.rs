@@ -1,5 +1,6 @@
 //! Operator-only local corpus extraction. No HTTP API can construct this root capability.
 
+use crate::extract::OfflineExtractConfig;
 use anyhow::{bail, Context};
 use clap::Args;
 use crawlx_core::extraction::ExtractionPolicyV1;
@@ -38,6 +39,9 @@ pub struct CorpusArgs {
     /// Whole corpus monotonic deadline, including parsing.
     #[arg(long, default_value_t = 30_000, value_parser = clap::value_parser!(u32).range(1..=90_000))]
     pub timeout_ms: u32,
+    /// JSON file, at most 64 KiB, with the `extract` request options `outputs`, `decode` and `markup`.
+    #[arg(long, value_name = "CONFIG")]
+    pub extract_config: Option<PathBuf>,
 }
 
 /// Acquire through safe root-relative descriptors and reuse native extraction/JSON serialization.
@@ -48,6 +52,13 @@ pub async fn run(args: CorpusArgs, out: &mut dyn Write) -> anyhow::Result<ExitCo
     let url = FileCorpus::parse_url(&args.url)?;
     let corpus = FileCorpus::open(&args.root, usize::from(args.max_children))?;
     let cancel = CancellationToken::new();
+    let mut options = ExtractOptions {
+        content: Some(ExtractionPolicyV1::default()),
+        ..ExtractOptions::default()
+    };
+    OfflineExtractConfig::load(args.extract_config.as_deref(), &cancel)
+        .await?
+        .apply(&mut options);
     let deadline = tokio::time::Instant::now() + Duration::from_millis(u64::from(args.timeout_ms));
     let pool = CpuPool::with_permits(NonZeroUsize::MIN);
     let mut pending = VecDeque::from([url]);
@@ -86,10 +97,7 @@ pub async fn run(args: CorpusArgs, out: &mut dyn Write) -> anyhow::Result<ExitCo
         if url.path().ends_with('/') && resource.body.is_empty() {
             continue;
         }
-        let options = ExtractOptions {
-            content: Some(ExtractionPolicyV1::default()),
-            ..ExtractOptions::default()
-        };
+        let options = options.clone();
         let task = pool.run(move || {
             let scrubbed =
                 crawlx_telemetry::Redactor::new().scrub_bytes(&resource.body, std::iter::empty::<&str>());
@@ -139,6 +147,9 @@ pub struct ProtocolArgs {
     /// Whole invocation deadline.
     #[arg(long, default_value_t = 30_000, value_parser = clap::value_parser!(u32).range(1..=90_000))]
     pub timeout_ms: u32,
+    /// JSON file, at most 64 KiB, with the `extract` request options `outputs`, `decode` and `markup`.
+    #[arg(long, value_name = "CONFIG")]
+    pub extract_config: Option<PathBuf>,
 }
 
 /// Acquire real protocol bytes and extract locally, with diagnostic provenance and no retained provider artifacts.
@@ -155,6 +166,8 @@ pub async fn acquire(args: ProtocolArgs, out: &mut dyn Write) -> anyhow::Result<
         out.write_all(b"\n")?;
         return Ok(ExitCode::SUCCESS);
     }
+    let extract_config =
+        OfflineExtractConfig::load(args.extract_config.as_deref(), &CancellationToken::new()).await?;
     let url = args.url.context("protocol target required")?;
     let delegate = args.delegate.context("protocol delegate required")?;
     let attempt = args.attempt.context("protocol attempt required")?;
@@ -215,13 +228,14 @@ pub async fn acquire(args: ProtocolArgs, out: &mut dyn Write) -> anyhow::Result<
     let mut context = crawlx_core::acquisition::ValidationContextV1::default();
     context.target_status = resource.target_status;
     context.transport_succeeded = true;
-    let options = ExtractOptions {
+    let mut options = ExtractOptions {
         status: resource.target_status.unwrap_or(0),
         content_type: resource.media_type,
         content: Some(ExtractionPolicyV1::default()),
         acquisition_validation: Some(context),
         ..ExtractOptions::default()
     };
+    extract_config.apply(&mut options);
     let pool = CpuPool::with_permits(NonZeroUsize::MIN);
     let task = pool.run(move || {
         let scrubbed =

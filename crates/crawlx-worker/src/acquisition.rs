@@ -50,8 +50,14 @@ pub(crate) fn fetch_options(fetch: &crawlx_core::config::Fetch) -> FetchOptions 
     options
 }
 
-/// Compile extract-owned option contracts before any network request is dispatched.
-pub(crate) fn configure_extract(
+/// Compile extract-owned option contracts (`outputs`, `decode`, `markup`) into `options`.
+///
+/// Shared by every run that extracts: online scrape and crawl, and offline `crawlx extract`.
+///
+/// # Errors
+/// [`WorkerError::Config`](crate::error::WorkerError::Config) naming the member that does not
+/// parse or, for `outputs`, does not validate.
+pub fn configure_extract(
     options: &mut ExtractOptions,
     extract: &crawlx_core::config::Extract,
 ) -> Result<(), crate::error::WorkerError> {
@@ -1304,8 +1310,8 @@ pub(crate) async fn admit_runtime(
         unavailable |= !browser.available;
         capabilities.push(browser);
     }
-    let registry: Arc<dyn WorkerRegistry> = if let Some(pg) = &rc.stores.pg {
-        Arc::new(pg.clone())
+    let registry: Arc<dyn WorkerRegistry> = if let Some(durable) = &rc.stores.durable {
+        durable.worker_registry()
     } else if let Some(memory) = &rc.stores.memory {
         memory.clone()
     } else {

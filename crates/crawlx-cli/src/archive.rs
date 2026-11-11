@@ -16,6 +16,8 @@ use crawlx_storage::archive::{
     cdxj, retained, rollover, staging::StagedFile, wacz, warc, ArchiveError, Limits,
 };
 use crawlx_storage::artifacts::AnonymousArtifactFile;
+use crawlx_storage::sql::Sql;
+use crawlx_storage::Store;
 use crawlx_telemetry::redact::Redactor;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -60,7 +62,7 @@ pub enum FormatArg {
 /// Arguments for an offline recorded-run export.
 #[derive(Args, Debug)]
 pub struct ArchiveExportArgs {
-    /// Real PostgreSQL run UUID or local report.json/directory from crawl --output.
+    /// Recorded run UUID in the database or local report.json/directory from crawl --output.
     pub source: String,
     /// Required owning tenant UUID; checked against the run and every artifact index row.
     #[arg(long)]
@@ -74,11 +76,11 @@ pub struct ArchiveExportArgs {
     /// Refuse incomplete source capture before staging. Current page-only exports cannot satisfy this.
     #[arg(long)]
     pub require_complete: bool,
-    /// Filesystem artifact root; defaults next to report.json or ./crawlx-artifacts for PostgreSQL.
+    /// Filesystem artifact root; defaults next to report.json or ./crawlx-artifacts for a database run.
     #[arg(long)]
     pub artifacts_dir: Option<PathBuf>,
-    /// PostgreSQL metadata connection only; no live content requests occur.
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    /// Database metadata connection only; no live content requests occur.
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     pub database_url: Option<String>,
     /// Maximum encoded output bytes, at most 1 GiB.
     #[arg(long, default_value_t = 1_073_741_824)]
@@ -241,61 +243,71 @@ fn retention_gate(retention: &Retention, created: Timestamp, now: Timestamp) -> 
     Ok(())
 }
 
+/// Source of a recorded run read from the database of any engine.
+async fn stored_source<B: Sql>(
+    pg: &Store<B>,
+    durable: &crawlx_worker::DurableStore,
+    args: &ArchiveExportArgs,
+    run: CrawlRunId,
+    limits: Limits,
+    now: Timestamp,
+) -> anyhow::Result<Source> {
+    let stored = crawlx_storage::tenant::scope(args.tenant, RunRepo::get(pg, run)).await?;
+    if stored.tenant != args.tenant {
+        bail!("archive tenant does not own source run");
+    }
+    retention_gate(&stored.config.retention, stored.created_at, now)?;
+    let mut pages = Vec::new();
+    let mut after = 0i64;
+    loop {
+        let batch =
+            crawlx_storage::tenant::scope(args.tenant, PageRepo::committed_page_keyset(pg, run, after, 64))
+                .await?;
+        let Some(last) = batch.last() else {
+            break;
+        };
+        let next = last.frontier_id;
+        if next <= after {
+            bail!("archive page keyset did not advance");
+        }
+        if pages.len().saturating_add(batch.len()) as u64 > u64::from(limits.records.saturating_sub(1)) {
+            bail!("archive page count exceeds bound");
+        }
+        pages.extend(batch);
+        after = next;
+    }
+    let traffic = crawlx_storage::tenant::scope(
+        args.tenant,
+        crawlx_storage::archive::recorded::traffic(pg, args.tenant, run, limits.records),
+    )
+    .await?;
+    // Sealed artifacts decrypt through the catalog when a key provider is set.
+    let custody =
+        match crawlx_worker::config::artifact_keys_from_lookup(&|name| std::env::var(name).ok()).await? {
+            Some(keys) => {
+                let (custody, _) =
+                    crawlx_worker::config::read_only_custody_from_lookup(durable, &|_| None).await?;
+                Some((custody, keys))
+            }
+            None => None,
+        };
+    Ok(Source {
+        run,
+        pages,
+        traffic,
+        created: stored.created_at,
+        custody,
+        artifacts: args
+            .artifacts_dir
+            .clone()
+            .unwrap_or_else(|| "./crawlx-artifacts".into()),
+    })
+}
+
 async fn source(args: &ArchiveExportArgs, limits: Limits, now: Timestamp) -> anyhow::Result<Source> {
     if let Ok(run) = args.source.parse::<CrawlRunId>() {
-        let pg = crate::inspect::connect(args.database_url.as_deref()).await?;
-        let stored = crawlx_storage::tenant::scope(args.tenant, RunRepo::get(&pg, run)).await?;
-        if stored.tenant != args.tenant {
-            bail!("archive tenant does not own source run");
-        }
-        retention_gate(&stored.config.retention, stored.created_at, now)?;
-        let mut pages = Vec::new();
-        let mut after = 0i64;
-        loop {
-            let batch = crawlx_storage::tenant::scope(
-                args.tenant,
-                PageRepo::committed_page_keyset(&pg, run, after, 64),
-            )
-            .await?;
-            let Some(last) = batch.last() else {
-                break;
-            };
-            let next = last.frontier_id;
-            if next <= after {
-                bail!("archive page keyset did not advance");
-            }
-            if pages.len().saturating_add(batch.len()) as u64 > u64::from(limits.records.saturating_sub(1)) {
-                bail!("archive page count exceeds bound");
-            }
-            pages.extend(batch);
-            after = next;
-        }
-        let traffic = crawlx_storage::tenant::scope(
-            args.tenant,
-            crawlx_storage::archive::recorded::traffic(&pg, args.tenant, run, limits.records),
-        )
-        .await?;
-        // Sealed artifacts decrypt through the catalog when a key provider is set.
-        let custody =
-            match crawlx_worker::config::artifact_keys_from_lookup(&|name| std::env::var(name).ok()).await? {
-                Some(keys) => {
-                    let (custody, _) =
-                        crawlx_worker::config::read_only_custody_from_lookup(&pg, &|_| None).await?;
-                    Some((custody, keys))
-                }
-                None => None,
-            };
-        return Ok(Source {
-            run,
-            pages,
-            traffic,
-            created: stored.created_at,
-            custody,
-            artifacts: args
-                .artifacts_dir
-                .clone()
-                .unwrap_or_else(|| "./crawlx-artifacts".into()),
-        });
+        let durable = crate::inspect::connect(args.database_url.as_deref()).await?;
+        return crawlx_worker::on_store!(&durable, store => stored_source(store, &durable, args, run, limits, now).await);
     }
     let (report_path, bytes) = retained::read_local_report(Path::new(&args.source))
         .context("opening bounded regular recorded run report")?;
@@ -394,6 +406,37 @@ fn parent(path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
+/// Refuse an output whose parent directory is missing, naming it.
+fn require_output_parent(out: &Path) -> anyhow::Result<()> {
+    if !parent(out).is_dir() {
+        bail!(
+            "archive output directory {} does not exist; create it first",
+            parent(out).display()
+        );
+    }
+    Ok(())
+}
+
+/// The distinct omission reasons of an export as an ` (omitted: a, b)` suffix, with the remedy
+/// for sealed artifacts; empty when nothing was omitted.
+fn omission_summary(omissions: &[ArchiveOmissionV1]) -> String {
+    let reasons: std::collections::BTreeSet<&str> = omissions.iter().map(|o| o.reason.as_str()).collect();
+    if reasons.is_empty() {
+        return String::new();
+    }
+    let mut text = format!(
+        " (omitted: {})",
+        reasons.iter().copied().collect::<Vec<_>>().join(", ")
+    );
+    if reasons.contains("sealed_artifact_requires_custody") {
+        text.push_str(
+            "; sealed artifacts need a run in a database (`--database-url`) and CRAWLX_ARTIFACT_KEY_FILE, \
+             a file-only `crawlx crawl --output` seals under a process-lifetime key that is gone",
+        );
+    }
+    text
+}
+
 fn export_recorded(
     args: ArchiveExportArgs,
     mut source: Source,
@@ -402,10 +445,14 @@ fn export_recorded(
     now: Timestamp,
 ) -> anyhow::Result<ArchiveManifestV1> {
     if args.out.exists() {
-        bail!("archive output already exists");
+        bail!("archive output {} already exists", args.out.display());
     }
+    require_output_parent(&args.out)?;
     if !source.artifacts.is_dir() {
-        bail!("recorded artifact store is unavailable");
+        bail!(
+            "recorded artifact store {} is unavailable; pass --artifacts-dir",
+            source.artifacts.display()
+        );
     }
     source.pages.sort_by(|a, b| {
         a.fetched_at
@@ -620,7 +667,10 @@ fn export_recorded(
         }
     }
     if manifest.records == 0 {
-        bail!("no retention-approved text artifacts are available for export");
+        bail!(
+            "no retention-approved text artifacts are available for export{}",
+            omission_summary(&manifest.omissions)
+        );
     }
     let mut files = output.finish()?;
     pages.file_mut().flush()?;
@@ -678,7 +728,8 @@ fn validate(path: &Path, limits: Limits, dependencies: &ArchiveDependencyArgs) -
     if path.to_str().is_some_and(|path| path.contains("://")) {
         bail!("capability_unavailable: external HTTP dependencies have no network fallback");
     }
-    let metadata = std::fs::symlink_metadata(path)?;
+    let metadata =
+        std::fs::symlink_metadata(path).with_context(|| format!("opening archive {}", path.display()))?;
     if (!metadata.is_file() && !metadata.is_dir()) || metadata.len() > limits.total_bytes {
         bail!("archive primary exceeds bound or is not a regular file or native bundle");
     }
@@ -691,6 +742,7 @@ fn validate(path: &Path, limits: Limits, dependencies: &ArchiveDependencyArgs) -
     Ok(Validated { collection, records })
 }
 fn atomic_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    require_output_parent(path)?;
     let mut file = AnonymousArtifactFile::new_in(parent(path))?;
     file.file_mut().write_all(bytes)?;
     file.publish(
@@ -817,8 +869,9 @@ fn import_archive(args: ArchiveImportArgs) -> anyhow::Result<serde_json::Value> 
         bail!("retention_denied: durable archive import is forbidden under zero data retention");
     }
     if args.out.exists() {
-        bail!("archive import destination already exists");
+        bail!("archive import destination {} already exists", args.out.display());
     }
+    require_output_parent(&args.out)?;
     let limits = Limits::default();
     let mut validated = validate(&args.input, limits, &args.dependencies)?;
     if !validated.collection.retention_approved() {

@@ -29,8 +29,7 @@ spec:
             {{- include "crawlx.commonEnv" . | nindent 12 }}
             {{- include "crawlx.capabilityEnv" (dict "root" . "worker" true) | nindent 12 }}
             {{- include "crawlx.artifactCustodyEnv" (dict "root" . "worker" true) | nindent 12 }}
-            - name: CRAWLX_API_DATABASE_URL_FILE
-              value: /run/secrets/crawlx/database_url_api
+            {{- include "crawlx.requestLoginEnv" . | nindent 12 }}
           securityContext:
             {{- include "crawlx.containerSecurityContext" . | nindent 12 }}
           resources:
@@ -50,9 +49,7 @@ spec:
               - secret:
                   name: {{ .Values.secrets.database }}
                   items: [{ key: database_url, path: database_url }]
-              - secret:
-                  name: {{ .Values.secrets.databaseApi }}
-                  items: [{ key: database_url_api, path: database_url_api }]
+              {{- include "crawlx.requestLoginSource" . | nindent 14 }}
               - secret:
                   name: {{ .Values.secrets.webhook }}
                   items: [{ key: webhook_signing_key, path: webhook_signing_key }]
@@ -103,11 +100,13 @@ spec:
             limits: { memory: 256Mi }
           volumeMounts:
             - { name: secrets, mountPath: /run/secrets/crawlx, readOnly: true }
+            {{- include "crawlx.sqliteMount" . | nindent 12 }}
       volumes:
         - name: secrets
           secret:
             secretName: {{ .Values.secrets.databaseMigrate }}
             items: [{ key: database_url, path: database_url }]
+        {{- include "crawlx.sqliteVolume" . | nindent 8 }}
 {{- end }}
 {{- if .Values.gym.enabled }}
 ---

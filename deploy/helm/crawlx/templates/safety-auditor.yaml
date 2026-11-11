@@ -58,7 +58,7 @@ spec:
   ingress: []
   egress:
     - to:
-        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.postgresSelector }} }
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.databaseSelector }} }
       ports: [{ protocol: TCP, port: 5432 }]
     # DNS is infrastructure-only; no crawl targets, API, model, object store or telemetry egress.
     - to:

@@ -290,6 +290,15 @@ impl ReportDataV1 {
     }
 }
 
+/// Opaque privacy-safe identity of a host as facts and reports show it: the digest every
+/// producer stores in `hostKey` and every report row and `hostKey` filter uses, so one value
+/// joins them. A trailing root dot does not change it; callers pass the URL's already
+/// lowercased host.
+#[must_use]
+pub fn report_host_key(host: &str) -> Digest {
+    Digest::of("crawlx:report:dns-host:v1", host.trim_end_matches('.').as_bytes())
+}
+
 /// Fenced fact; scope always comes from an authenticated producer lease.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

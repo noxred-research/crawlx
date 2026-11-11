@@ -1294,6 +1294,36 @@ pub trait RequestCommitRepo: Send + Sync + crate::digest_registry::DigestRegistr
         reason: crate::counters::TerminalReason,
         empty_batches: &[crate::dataset::DeliveryBatchV1],
     ) -> Result<(), StoreError>;
+    /// Claim the run's unfinished feed finalization as a fenced custody producer.
+    ///
+    /// The returned lease is the only authority under which terminal feed artifacts may be
+    /// sealed. It lasts `ttl` and must be renewed through [`Self::renew_feed_finalizer`]; an
+    /// unexpired claim by any worker makes this fail, and an expired one is taken over with a
+    /// higher fence. Finalization completing ([`Self::finalize_run_feeds`]) ends the lease.
+    ///
+    /// # Errors
+    /// Returns scope, `Conflict` while another claim is live, or `LeaseLost` when the run has no
+    /// unfinished finalization.
+    async fn claim_feed_finalizer(
+        &self,
+        run: CrawlRunId,
+        worker: crate::WorkerId,
+        ttl: std::time::Duration,
+    ) -> Result<crate::custody::CustodyLease, StoreError>;
+    /// Extend a live finalizer lease to `ttl` from now.
+    ///
+    /// # Errors
+    /// Returns `LeaseLost` when the lease expired, was taken over or the finalization ended.
+    async fn renew_feed_finalizer(
+        &self,
+        lease: &crate::custody::CustodyLease,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError>;
+    /// Give up a finalizer lease so another worker may claim it at once. Idempotent.
+    ///
+    /// # Errors
+    /// Returns scope or storage failures.
+    async fn release_feed_finalizer(&self, lease: &crate::custody::CustodyLease) -> Result<(), StoreError>;
     /// Append one settled rendition under live session authority and stored revisit limits.
     ///
     /// # Errors

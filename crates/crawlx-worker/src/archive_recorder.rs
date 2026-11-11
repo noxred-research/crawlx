@@ -169,7 +169,7 @@ pub(crate) async fn finalize(
     let work = Box::pin(crawlx_core::custody::with_producer(
         producer.clone(),
         crate::custody_renewal::with_custody_renewal(
-            stores.pg_secret_authority.clone(),
+            stores.secret_authority.clone(),
             producer,
             Box::pin(finalize_claimed(
                 stores,

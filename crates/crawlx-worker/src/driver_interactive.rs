@@ -11,6 +11,7 @@
 //! a profile commit.
 
 use super::*;
+use crate::durable::DurableAuthority;
 use crate::interactive_profiles::{
     proposal_for_input, InteractiveCommand, InteractiveControl, InteractiveError, InteractiveReply,
     InteractiveScope, InteractiveStart, ProfileInput,
@@ -19,7 +20,7 @@ use crawlx_core::custody::{CustodyLease, SecretRegistrar};
 use crawlx_core::observation::DomSelector;
 use crawlx_core::{SecretOr, Timestamp};
 use crawlx_storage::artifact_key_crypto::ArtifactKeys;
-use crawlx_storage::custody::{profiles::CustodyProfiles, PgSecretAuthority};
+use crawlx_storage::custody::profiles::CustodyProfiles;
 use crawlx_storage::profiles::ProfileScopeV1;
 use crawlx_storage::SessionLease;
 
@@ -30,7 +31,7 @@ pub struct InteractiveDeps {
     /// Actor-owned mailbox; dropping it revokes every API control.
     pub control: InteractiveControl,
     /// The run's existing secret authority.
-    pub authority: Arc<PgSecretAuthority>,
+    pub authority: Arc<DurableAuthority>,
     /// The exact key provider artifact custody uses.
     pub keys: Arc<dyn ArtifactKeys>,
     /// The session's producer custody lease (never fabricated here).
@@ -48,7 +49,7 @@ impl InteractiveDeps {
     #[must_use]
     pub fn new(
         control: InteractiveControl,
-        authority: Arc<PgSecretAuthority>,
+        authority: Arc<DurableAuthority>,
         keys: Arc<dyn ArtifactKeys>,
         custody: CustodyLease,
         registrar: Arc<dyn SecretRegistrar>,
@@ -377,7 +378,7 @@ impl ExplorationDriver {
             std::mem::take(&mut current.candidates),
             std::mem::take(&mut current.resolved),
             current.cluster,
-            self.decision_index,
+            self.stream_index(),
             self.rc.crawl.safety.profile,
             self.budget_view(),
             self.rc.clock.now(),
@@ -446,17 +447,19 @@ impl ExplorationDriver {
         started: &Started,
     ) -> Result<u64, Failure> {
         let storage = self.handle.export_profile_storage().await?;
-        let inspection = CustodyProfiles::new(deps.authority.as_ref(), deps.keys.as_ref())
-            .commit(
-                &deps.lease,
-                &deps.custody,
-                &started.scope,
-                started.expected_generation,
-                started.expires_at,
-                deps.retained_profile_approved,
-                &storage,
-            )
-            .await?;
+        let inspection = crate::on_authority!(deps.authority.as_ref(), authority => {
+            CustodyProfiles::new(authority, deps.keys.as_ref())
+                .commit(
+                    &deps.lease,
+                    &deps.custody,
+                    &started.scope,
+                    started.expected_generation,
+                    started.expires_at,
+                    deps.retained_profile_approved,
+                    &storage,
+                )
+                .await?
+        });
         // The plaintext snapshot leaves memory before cleanup begins.
         drop(storage);
         // Resource death must be confirmed before success is reported. Cancelled shutdown never

@@ -410,6 +410,12 @@ impl UrlPlaneRunner {
                 },
             ));
         }
+        // every fact of the attempt joins the requested host; a DNS fact keeps the host it resolved
+        let page_host = entry
+            .url
+            .url
+            .host_str()
+            .map(crawlx_core::report_history::report_host_key);
         let mut hosts: std::collections::BTreeMap<String, crawlx_core::hash::Digest> =
             std::collections::BTreeMap::new();
         for (ordinal, (host_key, observed)) in dns.into_iter().enumerate() {
@@ -463,7 +469,7 @@ impl UrlPlaneRunner {
             let mut fact = ReportFactV1::new(&lease, id, at, payload);
             fact.request_id = Some(entry.id);
             fact.url_key = url_key;
-            fact.host_key = hosts.get(&label).copied();
+            fact.host_key = hosts.get(&label).copied().or(page_host);
             fact.attempt = attempt_no;
             fact.validate()?;
             facts.push(fact);

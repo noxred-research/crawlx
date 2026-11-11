@@ -78,6 +78,7 @@ spec:
             - { name: tmp, mountPath: /tmp/crawlx }
             - { name: shm, mountPath: /dev/shm }
             - { name: artifacts, mountPath: /var/lib/crawlx/artifacts }
+            {{- include "crawlx.sqliteMount" $root | nindent 12 }}
             {{- include "crawlx.operatorCapabilityMounts" $root | nindent 12 }}
         {{- include "crawlx.metricsSidecar" $root | nindent 8 }}
       volumes:
@@ -99,6 +100,7 @@ spec:
         - { name: shm, emptyDir: { medium: Memory, sizeLimit: {{ $root.Values.worker.tmpfs.shm }} } }
         - name: artifacts
           persistentVolumeClaim: { claimName: {{ $root.Values.artifacts.existingClaim }} }
+        {{- include "crawlx.sqliteVolume" $root | nindent 8 }}
         - name: metrics-config
           configMap: { name: {{ $root.Release.Name }}-metrics-sidecar }
         {{- include "crawlx.operatorCapabilityVolumes" $root | nindent 8 }}

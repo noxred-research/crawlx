@@ -9,7 +9,7 @@ use crawlx_storage::approvals::{
     ApprovalBindingV1, ApprovalRepository, ApprovalRequestV1, DurableApprovalV1,
 };
 use crawlx_storage::testkit::{crawl_run, create_crawl, proposal, sessions, verdict};
-use crawlx_storage::{ApiKeyRow, ApprovalDecision, LeaseRepo, Pg, PgApiRepo, PgConfig, SessionLease};
+use crawlx_storage::{ApiKeyRow, ApprovalDecision, LeaseRepo, Pg, PgApiRepo, SessionLease, StoreConfig};
 
 struct Fixture {
     pg: Pg,
@@ -25,10 +25,10 @@ impl Fixture {
         let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
         let pg = Pg::connect(
             &url,
-            PgConfig {
+            StoreConfig {
                 schema: Some(format!("approval_{}", uuid::Uuid::now_v7().simple())),
                 max_connections: 8,
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await

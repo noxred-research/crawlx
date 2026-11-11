@@ -1,10 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! `PgApiStore` and `PgEraser` over PostgreSQL (skipped without `CRAWLX_TEST_DATABASE_URL`).
+//! `DatabaseApiStore` and `DatabaseEraser` over PostgreSQL (skipped without `CRAWLX_TEST_DATABASE_URL`).
 //! Row-level checks use raw SQL, which is why these tests live outside `src/`.
 
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-use crawlx_api::pg::{PgApiStore, PgEraser};
+use crawlx_api::database::{DatabaseApiStore, DatabaseEraser};
 use crawlx_api::store::{
     ApiStore, ApprovalDecision, ArtifactSource, AuthorizationInsert, DecideOutcome, DeliveryResult,
     DeliveryStatus, Eraser, IdemBegin, KeyRecord, Scope, StoreResult, StoredResponse, TrafficFilter,
@@ -26,7 +26,7 @@ use crawlx_policy::{AuthorizationRecord, AuthzFailure, OwnershipProof};
 use crawlx_storage::testkit::{
     allow_verdict, crawl_run, create_crawl, new_state, proposal, sessions, verdict,
 };
-use crawlx_storage::{CoverageRow, LeaseRepo, Pg, PgConfig};
+use crawlx_storage::{CoverageRow, LeaseRepo, Pg, StoreConfig};
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,17 +36,17 @@ use uuid::Uuid;
 struct Env {
     pg: Pg,
     tenant: TenantId,
-    store: PgApiStore,
+    store: DatabaseApiStore<crawlx_storage::backend::PgBackend>,
 }
 
 async fn setup() -> Option<Env> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("api_{}", CrawlRunId::new().0.simple())),
             max_connections: 8,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -54,7 +54,7 @@ async fn setup() -> Option<Env> {
     pg.migrate().await.expect("migrate");
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "test").await.expect("tenant");
-    let store = PgApiStore::new(pg.clone());
+    let store = DatabaseApiStore::new(pg.clone());
     Some(Env { pg, tenant, store })
 }
 
@@ -311,7 +311,14 @@ async fn an_in_progress_claim_names_the_run_it_announced() {
         None,
         "no run announced yet"
     );
-    let run = CrawlRunId::new();
+    // a run of another tenant (or none at all) is never linked
+    s.idem_link_run(tenant, "k", CrawlRunId::new()).await.unwrap();
+    assert_eq!(
+        s.idem_run(tenant, "k").await.unwrap(),
+        None,
+        "an unknown run is not linked"
+    );
+    let run = env.run().await.id;
     s.idem_link_run(tenant, "k", run).await.unwrap();
     assert_eq!(s.idem_run(tenant, "k").await.unwrap(), Some(run));
     assert_eq!(
@@ -1407,7 +1414,7 @@ async fn eraser_removes_run_rows() {
         .unwrap();
 
     let calls = Arc::new(AtomicUsize::new(0));
-    let eraser = PgEraser::new(env.pg.clone(), Some(Arc::new(StubArtifacts(calls.clone()))));
+    let eraser = DatabaseEraser::new(env.pg.clone(), Some(Arc::new(StubArtifacts(calls.clone()))));
     for table in [
         "crawl_runs",
         "approvals",
@@ -1446,6 +1453,9 @@ async fn eraser_removes_run_rows() {
     ));
 
     // without an artifact source the rows are still purged
-    assert!(PgEraser::new(env.pg.clone(), None).erase(keep.id).await.is_ok());
+    assert!(DatabaseEraser::new(env.pg.clone(), None)
+        .erase(keep.id)
+        .await
+        .is_ok());
     env.teardown().await;
 }

@@ -687,7 +687,7 @@ kind = "behavior"
 match = "retry-after-failure/*"
 class = "intentional_correctness"
 source = "black-box run 2026-10-29 against upstream c31e88c07afe941bfd8aebde61684eeba042abb5; bench/differential/captures/wire-webhook.json (sink answered 500 to the first two deliveries, `crawl.started` and the first `crawl.page`: neither was delivered again); delivery retried with backoff"
-rationale = "Upstream did not redeliver the two events the sink refused (they are missing from the stream). crawlx keeps them in the outbox and delivers them again on its retry schedule (10 s, 30 s, 2 min, ...; at most 8 attempts), so the stream carries the refused events a second time, after the events that succeeded."
+rationale = "Upstream did not redeliver the two events the sink refused (they are missing from the stream). crawlx keeps them in the outbox and delivers them again on its retry schedule (default `10s,1m,5m,30m,2h,6h,12h,24h`; at most 8 attempts), so the stream carries the refused events a second time, after the events that succeeded."
 user_visible = "Failed webhook deliveries are retried with backoff; a receiver must tolerate a late repeat of an event it refused (`webhookId` is stable per delivery)."
 
 [[divergence]]

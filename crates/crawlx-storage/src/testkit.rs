@@ -6,6 +6,10 @@ pub mod archive_races;
 pub mod fake_kms;
 #[cfg(feature = "fake-s3")]
 pub mod fake_s3;
+pub mod rig;
+pub mod tenancy;
+
+pub use rig::{Engine, Rig};
 
 use chrono::Utc;
 use crawlx_core::action::BrowserAction;

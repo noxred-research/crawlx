@@ -51,17 +51,33 @@
   });
 
   // --- volatile regions ---
+  // Default: the ticker and status line advance once per recorded interaction, so the page
+  // is a pure function of the gym seed and the action sequence (same-seed runs stay equal).
+  // `?live=1` selects the wall-clock variant (250 ms / 1 s timers) that exercises volatile-
+  // region masking and mutation-idle exclusion.
   var tickRng = __gym.rngFor('ticker');
   var tickN = 0;
-  setInterval(function () {
+  function tick() {
     tickN++;
     $('ticker').textContent = 'tick ' + tickN + ': price ' + (100 + tickRng() * 10).toFixed(2);
-  }, 250);
+  }
   var statusRng = __gym.rngFor('status');
   var statusMsgs = ['all systems nominal', 'sync complete', 'cache warm', 'queue empty', 'latency low'];
-  setInterval(function () {
+  function status() {
     $('status').textContent = 'Status: ' + __gym.pick(statusMsgs, statusRng);
-  }, 1000);
+  }
+  if (/[?&]live=1(&|$)/.test(location.search)) {
+    setInterval(tick, 250);
+    setInterval(status, 1000);
+  } else {
+    var hit = __gym.hit;
+    __gym.hit = function () {
+      var out = hit.apply(__gym, arguments);
+      tick();
+      status();
+      return out;
+    };
+  }
 
   // --- views ---
   function viewHome() {

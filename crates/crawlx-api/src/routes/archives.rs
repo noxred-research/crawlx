@@ -259,9 +259,16 @@ pub async fn export(
         axum::http::HeaderName::from_static("x-crawlx-sensitivity"),
         HeaderValue::from_static(row.custody.sensitivity.as_str()),
     );
+    let extension = if row.config.format == ArchiveFormat::Warc {
+        "warc.gz"
+    } else {
+        "wacz"
+    };
+    let disposition = format!("attachment; filename=\"crawlx-archive-{}.{extension}\"", row.id);
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_static("attachment"),
+        HeaderValue::from_str(&disposition)
+            .map_err(|error| crawlx_core::StoreError::Serialization(error.to_string()))?,
     );
     Ok(response)
 }

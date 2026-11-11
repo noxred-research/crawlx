@@ -230,7 +230,9 @@ impl Fixture {
             );
             fact.request_id = Some(entry.id);
             fact.url_key = Some(url.key);
-            fact.host_key = Some(Digest::of("crawlx/report-host/v1", b"report.example.test"));
+            fact.host_key = Some(crawlx_core::report_history::report_host_key(
+                "report.example.test",
+            ));
             self.store.append_fact(&lease, &fact).await.unwrap();
         }
     }

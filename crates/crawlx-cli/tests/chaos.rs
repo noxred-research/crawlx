@@ -28,7 +28,7 @@ use crawlx_core::{Clock, CrawlRunId, SystemClock, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;
 use crawlx_storage::testkit::fake_kms::LoopbackKms;
-use crawlx_storage::{Pg, PgConfig};
+use crawlx_storage::{Pg, StoreConfig};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row as _};
 use std::os::fd::AsRawFd;
@@ -276,7 +276,11 @@ impl Harness {
             .status()
             .await
             .unwrap();
-        assert!(status.success(), "migrate failed: {status}");
+        assert!(
+            status.success(),
+            "migrate failed: {status}; log:\n{}",
+            h.log("migrate.err")
+        );
         Some(h)
     }
 
@@ -547,15 +551,16 @@ impl Harness {
             "worker log:\n{}",
             self.log("worker.err")
         );
-        let pg = Pg::connect(&self.db, PgConfig::default()).await.unwrap();
+        let pg = Pg::connect(&self.db, StoreConfig::default()).await.unwrap();
         let run = CrawlRunId(run);
         let owner = crawlx_core::repo::RunRepo::get(&pg, run).await.unwrap();
         // The crawl sealed its artifacts: read them back through the same root key the
         // processes used, exactly as `crawlx inspect` does.
         let key_file = self.artifact_key.to_string_lossy().into_owned();
-        let (custody, keys) = crawlx_worker::config::read_only_custody_from_lookup(&pg, &|name| {
-            (name == "CRAWLX_ARTIFACT_KEY_FILE").then(|| key_file.clone())
-        })
+        let (custody, keys) = crawlx_worker::config::read_only_custody_from_lookup(
+            &crawlx_worker::DurableStore::Postgres(pg.clone()),
+            &|name| (name == "CRAWLX_ARTIFACT_KEY_FILE").then(|| key_file.clone()),
+        )
         .await
         .unwrap();
         let artifacts = crawlx_storage::FsArtifactStore::open(
@@ -569,8 +574,8 @@ impl Harness {
         .with_read_scope(owner.tenant, run);
         let report = verify_trail(
             run,
-            TrailStore::Pg {
-                pg: &pg,
+            TrailStore::Database {
+                store: &crawlx_worker::DurableStore::Postgres(pg.clone()),
                 artifacts: Some(&artifacts),
             },
         )
@@ -729,7 +734,7 @@ async fn sigkill_after_object_put_leaves_only_a_collectible_orphan() {
         .await
         .unwrap();
     assert_eq!(references, 0, "object upload must precede its durable reference");
-    let pg = Pg::connect(&h.db, PgConfig::default()).await.unwrap();
+    let pg = Pg::connect(&h.db, StoreConfig::default()).await.unwrap();
     let artifacts = Arc::new(
         FsArtifactStore::open(root, Arc::new(pg.clone()), Arc::new(SystemClock))
             .await

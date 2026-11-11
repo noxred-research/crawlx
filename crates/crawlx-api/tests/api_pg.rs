@@ -13,7 +13,7 @@ use crawlx_api::{ApiConfig, AppState, Repos, Scope};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::repo::{EventRepo, RunRepo, Sensitivity};
 use crawlx_core::{CrawlRunId, SystemClock};
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -37,10 +37,10 @@ async fn rig_with_delivery(
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("apie2e_{}", CrawlRunId::new().0.simple())),
             max_connections: 8,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -59,7 +59,7 @@ async fn rig_with_delivery(
         artifacts = artifacts.with_zdr_buffer(delivery.clone());
     }
     let artifacts = Arc::new(artifacts);
-    let repos = Repos::pg(&pg, artifacts.clone());
+    let repos = Repos::over_store(&pg, artifacts.clone());
     let key = generate_key();
     let rec = key_record(&key, tenant_id_for("acme"), Scope::all_set()).unwrap();
     repos.api.key_insert(&rec, "acme").await.unwrap();
@@ -129,7 +129,7 @@ async fn native_and_all_pinned_head_identities_and_receipts_survive_postgres_res
     let clock = Arc::new(SystemClock);
     r.app = crawlx_api::router(
         AppState::builder(
-            Repos::pg(&r.pg, r.artifacts.clone()),
+            Repos::over_store(&r.pg, r.artifacts.clone()),
             crawlx_api::admission_policy(&config, clock.clone()),
             config.clone(),
         )
@@ -213,7 +213,7 @@ async fn native_and_all_pinned_head_identities_and_receipts_survive_postgres_res
     );
     r.app = crawlx_api::router(
         AppState::builder(
-            Repos::pg(&r.pg, r.artifacts.clone()),
+            Repos::over_store(&r.pg, r.artifacts.clone()),
             crawlx_api::admission_policy(&config, clock.clone()),
             config,
         )
@@ -1002,7 +1002,7 @@ async fn authenticated_zdr_auditor_event_does_not_block_webhooks_for_other_runs(
     r.pg.append(runs[1], "paused", json!({"by": "operator"}))
         .await
         .unwrap();
-    let repos = Repos::pg(&r.pg, r.artifacts.clone());
+    let repos = Repos::over_store(&r.pg, r.artifacts.clone());
     let receiver = Arc::new(Receiver::default());
     let sender = WebhookSender::new(
         repos.api,

@@ -1,7 +1,8 @@
 //! Real local acquisitions and stored-page command/config boundaries.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use axum::{extract::State, http::Method, response::IntoResponse, routing::any, Router};
+use axum::http::{Method, StatusCode};
+use axum::{extract::State, response::IntoResponse, routing::any, Router};
 use clap::Parser as _;
 use crawlx_cli::scrape::{ScrapeArgs, ShellArgs};
 use crawlx_core::{Clock as _, SystemClock, TenantId};
@@ -27,7 +28,7 @@ async fn respond(
     State(requests): State<Requests>,
     method: Method,
     uri: axum::http::Uri,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     requests
         .lock()
         .unwrap()
@@ -36,12 +37,17 @@ async fn respond(
         return (
             [("content-type", "text/plain")],
             "User-agent: *\nDisallow: /denied\n",
-        );
+        )
+            .into_response();
+    }
+    if uri.path() == "/moved" {
+        return (StatusCode::FOUND, [("location", "/page")]).into_response();
     }
     (
         [("content-type", "text/html; charset=utf-8")],
         "<html><body><h1>Stored title</h1><p class='price'>17</p><a href='/next'>Next</a></body></html>",
     )
+        .into_response()
 }
 impl Site {
     async fn start() -> Self {
@@ -73,7 +79,10 @@ impl Site {
         }
     }
     fn args(&self, command: &str, extra: &[&str]) -> crawlx_cli::Command {
-        let url = format!("{}/page", self.origin);
+        self.args_at("/page", command, extra)
+    }
+    fn args_at(&self, path: &str, command: &str, extra: &[&str]) -> crawlx_cli::Command {
+        let url = format!("{}{path}", self.origin);
         let record = self.files.path().join("authorization.json");
         let mut argv = vec![
             "crawlx",
@@ -85,6 +94,12 @@ impl Site {
         ];
         argv.extend_from_slice(extra);
         crawlx_cli::Cli::try_parse_from(argv).unwrap().command
+    }
+    fn scrape_at(&self, path: &str, extra: &[&str]) -> ScrapeArgs {
+        let crawlx_cli::Command::Scrape(args) = self.args_at(path, "scrape", extra) else {
+            panic!("scrape")
+        };
+        args
     }
     fn scrape(&self, extra: &[&str]) -> ScrapeArgs {
         let crawlx_cli::Command::Scrape(args) = self.args("scrape", extra) else {
@@ -152,6 +167,36 @@ async fn get_selectors_and_head_use_actual_requested_method() {
 }
 
 #[tokio::test]
+async fn head_follows_a_same_host_redirect_outside_the_seed_path_like_get() {
+    let site = Site::start().await;
+    assert_eq!(
+        run(site.scrape_at("/moved", &["--css", "h1::text", "--json"]))
+            .await
+            .unwrap()
+            .trim(),
+        "[\"Stored title\"]"
+    );
+    let head: Value = serde_json::from_str(
+        &run(site.scrape_at("/moved", &["--method", "HEAD", "--json"]))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(head["method"], "HEAD");
+    assert_eq!(head["status"], 200);
+    assert_eq!(head["bodyBytes"], 0);
+    assert_eq!(
+        site.pages(),
+        [
+            ("GET".into(), "/moved".into()),
+            ("GET".into(), "/page".into()),
+            ("HEAD".into(), "/moved".into()),
+            ("HEAD".into(), "/page".into())
+        ]
+    );
+}
+
+#[tokio::test]
 async fn shell_fetches_once_then_css_xpath_regex_and_item_use_stored_page() {
     let site = Site::start().await;
     let recipe = json!({"version":1,"fields":[{"name":"price","selectors":[{"kind":"css","expression":"p.price"}],"extraction":{"kind":"text"},"cardinality":"one"}]});
@@ -190,6 +235,76 @@ async fn shell_fetches_once_then_css_xpath_regex_and_item_use_stored_page() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn regex_builtin_names_work_from_flag_extraction_file_and_shell() {
+    let site = Site::start().await;
+    let expected = json!(["1", "1", "17"]);
+    let from_flag: Value = serde_json::from_str(
+        &run(site.scrape(&["--regex-builtin", "number", "--json"]))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(from_flag, expected);
+    let pinned: Value = serde_json::from_str(
+        &run(site.scrape(&["--regex-builtin", "number.v1", "--json"]))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(pinned, expected);
+    let file = site.json_file("builtin.json", json!({"type":"builtin","name":"number"}));
+    let from_file: Value = serde_json::from_str(
+        &run(site.scrape(&["--extraction", file.to_str().unwrap(), "--json"]))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(from_file, expected);
+    let mut out = Vec::new();
+    crawlx_cli::scrape::shell_with_input(
+        site.shell(&[]),
+        b"builtin number\nquit\n".as_slice(),
+        &mut out,
+        &|_| None,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out).unwrap(),
+        expected,
+        "shell uses the same built-in table"
+    );
+}
+
+#[tokio::test]
+async fn unknown_regex_builtin_fails_before_network() {
+    let site = Site::start().await;
+    assert!(
+        run(site.scrape(&["--regex-builtin", "no_such_pattern", "--json"]))
+            .await
+            .is_err()
+    );
+    let file = site.json_file("bad.json", json!({"type":"builtin","name":"no_such_pattern"}));
+    assert!(
+        run(site.scrape(&["--extraction", file.to_str().unwrap(), "--json"]))
+            .await
+            .is_err()
+    );
+    assert!(crawlx_cli::Cli::try_parse_from([
+        "crawlx",
+        "scrape",
+        site.origin.as_str(),
+        "--regex-builtin",
+        "number",
+        "--regex",
+        "x"
+    ])
+    .is_err());
+    assert!(site.requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

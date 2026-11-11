@@ -32,7 +32,7 @@ pub(crate) fn approval_json(run: &RunMetadata, a: &ApprovalRecord, now: crawlx_c
         "riskClass": a.risk_class,
         "profile": run.safety_profile,
         "summary": {
-            "elementRole": s(sm, &["element_role", "elementRole", "role"]),
+            "elementRole": s(sm, &["element_role", "elementRole"]),
             "redactedName": s(sm, &["redacted_name", "redactedName"]),
             "routeTemplate": s(sm, &["route_template", "routeTemplate"]),
             "actionKind": s(sm, &["action_kind", "actionKind"]),
@@ -123,7 +123,7 @@ pub async fn decide(
                     "/reason",
                     "out_of_range",
                     "reason must be a string of at most 2000 bytes",
-                )]))
+                )]));
             }
         },
         _ => return Err(HttpError::malformed("body must be a JSON object")),

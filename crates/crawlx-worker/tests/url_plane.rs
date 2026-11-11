@@ -544,6 +544,30 @@ async fn acquisition_policy_site() -> Counted {
                 )
             }),
         )
+        .route(
+            "/interstitial",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    r#"<html><head><title>Just a moment...</title></head><body>
+<div id="challenge-stage"><form id="challenge-form" action="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page">
+<noscript>Enable JavaScript and cookies to continue</noscript></form></div></body></html>"#,
+                )
+            }),
+        )
+        .route(
+            "/mentions-challenges",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    format!(
+                        "<html><head><title>How interstitial challenges work</title></head><body><article>\
+                         <h1>How interstitial challenges work</h1><p>{}</p></article></body></html>",
+                        "Some sites show a checking your browser page and ask visitors to verify they are human. ".repeat(20),
+                    ),
+                )
+            }),
+        )
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&hits),
             |State(hits): State<Arc<Mutex<Vec<String>>>>,
@@ -655,6 +679,52 @@ async fn acceptance_2_oversize_refusal_fails_without_persisting_partial_page() {
     let target = row(&frontier, "/oversize");
     assert_eq!(target.status, FrontierStatus::Failed);
     assert_eq!(target.denial_reason.as_deref(), Some("body_limit"));
+}
+
+/// A genuine 200 interstitial is refused under the default, report and fail mismatch actions; an
+/// article that only discusses challenges is still stored.
+#[tokio::test]
+async fn genuine_200_interstitial_is_never_stored_as_a_successful_page() {
+    use crawlx_core::acquisition::{AcquisitionPolicyV1, ContentMismatchActionV1};
+
+    let site = acquisition_policy_site().await;
+    for action in [
+        None,
+        Some(ContentMismatchActionV1::Report),
+        Some(ContentMismatchActionV1::Fail),
+    ] {
+        let (report, frontier) = crawl_with_frontier(&site, |crawl| {
+            crawl.seed_url = url::Url::parse(&format!("{}/interstitial", site.base)).unwrap();
+            crawl.fetch.retries = 0;
+            crawl.acquisition = action.map(|action| {
+                let mut policy = AcquisitionPolicyV1::default();
+                policy.validation.on_content_mismatch = action;
+                policy
+            });
+        })
+        .await;
+        assert!(report.pages.is_empty(), "{action:?}");
+        assert_eq!(report.counters.urls.attempted, 1, "{action:?}");
+        assert_eq!(report.counters.urls.succeeded, 0, "{action:?}");
+        assert_eq!(report.counters.urls.failed, 1, "{action:?}");
+        let target = row(&frontier, "/interstitial");
+        assert_eq!(target.status, FrontierStatus::Failed, "{action:?}");
+        assert_eq!(
+            target.denial_reason.as_deref(),
+            Some("content_validation_failed"),
+            "{action:?}"
+        );
+    }
+
+    let (report, frontier) = crawl_with_frontier(&site, |crawl| {
+        crawl.seed_url = url::Url::parse(&format!("{}/mentions-challenges", site.base)).unwrap();
+    })
+    .await;
+    assert_eq!(report.pages.len(), 1);
+    assert_eq!(
+        row(&frontier, "/mentions-challenges").status,
+        FrontierStatus::Succeeded
+    );
 }
 
 #[tokio::test]

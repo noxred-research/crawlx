@@ -3,12 +3,21 @@
 //! A preview is never execution authority. Consumption commits before the synchronous
 //! kernel receives a one-shot capability. A crash in between spends approval without
 //! execution. The original parked action is reused at T1; no second action is created.
+//!
+//! Statements run only through [`crate::tenant::ScopedQuery`]; the module denies the raw
+//! statement entry points (see `clippy.toml`).
 
-use crate::codec::{conv, from_json, get, to_json};
-use crate::error::db;
+#![deny(clippy::disallowed_methods)]
+
+use crate::backend::strategy::Conn;
+use crate::backend::{BackendKind, Dialect as _, RowLock};
+use crate::codec::{conv, from_json, to_json};
 use crate::leases::SessionLease;
 use crate::repos::write_decision;
-use crate::{ApprovalRecord, Pg};
+use crate::sql::{Sql, SqlRow, Stmt};
+use crate::store::Store;
+use crate::tenant::{Dia, Scope, ScopedQuery};
+use crate::ApprovalRecord;
 use async_trait::async_trait;
 use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
@@ -16,9 +25,7 @@ use crawlx_core::safety::{RiskClass, SafetyDecision, SafetyVerdict};
 use crawlx_core::{
     ActionContextId, ActionId, ApprovalId, CrawlRunId, SessionId, StoreError, TenantId, Timestamp,
 };
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use sqlx::{Postgres, Transaction};
 
 /// Complete immutable binding checked both at durable consume and kernel admission.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -206,57 +213,93 @@ pub trait ApprovalRepository: Send + Sync {
     ) -> Result<(), StoreError>;
 }
 
+/// Approvals scanned per round trip while looking for the exact bound request.
+const FIND_PAGE: i64 = 32;
+
 // Lock order: session, run, authorization, approval, action. The session validator
-// and clock_timestamp()/FOR UPDATE OF are PostgreSQL-specific and isolated here.
+// and `FOR UPDATE OF` are PostgreSQL forms; the other engines lock the same rows one
+// statement at a time in the same order.
 // Database time is read after all authority locks, never supplied by API callers.
-async fn lock_authority(
-    tx: &mut Transaction<'_, Postgres>,
+async fn lock_authority<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     lease: &SessionLease,
 ) -> Result<Timestamp, StoreError> {
-    sqlx::query("SET LOCAL synchronous_commit = on")
-        .execute(&mut **tx)
-        .await
-        .map_err(db)?;
-    crate::session_binding::lock_lease(tx, lease, tenant).await?;
-    sqlx::query("SELECT run_id FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2 FOR UPDATE")
-        .bind(lease.session.run.0)
-        .bind(tenant.0)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?
+    if B::KIND == BackendKind::Postgres {
+        ScopedQuery::within_scope(Stmt::<B>::dynamic("SET LOCAL synchronous_commit = on"))
+            .execute(conn)
+            .await?;
+    }
+    crate::session_binding::lock_lease_on::<B>(conn, lease, tenant).await?;
+    let lock = format!(
+        "SELECT run_id FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2{}",
+        Dia::<B>::row_lock(RowLock::Update)
+    );
+    ScopedQuery::within_scope(Stmt::<B>::dynamic(&lock).uuid(lease.session.run.0).uuid(tenant.0))
+        .fetch_optional(conn)
+        .await?
         .ok_or(StoreError::LeaseLost)?;
-    sqlx::query("SELECT z.record_id FROM authorization_records z JOIN crawl_runs r ON r.authorization_record_id=z.record_id WHERE r.run_id=$1 FOR UPDATE OF z")
-        .bind(lease.session.run.0).fetch_optional(&mut **tx).await.map_err(db)?;
-    let now = crate::session_binding::lock_lease(tx, lease, tenant).await?;
-    let valid: bool = sqlx::query_scalar(
-        "SELECT NOT EXISTS(SELECT 1 FROM crawl_runs r LEFT JOIN authorization_records z ON z.record_id=r.authorization_record_id \
-         WHERE r.run_id=$1 AND r.authorization_record_id IS NOT NULL AND (z.record_id IS NULL OR z.tenant_id<>r.tenant_id \
-         OR z.verified_at IS NULL OR z.revoked_at IS NOT NULL OR z.valid_from>$2 OR z.valid_to<=$2 \
-         OR z.body_digest<>r.authorization_body_digest OR r.authorization_body_digest IS NULL))")
-        .bind(lease.session.run.0).bind(now).fetch_one(&mut **tx).await.map_err(db)?;
+    if B::KIND == BackendKind::Postgres {
+        ScopedQuery::within_scope(
+            Stmt::<B>::dynamic(
+                "SELECT z.record_id FROM authorization_records z JOIN crawl_runs r ON r.authorization_record_id=z.record_id WHERE r.run_id=$1 FOR UPDATE OF z",
+            )
+            .uuid(lease.session.run.0),
+        )
+        .fetch_optional(conn)
+        .await?;
+    } else if let Some(record) = ScopedQuery::within_scope(
+        Stmt::<B>::dynamic("SELECT authorization_record_id FROM crawl_runs WHERE run_id=$1")
+            .uuid(lease.session.run.0),
+    )
+    .fetch_optional(conn)
+    .await?
+    .map(|r| r.opt_uuid("authorization_record_id"))
+    .transpose()?
+    .flatten()
+    {
+        let lock = format!(
+            "SELECT record_id FROM authorization_records WHERE record_id=$1{}",
+            Dia::<B>::row_lock(RowLock::Update)
+        );
+        ScopedQuery::within_scope(Stmt::<B>::dynamic(&lock).uuid(record))
+            .fetch_optional(conn)
+            .await?;
+    }
+    let now = crate::session_binding::lock_lease_on::<B>(conn, lease, tenant).await?;
+    let valid = ScopedQuery::within_scope(
+        Stmt::<B>::dynamic(
+            "SELECT NOT EXISTS(SELECT 1 FROM crawl_runs r LEFT JOIN authorization_records z ON z.record_id=r.authorization_record_id \
+             WHERE r.run_id=$1 AND r.authorization_record_id IS NOT NULL AND (z.record_id IS NULL OR z.tenant_id<>r.tenant_id \
+             OR z.verified_at IS NULL OR z.revoked_at IS NOT NULL OR z.valid_from>$2 OR z.valid_to<=$2 \
+             OR z.body_digest<>r.authorization_body_digest OR r.authorization_body_digest IS NULL)) AS v",
+        )
+        .uuid(lease.session.run.0)
+        .ts(now),
+    )
+    .fetch_one(conn)
+    .await?
+    .flag("v")?;
     if !valid {
         return Err(StoreError::LeaseLost);
     }
     Ok(now)
 }
 
-async fn lock_request(
-    tx: &mut Transaction<'_, Postgres>,
-    id: ApprovalId,
-) -> Result<ApprovalRequestV1, StoreError> {
-    let row = sqlx::query("SELECT request_payload FROM approvals WHERE approval_id=$1 FOR UPDATE")
-        .bind(id.0)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?
+async fn lock_request<B: Sql>(conn: &mut Conn<B>, id: ApprovalId) -> Result<ApprovalRequestV1, StoreError> {
+    let sql = format!(
+        "SELECT request_payload FROM approvals WHERE approval_id=$1{}",
+        Dia::<B>::row_lock(RowLock::Update)
+    );
+    let row = ScopedQuery::within_scope(Stmt::<B>::dynamic(&sql).uuid(id.0))
+        .fetch_optional(conn)
+        .await?
         .ok_or_else(conflict)?;
-    let payload: Option<serde_json::Value> = get(&row, "request_payload")?;
-    from_json(payload.ok_or_else(conflict)?)
+    from_json(row.opt_json("request_payload")?.ok_or_else(conflict)?)
 }
 
-async fn check_action(
-    tx: &mut Transaction<'_, Postgres>,
+async fn check_action<B: Sql>(
+    conn: &mut Conn<B>,
     binding: &ApprovalBindingV1,
     lease: &SessionLease,
     tenant: TenantId,
@@ -264,61 +307,91 @@ async fn check_action(
     if binding.tenant != tenant || binding.run != lease.session.run || binding.session != lease.session.id {
         return Err(conflict());
     }
-    let row = sqlx::query(
-        "SELECT a.run_id, a.session_id, CAST(a.status AS TEXT) AS status, a.epoch_navigation, a.epoch_document, a.epoch_mutation, c.context_hash \
-         FROM actions a JOIN action_contexts c ON c.context_id=a.context_id WHERE a.action_id=$1 FOR UPDATE")
-        .bind(binding.action.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(conflict)?;
-    if get::<uuid::Uuid>(&row, "run_id")? != binding.run.0
-        || get::<uuid::Uuid>(&row, "session_id")? != binding.session.0
-        || get::<String>(&row, "status")? != "proposed"
-        || get::<Vec<u8>>(&row, "context_hash")?.as_slice() != binding.action_key.0
-        || get::<i64>(&row, "epoch_navigation")? != conv::<u64, i64>(binding.epoch.navigation_seq, "epoch")?
-        || get::<i64>(&row, "epoch_document")? != conv::<u64, i64>(binding.epoch.document_seq, "epoch")?
-        || get::<i64>(&row, "epoch_mutation")? != conv::<u64, i64>(binding.epoch.mutation_seq, "epoch")?
+    let sql = format!(
+        "SELECT a.run_id, a.session_id, a.status::text AS status, a.epoch_navigation, a.epoch_document, a.epoch_mutation, c.context_hash \
+         FROM actions a JOIN action_contexts c ON c.context_id=a.context_id WHERE a.action_id=$1{}",
+        Dia::<B>::row_lock(RowLock::Update)
+    );
+    let row = ScopedQuery::within_scope(Stmt::<B>::dynamic(&sql).uuid(binding.action.0))
+        .fetch_optional(conn)
+        .await?
+        .ok_or_else(conflict)?;
+    if row.uuid("run_id")? != binding.run.0
+        || row.uuid("session_id")? != binding.session.0
+        || row.text("status")? != "proposed"
+        || row.bytes("context_hash")?.as_slice() != binding.action_key.0
+        || row.i64("epoch_navigation")? != conv::<u64, i64>(binding.epoch.navigation_seq, "epoch")?
+        || row.i64("epoch_document")? != conv::<u64, i64>(binding.epoch.document_seq, "epoch")?
+        || row.i64("epoch_mutation")? != conv::<u64, i64>(binding.epoch.mutation_seq, "epoch")?
     {
         return Err(conflict());
     }
     Ok(())
 }
 
+impl<B: Sql> Store<B> {
+    /// Approvals are worker authority: with a tenant scope active they may only act for it.
+    fn approval_scope(&self, tenant: TenantId) -> Result<Scope, StoreError> {
+        let scope = self.scope()?;
+        scope.authorize(tenant)?;
+        Ok(scope)
+    }
+}
+
 #[async_trait]
-impl ApprovalRepository for Pg {
+impl<B: Sql> ApprovalRepository for Store<B> {
     async fn persist_approval(
         &self,
         tenant: TenantId,
         lease: &SessionLease,
         request: &ApprovalRequestV1,
     ) -> Result<(), StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let now = lock_authority(&mut tx, tenant, lease).await?;
+        let scope = self.approval_scope(tenant)?;
+        let mut tx = self.begin_write().await?;
+        let now = lock_authority::<B>(tx.conn(), tenant, lease).await?;
         request.validate(now)?;
-        let row = sqlx::query("SELECT request_payload, run_id, action_id, CAST(risk_class AS TEXT) AS risk_class, decision, consumed_at, revoked_at FROM approvals WHERE approval_id=$1 FOR UPDATE")
-            .bind(request.id.0).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(conflict)?;
-        let old: Option<serde_json::Value> = get(&row, "request_payload")?;
+        let sql = format!(
+            "SELECT request_payload, run_id, action_id, risk_class::text AS risk_class, decision, consumed_at, revoked_at FROM approvals WHERE approval_id=$1{}",
+            Dia::<B>::row_lock(RowLock::Update)
+        );
+        let row = scope
+            .query("approvals", Stmt::<B>::dynamic(&sql).uuid(request.id.0))?
+            .fetch_optional(tx.conn())
+            .await?
+            .ok_or_else(conflict)?;
+        let old = row.opt_json("request_payload")?;
         if let Some(old) = old {
             if from_json::<ApprovalRequestV1>(old)? != *request {
                 return Err(conflict());
             }
-            check_action(&mut tx, &request.binding, lease, tenant).await?;
-            return tx.commit().await.map_err(db);
+            check_action::<B>(tx.conn(), &request.binding, lease, tenant).await?;
+            return tx.commit().await;
         }
-        if get::<uuid::Uuid>(&row, "run_id")? != request.binding.run.0
-            || get::<uuid::Uuid>(&row, "action_id")? != request.binding.action.0
-            || get::<String>(&row, "risk_class")? != request.binding.risk.as_str()
-            || !matches!(
-                get::<String>(&row, "decision")?.as_str(),
-                "pending" | "approved" | "denied"
-            )
-            || get::<Option<Timestamp>>(&row, "consumed_at")?.is_some()
-            || get::<Option<Timestamp>>(&row, "revoked_at")?.is_some()
+        if row.uuid("run_id")? != request.binding.run.0
+            || row.uuid("action_id")? != request.binding.action.0
+            || row.text("risk_class")? != request.binding.risk.as_str()
+            || !matches!(row.text("decision")?.as_str(), "pending" | "approved" | "denied")
+            || row.opt_ts("consumed_at")?.is_some()
+            || row.opt_ts("revoked_at")?.is_some()
         {
             return Err(conflict());
         }
-        check_action(&mut tx, &request.binding, lease, tenant).await?;
-        sqlx::query("UPDATE approvals SET request_payload=$2, requested_at=$3, expires_at=$4, bound_action_id=action_id WHERE approval_id=$1")
-            .bind(request.id.0).bind(to_json(request)?).bind(request.created_at).bind(request.expires_at)
-            .execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)
+        check_action::<B>(tx.conn(), &request.binding, lease, tenant).await?;
+        let payload = to_json(request)?;
+        scope
+            .query(
+                "approvals",
+                Stmt::<B>::dynamic(
+                    "UPDATE approvals SET request_payload=$2, requested_at=$3, expires_at=$4, bound_action_id=action_id WHERE approval_id=$1",
+                )
+                .uuid(request.id.0)
+                .json(&payload)
+                .ts(request.created_at)
+                .ts(request.expires_at),
+            )?
+            .execute(tx.conn())
+            .await?;
+        tx.commit().await
     }
 
     async fn find_approval(
@@ -330,43 +403,67 @@ impl ApprovalRepository for Pg {
         params: Digest,
         epoch: ObservationEpoch,
     ) -> Result<Option<DurableApprovalV1>, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let now = lock_authority(&mut tx, tenant, lease).await?;
-        // Stream candidate payloads rather than materializing every approval for a context.
-        // SQL narrows immutable action epochs/risk; the exact parameter digest is checked
-        // against the typed request before any snapshot leaves this boundary.
-        let mut rows = sqlx::query(
+        let scope = self.approval_scope(tenant)?;
+        let mut tx = self.begin_write().await?;
+        let now = lock_authority::<B>(tx.conn(), tenant, lease).await?;
+        // Scan candidate payloads page by page rather than materializing every approval for a
+        // context. SQL narrows immutable action epochs/risk; the exact parameter digest is
+        // checked against the typed request before any snapshot leaves this boundary.
+        let sql = format!(
             "SELECT p.request_payload, p.approval_id FROM approvals p JOIN actions a ON a.action_id=p.action_id \
              JOIN action_contexts c ON c.context_id=a.context_id WHERE p.run_id=$1 AND a.session_id=$2 AND c.context_hash=$3 \
              AND p.decision='approved' AND p.consumed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at>$4 \
              AND a.epoch_navigation=$5 AND a.epoch_document=$6 AND a.epoch_mutation=$7 \
-             AND CAST(p.risk_class AS TEXT)=$8 \
-             AND p.request_payload IS NOT NULL AND a.status='proposed' ORDER BY p.approval_id")
-            .bind(lease.session.run.0).bind(lease.session.id.0).bind(key.0.as_slice()).bind(now)
-            .bind(conv::<u64, i64>(epoch.navigation_seq, "epoch")?)
-            .bind(conv::<u64, i64>(epoch.document_seq, "epoch")?)
-            .bind(conv::<u64, i64>(epoch.mutation_seq, "epoch")?)
-            .bind(risk.as_str())
-            .fetch(&mut *tx);
-        while let Some(row) = rows.try_next().await.map_err(db)? {
-            let request: ApprovalRequestV1 = from_json(get(&row, "request_payload")?)?;
-            if request.binding.tenant == tenant
-                && request.binding.run == lease.session.run
-                && request.binding.session == lease.session.id
-                && request.binding.action_key == key
-                && request.binding.risk == risk
-                && request.binding.params_digest == params
-                && request.binding.epoch == epoch
-                && request.expires_at > now
-            {
-                drop(rows);
-                let record = crate::repos::api::approval_in_transaction(&mut tx, request.id).await?;
-                tx.commit().await.map_err(db)?;
-                return Ok(Some(DurableApprovalV1 { request, record }));
+             AND p.risk_class::text=$8 \
+             AND p.request_payload IS NOT NULL AND a.status='proposed' AND ($9::uuid IS NULL OR p.approval_id>$9) \
+             ORDER BY p.approval_id LIMIT {FIND_PAGE}"
+        );
+        let navigation = conv::<u64, i64>(epoch.navigation_seq, "epoch")?;
+        let document = conv::<u64, i64>(epoch.document_seq, "epoch")?;
+        let mutation = conv::<u64, i64>(epoch.mutation_seq, "epoch")?;
+        let mut after: Option<uuid::Uuid> = None;
+        loop {
+            let rows = scope
+                .query(
+                    "approvals",
+                    Stmt::<B>::dynamic(&sql)
+                        .uuid(lease.session.run.0)
+                        .uuid(lease.session.id.0)
+                        .bytes(key.0.as_slice())
+                        .ts(now)
+                        .i64(navigation)
+                        .i64(document)
+                        .i64(mutation)
+                        .text(risk.as_str())
+                        .opt_uuid(after),
+                )?
+                .fetch_all(tx.conn())
+                .await?;
+            for row in &rows {
+                let request: ApprovalRequestV1 = from_json(row.json("request_payload")?)?;
+                if request.binding.tenant == tenant
+                    && request.binding.run == lease.session.run
+                    && request.binding.session == lease.session.id
+                    && request.binding.action_key == key
+                    && request.binding.risk == risk
+                    && request.binding.params_digest == params
+                    && request.binding.epoch == epoch
+                    && request.expires_at > now
+                {
+                    let record =
+                        crate::repos::api::approval_in_transaction::<B>(tx.conn(), request.id).await?;
+                    tx.commit().await?;
+                    return Ok(Some(DurableApprovalV1 { request, record }));
+                }
+            }
+            match rows.last() {
+                Some(last) if i64::try_from(rows.len()).is_ok_and(|n| n == FIND_PAGE) => {
+                    after = Some(last.uuid("approval_id")?);
+                }
+                _ => break,
             }
         }
-        drop(rows);
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(None)
     }
 
@@ -376,24 +473,35 @@ impl ApprovalRepository for Pg {
         lease: &SessionLease,
         expected: &DurableApprovalV1,
     ) -> Result<ConsumedApprovalV1, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        lock_authority(&mut tx, tenant, lease).await?;
-        let request = lock_request(&mut tx, expected.request.id).await?;
+        let scope = self.approval_scope(tenant)?;
+        let mut tx = self.begin_write().await?;
+        lock_authority::<B>(tx.conn(), tenant, lease).await?;
+        let request = lock_request::<B>(tx.conn(), expected.request.id).await?;
         if request != expected.request {
             return Err(conflict());
         }
-        check_action(&mut tx, &request.binding, lease, tenant).await?;
-        let now = lock_authority(&mut tx, tenant, lease).await?;
+        check_action::<B>(tx.conn(), &request.binding, lease, tenant).await?;
+        let now = lock_authority::<B>(tx.conn(), tenant, lease).await?;
         request.validate(now)?;
-        let result = sqlx::query(
-            "UPDATE approvals SET consumed_at=$2, consumed_fence=$3 WHERE approval_id=$1 AND run_id=$4 AND action_id=$5 \
-             AND decision='approved' AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>$2 AND decided_at<=$2")
-            .bind(request.id.0).bind(now).bind(lease.fencing_token).bind(request.binding.run.0)
-            .bind(request.binding.action.0).execute(&mut *tx).await.map_err(db)?;
-        if result.rows_affected() != 1 {
+        let spent = scope
+            .query(
+                "approvals",
+                Stmt::<B>::dynamic(
+                    "UPDATE approvals SET consumed_at=$2, consumed_fence=$3 WHERE approval_id=$1 AND run_id=$4 AND action_id=$5 \
+                     AND decision='approved' AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>$2 AND decided_at<=$2",
+                )
+                .uuid(request.id.0)
+                .ts(now)
+                .i64(lease.fencing_token)
+                .uuid(request.binding.run.0)
+                .uuid(request.binding.action.0),
+            )?
+            .execute(tx.conn())
+            .await?;
+        if spent != 1 {
             return Err(conflict());
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(ConsumedApprovalV1 {
             request,
             fence: lease.fencing_token,
@@ -409,32 +517,43 @@ impl ApprovalRepository for Pg {
         epoch: ObservationEpoch,
         verdict: &SafetyVerdict,
     ) -> Result<(), StoreError> {
+        let scope = self.approval_scope(tenant)?;
         let id = verdict.approval.ok_or_else(conflict)?;
         if verdict.decision != SafetyDecision::Allow {
             return Err(conflict());
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        lock_authority(&mut tx, tenant, lease).await?;
-        let request = lock_request(&mut tx, id).await?;
+        let mut tx = self.begin_write().await?;
+        lock_authority::<B>(tx.conn(), tenant, lease).await?;
+        let request = lock_request::<B>(tx.conn(), id).await?;
         if request.binding.action != action
             || request.binding.epoch != epoch
             || request.binding.risk != verdict.risk_class
         {
             return Err(conflict());
         }
-        check_action(&mut tx, &request.binding, lease, tenant).await?;
-        let now = lock_authority(&mut tx, tenant, lease).await?;
+        check_action::<B>(tx.conn(), &request.binding, lease, tenant).await?;
+        let now = lock_authority::<B>(tx.conn(), tenant, lease).await?;
         request.validate(now)?;
-        let valid: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM approvals WHERE approval_id=$1 AND consumed_fence=$2 AND consumed_at<=$3 \
-             AND decision='approved' AND revoked_at IS NULL AND expires_at>$3 AND bound_action_id=$4)")
-            .bind(id.0).bind(lease.fencing_token).bind(now).bind(action.0)
-            .fetch_one(&mut *tx).await.map_err(db)?;
+        let valid = scope
+            .query(
+                "approvals",
+                Stmt::<B>::dynamic(
+                    "SELECT EXISTS(SELECT 1 FROM approvals WHERE approval_id=$1 AND consumed_fence=$2 AND consumed_at<=$3 \
+                     AND decision='approved' AND revoked_at IS NULL AND expires_at>$3 AND bound_action_id=$4) AS v",
+                )
+                .uuid(id.0)
+                .i64(lease.fencing_token)
+                .ts(now)
+                .uuid(action.0),
+            )?
+            .fetch_one(tx.conn())
+            .await?
+            .flag("v")?;
         if !valid {
             return Err(conflict());
         }
-        write_decision(
-            &mut tx,
+        write_decision::<B>(
+            tx.conn(),
             lease.session.run,
             lease.session.id,
             Some(action.0),
@@ -442,23 +561,43 @@ impl ApprovalRepository for Pg {
             &request.summary,
         )
         .await?;
-        sqlx::query("UPDATE approvals SET safety_decision_id=$2 WHERE approval_id=$1")
-            .bind(id.0)
-            .bind(verdict.decision_id.0)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query(
-            "UPDATE actions SET status='intended', hold='none', intended_at=$2, finished_at=NULL, safety_decision_id=$3, \
-             before_state_id=(SELECT state_id FROM states WHERE session_id=$4 AND epoch_navigation=$5 AND epoch_document=$6 \
-             AND epoch_mutation<=$7 ORDER BY epoch_mutation DESC, observed_at DESC LIMIT 1) WHERE action_id=$1")
-            .bind(action.0).bind(now).bind(verdict.decision_id.0).bind(lease.session.id.0)
-            .bind(conv::<u64, i64>(epoch.navigation_seq, "epoch")?)
-            .bind(conv::<u64, i64>(epoch.document_seq, "epoch")?)
-            .bind(conv::<u64, i64>(epoch.mutation_seq, "epoch")?)
-            .execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("UPDATE action_contexts SET attempts=attempts+1 WHERE context_id=(SELECT context_id FROM actions WHERE action_id=$1)")
-            .bind(action.0).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)
+        scope
+            .query(
+                "approvals",
+                Stmt::<B>::dynamic("UPDATE approvals SET safety_decision_id=$2 WHERE approval_id=$1")
+                    .uuid(id.0)
+                    .uuid(verdict.decision_id.0),
+            )?
+            .execute(tx.conn())
+            .await?;
+        scope
+            .query(
+                "actions",
+                Stmt::<B>::dynamic(
+                    "UPDATE actions SET status='intended', hold='none', intended_at=$2, finished_at=NULL, safety_decision_id=$3, \
+                     before_state_id=(SELECT state_id FROM states WHERE session_id=$4 AND epoch_navigation=$5 AND epoch_document=$6 \
+                     AND epoch_mutation<=$7 ORDER BY epoch_mutation DESC, observed_at DESC LIMIT 1) WHERE action_id=$1",
+                )
+                .uuid(action.0)
+                .ts(now)
+                .uuid(verdict.decision_id.0)
+                .uuid(lease.session.id.0)
+                .i64(conv::<u64, i64>(epoch.navigation_seq, "epoch")?)
+                .i64(conv::<u64, i64>(epoch.document_seq, "epoch")?)
+                .i64(conv::<u64, i64>(epoch.mutation_seq, "epoch")?),
+            )?
+            .execute(tx.conn())
+            .await?;
+        scope
+            .query(
+                "action_contexts",
+                Stmt::<B>::dynamic(
+                    "UPDATE action_contexts SET attempts=attempts+1 WHERE context_id=(SELECT context_id FROM actions WHERE action_id=$1)",
+                )
+                .uuid(action.0),
+            )?
+            .execute(tx.conn())
+            .await?;
+        tx.commit().await
     }
 }

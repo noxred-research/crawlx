@@ -12,12 +12,15 @@ use anyhow::{anyhow, bail, Context as _};
 use chrono::{DateTime, Utc};
 use clap::{Args, Subcommand, ValueEnum};
 use crawlx_core::{ActionId, CrawlRunId, SystemClock, TenantId, WorkerId};
+use crawlx_storage::sql::Sql;
+use crawlx_storage::tenant::Tenancy;
 use crawlx_storage::{
-    AdminOps, AdmissionMode, ArtifactBlobs, FsArtifactStore, FsBlobs, Pg, RetentionSweeper, RunSelector,
-    S3ArtifactStore, S3Blobs, S3Config, SafetyAuditor, TenantEngine,
+    AdminOps, AdmissionMode, ArtifactBlobs, FsArtifactStore, FsBlobs, RetentionSweeper, RunSelector,
+    S3ArtifactStore, S3Blobs, S3Config, SafetyAuditor, Store, TenantEngine,
 };
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
+use crawlx_worker::DurableStore;
 use std::future::Future;
 use std::io::Write;
 use std::path::PathBuf;
@@ -28,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 /// Connection and operator identity shared by every operator command.
 #[derive(Args, Debug)]
 pub struct AdminCommon {
-    #[arg(long, env = "CRAWLX_DATABASE_URL", global = true)]
+    #[arg(long, env = "CRAWLX_DATABASE_URL", global = true, hide_env_values = true)]
     /// Database url (or `CRAWLX_DATABASE_URL_FILE` / `database.url_file`).
     pub database_url: Option<String>,
     /// Operator name recorded in the admin audit log; `$USER` when omitted.
@@ -37,7 +40,7 @@ pub struct AdminCommon {
 }
 
 impl AdminCommon {
-    async fn ops(&self) -> anyhow::Result<(Pg, String)> {
+    async fn ops(&self) -> anyhow::Result<(DurableStore, String)> {
         let url = crate::config_check::database_url(self.database_url.as_deref())?;
         let pg = connect(url.as_deref()).await?;
         let operator = self
@@ -372,18 +375,46 @@ pub enum OpsCommand {
 }
 
 pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    let cmd = match cmd {
+        OpsCommand::SafetyAudit(a) => return safety_audit(a, out).await,
+        OpsCommand::SweepRetention(a) => return sweep_retention(a, out).await,
+        OpsCommand::SweepDelivery => return sweep_delivery(out).await,
+        OpsCommand::DurabilityAudit(a) => return durability_audit(a, out).await,
+        other => other,
+    };
+    let common = match &cmd {
+        OpsCommand::Pause(a) => &a.common,
+        OpsCommand::Resume(a) => &a.common,
+        OpsCommand::Cancel(a) => &a.common,
+        OpsCommand::Drain(a) => &a.common,
+        OpsCommand::Freeze(a) => &a.common,
+        OpsCommand::Reconcile(a) => &a.common,
+        OpsCommand::VerifyArtifacts(a) => &a.common,
+        OpsCommand::Engine(a) => &a.common,
+        OpsCommand::Workers(a) => &a.common,
+        OpsCommand::Status(a) => &a.common,
+        other => bail!("{other:?} does not use the database repositories"),
+    };
+    let (store, operator) = common.ops().await?;
+    crawlx_worker::on_store!(&store, pg => run_database(pg, &operator, cmd, out).await)
+}
+
+/// The commands that read or change the database, over its repositories of one engine.
+async fn run_database<B: Tenancy>(
+    pg: &Store<B>,
+    op: &str,
+    cmd: OpsCommand,
+    out: &mut dyn Write,
+) -> anyhow::Result<ExitCode> {
     match cmd {
-        OpsCommand::SafetyAudit(a) => safety_audit(a, out).await,
         OpsCommand::Pause(a) => {
             let sel = a.sel.resolve()?;
-            let (pg, op) = a.common.ops().await?;
-            let runs = AdminOps::new(&pg, &op).pause(sel).await?;
+            let runs = AdminOps::new(pg, op).pause(sel).await?;
             report_runs(out, "paused", &runs)
         }
         OpsCommand::Resume(a) => {
             let sel = a.sel.resolve()?;
-            let (pg, op) = a.common.ops().await?;
-            let ops = AdminOps::new(&pg, &op);
+            let ops = AdminOps::new(pg, op);
             if a.admission {
                 let before = ops.set_admission(AdmissionMode::Open).await?;
                 writeln!(out, "scheduler.admission: {before} -> open")?;
@@ -393,17 +424,15 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
         }
         OpsCommand::Cancel(a) => {
             let sel = a.sel.resolve()?;
-            let (pg, op) = a.common.ops().await?;
             let reason = match a.reason {
                 CancelReason::Cancelled => "cancelled",
                 CancelReason::PolicyStopped => "policy_stopped",
             };
-            let runs = AdminOps::new(&pg, &op).cancel(sel, reason).await?;
+            let runs = AdminOps::new(pg, op).cancel(sel, reason).await?;
             report_runs(out, reason, &runs)
         }
         OpsCommand::Drain(a) => {
-            let (pg, op) = a.common.ops().await?;
-            let ops = AdminOps::new(&pg, &op);
+            let ops = AdminOps::new(pg, op);
             if a.admission {
                 let before = ops.set_admission(AdmissionMode::Drain).await?;
                 writeln!(out, "scheduler.admission: {before} -> drain")?;
@@ -418,8 +447,7 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
             Ok(ExitCode::SUCCESS)
         }
         OpsCommand::Freeze(a) => {
-            let (pg, op) = a.common.ops().await?;
-            let ops = AdminOps::new(&pg, &op);
+            let ops = AdminOps::new(pg, op);
             let before = ops.set_admission(AdmissionMode::Frozen).await?;
             writeln!(
                 out,
@@ -433,8 +461,7 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
             Ok(ExitCode::SUCCESS)
         }
         OpsCommand::Reconcile(a) => {
-            let (pg, op) = a.common.ops().await?;
-            let ops = AdminOps::new(&pg, &op);
+            let ops = AdminOps::new(pg, op);
             match a.action.as_deref() {
                 Some(id) => {
                     let action: ActionId = parse_id(id, "action")?;
@@ -464,9 +491,8 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
             Ok(ExitCode::SUCCESS)
         }
         OpsCommand::VerifyArtifacts(a) => {
-            let (pg, op) = a.common.ops().await?;
             let blobs = a.store.blobs().await?;
-            let v = AdminOps::new(&pg, &op)
+            let v = AdminOps::new(pg, op)
                 .verify_artifacts(blobs.as_ref(), a.since)
                 .await?;
             writeln!(
@@ -489,29 +515,11 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
                 ExitCode::from(1)
             })
         }
-        OpsCommand::SweepRetention(a) => sweep_retention(a, out).await,
-        OpsCommand::SweepDelivery => {
-            let clock: Arc<dyn crawlx_core::Clock> = Arc::new(SystemClock);
-            let buffer = crawlx_storage::DeliveryBuffer::open_runtime(
-                clock.clone(),
-                crawlx_storage::BufferLimits::default(),
-            )
-            .await?;
-            if !buffer.is_enabled() {
-                writeln!(out, "delivery_backend=disabled")?;
-                return Ok(ExitCode::SUCCESS);
-            }
-            let removed = buffer.sweep(clock.now()).await?;
-            writeln!(out, "expired_delivery_pages={removed}")?;
-            Ok(ExitCode::SUCCESS)
-        }
-        OpsCommand::DurabilityAudit(a) => durability_audit(a, out).await,
         OpsCommand::Engine(a) => {
             let tenant: TenantId = parse_id(&a.tenant, "tenant")?;
-            let (pg, op) = a.common.ops().await?;
             match a.set {
                 Some(engine) => {
-                    let before = AdminOps::new(&pg, &op)
+                    let before = AdminOps::new(pg, op)
                         .set_tenant_engine(tenant, engine.into())
                         .await?;
                     writeln!(
@@ -521,7 +529,7 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
                     )?;
                 }
                 None => {
-                    let engine = crawlx_storage::admin::tenant_engine_of(&pg, tenant)
+                    let engine = crawlx_storage::admin::tenant_engine_of(pg, tenant)
                         .await?
                         .ok_or_else(|| anyhow!("tenant {tenant} does not exist"))?;
                     writeln!(out, "tenant {tenant} engine: {engine}")?;
@@ -529,9 +537,8 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
             }
             Ok(ExitCode::SUCCESS)
         }
-        OpsCommand::Workers(a) => {
-            let (pg, op) = a.common.ops().await?;
-            let rows = AdminOps::new(&pg, &op).workers().await?;
+        OpsCommand::Workers(_) => {
+            let rows = AdminOps::new(pg, op).workers().await?;
             writeln!(
                 out,
                 "worker_id\thostname\tversion\tdraining\tleases\tlast_heartbeat"
@@ -550,13 +557,12 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
             }
             Ok(ExitCode::SUCCESS)
         }
-        OpsCommand::Status(a) => {
-            let (pg, op) = a.common.ops().await?;
-            let ops = AdminOps::new(&pg, &op);
+        OpsCommand::Status(_) => {
+            let ops = AdminOps::new(pg, op);
             let admission = ops.admission().await?;
             let open = ops.open_actions(None).await?;
             let workers = ops.workers().await?;
-            let active: i64 = sqlx_count(&pg).await?;
+            let active: i64 = sqlx_count(pg).await?;
             writeln!(out, "scheduler.admission: {admission}")?;
             writeln!(out, "active crawls: {active}")?;
             writeln!(
@@ -573,13 +579,29 @@ pub(crate) async fn run(cmd: OpsCommand, out: &mut dyn Write) -> anyhow::Result<
             )?;
             Ok(ExitCode::SUCCESS)
         }
+        other => Err(anyhow!("{other:?} does not use the database repositories")),
     }
 }
 
-async fn sqlx_count(pg: &Pg) -> anyhow::Result<i64> {
+/// Expire shared ephemeral delivery pages and crash leftovers; no database access.
+async fn sweep_delivery(out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    let clock: Arc<dyn crawlx_core::Clock> = Arc::new(SystemClock);
+    let buffer =
+        crawlx_storage::DeliveryBuffer::open_runtime(clock.clone(), crawlx_storage::BufferLimits::default())
+            .await?;
+    if !buffer.is_enabled() {
+        writeln!(out, "delivery_backend=disabled")?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let removed = buffer.sweep(clock.now()).await?;
+    writeln!(out, "expired_delivery_pages={removed}")?;
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn sqlx_count<B: Sql>(pg: &Store<B>) -> anyhow::Result<i64> {
     crawlx_storage::admin::active_run_count(pg)
         .await
-        .map_err(|e| anyhow!("counting active runs: {e}"))
+        .map_err(|e| anyhow!("counting active runs: {}", crate::authz::chain(&e)))
 }
 
 fn report_runs(out: &mut dyn Write, verb: &str, runs: &[CrawlRunId]) -> anyhow::Result<ExitCode> {
@@ -668,11 +690,22 @@ where
 
 async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     if a.every.is_some() && a.mode == SweepMode::Zdr {
-        bail!("--every cannot be combined with --mode zdr: a forced ZDR sweep is a one-time, confirmed operation");
+        bail!(
+            "--every cannot be combined with --mode zdr: a forced ZDR sweep is a one-time, confirmed operation"
+        );
     }
     let recovery = tokio::task::spawn_blocking(crawlx_storage::archive::publication::recover_owned).await??;
     crate::report_archive_recovery(recovery);
-    let (pg, op) = a.common.ops().await?;
+    let (store, op) = a.common.ops().await?;
+    crawlx_worker::on_store!(&store, pg => sweep_retention_on(pg, &op, a, out).await)
+}
+
+async fn sweep_retention_on<B: Sql>(
+    pg: &Store<B>,
+    op: &str,
+    a: SweepRetentionArgs,
+    out: &mut dyn Write,
+) -> anyhow::Result<ExitCode> {
     let clock = Arc::new(SystemClock);
     let runs: Arc<dyn crawlx_core::repo::RunRepo> = Arc::new(pg.clone());
     let reaper: Arc<dyn crawlx_storage::ArtifactReaper> = match &a.store.s3_bucket {
@@ -699,14 +732,14 @@ async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::
                 .map_err(|error| crawlx_core::StoreError::Unavailable(error.to_string()))?
                 .map_err(|error| crawlx_core::StoreError::Unavailable(error.to_string()))?;
             crate::report_archive_recovery(recovery);
-            let now = pg.db_now().await?;
+            let now = crawlx_storage::LeaseRepo::now(pg).await?;
             sweeper.sweep(now).await
         })
         .await;
         signals.abort();
         return code;
     }
-    let now = pg.db_now().await?;
+    let now = crawlx_storage::LeaseRepo::now(pg).await?;
     match a.mode {
         SweepMode::All => {
             let r = sweeper.sweep(now).await?;
@@ -716,8 +749,7 @@ async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::
             if !a.force {
                 bail!("--mode zdr deletes ZDR content immediately; pass --force to confirm (RB-08 step 3)");
             }
-            let purged =
-                crawlx_storage::admin::force_zdr_sweep(&pg, &sweeper, &format!("admin:{op}")).await?;
+            let purged = crawlx_storage::admin::force_zdr_sweep(pg, &sweeper, &format!("admin:{op}")).await?;
             writeln!(out, "zdr: {} run(s) purged, structural trail kept", purged.len())?;
             for r in purged {
                 writeln!(out, "{r}")?;
@@ -734,8 +766,9 @@ async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::
 /// `crawlx admin durability-audit`: compare the API's append-only accept log
 /// against `crawl_runs`, move the two audit counters and fail when any accepted run is gone.
 async fn durability_audit(a: DurabilityAuditArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
-    let (pg, op) = a.common.ops().await?;
-    let audit = AdminOps::new(&pg, &op).durability_audit(a.since).await?;
+    let (store, op) = a.common.ops().await?;
+    let audit =
+        crawlx_worker::on_store!(&store, pg => AdminOps::new(pg, &op).durability_audit(a.since).await)?;
     let missing = u64::try_from(audit.missing.len()).unwrap_or(u64::MAX);
     let metrics = Metrics::global();
     metrics
@@ -764,6 +797,22 @@ async fn durability_audit(a: DurabilityAuditArgs, out: &mut dyn Write) -> anyhow
 }
 
 async fn safety_audit(a: SafetyAuditArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    // two distinct database identities exist only on PostgreSQL; refuse before any connection
+    for url in [&a.reader_database_url, &a.pause_database_url] {
+        match crawlx_storage::DatabaseUrl::parse(url)
+            .map_err(|refusal| anyhow!("{refusal}"))?
+            .kind()
+        {
+            crawlx_storage::BackendKind::Sqlite => {
+                bail!("{}", crawlx_storage::BackendRefusal::sqlite_safety_auditor())
+            }
+            crawlx_storage::BackendKind::Postgres => {}
+            kind => bail!(
+                "{}",
+                crawlx_storage::BackendRefusal::unimplemented(kind, "the independent safety auditor")
+            ),
+        }
+    }
     let auditor = SafetyAuditor::connect(&a.reader_database_url, &a.pause_database_url).await?;
     let report = auditor.audit().await?;
     let counter = Metrics::global().counter(names::SAFETY_INVARIANT_VIOLATIONS);

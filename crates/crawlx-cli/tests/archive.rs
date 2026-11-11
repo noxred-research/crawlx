@@ -883,3 +883,33 @@ fn startup_without_publication_journal_never_creates_user_state() {
     );
     assert!(!absent.exists());
 }
+
+#[tokio::test]
+async fn missing_export_parent_names_directory_before_staging() {
+    let fixture = fixture().await;
+    let args = fixture.export("missing/output.wacz");
+    let error = execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("archive output directory"), "{error}");
+    assert!(error.contains("missing"), "{error}");
+    assert!(error.contains("create it first"), "{error}");
+    assert!(!fixture.dir.path().join("missing").exists());
+}
+
+#[tokio::test]
+async fn empty_export_reports_retained_object_omission() {
+    let fixture = fixture().await;
+    let index = fixture.dir.path().join("artifacts/_index");
+    for row in std::fs::read_dir(index).unwrap() {
+        std::fs::remove_file(row.unwrap().path()).unwrap();
+    }
+    let error = execute_with_clock(fixture.export("empty.wacz"), &mut Vec::new(), &fixture.clock)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("no retention-approved text artifacts"), "{error}");
+    assert!(error.contains("retained_object_missing"), "{error}");
+    assert!(!fixture.dir.path().join("empty.wacz").exists());
+}

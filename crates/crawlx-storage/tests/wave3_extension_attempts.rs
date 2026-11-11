@@ -25,7 +25,7 @@ use crawlx_core::time::ManualClock;
 use crawlx_core::{Clock, CrawlRunId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::{ArtifactIndex, FsArtifactStore};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{MemoryStore, Pg, PgConfig, WorkerRegistry};
+use crawlx_storage::{MemoryStore, Pg, StoreConfig, WorkerRegistry};
 use std::sync::Arc;
 
 fn step(sequence: u64, event: ExtensionEventV1, result: ExtensionResultV1) -> ExtensionReceiptV1 {
@@ -488,9 +488,9 @@ async fn postgres_extension_attempts_are_ordered_idempotent_and_atomic() {
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("extension_attempts_{}", CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -585,9 +585,9 @@ async fn postgres_failed_result_schedules_adaptive_revisit() {
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("extension_recrawl_{}", CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

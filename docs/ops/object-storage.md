@@ -1,14 +1,35 @@
 # Object storage
 
-CrawlX stores artifacts, archives, exports and audit objects in an S3-compatible bucket
-(`crawlx_storage::s3::S3Blobs`). The services that speak the S3 API differ in addressing,
+The library backend stores artifacts, archives, exports and audit objects in an S3-compatible
+bucket (`crawlx_storage::s3::S3Blobs`). The services that speak the S3 API differ in addressing,
 region handling, encryption, object lock and checksum support, so the backend has one
 **profile** per family of services. A profile sets the defaults, and the configuration is
 checked against what the profile can do **when it is built**: an unsupported option is a
 typed error at startup, never a silently dropped header or a failed request later.
 
+`crawlx serve` and `crawlx worker` (and `crawlx crawl --database-url`) use the same settings for
+runtime artifacts, on every database engine: when `CRAWLX_S3_BUCKET` is set they write and read
+artifacts through the bucket (with the database index, the ephemeral delivery buffer, the upload
+spool and encrypted custody, as on the filesystem); without it they use `--artifacts-dir`.
+`crawlx config check` validates the profile and settings for both. Serve and worker must point at
+the same bucket.
+
 Select the profile with `CRAWLX_S3_PROFILE`. The default is `standard`, which keeps the
 behavior from before profiles existed.
+
+## Selecting the backend
+
+Profiles configure an S3 client; they do not change every process's artifact backend.
+The current `crawlx serve`, `crawlx worker` and local `crawlx crawl` commands use their
+filesystem artifact directory. Setting `CRAWLX_S3_BUCKET` does not redirect those writes.
+API and worker processes must therefore share the same filesystem artifact directory.
+Library embeddings can supply `S3ArtifactStore` explicitly.
+
+The CLI selects S3 for `admin audit-export --s3-bucket BUCKET`, `inspect trail
+--s3-bucket BUCKET`, and the artifact verification/retention commands with
+`--s3-bucket BUCKET`. Object delivery destinations also use the configured S3 client.
+Configure the same profile, endpoint and bucket when reading or cleaning those objects.
+
 
 ## Profiles
 

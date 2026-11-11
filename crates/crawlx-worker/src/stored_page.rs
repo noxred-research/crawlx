@@ -51,6 +51,11 @@ pub async fn acquire(
     crawl.limits.urls = 1;
     crawl.scope.max_discovery_depth = 0;
     crawl.scope.path_climb = false;
+    if method == Method::HEAD {
+        // A single metadata probe is not a crawl: a same-host redirect leaving the seed's path is
+        // admitted exactly as it is for the GET scrape, while host, robots and authorization hold.
+        crawl.scope.crawl_entire_domain = true;
+    }
     crawl.scope.known_files.clear();
     crawl.scope.sitemap = SitemapMode::Skip;
     crawl.fetch.retries = 0;
@@ -59,7 +64,9 @@ pub async fn acquire(
     crawl.fetch.oversize = Some(crawlx_core::acquisition::OversizePolicy::Refuse);
     let mut allowance = crawl.acquisition.clone().unwrap_or_default();
     allowance.max_decoded_bytes = allowance.max_decoded_bytes.min(1_048_576);
-    allowance.max_attempts = 1;
+    // Retries are off (no retry class, zero transport retries), so for a native HEAD every attempt
+    // is one redirect hop; the GET scrape engine follows its redirects inside its single attempt.
+    allowance.max_attempts = if method == Method::HEAD { 8 } else { 1 };
     allowance.retry_on.clear();
     allowance.meta_refresh = None;
     allowance.backend_ids = vec!["native_http".into()];
@@ -95,8 +102,14 @@ pub async fn acquire(
         return Err(WorkerError::Config("stored-page acquisition cancelled".into()));
     }
     if method == Method::HEAD {
+        let failure = report.failures.first().map(|failure| failure.reason.clone());
         let head = report.head_responses.into_iter().next().ok_or_else(|| {
-            WorkerError::PolicyDenied("stored-page acquisition produced no admitted HEAD response".into())
+            WorkerError::PolicyDenied(match failure {
+                Some(reason) => {
+                    format!("stored-page acquisition produced no admitted HEAD response ({reason})")
+                }
+                None => "stored-page acquisition produced no admitted HEAD response".into(),
+            })
         })?;
         let status = head
             .get("status")

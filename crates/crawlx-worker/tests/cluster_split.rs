@@ -21,7 +21,7 @@ use crawlx_core::{SafetyProfile, StateClusterId, SystemClock, TenantId};
 use crawlx_observe::spec;
 use crawlx_safety::Adjudication;
 use crawlx_state::OutcomeClass;
-use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use crawlx_strategies::InMemoryLedger;
 use crawlx_worker::{StateAnalyzer, Stores};
 use std::collections::BTreeSet;
@@ -277,9 +277,9 @@ async fn a_contradicting_cluster_is_split_persisted_and_rekeyed_in_postgres() {
     let schema = format!("t_split_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -291,7 +291,11 @@ async fn a_contradicting_cluster_is_split_persisted_and_rekeyed_in_postgres() {
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        TenantId::new(),
+    );
     stores.checkpoint_keys =
         Arc::new(crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap());
     let fake = Arc::new(

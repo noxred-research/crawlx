@@ -1,15 +1,17 @@
 //! Session binding metadata subordinate to the existing session lease, never a new lock service.
 
-use crate::codec::{from_json, get, to_json};
-use crate::error::db;
+use crate::backend::strategy::Conn;
+use crate::backend::{BackendKind, Dialect, RowLock};
+use crate::codec::{from_json, to_json};
 use crate::leases::SessionLease;
-use crate::Pg;
+use crate::sql::{db_clock, stmt, Sql, SqlRow, Stmt};
+use crate::store::Store;
+use crate::tenant::TenantGuard;
 use crawlx_core::repo::{EventRepo, RunRepo};
 use crawlx_core::session_binding::{
     BindingState, RetirementReason, SessionBindingError, SessionBindingV1, SessionIdentityV1, SessionLimits,
 };
 use crawlx_core::{StoreError, TenantId, Timestamp};
-use sqlx::{Postgres, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Absolute ceiling on one initial-authentication reservation (one hour).
@@ -39,46 +41,74 @@ struct BudgetClock {
 
 /// Lock and validate the already-granted session lease in a metadata transaction.
 /// Uses the database clock after row acquisition so a blocked waiter cannot reuse stale time.
-pub(crate) async fn lock_lease(
-    tx: &mut Transaction<'_, Postgres>,
+///
+/// Engines without `FOR UPDATE OF` lock the session row alone and then check the tenant of its
+/// run, which locks the same single row and validates the same ownership.
+pub(crate) async fn lock_lease_on<B: Sql>(
+    conn: &mut Conn<B>,
     lease: &SessionLease,
     tenant: TenantId,
 ) -> Result<Timestamp, StoreError> {
-    let row = sqlx::query(
-        "SELECT s.session_id FROM crawl_sessions s JOIN crawl_runs r USING(run_id) \
-         WHERE s.session_id=$1 AND s.run_id=$2 AND s.role=$3 AND r.tenant_id=$4 \
-         FOR UPDATE OF s",
-    )
-    .bind(lease.session.id.0)
-    .bind(lease.session.run.0)
-    .bind(&lease.session.role.0)
-    .bind(tenant.0)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
-    if row.is_none() {
+    let locked = if B::KIND == BackendKind::Postgres {
+        stmt!(
+            B,
+            "SELECT s.session_id FROM crawl_sessions s JOIN crawl_runs r USING(run_id) \
+             WHERE s.session_id=$1 AND s.run_id=$2 AND s.role=$3 AND r.tenant_id=$4 \
+             FOR UPDATE OF s"
+        )
+        .uuid(lease.session.id.0)
+        .uuid(lease.session.run.0)
+        .text(&lease.session.role.0)
+        .uuid(tenant.0)
+        .fetch_optional(conn)
+        .await?
+        .is_some()
+    } else {
+        let session = stmt!(
+            B,
+            format!(
+                "SELECT session_id FROM crawl_sessions WHERE session_id=$1 AND run_id=$2 AND role=$3{}",
+                <B::Dialect as Dialect>::row_lock(RowLock::Update)
+            )
+        )
+        .uuid(lease.session.id.0)
+        .uuid(lease.session.run.0)
+        .text(&lease.session.role.0)
+        .fetch_optional(conn)
+        .await?
+        .is_some();
+        session
+            && stmt!(
+                B,
+                "SELECT run_id FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2"
+            )
+            .uuid(lease.session.run.0)
+            .uuid(tenant.0)
+            .fetch_optional(conn)
+            .await?
+            .is_some()
+    };
+    if !locked {
         return Err(StoreError::LeaseLost);
     }
-    let now: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
-    let valid: bool = sqlx::query_scalar(
+    let now = db_clock::<B>(conn).await?;
+    let valid = stmt!(
+        B,
         "SELECT EXISTS(SELECT 1 FROM crawl_sessions s JOIN crawl_runs r USING(run_id) \
          WHERE s.session_id=$1 AND s.lease_owner=$2 AND s.fencing_token=$3 \
          AND s.lease_expires_at > $4 AND s.status IN ('running','recovering') \
          AND r.status IN ('queued','running') AND r.cancel_requested_at IS NULL \
          AND r.purge_requested_at IS NULL \
          AND NOT EXISTS(SELECT 1 FROM authorization_records a WHERE a.record_id=r.authorization_record_id \
-           AND (a.revoked_at IS NOT NULL OR a.valid_to <= $4)))",
+           AND (a.revoked_at IS NOT NULL OR a.valid_to <= $4))) AS valid"
     )
-    .bind(lease.session.id.0)
-    .bind(lease.worker.0)
-    .bind(lease.fencing_token)
-    .bind(now)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(db)?;
+    .uuid(lease.session.id.0)
+    .uuid(lease.worker.0)
+    .i64(lease.fencing_token)
+    .ts(now)
+    .fetch_one(conn)
+    .await?
+    .flag("valid")?;
     if !valid {
         return Err(StoreError::LeaseLost);
     }
@@ -156,12 +186,64 @@ pub(crate) async fn budget_clock_deadline<R: RunRepo + EventRepo + ?Sized>(
     Ok((deadline, allowance))
 }
 
-impl Pg {
+impl<B: Sql> Store<B> {
     /// Rebuild the clock ceiling from persisted worker accounting, never from a requested
     /// binding expiry. EventRepo resolves privacy-protected events for ZDR runs as well.
     async fn binding_clock_deadline(&self, lease: &SessionLease) -> Result<(Timestamp, u64), StoreError> {
         let run = RunRepo::get(self, lease.session.run).await?;
         budget_clock_deadline(self, &run, Some(lease.session.id)).await
+    }
+
+    /// Read a binding beneath its locked session lease, carrying the tenant predicate on
+    /// engines without database-enforced tenancy.
+    async fn stored_binding(
+        conn: &mut Conn<B>,
+        session: crawlx_core::SessionId,
+        tenant: TenantId,
+    ) -> Result<Option<SessionBindingV1>, StoreError> {
+        let mut query = if B::KIND.capabilities().database_enforced_tenancy {
+            stmt!(B, "SELECT binding FROM session_bindings WHERE session_id=$1")
+        } else {
+            let scope = TenantGuard::for_tenant(tenant).scope::<B::Dialect>("session_bindings", "", "$2")?;
+            Stmt::<B>::dynamic(&format!(
+                "SELECT binding FROM session_bindings WHERE session_id=$1 AND {}",
+                scope.predicate
+            ))
+        }
+        .uuid(session.0);
+        if !B::KIND.capabilities().database_enforced_tenancy {
+            query = query.uuid(tenant.0);
+        }
+        query
+            .fetch_optional(conn)
+            .await?
+            .map(|row| from_json(row.json("binding")?))
+            .transpose()
+    }
+
+    /// Persist a validated transition beneath the same locked session lease.
+    async fn save_binding(conn: &mut Conn<B>, binding: &SessionBindingV1) -> Result<(), StoreError> {
+        let value = to_json(binding)?;
+        let mut query = if B::KIND.capabilities().database_enforced_tenancy {
+            stmt!(B, "UPDATE session_bindings SET binding=$2 WHERE session_id=$1")
+        } else {
+            let scope = TenantGuard::for_tenant(binding.identity.tenant).scope::<B::Dialect>(
+                "session_bindings",
+                "",
+                "$3",
+            )?;
+            Stmt::<B>::dynamic(&format!(
+                "UPDATE session_bindings SET binding=$2 WHERE session_id=$1 AND {}",
+                scope.predicate
+            ))
+        }
+        .uuid(binding.identity.session.0)
+        .json(&value);
+        if !B::KIND.capabilities().database_enforced_tenancy {
+            query = query.uuid(binding.identity.tenant.0);
+        }
+        query.execute(conn).await?;
+        Ok(())
     }
 
     /// Establish/renew the same identity under the existing live session lease.
@@ -176,6 +258,7 @@ impl Pg {
         identity: SessionIdentityV1,
         expires_at: Timestamp,
     ) -> Result<SessionBindingV1, StoreError> {
+        self.scope()?.authorize(identity.tenant)?;
         if identity.session != lease.session.id
             || identity.run != lease.session.run
             || identity.principal != lease.session.role
@@ -183,43 +266,44 @@ impl Pg {
             return Err(StoreError::Conflict("session_unavailable".into()));
         }
         let (clock_deadline, login_allowance_ms) = self.binding_clock_deadline(lease).await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let now = lock_lease(&mut tx, lease, identity.tenant).await?;
+        let mut tx = self.begin_write().await?;
+        let now = lock_lease_on::<B>(tx.conn(), lease, identity.tenant).await?;
         // Authentication credits change only the exploration clock. Authorization and
         // secret retention stay independent absolute ceilings.
-        let authority_deadline: Option<Timestamp> = sqlx::query_scalar(
-            "SELECT LEAST(r.expires_at, a.valid_to) FROM crawl_runs r \
-             LEFT JOIN authorization_records a ON a.record_id=r.authorization_record_id \
-             WHERE r.run_id=$1",
+        let authority_deadline = stmt!(
+            B,
+            format!(
+                "SELECT {} AS deadline FROM crawl_runs r \
+                 LEFT JOIN authorization_records a ON a.record_id=r.authorization_record_id \
+                 WHERE r.run_id=$1",
+                <B::Dialect as Dialect>::least_ignoring_null(&["r.expires_at", "a.valid_to"])
+            )
         )
-        .bind(identity.run.0)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(identity.run.0)
+        .fetch_one(tx.conn())
+        .await?
+        .opt_ts("deadline")?;
         let ceiling = authority_deadline.map_or(clock_deadline, |deadline| deadline.min(clock_deadline));
         let mut expiry = expires_at.min(ceiling);
         if identity.profile.is_some() {
-            let profile_deadline: Timestamp = sqlx::query_scalar(
-                "SELECT expires_at FROM browser_profiles WHERE session_id=$1 AND lease_fence=$2",
+            let profile_deadline = stmt!(
+                B,
+                "SELECT expires_at FROM browser_profiles WHERE session_id=$1 AND lease_fence=$2"
             )
-            .bind(identity.session.0)
-            .bind(lease.fencing_token)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| StoreError::Conflict("profile_unavailable: profile lease missing".into()))?;
+            .uuid(identity.session.0)
+            .i64(lease.fencing_token)
+            .fetch_optional(tx.conn())
+            .await?
+            .ok_or_else(|| StoreError::Conflict("profile_unavailable: profile lease missing".into()))?
+            .ts("expires_at")?;
             expiry = expiry.min(profile_deadline);
         }
         if expiry <= now {
             return Err(StoreError::Conflict("session_unavailable".into()));
         }
-        let row = sqlx::query("SELECT binding FROM session_bindings WHERE session_id=$1")
-            .bind(identity.session.0)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-        let binding = if let Some(row) = row {
-            let mut current: SessionBindingV1 = from_json(get(&row, "binding")?)?;
+        let binding = if let Some(mut current) =
+            Self::stored_binding(tx.conn(), identity.session, identity.tenant).await?
+        {
             if current.identity != identity
                 || current.expires_at <= now
                 || current.retirement.is_some()
@@ -265,17 +349,20 @@ impl Pg {
                 SessionLimits::default(),
             )
             .map_err(|error| StoreError::Conflict(error.to_string()))?;
-        sqlx::query(
-            "INSERT INTO session_bindings(session_id,run_id,binding) VALUES($1,$2,$3) \
-                     ON CONFLICT(session_id) DO UPDATE SET binding=EXCLUDED.binding",
+        let stored = to_json(&binding)?;
+        stmt!(
+            B,
+            format!(
+                "INSERT INTO session_bindings(session_id,run_id,binding) VALUES($1,$2,$3) {}",
+                <B::Dialect as Dialect>::upsert_update(&["session_id"], &["binding"], None)
+            )
         )
-        .bind(binding.identity.session.0)
-        .bind(binding.identity.run.0)
-        .bind(to_json(&binding)?)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .uuid(binding.identity.session.0)
+        .uuid(binding.identity.run.0)
+        .json(&stored)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await?;
         Ok(binding)
     }
 
@@ -290,37 +377,47 @@ impl Pg {
         lease: &SessionLease,
         binding: &SessionBindingV1,
     ) -> Result<(), SessionBindingVerificationError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let now = lock_lease(&mut tx, lease, binding.identity.tenant).await?;
-        let row = sqlx::query("SELECT binding FROM session_bindings WHERE session_id=$1")
-            .bind(lease.session.id.0)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+        self.scope()?.authorize(binding.identity.tenant)?;
+        let mut tx = self.begin_write().await?;
+        let now = lock_lease_on::<B>(tx.conn(), lease, binding.identity.tenant).await?;
+        let current = Self::stored_binding(tx.conn(), lease.session.id, binding.identity.tenant)
+            .await?
             .ok_or_else(|| StoreError::Conflict("session_unavailable".into()))?;
-        let current: SessionBindingV1 = from_json(get(&row, "binding")?)?;
         if current.checkpoint_identity() != binding.checkpoint_identity() {
             return Err(StoreError::Conflict("session generation conflict".into()).into());
         }
         if let Some(expected) = binding.identity.profile {
-            let row = sqlx::query("SELECT scope,generation FROM browser_profiles WHERE session_id=$1 AND lease_fence=$2 AND expires_at>$3")
-                .bind(lease.session.id.0).bind(lease.fencing_token).bind(now)
-                .fetch_optional(&mut *tx).await.map_err(db)?
-                .ok_or_else(|| StoreError::Conflict("profile_unavailable: profile lease expired or revoked".into()))?;
-            let scope: crate::profiles::ProfileScopeV1 = from_json(get(&row, "scope")?)?;
-            let generation: i64 = get(&row, "generation")?;
-            let generation = u64::try_from(generation)
+            let row = stmt!(
+                B,
+                "SELECT scope,generation FROM browser_profiles WHERE session_id=$1 AND lease_fence=$2 AND expires_at>$3"
+            )
+            .uuid(lease.session.id.0)
+            .i64(lease.fencing_token)
+            .ts(now)
+            .fetch_optional(tx.conn())
+            .await?
+            .ok_or_else(|| StoreError::Conflict("profile_unavailable: profile lease expired or revoked".into()))?;
+            let scope: crate::profiles::ProfileScopeV1 = from_json(row.json("scope")?)?;
+            let generation = u64::try_from(row.i64("generation")?)
                 .map_err(|_| StoreError::Conflict("profile generation conflict".into()))?;
-            let actual =
-                crawlx_core::hash::Digest::of_value("crawlx/profile-identity/v1", &(scope, generation))
-                    .map_err(|error| StoreError::Serialization(error.to_string()))?;
-            if actual != expected {
+            let identity_of = |generation: u64| {
+                crawlx_core::hash::Digest::of_value("crawlx/profile-identity/v1", &(&scope, generation))
+                    .map_err(|error| StoreError::Serialization(error.to_string()))
+            };
+            // The row is pinned to this very session and fence, so only this session's own
+            // end-of-run commit can have advanced it, by exactly one generation beyond the one
+            // the binding was created for. Any other drift is a conflict.
+            let own_commit = match generation.checked_sub(1).filter(|previous| *previous > 0) {
+                Some(previous) => Some(identity_of(previous)?),
+                None => None,
+            };
+            if identity_of(generation)? != expected && own_commit != Some(expected) {
                 return Err(StoreError::Conflict("profile generation conflict".into()).into());
             }
         }
         // Check independent lease/profile/storage authority before reporting only expiry.
         // The transaction grants no authority and never renews any ceiling.
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         current.eligible(
             &binding.identity,
             lease.fencing_token,
@@ -339,16 +436,12 @@ impl Pg {
         lease: &SessionLease,
         tenant: TenantId,
     ) -> Result<SessionBindingV1, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        lock_lease(&mut tx, lease, tenant).await?;
-        let value: serde_json::Value =
-            sqlx::query_scalar("SELECT binding FROM session_bindings WHERE session_id=$1")
-                .bind(lease.session.id.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .ok_or_else(|| StoreError::Conflict("session_unavailable".into()))?;
-        let binding: SessionBindingV1 = from_json(value)?;
+        self.scope()?.authorize(tenant)?;
+        let mut tx = self.begin_write().await?;
+        lock_lease_on::<B>(tx.conn(), lease, tenant).await?;
+        let binding = Self::stored_binding(tx.conn(), lease.session.id, tenant)
+            .await?
+            .ok_or_else(|| StoreError::Conflict("session_unavailable".into()))?;
         if binding.lease_fence != lease.fencing_token
             || binding.schema_version != 1
             || binding.generation == 0
@@ -360,7 +453,7 @@ impl Pg {
         {
             return Err(StoreError::Conflict("session generation conflict".into()));
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(binding)
     }
 
@@ -376,18 +469,14 @@ impl Pg {
         generation: u64,
         pin: crawlx_core::hash::Digest,
     ) -> Result<(), StoreError> {
+        self.scope()?.authorize(tenant)?;
         let generation_db = i64::try_from(generation)
             .map_err(|_| StoreError::Conflict("session generation conflict".into()))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        lock_lease(&mut tx, lease, tenant).await?;
-        let value: serde_json::Value =
-            sqlx::query_scalar("SELECT binding FROM session_bindings WHERE session_id=$1")
-                .bind(lease.session.id.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .ok_or_else(|| StoreError::Conflict("session_unavailable".into()))?;
-        let binding: SessionBindingV1 = from_json(value)?;
+        let mut tx = self.begin_write().await?;
+        lock_lease_on::<B>(tx.conn(), lease, tenant).await?;
+        let binding = Self::stored_binding(tx.conn(), lease.session.id, tenant)
+            .await?
+            .ok_or_else(|| StoreError::Conflict("session_unavailable".into()))?;
         if generation == 0
             || binding.schema_version != 1
             || binding.generation != generation
@@ -399,30 +488,33 @@ impl Pg {
         {
             return Err(StoreError::Conflict("session generation conflict".into()));
         }
-        sqlx::query(
-            "INSERT INTO session_egress_pins(session_id,generation,pin_digest) VALUES($1,$2,$3) \
-             ON CONFLICT(session_id,generation) DO NOTHING",
+        stmt!(
+            B,
+            format!(
+                "INSERT INTO session_egress_pins(session_id,generation,pin_digest) VALUES($1,$2,$3) {}",
+                <B::Dialect as Dialect>::upsert_do_nothing(&["session_id", "generation"])
+            )
         )
-        .bind(lease.session.id.0)
-        .bind(generation_db)
-        .bind(pin.0.as_slice())
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        let same: bool = sqlx::query_scalar(
+        .uuid(lease.session.id.0)
+        .i64(generation_db)
+        .bytes(pin.0.as_slice())
+        .execute(tx.conn())
+        .await?;
+        let same = stmt!(
+            B,
             "SELECT EXISTS(SELECT 1 FROM session_egress_pins \
-             WHERE session_id=$1 AND generation=$2 AND pin_digest=$3)",
+             WHERE session_id=$1 AND generation=$2 AND pin_digest=$3) AS same"
         )
-        .bind(lease.session.id.0)
-        .bind(generation_db)
-        .bind(pin.0.as_slice())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(lease.session.id.0)
+        .i64(generation_db)
+        .bytes(pin.0.as_slice())
+        .fetch_one(tx.conn())
+        .await?
+        .flag("same")?;
         if !same {
             return Err(StoreError::Conflict("session egress pin changed".into()));
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await
     }
 
     /// Explicitly replace a health/usage-retired anonymous generation after confirmed cleanup.
@@ -439,6 +531,7 @@ impl Pg {
         identity: SessionIdentityV1,
         expires_at: Timestamp,
     ) -> Result<SessionBindingV1, SessionBindingVerificationError> {
+        self.scope()?.authorize(expected.identity.tenant)?;
         let run = RunRepo::get(self, lease.session.run).await?;
         let anonymous = lease.session.role == crawlx_core::PrincipalId::anonymous()
             && (run.config.roles.is_empty()
@@ -452,16 +545,11 @@ impl Pg {
             .orchestration
             .as_ref()
             .map_or(0, |config| config.attempts.max_session_rotations);
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let now = lock_lease(&mut tx, lease, expected.identity.tenant).await?;
-        let value: serde_json::Value =
-            sqlx::query_scalar("SELECT binding FROM session_bindings WHERE session_id=$1")
-                .bind(lease.session.id.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .ok_or(SessionBindingError::GenerationConflict)?;
-        let current: SessionBindingV1 = from_json(value)?;
+        let mut tx = self.begin_write().await?;
+        let now = lock_lease_on::<B>(tx.conn(), lease, expected.identity.tenant).await?;
+        let current = Self::stored_binding(tx.conn(), lease.session.id, expected.identity.tenant)
+            .await?
+            .ok_or(SessionBindingError::GenerationConflict)?;
         if !anonymous
             || rotations == 0
             || current.generation > u64::from(rotations)
@@ -481,37 +569,36 @@ impl Pg {
         }
         // Proposal insertion already locks the session row. Lock every retryable action
         // before inspecting status so an uncommitted intent cannot hide behind its old row.
-        sqlx::query(
-            "SELECT action_id FROM actions WHERE session_id=$1 AND \
-             (status IN ('proposed','intended','unknown') OR \
-              (status='reconciled' AND reconcile_resolution='not_applied')) \
-             ORDER BY action_id FOR UPDATE",
+        stmt!(
+            B,
+            format!(
+                "SELECT action_id FROM actions WHERE session_id=$1 AND \
+                 (status IN ('proposed','intended','unknown') OR \
+                  (status='reconciled' AND reconcile_resolution='not_applied')) \
+                 ORDER BY action_id{}",
+                <B::Dialect as Dialect>::row_lock(RowLock::Update)
+            )
         )
-        .bind(lease.session.id.0)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        let blocked: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM actions WHERE session_id=$1 \
+        .uuid(lease.session.id.0)
+        .fetch_all(tx.conn())
+        .await?;
+        let blocked = stmt!(
+            B,
+            "SELECT (EXISTS(SELECT 1 FROM actions WHERE session_id=$1 \
              AND status IN ('intended','unknown')) OR \
-             EXISTS(SELECT 1 FROM browser_profiles WHERE session_id=$1)",
+             EXISTS(SELECT 1 FROM browser_profiles WHERE session_id=$1)) AS blocked"
         )
-        .bind(lease.session.id.0)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(lease.session.id.0)
+        .fetch_one(tx.conn())
+        .await?
+        .flag("blocked")?;
         if blocked {
             return Err(SessionBindingError::GenerationConflict.into());
         }
         let next = current.replace(identity, true, expires_at)?;
         next.eligible(&next.identity, lease.fencing_token, now, SessionLimits::default())?;
-        sqlx::query("UPDATE session_bindings SET binding=$2 WHERE session_id=$1")
-            .bind(lease.session.id.0)
-            .bind(to_json(&next)?)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        Self::save_binding(tx.conn(), &next).await?;
+        tx.commit().await?;
         Ok(next)
     }
 
@@ -526,15 +613,12 @@ impl Pg {
         expected_version: u64,
         next: &SessionBindingV1,
     ) -> Result<(), StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        lock_lease(&mut tx, lease, next.identity.tenant).await?;
-        let row = sqlx::query("SELECT binding FROM session_bindings WHERE session_id=$1")
-            .bind(lease.session.id.0)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
+        self.scope()?.authorize(next.identity.tenant)?;
+        let mut tx = self.begin_write().await?;
+        lock_lease_on::<B>(tx.conn(), lease, next.identity.tenant).await?;
+        let current = Self::stored_binding(tx.conn(), lease.session.id, next.identity.tenant)
+            .await?
             .ok_or_else(|| StoreError::Conflict("session_unavailable".into()))?;
-        let current: SessionBindingV1 = from_json(get(&row, "binding")?)?;
         let same = next.identity == current.identity && next.generation == current.generation;
         let legal_state = matches!(
             (current.state, next.state),
@@ -584,12 +668,7 @@ impl Pg {
         {
             return Err(StoreError::Conflict("session generation conflict".into()));
         }
-        sqlx::query("UPDATE session_bindings SET binding=$2 WHERE session_id=$1")
-            .bind(lease.session.id.0)
-            .bind(to_json(next)?)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        tx.commit().await.map_err(db)
+        Self::save_binding(tx.conn(), next).await?;
+        tx.commit().await
     }
 }

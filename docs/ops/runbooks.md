@@ -124,7 +124,7 @@ route failed Jobs and preserved JSON to paging rather than assuming Prometheus s
 | R-CFG | Revert the configuration in version control, run `crawlx config check`, then roll. |
 | R-CHROMIUM | Redeploy the previous image tag and revert `chromium-pin.toml`; sessions resume from checkpoint by re-observing. |
 | R-MODEL | Roll back to the previous model artifact (versioned independently) and check the calibration version matches ([RB-05](#rb-05) step 3). |
-| R-ENGINE | `crawlx admin engine --tenant <id> --set upstream`: new compat crawls go to the configured upstream engine instead; in-flight crawls finish where they started. |
+| R-ENGINE | `crawlx admin engine --tenant <id> --set upstream`: CrawlX refuses new compatibility crawls for the tenant with `409 engine_mismatch`, so an operator gateway can route them to the upstream engine. CrawlX does not forward requests itself. In-flight and stored runs stay readable and finish where they started. |
 | R-ADMISSION | `crawlx admin resume --admission --crawl <id>` (or `--all` after listing paused runs) after a `drain --admission` or `freeze` ([RB-04](#rb-04) step 8, [RB-07](#rb-07) step 7, [RB-11](#rb-11)). |
 
 ---
@@ -255,8 +255,11 @@ Trigger: crash-rate alert, many sessions in recovery, often after a Chromium or 
 5. If one target crashes renderers: `crawlx admin pause --crawl <id>`, capture the replay bundle
    and a Chromium trace on a canary session, and open a target-specific ticket (SEV-3). Do not
    disable crash handling.
-6. Confirm the crash-loop breaker paused the affected runs rather than respawning without bound.
-   Any `unknown` actions created follow [RB-02](#rb-02).
+6. Confirm recovery stays bounded: each session retries the recovery ladder (reattach, restore the
+   checkpoint, rerun the built-in login) a finite number of times, then fails with
+   `recovery_exhausted` and the run ends `failed`; nothing respawns without bound, and the worker
+   never pauses a run by itself (use `crawlx admin pause --crawl <id>` as in step 5). Any `unknown`
+   actions created follow [RB-02](#rb-02).
 7. Reduce load while recovering: lower `worker.max_sessions` and `worker.contexts_per_browser` for
    the affected pool (configuration roll) to avoid memory thrash.
 8. Exit criteria: crash rate back to baseline for 30 minutes; paused runs resumed or terminated
@@ -887,7 +890,7 @@ One card for each of the 32 rules, in file order.
 - **Symptom.** Widespread session recoveries; coverage drops.
 - **Dashboards.** As card 21; Capacity: "Renderer RSS per session (p95 across workers)".
 - **First commands.** Roll back first ([RB-03](#rb-03) step 2), draining rather than killing: `crawlx admin drain --worker <id>` per node, or `crawlx admin drain --admission` to stop new work while recovering.
-- **Then.** [RB-03](#rb-03) steps 4 to 8: compare `chromium-pin.toml` with the running image and the recent sessions' `BrowserBuildInfo`; reduce `worker.max_sessions` and `contexts_per_browser`; confirm the crash-loop breaker paused runs. [RB-02](#rb-02) for `unknown` actions.
+- **Then.** [RB-03](#rb-03) steps 4 to 8: compare `chromium-pin.toml` with the running image and the recent sessions' `BrowserBuildInfo`; reduce `worker.max_sessions` and `contexts_per_browser`; confirm affected sessions end `recovery_exhausted` instead of respawning, and pause targets that keep crashing. [RB-02](#rb-02) for `unknown` actions.
 - **Rollback.** R-CHROMIUM, R-APP.
 
 ## 23. CrawlxModelBreakerOpen

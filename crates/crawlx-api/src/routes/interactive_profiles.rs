@@ -40,7 +40,11 @@ pub(crate) fn registry(state: &AppState) -> Result<&InteractiveProfiles, HttpErr
     state
         .interactive_profiles
         .as_deref()
-        .ok_or_else(|| HttpError::invalid_state("local interactive worker capability is not configured"))
+        .ok_or_else(|| {
+            HttpError::invalid_state(
+                "local interactive worker capability is not configured: it exists only when the API and the worker run in one process and share the registry; `crawlx serve` with a separate `crawlx worker` does not provide it",
+            )
+        })
 }
 
 fn validate_origin(expected: &url::Url, headers: &HeaderMap) -> Result<(), HttpError> {
@@ -315,7 +319,9 @@ pub async fn ui(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<
         return Err(HttpError::scope_missing("interactive:local-host"));
     }
     let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(UI_SCRIPT.as_bytes()));
-    let policy = format!("default-src 'none'; script-src 'sha256-{hash}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    let policy = format!(
+        "default-src 'none'; script-src 'sha256-{hash}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    );
     let mut response =
         no_store(Html(format!("{UI_BODY}<script>{UI_SCRIPT}</script></html>")).into_response());
     response.headers_mut().insert(

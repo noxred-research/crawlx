@@ -9,7 +9,7 @@ use crawlx_core::safety::{RiskClass, SafetyDecision};
 use crawlx_core::{ActionId, ApprovalId, CrawlRunId, StateClusterId, TenantId, WorkerId};
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal, sessions, verdict};
 use crawlx_storage::{
-    ApiKeyRow, DeliveryBuffer, LeaseRepo, NewAuthorization, Pg, PgApiRepo, PgConfig, SafetyAuditor,
+    ApiKeyRow, DeliveryBuffer, LeaseRepo, NewAuthorization, Pg, PgApiRepo, SafetyAuditor, StoreConfig,
 };
 use std::sync::Arc;
 
@@ -138,9 +138,9 @@ async fn privileged_bypass_pauses_only_affected_run_with_independent_identities(
     let schema = format!("auditor_{suffix}");
     let pg = Pg::connect(
         &base,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

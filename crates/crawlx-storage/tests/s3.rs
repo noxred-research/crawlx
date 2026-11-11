@@ -447,19 +447,22 @@ async fn self_hosted_backend_contract_when_docker_can_run_it() {
 async fn service_contract(endpoint: &str, access: &str, secret: &str) {
     let creds =
         || aws_sdk_s3::config::Credentials::new(access.to_owned(), secret.to_owned(), None, None, "test");
-    let mut cfg = S3Config::new("crawlx-artifacts", "us-east-1").with_endpoint(endpoint.to_owned());
+    // A bucket per run: the contract lists and empties the whole bucket, so it must not share
+    // one with anything else that uses the same server (CLI audit export, other suites).
+    let bucket = format!("crawlx-contract-{}", TenantId::new());
+    let mut cfg = S3Config::new(&bucket, "us-east-1").with_endpoint(endpoint.to_owned());
     cfg.max_attempts = 3;
     let b = S3Blobs::with_credentials(&cfg, creds()).unwrap();
     // readiness: the bucket create succeeds once the server answers
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     loop {
-        match b.client().create_bucket().bucket("crawlx-artifacts").send().await {
+        match b.client().create_bucket().bucket(&bucket).send().await {
             Ok(_) => break,
             Err(e)
                 if e.as_service_error()
                     .is_some_and(|s| s.is_bucket_already_owned_by_you()) =>
             {
-                break
+                break;
             }
             Err(e) if tokio::time::Instant::now() < deadline => {
                 tracing::debug!(error = %e, "minio not ready");
@@ -485,5 +488,9 @@ async fn service_contract(endpoint: &str, access: &str, secret: &str) {
             assert!(msg.starts_with("s3 put content/sse/a/b"), "{msg}")
         }
         Err(other) => panic!("unexpected error class: {other:?}"),
+    }
+    // best-effort: the bucket is empty here, so a failed removal only leaves an empty bucket
+    if let Err(e) = b.client().delete_bucket().bucket(&bucket).send().await {
+        tracing::debug!(error = %e, "contract bucket not removed");
     }
 }

@@ -71,7 +71,7 @@ pub async fn artifact(
         Sensitivity::CredentialBearing => {
             return Err(HttpError::artifact_unavailable(
                 "credential-bearing artifacts are never served",
-            ))
+            ));
         }
         Sensitivity::Sensitive => principal.require(Scope::ArtifactsReadSensitive)?,
         Sensitivity::Metadata | Sensitivity::Content => {}

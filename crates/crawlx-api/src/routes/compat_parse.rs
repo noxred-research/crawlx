@@ -301,7 +301,9 @@ fn parse_error(e: ParseError, req: &ParseRequest) -> HttpError {
         ParseError::UnsupportedFormat { detail } => HttpError::compat(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "unsupported_content_type",
-            format!("unsupported file type: {detail}; GET /compat/v2/parse/formats lists the supported formats"),
+            format!(
+                "unsupported file type: {detail}; GET /compat/v2/parse/formats lists the supported formats"
+            ),
         ),
         e @ ParseError::TooLarge { .. } => {
             HttpError::compat(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", e.to_string())
@@ -363,7 +365,11 @@ fn parse_error(e: ParseError, req: &ParseRequest) -> HttpError {
                 format!("the {format} document cannot be parsed"),
             )
         }
-        other => HttpError::compat(StatusCode::UNPROCESSABLE_ENTITY, "corrupt_document", other.to_string()),
+        other => HttpError::compat(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "corrupt_document",
+            other.to_string(),
+        ),
     }
 }
 

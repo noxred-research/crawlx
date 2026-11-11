@@ -1,9 +1,11 @@
 //! Retained, tenant/run-scoped URL graph persistence over existing producer custody.
-//! SQL remains here; PostgreSQL lock and clock details are isolated in small helpers.
+//! SQL remains here; the row lock and the database clock come from the engine's dialect.
 
-use crate::codec::{digest, get};
-use crate::error::db;
-use crate::Pg;
+use crate::backend::strategy::Conn;
+use crate::backend::{Dialect, RowLock};
+use crate::codec::digest;
+use crate::sql::{db_clock, stmt, Sql, SqlRow, Stmt};
+use crate::store::Store;
 use async_trait::async_trait;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::custody::CustodyLease;
@@ -12,8 +14,8 @@ use crawlx_core::url_graph::{
     UrlGraphSnapshotV1, UrlHandleV1,
 };
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp};
-use sqlx::{Postgres, Transaction};
 use std::collections::BTreeSet;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct MemoryGraph {
@@ -61,97 +63,118 @@ pub(crate) fn retained_deadline(
     Ok(end)
 }
 
-// PostgreSQL database-clock authority; portable graph DML below needs no wall clock.
-async fn now(tx: &mut Transaction<'_, Postgres>) -> Result<Timestamp, StoreError> {
-    sqlx::query_scalar("SELECT clock_timestamp()")
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)
+// The database clock is the only wall clock of this module.
+async fn now<B: Sql>(conn: &mut Conn<B>) -> Result<Timestamp, StoreError> {
+    db_clock::<B>(conn).await
 }
 
-// PostgreSQL enum projection and row lock stay at the existing run authority boundary.
-async fn retained_run(
-    tx: &mut Transaction<'_, Postgres>,
+// The enum projection and the run row lock stay at the existing run authority boundary.
+async fn retained_run<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
 ) -> Result<Timestamp, StoreError> {
     tenant_scope(tenant)?;
-    let row = sqlx::query("SELECT tenant_id,retention_mode::text AS mode,retention_days,created_at,expires_at,purge_requested_at FROM crawl_runs WHERE run_id=$1 FOR SHARE")
-        .bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(|| missing(run))?;
-    if TenantId(get(&row, "tenant_id")?) != tenant
-        || get::<Option<Timestamp>>(&row, "purge_requested_at")?.is_some()
-    {
+    let row = stmt!(
+        B,
+        format!(
+            "SELECT tenant_id,retention_mode::text AS mode,retention_days,created_at,expires_at,purge_requested_at FROM crawl_runs WHERE run_id=$1{}",
+            <B::Dialect as Dialect>::row_lock(RowLock::Share)
+        )
+    )
+    .uuid(run.0)
+    .fetch_optional(conn)
+    .await?
+    .ok_or_else(|| missing(run))?;
+    if TenantId(row.uuid("tenant_id")?) != tenant || row.opt_ts("purge_requested_at")?.is_some() {
         return Err(denied());
     }
-    let mode = match get::<String>(&row, "mode")?.as_str() {
+    let mode = match row.text("mode")?.as_str() {
         "standard" => RetentionMode::Standard,
         "extended" => RetentionMode::Extended,
         _ => return Err(denied()),
     };
-    let clock = now(tx).await?;
+    let clock = now::<B>(conn).await?;
     retained_deadline(
         mode,
-        i64::from(get::<i32>(&row, "retention_days")?),
-        get(&row, "created_at")?,
-        get(&row, "expires_at")?,
+        i64::from(row.i32("retention_days")?),
+        row.ts("created_at")?,
+        row.opt_ts("expires_at")?,
         clock,
     )
 }
 
 // Header locks serialize source replacement and rank publication without a second lease.
-async fn load(
-    tx: &mut Transaction<'_, Postgres>,
+async fn load<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
     write: bool,
 ) -> Result<(UrlGraphSnapshotV1, Timestamp), StoreError> {
-    let sql = if write {
-        "SELECT version,revision,policy,expires_at FROM url_graph_runs WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE"
+    let query = if write {
+        stmt!(
+            B,
+            format!(
+                "SELECT version,revision,policy,expires_at FROM url_graph_runs WHERE tenant_id=$1 AND run_id=$2{}",
+                <B::Dialect as Dialect>::row_lock(RowLock::Update)
+            )
+        )
     } else {
-        "SELECT version,revision,policy,expires_at FROM url_graph_runs WHERE tenant_id=$1 AND run_id=$2 FOR SHARE"
+        stmt!(
+            B,
+            format!(
+                "SELECT version,revision,policy,expires_at FROM url_graph_runs WHERE tenant_id=$1 AND run_id=$2{}",
+                <B::Dialect as Dialect>::row_lock(RowLock::Share)
+            )
+        )
     };
-    let row = sqlx::query(sql)
-        .bind(tenant.0)
-        .bind(run.0)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?
+    let row = query
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .fetch_optional(conn)
+        .await?
         .ok_or_else(|| missing(run))?;
-    let expiry: Timestamp = get(&row, "expires_at")?;
-    if expiry <= now(tx).await? {
+    let expiry = row.ts("expires_at")?;
+    if expiry <= now::<B>(conn).await? {
         return Err(denied());
     }
-    let policy: UrlGraphPolicyV1 = serde_json::from_value(get(&row, "policy")?)?;
+    let policy: UrlGraphPolicyV1 = serde_json::from_value(row.json("policy")?)?;
     let mut graph = UrlGraphSnapshotV1::empty(tenant, run, policy);
-    graph.version = u16::try_from(get::<i32>(&row, "version")?).map_err(|_| denied())?;
-    graph.revision = u64::try_from(get::<i64>(&row, "revision")?).map_err(|_| denied())?;
-    let nodes = sqlx::query(
-        "SELECT handle FROM url_graph_nodes WHERE tenant_id=$1 AND run_id=$2 ORDER BY handle LIMIT 2049",
+    graph.version = u16::try_from(row.i32("version")?).map_err(|_| denied())?;
+    graph.revision = u64::try_from(row.i64("revision")?).map_err(|_| denied())?;
+    let nodes = stmt!(
+        B,
+        "SELECT handle FROM url_graph_nodes WHERE tenant_id=$1 AND run_id=$2 ORDER BY handle LIMIT 2049"
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(db)?;
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .fetch_all(conn)
+    .await?;
     graph.nodes = nodes
         .iter()
-        .map(|row| Ok(UrlHandleV1(digest(&get::<Vec<u8>>(row, "handle")?)?)))
+        .map(|row| Ok(UrlHandleV1(digest(&row.bytes("handle")?)?)))
         .collect::<Result<_, StoreError>>()?;
-    let edges = sqlx::query("SELECT source_handle,target_handle,anchor_handle,cost FROM url_graph_edges WHERE tenant_id=$1 AND run_id=$2 ORDER BY source_handle,target_handle,anchor_handle LIMIT 8193")
-        .bind(tenant.0).bind(run.0).fetch_all(&mut **tx).await.map_err(db)?;
+    let edges = stmt!(
+        B,
+        "SELECT source_handle,target_handle,anchor_handle,cost FROM url_graph_edges WHERE tenant_id=$1 AND run_id=$2 ORDER BY source_handle,target_handle,anchor_handle LIMIT 8193"
+    )
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .fetch_all(conn)
+    .await?;
     graph.edges = edges
         .iter()
         .map(|row| {
-            let anchor: Vec<u8> = get(row, "anchor_handle")?;
+            let anchor = row.bytes("anchor_handle")?;
             Ok(UrlGraphEdgeV1::new(
-                UrlHandleV1(digest(&get::<Vec<u8>>(row, "source_handle")?)?),
-                UrlHandleV1(digest(&get::<Vec<u8>>(row, "target_handle")?)?),
+                UrlHandleV1(digest(&row.bytes("source_handle")?)?),
+                UrlHandleV1(digest(&row.bytes("target_handle")?)?),
                 if anchor.is_empty() {
                     None
                 } else {
                     Some(digest(&anchor)?)
                 },
-                u32::try_from(get::<i64>(row, "cost")?).map_err(|_| denied())?,
+                u32::try_from(row.i64("cost")?).map_err(|_| denied())?,
             ))
         })
         .collect::<Result<_, StoreError>>()?;
@@ -159,95 +182,133 @@ async fn load(
     Ok((graph, expiry))
 }
 
-async fn invalidate(
-    tx: &mut Transaction<'_, Postgres>,
-    tenant: TenantId,
-    run: CrawlRunId,
-) -> Result<(), StoreError> {
-    sqlx::query("DELETE FROM url_graph_ranks WHERE tenant_id=$1 AND run_id=$2")
-        .bind(tenant.0)
-        .bind(run.0)
-        .execute(&mut **tx)
-        .await
-        .map_err(db)?;
+async fn invalidate<B: Sql>(conn: &mut Conn<B>, tenant: TenantId, run: CrawlRunId) -> Result<(), StoreError> {
+    stmt!(B, "DELETE FROM url_graph_ranks WHERE tenant_id=$1 AND run_id=$2")
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .execute(conn)
+        .await?;
     Ok(())
 }
-async fn finish(
-    tx: &mut Transaction<'_, Postgres>,
+
+async fn finish<B: Sql>(
+    conn: &mut Conn<B>,
     lease: &CustodyLease,
     expiry: Timestamp,
 ) -> Result<(), StoreError> {
-    crate::custody::live(tx, lease).await?;
-    if expiry <= now(tx).await? {
+    crate::custody::live::<B>(conn, lease).await?;
+    if expiry <= now::<B>(conn).await? {
         return Err(denied());
     }
     lease.check_local_cancellation()
 }
 
-// PostgreSQL insert-if-absent serializes first creation through the unique run key.
-async fn create_header(
-    tx: &mut Transaction<'_, Postgres>,
+// Insert-if-absent serializes first creation through the unique run key.
+async fn create_header<B: Sql>(
+    conn: &mut Conn<B>,
     lease: &CustodyLease,
     policy: &UrlGraphPolicyV1,
     ceiling: Timestamp,
 ) -> Result<(), StoreError> {
-    sqlx::query("INSERT INTO url_graph_runs(tenant_id,run_id,version,revision,policy,expires_at) VALUES($1,$2,1,0,$3,$4) ON CONFLICT(tenant_id,run_id) DO NOTHING")
-        .bind(lease.tenant.0).bind(lease.run.0).bind(serde_json::to_value(policy)?).bind(ceiling)
-        .execute(&mut **tx).await.map_err(db)?;
+    let policy = serde_json::to_value(policy)?;
+    stmt!(
+        B,
+        format!(
+            "INSERT INTO url_graph_runs(tenant_id,run_id,version,revision,policy,expires_at) VALUES($1,$2,1,0,$3,$4) {}",
+            <B::Dialect as Dialect>::upsert_do_nothing(&["tenant_id", "run_id"])
+        )
+    )
+    .uuid(lease.tenant.0)
+    .uuid(lease.run.0)
+    .json(&policy)
+    .ts(ceiling)
+    .execute(conn)
+    .await?;
     Ok(())
 }
 
-impl Pg {
+impl<B: Sql> Store<B> {
     /// Erase at most 512 expired graph runs and all their child evidence/ranks.
     /// An attached tenant scope narrows maintenance; unscoped worker maintenance spans tenants.
     ///
     /// # Errors
     /// Returns the existing database error if bounded deletion fails.
     pub async fn purge_expired_url_graph(&self) -> Result<u64, StoreError> {
-        let result = sqlx::query(
-            "DELETE FROM url_graph_runs WHERE (tenant_id,run_id) IN (\
-             SELECT tenant_id,run_id FROM url_graph_runs \
-             WHERE expires_at<=CURRENT_TIMESTAMP AND (tenant_id=$1 OR $1 IS NULL) \
-             ORDER BY expires_at,tenant_id,run_id LIMIT 512)",
-        )
-        .bind(crate::tenant::current().map(|tenant| tenant.0))
-        .execute(&self.pool)
-        .await
-        .map_err(db)?;
-        Ok(result.rows_affected())
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let clock = now::<B>(tx.conn()).await?;
+        let scope = crate::tenant::current();
+        // MariaDB rejects LIMIT inside an IN subquery: pick the keys first, delete by key.
+        let select = if scope.is_some() {
+            "SELECT tenant_id,run_id FROM url_graph_runs WHERE expires_at<=$1 AND tenant_id=$2 ORDER BY expires_at,tenant_id,run_id LIMIT 512"
+        } else {
+            "SELECT tenant_id,run_id FROM url_graph_runs WHERE expires_at<=$1 ORDER BY expires_at,tenant_id,run_id LIMIT 512"
+        };
+        let mut keys = Stmt::<B>::dynamic(select).ts(clock);
+        if let Some(tenant) = scope {
+            keys = keys.uuid(tenant.0);
+        }
+        let keys = keys
+            .fetch_all(tx.conn())
+            .await?
+            .iter()
+            .map(|row| Ok((row.uuid("tenant_id")?, row.uuid("run_id")?)))
+            .collect::<Result<Vec<(Uuid, Uuid)>, StoreError>>()?;
+        let mut erased = 0_u64;
+        if !keys.is_empty() {
+            let rows = (0..keys.len())
+                .map(|row| format!("(${},${})", row * 2 + 1, row * 2 + 2))
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut delete = Stmt::<B>::dynamic(&format!(
+                "DELETE FROM url_graph_runs WHERE (tenant_id,run_id) IN ({rows})"
+            ));
+            for (tenant, run) in &keys {
+                delete = delete.uuid(*tenant).uuid(*run);
+            }
+            erased = delete.execute(tx.conn()).await?;
+        }
+        tx.commit().await?;
+        Ok(erased)
     }
 }
 
 #[async_trait]
-impl UrlGraphRepo for Pg {
+impl<B: Sql> UrlGraphRepo for Store<B> {
     async fn configure(&self, lease: &CustodyLease, policy: &UrlGraphPolicyV1) -> Result<(), StoreError> {
+        self.scope()?.authorize(lease.tenant)?;
         policy.validate().map_err(invalid)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        crate::custody::live(&mut tx, lease).await?;
-        let ceiling = retained_run(&mut tx, lease.tenant, lease.run).await?;
-        create_header(&mut tx, lease, policy, ceiling).await?;
-        let (graph, expiry) = load(&mut tx, lease.tenant, lease.run, true).await?;
+        let mut tx = self.begin_write().await?;
+        crate::custody::live::<B>(tx.conn(), lease).await?;
+        let ceiling = retained_run::<B>(tx.conn(), lease.tenant, lease.run).await?;
+        create_header::<B>(tx.conn(), lease, policy, ceiling).await?;
+        let (graph, expiry) = load::<B>(tx.conn(), lease.tenant, lease.run, true).await?;
         if graph.policy != *policy {
-            sqlx::query("UPDATE url_graph_runs SET policy=$3 WHERE tenant_id=$1 AND run_id=$2")
-                .bind(lease.tenant.0)
-                .bind(lease.run.0)
-                .bind(serde_json::to_value(policy)?)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-            invalidate(&mut tx, lease.tenant, lease.run).await?;
+            let stored = serde_json::to_value(policy)?;
+            stmt!(
+                B,
+                "UPDATE url_graph_runs SET policy=$3 WHERE tenant_id=$1 AND run_id=$2"
+            )
+            .uuid(lease.tenant.0)
+            .uuid(lease.run.0)
+            .json(&stored)
+            .execute(tx.conn())
+            .await?;
+            invalidate::<B>(tx.conn(), lease.tenant, lease.run).await?;
         }
         if ceiling < expiry {
-            sqlx::query("UPDATE url_graph_runs SET expires_at=$3 WHERE tenant_id=$1 AND run_id=$2")
-                .bind(lease.tenant.0)
-                .bind(lease.run.0)
-                .bind(ceiling)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+            stmt!(
+                B,
+                "UPDATE url_graph_runs SET expires_at=$3 WHERE tenant_id=$1 AND run_id=$2"
+            )
+            .uuid(lease.tenant.0)
+            .uuid(lease.run.0)
+            .ts(ceiling)
+            .execute(tx.conn())
+            .await?;
         }
-        finish(&mut tx, lease, expiry.min(ceiling)).await?;
-        tx.commit().await.map_err(db)
+        finish::<B>(tx.conn(), lease, expiry.min(ceiling)).await?;
+        tx.commit().await
     }
 
     async fn replace_source(
@@ -257,10 +318,11 @@ impl UrlGraphRepo for Pg {
         policy: &UrlGraphPolicyV1,
     ) -> Result<u64, StoreError> {
         batch.validate().map_err(invalid)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        crate::custody::live(&mut tx, lease).await?;
-        let ceiling = retained_run(&mut tx, lease.tenant, lease.run).await?;
-        let (mut graph, expiry) = load(&mut tx, lease.tenant, lease.run, true).await?;
+        self.scope()?.authorize(lease.tenant)?;
+        let mut tx = self.begin_write().await?;
+        crate::custody::live::<B>(tx.conn(), lease).await?;
+        let ceiling = retained_run::<B>(tx.conn(), lease.tenant, lease.run).await?;
+        let (mut graph, expiry) = load::<B>(tx.conn(), lease.tenant, lease.run, true).await?;
         if graph.policy != *policy {
             return Err(StoreError::Conflict("url graph policy changed".into()));
         }
@@ -270,89 +332,112 @@ impl UrlGraphRepo for Pg {
             .collect();
         if graph.replace(batch).map_err(invalid)? {
             for node in additional {
-                sqlx::query("INSERT INTO url_graph_nodes(tenant_id,run_id,handle) VALUES($1,$2,$3)")
-                    .bind(lease.tenant.0)
-                    .bind(lease.run.0)
-                    .bind(node.0 .0.as_slice())
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                stmt!(
+                    B,
+                    "INSERT INTO url_graph_nodes(tenant_id,run_id,handle) VALUES($1,$2,$3)"
+                )
+                .uuid(lease.tenant.0)
+                .uuid(lease.run.0)
+                .bytes(node.0 .0.as_slice())
+                .execute(tx.conn())
+                .await?;
             }
-            sqlx::query("DELETE FROM url_graph_edges WHERE tenant_id=$1 AND run_id=$2 AND source_handle=$3")
-                .bind(lease.tenant.0)
-                .bind(lease.run.0)
-                .bind(batch.source.0 .0.as_slice())
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+            stmt!(
+                B,
+                "DELETE FROM url_graph_edges WHERE tenant_id=$1 AND run_id=$2 AND source_handle=$3"
+            )
+            .uuid(lease.tenant.0)
+            .uuid(lease.run.0)
+            .bytes(batch.source.0 .0.as_slice())
+            .execute(tx.conn())
+            .await?;
             for edge in &batch.edges {
                 let anchor = edge.anchor.as_ref().map_or(&[][..], |digest| digest.0.as_slice());
-                sqlx::query("INSERT INTO url_graph_edges(tenant_id,run_id,version,source_handle,target_handle,anchor_handle,cost,producer_fence) VALUES($1,$2,1,$3,$4,$5,$6,$7)")
-                    .bind(lease.tenant.0).bind(lease.run.0).bind(edge.source.0.0.as_slice())
-                    .bind(edge.target.0.0.as_slice()).bind(anchor).bind(i64::from(edge.cost)).bind(lease.fence)
-                    .execute(&mut *tx).await.map_err(db)?;
+                stmt!(
+                    B,
+                    "INSERT INTO url_graph_edges(tenant_id,run_id,version,source_handle,target_handle,anchor_handle,cost,producer_fence) VALUES($1,$2,1,$3,$4,$5,$6,$7)"
+                )
+                .uuid(lease.tenant.0)
+                .uuid(lease.run.0)
+                .bytes(edge.source.0 .0.as_slice())
+                .bytes(edge.target.0 .0.as_slice())
+                .bytes(anchor)
+                .i64(i64::from(edge.cost))
+                .i64(lease.fence)
+                .execute(tx.conn())
+                .await?;
             }
-            sqlx::query("UPDATE url_graph_runs SET revision=$3 WHERE tenant_id=$1 AND run_id=$2")
-                .bind(lease.tenant.0)
-                .bind(lease.run.0)
-                .bind(i64::try_from(graph.revision).map_err(|_| denied())?)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-            invalidate(&mut tx, lease.tenant, lease.run).await?;
+            let revision = i64::try_from(graph.revision).map_err(|_| denied())?;
+            stmt!(
+                B,
+                "UPDATE url_graph_runs SET revision=$3 WHERE tenant_id=$1 AND run_id=$2"
+            )
+            .uuid(lease.tenant.0)
+            .uuid(lease.run.0)
+            .i64(revision)
+            .execute(tx.conn())
+            .await?;
+            invalidate::<B>(tx.conn(), lease.tenant, lease.run).await?;
         }
-        finish(&mut tx, lease, expiry.min(ceiling)).await?;
-        tx.commit().await.map_err(db)?;
+        finish::<B>(tx.conn(), lease, expiry.min(ceiling)).await?;
+        tx.commit().await?;
         Ok(graph.revision)
     }
 
     async fn snapshot(&self, tenant: TenantId, run: CrawlRunId) -> Result<UrlGraphSnapshotV1, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        retained_run(&mut tx, tenant, run).await?;
-        let (graph, expiry) = load(&mut tx, tenant, run, false).await?;
-        if expiry <= now(&mut tx).await? {
+        self.scope()?.authorize(tenant)?;
+        let mut tx = self.begin_write().await?;
+        retained_run::<B>(tx.conn(), tenant, run).await?;
+        let (graph, expiry) = load::<B>(tx.conn(), tenant, run, false).await?;
+        if expiry <= now::<B>(tx.conn()).await? {
             return Err(denied());
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(graph)
     }
 
     async fn store_ranks(&self, lease: &CustodyLease, ranks: &UrlGraphRanksV1) -> Result<(), StoreError> {
+        self.scope()?.authorize(lease.tenant)?;
         if ranks.tenant != lease.tenant || ranks.run != lease.run {
             return Err(denied());
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        crate::custody::live(&mut tx, lease).await?;
-        let ceiling = retained_run(&mut tx, lease.tenant, lease.run).await?;
-        let (graph, expiry) = load(&mut tx, lease.tenant, lease.run, true).await?;
+        let mut tx = self.begin_write().await?;
+        crate::custody::live::<B>(tx.conn(), lease).await?;
+        let ceiling = retained_run::<B>(tx.conn(), lease.tenant, lease.run).await?;
+        let (graph, expiry) = load::<B>(tx.conn(), lease.tenant, lease.run, true).await?;
         ranks.validate_for(&graph).map_err(invalid)?;
-        invalidate(&mut tx, lease.tenant, lease.run).await?;
-        sqlx::query(
-            "INSERT INTO url_graph_ranks(tenant_id,run_id,version,revision,result) VALUES($1,$2,1,$3,$4)",
+        invalidate::<B>(tx.conn(), lease.tenant, lease.run).await?;
+        let revision = i64::try_from(ranks.revision).map_err(|_| denied())?;
+        let result = serde_json::to_value(ranks)?;
+        stmt!(
+            B,
+            "INSERT INTO url_graph_ranks(tenant_id,run_id,version,revision,result) VALUES($1,$2,1,$3,$4)"
         )
-        .bind(lease.tenant.0)
-        .bind(lease.run.0)
-        .bind(i64::try_from(ranks.revision).map_err(|_| denied())?)
-        .bind(serde_json::to_value(ranks)?)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        finish(&mut tx, lease, expiry.min(ceiling)).await?;
-        tx.commit().await.map_err(db)
+        .uuid(lease.tenant.0)
+        .uuid(lease.run.0)
+        .i64(revision)
+        .json(&result)
+        .execute(tx.conn())
+        .await?;
+        finish::<B>(tx.conn(), lease, expiry.min(ceiling)).await?;
+        tx.commit().await
     }
 
     async fn ranks(&self, tenant: TenantId, run: CrawlRunId) -> Result<UrlGraphRankStateV1, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        retained_run(&mut tx, tenant, run).await?;
-        let (graph, expiry) = load(&mut tx, tenant, run, false).await?;
-        let row = sqlx::query("SELECT result FROM url_graph_ranks WHERE tenant_id=$1 AND run_id=$2")
-            .bind(tenant.0)
-            .bind(run.0)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
+        self.scope()?.authorize(tenant)?;
+        let mut tx = self.begin_write().await?;
+        retained_run::<B>(tx.conn(), tenant, run).await?;
+        let (graph, expiry) = load::<B>(tx.conn(), tenant, run, false).await?;
+        let row = stmt!(
+            B,
+            "SELECT result FROM url_graph_ranks WHERE tenant_id=$1 AND run_id=$2"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .fetch_optional(tx.conn())
+        .await?;
         let state = if let Some(row) = row {
-            let ranks: UrlGraphRanksV1 = serde_json::from_value(get(&row, "result")?)?;
+            let ranks: UrlGraphRanksV1 = serde_json::from_value(row.json("result")?)?;
             if ranks.validate_for(&graph).is_ok() {
                 UrlGraphRankStateV1::Current(ranks)
             } else {
@@ -361,10 +446,10 @@ impl UrlGraphRepo for Pg {
         } else {
             UrlGraphRankStateV1::Invalidated
         };
-        if expiry <= now(&mut tx).await? {
+        if expiry <= now::<B>(tx.conn()).await? {
             return Err(denied());
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(state)
     }
 }

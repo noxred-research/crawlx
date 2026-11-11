@@ -215,13 +215,17 @@ fn shown(url: &str) -> String {
     }
 }
 
-/// The error and its `source` chain (reqwest keeps the cause in the chain).
-fn chain(e: &dyn std::error::Error) -> String {
+/// The error and its `source` chain (reqwest keeps the cause in the chain; storage errors keep
+/// the driver failure there). A source whose text its wrapper already shows is not repeated.
+pub(crate) fn chain(e: &dyn std::error::Error) -> String {
     let mut text = e.to_string();
     let mut source = e.source();
     while let Some(s) = source {
-        text.push_str(": ");
-        text.push_str(&s.to_string());
+        let shown = s.to_string();
+        if !text.ends_with(&shown) {
+            text.push_str(": ");
+            text.push_str(&shown);
+        }
         source = s.source();
     }
     text

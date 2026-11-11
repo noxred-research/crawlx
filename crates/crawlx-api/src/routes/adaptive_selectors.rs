@@ -116,7 +116,7 @@ async fn html(
             crawlx_core::repo::Sensitivity::CredentialBearing => {
                 return Err(HttpError::artifact_unavailable(
                     "credential-bearing HTML cannot be used",
-                ))
+                ));
             }
             crawlx_core::repo::Sensitivity::Sensitive => principal.require(Scope::ArtifactsReadSensitive)?,
             _ => {}

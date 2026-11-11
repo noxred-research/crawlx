@@ -386,6 +386,15 @@ pub async fn verify_ownership(
                 "the record carries no ownership proof",
             )],
         },
+        Some(OwnershipProof::OperatorSignature { key_id, .. }) if keys.is_empty() => {
+            OwnershipOutcome::Unverified {
+                failures: vec![OwnershipFailure::new(
+                    key_id.clone(),
+                    "this API holds no operator keys: set CRAWLX_AUTHZ_OPERATOR_KEYS_FILE to a keys file \
+                     containing this key id and restart it",
+                )],
+            }
+        }
         Some(OwnershipProof::OperatorSignature { key_id, .. }) => match keys.verify(record) {
             Ok(()) => OwnershipOutcome::Verified {
                 verification: json!({ "kind": "operator_signature", "checkedAt": now, "keyId": key_id }),
@@ -656,10 +665,16 @@ mod tests {
             verify_ownership(&tampered, &keys(), &probe, now()).await,
             OwnershipOutcome::Unverified { .. }
         ));
-        assert!(matches!(
-            verify_ownership(&r, &OperatorKeys::new(), &probe, now()).await,
-            OwnershipOutcome::Unverified { .. }
-        ));
+        let OwnershipOutcome::Unverified { failures } =
+            verify_ownership(&r, &OperatorKeys::new(), &probe, now()).await
+        else {
+            panic!("no operator keys never verifies");
+        };
+        assert!(
+            failures[0].reason.contains("CRAWLX_AUTHZ_OPERATOR_KEYS_FILE"),
+            "{}",
+            failures[0].reason
+        );
     }
 
     #[tokio::test]

@@ -640,7 +640,7 @@ impl BrowserRenderer {
             rc.crawl.capture.clone(),
             (&rc.controls, &rc.captcha_secrets),
         ));
-        if rc.stores.pg.is_some() {
+        if rc.stores.durable.is_some() {
             rc.clusters
                 .sync(rc.stores.states.as_ref(), rc.run)
                 .await

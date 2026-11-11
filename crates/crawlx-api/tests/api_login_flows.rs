@@ -12,7 +12,7 @@ use crawlx_api::{ApiConfig, AppState, ArtifactSource, Repos, Scope, Settings};
 use crawlx_core::repo::Sensitivity;
 use crawlx_core::time::ManualClock;
 use crawlx_core::{ArtifactRef, CrawlRunId};
-use crawlx_storage::{ArtifactBlobs, FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{ArtifactBlobs, FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -52,10 +52,10 @@ impl Rig {
             let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
             let pg = Pg::connect(
                 &url,
-                PgConfig {
+                StoreConfig {
                     schema: Some(format!("api_login_{}", CrawlRunId::new().0.simple())),
                     max_connections: 8,
-                    ..PgConfig::default()
+                    ..StoreConfig::default()
                 },
             )
             .await
@@ -69,7 +69,7 @@ impl Rig {
                     .with_index(Arc::new(pg.clone()))
                     .with_zdr_buffer(delivery.clone()),
             );
-            (Repos::pg(&pg, artifacts.clone()), artifacts)
+            (Repos::over_store(&pg, artifacts.clone()), artifacts)
         } else {
             let store = Arc::new(MemoryStore::with_clock(clock.clone()));
             let artifacts = Arc::new(

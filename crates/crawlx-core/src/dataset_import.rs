@@ -525,6 +525,27 @@ mod tests {
             panic!("dataset import must not finalize runs")
         }
 
+        async fn claim_feed_finalizer(
+            &self,
+            _: crate::CrawlRunId,
+            _: crate::WorkerId,
+            _: std::time::Duration,
+        ) -> Result<crate::custody::CustodyLease, StoreError> {
+            panic!("dataset import must not claim feed finalization")
+        }
+
+        async fn renew_feed_finalizer(
+            &self,
+            _: &crate::custody::CustodyLease,
+            _: std::time::Duration,
+        ) -> Result<(), StoreError> {
+            panic!("dataset import must not renew feed finalization")
+        }
+
+        async fn release_feed_finalizer(&self, _: &crate::custody::CustodyLease) -> Result<(), StoreError> {
+            panic!("dataset import must not release feed finalization")
+        }
+
         async fn lease_observed_fenced(
             &self,
             _: &crate::custody::CustodyLease,

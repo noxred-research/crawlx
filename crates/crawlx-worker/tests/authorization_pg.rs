@@ -18,7 +18,7 @@ use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;
 use crawlx_scheduler::RunPlanner;
 use crawlx_storage::checkpoint_crypto::{MemoryCheckpointKeys, UnavailableCheckpointKeys};
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use crawlx_worker::lease_loop::run_with;
 use crawlx_worker::{EgressConfig, RunContext, Stores, WorkerConfig, WorkerError};
 use std::sync::Arc;
@@ -40,9 +40,9 @@ impl Rig {
         };
         let pg = Pg::connect(
             &url,
-            PgConfig {
+            StoreConfig {
                 schema: Some(format!("t_authz_{}", uuid::Uuid::now_v7().simple())),
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await
@@ -56,7 +56,11 @@ impl Rig {
             .await
             .unwrap()
             .with_index(Arc::new(pg.clone()));
-        let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), tenant);
+        let mut stores = Stores::over_durable(
+            crawlx_worker::DurableStore::Postgres(pg.clone()),
+            Arc::new(artifacts),
+            tenant,
+        );
         stores.checkpoint_keys = Arc::new(MemoryCheckpointKeys::new().unwrap());
         let mut record = sample_record(tenant, SystemClock.now(), &["https://example.test"]);
         record.verified_at = Some(SystemClock.now());
@@ -322,5 +326,52 @@ async fn revoking_the_stored_record_with_an_update_stops_a_run_mid_flight() {
     let revoked = events(&rig, run, "authorization.revoked").await;
     assert_eq!(revoked.len(), 1, "{revoked:?}");
     assert_eq!(revoked[0]["reason"], "revoked");
+    rig.teardown().await;
+}
+
+#[tokio::test]
+async fn rejected_local_admission_never_leaves_a_runnable_run() {
+    let Some(rig) = Rig::new().await else { return };
+    for retained in [false, true] {
+        let mut crawl = CreateCrawl::new("https://example.test/".parse().unwrap());
+        crawl.mode = CrawlMode::Dynamic;
+        crawl.safety.authorization_record_ref = Some(rig.record.id);
+        if retained {
+            crawl.dynamic.browser_profile = Some(crawlx_core::config::BrowserProfile {
+                name: "unapproved".to_owned(),
+                generation: 0,
+                save_changes: true,
+            });
+        } else {
+            crawl.roles = vec![crawlx_core::config::Role {
+                name: "undeclared".to_owned(),
+                credential_ref: Some(crawlx_core::secret::CredentialRef("env://UNDECLARED".to_owned())),
+                login_plan: None,
+                replica_base_url: None,
+            }];
+        }
+        let local = crawlx_worker::LocalRun::new(crawl, rig.cfg(Duration::ZERO))
+            .with_stores(rig.stores.clone())
+            .with_authorization(rig.record.clone())
+            .with_backend(Arc::new(FakeBackend::new(mesh(2))));
+        assert!(matches!(
+            crawlx_worker::run_local_with(local).await,
+            Err(WorkerError::Config(_))
+        ));
+    }
+    let states: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT status::text, terminal_reason::text FROM crawl_runs WHERE tenant_id = $1 ORDER BY created_at",
+    )
+    .bind(rig.stores.tenant.0)
+    .fetch_all(rig.pg.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        states,
+        vec![
+            ("failed".to_owned(), Some("fatal_error".to_owned())),
+            ("failed".to_owned(), Some("fatal_error".to_owned())),
+        ]
+    );
     rig.teardown().await;
 }

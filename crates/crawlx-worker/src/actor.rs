@@ -530,7 +530,7 @@ pub struct SessionConfig {
     /// Worker-installed local article language capability for settled-DOM extraction.
     pub article_language_detector: Option<crawlx_core::article_language::ArticleLanguageHandle>,
     /// Existing scheduler lease used only for fenced binding metadata updates.
-    pub(crate) binding_owner: Option<(crawlx_storage::Pg, crawlx_storage::leases::SessionLease)>,
+    pub(crate) binding_owner: Option<(crate::durable::DurableStore, crawlx_storage::leases::SessionLease)>,
     /// Shared generation pin; the registry remains its sole transport owner.
     pub(crate) pool_pin: Option<Arc<crawlx_fetch::proxyx::PoolBinding>>,
     /// Local lease authority when no PostgreSQL binding repository is installed.

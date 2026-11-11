@@ -8,7 +8,7 @@ use crawlx_core::hash::Digest;
 use crawlx_core::repo::{PageRecord, PageRepo, RunRepo};
 use crawlx_core::{ArtifactId, ArtifactRef, CanonicalUrl, CrawlRunId, TenantId, TrustLane};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{Pg, PgConfig};
+use crawlx_storage::{Pg, StoreConfig};
 use sqlx::Row as _;
 
 struct Env {
@@ -19,10 +19,10 @@ async fn setup() -> Option<Env> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_{}", CrawlRunId::new().0.simple())),
             max_connections: 4,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

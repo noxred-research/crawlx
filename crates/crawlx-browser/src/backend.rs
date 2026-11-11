@@ -10,13 +10,14 @@ use crawlx_core::browser::{BrowserBackend, BrowserContext, BrowserError, Context
 use crawlx_core::config::LaunchProfile;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::time::{Clock, SystemClock};
-use crawlx_telemetry::metrics::names;
+use crawlx_telemetry::metrics::{names, Gauge};
 use crawlx_telemetry::Metrics;
 use crawlx_url::CanonicalizeOptions;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -47,22 +48,71 @@ impl Drop for BackendShared {
 /// `crawlx.browser.rss_bytes`.
 const RSS_SAMPLE_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Sample `launch::tree_rss_bytes(pid)` every [`RSS_SAMPLE_INTERVAL`] into the gauge until
-/// `token` is cancelled. A failed read (the browser is gone) is logged at debug and
-/// leaves the gauge at its last value.
+static RSS_SAMPLES: LazyLock<RssSamples> = LazyLock::new(|| RssSamples {
+    values: parking_lot::Mutex::new(BTreeMap::new()),
+    gauge: Metrics::global().gauge(names::BROWSER_RSS_BYTES),
+});
+
+struct RssSamples {
+    values: parking_lot::Mutex<BTreeMap<tokio::task::Id, u64>>,
+    gauge: Gauge,
+}
+
+impl RssSamples {
+    fn publish(&self, values: &BTreeMap<tokio::task::Id, u64>) {
+        let total = values.values().copied().fold(0_u64, u64::saturating_add);
+        self.gauge.set(total as f64, &[]);
+    }
+}
+
+struct RssContribution<'a> {
+    samples: &'a RssSamples,
+    id: tokio::task::Id,
+}
+
+impl<'a> RssContribution<'a> {
+    fn new(samples: &'a RssSamples, id: tokio::task::Id) -> Self {
+        let contribution = Self { samples, id };
+        contribution.set(0);
+        contribution
+    }
+
+    fn set(&self, bytes: u64) {
+        let mut values = self.samples.values.lock();
+        values.insert(self.id, bytes);
+        self.samples.publish(&values);
+    }
+}
+
+impl Drop for RssContribution<'_> {
+    fn drop(&mut self) {
+        let mut values = self.samples.values.lock();
+        values.remove(&self.id);
+        self.samples.publish(&values);
+    }
+}
+
+/// Sample the browser tree into the shared RSS total until cancellation.
+/// Failed reads clear this sampler's contribution; dropping it removes the contribution.
 fn spawn_rss_sampler(pid: u32, token: CancellationToken) {
     tokio::spawn(async move {
+        let contribution = RssContribution::new(&RSS_SAMPLES, tokio::task::id());
         let mut tick = tokio::time::interval(RSS_SAMPLE_INTERVAL);
         loop {
             tokio::select! {
                 () = token.cancelled() => break,
                 _ = tick.tick() => {}
             }
-            match tokio::task::spawn_blocking(move || launch::tree_rss_bytes(pid)).await {
-                Ok(Ok(bytes)) => Metrics::global()
-                    .gauge(names::BROWSER_RSS_BYTES)
-                    .set(bytes as f64, &[]),
-                Ok(Err(e)) => tracing::debug!(error = %e, "browser rss sample failed"),
+            let sampled = tokio::select! {
+                () = token.cancelled() => break,
+                sampled = tokio::task::spawn_blocking(move || launch::tree_rss_bytes(pid)) => sampled,
+            };
+            match sampled {
+                Ok(Ok(bytes)) => contribution.set(bytes),
+                Ok(Err(e)) => {
+                    contribution.set(0);
+                    tracing::debug!(error = %e, "browser rss sample failed");
+                }
                 Err(_) => break,
             }
         }
@@ -383,5 +433,72 @@ impl BrowserBackend for ChromiumBackend {
 
     async fn shutdown_confirmed(&self) -> Result<(), BrowserError> {
         self.terminate().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[tokio::test]
+    async fn rss_contributions_sum_clear_and_drop_independently() {
+        let samples = RssSamples {
+            values: parking_lot::Mutex::new(BTreeMap::new()),
+            gauge: Metrics::new().gauge(names::BROWSER_RSS_BYTES),
+        };
+        let first_task = tokio::spawn(std::future::pending::<()>());
+        let second_task = tokio::spawn(std::future::pending::<()>());
+        let first = RssContribution::new(&samples, first_task.id());
+        let second = RssContribution::new(&samples, second_task.id());
+
+        first.set(100);
+        second.set(200);
+        assert_eq!(samples.gauge.get(&[]), Some(300.0));
+        first.set(0);
+        assert_eq!(samples.gauge.get(&[]), Some(200.0));
+        first.set(u64::MAX);
+        assert_eq!(samples.gauge.get(&[]), Some(u64::MAX as f64));
+        first.set(100);
+        assert_eq!(samples.gauge.get(&[]), Some(300.0));
+
+        drop(first);
+        assert_eq!(samples.values.lock().len(), 1);
+        assert_eq!(samples.gauge.get(&[]), Some(200.0));
+        second.set(250);
+        assert_eq!(samples.gauge.get(&[]), Some(250.0));
+        drop(second);
+        assert!(samples.values.lock().is_empty());
+        assert_eq!(samples.gauge.get(&[]), Some(0.0));
+
+        first_task.abort();
+        second_task.abort();
+        let _ = first_task.await;
+        let _ = second_task.await;
+    }
+
+    #[tokio::test]
+    async fn rss_contribution_cleans_up_when_task_is_aborted() {
+        let samples = Arc::new(RssSamples {
+            values: parking_lot::Mutex::new(BTreeMap::new()),
+            gauge: Metrics::new().gauge(names::BROWSER_RSS_BYTES),
+        });
+        let task_samples = Arc::clone(&samples);
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let contribution = RssContribution::new(&task_samples, tokio::task::id());
+            contribution.set(100);
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+            drop(contribution);
+        });
+
+        started.await.unwrap();
+        assert_eq!(samples.gauge.get(&[]), Some(100.0));
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(samples.values.lock().is_empty());
+        assert_eq!(samples.gauge.get(&[]), Some(0.0));
     }
 }
