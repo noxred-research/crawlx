@@ -25,6 +25,9 @@ fn run_helper(limits: &HelperLimits, header: &[u8], body: &[u8]) -> Outcome {
         .arg(HELPER_SUBCOMMAND)
         .args(&limits.helper_args()[1..])
         .env_clear()
+        // A coverage build writes its profile when the helper exits; the production file-size
+        // limit (zero) must stay, so send that write to a device the limit does not govern.
+        .env("LLVM_PROFILE_FILE", "/dev/null")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

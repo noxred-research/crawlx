@@ -118,6 +118,7 @@ const DOCUMENT_BASE_BYTES: usize = 16 * 1024;
 pub struct HelperLauncher {
     program: PathBuf,
     leading_args: Vec<OsString>,
+    env: Vec<(OsString, OsString)>,
 }
 
 impl HelperLauncher {
@@ -137,6 +138,7 @@ impl HelperLauncher {
         Ok(Self {
             program,
             leading_args: Vec::new(),
+            env: Vec::new(),
         })
     }
 
@@ -156,6 +158,22 @@ impl HelperLauncher {
     #[must_use]
     pub fn with_leading_args(mut self, args: impl IntoIterator<Item = impl Into<OsString>>) -> Self {
         self.leading_args = args.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Environment variables the helper receives. The environment is otherwise empty. This is
+    /// an explicit embedder or test setting (for example sending an instrumented build's
+    /// profile output to a device); production launchers pass nothing, so the helper inherits
+    /// no ambient variables and no secrets.
+    #[must_use]
+    pub fn with_env(
+        mut self,
+        vars: impl IntoIterator<Item = (impl Into<OsString>, impl Into<OsString>)>,
+    ) -> Self {
+        self.env = vars
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect();
         self
     }
 
@@ -926,6 +944,7 @@ impl IsolatedParser {
             .args(&self.launcher.leading_args)
             .args(self.config.limits.helper_args())
             .env_clear()
+            .envs(self.launcher.env.iter().map(|(key, value)| (key, value)))
             .current_dir("/")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1095,13 +1114,12 @@ mod tests {
     }
 
     fn trampoline() -> HelperLauncher {
-        HelperLauncher::current_exe().unwrap().with_leading_args([
-            "--exact",
-            TRAMPOLINE,
-            "--nocapture",
-            "--test-threads=1",
-            "--",
-        ])
+        HelperLauncher::current_exe()
+            .unwrap()
+            .with_leading_args(["--exact", TRAMPOLINE, "--nocapture", "--test-threads=1", "--"])
+            // An instrumented test binary writes its profile at exit; the helper's file-size
+            // limit stays zero, so the write goes to a device that limit does not govern.
+            .with_env([("LLVM_PROFILE_FILE", "/dev/null")])
     }
 
     /// Loadable mappings are bounded by the file size; leave room for the parse itself.

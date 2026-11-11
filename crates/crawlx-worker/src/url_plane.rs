@@ -1221,11 +1221,13 @@ impl UrlPlaneRunner {
                 .map_err(|_| {
                     StoreError::RetentionDenied("browser page secret projection unavailable".into())
                 })?;
-            if rc.hard_cancel.is_cancelled()
-                || self.authorization_lost().await
-                || self.held.lock().get(&entry.id).copied() != Some(fence)
-            {
+            if self.authorization_lost().await || self.held.lock().get(&entry.id).copied() != Some(fence) {
                 return Err(WorkerError::Store(StoreError::LeaseLost));
+            }
+            // The caller's stop ends the session recoverably: nothing is published under it, the
+            // row goes back, and the session is handed over rather than failed.
+            if rc.hard_cancel.is_cancelled() {
+                return Err(crate::error::SessionError::Cancelled.into());
             }
             // Every boundary the settled document really crossed. Denial wins and publishes no page.
             let stop = [
@@ -1242,7 +1244,12 @@ impl UrlPlaneRunner {
                     Some("extension_policy_denied".to_owned()),
                 ),
                 Some(lifecycle_plane::LifecycleStop::Cancelled) => {
-                    return Err(WorkerError::Store(StoreError::LeaseLost));
+                    // a run stop interrupted the boundary: hand the session over, not a lost fence
+                    return Err(if rc.cancel.is_cancelled() {
+                        crate::error::SessionError::Cancelled.into()
+                    } else {
+                        WorkerError::Store(StoreError::LeaseLost)
+                    });
                 }
                 Some(_) => (FrontierStatus::Failed, Some("extension_failed".to_owned())),
             };
@@ -4982,7 +4989,14 @@ impl UrlPlaneRunner {
             && self.crawl.scope.discovery.is_none()
             && self.source_enabled(crawlx_core::discovery::DiscoverySourceV1::Html)
         {
-            let generic: &[Url] = if recipe_html { &[] } else { &links };
+            // Anchor endpoints duplicate the generic link set. A recipe replaces that set, so
+            // they must not re-admit the links its rules did not select.
+            let (generic, fetchable): (&[Url], Vec<DiscoveredEndpoint>) = if recipe_html {
+                let fetchable = fetchable.into_iter().filter(|e| !links.contains(&e.url)).collect();
+                (&[], fetchable)
+            } else {
+                (&links, fetchable)
+            };
             self.follow_page(entry, &resp.final_url, generic, fetchable).await?;
         }
         let followed_recipe = self.follow_recipe_candidates(entry, &recipe_candidates).await?;
