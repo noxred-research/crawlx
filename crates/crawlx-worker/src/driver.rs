@@ -640,6 +640,10 @@ pub struct ExplorationDriver {
     arbiter: Arbiter,
     scope: Option<ScopePolicy>,
     decision_index: u64,
+    /// Rounds whose chosen action was dropped before it ran (stale epoch, identity change,
+    /// not actionable). A drop is not journaled, so it must not advance the seeded decision
+    /// stream: the arbiter's tie-break draws are keyed by [`Self::stream_index`].
+    dropped_rounds: u64,
     seen_ops: BTreeSet<String>,
     retry: BTreeMap<ActionContextId, ActionId>,
     blocked_seen: BTreeSet<ActionContextId>,
@@ -777,6 +781,7 @@ impl ExplorationDriver {
             state,
             scope,
             decision_index: 0,
+            dropped_rounds: 0,
             seen_ops: BTreeSet::new(),
             retry: BTreeMap::new(),
             blocked_seen: BTreeSet::new(),
@@ -1758,7 +1763,7 @@ impl ExplorationDriver {
                             std::mem::take(&mut current.candidates),
                             std::mem::take(&mut current.resolved),
                             current.cluster,
-                            self.decision_index,
+                            self.stream_index(),
                             self.rc.crawl.safety.profile,
                             self.budget_view(),
                             now,
@@ -1801,11 +1806,8 @@ impl ExplorationDriver {
                         // dataset recording: take System 1's record of this round off the channel
                         // now (the strategies have finished), so the pick can be matched to it
                         let shortlist_record = if self.cfg.record_shortlists.is_some() {
-                            hold_round_record(
-                                self.records.as_mut(),
-                                &mut self.held_records,
-                                self.decision_index,
-                            )
+                            let stream = self.stream_index();
+                            hold_round_record(self.records.as_mut(), &mut self.held_records, stream)
                         } else {
                             None
                         };
@@ -1930,7 +1932,7 @@ impl ExplorationDriver {
                                         &rec.shortlist,
                                         &ctx.seed,
                                         &ctx.principal,
-                                        self.decision_index,
+                                        self.stream_index(),
                                     );
                                 }
                             }
@@ -2196,8 +2198,9 @@ impl ExplorationDriver {
             let settle = self.cfg.action_settle();
             let expected = proposal.expected.clone();
             let before = current.cluster;
+            let retried = self.retry.remove(&key.id());
             let result = async {
-                match self.retry.remove(&key.id()) {
+                match retried {
                     Some(id) => self.handle.execute_retry(admitted, settle, id).await,
                     None => self.handle.execute(admitted, settle).await,
                 }
@@ -2221,6 +2224,12 @@ impl ExplorationDriver {
                     halts = 0;
                     storage_halt = None;
                     if outcome.dropped.is_some() {
+                        // A dropped retry never reached T1: the reconciled `not_applied` row
+                        // is still waiting to be re-intended under its own id, so keep the
+                        // claim instead of proposing a new action for the key later.
+                        if let Some(id) = retried {
+                            self.retry.insert(key.id(), id);
+                        }
                         self.consecutive_drops += 1;
                         self.drops += 1;
                         if self.consecutive_drops >= self.cfg.max_consecutive_drops {
@@ -2616,6 +2625,12 @@ impl ExplorationDriver {
         }
     }
 
+    /// Index of the seeded decision stream: rounds minus dropped rounds. Equal for two runs
+    /// that journal the same actions, however many proposals went stale in between.
+    fn stream_index(&self) -> u64 {
+        stream_position(self.decision_index, self.dropped_rounds)
+    }
+
     /// Cool a dropped key down so the next round plans something else. A refused confirmation
     /// carries live evidence: the key is retried once, classified on that evidence.
     fn note_drop(&mut self, id: ActionContextId, reason: DropReason, live: Option<LiveTargetFacts>) {
@@ -2693,6 +2708,7 @@ impl ExplorationDriver {
         self.follow_through.remove(&proposal.key.element);
         if let Some(reason) = outcome.dropped {
             tracing::debug!(action = %outcome.action_id, reason = reason.as_str(), "action dropped; replanning");
+            self.dropped_rounds = self.dropped_rounds.saturating_add(1);
             self.note_drop(proposal.key.id(), reason, outcome.live);
             return None;
         }
@@ -3345,6 +3361,39 @@ async fn persist_strategy_arm_events(
         );
     }
     Ok(())
+}
+
+/// Position in the seeded decision stream after `rounds` rounds of which `dropped` ended in a
+/// dropped (never journaled) action.
+const fn stream_position(rounds: u64, dropped: u64) -> u64 {
+    rounds.saturating_sub(dropped)
+}
+
+#[cfg(test)]
+mod decision_stream_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    /// The tie-break draw of the round that follows `rounds` rounds with `dropped` drops.
+    fn draw(seed: CrawlSeed, rounds: u64, dropped: u64) -> u64 {
+        let index = stream_position(rounds, dropped).to_le_bytes();
+        let mut head = [0_u8; 8];
+        head.copy_from_slice(&seed.derive("arbiter", &[b"anonymous", &index])[..8]);
+        u64::from_le_bytes(head)
+    }
+
+    #[test]
+    fn dropped_rounds_do_not_shift_the_decision_stream() {
+        let seed = CrawlSeed(7);
+        // run A journals decisions 1..=3 directly; run B drops two proposals as stale on the
+        // way, so its rounds run ahead but its journaled decisions sit at the same positions
+        let direct: Vec<u64> = (1..=3).map(|n| draw(seed, n, 0)).collect();
+        let with_drops = [draw(seed, 1, 0), draw(seed, 3, 1), draw(seed, 5, 2)];
+        assert_eq!(direct, with_drops);
+        // without the correction the same rounds would draw from shifted positions
+        assert_ne!(draw(seed, 3, 0), draw(seed, 3, 1));
+        assert_eq!(stream_position(2, 5), 0, "never underflows");
+    }
 }
 
 #[cfg(test)]

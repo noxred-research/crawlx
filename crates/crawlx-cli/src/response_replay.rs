@@ -6,7 +6,9 @@ use base64::Engine;
 use clap::Args;
 use crawlx_core::hash::Digest;
 use crawlx_core::{CrawlRunId, TenantId};
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::artifact_key_crypto::ArtifactKeys;
+use crawlx_storage::sql::Sql;
+use crawlx_storage::{ArtifactCustody, FsArtifactStore, Store};
 use std::{io::Write, path::PathBuf, process::ExitCode, sync::Arc};
 
 /// Read one existing retained response without acquiring a target URL.
@@ -26,8 +28,8 @@ pub struct ReplayResponseArgs {
     /// Source API-key principal. Omit only for an isolated local source run.
     #[arg(long)]
     pub principal: Option<uuid::Uuid>,
-    /// PostgreSQL holding the existing source metadata; migrations are never run here.
-    #[arg(long, env = "CRAWLX_DATABASE_URL", value_name = "URL")]
+    /// Database (PostgreSQL, MariaDB or SQLite URL) holding the existing source metadata; migrations are never run here.
+    #[arg(long, env = "CRAWLX_DATABASE_URL", value_name = "URL", hide_env_values = true)]
     pub database_url: String,
     /// Existing local artifact root.
     #[arg(long, default_value = "./crawlx-artifacts", value_name = "DIRECTORY")]
@@ -48,25 +50,35 @@ pub async fn execute(args: ReplayResponseArgs) -> anyhow::Result<ExitCode> {
     if root.file_type().is_symlink() || !root.is_dir() {
         anyhow::bail!("retained artifact root must be an existing directory");
     }
-    let pg = Pg::connect(&args.database_url, PgConfig::default())
+    let durable = crate::inspect::connect(Some(&args.database_url))
         .await
         .context("opening retained response metadata")?;
     let (custody, keys) =
-        crawlx_worker::config::read_only_custody_from_lookup(&pg, &|name| std::env::var(name).ok())
+        crawlx_worker::config::read_only_custody_from_lookup(&durable, &|name| std::env::var(name).ok())
             .await
             .context("opening artifact key custody")?;
+    crawlx_worker::on_store!(&durable, store => replay_on(store, custody, keys, &args, identity).await)
+}
+
+async fn replay_on<B: Sql>(
+    store: &Store<B>,
+    custody: Arc<dyn ArtifactCustody>,
+    keys: Arc<dyn ArtifactKeys>,
+    args: &ReplayResponseArgs,
+    identity: Digest,
+) -> anyhow::Result<ExitCode> {
     crawlx_storage::tenant::scope(args.tenant, async {
         let artifacts = FsArtifactStore::open(
             &args.artifacts_dir,
-            Arc::new(pg.clone()),
+            Arc::new(store.clone()),
             Arc::new(crawlx_core::SystemClock),
         )
         .await?
-        .with_index(Arc::new(pg.clone()))
+        .with_index(Arc::new(store.clone()))
         .with_custody(custody, keys, crawlx_storage::CustodyWrites::ReadOnly);
         let replay = crawlx_worker::scrape::cache::replay_saved_response(
-            &pg,
-            &pg,
+            store,
+            store,
             &artifacts,
             args.tenant,
             args.run,

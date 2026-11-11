@@ -19,7 +19,7 @@ pub const DEFAULT_REAP_INTERVAL: Duration = Duration::from_secs(15);
 pub const DEFAULT_MAX_URL_ATTEMPTS: u16 = 5;
 
 /// Reaper settings. Lease TTLs (30 s sessions, 60 s URL batches) are properties of the
-/// repository that grants the leases (`PgConfig::session_ttl`, `url_batch_ttl`).
+/// repository that grants the leases (`StoreConfig::session_ttl`, `url_batch_ttl`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ReaperConfig {
     /// Period between sweeps.

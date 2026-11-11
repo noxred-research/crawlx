@@ -4,6 +4,7 @@
 //! snapshot. The separate pause capability rechecks each violation before changing a run,
 //! and appends the existing paused event and BLAKE3 audit-chain entry atomically.
 
+use crate::backend::{BackendKind, BackendRefusal, DatabaseUrl};
 use crate::codec::get;
 use crate::error::db;
 use crawlx_core::hash::Digest;
@@ -52,9 +53,21 @@ impl SafetyAuditor {
     /// Connect without running migrations or borrowing a privileged worker/API pool.
     ///
     /// # Errors
-    /// Returns an error on connection failure, missing auditor migration, identical database
-    /// identities, elevated privileges, or membership in both auditor capability roles.
+    /// Returns the `sqlite_safety_auditor` refusal for SQLite URLs (it has no second database
+    /// identity) and the `backend_unimplemented` refusal for MariaDB, which has no
+    /// independent auditor yet. On PostgreSQL returns an error on connection failure, missing
+    /// auditor migration, identical database identities, elevated privileges, or membership
+    /// in both auditor capability roles.
     pub async fn connect(read_url: &str, pause_url: &str) -> Result<Self, StoreError> {
+        for url in [read_url, pause_url] {
+            match DatabaseUrl::parse(url)?.kind() {
+                BackendKind::Postgres => {}
+                BackendKind::Sqlite => return Err(BackendRefusal::sqlite_safety_auditor().into()),
+                kind => {
+                    return Err(BackendRefusal::unimplemented(kind, "the independent safety auditor").into())
+                }
+            }
+        }
         let reader = PgPoolOptions::new()
             .max_connections(1)
             .connect(read_url)

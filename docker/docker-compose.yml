@@ -16,9 +16,10 @@
 #     the secrets are files under /run/secrets, never environment values or flags;
 #   * `CRAWLX_ENVIRONMENT`, `CRAWLX_LOG`, `TMPDIR`; `CRAWLX_CHROMIUM_PATH` comes from the image;
 #   * `CRAWLX_S3_*` with `CRAWLX_S3_ACCESS_KEY`/`CRAWLX_S3_SECRET_KEY` mapped to the SDK credential variables, for `crawlx admin --s3-bucket`:
-#     `crawlx serve` and `crawlx worker` use the filesystem artifact store (`--artifacts-dir`),
-#     so they share the `artifacts` volume; the S3 backend is consumed by the admin commands only
-#     (verify-artifacts, sweep-retention), which is why only `admin` carries the S3 settings.
+#     `crawlx serve` and `crawlx worker` use the filesystem artifact store (`--artifacts-dir`) unless
+#     `CRAWLX_S3_BUCKET` (with the profile settings of docs/ops/object-storage.md) is set on both of them;
+#     this stack sets it on `admin` only, so api and worker share the `artifacts` volume. To store runtime
+#     artifacts in the bucket, give api and worker the same `CRAWLX_S3_*` settings and credentials as `admin`.
 #   * Artifact custody (every PostgreSQL-backed worker and API process needs it):
 #     `CRAWLX_ARTIFACT_KEY_FILE` (api + worker, the same 64-hex key file) is the artifact key
 #     provider; `CRAWLX_SECRET_REDIS_URL_FILE` (worker only) names the URL of `secret-custody`, a
@@ -41,6 +42,8 @@
 #   CRAWLX_S3_BUCKET, CRAWLX_S3_ACCESS_KEY, CRAWLX_S3_SECRET_KEY   object store for `admin`
 #   CRAWLX_LOG                    log filter (RUST_LOG syntax), default info
 #
+# The database engine is an overlay too: compose.mariadb.yml and compose.sqlite.yml replace PostgreSQL
+# (docs/ops/storage-backends.md; `docker/init-compose.sh --engine ...` writes their secrets).
 # Optional capabilities are separate overlays, never default secret-file requirements:
 # compose.identity.yml, compose.profiles.yml, compose.protocol.yml, compose.delivery.yml.
 # compose.article-language.yml adds an explicitly installed language bundle and native runtime.

@@ -146,7 +146,7 @@ Leased runs use `ContentDedupeClaimV1` in the request result transaction, not a 
 
 `excludedUrls` (`substrings`, case-insensitive; `patterns`, regular expressions with the path-filter size and nesting limits; at most 256 rules of 512 bytes each per list) is compiled by `crawlx_url::UrlExclusionFilter` and evaluated by `crawlx_url::PreFetchGate::decide` (in front of the scope filter) before any request, robots lookup or DNS resolution: a match yields `PreFetchDecision::UrlExcluded` with the reason code `url_excluded` and the matching rule, and the URL costs zero target requests. This reason is separate from path-scope reasons and from the content-quality reason `author_excluded`, which applies only after a page was acquired and rejects its ingestion while the acquisition and its content evidence stay recorded.
 
-Acquisition validation classifies a challenge page by structure (a challenge form or stage element with too little real content around it, or an authoritative challenge response header), never by words: an article that discusses interstitial pages or captchas passes, a keyword-only page passes, and a genuine 200 interstitial is excluded with the signals `challenge_structure_present` and `challenge_missing_expected_content`. Validation selects no fetch backend and changes no session.
+Acquisition validation classifies a challenge page by structure (a challenge form or stage element with too little real content around it, or an authoritative challenge response header), never by words: an article that discusses interstitial pages or captchas passes, a keyword-only page passes, and a genuine 200 interstitial is excluded with the signals `challenge_structure_present` and `challenge_missing_expected_content`. Structural evidence exists only on the parsed document, so the HTTP crawl plane decides after parsing and before any page, item, link or dedupe claim is stored. Exclusion does not depend on `validation.onContentMismatch`: a challenge classified on a success-status HTTP response fails the URL as `content_validation_failed` (crawl) or `unsupported_content` (scrape) under the default `report` action as well as under `fail`, and no page is stored. `report` keeps compatibility documents only for other rejected content (wrong MIME, selector or length mismatch). Rendered browser pages record the same classification as evidence. Validation selects no fetch backend and changes no session.
 
 ## Content outputs: variants, fit content, tables and link scores
 
@@ -400,6 +400,8 @@ CSV freezes the first object's sorted fields unless `--csv-fields` declares an
 ordered projection. Missing cells are empty; undeclared fields fail when columns
 were inferred. Spreadsheet formula prefixes are escaped. XML rejects invalid
 control characters and escapes text. Executable object formats are not accepted.
+Stdin export errors identify the one-based input row, including parser, row-size,
+schema and serializer refusals. The error does not echo that row's content.
 An error can leave partial output; publish a redirected file only after successful
 completion. Redirecting content to a file is an operator retention choice, not a
 zero-retention guarantee. Article-oriented `extract` formats remain separate.
@@ -421,6 +423,10 @@ to normal sensitive artifact references. Images inherit tenant, run, expiry and 
 controls; JSON output never embeds image bytes. Zero-data-retention refuses the operation
 before reading the archive or baseline.
 
+`--diff-images` requires `--baseline`. Without a baseline, QA still reports
+comparisons as unevaluated and exits `2`; it does not invent successful comparisons.
+Create the parent of `--out` first. The output itself must be a new directory.
+
 Black pixels mean equal decoded samples. Color channels show absolute differences,
 including alpha changes; magenta marks pixels outside one image's dimensions. Missing or
 truncated pairs produce no difference image and never become successful comparisons.
@@ -435,6 +441,28 @@ stored-byte digests; unsatisfiable ranges return `416`. Multiple or malformed ra
 ignored, and `HEAD` never sends body bytes. Since URL mapping changes representation
 bytes, origin validators cannot satisfy `If-Range`; those requests receive full content.
 No request can use range selection to fetch a missing live resource.
+
+## Exporting retained runs
+
+`crawlx archive export RUN --tenant TENANT --database-url URL --artifacts-dir DIRECTORY
+--out capture.wacz` reads a run from the database and decrypts sealed content through its
+catalog. Configure its original artifact key provider. `--format warc` instead writes
+a new bundle directory with its adjacent index and publication manifest.
+Create the destination's parent directory first; existing outputs are never replaced.
+`inspect` and `verify` accept either format and check fixity without live requests.
+
+The local `report.json` input supports approved legacy plaintext artifacts, not
+process-lifetime encrypted output from a file-only `crawlx crawl`. That process key
+is gone when the crawl exits. Use a database run and a durable artifact key provider
+when archives must be exported later. A markdown-only export has no HTML replay
+entry point; retain HTML or decoded response bodies in the source run for replay.
+
+`crawlx archive import INPUT --out NEW_FILE` validates and retains a local copy.
+For a revisit whose baseline lives elsewhere, supply `--tenant TENANT
+--dependency-root DIRECTORY --dependency relative.warc --dependency-sha256 SHA256`.
+Repeat dependency files and their whole-file pins in matching order. Import
+materializes an approved dependency closure into a self-contained WACZ.
+No archive record URI grants filesystem access or a network fallback.
 
 ## Worker parser and extraction controls
 
@@ -466,6 +494,16 @@ the same selectors as `outputs`, `decode` and `markup`; selected results appear 
 response's `outputs` object. These are content-bearing results and follow the existing
 retention and secret-redaction rules. Preview intents do not grant network authority:
 the worker rechecks URL scope, robots and checked acquisition on every followed hop.
+
+Offline `crawlx extract` (and `crawlx corpus` and `crawlx protocol`) honour the same three
+options. `--extract-config FILE` takes a JSON object of at most 64 KiB with the request's
+`outputs`, `decode` and `markup` members; `outputs` is validated before any input is read
+and unknown members are refused rather than ignored. Positional JSON arrays are refused
+even when their entries match those three members. The results appear in the document's
+`outputs`, `decode` and `markup` members, produced by the same extractor entry and options
+an online run uses. `--request FILE` stays the native content policy
+(`extract.content`), including `selectors.readMore` and `selectors.readMoreBase`; the
+`--base-url` is the page base for `readMoreBase: "page"`, and no reference is ever fetched.
 
 ## Archive rollover and metadata-only requests
 
@@ -595,6 +633,12 @@ value predicates: `{"kind":"present","field":"title"}` or
 scalars, not executable expressions. Generic items expose their approved top-level
 fields; article filters expose `title`, `text` and `comments`.
 
+An HTTP-family destination is also checked against the run's egress policy at send time:
+its port must be 80, 443 or the seed URL's port, and with an authorization record its
+origin must lie inside the signed target. A registered destination outside that policy
+is never sent to; its receipt stays `pending` and retries with backoff, and the worker
+logs `provider_egress_policy_denied` (or `provider_egress_port_denied`).
+
 `parameters.csvColumns` declares at most 64 unique CSV columns in wire order.
 `parameters.jsonIndent` selects JSON indentation from zero through eight spaces.
 Parameters used with a different serializer fail admission.
@@ -606,6 +650,12 @@ another artifact, a retry looks up the exact run, feed and idempotency key and r
 the complete staged manifest, including its original `ArtifactId` and expiry. Changed
 bytes or source ranges fail; expired, revoked or missing source custody never renews
 the manifest or silently allocates a replacement.
+Terminal batches are sealed artifacts. Finalization first claims the run's fenced
+finalizer (one owner, an expiry, and a fence that rises on every claim), writes every
+artifact as that producer and renews the claim while it works. A second worker sees the
+claim as busy until it expires or is released; an expired owner can no longer write.
+The claim survives a cancellation request or a reached deadline, because those are why
+the run finalizes; purge, expiry and a revoked authorization record still revoke it.
 Imported `json_object_v1` datasets use terminal JSON, JSONL, CSV or XML feeds.
 
 `emptyPolicy:"skip"` is the default. `emptyPolicy:"emit"` emits a valid empty
@@ -621,8 +671,11 @@ the actual compressed artifact and byte length. Terminal batching compresses the
 completed batch once. Custom executable postprocessors are not accepted.
 Zero-retention feeds retain their original volatile deadline and never acquire a
 durable spool merely because a codec or destination was selected.
-Structured search, stream and queue sinks refuse pre-compressed feeds during
-admission with `feed_compression_unsupported_for_sink`, before any request.
+Structured search, stream and queue sinks refuse pre-compressed feeds before acquisition.
+Workers advertise compressed-byte support separately from destination existence and ZDR
+permission. API admission requires all three on one fresh worker and returns
+`acquisition_capability_unavailable` when that combination is unavailable; direct worker
+validation uses `feed_compression_unsupported_for_sink`.
 Transport-level `Content-Encoding` is separate from feed compression.
 
 ## Approved declarative browser recipes
@@ -733,6 +786,10 @@ anonymous health/usage replacements; its default is zero. Replacement requires c
 cleanup, reconciled writes, unchanged identity and the original expiry ceiling.
 Authenticated sessions and retained profiles never rotate implicitly.
 
+Run-specific configuration refusal ends the affected run with `fatal_error`; the worker
+continues serving unrelated runs. A local run rejected during account or session-context
+admission is also finalized, rather than remaining queued for another worker.
+
 `BrowserPool` retires processes after 1,000 context admissions, one hour of age or five
 minutes idle by default. `PoolRetirement` configures finite operator bounds before the
 pool is shared. Retirement stops new contexts but drains live actors first. Confirmed
@@ -833,8 +890,9 @@ An absent journal requires no writable home or new state files during startup.
 ## Safe single-page commands and immutable configuration
 
 `crawlx scrape URL` accepts GET or HEAD. `--output-format html|markdown|json`
-(`--output` alias) selects output; `--css`, `--xpath`, `--regex` or `--extraction FILE`
-select bounded extraction. GET JSON output requires extraction before network I/O.
+(`--output` alias) selects output; `--css`, `--xpath`, `--regex`, `--regex-builtin NAME`
+(a built-in pattern such as `email` or `email.v1`, reporting its own capture group) or
+`--extraction FILE` select bounded extraction. GET JSON output requires extraction before network I/O.
 HEAD returns body-free JSON metadata and refuses body extraction or non-JSON output.
 An extraction file is declarative JSON, for example:
 
@@ -842,8 +900,10 @@ An extraction file is declarative JSON, for example:
 {"type":"css","expression":"h1::text"}
 ```
 
+`{"type":"builtin","name":"email"}` selects a regex built-in the same way.
+
 `crawlx shell URL` uses one admitted acquisition, then accepts `css EXPRESSION`,
-`xpath EXPRESSION`, `regex PATTERN`, `item INLINE_ITEM_LOADER_JSON` and `quit`.
+`xpath EXPRESSION`, `regex PATTERN`, `builtin NAME`, `item INLINE_ITEM_LOADER_JSON` and `quit`.
 Robots requests are separate admission traffic; permitted redirects share the
 acquisition allowance. No REPL command adds network access, code evaluation or
 process execution. The stored page is capped at 1 MiB; each command at 64 KiB;
@@ -949,6 +1009,11 @@ durable approval when required and the action journal. Finish exports bounded
 structured storage, commits encrypted custody, confirms actor shutdown and only
 then acknowledges the committed generation. Unproven screencast frames stay suppressed.
 
+This control requires library embedding: share `InteractiveProfiles` with the API
+state builder and the local worker. Separate `crawlx serve` and `crawlx worker`
+processes do not provide this registry. Their interactive endpoints refuse the
+operation explicitly; they never return unproven screencast pixels.
+
 ## Retained-source reparse
 
 `crawlx reparse` operates on an approved retained source and the original tenant,
@@ -995,6 +1060,12 @@ stay `null` and appear under `notRecorded`; intentionally hidden fields stay `wi
 Retained runs store facts until the run's fixed retention deadline; ZDR runs keep them only
 in the volatile delivery buffer and never expose them through reports or cross-run history.
 
+The `hostKey` returned by `hosts` and `frontier` is the same identity used by DNS
+facts and by newly recorded URL-attempt wire, processor, pipeline and alert facts.
+Use it unchanged in their `hostKey` filters. DNS facts identify the host actually
+resolved; other attempt facts identify the requested URL's host. Older facts that
+did not record a host remain unassociated; no historical measurement is invented.
+
 Reports `history`, `wire_history`, `processor_history`, `pipeline_history`,
 `host_dns_health` and `alert_log` page facts with `after`/`next`; their rows have
 `rowType` `fact` (a repository `sequence` and the typed `fact`), their `source` is
@@ -1040,3 +1111,70 @@ in-flight overrun, keeping unknown drop times distinct. Adaptive revisit policie
 next interval from measured change, unchanged and error outcomes within finite minimum and
 maximum bounds; hard denials never schedule a revisit. Metadata inheritance copies only a
 bounded public label, never routes, headers, principals or cookies.
+
+## Scope, local resume and acquisition controls
+
+Host scope is not path scope. Unless `scope.crawlEntireDomain` is true or
+`scope.includePaths` selects other paths, a non-root seed stays under its seed path.
+For example, a crawl seeded at `/docs/` does not fetch `/blog/`. Configure the JSON
+request with `"scope":{"crawlEntireDomain":true}` to explore sibling paths; host,
+exclude, robots, authorization and egress rules still apply. `--no-scope` disables
+only host scope, not these other rules. Include patterns narrow discovered URLs;
+the seed can be acquired to discover links without becoming an output page.
+
+`--resume FILE` saves pending URLs and visited progress when an in-memory crawl
+stops at its URL limit, deadline or cancellation. Invoke the same seed and policy
+again with that file, raising the stopping limit when needed. Finished progress
+deletes the file. Multiple seeds use one versioned envelope, skipping seeds that
+already finished. Resume restores URL progress, not browser state or response-cache
+bodies; it does not recover the sealed objects of a prior ephemeral artifact store.
+
+Native JSON `fetch` options also accept these bounded acquisition controls:
+
+```json
+{
+  "fetch": {
+    "preflight": {"maxContentLength": 1048576, "contentTypes": ["text/html"]},
+    "declaration": {"contentType": "text/html", "charset": "utf-8",
+                    "statuses": {"allow": [404], "deny": [500]}},
+    "maxResponseBytes": 1048576,
+    "oversize": "refuse"
+  }
+}
+```
+
+Preflight sends a bodyless HEAD before GET and refuses a declared length or MIME
+outside its bounds. It shares the GET acquisition allowance. `oversize` is
+`truncate` (default) or `refuse`; truncation marks the bounded prefix. Response
+declarations select decoding and status treatment; they never authorize a URL.
+`crawlx scrape URL --method HEAD` emits body-free JSON metadata; body extraction
+requires GET. A redirect must remain inside the admitted scope, even for HEAD.
+
+HTML above 1 MiB normally uses a resource-limited parser helper. A helper failure
+is separate from the fetch byte cap and from the shared parser admission budget.
+Operators can set `CRAWLX_PARSER_HELPER_ADDRESS_SPACE_BYTES` (default 512 MiB),
+`CRAWLX_PARSER_HELPER_CPU_SECONDS` (10) and `CRAWLX_PARSER_HELPER_TIMEOUT_MS`
+(15000). Debug executables can need more address space than release executables.
+Increase only the required limit within the container's total memory budget;
+concurrent helpers add their address-space ceilings to parent memory.
+
+## Reproducing the crawl maze
+
+Build `crawlx`, `gym-server` and `crawl-maze-score`, then run
+`gym-server --bind 127.0.0.1:0 --claim-origin g32`. Create the local authorization
+record from the walkthrough with the printed origin and run:
+
+```sh
+crawlx crawl http://127.0.0.1:PORT/g32/ --mode static \
+  --authorization-record authz.local.json --allow-private-networks \
+  --known-files all --no-default-ext-filter --seed 20261019 --output maze-out
+curl http://127.0.0.1:PORT/__gym/ledger > maze-ledger.json
+crawl-maze-score --ledger maze-ledger.json --json
+```
+
+The static reference in `bench/baselines/crawl-maze.json` measures 66/66 static-plane
+targets and 83/91 targets overall. The remaining eight require body-bearing actions
+that static read-only crawling must not submit. Score server requests, not page
+counts: plain-text `.found` responses can be requested without yielding HTML pages.
+The scorer returns exit 1 when any of the 91 targets remain missing; that does not
+mean the static plane missed an expected static target.

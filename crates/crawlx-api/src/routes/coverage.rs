@@ -127,7 +127,7 @@ pub async fn coverage(
         Some(_) => {
             return Err(HttpError::malformed(
                 "groupBy must be actionKind, resourceContext or routeTemplate",
-            ))
+            ));
         }
     };
     let role_filter = params.get("role");

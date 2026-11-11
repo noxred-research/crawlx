@@ -24,8 +24,24 @@
 # 0444: Docker bind-mounts each file, so the container user (uids 10001, 999, 1001 differ per
 # image) reads it through the file mode while the directory keeps other host users out.
 #
-# Usage: docker/init-compose.sh [DIR]
+# Storage engine: `--engine postgres|mariadb|sqlite` (or CRAWLX_STORAGE_ENGINE; default postgres).
+# The PostgreSQL secrets above are always written. `mariadb` also writes secrets/mariadb_password,
+# mariadb_root_password and database_url_mariadb (docker/compose.mariadb.yml); `sqlite` also writes
+# secrets/database_url_sqlite (docker/compose.sqlite.yml). docs/ops/storage-backends.md.
+#
+# Usage: docker/init-compose.sh [--engine postgres|mariadb|sqlite] [DIR]
 set -euo pipefail
+
+engine="${CRAWLX_STORAGE_ENGINE:-postgres}"
+if [ "${1:-}" = "--engine" ]; then
+  [ $# -ge 2 ] || { printf '%s\n' "--engine needs postgres, mariadb or sqlite" >&2; exit 1; }
+  engine="$2"
+  shift 2
+fi
+case "$engine" in
+  postgres | mariadb | sqlite) ;;
+  *) printf '%s\n' "unknown storage engine: $engine (expected postgres, mariadb or sqlite)" >&2; exit 1 ;;
+esac
 
 dir="${1:-$(cd "$(dirname "$0")" && pwd)}"
 mkdir -p "$dir/secrets" "$dir/gates"
@@ -96,6 +112,22 @@ else
 fi
 write_secret postgres_api_password "$api_password"
 write_secret database_url_api "postgres://crawlx_api:${api_password}@postgres:5432/crawlx"
+case "$engine" in
+  mariadb)
+    # one login owns the schema and serves requests: MariaDB has no restricted request login
+    if [ -e "$secrets/mariadb_password" ]; then
+      maria_password="$(cat "$secrets/mariadb_password")"
+    else
+      maria_password="$(hex 24)"
+    fi
+    write_secret mariadb_password "$maria_password"
+    write_secret mariadb_root_password "$(hex 24)"
+    write_secret database_url_mariadb "mysql://crawlx:${maria_password}@mariadb:3306/crawlx"
+    ;;
+  sqlite)
+    write_secret database_url_sqlite "sqlite:///var/lib/crawlx/db/crawlx.sqlite"
+    ;;
+esac
 write_secret webhook_signing_key "$(hex 32)"
 write_secret minio_root_user "crawlx$(hex 4)"
 write_secret minio_root_password "$(hex 24)"
@@ -130,5 +162,10 @@ else
   say "created $env_file"
 fi
 
-say "next: docker compose -f docker/docker-compose.yml up -d --build --wait"
+case "$engine" in
+  mariadb) overlay=" -f docker/compose.mariadb.yml" ;;
+  sqlite) overlay=" -f docker/compose.sqlite.yml" ;;
+  *) overlay="" ;;
+esac
+say "next: docker compose -f docker/docker-compose.yml${overlay} up -d --build --wait"
 say "      the API key is CRAWLX_API_KEY_SPEC in $env_file (the part after 'default=')"

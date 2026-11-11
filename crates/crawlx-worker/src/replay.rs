@@ -343,24 +343,14 @@ impl Seen {
                 first.set_fragment(None);
                 first
             });
-        let rendered = if bundle.html.as_deref().is_some_and(|html| !html.is_empty()) {
-            let bundle = Arc::clone(bundle);
-            rc.cpu_pool
-                .run(move || {
-                    crawlx_extract::LinkExtractor::links(
-                        bundle.html.as_deref().unwrap_or_default(),
-                        &bundle.url.url,
-                    )
-                })
-                .await
-                .map_err(WorkerError::BrowserExtractionTask)??
-        } else {
-            Vec::new()
+        let rendered = match bundle.html.as_deref().filter(|html| !html.is_empty()) {
+            Some(html) => Self::rendered_links(html, &bundle.url.url, rc).await?,
+            None => Vec::new(),
         };
         let destinations = candidates
             .iter()
             .filter_map(|candidate| candidate.descriptor.href.as_deref())
-            .chain(rendered.iter().map(|link| link.url.as_str()))
+            .chain(rendered.iter().map(String::as_str))
             .chain(
                 bundle
                     .discovered_urls
@@ -381,6 +371,40 @@ impl Seen {
             }
         }
         Ok(())
+    }
+
+    /// Links of the rendered HTML, through the same bounded isolated pipeline every other
+    /// path parses documents with. The copy and its derived document are admitted against the
+    /// shared parse budget before either is allocated, and the reservation is held until the
+    /// links are copied out.
+    async fn rendered_links(
+        html: &str,
+        base: &url::Url,
+        rc: &RunContext,
+    ) -> Result<Vec<String>, WorkerError> {
+        use crate::url_plane::memory_plane::{
+            derived_bytes, extract_isolated, reserve_derived, IsolatedOutcome,
+        };
+        let hold = reserve_derived(html.len().saturating_add(derived_bytes(html.len())))
+            .map_err(|error| WorkerError::Other(format!("replay document memory admission: {error}")))?;
+        let body = bytes::Bytes::copy_from_slice(html.as_bytes());
+        let outcome = Box::pin(extract_isolated(
+            &rc.cpu_pool,
+            crawlx_core::parser_memory::Budgeted::new(body, hold),
+            base.clone(),
+            crawlx_extract::ExtractOptions::default(),
+            &rc.controls,
+            Some(&rc.captcha_secrets),
+            &rc.hard_cancel,
+        ))
+        .await;
+        match outcome {
+            IsolatedOutcome::Parsed(document, _hold) => {
+                Ok(document.links.iter().map(|link| link.url.to_string()).collect())
+            }
+            IsolatedOutcome::Failed(error) => Err(error.into()),
+            IsolatedOutcome::Cancelled => Err(crawlx_fetch::FetchError::AcquisitionCancelled.into()),
+        }
     }
 }
 
@@ -647,7 +671,7 @@ impl ReplayRunner {
         let (rc, handle, report) = crawlx_core::custody::with_producer(
             producer.clone(),
             crate::custody_renewal::with_custody_renewal(
-                stores.pg_secret_authority.clone(),
+                stores.secret_authority.clone(),
                 producer,
                 Box::pin(async {
                     let rc = Arc::new(

@@ -84,6 +84,13 @@ fn preflight(bytes: &[u8], schema: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Wall-clock cap on one validator run.
+///
+/// Every `xmllint` process compiles the full pinned TEI RELAX NG schema before it reads the
+/// document: about 8 to 9 seconds of CPU on an idle host, and longer when the host is busy. The
+/// cap only has to stop a hung validator, so it sits far above that fixed cost.
+const VALIDATION_DEADLINE: Duration = Duration::from_secs(60);
+
 /// Prepared pinned schema. Only public schema bytes touch disk.
 pub(super) struct Validator {
     schema: tempfile::NamedTempFile,
@@ -140,7 +147,7 @@ impl Validator {
         let result = tokio::select! {
             biased;
             () = cancel.cancelled() => Err(anyhow::anyhow!("TEI validation cancelled")),
-            result = tokio::time::timeout(Duration::from_secs(10), validation) => {
+            result = tokio::time::timeout(VALIDATION_DEADLINE, validation) => {
                 match result {
                     Ok(result) => result,
                     Err(_) => Err(anyhow::anyhow!("TEI validation deadline exceeded")),

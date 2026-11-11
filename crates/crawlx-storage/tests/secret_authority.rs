@@ -12,7 +12,7 @@ use crawlx_storage::custody::{
 };
 use crawlx_storage::leases::{LeaseRepo, SessionLease};
 use crawlx_storage::testkit::{crawl_run, create_crawl, sessions};
-use crawlx_storage::{ArtifactRow, Pg, PgConfig};
+use crawlx_storage::{ArtifactRow, Pg, StoreConfig};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -32,9 +32,9 @@ async fn fixture() -> Option<Fixture> {
     let database = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     // Must point at a dedicated no-RDB/AOF/no-replica/noeviction Redis instance.
     let redis_url = std::env::var("CRAWLX_TEST_SECRET_REDIS_URL").ok()?;
-    let config = PgConfig {
+    let config = StoreConfig {
         schema: Some(format!("custody_{}", Uuid::now_v7().simple())),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let pg = Pg::connect(&database, config.clone()).await.unwrap();
     pg.migrate().await.unwrap();
@@ -1166,9 +1166,9 @@ async fn actual_provisioned_api_role_uses_only_owned_producer_sequence() {
     restricted_url.set_password(Some(&password)).unwrap();
     let restricted = Pg::connect_existing(
         restricted_url.as_str(),
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

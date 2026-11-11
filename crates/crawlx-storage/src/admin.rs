@@ -7,10 +7,13 @@
 //! in plain SQL (RB-11) because an emergency stop must not depend on this binary.
 
 use crate::artifacts::ArtifactBlobs;
+use crate::backend::{Backend, BackendKind, Dialect, MariaBackend, PgBackend, RowLock, SqliteBackend};
 use crate::codec::get;
 use crate::error::db;
-use crate::pg::Pg;
+use crate::repos::effects::settle_run;
 use crate::retention::append_audit;
+use crate::sql::{stmt, Sql, SqlRow, Stmt};
+use crate::store::{Pg, Store};
 use async_trait::async_trait;
 use crawlx_core::hash::Digest;
 use crawlx_core::{ActionId, CrawlRunId, SessionId, StoreError, TenantId, Timestamp, WorkerId};
@@ -124,20 +127,17 @@ pub enum RunSelector {
     All,
 }
 
-/// `$head` + the selector's predicate + `$tail` as a compile-time `&'static str`.
-/// The predicate is one of three constants, so no SQL text is ever built at runtime.
-macro_rules! selected_sql {
-    ($sel:expr, $head:literal, $tail:literal) => {
-        match $sel {
-            RunSelector::Crawl(_) => concat!($head, "run_id = $1", $tail),
-            RunSelector::Tenant(_) => concat!($head, "tenant_id = $1", $tail),
-            RunSelector::All => concat!($head, "$1::uuid IS NULL", $tail),
-        }
-    };
-}
-
 impl RunSelector {
-    /// The value bound to `$1` of [`selected_sql!`].
+    /// The predicate selecting the runs, over the one value [`RunSelector::arg`] binds to `$1`.
+    const fn predicate(self) -> &'static str {
+        match self {
+            Self::Crawl(_) => "run_id = $1",
+            Self::Tenant(_) => "tenant_id = $1",
+            Self::All => "$1::uuid IS NULL",
+        }
+    }
+
+    /// The value bound to `$1` of [`RunSelector::predicate`].
     fn arg(self) -> Option<uuid::Uuid> {
         match self {
             Self::Crawl(id) => Some(id.0),
@@ -484,6 +484,351 @@ fn acquisition_capacity(
     Ok(value)
 }
 
+/// The worker registry of the engines without the PostgreSQL SQL functions (MariaDB, SQLite):
+/// capability JSON is merged and judged in Rust, with one shared eligibility rule.
+mod registry {
+    use super::{acquisition_capacity, validate_required_backends};
+    use crate::backend::{Dialect, RowLock};
+    use crate::sql::{stmt, Sql, SqlRow, Stmt};
+    use crate::store::Store;
+    use crate::worker_eligibility::{claim_eligible, WorkerFacts};
+    use crawlx_core::acquisition::{BackendCapabilitiesV1, WorkerCapabilitiesV1};
+    use crawlx_core::data_capabilities::{WorkerDataCapabilitiesV1, WorkerDataRequirementsV1};
+    use crawlx_core::{CrawlRunId, StoreError, Timestamp, WorkerId};
+    use serde_json::{Map, Value};
+    use std::time::Duration;
+
+    /// Largest `workers.capacity` document an eligibility read accepts.
+    const MAX_CAPACITY_BYTES: usize = 98_304;
+
+    fn not_found(id: WorkerId) -> StoreError {
+        StoreError::NotFound {
+            entity: "worker",
+            id: id.to_string(),
+        }
+    }
+
+    pub(super) async fn register<B: Sql>(
+        store: &Store<B>,
+        id: WorkerId,
+        hostname: &str,
+        version: &str,
+    ) -> Result<(), StoreError> {
+        let now = <B::Dialect as Dialect>::now();
+        let update = <B::Dialect as Dialect>::upsert_update(&["worker_id"], &["hostname", "version"], None);
+        Stmt::<B>::dynamic(&format!(
+            "INSERT INTO workers (worker_id, hostname, version, capacity, last_heartbeat_at) \
+             VALUES ($1, $2, $3, '{{}}', {now}) \
+             {update}, capacity = '{{}}', draining = false, started_at = {now}, last_heartbeat_at = {now}"
+        ))
+        .uuid(id.0)
+        .text(hostname)
+        .text(version)
+        .execute_write(&store.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub(super) async fn heartbeat<B: Sql>(store: &Store<B>, id: WorkerId) -> Result<bool, StoreError> {
+        let update = format!(
+            "UPDATE workers SET last_heartbeat_at = {} WHERE worker_id = $1",
+            <B::Dialect as Dialect>::now()
+        );
+        let draining = if <B::Dialect as Dialect>::UPDATE_RETURNING {
+            Stmt::<B>::dynamic(&format!("{update} RETURNING draining"))
+                .uuid(id.0)
+                .fetch_optional_write(&store.pool)
+                .await?
+                .map(|row| row.bool("draining"))
+                .transpose()?
+        } else {
+            let mut tx = store.begin_write().await?;
+            let matched = Stmt::<B>::dynamic(&update).uuid(id.0).execute(tx.conn()).await?;
+            let draining = if matched == 0 {
+                None
+            } else {
+                stmt!(B, "SELECT draining FROM workers WHERE worker_id = $1")
+                    .uuid(id.0)
+                    .fetch_optional(tx.conn())
+                    .await?
+                    .map(|row| row.bool("draining"))
+                    .transpose()?
+            };
+            tx.commit().await?;
+            draining
+        };
+        Ok(draining.unwrap_or(false))
+    }
+
+    /// Read `workers.capacity` of `id` under the row lock, let `edit` change it and write it
+    /// back with a fresh heartbeat, all in one write transaction.
+    async fn edit_capacity<B: Sql>(
+        store: &Store<B>,
+        id: WorkerId,
+        edit: impl FnOnce(&mut Map<String, Value>),
+    ) -> Result<(), StoreError> {
+        let lock = <B::Dialect as Dialect>::row_lock(RowLock::Update);
+        let now = <B::Dialect as Dialect>::now();
+        let mut tx = store.begin_write().await?;
+        let row = Stmt::<B>::dynamic(&format!(
+            "SELECT capacity FROM workers WHERE worker_id = $1{lock}"
+        ))
+        .uuid(id.0)
+        .fetch_optional(tx.conn())
+        .await?
+        .ok_or_else(|| not_found(id))?;
+        let mut capacity = row.json("capacity")?;
+        edit(
+            capacity
+                .as_object_mut()
+                .ok_or_else(|| StoreError::Serialization("worker capacity is not an object".to_owned()))?,
+        );
+        Stmt::<B>::dynamic(&format!(
+            "UPDATE workers SET capacity = $2, last_heartbeat_at = {now} WHERE worker_id = $1"
+        ))
+        .uuid(id.0)
+        .json(&capacity)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await
+    }
+
+    pub(super) async fn publish_acquisition<B: Sql>(
+        store: &Store<B>,
+        id: WorkerId,
+        capabilities: &[BackendCapabilitiesV1],
+    ) -> Result<(), StoreError> {
+        let capacity = acquisition_capacity(capabilities)?;
+        edit_capacity(store, id, |object| {
+            object.remove("localRun");
+            object.insert("acquisition".to_owned(), capacity);
+            object.insert("acceptsQueued".to_owned(), Value::Bool(true));
+        })
+        .await
+    }
+
+    pub(super) async fn publish_local_acquisition<B: Sql>(
+        store: &Store<B>,
+        id: WorkerId,
+        run: CrawlRunId,
+        capabilities: &[BackendCapabilitiesV1],
+    ) -> Result<(), StoreError> {
+        let capacity = acquisition_capacity(capabilities)?;
+        edit_capacity(store, id, |object| {
+            object.insert("acquisition".to_owned(), capacity);
+            object.insert("acceptsQueued".to_owned(), Value::Bool(false));
+            object.insert("localRun".to_owned(), Value::String(run.to_string()));
+        })
+        .await
+    }
+
+    pub(super) async fn publish_data<B: Sql>(
+        store: &Store<B>,
+        id: WorkerId,
+        facts: &WorkerDataCapabilitiesV1,
+    ) -> Result<(), StoreError> {
+        facts.validate()?;
+        let value =
+            serde_json::to_value(facts).map_err(|error| StoreError::Serialization(error.to_string()))?;
+        edit_capacity(store, id, |object| {
+            object.insert("data".to_owned(), value);
+        })
+        .await
+    }
+
+    /// Candidate rows: workers not draining whose last heartbeat is within `max_age` of now.
+    async fn fresh_workers<B: Sql>(
+        store: &Store<B>,
+        max_age: Duration,
+    ) -> Result<Vec<(WorkerId, Timestamp, Value, bool)>, StoreError> {
+        let milliseconds = i64::try_from(max_age.as_millis().min(90_000)).unwrap_or(90_000);
+        let now = super::db_now_of(store).await?;
+        let since = now - chrono::Duration::milliseconds(milliseconds);
+        let rows = stmt!(
+            B,
+            "SELECT worker_id, last_heartbeat_at, capacity, draining FROM workers \
+             WHERE draining = false AND last_heartbeat_at >= $1 AND last_heartbeat_at <= $2 \
+             ORDER BY worker_id"
+        )
+        .ts(since)
+        .ts(now)
+        .fetch_all_pool(&store.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                Ok((
+                    WorkerId(row.uuid("worker_id")?),
+                    row.ts("last_heartbeat_at")?,
+                    row.json("capacity")?,
+                    row.bool("draining")?,
+                ))
+            })
+            .collect()
+    }
+
+    fn queued(capacity: &Value) -> bool {
+        capacity.get("acceptsQueued") == Some(&Value::Bool(true))
+            && capacity.to_string().len() <= MAX_CAPACITY_BYTES
+    }
+
+    fn worker_of(
+        id: WorkerId,
+        heartbeat: Timestamp,
+        capacity: &Value,
+    ) -> Result<WorkerCapabilitiesV1, StoreError> {
+        let backends = serde_json::from_value(capacity.get("acquisition").cloned().unwrap_or(Value::Null))
+            .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        let mut worker = WorkerCapabilitiesV1::new(id, heartbeat, backends)
+            .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        worker.data = serde_json::from_value(
+            capacity
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new())),
+        )
+        .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        worker.data.validate()?;
+        Ok(worker)
+    }
+
+    pub(super) async fn eligible_data_worker<B: Sql>(
+        store: &Store<B>,
+        required_ids: &[String],
+        data: &WorkerDataRequirementsV1,
+        max_age: Duration,
+    ) -> Result<Option<WorkerCapabilitiesV1>, StoreError> {
+        if !required_ids.is_empty() {
+            validate_required_backends(required_ids)?;
+        }
+        data.validate()?;
+        if max_age.is_zero() {
+            return Ok(None);
+        }
+        let requirements =
+            serde_json::to_value(data).map_err(|error| StoreError::Serialization(error.to_string()))?;
+        let now = super::db_now_of(store).await?;
+        for (id, heartbeat, capacity, draining) in fresh_workers(store, max_age).await? {
+            let facts = WorkerFacts {
+                capacity,
+                draining,
+                last_heartbeat_at: heartbeat,
+            };
+            if queued(&facts.capacity)
+                && claim_eligible(
+                    Some(&facts),
+                    uuid::Uuid::nil(),
+                    now,
+                    required_ids,
+                    false,
+                    &requirements,
+                )
+            {
+                return worker_of(id, heartbeat, &facts.capacity).map(Some);
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) async fn live_acquisition_workers<B: Sql>(
+        store: &Store<B>,
+        max_age: Duration,
+    ) -> Result<Vec<WorkerCapabilitiesV1>, StoreError> {
+        if max_age.is_zero() {
+            return Ok(Vec::new());
+        }
+        let limit = crawlx_core::acquisition::WORKER_CAPABILITY_SNAPSHOT_LIMIT.saturating_add(1);
+        let mut out = Vec::new();
+        for (id, heartbeat, capacity, _) in fresh_workers(store, max_age).await? {
+            let backends = capacity
+                .get("acquisition")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            if queued(&capacity) && (1..=4).contains(&backends) {
+                out.push(worker_of(id, heartbeat, &capacity)?);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// The engine's own clock for registry freshness.
+async fn db_now_of<B: Sql>(store: &Store<B>) -> Result<Timestamp, StoreError> {
+    stmt!(B, format!("SELECT {} AS v", <B::Dialect as Dialect>::now()))
+        .fetch_one_pool(&store.pool)
+        .await?
+        .ts("v")
+}
+
+macro_rules! worker_registry_impl {
+    ($($backend:ty),+) => {$(
+        #[async_trait]
+        impl WorkerRegistry for Store<$backend> {
+            async fn register_worker(&self, id: WorkerId, hostname: &str, version: &str) -> Result<(), StoreError> {
+                registry::register(self, id, hostname, version).await
+            }
+
+            async fn worker_heartbeat(&self, id: WorkerId) -> Result<bool, StoreError> {
+                registry::heartbeat(self, id).await
+            }
+
+            async fn publish_acquisition_capabilities(
+                &self,
+                id: WorkerId,
+                capabilities: &[crawlx_core::acquisition::BackendCapabilitiesV1],
+            ) -> Result<(), StoreError> {
+                registry::publish_acquisition(self, id, capabilities).await
+            }
+
+            async fn publish_local_acquisition_capabilities(
+                &self,
+                id: WorkerId,
+                run: CrawlRunId,
+                capabilities: &[crawlx_core::acquisition::BackendCapabilitiesV1],
+            ) -> Result<(), StoreError> {
+                registry::publish_local_acquisition(self, id, run, capabilities).await
+            }
+
+            async fn publish_data_capabilities(
+                &self,
+                id: WorkerId,
+                facts: &crawlx_core::data_capabilities::WorkerDataCapabilitiesV1,
+            ) -> Result<(), StoreError> {
+                registry::publish_data(self, id, facts).await
+            }
+
+            async fn eligible_data_worker(
+                &self,
+                required_ids: &[String],
+                data: &crawlx_core::data_capabilities::WorkerDataRequirementsV1,
+                max_age: std::time::Duration,
+            ) -> Result<Option<crawlx_core::acquisition::WorkerCapabilitiesV1>, StoreError> {
+                registry::eligible_data_worker(self, required_ids, data, max_age).await
+            }
+
+            async fn live_acquisition_workers(
+                &self,
+                max_age: std::time::Duration,
+            ) -> Result<Vec<crawlx_core::acquisition::WorkerCapabilitiesV1>, StoreError> {
+                registry::live_acquisition_workers(self, max_age).await
+            }
+
+            async fn eligible_acquisition_worker(
+                &self,
+                required_ids: &[String],
+                max_age: std::time::Duration,
+            ) -> Result<Option<crawlx_core::acquisition::WorkerCapabilitiesV1>, StoreError> {
+                validate_required_backends(required_ids)?;
+                registry::eligible_data_worker(self, required_ids, &Default::default(), max_age).await
+            }
+        }
+    )+};
+}
+
+worker_registry_impl!(SqliteBackend, MariaBackend);
+
 #[derive(Default)]
 pub(crate) struct WorkerRegistryState {
     pub(crate) rows: std::collections::BTreeMap<
@@ -705,18 +1050,27 @@ impl crate::MemoryStore {
     }
 }
 
-/// The admin operations over PostgreSQL.
-pub struct AdminOps<'a> {
-    pg: &'a Pg,
+/// `ORDER BY` term putting rows with a `NULL` `col` last.
+fn nulls_last<B: Backend>(col: &str) -> String {
+    if B::KIND == BackendKind::MariaDb {
+        format!("({col} IS NULL), {col}")
+    } else {
+        format!("{col} NULLS LAST")
+    }
+}
+
+/// The admin operations over any engine.
+pub struct AdminOps<'a, B: Sql = PgBackend> {
+    store: &'a Store<B>,
     actor: String,
 }
 
-impl<'a> AdminOps<'a> {
+impl<'a, B: Sql> AdminOps<'a, B> {
     /// Operations recorded in the audit log as `admin:<operator>`.
     #[must_use]
-    pub fn new(pg: &'a Pg, operator: &str) -> Self {
+    pub fn new(store: &'a Store<B>, operator: &str) -> Self {
         Self {
-            pg,
+            store,
             actor: format!("admin:{operator}"),
         }
     }
@@ -729,7 +1083,7 @@ impl<'a> AdminOps<'a> {
         subject: serde_json::Value,
     ) -> Result<(), StoreError> {
         append_audit(
-            self.pg,
+            self.store,
             tenant.map(|t| t.0),
             run.map(|r| r.0),
             &self.actor,
@@ -744,7 +1098,7 @@ impl<'a> AdminOps<'a> {
     /// # Errors
     /// Returns an error if the setting cannot be read or holds an unknown value.
     pub async fn admission(&self) -> Result<AdmissionMode, StoreError> {
-        admission_of(self.pg).await
+        admission_of(self.store).await
     }
 
     /// Set `scheduler.admission` (`freeze` = `Frozen`, `resume` = `Open`).
@@ -753,14 +1107,15 @@ impl<'a> AdminOps<'a> {
     /// Returns an error if the update or the audit append fails.
     pub async fn set_admission(&self, mode: AdmissionMode) -> Result<AdmissionMode, StoreError> {
         let before = self.admission().await?;
-        sqlx::query(
-            "UPDATE cluster_settings SET value = $1, updated_at = now(), updated_by = $2 WHERE key = 'scheduler.admission'",
-        )
-        .bind(mode.as_str())
-        .bind(&self.actor)
-        .execute(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        let now = <B::Dialect as Dialect>::now();
+        let key = <B::Dialect as Dialect>::reserved_ident("key");
+        Stmt::<B>::dynamic(&format!(
+            "UPDATE cluster_settings SET value = $1, updated_at = {now}, updated_by = $2 WHERE {key} = 'scheduler.admission'"
+        ))
+        .text(mode.as_str())
+        .text(&self.actor)
+        .execute_write(&self.store.pool)
+        .await?;
         self.audit(
             None,
             None,
@@ -771,120 +1126,70 @@ impl<'a> AdminOps<'a> {
         Ok(before)
     }
 
-    /// Pause every `running` run selected (`pause_requested_at = now()`, `status = paused`); the
-    /// Session Actors stop at their next action boundary. Returns the runs paused.
+    /// Change the runs `sel` selects that satisfy `condition`: `assignments` is the `SET` list
+    /// (it may use `$2` for `reason`). Returns the runs changed with their tenants, in id order.
     ///
-    /// # Errors
-    /// Returns an error if the update, the event append or the audit append fails.
-    pub async fn pause(&self, sel: RunSelector) -> Result<Vec<CrawlRunId>, StoreError> {
-        let sql = selected_sql!(
-            sel,
-            "UPDATE crawl_runs SET status = 'paused', pause_requested_at = now() \
-             WHERE status = 'running' AND ",
-            " RETURNING run_id, tenant_id"
-        );
-        let rows = sqlx::query(sql)
-            .bind(sel.arg())
-            .fetch_all(&self.pg.pool)
-            .await
-            .map_err(db)?;
-        let mut out = Vec::with_capacity(rows.len());
-        for r in &rows {
-            let run = CrawlRunId(get(r, "run_id")?);
-            let tenant = TenantId(get(r, "tenant_id")?);
-            self.append_event(run, "paused", serde_json::json!({ "by": self.actor }))
-                .await?;
-            self.audit(Some(tenant), Some(run), "admin.pause", sel.describe())
-                .await?;
-            out.push(run);
-        }
-        Ok(out)
-    }
-
-    /// Resume every `paused` run selected. Returns the runs resumed.
-    ///
-    /// # Errors
-    /// Returns an error if the update, the event append or the audit append fails.
-    pub async fn resume(&self, sel: RunSelector) -> Result<Vec<CrawlRunId>, StoreError> {
-        let sql = selected_sql!(
-            sel,
-            "UPDATE crawl_runs SET status = 'running', pause_requested_at = NULL \
-             WHERE status = 'paused' AND ",
-            " RETURNING run_id, tenant_id"
-        );
-        let rows = sqlx::query(sql)
-            .bind(sel.arg())
-            .fetch_all(&self.pg.pool)
-            .await
-            .map_err(db)?;
-        let mut out = Vec::with_capacity(rows.len());
-        for r in &rows {
-            let run = CrawlRunId(get(r, "run_id")?);
-            let tenant = TenantId(get(r, "tenant_id")?);
-            self.append_event(run, "resumed", serde_json::json!({ "by": self.actor }))
-                .await?;
-            self.audit(Some(tenant), Some(run), "admin.resume", sel.describe())
-                .await?;
-            out.push(run);
-        }
-        Ok(out)
-    }
-
-    /// Cancel every non-terminal run selected (`terminal_reason = cancelled`, or
-    /// `policy_stopped` for safety-related stops); pending sessions become `cancelled`.
-    ///
-    /// # Errors
-    /// Returns an error if the update, the event append or the audit append fails.
-    pub async fn cancel(&self, sel: RunSelector, reason: &str) -> Result<Vec<CrawlRunId>, StoreError> {
-        if !matches!(reason, "cancelled" | "policy_stopped") {
-            return Err(StoreError::Conflict(format!(
-                "cancel reason must be `cancelled` or `policy_stopped`, got {reason:?}"
-            )));
-        }
-        let sql = selected_sql!(
-            sel,
-            "UPDATE crawl_runs SET status = 'cancelled', terminal_reason = $2::text::terminal_reason, \
-               cancel_requested_at = now(), finished_at = now() \
-             WHERE status::text IN ('queued','running','pausing','paused','cancelling') AND ",
-            " RETURNING run_id, tenant_id"
-        );
-        let rows = sqlx::query(sql)
-            .bind(sel.arg())
-            .bind(reason)
-            .fetch_all(&self.pg.pool)
-            .await
-            .map_err(db)?;
-        let mut out = Vec::with_capacity(rows.len());
-        for r in &rows {
-            let run = CrawlRunId(get(r, "run_id")?);
-            let tenant = TenantId(get(r, "tenant_id")?);
-            sqlx::query("UPDATE crawl_sessions SET status = 'cancelled', finished_at = now() WHERE run_id = $1 AND status = 'pending'")
-                .bind(run.0)
-                .execute(&self.pg.pool)
-                .await
-                .map_err(db)?;
-            self.append_event(
-                run,
-                "status",
-                serde_json::json!({ "status": "cancelled", "terminalReason": reason }),
-            )
+    /// `condition` and `assignments` are compile-time literals.
+    async fn update_runs(
+        &self,
+        sel: RunSelector,
+        assignments: &str,
+        condition: &str,
+        reason: Option<&str>,
+        settle: bool,
+    ) -> Result<Vec<(CrawlRunId, TenantId)>, StoreError> {
+        let predicate = sel.predicate();
+        let mut changed: Vec<(CrawlRunId, TenantId)> = if <B::Dialect as Dialect>::UPDATE_RETURNING {
+            let mut statement = Stmt::<B>::dynamic(&format!(
+                "UPDATE crawl_runs SET {assignments} WHERE {condition} AND {predicate} RETURNING run_id, tenant_id"
+            ))
+            .opt_uuid(sel.arg());
+            if let Some(reason) = reason {
+                statement = statement.text(reason);
+            }
+            let mut tx = self.store.begin_write().await?;
+            let rows = statement.fetch_all(tx.conn()).await?;
+            let changed: Vec<(CrawlRunId, TenantId)> = rows
+                .iter()
+                .map(|r| Ok((CrawlRunId(r.uuid("run_id")?), TenantId(r.uuid("tenant_id")?))))
+                .collect::<Result<_, StoreError>>()?;
+            if settle {
+                for (run, _) in &changed {
+                    settle_run::<B>(tx.conn(), *run).await?;
+                }
+            }
+            tx.commit().await?;
+            changed
+        } else {
+            // no `UPDATE .. RETURNING`: lock the selected rows, then change them one by one
+            let lock = <B::Dialect as Dialect>::row_lock(RowLock::Update);
+            let mut tx = self.store.begin_write().await?;
+            let rows = Stmt::<B>::dynamic(&format!(
+                "SELECT run_id, tenant_id FROM crawl_runs WHERE {condition} AND {predicate}{lock}"
+            ))
+            .opt_uuid(sel.arg())
+            .fetch_all(tx.conn())
             .await?;
-            self.append_event(
-                run,
-                "completed",
-                serde_json::json!({ "status": "cancelled", "terminalReason": reason, "by": self.actor }),
-            )
-            .await?;
-            self.audit(
-                Some(tenant),
-                Some(run),
-                "admin.cancel",
-                serde_json::json!({ "selector": sel.describe(), "reason": reason }),
-            )
-            .await?;
-            out.push(run);
-        }
-        Ok(out)
+            let mut changed = Vec::with_capacity(rows.len());
+            for r in &rows {
+                let run = r.uuid("run_id")?;
+                let mut statement =
+                    Stmt::<B>::dynamic(&format!("UPDATE crawl_runs SET {assignments} WHERE run_id = $1"))
+                        .uuid(run);
+                if let Some(reason) = reason {
+                    statement = statement.text(reason);
+                }
+                statement.execute(tx.conn()).await?;
+                if settle {
+                    settle_run::<B>(tx.conn(), CrawlRunId(run)).await?;
+                }
+                changed.push((CrawlRunId(run), TenantId(r.uuid("tenant_id")?)));
+            }
+            tx.commit().await?;
+            changed
+        };
+        changed.sort_by_key(|(run, _)| run.0);
+        Ok(changed)
     }
 
     /// Mark `worker` draining: it stops taking leases at its next heartbeat and hands its
@@ -894,22 +1199,21 @@ impl<'a> AdminOps<'a> {
     /// Returns [`StoreError::NotFound`] if the worker never registered, or an error if the
     /// update or the audit append fails.
     pub async fn drain_worker(&self, worker: WorkerId) -> Result<u64, StoreError> {
-        let n = sqlx::query("UPDATE workers SET draining = true WHERE worker_id = $1")
-            .bind(worker.0)
-            .execute(&self.pg.pool)
-            .await
-            .map_err(db)?
-            .rows_affected();
+        let n = stmt!(B, "UPDATE workers SET draining = true WHERE worker_id = $1")
+            .uuid(worker.0)
+            .execute_write(&self.store.pool)
+            .await?;
         if n == 0 {
             return Err(crate::error::not_found("worker", worker));
         }
-        let held: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM crawl_sessions WHERE lease_owner = $1 AND status IN ('running','recovering')",
+        let held = stmt!(
+            B,
+            "SELECT count(*) AS held FROM crawl_sessions WHERE lease_owner = $1 AND status IN ('running','recovering')"
         )
-        .bind(worker.0)
-        .fetch_one(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .uuid(worker.0)
+        .fetch_one_pool(&self.store.pool)
+        .await?
+        .i64("held")?;
         self.audit(
             None,
             None,
@@ -925,25 +1229,25 @@ impl<'a> AdminOps<'a> {
     /// # Errors
     /// Returns an error if the query fails.
     pub async fn workers(&self) -> Result<Vec<WorkerRow>, StoreError> {
-        let rows = sqlx::query(
+        let rows = stmt!(
+            B,
             "SELECT w.worker_id, w.hostname, w.version, w.capacity, w.draining, w.started_at, w.last_heartbeat_at, \
                     (SELECT count(*) FROM crawl_sessions s WHERE s.lease_owner = w.worker_id AND s.status IN ('running','recovering')) AS held \
-             FROM workers w ORDER BY w.started_at, w.worker_id",
+             FROM workers w ORDER BY w.started_at, w.worker_id"
         )
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .fetch_all_pool(&self.store.pool)
+        .await?;
         rows.iter()
             .map(|r| {
-                let held: i64 = get(r, "held")?;
+                let held = r.i64("held")?;
                 Ok(WorkerRow {
-                    id: WorkerId(get(r, "worker_id")?),
-                    hostname: get(r, "hostname")?,
-                    version: get(r, "version")?,
-                    draining: get(r, "draining")?,
-                    started_at: get(r, "started_at")?,
-                    last_heartbeat_at: get(r, "last_heartbeat_at")?,
-                    capacity: get(r, "capacity")?,
+                    id: WorkerId(r.uuid("worker_id")?),
+                    hostname: r.text("hostname")?,
+                    version: r.text("version")?,
+                    draining: r.bool("draining")?,
+                    started_at: r.ts("started_at")?,
+                    last_heartbeat_at: r.ts("last_heartbeat_at")?,
+                    capacity: r.json("capacity")?,
                     leases_held: u64::try_from(held).unwrap_or(0),
                 })
             })
@@ -955,25 +1259,25 @@ impl<'a> AdminOps<'a> {
     /// # Errors
     /// Returns an error if the query fails.
     pub async fn open_actions(&self, action: Option<ActionId>) -> Result<Vec<OpenAction>, StoreError> {
-        let rows = sqlx::query(
+        let order = nulls_last::<B>("a.intended_at");
+        let rows = Stmt::<B>::dynamic(&format!(
             "SELECT a.action_id, a.run_id, a.session_id, a.status::text AS status, s.status AS session_status, a.intended_at \
              FROM actions a JOIN crawl_sessions s ON s.session_id = a.session_id \
              WHERE a.status::text IN ('intended','unknown') AND ($1::uuid IS NULL OR a.action_id = $1) \
-             ORDER BY a.intended_at NULLS LAST, a.action_id",
-        )
-        .bind(action.map(|a| a.0))
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+             ORDER BY {order}, a.action_id"
+        ))
+        .opt_uuid(action.map(|a| a.0))
+        .fetch_all_pool(&self.store.pool)
+        .await?;
         rows.iter()
             .map(|r| {
                 Ok(OpenAction {
-                    id: ActionId(get(r, "action_id")?),
-                    run: CrawlRunId(get(r, "run_id")?),
-                    session: SessionId(get(r, "session_id")?),
-                    status: get(r, "status")?,
-                    session_status: get(r, "session_status")?,
-                    intended_at: get(r, "intended_at")?,
+                    id: ActionId(r.uuid("action_id")?),
+                    run: CrawlRunId(r.uuid("run_id")?),
+                    session: SessionId(r.uuid("session_id")?),
+                    status: r.text("status")?,
+                    session_status: r.text("session_status")?,
+                    intended_at: r.opt_ts("intended_at")?,
                 })
             })
             .collect()
@@ -997,15 +1301,36 @@ impl<'a> AdminOps<'a> {
                 open.status
             )));
         }
-        let status: String = sqlx::query_scalar(
-            "UPDATE crawl_sessions SET status = CASE WHEN status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < now()) \
+        let now = <B::Dialect as Dialect>::now();
+        let update = format!(
+            "UPDATE crawl_sessions SET status = CASE WHEN status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < {now}) \
                                                THEN 'recovering' ELSE status END \
-             WHERE session_id = $1 RETURNING status",
-        )
-        .bind(open.session.0)
-        .fetch_one(&self.pg.pool)
-        .await
-        .map_err(db)?;
+             WHERE session_id = $1"
+        );
+        let status = if <B::Dialect as Dialect>::UPDATE_RETURNING {
+            Stmt::<B>::dynamic(&format!("{update} RETURNING status"))
+                .uuid(open.session.0)
+                .fetch_optional_write(&self.store.pool)
+                .await?
+                .ok_or(StoreError::NotFound {
+                    entity: "row",
+                    id: String::new(),
+                })?
+                .text("status")?
+        } else {
+            let mut tx = self.store.begin_write().await?;
+            Stmt::<B>::dynamic(&update)
+                .uuid(open.session.0)
+                .execute(tx.conn())
+                .await?;
+            let status = stmt!(B, "SELECT status FROM crawl_sessions WHERE session_id = $1")
+                .uuid(open.session.0)
+                .fetch_one(tx.conn())
+                .await?
+                .text("status")?;
+            tx.commit().await?;
+            status
+        };
         if matches!(status.as_str(), "completed" | "failed" | "cancelled") {
             return Err(StoreError::Conflict(format!(
                 "session {} is terminal ({status}); restore it from a checkpoint before reconciling",
@@ -1032,18 +1357,18 @@ impl<'a> AdminOps<'a> {
         tenant: TenantId,
         engine: TenantEngine,
     ) -> Result<TenantEngine, StoreError> {
-        let before: Option<String> = sqlx::query_scalar("SELECT engine FROM tenants WHERE tenant_id = $1")
-            .bind(tenant.0)
-            .fetch_optional(&self.pg.pool)
-            .await
-            .map_err(db)?;
+        let before = stmt!(B, "SELECT engine FROM tenants WHERE tenant_id = $1")
+            .uuid(tenant.0)
+            .fetch_optional_pool(&self.store.pool)
+            .await?
+            .map(|r| r.text("engine"))
+            .transpose()?;
         let before = TenantEngine::parse(&before.ok_or_else(|| crate::error::not_found("tenant", tenant))?)?;
-        sqlx::query("UPDATE tenants SET engine = $2 WHERE tenant_id = $1")
-            .bind(tenant.0)
-            .bind(engine.as_str())
-            .execute(&self.pg.pool)
-            .await
-            .map_err(db)?;
+        stmt!(B, "UPDATE tenants SET engine = $2 WHERE tenant_id = $1")
+            .uuid(tenant.0)
+            .text(engine.as_str())
+            .execute_write(&self.store.pool)
+            .await?;
         self.audit(
             Some(tenant),
             None,
@@ -1086,25 +1411,25 @@ impl<'a> AdminOps<'a> {
         keys: Option<&dyn crate::artifact_key_crypto::ArtifactKeys>,
         since: Option<Timestamp>,
     ) -> Result<ArtifactVerification, StoreError> {
-        let rows = sqlx::query(
+        let rows = stmt!(
+            B,
             "SELECT a.artifact_id, a.run_id, a.object_key, a.content_digest, \
                     c.envelope, c.artifact_payload, c.ciphertext_digest, c.ciphertext_size \
              FROM artifacts a LEFT JOIN artifact_key_custody c ON c.artifact_id = a.artifact_id \
              WHERE a.deleted_at IS NULL AND ($1::timestamptz IS NULL OR a.created_at >= $1) \
-             ORDER BY a.artifact_id",
+             ORDER BY a.artifact_id"
         )
-        .bind(since)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .opt_ts(since)
+        .fetch_all_pool(&self.store.pool)
+        .await?;
         let mut out = ArtifactVerification::default();
         let mut live_keys = std::collections::BTreeSet::new();
         for r in &rows {
-            let artifact_id: uuid::Uuid = get(r, "artifact_id")?;
-            let run = CrawlRunId(get(r, "run_id")?);
-            let object_key: String = get(r, "object_key")?;
-            let digest: Vec<u8> = get(r, "content_digest")?;
-            let sealed: Option<serde_json::Value> = get(r, "envelope")?;
+            let artifact_id = r.uuid("artifact_id")?;
+            let run = CrawlRunId(r.uuid("run_id")?);
+            let object_key = r.text("object_key")?;
+            let digest = r.bytes("content_digest")?;
+            let sealed = r.opt_json("envelope")?;
             out.checked += 1;
             live_keys.insert(object_key.clone());
             let defect = match blobs.get(&object_key).await? {
@@ -1154,12 +1479,12 @@ impl<'a> AdminOps<'a> {
 
     async fn verify_sealed(
         keys: Option<&dyn crate::artifact_key_crypto::ArtifactKeys>,
-        r: &sqlx::postgres::PgRow,
+        r: &B::Row,
         envelope: serde_json::Value,
         bytes: Vec<u8>,
     ) -> Result<Option<&'static str>, StoreError> {
-        let ciphertext_digest: Vec<u8> = get(r, "ciphertext_digest")?;
-        let ciphertext_size: i64 = get(r, "ciphertext_size")?;
+        let ciphertext_digest = r.bytes("ciphertext_digest")?;
+        let ciphertext_size = r.i64("ciphertext_size")?;
         let actual = Digest::of(crate::custody::CIPHERTEXT_DIGEST_DOMAIN, &bytes);
         if actual.0.as_slice() != ciphertext_digest.as_slice()
             || i64::try_from(bytes.len()).ok() != Some(ciphertext_size)
@@ -1169,7 +1494,7 @@ impl<'a> AdminOps<'a> {
         let Some(keys) = keys else {
             return Ok(None);
         };
-        let payload: serde_json::Value = get(r, "artifact_payload")?;
+        let payload = r.json("artifact_payload")?;
         let (Ok(row), Ok(envelope), Ok(ciphertext)) = (
             serde_json::from_value::<crate::ArtifactRow>(payload),
             serde_json::from_value::<crate::custody::ArtifactKeyEnvelope>(envelope),
@@ -1208,30 +1533,31 @@ impl<'a> AdminOps<'a> {
     /// # Errors
     /// Returns an error if a query or the audit append fails.
     pub async fn durability_audit(&self, since: Option<Timestamp>) -> Result<DurabilityAudit, StoreError> {
-        let checked: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM audit_events e \
+        let checked = stmt!(
+            B,
+            "SELECT count(*) AS checked FROM audit_events e \
              WHERE e.event = 'crawl.accepted' AND e.run_id IS NOT NULL \
-               AND ($1::timestamptz IS NULL OR e.occurred_at >= $1)",
+               AND ($1::timestamptz IS NULL OR e.occurred_at >= $1)"
         )
-        .bind(since)
-        .fetch_one(&self.pg.pool)
-        .await
-        .map_err(db)?;
-        let rows = sqlx::query(
+        .opt_ts(since)
+        .fetch_one_pool(&self.store.pool)
+        .await?
+        .i64("checked")?;
+        let rows = stmt!(
+            B,
             "SELECT DISTINCT e.run_id FROM audit_events e \
              LEFT JOIN crawl_runs r ON r.run_id = e.run_id \
              WHERE e.event = 'crawl.accepted' AND e.run_id IS NOT NULL \
                AND ($1::timestamptz IS NULL OR e.occurred_at >= $1) \
                AND r.run_id IS NULL \
-             ORDER BY e.run_id",
+             ORDER BY e.run_id"
         )
-        .bind(since)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .opt_ts(since)
+        .fetch_all_pool(&self.store.pool)
+        .await?;
         let missing = rows
             .iter()
-            .map(|r| get(r, "run_id").map(CrawlRunId))
+            .map(|r| r.uuid("run_id").map(CrawlRunId))
             .collect::<Result<Vec<_>, _>>()?;
         let out = DurabilityAudit {
             checked: u64::try_from(checked).unwrap_or(0),
@@ -1246,16 +1572,128 @@ impl<'a> AdminOps<'a> {
         .await?;
         Ok(out)
     }
+}
 
+impl<B: Sql> AdminOps<'_, B>
+where
+    Store<B>: crawlx_core::repo::EventRepo,
+{
     async fn append_event(
         &self,
         run: CrawlRunId,
         kind: &str,
         payload: serde_json::Value,
     ) -> Result<(), StoreError> {
-        crawlx_core::repo::EventRepo::append(self.pg, run, kind, payload)
+        crawlx_core::repo::EventRepo::append(self.store, run, kind, payload)
             .await
             .map(|_| ())
+    }
+
+    /// Pause every `running` run selected (`pause_requested_at = now()`, `status = paused`); the
+    /// Session Actors stop at their next action boundary. Returns the runs paused.
+    ///
+    /// # Errors
+    /// Returns an error if the update, the event append or the audit append fails.
+    pub async fn pause(&self, sel: RunSelector) -> Result<Vec<CrawlRunId>, StoreError> {
+        let now = <B::Dialect as Dialect>::now();
+        let runs = self
+            .update_runs(
+                sel,
+                &format!("status = 'paused', pause_requested_at = {now}"),
+                "status = 'running'",
+                None,
+                false,
+            )
+            .await?;
+        let mut out = Vec::with_capacity(runs.len());
+        for (run, tenant) in runs {
+            self.append_event(run, "paused", serde_json::json!({ "by": self.actor }))
+                .await?;
+            self.audit(Some(tenant), Some(run), "admin.pause", sel.describe())
+                .await?;
+            out.push(run);
+        }
+        Ok(out)
+    }
+
+    /// Resume every `paused` run selected. Returns the runs resumed.
+    ///
+    /// # Errors
+    /// Returns an error if the update, the event append or the audit append fails.
+    pub async fn resume(&self, sel: RunSelector) -> Result<Vec<CrawlRunId>, StoreError> {
+        let runs = self
+            .update_runs(
+                sel,
+                "status = 'running', pause_requested_at = NULL",
+                "status = 'paused'",
+                None,
+                false,
+            )
+            .await?;
+        let mut out = Vec::with_capacity(runs.len());
+        for (run, tenant) in runs {
+            self.append_event(run, "resumed", serde_json::json!({ "by": self.actor }))
+                .await?;
+            self.audit(Some(tenant), Some(run), "admin.resume", sel.describe())
+                .await?;
+            out.push(run);
+        }
+        Ok(out)
+    }
+
+    /// Cancel every non-terminal run selected (`terminal_reason = cancelled`, or
+    /// `policy_stopped` for safety-related stops); pending sessions become `cancelled`.
+    ///
+    /// # Errors
+    /// Returns an error if the update, the event append or the audit append fails.
+    pub async fn cancel(&self, sel: RunSelector, reason: &str) -> Result<Vec<CrawlRunId>, StoreError> {
+        if !matches!(reason, "cancelled" | "policy_stopped") {
+            return Err(StoreError::Conflict(format!(
+                "cancel reason must be `cancelled` or `policy_stopped`, got {reason:?}"
+            )));
+        }
+        let now = <B::Dialect as Dialect>::now();
+        let runs = self
+            .update_runs(
+                sel,
+                &format!(
+                    "status = 'cancelled', terminal_reason = $2::text::terminal_reason, cancel_requested_at = {now}, finished_at = {now}"
+                ),
+                "status::text IN ('queued','running','pausing','paused','cancelling')",
+                Some(reason),
+                true,
+            )
+            .await?;
+        let mut out = Vec::with_capacity(runs.len());
+        for (run, tenant) in runs {
+            Stmt::<B>::dynamic(&format!(
+                "UPDATE crawl_sessions SET status = 'cancelled', finished_at = {now} WHERE run_id = $1 AND status = 'pending'"
+            ))
+            .uuid(run.0)
+            .execute_write(&self.store.pool)
+            .await?;
+            self.append_event(
+                run,
+                "status",
+                serde_json::json!({ "status": "cancelled", "terminalReason": reason }),
+            )
+            .await?;
+            self.append_event(
+                run,
+                "completed",
+                serde_json::json!({ "status": "cancelled", "terminalReason": reason, "by": self.actor }),
+            )
+            .await?;
+            self.audit(
+                Some(tenant),
+                Some(run),
+                "admin.cancel",
+                serde_json::json!({ "selector": sel.describe(), "reason": reason }),
+            )
+            .await?;
+            out.push(run);
+        }
+        Ok(out)
     }
 }
 
@@ -1263,13 +1701,14 @@ impl<'a> AdminOps<'a> {
 ///
 /// # Errors
 /// Returns an error if the query fails.
-pub async fn active_run_count(pg: &Pg) -> Result<i64, StoreError> {
-    sqlx::query_scalar(
-        "SELECT count(*) FROM crawl_runs WHERE status::text IN ('queued','running','pausing','paused')",
+pub async fn active_run_count<B: Sql>(store: &Store<B>) -> Result<i64, StoreError> {
+    stmt!(
+        B,
+        "SELECT count(*) AS active FROM crawl_runs WHERE status::text IN ('queued','running','pausing','paused')"
     )
-    .fetch_one(&pg.pool)
-    .await
-    .map_err(db)
+    .fetch_one_pool(&store.pool)
+    .await?
+    .i64("active")
 }
 
 /// RB-08 step 3 (`crawlx admin sweep-retention --mode zdr --force`): for every run with
@@ -1280,41 +1719,45 @@ pub async fn active_run_count(pg: &Pg) -> Result<i64, StoreError> {
 ///
 /// # Errors
 /// Returns an error if a query, the object deletion or the audit append fails.
-pub async fn force_zdr_sweep(
-    pg: &Pg,
-    sweeper: &crate::retention::RetentionSweeper,
+pub async fn force_zdr_sweep<B: Sql>(
+    store: &Store<B>,
+    sweeper: &crate::retention::RetentionSweeper<B>,
     actor: &str,
 ) -> Result<Vec<CrawlRunId>, StoreError> {
-    let rows =
-        sqlx::query("SELECT run_id, tenant_id FROM crawl_runs WHERE retention_mode = 'zdr' ORDER BY run_id")
-            .fetch_all(&pg.pool)
-            .await
-            .map_err(db)?;
+    let rows = stmt!(
+        B,
+        "SELECT run_id, tenant_id FROM crawl_runs WHERE retention_mode = 'zdr' ORDER BY run_id"
+    )
+    .fetch_all_pool(&store.pool)
+    .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in &rows {
-        let run = CrawlRunId(get(r, "run_id")?);
-        let tenant: uuid::Uuid = get(r, "tenant_id")?;
-        let keys: Vec<String> = sqlx::query_scalar(
-            "SELECT object_key FROM artifacts WHERE run_id = $1 AND deleted_at IS NULL ORDER BY object_key",
+        let run = CrawlRunId(r.uuid("run_id")?);
+        let tenant = r.uuid("tenant_id")?;
+        let keys = stmt!(
+            B,
+            "SELECT object_key FROM artifacts WHERE run_id = $1 AND deleted_at IS NULL ORDER BY object_key"
         )
-        .bind(run.0)
-        .fetch_all(&pg.pool)
-        .await
-        .map_err(db)?;
+        .uuid(run.0)
+        .fetch_all_pool(&store.pool)
+        .await?
+        .iter()
+        .map(|row| row.text("object_key"))
+        .collect::<Result<Vec<String>, _>>()?;
         let objects = sweeper.purge_run_objects(run).await?;
-        sqlx::query("UPDATE artifacts SET deleted_at = now() WHERE run_id = $1 AND deleted_at IS NULL")
-            .bind(run.0)
-            .execute(&pg.pool)
-            .await
-            .map_err(db)?;
-        let pages = sqlx::query("DELETE FROM pages WHERE run_id = $1")
-            .bind(run.0)
-            .execute(&pg.pool)
-            .await
-            .map_err(db)?
-            .rows_affected();
+        let now = <B::Dialect as Dialect>::now();
+        Stmt::<B>::dynamic(&format!(
+            "UPDATE artifacts SET deleted_at = {now} WHERE run_id = $1 AND deleted_at IS NULL"
+        ))
+        .uuid(run.0)
+        .execute_write(&store.pool)
+        .await?;
+        let pages = stmt!(B, "DELETE FROM pages WHERE run_id = $1")
+            .uuid(run.0)
+            .execute_write(&store.pool)
+            .await?;
         append_audit(
-            pg,
+            store,
             Some(tenant),
             Some(run.0),
             actor,
@@ -1331,12 +1774,15 @@ pub async fn force_zdr_sweep(
 ///
 /// # Errors
 /// Returns an error if the row cannot be read or holds an unknown value.
-pub async fn admission_of(pg: &Pg) -> Result<AdmissionMode, StoreError> {
-    let value: Option<String> =
-        sqlx::query_scalar("SELECT value FROM cluster_settings WHERE key = 'scheduler.admission'")
-            .fetch_optional(&pg.pool)
-            .await
-            .map_err(db)?;
+pub async fn admission_of<B: Sql>(store: &Store<B>) -> Result<AdmissionMode, StoreError> {
+    let key = <B::Dialect as Dialect>::reserved_ident("key");
+    let value = Stmt::<B>::dynamic(&format!(
+        "SELECT value FROM cluster_settings WHERE {key} = 'scheduler.admission'"
+    ))
+    .fetch_optional_pool(&store.pool)
+    .await?
+    .map(|row| row.text("value"))
+    .transpose()?;
     value
         .as_deref()
         .map_or(Ok(AdmissionMode::Open), AdmissionMode::parse)
@@ -1346,12 +1792,16 @@ pub async fn admission_of(pg: &Pg) -> Result<AdmissionMode, StoreError> {
 ///
 /// # Errors
 /// Returns an error if the query fails or the stored value is unknown.
-pub async fn tenant_engine_of(pg: &Pg, tenant: TenantId) -> Result<Option<TenantEngine>, StoreError> {
-    let value: Option<String> = sqlx::query_scalar("SELECT engine FROM tenants WHERE tenant_id = $1")
-        .bind(tenant.0)
-        .fetch_optional(&pg.pool)
-        .await
-        .map_err(db)?;
+pub async fn tenant_engine_of<B: Sql>(
+    store: &Store<B>,
+    tenant: TenantId,
+) -> Result<Option<TenantEngine>, StoreError> {
+    let value = stmt!(B, "SELECT engine FROM tenants WHERE tenant_id = $1")
+        .uuid(tenant.0)
+        .fetch_optional_pool(&store.pool)
+        .await?
+        .map(|row| row.text("engine"))
+        .transpose()?;
     value.as_deref().map(TenantEngine::parse).transpose()
 }
 
@@ -1381,10 +1831,12 @@ mod tests {
 
     #[test]
     fn selector_clauses_bind_one_argument() {
-        assert_eq!(selected_sql!(RunSelector::All, "", ""), "$1::uuid IS NULL");
+        assert_eq!(RunSelector::All.predicate(), "$1::uuid IS NULL");
         assert_eq!(RunSelector::All.arg(), None);
         let id = CrawlRunId::new();
-        assert_eq!(selected_sql!(RunSelector::Crawl(id), "", ""), "run_id = $1");
+        assert_eq!(RunSelector::Crawl(id).predicate(), "run_id = $1");
         assert_eq!(RunSelector::Crawl(id).arg(), Some(id.0));
+        let tenant = TenantId::new();
+        assert_eq!(RunSelector::Tenant(tenant).predicate(), "tenant_id = $1");
     }
 }

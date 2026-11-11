@@ -125,6 +125,30 @@ impl CustodyLease {
         }
     }
 
+    /// Bind terminal feed publication to its claimed run-level finalizer row.
+    ///
+    /// Storage validates on every mutation that `finalizer` still owns the run's unfinished feed
+    /// finalization at exactly `fence`, owned by `worker`, with an unexpired lease. The claim is
+    /// made through [`crate::orchestration::RequestCommitRepo::claim_feed_finalizer`]; constructing
+    /// this descriptor grants nothing.
+    #[must_use]
+    pub const fn for_feed_finalization(
+        tenant: TenantId,
+        run: CrawlRunId,
+        finalizer: Uuid,
+        worker: WorkerId,
+        fence: i64,
+    ) -> Self {
+        Self {
+            tenant,
+            run,
+            source: CustodySource::FeedFinalization(finalizer),
+            worker,
+            fence,
+            local_cancellation: None,
+        }
+    }
+
     /// Bind credential-bearing bootstrap I/O to its dedicated persisted run lease.
     ///
     /// `cancellation` must be cloned from the actual admitted worker context,
@@ -195,6 +219,8 @@ pub enum CustodySource {
     ArchiveExport(Uuid),
     /// Dedicated run-bootstrap ownership, independent of sessions/frontier rows.
     Bootstrap(Uuid),
+    /// Claimed run-level terminal feed finalization, fenced on the run's finalizer row.
+    FeedFinalization(Uuid),
 }
 
 /// Exact volatile incarnation and committed secret epoch of a run.

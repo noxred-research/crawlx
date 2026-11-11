@@ -1,11 +1,10 @@
 //! Renewable database use windows over an immutable Redis retention ceiling.
 
-use super::{database_now, denied, live, locked, PgSecretAuthority, EXPIRY_MARGIN_MS, MAX_AUTHORITY_TTL};
-use crate::codec::get;
-use crate::error::db;
+use super::{database_now, denied, live, locked, SecretAuthority, EXPIRY_MARGIN_MS, MAX_AUTHORITY_TTL};
+use crate::backend::strategy::Conn;
+use crate::sql::{stmt, Sql, SqlRow};
 use crawlx_core::custody::{CustodyLease, CustodyRenewalWindow, SecretEpoch};
 use crawlx_core::{StoreError, Timestamp};
-use sqlx::{Postgres, Transaction};
 use std::time::Duration;
 
 fn add_window(now: Timestamp, duration: Duration) -> Result<Timestamp, StoreError> {
@@ -34,20 +33,20 @@ fn original_ceiling(
         .ok_or_else(|| denied("secret authority deadline overflow"))
 }
 
-impl PgSecretAuthority {
+impl<B: Sql> SecretAuthority<B> {
     pub(super) async fn initial_deadlines(
         &self,
-        tx: &mut Transaction<'_, Postgres>,
+        conn: &mut Conn<B>,
         lease: &CustodyLease,
     ) -> Result<(Timestamp, Timestamp), StoreError> {
-        let row = sqlx::query("SELECT r.expires_at,r.deadline_at,a.valid_to FROM crawl_runs r LEFT JOIN authorization_records a ON a.record_id=r.authorization_record_id WHERE r.tenant_id=$1 AND r.run_id=$2")
-            .bind(lease.tenant.0).bind(lease.run.0).fetch_one(&mut **tx).await.map_err(db)?;
-        let now = database_now(tx).await?;
+        let row = stmt!(B, "SELECT r.expires_at,r.deadline_at,a.valid_to FROM crawl_runs r LEFT JOIN authorization_records a ON a.record_id=r.authorization_record_id WHERE r.tenant_id=$1 AND r.run_id=$2")
+            .uuid(lease.tenant.0).uuid(lease.run.0).fetch_one(conn).await?;
+        let now = database_now::<B>(conn).await?;
         let ceiling = original_ceiling(
             now,
-            get(&row, "expires_at")?,
-            get(&row, "valid_to")?,
-            get(&row, "deadline_at")?,
+            row.opt_ts("expires_at")?,
+            row.opt_ts("valid_to")?,
+            row.opt_ts("deadline_at")?,
             self.hard_max,
         )?;
         let expires_at = add_window(now, self.ttl)?.min(ceiling);
@@ -70,7 +69,7 @@ impl PgSecretAuthority {
     /// Rejects expired authority, pending operations, stale fences and legacy windows.
     pub async fn renewal_window(&self, lease: &CustodyLease) -> Result<CustodyRenewalWindow, StoreError> {
         let mut tx = self.transaction().await?;
-        let row = locked(&mut tx, lease).await?;
+        let row = locked::<B>(tx.conn(), lease).await?;
         if row.pending.is_some() || row.epoch == 0 {
             return Err(denied(super::REGISTER_STALE));
         }
@@ -80,12 +79,12 @@ impl PgSecretAuthority {
         let use_window = Duration::from_millis(
             u64::try_from(millis).map_err(|_| denied("secret authority use window corrupt"))?,
         );
-        live(&mut tx, lease).await?;
-        let observed_at = database_now(&mut tx).await?;
+        live::<B>(tx.conn(), lease).await?;
+        let observed_at = database_now::<B>(tx.conn()).await?;
         if row.expires_at <= observed_at {
             return Err(denied("secret authority expired during renewal inspection"));
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         Ok(CustodyRenewalWindow::new(
             SecretEpoch::new(lease.tenant, lease.run, row.incarnation, row.epoch),
@@ -103,15 +102,16 @@ impl PgSecretAuthority {
         expected: SecretEpoch,
     ) -> Result<crawlx_core::custody::RunSecretSnapshot, StoreError> {
         let mut tx = self.transaction().await?;
-        let (row, status) = super::read_locked(&mut tx, tenant, run).await?;
-        let retained: bool = sqlx::query_scalar(
-            "SELECT retention_mode<>'zdr' FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2",
+        let (row, status) = super::read_locked::<B>(tx.conn(), tenant, run).await?;
+        let retained = stmt!(
+            B,
+            "SELECT retention_mode<>'zdr' AS v FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2"
         )
-        .bind(tenant.0)
-        .bind(run.0)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .fetch_one(tx.conn())
+        .await?
+        .bool("v")?;
         if !retained
             || row.pending.is_some()
             || row.epoch < 1
@@ -120,7 +120,7 @@ impl PgSecretAuthority {
             return Err(denied("retained-source privacy authority unavailable or changed"));
         }
         let terminal = matches!(status.as_str(), "completed" | "failed" | "cancelled");
-        let now = database_now(&mut tx).await?;
+        let now = database_now::<B>(tx.conn()).await?;
         if row.retention_ceiling <= now || (!terminal && row.expires_at <= now) {
             return Err(denied("retained-source privacy authority expired"));
         }
@@ -128,22 +128,23 @@ impl PgSecretAuthority {
             .invoke(&row, "snapshot", row.epoch, uuid::Uuid::nil(), "", 0)
             .await?;
         snapshot.check(row.commitment.as_deref())?;
-        let now = database_now(&mut tx).await?;
-        let retained: bool = sqlx::query_scalar(
-            "SELECT expires_at IS NULL OR expires_at>$3 FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2",
+        let now = database_now::<B>(tx.conn()).await?;
+        let retained = stmt!(
+            B,
+            "SELECT expires_at IS NULL OR expires_at>$3 AS v FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2"
         )
-        .bind(tenant.0)
-        .bind(run.0)
-        .bind(now)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .ts(now)
+        .fetch_one(tx.conn())
+        .await?
+        .bool("v")?;
         if !retained || row.retention_ceiling <= now || (!terminal && row.expires_at <= now) {
             return Err(denied(
                 "retained-source privacy authority expired during projection",
             ));
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         Ok(snapshot.snapshot)
     }
 }

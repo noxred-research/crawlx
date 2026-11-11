@@ -27,13 +27,14 @@
 //! secret enumeration and live-output ownership boundaries are integrated.
 //! This module provides neither a plaintext fallback nor production closure.
 
-use super::{database_now, denied, locally_live, no_exposures, random_uuid, run_lock};
-use crate::error::db;
-use crate::Pg;
+use super::{database_now, denied, frag, locally_live, no_exposures, random_uuid, run_lock};
+use crate::backend::strategy::{Conn, FenceSeq};
+use crate::backend::{BackendKind, PgBackend, WriteTx};
+use crate::sql::{stmt, Sql, SqlRow};
+use crate::store::Store;
 use async_trait::async_trait;
 use crawlx_core::custody::{CustodyLease, CustodySource};
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp, WorkerId};
-use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -147,21 +148,24 @@ pub enum BootstrapClaim {
     },
 }
 
-/// PostgreSQL bootstrap ownership, independent of volatile secret storage.
+/// Database bootstrap ownership, independent of volatile secret storage.
 #[derive(Clone)]
-pub struct PgBootstrapAuthority {
-    pg: Pg,
+pub struct BootstrapAuthority<B: Sql> {
+    store: Store<B>,
     authorizer: Arc<dyn BootstrapProducerAuthorizer>,
     ttl: chrono::Duration,
 }
 
-impl PgBootstrapAuthority {
+/// Bootstrap ownership over PostgreSQL.
+pub type PgBootstrapAuthority = BootstrapAuthority<PgBackend>;
+
+impl<B: Sql> BootstrapAuthority<B> {
     /// Bind a trusted worker-context authorizer and positive bounded lease TTL.
     ///
     /// # Errors
     /// Rejects sub-millisecond, zero or greater-than-five-minute TTLs.
     pub fn new(
-        pg: Pg,
+        store: Store<B>,
         authorizer: Arc<dyn BootstrapProducerAuthorizer>,
         ttl: Duration,
     ) -> Result<Self, StoreError> {
@@ -171,13 +175,16 @@ impl PgBootstrapAuthority {
             ));
         }
         let ttl = chrono::Duration::from_std(ttl).map_err(|_| denied("bootstrap lease TTL out of range"))?;
-        Ok(Self { pg, authorizer, ttl })
+        Ok(Self {
+            store,
+            authorizer,
+            ttl,
+        })
     }
 
-    async fn transaction(&self) -> Result<Transaction<'static, Postgres>, StoreError> {
-        let mut tx = self.pg.pool.begin().await.map_err(db)?;
-        sqlx::query("SELECT set_config('lock_timeout','10s',true),set_config('statement_timeout','30s',true),set_config('idle_in_transaction_session_timeout','90s',true)")
-            .execute(&mut *tx).await.map_err(db)?;
+    async fn transaction(&self) -> Result<WriteTx<B::Db>, StoreError> {
+        let mut tx = self.store.begin_write().await?;
+        frag::bound_waits::<B>(tx.conn()).await?;
         Ok(tx)
     }
 
@@ -185,7 +192,7 @@ impl PgBootstrapAuthority {
     // Every authorization decision uses fresh database time after lock waits.
     async fn eligible(
         &self,
-        tx: &mut Transaction<'_, Postgres>,
+        conn: &mut Conn<B>,
         tenant: TenantId,
         run: CrawlRunId,
         authorization: &BootstrapAuthorization,
@@ -194,7 +201,7 @@ impl PgBootstrapAuthority {
         let result = tokio::select! {
             biased;
             () = authorization.cancellation.cancelled() => Err(StoreError::LeaseLost),
-            result = self.eligible_locked(tx, tenant, run, authorization.worker) => result,
+            result = self.eligible_locked(conn, tenant, run, authorization.worker) => result,
         };
         authorization.check()?;
         result
@@ -202,37 +209,54 @@ impl PgBootstrapAuthority {
 
     async fn eligible_locked(
         &self,
-        tx: &mut Transaction<'_, Postgres>,
+        conn: &mut Conn<B>,
         tenant: TenantId,
         run: CrawlRunId,
         worker: WorkerId,
     ) -> Result<(Timestamp, Timestamp), StoreError> {
-        run_lock(tx, tenant, run, true).await?;
-        let found: Option<Uuid> =
-            sqlx::query_scalar("SELECT run_id FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 FOR SHARE")
-                .bind(tenant.0)
-                .bind(run.0)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(db)?;
+        run_lock::<B>(conn, tenant, run, true).await?;
+        let found = stmt!(
+            B,
+            format!(
+                "SELECT run_id FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2{}",
+                frag::share::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .fetch_optional(conn)
+        .await?;
         if found.is_none() {
             return Err(StoreError::LeaseLost);
         }
-        let registered: Option<Uuid> =
-            sqlx::query_scalar("SELECT worker_id FROM workers WHERE worker_id=$1 AND NOT draining FOR SHARE")
-                .bind(worker.0)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(db)?;
+        let registered = stmt!(
+            B,
+            format!(
+                "SELECT worker_id FROM workers WHERE worker_id=$1 AND NOT draining{}",
+                frag::share::<B>()
+            )
+        )
+        .uuid(worker.0)
+        .fetch_optional(conn)
+        .await?;
         if registered.is_none() {
             return Err(StoreError::LeaseLost);
         }
-        let _: Option<Uuid> = sqlx::query_scalar(
-            "SELECT a.record_id FROM authorization_records a JOIN crawl_runs r ON r.authorization_record_id=a.record_id WHERE r.run_id=$1 FOR SHARE OF a",
-        ).bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?;
-        let now = database_now(tx).await?;
-        let limit: Option<Option<Timestamp>> = sqlx::query_scalar(
-            "SELECT LEAST(r.expires_at,r.deadline_at,a.valid_to) FROM crawl_runs r \
+        stmt!(
+            B,
+            format!(
+                "SELECT a.record_id FROM authorization_records a JOIN crawl_runs r ON r.authorization_record_id=a.record_id WHERE r.run_id=$1{}",
+                frag::share_of::<B>("a")
+            )
+        )
+        .uuid(run.0)
+        .fetch_optional(conn)
+        .await?;
+        let now = database_now::<B>(conn).await?;
+        let limit = stmt!(
+            B,
+            format!(
+                "SELECT {} AS v FROM crawl_runs r \
              LEFT JOIN authorization_records a ON a.record_id=r.authorization_record_id \
              WHERE r.tenant_id=$1 AND r.run_id=$2 AND r.status IN ('queued','running') \
              AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
@@ -242,14 +266,15 @@ impl PgBootstrapAuthority {
                (a.record_id IS NOT NULL AND a.tenant_id=r.tenant_id AND a.revoked_at IS NULL \
                 AND a.valid_from<=$3 AND a.valid_to>$3 \
                 AND (r.authorization_body_digest IS NULL OR r.authorization_body_digest=a.body_digest)))",
+                frag::least::<B>(&["r.expires_at", "r.deadline_at", "a.valid_to"])
+            )
         )
-        .bind(tenant.0)
-        .bind(run.0)
-        .bind(now)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?;
-        let limit = limit.ok_or(StoreError::LeaseLost)?;
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .ts(now)
+        .fetch_optional(conn)
+        .await?;
+        let limit = limit.ok_or(StoreError::LeaseLost)?.opt_ts("v")?;
         let expiry = now
             .checked_add_signed(self.ttl)
             .ok_or_else(|| denied("bootstrap lease expiry out of range"))?;
@@ -260,7 +285,7 @@ impl PgBootstrapAuthority {
     ///
     /// A live row returns `Busy` even for the same worker. A retry after an
     /// unknown acquisition must not assume ownership. An expired/released row
-    /// receives a strictly newer fence from the owned PostgreSQL sequence.
+    /// receives a strictly newer fence from the owned sequence.
     ///
     /// # Errors
     /// Rejects unavailable authorization, unregistered/draining workers, stopped
@@ -270,16 +295,29 @@ impl PgBootstrapAuthority {
         authorization.check()?;
         let worker = authorization.worker;
         let mut tx = self.transaction().await?;
-        let (now, expiry) = self.eligible(&mut tx, tenant, run, &authorization).await?;
-        let existing: Option<(Uuid, String, Timestamp, i64, Option<Timestamp>)> = sqlx::query_as(
-            "SELECT producer_id,state,expires_at,progress,completed_at FROM run_bootstrap_producers WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE",
-        ).bind(tenant.0).bind(run.0).fetch_optional(&mut *tx).await.map_err(db)?;
+        let (now, expiry) = self.eligible(tx.conn(), tenant, run, &authorization).await?;
+        let existing = stmt!(
+            B,
+            format!(
+                "SELECT producer_id,state,expires_at,progress,completed_at FROM run_bootstrap_producers WHERE tenant_id=$1 AND run_id=$2{}",
+                frag::update::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .fetch_optional(tx.conn())
+        .await?;
         authorization.check()?;
-        let producer = if let Some((id, state, expires_at, progress, completed_at)) = existing {
+        let producer = if let Some(row) = existing {
+            let id = row.uuid("producer_id")?;
+            let state = row.text("state")?;
+            let expires_at = row.ts("expires_at")?;
+            let progress = row.i64("progress")?;
+            let completed_at = row.opt_ts("completed_at")?;
             if state == "completed" {
                 let completed_at =
                     completed_at.ok_or_else(|| denied("bootstrap completion timestamp missing"))?;
-                tx.commit().await.map_err(db)?;
+                tx.commit().await?;
                 authorization.check()?;
                 return Ok(BootstrapClaim::Completed {
                     progress,
@@ -287,7 +325,7 @@ impl PgBootstrapAuthority {
                 });
             }
             if state == "running" && expires_at > now {
-                tx.commit().await.map_err(db)?;
+                tx.commit().await?;
                 authorization.check()?;
                 return Ok(BootstrapClaim::Busy { expires_at });
             }
@@ -295,16 +333,10 @@ impl PgBootstrapAuthority {
         } else {
             random_uuid()?
         };
-        let (fence, progress): (i64, i64) = sqlx::query_as(
-            "INSERT INTO run_bootstrap_producers(producer_id,tenant_id,run_id,owner,state,leased_at,expires_at) \
-             VALUES($1,$2,$3,$4,'running',$5,$6) \
-             ON CONFLICT(tenant_id,run_id) DO UPDATE SET owner=EXCLUDED.owner, \
-               fence=nextval('run_bootstrap_producer_fence'),state='running',leased_at=EXCLUDED.leased_at,expires_at=EXCLUDED.expires_at \
-             RETURNING fence,progress",
-        ).bind(producer).bind(tenant.0).bind(run.0).bind(worker.0).bind(now).bind(expiry)
-            .fetch_one(&mut *tx).await.map_err(db)?;
+        let (fence, progress) =
+            acquire_row::<B>(tx.conn(), producer, tenant, run, worker, now, expiry).await?;
         authorization.check()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         authorization.check()?;
         Ok(BootstrapClaim::Acquired(BootstrapLease {
             custody: CustodyLease::for_bootstrap(
@@ -322,7 +354,7 @@ impl PgBootstrapAuthority {
 
     async fn owned(
         &self,
-        tx: &mut Transaction<'_, Postgres>,
+        conn: &mut Conn<B>,
         lease: &BootstrapLease,
     ) -> Result<(Uuid, Timestamp, Timestamp, i64), StoreError> {
         let custody = lease.custody();
@@ -337,17 +369,28 @@ impl PgBootstrapAuthority {
             return Err(StoreError::LeaseLost);
         };
         let (now, expiry) = self
-            .eligible(tx, custody.tenant, custody.run, &authorization)
+            .eligible(conn, custody.tenant, custody.run, &authorization)
             .await?;
-        let owned: Option<(Timestamp, i64)> = locally_live(custody, async {
-            sqlx::query_as(
-                "SELECT expires_at,progress FROM run_bootstrap_producers WHERE producer_id=$1 AND tenant_id=$2 AND run_id=$3 AND owner=$4 AND fence=$5 AND state='running' FOR UPDATE",
-            ).bind(producer).bind(custody.tenant.0).bind(custody.run.0).bind(worker.0).bind(custody.fence)
-                .fetch_optional(&mut **tx).await.map_err(db)
+        let owned = locally_live(custody, async {
+            stmt!(
+                B,
+                format!(
+                    "SELECT expires_at,progress FROM run_bootstrap_producers WHERE producer_id=$1 AND tenant_id=$2 AND run_id=$3 AND owner=$4 AND fence=$5 AND state='running'{}",
+                    frag::update::<B>()
+                )
+            )
+            .uuid(producer)
+            .uuid(custody.tenant.0)
+            .uuid(custody.run.0)
+            .uuid(worker.0)
+            .i64(custody.fence)
+            .fetch_optional(&mut *conn)
+            .await
         })
         .await?;
-        let (old_expiry, progress) = owned.ok_or(StoreError::LeaseLost)?;
-        if old_expiry <= database_now(tx).await? {
+        let owned = owned.ok_or(StoreError::LeaseLost)?;
+        let (old_expiry, progress) = (owned.ts("expires_at")?, owned.i64("progress")?);
+        if old_expiry <= database_now::<B>(conn).await? {
             return Err(StoreError::LeaseLost);
         }
         authorization.check()?;
@@ -361,12 +404,18 @@ impl PgBootstrapAuthority {
     /// Rejects stale/expired fences, failed current authorization and backend errors.
     pub async fn renew(&self, lease: &BootstrapLease) -> Result<BootstrapLease, StoreError> {
         let mut tx = self.transaction().await?;
-        let (producer, now, expiry, progress) = self.owned(&mut tx, lease).await?;
-        let renewed: Option<Uuid> = sqlx::query_scalar("UPDATE run_bootstrap_producers SET leased_at=$2,expires_at=$3 WHERE producer_id=$1 AND expires_at>clock_timestamp() RETURNING producer_id")
-            .bind(producer).bind(now).bind(expiry).fetch_optional(&mut *tx).await.map_err(db)?;
+        let (producer, now, expiry, progress) = self.owned(tx.conn(), lease).await?;
+        let clock = frag::clock::<B>();
+        let renewed = frag::update_returning::<B>(
+            tx.conn(),
+            stmt!(B, format!("UPDATE run_bootstrap_producers SET leased_at=$2,expires_at=$3 WHERE producer_id=$1 AND expires_at>{clock}{}", frag::returning::<B>("producer_id")))
+                .uuid(producer).ts(now).ts(expiry),
+            stmt!(B, "SELECT producer_id FROM run_bootstrap_producers WHERE producer_id=$1").uuid(producer),
+        )
+        .await?;
         renewed.ok_or(StoreError::LeaseLost)?;
         lease.custody.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.custody.check_local_cancellation()?;
         Ok(BootstrapLease {
             custody: lease.custody.clone(),
@@ -388,16 +437,21 @@ impl PgBootstrapAuthority {
         progress: i64,
     ) -> Result<BootstrapLease, StoreError> {
         let mut tx = self.transaction().await?;
-        let (producer, _, _, previous) = self.owned(&mut tx, lease).await?;
+        let (producer, _, _, previous) = self.owned(tx.conn(), lease).await?;
         if progress < previous || progress < 0 {
             return Err(denied("bootstrap progress cannot regress"));
         }
-        let expires_at: Option<Timestamp> = sqlx::query_scalar(
-            "UPDATE run_bootstrap_producers SET progress=$2 WHERE producer_id=$1 AND expires_at>clock_timestamp() RETURNING expires_at",
-        ).bind(producer).bind(progress).fetch_optional(&mut *tx).await.map_err(db)?;
-        let expires_at = expires_at.ok_or(StoreError::LeaseLost)?;
+        let clock = frag::clock::<B>();
+        let updated = frag::update_returning::<B>(
+            tx.conn(),
+            stmt!(B, format!("UPDATE run_bootstrap_producers SET progress=$2 WHERE producer_id=$1 AND expires_at>{clock}{}", frag::returning::<B>("expires_at")))
+                .uuid(producer).i64(progress),
+            stmt!(B, "SELECT expires_at FROM run_bootstrap_producers WHERE producer_id=$1").uuid(producer),
+        )
+        .await?;
+        let expires_at = updated.ok_or(StoreError::LeaseLost)?.ts("expires_at")?;
         lease.custody.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.custody.check_local_cancellation()?;
         Ok(BootstrapLease {
             custody: lease.custody.clone(),
@@ -417,17 +471,20 @@ impl PgBootstrapAuthority {
     /// authorization and backend errors. Unknown commit outcomes require claim.
     pub async fn complete(&self, lease: &BootstrapLease, progress: i64) -> Result<(), StoreError> {
         let mut tx = self.transaction().await?;
-        let (producer, _, _, durable) = self.owned(&mut tx, lease).await?;
+        let (producer, _, _, durable) = self.owned(tx.conn(), lease).await?;
         if progress != durable {
             return Err(denied("bootstrap completion requires the durable checkpoint"));
         }
-        no_exposures(&mut tx, lease.custody.tenant, lease.custody.run).await?;
+        no_exposures::<B>(tx.conn(), lease.custody.tenant, lease.custody.run).await?;
         lease.custody.check_local_cancellation()?;
-        let completed: Option<Uuid> = sqlx::query_scalar("UPDATE run_bootstrap_producers SET state='completed',completed_at=clock_timestamp(),expires_at=clock_timestamp() WHERE producer_id=$1 AND expires_at>clock_timestamp() RETURNING producer_id")
-            .bind(producer).fetch_optional(&mut *tx).await.map_err(db)?;
-        completed.ok_or(StoreError::LeaseLost)?;
+        let clock = frag::clock::<B>();
+        let completed = stmt!(B, format!("UPDATE run_bootstrap_producers SET state='completed',completed_at={clock},expires_at={clock} WHERE producer_id=$1 AND expires_at>{clock}"))
+            .uuid(producer).execute(tx.conn()).await?;
+        if completed == 0 {
+            return Err(StoreError::LeaseLost);
+        }
         lease.custody.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.custody.check_local_cancellation()
     }
 
@@ -440,12 +497,54 @@ impl PgBootstrapAuthority {
     /// Rejects stale/expired ownership, failed authorization and backend errors.
     pub async fn release(&self, lease: &BootstrapLease) -> Result<(), StoreError> {
         let mut tx = self.transaction().await?;
-        let (producer, _, _, _) = self.owned(&mut tx, lease).await?;
-        let released: Option<Uuid> = sqlx::query_scalar("UPDATE run_bootstrap_producers SET state='released',expires_at=clock_timestamp() WHERE producer_id=$1 AND expires_at>clock_timestamp() RETURNING producer_id")
-            .bind(producer).fetch_optional(&mut *tx).await.map_err(db)?;
-        released.ok_or(StoreError::LeaseLost)?;
+        let (producer, _, _, _) = self.owned(tx.conn(), lease).await?;
+        let clock = frag::clock::<B>();
+        let released = stmt!(B, format!("UPDATE run_bootstrap_producers SET state='released',expires_at={clock} WHERE producer_id=$1 AND expires_at>{clock}"))
+            .uuid(producer).execute(tx.conn()).await?;
+        if released == 0 {
+            return Err(StoreError::LeaseLost);
+        }
         lease.custody.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.custody.check_local_cancellation()
     }
+}
+
+/// Insert or take over the producer row with a fresh fence, returning `(fence, progress)`.
+async fn acquire_row<B: Sql>(
+    conn: &mut Conn<B>,
+    producer: Uuid,
+    tenant: TenantId,
+    run: CrawlRunId,
+    worker: WorkerId,
+    now: Timestamp,
+    expiry: Timestamp,
+) -> Result<(i64, i64), StoreError> {
+    let row = match B::KIND {
+        BackendKind::Postgres => stmt!(B, "INSERT INTO run_bootstrap_producers(producer_id,tenant_id,run_id,owner,state,leased_at,expires_at) \
+             VALUES($1,$2,$3,$4,'running',$5,$6) \
+             ON CONFLICT(tenant_id,run_id) DO UPDATE SET owner=EXCLUDED.owner, \
+               fence=nextval('run_bootstrap_producer_fence'),state='running',leased_at=EXCLUDED.leased_at,expires_at=EXCLUDED.expires_at \
+             RETURNING fence,progress")
+            .uuid(producer).uuid(tenant.0).uuid(run.0).uuid(worker.0).ts(now).ts(expiry)
+            .fetch_one(conn).await?,
+        BackendKind::MariaDb => stmt!(B, "INSERT INTO run_bootstrap_producers(producer_id,tenant_id,run_id,owner,state,leased_at,expires_at) \
+             VALUES($1,$2,$3,$4,'running',$5,$6) \
+             ON DUPLICATE KEY UPDATE owner=VALUES(owner), \
+               fence=NEXTVAL(run_bootstrap_producer_fence),state='running',leased_at=VALUES(leased_at),expires_at=VALUES(expires_at) \
+             RETURNING fence,progress")
+            .uuid(producer).uuid(tenant.0).uuid(run.0).uuid(worker.0).ts(now).ts(expiry)
+            .fetch_one(conn).await?,
+        BackendKind::Sqlite => {
+            let fence = B::next_fence(conn, FenceSeq::BootstrapProducer).await?;
+            stmt!(B, "INSERT INTO run_bootstrap_producers(producer_id,tenant_id,run_id,owner,fence,state,leased_at,expires_at) \
+                 VALUES($1,$2,$3,$4,$7,'running',$5,$6) \
+                 ON CONFLICT(tenant_id,run_id) DO UPDATE SET owner=EXCLUDED.owner, \
+                   fence=EXCLUDED.fence,state='running',leased_at=EXCLUDED.leased_at,expires_at=EXCLUDED.expires_at \
+                 RETURNING fence,progress")
+                .uuid(producer).uuid(tenant.0).uuid(run.0).uuid(worker.0).ts(now).ts(expiry).i64(fence)
+                .fetch_one(conn).await?
+        }
+    };
+    Ok((row.i64("fence")?, row.i64("progress")?))
 }

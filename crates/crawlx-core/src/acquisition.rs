@@ -475,6 +475,22 @@ impl ValidationOutcomeV1 {
             content_accepted: false,
         }
     }
+
+    /// Whether acquisition must refuse this document instead of storing it as a successful page.
+    ///
+    /// `Fail` refuses every rejected outcome. Under `Report`, an interstitial challenge that
+    /// arrives with a success status is still refused: it is not a compatibility error page but
+    /// a response that only looks successful, and storing it would pass it off as target content.
+    /// Non-success statuses never reach this check as stored pages.
+    #[must_use]
+    pub fn refuses_content(&self, action: ContentMismatchActionV1, target_status: Option<u16>) -> bool {
+        if self.content_accepted {
+            return false;
+        }
+        action == ContentMismatchActionV1::Fail
+            || (self.category == ValidationCategoryV1::Challenge
+                && target_status.is_some_and(|status| (200..300).contains(&status)))
+    }
 }
 
 /// Where final URL evidence came from.
@@ -1040,5 +1056,39 @@ mod tests {
         invalid = policy;
         invalid.validation.required_selectors = vec!["x".repeat(2049)];
         assert!(invalid.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    fn outcome(category: ValidationCategoryV1, accepted: bool) -> ValidationOutcomeV1 {
+        let mut outcome = ValidationOutcomeV1::indeterminate();
+        outcome.category = category;
+        outcome.content_accepted = accepted;
+        outcome
+    }
+
+    #[test]
+    fn challenge_with_success_status_is_refused_under_every_action() {
+        let challenge = outcome(ValidationCategoryV1::Challenge, false);
+        for action in [ContentMismatchActionV1::Report, ContentMismatchActionV1::Fail] {
+            assert!(challenge.refuses_content(action, Some(200)));
+            assert!(challenge.refuses_content(action, Some(204)));
+        }
+        // Non-success statuses are decided by the status gate, not by this predicate.
+        assert!(!challenge.refuses_content(ContentMismatchActionV1::Report, Some(403)));
+        assert!(!challenge.refuses_content(ContentMismatchActionV1::Report, None));
+        assert!(challenge.refuses_content(ContentMismatchActionV1::Fail, Some(403)));
+    }
+
+    #[test]
+    fn report_keeps_other_rejections_and_fail_refuses_them() {
+        let mismatch = outcome(ValidationCategoryV1::ContentMismatch, false);
+        assert!(!mismatch.refuses_content(ContentMismatchActionV1::Report, Some(200)));
+        assert!(mismatch.refuses_content(ContentMismatchActionV1::Fail, Some(200)));
+        let valid = outcome(ValidationCategoryV1::Valid, true);
+        assert!(!valid.refuses_content(ContentMismatchActionV1::Fail, Some(200)));
     }
 }

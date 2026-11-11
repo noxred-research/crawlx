@@ -100,8 +100,8 @@ only), test sinks, optional politeness ceilings, an evidence reference and an em
 A record is required for:
 
 - `profile = authorized_security_test`;
-- `allowPrivateNetworks` (which also needs non-empty `authorizedNetworks`, and an operator-signature
-  ownership proof for them);
+- `allowPrivateNetworks` (which also needs non-empty `authorizedNetworks`; API use additionally
+  requires an operator-signature ownership proof for them);
 - `respectRobotsTxt = false` (which also needs `robotsOverrideAcknowledged`);
 - role credentials (a matching test account) and test sinks under `authorized_security_test`.
 
@@ -112,8 +112,8 @@ Lifecycle, over the API (`/v1/authorizations`, scopes `authorizations:read` and
   at `/.well-known/crawlx-authorization`, or an operator signature (HMAC-SHA256 under keys from
   `CRAWLX_AUTHZ_OPERATOR_KEYS_FILE`; `crawlx authz sign` and `challenge` work offline). The API
   refuses to start a run under a record without `verifiedAt`.
-- **Amend.** A new version or a new record; existing ones are never mutated. Status is
-  `active`, `not_yet_valid`, `expired` or `revoked`.
+- **Amend.** Use a new record id with an incremented version; an existing id cannot store a
+  different body. Status is `active`, `not_yet_valid`, `expired` or `revoked`.
 - **Bind.** Admission stores the record id, version and body digest on the run.
 - **Re-check while running.** A guard re-reads the record at least every 60 seconds. Revocation,
   expiry or loss stops the run with the terminal reason `authorization_revoked`; a failed read is
@@ -121,6 +121,22 @@ Lifecycle, over the API (`/v1/authorizations`, scopes `authorizations:read` and
 - **Every request.** The record's scope is part of the egress policy, so it bounds each fetch hop,
   not just the seed. The browser proxy applies it at host level (it cannot see paths inside
   `CONNECT`); browser-discovered URLs are bounded by the scope policy with the record scope.
+
+### Upload evidence before API creation
+
+The API requires an available, tenant-owned evidence artifact, not a caller-chosen digest alone.
+Upload a UTF-8 authorization document to `POST /v1/authorizations/evidence` with
+`{"runId":"<owned-run-id>","document":"<authorization document>"}` and an
+`authorizations:write` key. The run must already exist and must not use ZDR retention.
+Use the returned `artifactId` and `digest` in the record's `evidence` object, then sign the
+complete record and create it. Uploading evidence does not verify ownership or authorize a run.
+For a first record, create an unstarted run against an otherwise admissible public target
+before starting any worker, upload the evidence, and cancel that bootstrap run before workers
+start. Alternatively, use an existing owned non-ZDR run. The local fixture record in the
+walkthrough is a CLI-only operator input; its placeholder digest is not API-verifiable evidence.
+Local `crawlx crawl --authorization-record FILE` treats the supplied record as an explicit
+operator input and does not require the API's `verifiedAt` lifecycle or evidence upload.
+Its scope, validity window, profile cap and network restrictions still apply.
 
 ## Admission
 

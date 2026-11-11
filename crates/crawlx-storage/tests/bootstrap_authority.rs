@@ -12,7 +12,7 @@ use crawlx_storage::custody::bootstrap::{
 };
 use crawlx_storage::custody::PgSecretAuthority;
 use crawlx_storage::testkit::{crawl_run, create_crawl};
-use crawlx_storage::{LeaseRepo, Pg, PgConfig};
+use crawlx_storage::{LeaseRepo, Pg, StoreConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -67,9 +67,9 @@ struct Fixture {
 
 async fn fixture() -> Option<Fixture> {
     let database = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
-    let config = PgConfig {
+    let config = StoreConfig {
         schema: Some(format!("bootstrap_{}", Uuid::now_v7().simple())),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let pg = Pg::connect(&database, config.clone()).await.unwrap();
     pg.migrate().await.unwrap();
@@ -765,10 +765,10 @@ async fn nonsuperuser_table_owner_claims_unscoped_while_api_role_keeps_tenant_is
     // real, non-superuser, non-BYPASSRLS table owner without app.tenant_id.
     let worker_pg = Pg::connect_existing(
         &database,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
             max_connections: 1,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

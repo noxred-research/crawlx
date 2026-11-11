@@ -22,8 +22,9 @@
 //! its own root; an empty day has no root (`null`) and `count = 0`.
 
 use crate::artifacts::ArtifactBlobs;
-use crate::error::db;
-use crate::pg::Pg;
+use crate::backend::PgBackend;
+use crate::sql::{stmt, Sql, SqlRow};
+use crate::store::Store;
 use chrono::{NaiveDate, TimeZone, Utc};
 use crawlx_core::hash::Digest;
 use crawlx_core::{StoreError, TenantId, Timestamp};
@@ -108,12 +109,12 @@ impl AuditDayExport {
 }
 
 /// Reads `audit_events` and writes one export per tenant and day.
-pub struct MerkleExport {
-    pg: Pg,
+pub struct MerkleExport<B: Sql = PgBackend> {
+    store: Store<B>,
     blobs: Arc<dyn ArtifactBlobs>,
 }
 
-impl std::fmt::Debug for MerkleExport {
+impl<B: Sql> std::fmt::Debug for MerkleExport<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MerkleExport")
             .field("bucket", &self.blobs.bucket())
@@ -141,11 +142,11 @@ fn digest_from_column(bytes: &[u8]) -> Result<Digest, StoreError> {
         .map_err(|_| StoreError::Serialization(format!("entry_hash has {} bytes, expected 32", bytes.len())))
 }
 
-impl MerkleExport {
-    /// Export over the `audit_events` of `pg` into `blobs` (the audit bucket).
+impl<B: Sql> MerkleExport<B> {
+    /// Export over the `audit_events` of `store` into `blobs` (the audit bucket).
     #[must_use]
-    pub fn new(pg: Pg, blobs: Arc<dyn ArtifactBlobs>) -> Self {
-        Self { pg, blobs }
+    pub fn new(store: Store<B>, blobs: Arc<dyn ArtifactBlobs>) -> Self {
+        Self { store, blobs }
     }
 
     /// Ordered `(audit_id, entry_hash)` leaves of `tenant` on `day`.
@@ -156,19 +157,22 @@ impl MerkleExport {
     /// [`StoreError::Serialization`] if an `entry_hash` is not 32 bytes, or the database error.
     pub async fn leaves(&self, tenant: TenantId, day: NaiveDate) -> Result<Vec<(i64, Digest)>, StoreError> {
         let (start, end) = day_bounds(day)?;
-        let rows: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+        let rows = stmt!(
+            B,
             "SELECT audit_id, entry_hash FROM audit_events \
              WHERE tenant_id = $1 AND occurred_at >= $2 AND occurred_at < $3 \
-             ORDER BY occurred_at, audit_id",
+             ORDER BY occurred_at, audit_id"
         )
-        .bind(tenant.0)
-        .bind(start)
-        .bind(end)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
-        rows.into_iter()
-            .map(|(id, hash)| digest_from_column(&hash).map(|d| (id, d)))
+        .uuid(tenant.0)
+        .ts(start)
+        .ts(end)
+        .fetch_all_pool(&self.store.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                let id = row.i64("audit_id")?;
+                digest_from_column(&row.bytes("entry_hash")?).map(|digest| (id, digest))
+            })
             .collect()
     }
 
@@ -180,16 +184,18 @@ impl MerkleExport {
     /// the database error.
     pub async fn tenants_with_events(&self, day: NaiveDate) -> Result<Vec<TenantId>, StoreError> {
         let (start, end) = day_bounds(day)?;
-        let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+        let rows = stmt!(
+            B,
             "SELECT DISTINCT tenant_id FROM audit_events \
-             WHERE tenant_id IS NOT NULL AND occurred_at >= $1 AND occurred_at < $2 ORDER BY tenant_id",
+             WHERE tenant_id IS NOT NULL AND occurred_at >= $1 AND occurred_at < $2 ORDER BY tenant_id"
         )
-        .bind(start)
-        .bind(end)
-        .fetch_all(&self.pg.pool)
-        .await
-        .map_err(db)?;
-        Ok(ids.into_iter().map(TenantId).collect())
+        .ts(start)
+        .ts(end)
+        .fetch_all_pool(&self.store.pool)
+        .await?;
+        rows.iter()
+            .map(|row| row.uuid("tenant_id").map(TenantId))
+            .collect()
     }
 
     /// Compute and write `tenant`'s export for `day`, replacing any existing object with

@@ -9,7 +9,7 @@ use crawlx_core::repo::{ModelDecisionKind, ModelDecisionRepo, RunRepo};
 use crawlx_core::{CreateCrawl, SystemClock, TenantId};
 use crawlx_fetch::StaticResolver;
 use crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys;
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use crawlx_worker::{
     run_local_with, EgressConfig, EngineConfig, LocalRun, ModelConfig, Stores, WorkerConfig,
 };
@@ -23,9 +23,9 @@ async fn shadow_decisions_round_trip_through_model_decisions() {
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_worker_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -37,7 +37,11 @@ async fn shadow_decisions_round_trip_through_model_decisions() {
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        TenantId::new(),
+    );
     stores.checkpoint_keys = Arc::new(MemoryCheckpointKeys::new().unwrap());
 
     let mut home = FakePage::new("https://example.test/").title("Home");

@@ -45,7 +45,7 @@ pub struct ReplayArgs {
     #[arg(long, value_enum, default_value = "verify")]
     /// Mode.
     pub mode: ReplayModeArg,
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     /// Database url.
     pub database_url: Option<String>,
     /// Scratch directory for replay artifacts.
@@ -63,7 +63,7 @@ pub enum ExportFormat {
     #[value(name = "text")]
     Text,
     /// The full run: `run`, `session`, `page`, `state`, `action` and `coverage` records
-    /// (PostgreSQL runs only).
+    /// (database runs only).
     #[value(name = "dump")]
     Dump,
 }
@@ -116,7 +116,7 @@ pub struct ExportArgs {
     /// Output file; standard output when omitted.
     #[arg(long, value_name = "FILE")]
     pub out: Option<PathBuf>,
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     /// Database url.
     pub database_url: Option<String>,
     /// Artifacts dir (`./crawlx-artifacts`, or `<output>/artifacts` next to a `report.json`).
@@ -130,11 +130,11 @@ pub struct ServeArgs {
     #[arg(long, default_value = "127.0.0.1:8080")]
     /// Bind.
     pub bind: SocketAddr,
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     /// Database url.
     pub database_url: Option<String>,
-    /// Non-owner PostgreSQL role used only by authenticated API requests.
-    #[arg(long, env = "CRAWLX_API_DATABASE_URL")]
+    /// Non-owner database role used only by authenticated API requests (PostgreSQL only; MariaDB has none yet, SQLite refuses it).
+    #[arg(long, env = "CRAWLX_API_DATABASE_URL", hide_env_values = true)]
     pub api_database_url: Option<String>,
     /// Development only: allow requests to use the database owner role.
     #[arg(long, env = "CRAWLX_ALLOW_OWNER_API")]
@@ -142,8 +142,8 @@ pub struct ServeArgs {
     #[arg(long, default_value = "./crawlx-artifacts", value_name = "DIR")]
     /// Artifacts dir.
     pub artifacts_dir: PathBuf,
-    /// Bootstrap API key as `tenant=cx_live_<26 base32>`, or `tenant=fc-<16 to 64 alphanumerics>`
-    /// with `--compat-keys`. Repeatable.
+    /// Bootstrap API key as `tenant=cx_live_<26 characters from a-z and 2-7>`, or
+    /// `tenant=fc-<16 to 64 ASCII letters or digits>` with `--compat-keys`. Repeatable.
     #[arg(long = "api-key", value_name = "TENANT=KEY")]
     pub api_keys: Vec<String>,
     /// Accept prefixed `fc-...` bearer keys on the `/compat` routes
@@ -154,10 +154,10 @@ pub struct ServeArgs {
     /// Compatibility defaults: strict or native_defaults; an explicit flag wins over the environment.
     #[arg(long, env = "CRAWLX_COMPAT_MODE", value_parser = parse_compat_mode)]
     pub compat_mode: Option<crawlx_api::CompatMode>,
-    /// Requests per minute per key.
+    /// Requests per minute per tenant (all of its keys share one bucket). Default 6000; 0 disables limiting.
     #[arg(long)]
     pub rate_limit_per_minute: Option<u32>,
-    #[arg(long, env = "CRAWLX_WEBHOOK_SECRET")]
+    #[arg(long, env = "CRAWLX_WEBHOOK_SECRET", hide_env_values = true)]
     /// Webhook secret.
     pub webhook_secret: Option<String>,
     /// Unauthenticated `GET /metrics` listener for a scraper sidecar; loopback addresses only.
@@ -174,7 +174,7 @@ pub struct ServeArgs {
 /// Arguments of `crawlx worker`.
 #[derive(Args, Debug)]
 pub struct WorkerArgs {
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     /// Database url.
     pub database_url: Option<String>,
     #[arg(long, default_value = "./crawlx-artifacts", value_name = "DIR")]
@@ -230,14 +230,19 @@ pub struct WorkerArgs {
 /// Arguments of `crawlx migrate`.
 #[derive(Args, Debug)]
 pub struct MigrateArgs {
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     /// Database url.
     pub database_url: Option<String>,
 }
 
 pub(crate) async fn migrate(args: MigrateArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
-    let pg = connect(args.database_url.as_deref()).await?;
-    pg.migrate().await.map_err(|e| anyhow!("migration failed: {e}"))?;
+    // `migrate` is the one command that may create a SQLite database file
+    let database =
+        crate::inspect::connect_database(args.database_url.as_deref(), crate::inspect::Open::Migrate).await?;
+    database
+        .migrate()
+        .await
+        .map_err(|e| anyhow!("migration failed: {}", crate::authz::chain(&e)))?;
     writeln!(out, "migrations applied")?;
     Ok(ExitCode::SUCCESS)
 }
@@ -247,10 +252,14 @@ pub(crate) async fn worker(
     getenv: &dyn Fn(&str) -> Option<String>,
 ) -> anyhow::Result<ExitCode> {
     if args.profiles_dir.is_some() {
-        bail!("--profiles-dir plaintext reuse is retired; configure encrypted retained profiles through CRAWLX_PROFILE_KEY_REF");
+        bail!(
+            "--profiles-dir plaintext reuse is retired; configure encrypted retained profiles through CRAWLX_PROFILE_KEY_REF"
+        );
     }
     let Some(url) = crate::config_check::database_url(args.database_url.as_deref())? else {
-        bail!("`worker` leases work from PostgreSQL: pass --database-url, set CRAWLX_DATABASE_URL or CRAWLX_DATABASE_URL_FILE");
+        bail!(
+            "`worker` leases work from the database: pass --database-url, set CRAWLX_DATABASE_URL or CRAWLX_DATABASE_URL_FILE"
+        );
     };
     // one live set of deployment lists for every run this worker leases; files reload on SIGHUP and a poll
     let egress_feed = crate::egress_feed::EgressFeed::start(getenv).await?;
@@ -271,6 +280,7 @@ pub(crate) async fn worker(
         tracing::info!(backend = ocr.backend().name(), "OCR enabled for scrape runs");
     }
     let mut cfg = WorkerConfig {
+        store: crate::config_check::store_config(Some(&url))?,
         database_url: Some(url),
         request_identity_key: WorkerConfig::request_identity_key_from_lookup(getenv)?,
         model,
@@ -341,14 +351,16 @@ pub(crate) async fn worker(
         pprof.shutdown().await;
     }
     egress_feed.stop().await;
-    worked.map_err(|e| anyhow!("worker failed: {e}"))?;
+    worked.map_err(|e| anyhow!("worker failed: {}", crate::authz::chain(&e)))?;
     Ok(ExitCode::SUCCESS)
 }
 
 pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
+    let database_url = crate::config_check::database_url(args.database_url.as_deref())?;
     let mut cfg = ApiConfig {
         bind: args.bind,
-        database_url: crate::config_check::database_url(args.database_url.as_deref())?,
+        store: crate::config_check::store_config(database_url.as_deref())?,
+        database_url,
         api_database_url: args.api_database_url,
         allow_owner_api: args.allow_owner_api,
         artifacts_dir: args.artifacts_dir,
@@ -357,11 +369,16 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
         compat_mode_override: args.compat_mode,
         ..ApiConfig::default()
     };
+    if cfg.database_url.is_none() {
+        tracing::warn!(
+            "in-memory API mode: crawls stay queued, no separate worker can execute them, and runs are lost on exit; configure a database (--database-url) for API/worker runs, or use `crawlx crawl` locally"
+        );
+    }
     for spec in &args.api_keys {
         let (tenant, key) = spec
             .split_once('=')
             .filter(|(t, k)| !t.is_empty() && !k.is_empty())
-            .ok_or_else(|| anyhow!("--api-key expects TENANT=KEY, got {spec:?}"))?;
+            .ok_or_else(|| anyhow!("--api-key expects TENANT=KEY"))?;
         cfg.api_keys.push(ApiKeyBootstrap::new(tenant, key));
     }
     if let Some(n) = args.rate_limit_per_minute {
@@ -384,7 +401,7 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
         pprof.shutdown().await;
     }
     egress_feed.stop().await;
-    served.map_err(|e| anyhow!("api failed: {e}"))?;
+    served.map_err(|e| anyhow!("api failed: {}", crate::authz::chain(&e)))?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -417,7 +434,7 @@ mod compat_mode_tests {
 
 /// Where `crawlx export` reads pages from.
 enum ExportSource {
-    /// A run in PostgreSQL.
+    /// A run in the database.
     Database(CrawlRunId),
     /// A `report.json` written by `crawlx crawl --output`.
     Report(PathBuf),
@@ -576,11 +593,11 @@ pub(crate) async fn export(args: ExportArgs, out: &mut dyn Write) -> anyhow::Res
     };
     let database_url = match &source {
         ExportSource::Database(_) => Some(args.database_url.clone().ok_or_else(|| {
-            anyhow!("export reads PostgreSQL: pass --database-url or set CRAWLX_DATABASE_URL")
+            anyhow!("export reads the database: pass --database-url or set CRAWLX_DATABASE_URL")
         })?),
         ExportSource::Report(_) => {
             if args.format == ExportFormat::Dump {
-                bail!("--format dump needs a run id and PostgreSQL");
+                bail!("--format dump needs a run id and a database");
             }
             None
         }
@@ -594,7 +611,7 @@ pub(crate) async fn export(args: ExportArgs, out: &mut dyn Write) -> anyhow::Res
     // Reports decrypt sealed artifacts through the catalog; they never publish.
     cfg.artifact_keys = crawlx_worker::config::artifact_keys_from_lookup(&|key| std::env::var(key).ok())
         .await
-        .map_err(|e| anyhow!("{e}"))?;
+        .map_err(|e| anyhow!("{}", crate::authz::chain(&e)))?;
     let stores = Stores::open_read_only(&cfg).await.map_err(|e| anyhow!("{e}"))?;
     let (report, mut pages) = match &source {
         ExportSource::Database(run) => {
@@ -631,7 +648,7 @@ pub(crate) async fn export(args: ExportArgs, out: &mut dyn Write) -> anyhow::Res
         };
         match (args.format, &report) {
             (ExportFormat::Dump, Some(report)) => dump(report, w)?,
-            (ExportFormat::Dump, None) => bail!("--format dump needs a run id and PostgreSQL"),
+            (ExportFormat::Dump, None) => bail!("--format dump needs a run id and a database"),
             _ => {
                 exporter
                     .export_pages(&pages, |p| bodies.get(p.url.url.as_str()).cloned(), w)?
@@ -664,10 +681,9 @@ pub(crate) async fn replay(
     };
     cfg.load_checkpoint_keys_from_lookup(getenv).await?;
     cfg.load_artifact_custody_from_lookup(getenv).await?;
-    let pg = connect(args.database_url.as_deref()).await?;
-    let action = InspectRepo::new(pg)
-        .transition_action(run, transition)
-        .await
+    let store = connect(args.database_url.as_deref()).await?;
+    let action = crawlx_worker::on_store!(&store, pg => InspectRepo::new(pg.clone()).transition_action(run, transition)
+        .await)
         .context("reading transitions")?
         .ok_or_else(|| anyhow!("transition {transition} is not part of run {run}"))?;
     let stores = Stores::open(&cfg).await.map_err(|e| anyhow!("{e}"))?;

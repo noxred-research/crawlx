@@ -1,5 +1,5 @@
 //! The live-model rig for gate G3: worker runs on real Chromium
-//! against PostgreSQL with a served model bundle as the System 1 engine.
+//! against a database of any engine with a served model bundle as the System 1 engine.
 //!
 //! * [`DecisionRig`]: one PostgreSQL schema (set up as the soak harness does), the worker stores
 //!   over it and the System 1 engine, a [`DecisionHttpEngine`] speaking to a `decision-serve` endpoint under
@@ -32,7 +32,9 @@ use crawlx_model::breaker::BreakerState;
 use crawlx_model::decision_http::{DecisionHttpConfig, DecisionHttpEngine};
 use crawlx_model::{DecisionEngine, ModelError, ModelId, TypedAnswer, TypedDecision, TypedDecisionRequest};
 use crawlx_policy::authorization::AuthorizationRecord;
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::sql::Sql;
+use crawlx_storage::{Database, FsArtifactStore, Store, StoreConfig};
+use crawlx_worker::DurableStore;
 use crawlx_worker::{
     run_local_with, DriverConfig, EngineConfig, LocalRun, ModelConfig, ProvidedEngine, ShortlistRecording,
     Stores,
@@ -113,7 +115,8 @@ impl DecisionEngine for ForcedChoice {
 /// Where the rig runs and which model it asks.
 #[derive(Clone, PartialEq, Debug)]
 pub struct RigConfig {
-    /// PostgreSQL URL; the rig creates (and on [`DecisionRig::close`] drops) its own schema.
+    /// Database URL (`postgres:`, `mariadb:` or `sqlite:`); on PostgreSQL the rig creates (and on
+    /// [`DecisionRig::close`] drops) its own schema.
     pub database_url: String,
     /// `http://host:port/v1/decide` of a running `decision-serve`.
     pub endpoint: String,
@@ -170,9 +173,9 @@ async fn served_identity(endpoint: &str) -> Result<ModelId, BenchError> {
     ))
 }
 
-/// One PostgreSQL schema, the worker stores over it and the metered System 1 engine.
+/// One isolated database, the worker stores over it and the metered System 1 engine.
 pub struct DecisionRig {
-    pg: Pg,
+    database: Database,
     stores: Stores,
     record: AuthorizationRecord,
     engine: Arc<MeteredEngine>,
@@ -240,26 +243,26 @@ impl DecisionRig {
 
         std::fs::create_dir_all(&cfg.scratch).map_err(|e| BenchError::io(&cfg.scratch, e))?;
         let schema = format!("decision_eval_{}", uuid::Uuid::now_v7().simple());
-        let pg = Pg::connect(
+        let database = Database::open(
             &cfg.database_url,
-            PgConfig {
+            StoreConfig {
                 schema: Some(schema),
                 max_connections: 8,
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await?;
-        pg.migrate().await?;
+        database.migrate().await?;
+        let durable = DurableStore::open(&database).map_err(crawlx_core::StoreError::from)?;
         let record = loopback_record(&origin.origin().ascii_serialization())?;
-        pg.ensure_tenant(record.tenant, "decision-eval").await?;
-        let runs: Arc<dyn RunRepo> = Arc::new(pg.clone());
-        let artifacts = FsArtifactStore::open(&cfg.scratch.join("artifacts"), runs, Arc::new(SystemClock))
-            .await?
-            .with_index(Arc::new(pg.clone()));
-        let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), record.tenant);
+        durable.ensure_tenant(record.tenant, "decision-eval").await?;
+        let artifacts = crawlx_worker::on_store!(&durable, store => {
+            artifact_store(store, &cfg.scratch.join("artifacts")).await?
+        });
+        let mut stores = Stores::over_durable(durable, Arc::new(artifacts), record.tenant);
         stores.checkpoint_keys = keys;
         Ok(Self {
-            pg,
+            database,
             stores,
             record,
             engine,
@@ -291,7 +294,7 @@ impl DecisionRig {
     /// [`BenchError::Store`] when dropping the schema fails.
     pub async fn close(self) -> Result<(), BenchError> {
         let scratch = self.scratch;
-        self.pg.drop_schema().await?;
+        self.database.teardown().await?;
         // best effort: the artifacts of finished runs are not needed again
         let _ = std::fs::remove_dir_all(scratch);
         Ok(())
@@ -442,14 +445,17 @@ impl VariantExecutor for RigExecutor<'_> {
 
         let records = self.rig.stores.model_decisions.list(report.run_id).await?;
         let trail_violations = if self.verify_trail {
-            let trail = verify_trail(
-                report.run_id,
-                TrailStore::Pg {
-                    pg: &self.rig.pg,
-                    artifacts: Some(self.rig.stores.artifacts.as_ref()),
-                },
-            )
-            .await?;
+            let trail =
+                verify_trail(
+                    report.run_id,
+                    TrailStore::Database {
+                        store: self.rig.stores.durable.as_ref().ok_or_else(|| {
+                            BenchError::Gate("decision rig has no database store".to_owned())
+                        })?,
+                        artifacts: Some(self.rig.stores.artifacts.as_ref()),
+                    },
+                )
+                .await?;
             Some(u64::try_from(trail.violations.len()).unwrap_or(u64::MAX))
         } else {
             None
@@ -611,6 +617,16 @@ pub fn scratch_dir(root: &Path, tag: &str) -> PathBuf {
     root.join(format!("crawlx-decision-eval-{tag}-{}", std::process::id()))
 }
 
+/// The filesystem artifact store of the rig over `store`.
+async fn artifact_store<B: Sql>(
+    store: &Store<B>,
+    dir: &std::path::Path,
+) -> Result<FsArtifactStore, BenchError> {
+    let runs: Arc<dyn RunRepo> = Arc::new(store.clone());
+    Ok(FsArtifactStore::open(dir, runs, Arc::new(SystemClock))
+        .await?
+        .with_index(Arc::new(store.clone())))
+}
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

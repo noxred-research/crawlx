@@ -18,7 +18,9 @@ use crawlx_core::browser::BrowserError;
 use crawlx_core::ids::{BackendNodeId, FrameId, TabId};
 use crawlx_core::observation::RuntimeLocator;
 use crawlx_core::page_op::{Emulation, PageOp, PageOpResult, PdfSpec, SelectorState, ShotSpec};
-use crawlx_core::parser_memory::{AdmittedBytes, AdmittedText, Budgeted, ByteBudget, BytePermit};
+use crawlx_core::parser_memory::{
+    AdmittedBytes, AdmittedText, Budgeted, ByteAdmissionError, ByteBudget, BytePermit,
+};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -253,6 +255,19 @@ fn main_world_result(v: &Value) -> Result<Value, BrowserError> {
         .map_or(Value::Null, |s| Value::String(s.to_owned())))
 }
 
+/// Cut `permit` to cover exactly `keep` bytes: surplus is released, a shortfall is admitted
+/// (nothing changes when the budget refuses it).
+fn fit_permit(permit: &mut BytePermit, keep: usize) -> Result<(), ByteAdmissionError> {
+    if permit.bytes() < keep {
+        permit.grow_to(keep)
+    } else {
+        if let Ok(surplus) = permit.split(permit.bytes() - keep) {
+            drop(surplus);
+        }
+        Ok(())
+    }
+}
+
 /// Own `text`, a string moved out of a charged CDP value, as an immutable shared document.
 ///
 /// `rest` is what is left of that value and is freed first. The permit that covered the whole
@@ -265,17 +280,28 @@ pub(super) fn admit_text(
     mut permit: BytePermit,
 ) -> Result<AdmittedText, BrowserError> {
     drop(rest);
-    let keep = text.capacity();
-    if permit.bytes() < keep {
-        if let Err(refused) = permit.grow_to(keep) {
-            drop(text);
-            drop(permit);
-            return Err(BrowserError::Memory(refused));
-        }
-    } else if let Ok(surplus) = permit.split(permit.bytes() - keep) {
-        drop(surplus);
+    if let Err(refused) = fit_permit(&mut permit, text.capacity()) {
+        drop(text);
+        drop(permit);
+        return Err(BrowserError::Memory(refused));
     }
     Ok(AdmittedText::new(text, permit))
+}
+
+/// [`admit_text`] for a byte buffer (a capture body) moved out of a charged CDP value: the
+/// buffer keeps exactly its own capacity charged, under the permit that metered its reply.
+pub(super) fn admit_bytes(
+    bytes: Vec<u8>,
+    rest: Value,
+    mut permit: BytePermit,
+) -> Result<AdmittedBytes, BrowserError> {
+    drop(rest);
+    if let Err(refused) = fit_permit(&mut permit, bytes.capacity()) {
+        drop(bytes);
+        drop(permit);
+        return Err(BrowserError::Memory(refused));
+    }
+    Ok(AdmittedBytes::new(bytes, permit))
 }
 
 /// `Runtime.evaluate` parameters for a by-value main-world evaluation.
@@ -555,6 +581,21 @@ impl CdpContext {
                 timeout + Duration::from_secs(1),
             )
             .await
+    }
+
+    /// Evaluate `script` (awaiting a returned promise) in the main world and keep the whole
+    /// reply charged: the transport reserves the reply before its bytes are allocated, and the
+    /// caller moves the parts it retains out under that same reservation. A thrown value
+    /// becomes [`BrowserError::Script`].
+    pub(super) async fn evaluate_script_charged(
+        &self,
+        script: &str,
+    ) -> Result<Budgeted<Value>, BrowserError> {
+        let reply = self.evaluate_main_charged(script, true, SCRIPT_TIMEOUT).await?;
+        if let Some(details) = reply.value().get("exceptionDetails") {
+            return Err(BrowserError::Script(exception_message(details)));
+        }
+        Ok(reply)
     }
 
     /// `PageOp::Html`: the serialized document is moved out of the charged response, not

@@ -20,7 +20,7 @@ use crawlx_storage::artifact_key_crypto::{ArtifactKeys, FileArtifactKeys, Memory
 use crawlx_storage::artifacts::{ArtifactBlobs, BlobEntry, FsArtifactStore, MemBlobs, ObjectArtifactStore};
 use crawlx_storage::custody::PgSecretAuthority;
 use crawlx_storage::testkit::{crawl_run, create_crawl, sessions};
-use crawlx_storage::{MemoryStore, Pg, PgConfig};
+use crawlx_storage::{MemoryStore, Pg, StoreConfig};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -636,9 +636,9 @@ async fn pg_world() -> Option<Pgw> {
         eprintln!("SKIPPED: CRAWLX_TEST_SECRET_REDIS_URL is not set");
         return None;
     };
-    let config = PgConfig {
+    let config = StoreConfig {
         schema: Some(format!("artcustody_{}", Uuid::now_v7().simple())),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let pg = Pg::connect(&database, config.clone()).await.unwrap();
     pg.migrate().await.unwrap();

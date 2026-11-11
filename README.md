@@ -124,7 +124,8 @@ refinement steps.
 | | `--mode static` | `--mode dynamic` | `--mode hybrid` (default) |
 |---|:---:|:---:|:---:|
 | Needs Chromium | no | yes | yes |
-| Fetches with the HTTP client, writes Markdown pages | yes | no | yes |
+| Fetches pages with the HTTP client | yes | no | yes |
+| Writes Markdown pages | yes | yes (settled browser DOM) | yes |
 | Executes page JavaScript | no | yes | yes |
 | Clicks and navigates (`read_only` profile) | no | yes | yes |
 | Element identity, state clusters, enablement graph | no | yes | yes |
@@ -238,6 +239,10 @@ curl -s http://127.0.0.1:8080/v1/crawls/<run-id>/pages  -H "Authorization: Beare
 The OpenAPI document is served at `/v1/openapi.json`. Without Compose, run `crawlx migrate`,
 `crawlx serve` and `crawlx worker` against your own PostgreSQL; see the
 [walkthrough](docs/walkthrough.md) and [operations](docs/ops/README.md).
+
+PostgreSQL, MariaDB and SQLite are supported persistent engines for `serve`, `worker` and the operator
+commands; see [storage backends](docs/ops/storage-backends.md). Foreground CLI crawls can also use
+in-memory local mode, and `crawlx serve` without a database only queues runs in its own process.
 
 ### Tooling interoperability: compatibility API
 

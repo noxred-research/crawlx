@@ -3,7 +3,10 @@
 //!
 //! # What lives here
 //!
-//! * [`Pg`] – pooled PostgreSQL handle. It implements every repository trait of
+//! * [`Database`] – the one constructor ([`Database::open`]) for PostgreSQL, MariaDB and
+//!   SQLite, selected by URL scheme; [`backend`] holds the engines, their SQL [`Dialect`]
+//!   fragments and the [`Concurrency`] strategy.
+//! * [`Pg`] – pooled PostgreSQL handle (`Store<PgBackend>`). It implements every repository trait of
 //!   `crawlx_core::repo` (`RunRepo`, `FrontierRepo`, `PageRepo`, `ActionJournal`,
 //!   `StateRepo`, `EdgeStore`, `LedgerRepo`, `SafetyAudit`, `EventRepo`) plus
 //!   [`leases::LeaseRepo`].
@@ -68,6 +71,20 @@
 //! * ZDR: the artifact gate, header/URL redaction on `traffic_events` and value-free
 //!   `actions.params` are implemented; NULLing `canonical_url` is not, because the
 //!   frontier needs the URL while the run is live.
+//! * Tenancy: request-surface modules run statements only through [`tenant::ScopedQuery`];
+//!   the crate's `clippy.toml` disallows the raw statement entry points and those modules
+//!   deny `clippy::disallowed_methods` again.
+
+// The statement layer and every operator-authority module run raw statements by design; only
+// the request-surface modules (api, authorization, intel, inspect, trusted, trail, approvals)
+// deny the lint again.
+#![allow(
+    clippy::disallowed_methods,
+    reason = "operator code runs statements directly; request-surface modules deny this lint again"
+)]
+
+#[cfg(all(feature = "unscoped-for-test", not(debug_assertions)))]
+compile_error!("the `unscoped-for-test` feature disables tenant isolation and exists only for test builds");
 
 pub mod admin;
 pub mod approvals;
@@ -79,6 +96,7 @@ pub mod artifact_key_crypto;
 pub mod artifacts;
 pub mod audit;
 pub mod ax_artifact;
+pub mod backend;
 pub mod chaos;
 pub mod checkpoint_crypto;
 mod codec;
@@ -91,7 +109,6 @@ mod intel_memory;
 pub mod leases;
 pub mod memory;
 pub mod origin;
-mod pg;
 pub mod profiles;
 pub mod report_history;
 mod repos;
@@ -100,26 +117,35 @@ pub mod s3;
 pub mod safety_auditor;
 pub mod session_binding;
 pub mod spool;
+pub mod sql;
+mod store;
 pub mod tenant;
+pub mod tenant_tables;
 pub mod testkit;
 pub mod trail;
 pub mod trusted;
 pub mod url_graph;
+mod worker_eligibility;
 pub mod zdr;
+pub mod zdr_project;
 
 pub use admin::{
     AdminOps, AdmissionMode, ArtifactDefect, ArtifactVerification, DurabilityAudit, OpenAction, RunSelector,
     TenantEngine, WorkerRegistry, WorkerRow,
 };
 pub use artifact_custody::{
-    is_stale_epoch, ArtifactCustody, CustodyWrites, LeasedSecretRegistrar, LocalArtifactCustody,
-    PgArtifactCustody,
+    is_stale_epoch, ArtifactCustody, CustodyWrites, DbArtifactCustody, LeasedSecretRegistrar,
+    LocalArtifactCustody, PgArtifactCustody,
 };
 pub use artifacts::{
     ArtifactBlobs, ArtifactIndex, ArtifactReaper, ArtifactRow, BlobEntry, FsArtifactStore, FsBlobs,
     LiveArtifacts, MemBlobs, MemoryArtifactStore, ObjectArtifactStore, PRESIGN_MAX_TTL,
 };
 pub use audit::{AuditDayExport, MerkleExport};
+pub use backend::{
+    Backend, BackendKind, BackendRefusal, Capabilities, Concurrency, Database, DatabaseUrl, Dialect,
+    DurableAdmin, Feature, FenceSeq, LockMode, OriginAdmissionFactory, RefusalCode, WorkerLock, WriteTx,
+};
 pub use intel::{
     Baseline, CheckPage, CheckRecord, CheckState, IntelRepo, IntelResult, JobCount, JobKind, JobPatch,
     JobRecord, JobStatus, MemoryIntel, MonitorRecord, MonitorStatus, PurgeReport, Snapshot, ThreadRecord,
@@ -130,18 +156,20 @@ pub use leases::{
 };
 pub use memory::adaptive_selectors;
 pub use memory::{InMemoryJournal, MemoryStore};
-pub use origin::PgOriginAdmission;
-pub use pg::{AuthorizationRow, Pg, PgConfig};
+pub use origin::{MariaOriginAdmission, PgOriginAdmission, SqliteOriginAdmission};
 pub use repos::api::{
-    ActionSummary, ApiKeyRow, ApprovalDecision, ApprovalRecord, DecideOutcome, DeliveryResult,
+    ActionSummary, ApiKeyRow, ApiRepo, ApprovalDecision, ApprovalRecord, DecideOutcome, DeliveryResult,
     DeliveryStatus, IdemClaim, IdemResponse, PgApiRepo, TransitionFilter, TransitionRecord, WebhookDelivery,
 };
 pub use repos::authorization::{AuthorizationInsert, NewAuthorization, Revoked, StoredAuthorization};
 pub use repos::inspect::{EpochRow, InspectRepo, NavigationEvent, TransitionRow};
+pub use repos::CoreRepos;
 pub use retention::{RetentionSweeper, SweepReport};
 pub use s3::{S3ArtifactStore, S3Blobs, S3Config};
 pub use safety_auditor::{SafetyAuditReport, SafetyAuditor, SafetyViolation};
 pub use spool::{UploadSpool, UploadSpoolConfig};
+pub use store::{AuthorizationRow, Pg, Store, StoreConfig};
+pub use tenant::{Scope, ScopedQuery};
 pub use trail::{TrafficAttributionRow, TrailReads};
 pub use trusted::{CorpusTrafficEvent, CoverageRow, LaneFilter, TrafficQuery, TrustedCorpus};
 pub use zdr::{BufferLimits, BufferedBlob, BufferedPage, DeliveryBuffer};

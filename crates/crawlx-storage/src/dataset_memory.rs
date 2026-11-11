@@ -264,7 +264,8 @@ impl DeliveryOutboxRepo for MemoryStore {
         Ok(runs.into_iter().take(usize::from(limit)).collect())
     }
     async fn maintain(&self, run: CrawlRunId) -> Result<(), StoreError> {
-        let retired = self.retire_expired_feed_finalization_owned(run)?;
+        let volatile_missing = self.feed_volatile_missing(run).await?;
+        let retired = self.retire_expired_feed_finalization_owned(run, volatile_missing)?;
         let (tenant, pages) = {
             let mut g = self.inner.lock();
             let owner = g.runs.get(&run).ok_or_else(|| nf("crawl_run", run))?;

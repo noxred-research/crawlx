@@ -15,7 +15,7 @@ use crawlx_model::{
     DecisionEngine, Instruction, ModelId, Provenance, ProvenanceTagged, StateView, TypedDecisionRequest,
     TypedQuestion,
 };
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use crawlx_worker::actor::{SessionActor, ShutdownReason};
 use crawlx_worker::pool::{BrowserPool, PoolConfig};
 use crawlx_worker::runtime::diagnostics::{worker_mean_polls, RuntimeMonitor};
@@ -134,10 +134,10 @@ fn spawn_load(cfg: &LoadConfig, report: &std::path::Path) -> tokio::process::Chi
 async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mode: EvidenceMode) {
     let pg = Pg::connect(
         db,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("runtime_proof_{}", uuid::Uuid::now_v7().simple())),
             max_connections: 16,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -213,7 +213,11 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
             .unwrap();
     });
 
-    let stores = Stores::over_pg(pg.clone(), artifacts.clone(), tenant);
+    let stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        artifacts.clone(),
+        tenant,
+    );
     let mut crawl = CreateCrawl::new(url::Url::parse(&format!("{origin}/")).unwrap());
     crawl.safety.allow_private_networks = true;
     crawl.dynamic.observe_only = true;
@@ -794,10 +798,10 @@ mod url_filter {
         });
         let pg = Pg::connect(
             db,
-            PgConfig {
+            StoreConfig {
                 schema: Some(format!("url_filter_proof_{}", uuid::Uuid::now_v7().simple())),
                 max_connections: 8,
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await
@@ -810,7 +814,11 @@ mod url_filter {
                 .unwrap()
                 .with_index(Arc::new(pg.clone())),
         );
-        let stores = Stores::over_pg(pg.clone(), artifacts, crawlx_core::TenantId::new());
+        let stores = Stores::over_durable(
+            crawlx_worker::DurableStore::Postgres(pg.clone()),
+            artifacts,
+            crawlx_core::TenantId::new(),
+        );
         let mut cfg = worker_config_with(TrailingSlash::Keep, dir.path()).unwrap();
         cfg.launch.executable = executable;
         cfg.launch.unsafe_no_sandbox_for_ci = std::env::var_os("CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI").is_some();

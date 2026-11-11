@@ -71,7 +71,7 @@ struct RigArgs {
     /// `http://host:port/v1/decide` of a running `decision-serve`.
     #[arg(long)]
     endpoint: String,
-    /// PostgreSQL URL of the rig's schema.
+    /// Database URL of the rig (`postgres:`, `mariadb:` or `sqlite:`).
     #[arg(long, env = "CRAWLX_TEST_DATABASE_URL")]
     database_url: String,
     /// Per-call time budget of the model engine in milliseconds.

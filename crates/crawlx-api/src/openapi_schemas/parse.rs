@@ -230,7 +230,7 @@ pub(super) struct ParseUpload {
     #[schemars(schema_with = "file_part")]
     file: String,
     /// The options.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "options_part")]
     options: Option<String>,
 }

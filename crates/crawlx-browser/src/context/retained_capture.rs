@@ -5,6 +5,7 @@
 //! asset was loaded, so its completeness remains unknown. Image dimensions come from the
 //! encoded image, rather than CSS dimensions or an assumed device scale factor.
 
+use super::page_ops::admit_bytes;
 use super::CdpContext;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
@@ -13,9 +14,10 @@ use crawlx_core::browser_capture::{
     BrowserCaptureSink, CaptureArtifact, CaptureCompleteness, CaptureDescriptor, CaptureKind, CaptureSpec,
 };
 use crawlx_core::page_op::{PageOp, PageOpResult, ShotSpec};
-use crawlx_core::parser_memory::{global, AdmittedBytes};
+use crawlx_core::parser_memory::{AdmittedBytes, Budgeted, ByteBudget};
 use crawlx_core::secret::Redactor;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::Duration;
 
 const DEADLINE: Duration = Duration::from_secs(120);
@@ -52,16 +54,55 @@ fn denied(reason: &'static str) -> BrowserError {
     BrowserError::Unsupported(reason.to_owned())
 }
 
-/// Charge an owned buffer against the shared budget before retaining it as capture evidence.
-fn charge(bytes: Vec<u8>) -> Result<AdmittedBytes, BrowserError> {
-    let permit = global().try_reserve(bytes.capacity())?;
-    Ok(AdmittedBytes::new(bytes, permit))
+/// The refusal for a capture larger than its configured byte limit: the typed memory error, as
+/// for a body the shared budget cannot hold.
+fn over_limit(size: usize, limit: usize) -> BrowserError {
+    match Arc::new(ByteBudget::new(limit)).try_reserve(size) {
+        Err(refused) => BrowserError::Memory(refused),
+        Ok(_) => denied("capture exceeds byte limit"),
+    }
 }
 
-/// Reserve first, then copy a borrowed slice into a charged buffer; refusal allocates nothing.
-fn charge_copy(bytes: &[u8]) -> Result<AdmittedBytes, BrowserError> {
-    let permit = global().try_reserve(bytes.len())?;
-    Ok(AdmittedBytes::new(bytes.to_vec(), permit))
+/// Take the MHTML out of its charged `Page.captureSnapshot` reply. The transport reserved the
+/// reply before allocating it, so no uncharged copy exists: the text moves into its buffer
+/// under that same reservation, cut to the buffer's own capacity. A snapshot above `limit` is
+/// refused with [`BrowserError::Memory`], and so is one the budget cannot keep.
+fn admit_snapshot(mut reply: Budgeted<Value>, limit: usize) -> Result<AdmittedBytes, BrowserError> {
+    let data = match reply.value_mut().get_mut("data") {
+        Some(Value::String(data)) => std::mem::take(data),
+        _ => return Err(denied("MHTML capture data is unavailable")),
+    };
+    if data.len() > limit {
+        return Err(over_limit(data.len(), limit));
+    }
+    let (rest, permit) = reply.into_parts();
+    admit_bytes(data.into_bytes(), rest, permit)
+}
+
+/// Take the rendered text out of its charged evaluation reply, clipped to `limit` bytes at a
+/// character boundary. Returns the admitted bytes and whether text was left out. The reply was
+/// reserved before it was built, and the text moves out of it without a copy.
+fn admit_capture_text(
+    mut reply: Budgeted<Value>,
+    limit: usize,
+) -> Result<(AdmittedBytes, bool), BrowserError> {
+    let unavailable = || denied("rendered text capture is unavailable");
+    let Some(Value::Object(result)) = reply.value_mut().pointer_mut("/result/value") else {
+        return Err(unavailable());
+    };
+    let clipped = result.get("clipped").and_then(Value::as_bool) == Some(true);
+    let mut text = match result.get_mut("text") {
+        Some(Value::String(text)) => std::mem::take(text),
+        _ => return Err(unavailable()),
+    };
+    let mut end = text.len().min(limit);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let truncated = clipped || end < text.len();
+    text.truncate(end);
+    let (rest, permit) = reply.into_parts();
+    Ok((admit_bytes(text.into_bytes(), rest, permit)?, truncated))
 }
 
 fn byte_limit(value: u64) -> Result<usize, BrowserError> {
@@ -364,19 +405,11 @@ impl CdpContext {
                 descriptor.truncated = missing_resources;
                 completeness = CaptureCompleteness::Unknown;
                 let (_, session) = self.session_for(None)?;
-                let mut snapshot = session
-                    .send("Page.captureSnapshot", json!({"format": "mhtml"}))
+                let reply = session
+                    .send_budgeted("Page.captureSnapshot", json!({"format": "mhtml"}))
                     .await?;
-                snapshot
-                    .get("data")
-                    .and_then(Value::as_str)
-                    .filter(|body| body.len() <= limit)
-                    .ok_or_else(|| denied("MHTML capture is unavailable or exceeds byte limit"))?;
                 descriptor.content_type = "multipart/related".to_owned();
-                match snapshot.get_mut("data").map(Value::take) {
-                    Some(Value::String(body)) => charge(body.into_bytes())?,
-                    _ => return Err(denied("MHTML capture data is unavailable")),
-                }
+                admit_snapshot(reply, limit)?
             }
             CaptureSpec::Screenshot { shot, max_pixels, .. } => {
                 let (_, session) = self.session_for(None)?;
@@ -445,27 +478,18 @@ impl CdpContext {
                 bytes
             }
             CaptureSpec::Text { .. } => {
-                let PageOpResult::Json(text) = self.page_op(PageOp::EvaluateScript {
-                    script: format!("(() => {{ const t = document.body ? document.body.innerText : ''; return {{ text: t.slice(0, {limit}), clipped: t.length > {limit} }}; }})()"),
-                }).await? else {
-                    return Err(denied("rendered text capture is unavailable"));
-                };
-                let mut body = text
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| denied("rendered text capture is unavailable"))?;
-                let mut end = body.len().min(limit);
-                while !body.is_char_boundary(end) {
-                    end -= 1;
-                }
-                descriptor.truncated =
-                    end < body.len() || text.get("clipped").and_then(Value::as_bool) == Some(true);
-                body = &body[..end];
-                if descriptor.truncated {
+                let reply = self
+                    .evaluate_script_charged(&format!(
+                        "(() => {{ const t = document.body ? document.body.innerText : ''; return {{ text: t.slice(0, {limit}), clipped: t.length > {limit} }}; }})()"
+                    ))
+                    .await?;
+                let (bytes, truncated) = admit_capture_text(reply, limit)?;
+                descriptor.truncated = truncated;
+                if truncated {
                     completeness = CaptureCompleteness::Clipped;
                 }
                 descriptor.content_type = "text/plain; charset=utf-8".to_owned();
-                charge_copy(body.as_bytes())?
+                bytes
             }
             _ => return Err(denied("unsupported retained capture representation")),
         };
@@ -765,5 +789,120 @@ mod tests {
         assert_eq!(entries.len(), 2);
         let mut full = vec![("frame", "url"); RESOURCE_COUNT];
         assert!(resources(&tree, &mut full).is_err());
+    }
+
+    fn charged(budget: &Arc<ByteBudget>, value: Value, bytes: usize) -> Budgeted<Value> {
+        Budgeted::new(value, budget.try_reserve(bytes).unwrap())
+    }
+
+    fn object(field: &str, value: Value) -> Value {
+        let mut map = serde_json::Map::new();
+        map.insert(field.to_owned(), value);
+        Value::Object(map)
+    }
+
+    fn text_reply(text: String, clipped: bool) -> Value {
+        let mut value = serde_json::Map::new();
+        value.insert("text".to_owned(), Value::String(text));
+        value.insert("clipped".to_owned(), Value::Bool(clipped));
+        object("result", object("value", Value::Object(value)))
+    }
+
+    #[test]
+    fn mhtml_above_the_metadata_cap_is_admitted_without_a_copy() {
+        let size = crate::cdp::METADATA_REPLY_LIMIT + 512 * 1024;
+        let budget = Arc::new(ByteBudget::new(8 * size));
+        let data = "m".repeat(size);
+        let at = data.as_ptr();
+        let reply = charged(&budget, object("data", Value::String(data)), 2 * size);
+        let admitted = admit_snapshot(reply, 4 * 1024 * 1024).unwrap();
+        assert_eq!(admitted.len(), size);
+        assert_eq!(
+            admitted.as_slice().as_ptr(),
+            at,
+            "the reply's allocation is the artifact's"
+        );
+        assert!(budget.used() >= size, "the snapshot stays charged while held");
+        assert!(
+            budget.used() < 2 * size,
+            "the reply's surplus reservation is released"
+        );
+        drop(admitted);
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn mhtml_above_its_limit_or_the_budget_is_refused_with_the_typed_memory_error() {
+        let size = crate::cdp::METADATA_REPLY_LIMIT + 512 * 1024;
+        let budget = Arc::new(ByteBudget::new(8 * size));
+        let reply = charged(&budget, object("data", Value::String("m".repeat(size))), 2 * size);
+        match admit_snapshot(reply, crate::cdp::METADATA_REPLY_LIMIT) {
+            Err(BrowserError::Memory(refused)) => {
+                assert!(refused.exceeds_budget());
+                assert_eq!(refused.requested, size);
+                assert_eq!(refused.limit, crate::cdp::METADATA_REPLY_LIMIT);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(budget.used(), 0, "a refused snapshot releases its reservation");
+        // Within its limit, but the budget cannot hold the buffer the reply decoded into.
+        let small = Arc::new(ByteBudget::new(64 * 1024));
+        let reply = charged(&small, object("data", Value::String("m".repeat(128 * 1024))), 16);
+        assert!(matches!(
+            admit_snapshot(reply, 4 * 1024 * 1024),
+            Err(BrowserError::Memory(_))
+        ));
+        assert_eq!(small.used(), 0);
+        let reply = charged(&small, object("data", Value::Null), 16);
+        assert!(matches!(
+            admit_snapshot(reply, 4 * 1024 * 1024),
+            Err(BrowserError::Unsupported(_))
+        ));
+        assert_eq!(small.used(), 0);
+    }
+
+    #[test]
+    fn capture_text_moves_out_of_its_charged_reply_clipped_at_a_character() {
+        let budget = Arc::new(ByteBudget::new(1 << 20));
+        let text = String::from("h\u{e9}llo");
+        let at = text.as_ptr();
+        let reply = charged(&budget, text_reply(text, false), 4096);
+        let (bytes, truncated) = admit_capture_text(reply, 2).unwrap();
+        assert_eq!(
+            bytes.as_slice(),
+            b"h",
+            "a cut inside a character backs up to its start"
+        );
+        assert!(truncated);
+        assert_eq!(bytes.as_slice().as_ptr(), at, "the text is never copied");
+        assert!(
+            budget.used() >= 6 && budget.used() < 4096,
+            "only the text's capacity stays charged"
+        );
+        drop(bytes);
+        assert_eq!(budget.used(), 0);
+        let reply = charged(&budget, text_reply("whole".to_owned(), true), 64);
+        let (bytes, truncated) = admit_capture_text(reply, 64).unwrap();
+        assert_eq!(bytes.as_slice(), b"whole");
+        assert!(truncated, "a page-side clip is reported even when the text fits");
+        let reply = charged(&budget, text_reply("whole".to_owned(), false), 64);
+        assert!(!admit_capture_text(reply, 64).unwrap().1);
+    }
+
+    #[test]
+    fn capture_text_the_budget_cannot_keep_is_refused_and_released() {
+        let budget = Arc::new(ByteBudget::new(1024));
+        let reply = charged(&budget, text_reply("t".repeat(4096), false), 1);
+        assert!(matches!(
+            admit_capture_text(reply, 8192),
+            Err(BrowserError::Memory(_))
+        ));
+        assert_eq!(budget.used(), 0);
+        let reply = charged(&budget, object("result", Value::Null), 1);
+        assert!(matches!(
+            admit_capture_text(reply, 8192),
+            Err(BrowserError::Unsupported(_))
+        ));
+        assert_eq!(budget.used(), 0);
     }
 }

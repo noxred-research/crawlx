@@ -3,18 +3,19 @@
 
 use chrono::{Duration, Utc};
 use crawlx_api::auth::{generate_key, key_record};
-use crawlx_api::pg::PgApiStore;
+use crawlx_api::database::DatabaseApiStore;
 use crawlx_api::store::ApiStore;
 use crawlx_api::{ApiConfig, AppState, Repos, Scope};
 use crawlx_core::counters::{RunStatus, TerminalReason};
+use crawlx_core::epoch::ObservationEpoch;
 use crawlx_core::hash::Digest;
-use crawlx_core::repo::{EventRepo, FrontierRepo, PageRecord, PageRepo, RunRepo};
+use crawlx_core::repo::{EventRepo, FrontierRepo, PageRecord, PageRepo, RunRepo, StateRepo};
 use crawlx_core::traffic::TrustLane;
-use crawlx_core::{CrawlRunId, SystemClock, TenantId};
-use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
+use crawlx_core::{CrawlRunId, StateClusterId, SystemClock, TenantId};
+use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl, new_state, sessions};
 use crawlx_storage::{
     tenant, AuthorizationRow, FsArtifactStore, IntelRepo, JobKind, JobRecord, JobStatus, Pg, PgApiRepo,
-    PgConfig,
+    StoreConfig,
 };
 #[allow(
     clippy::disallowed_types,
@@ -38,10 +39,10 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
     let schema = format!("api_rls_{}", Uuid::now_v7().simple());
     let role = format!("api_rls_{}", Uuid::now_v7().simple());
     let password = Uuid::now_v7().simple().to_string();
-    let cfg = PgConfig {
+    let cfg = StoreConfig {
         schema: Some(schema.clone()),
         max_connections: 1,
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let owner = Pg::connect(&url, cfg.clone()).await.unwrap();
     owner.migrate().await.unwrap();
@@ -89,13 +90,14 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
         "owner must be refused as API role"
     );
     let request_pg = owner.with_api_role(api_url.as_str()).await.unwrap();
-    let api = PgApiStore::new(owner.clone());
+    let api = DatabaseApiStore::new(owner.clone());
     let now = Utc::now();
     let mut keys = Vec::new();
     let mut tenants = Vec::new();
     let mut runs = Vec::new();
     let mut jobs = Vec::new();
     let mut records = Vec::new();
+    let mut state_ids = Vec::new();
     for i in 0..2 {
         let tenant = TenantId::new();
         let key = generate_key();
@@ -104,6 +106,17 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
             .unwrap();
         let run = crawl_run(tenant, create_crawl("https://app.example.test/", &[], 1));
         owner.create(&run, None).await.unwrap();
+        let slots = sessions(run.id, 1, 1);
+        owner.create_sessions(&slots).await.unwrap();
+        let state = new_state(
+            slots[0].id,
+            StateClusterId::new(),
+            true,
+            1,
+            ObservationEpoch::default(),
+        );
+        owner.put_state(&state).await.unwrap();
+        state_ids.push(state.id);
         let page_url = canonical_url(&format!("https://app.example.test/tenant-{i}"));
         let (_, frontier) = owner.discover(run.id, &page_url, 0, None, None).await.unwrap();
         owner
@@ -216,7 +229,7 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
         ..ApiConfig::default()
     };
     let state = AppState::new(
-        Repos::pg(&request_pg, artifacts),
+        Repos::over_store(&request_pg, artifacts),
         crawlx_api::admission_policy(&config, clock),
         config,
     );
@@ -242,6 +255,7 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
             for path in [
                 format!("/v1/crawls/{}", runs[i]),
                 format!("/v1/crawls/{}/pages", runs[i]),
+                format!("/v1/crawls/{}/states", runs[i]),
                 format!("/v1/crawls/{}/coverage", runs[i]),
                 format!("/v1/authorizations/{}", records[i]),
                 format!("/compat/v2/agent/{}", jobs[i]),
@@ -262,10 +276,18 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
                     assert_eq!(pages["total"], 1);
                     assert!(body.contains(&format!("Tenant {i}")), "{body}");
                 }
+                if path.ends_with("/states") {
+                    let states: Value = serde_json::from_str(&body).unwrap();
+                    assert_eq!(states["total"], 1);
+                    assert_eq!(states["data"].as_array().unwrap().len(), 1);
+                    assert_eq!(states["data"][0]["id"], state_ids[i].to_string());
+                    assert!(!body.contains(&state_ids[other].to_string()), "{body}");
+                }
             }
             for path in [
                 format!("/v1/crawls/{}", runs[other]),
                 format!("/v1/crawls/{}/pages", runs[other]),
+                format!("/v1/crawls/{}/states", runs[other]),
                 format!("/v1/crawls/{}/coverage", runs[other]),
                 format!("/v1/authorizations/{}", records[other]),
                 format!("/compat/v2/agent/{}", jobs[other]),
@@ -344,6 +366,23 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
         let id: CrawlRunId = body["id"].as_str().unwrap().parse().unwrap();
         assert_eq!(owner.get(id).await.unwrap().tenant, tenants[i]);
     }
+    // Query membership directly, without a states join that could hide a missing policy.
+    // Each restricted-role transaction must expose exactly its tenant's membership.
+    for (i, tenant) in tenants.iter().enumerate() {
+        let mut tx = restricted.pool().begin().await.unwrap();
+        sqlx::query("SELECT set_config('app.tenant_id', $1::uuid::text, true)")
+            .bind(tenant.0)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let visible: Vec<Uuid> =
+            sqlx::query_scalar("SELECT state_id FROM state_cluster_membership ORDER BY state_id")
+                .fetch_all(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(visible, vec![state_ids[i].0]);
+        tx.commit().await.unwrap();
+    }
     // Bypass route-level ownership checks deliberately: RLS must still filter even
     // when a repository receives the other tenant's valid id and explicit tenant.
     tenant::scope(tenants[0], async {
@@ -409,7 +448,7 @@ async fn non_owner_http_requests_isolate_tenants_and_clear_transaction_settings(
     .await;
     // Cancel while the scoped SELECT owns a transaction and waits on a table
     // lock. Pool reuse must roll back before handing out that same connection.
-    let inspector = Pg::connect(&url, PgConfig::default()).await.unwrap();
+    let inspector = Pg::connect(&url, StoreConfig::default()).await.unwrap();
     let mut lock = owner.pool().begin().await.unwrap();
     sqlx::query("LOCK TABLE crawl_runs IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *lock)

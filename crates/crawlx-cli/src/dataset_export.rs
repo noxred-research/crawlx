@@ -200,7 +200,7 @@ impl<'a> ItemStream<'a> {
     }
 
     fn push(&mut self, item: &Value) -> anyhow::Result<()> {
-        let fields = item.as_object().context("input row must be a JSON object")?;
+        let fields = item.as_object().context("row must be a JSON object")?;
         if self.infer_columns {
             if self.first {
                 let mut columns: Vec<_> = fields.keys().cloned().collect();
@@ -256,9 +256,18 @@ async fn export_reader(
     let mut stream = ItemStream::new(args, out)?;
     stream.start()?;
     let mut row = Vec::new();
-    while next_row(&mut reader, &mut row, usize::try_from(args.max_row_bytes)?).await? {
-        let item: Value = serde_json::from_slice(&row).context("input row must be a UTF-8 JSON object")?;
-        stream.push(&item)?;
+    let mut number = 0_u64;
+    // Row numbers count input lines from one, so a rejected row can be found in the source.
+    while next_row(&mut reader, &mut row, usize::try_from(args.max_row_bytes)?)
+        .await
+        .with_context(|| format!("input row {}", number.saturating_add(1)))?
+    {
+        number = number.saturating_add(1);
+        let item: Value = serde_json::from_slice(&row)
+            .with_context(|| format!("input row {number} must be a UTF-8 JSON object"))?;
+        stream
+            .push(&item)
+            .with_context(|| format!("input row {number}"))?;
     }
     stream.finish()
 }
@@ -306,6 +315,37 @@ mod tests {
             .await
             .unwrap();
         out
+    }
+
+    #[tokio::test]
+    async fn rejected_rows_report_their_one_based_input_line() {
+        for (format, input, reason) in [
+            (DatasetExportFormat::Jsonl, "{\"a\":1}\nno\n", "UTF-8 JSON object"),
+            (DatasetExportFormat::Jsonl, "{\"a\":1}\n[]\n", "JSON object"),
+            (
+                DatasetExportFormat::Csv,
+                "{\"a\":1}\n{\"b\":2}\n",
+                "first-row schema",
+            ),
+            (
+                DatasetExportFormat::Xml,
+                "{\"a\":1}\n{\"a\":\"\\u0001\"}\n",
+                "forbidden scalar",
+            ),
+        ] {
+            let error = export_reader(&args(format), BufReader::new(input.as_bytes()), &mut Vec::new())
+                .await
+                .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("input row 2"), "{message}");
+            assert!(message.contains(reason), "{message}");
+        }
+        let mut limited = args(DatasetExportFormat::Jsonl);
+        limited.max_row_bytes = 3;
+        let error = export_reader(&limited, BufReader::new(&b"{}\n{\"a\":1}\n"[..]), &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("input row 2"));
     }
 
     #[tokio::test]

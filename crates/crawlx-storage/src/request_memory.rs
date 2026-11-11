@@ -300,10 +300,12 @@ pub(super) fn append(
     if !matches!(
         run.status,
         RunStatus::Queued | RunStatus::Running | RunStatus::Paused
-    ) || admitted_at >= deadline
-        || admitted_at > now
+    ) || admitted_at > now
     {
         return Err(StoreError::AccessDenied("run no longer admits requests".into()));
+    }
+    if admitted_at >= deadline {
+        return Err(StoreError::RunDeadlineReached);
     }
     if batch.principal != "anonymous"
         && !g
@@ -757,7 +759,7 @@ impl MemoryStore {
             Some(escrow) if escrow.fence == fence => {
                 return Err(StoreError::Conflict(
                     "acquisition already reserved by this lease".into(),
-                ))
+                ));
             }
             Some(escrow) => (escrow.deadline, escrow.usage.clone()),
             None => (absolute, AcquisitionUsageV1::default()),
@@ -898,7 +900,7 @@ impl MemoryStore {
         {
             match row.e.status {
                 FrontierStatus::Pending if row.next_attempt_at <= now => {
-                    return Ok(FrontierActivityV1::Ready)
+                    return Ok(FrontierActivityV1::Ready);
                 }
                 FrontierStatus::Pending => pending = true,
                 FrontierStatus::Leased => leased = true,
@@ -1064,7 +1066,7 @@ impl MemoryStore {
             .map(|((_, _, generation), _)| *generation);
         let generation = match latest {
             Some(generation) if generation >= u32::from(cap.min(128)) => {
-                return Ok(ObservedAppendV1::CapReached)
+                return Ok(ObservedAppendV1::CapReached);
             }
             Some(generation) => generation
                 .checked_add(1)
@@ -1190,6 +1192,27 @@ impl RequestCommitRepo for MemoryStore {
         batches: &[crawlx_core::dataset::DeliveryBatchV1],
     ) -> Result<(), StoreError> {
         self.finalize_run_feeds_owned(run, status, reason, batches).await
+    }
+    async fn claim_feed_finalizer(
+        &self,
+        run: CrawlRunId,
+        worker: crawlx_core::WorkerId,
+        ttl: std::time::Duration,
+    ) -> Result<crawlx_core::custody::CustodyLease, StoreError> {
+        self.claim_feed_finalizer_owned(run, worker, ttl)
+    }
+    async fn renew_feed_finalizer(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        self.renew_feed_finalizer_owned(lease, ttl)
+    }
+    async fn release_feed_finalizer(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+    ) -> Result<(), StoreError> {
+        self.release_feed_finalizer_owned(lease)
     }
     async fn record_extension_attempt(
         &self,

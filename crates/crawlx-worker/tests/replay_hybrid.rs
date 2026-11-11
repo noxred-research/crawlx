@@ -129,16 +129,16 @@ async fn dual_mode_writes_version_pairs_in_memory() {
 async fn dual_mode_writes_version_pairs_in_postgres() {
     use crawlx_core::repo::RunRepo;
     use crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys;
-    use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+    use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
     let Ok(database) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
         eprintln!("skipped: CRAWLX_TEST_DATABASE_URL is not set");
         return;
     };
     let pg = Pg::connect(
         &database,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_identity_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -150,7 +150,11 @@ async fn dual_mode_writes_version_pairs_in_postgres() {
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), crawlx_core::TenantId::new());
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        crawlx_core::TenantId::new(),
+    );
     stores.checkpoint_keys = Arc::new(MemoryCheckpointKeys::new().unwrap());
     dual_alias_scenario(stores, cfg(dir.path())).await;
     let versions: Vec<i16> =
@@ -574,6 +578,99 @@ async fn hybrid_mode_honors_always_browser_paths_for_plain_pages() {
             .collect::<Vec<_>>()
     );
     assert!(!report.states.iter().any(|s| s.url.url.path() == "/about"));
+}
+
+#[tokio::test]
+async fn explicit_http_routes_prevent_seed_and_navigation_promotion() {
+    use axum::{routing::get, Router};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let html = || async {
+            axum::response::Html(
+                r#"<html><body><div id="app"></div><a href="/app">App</a><a href="/http">HTTP</a><script type="module" src="/main.js"></script></body></html>"#,
+            )
+        };
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/", get(html))
+                .route("/app", get(html))
+                .route("/http", get(html)),
+        )
+        .await
+        .unwrap();
+    });
+    for child_route in ["http", "unmatched"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut crawl = CreateCrawl::new(url::Url::parse(&format!("{base}/")).unwrap());
+        crawl.mode = CrawlMode::Hybrid;
+        crawl.seed = Some(7);
+        crawl.safety.allow_private_networks = true;
+        crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
+        crawl.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
+        crawl.scope.known_files.clear();
+        crawl.politeness.delay_ms = 0;
+        crawl.limits.interactions = 5;
+        crawl.dynamic.always_browser_paths = vec![".*".into()];
+        crawl.protocol.routes.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "http-only", "schemes": ["http"], "origin": base,
+                "pathPattern": if child_route == "http" { "^/" } else { "^/(http)?$" },
+                "schedulerMetadata": {
+                    "request_class": "stateless_get",
+                    "source_kind": "url_plane",
+                    "media_class": "unclassified"
+                },
+                "backend": "http", "delegateId": null, "requiredCapabilities": [],
+                "maxBodyBytes": 1048576, "maxElapsedMs": 10000, "policyRevision": "local"
+            }))
+            .unwrap(),
+        );
+        let script = FakeScript::new()
+            .page(FakePage::new(&format!("{base}/")).title("HTTP seed"))
+            .page(
+                FakePage::new(&format!("{base}/app"))
+                    .title("Browser child")
+                    .node(FakeAxSpec::link("http", "HTTP", "/http"))
+                    .on_click("http", vec![FakeEffect::Navigate("/http".into())])
+                    .discovered("/http", "link"),
+            )
+            .page(FakePage::new(&format!("{base}/http")).title("HTTP child"));
+        let backend = Arc::new(
+            FakeBackend::builder()
+                .script(script)
+                .honour_navigation_guard()
+                .clock(Arc::new(SystemClock))
+                .build(),
+        );
+        let report = run_local_with(LocalRun::new(crawl, cfg(dir.path())).with_backend(backend.clone()))
+            .await
+            .unwrap();
+        let contexts = backend.context_handles();
+        if child_route == "http" {
+            assert_eq!(report.status, RunStatus::Completed);
+            assert!(report.states.is_empty());
+            assert!(
+                contexts.is_empty(),
+                "HTTP-only routing must not acquire a browser"
+            );
+        } else {
+            assert!(report.states.iter().any(|state| state.url.url.path() == "/app"));
+            assert!(contexts.iter().all(|context| {
+                context
+                    .navigations()
+                    .iter()
+                    .all(|url| url == &format!("{base}/app"))
+            }));
+            assert!(contexts
+                .iter()
+                .any(|context| !context.refused_navigations().is_empty()));
+        }
+        assert!(report.states.iter().all(|state| state.url.url.path() == "/app"));
+    }
+    server.abort();
 }
 
 #[tokio::test]

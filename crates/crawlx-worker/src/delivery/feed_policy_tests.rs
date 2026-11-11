@@ -53,6 +53,9 @@ async fn fixture(feeds: Value, schema: &str, zdr: bool) -> Fixture {
     let mut facts = crawlx_core::data_capabilities::WorkerDataCapabilitiesV1::default();
     facts.destinations.insert("first".into(), true);
     facts.destinations.insert("second".into(), true);
+    facts
+        .compressed_destinations
+        .extend(["first".into(), "second".into()]);
     repo.publish_data_capabilities(worker, &facts).await.unwrap();
     Fixture {
         stores,
@@ -232,7 +235,12 @@ async fn terminal_filters_multiple_destinations_and_bounded_batches_keep_exact_r
     // A restart before the terminal transaction must not expose or regenerate different batches.
     assert!(f.repo.claim(f.run.id, f.worker, 10, 60).await.unwrap().is_empty());
     f.stores
-        .finish_run(f.run.id, TerminalReason::FrontierExhausted, &CpuPool::default())
+        .finish_run(
+            f.run.id,
+            TerminalReason::FrontierExhausted,
+            &CpuPool::default(),
+            f.worker,
+        )
         .await
         .unwrap();
     assert_eq!(f.repo.get(f.run.id).await.unwrap().status, RunStatus::Completed);
@@ -269,7 +277,12 @@ async fn terminal_imported_objects_use_same_bounded_serializer_without_fragments
     let f = fixture(json!([feed("first", "jsonl")]), "json_object_v1", false).await;
     accept(&f, &[json!({"n":1}), json!({"n":2}), json!({"n":3})], true).await;
     f.stores
-        .finish_run(f.run.id, TerminalReason::FrontierExhausted, &CpuPool::default())
+        .finish_run(
+            f.run.id,
+            TerminalReason::FrontierExhausted,
+            &CpuPool::default(),
+            f.worker,
+        )
         .await
         .unwrap();
     let claims = f.repo.claim(f.run.id, f.worker, 10, 60).await.unwrap();
@@ -296,7 +309,12 @@ async fn terminal_empty_emit_has_no_invented_item_range_and_skip_has_no_receipt(
         skip["emptyPolicy"] = json!("skip");
         let f = fixture(json!([feed("first", "json"), skip]), "document_item_v1", zdr).await;
         f.stores
-            .finish_run(f.run.id, TerminalReason::FrontierExhausted, &CpuPool::default())
+            .finish_run(
+                f.run.id,
+                TerminalReason::FrontierExhausted,
+                &CpuPool::default(),
+                f.worker,
+            )
             .await
             .unwrap();
         let claims = f.repo.claim(f.run.id, f.worker, 10, 60).await.unwrap();
@@ -357,7 +375,12 @@ async fn terminal_batch_reclaims_same_identity_after_local_put_without_receipt()
     let f = fixture(json!([feed("first", "jsonl")]), "document_item_v1", false).await;
     accept(&f, &[json!({"n":1}), json!({"n":2})], false).await;
     f.stores
-        .finish_run(f.run.id, TerminalReason::FrontierExhausted, &CpuPool::default())
+        .finish_run(
+            f.run.id,
+            TerminalReason::FrontierExhausted,
+            &CpuPool::default(),
+            f.worker,
+        )
         .await
         .unwrap();
     let first = f
@@ -427,7 +450,12 @@ async fn compressed_byte_expansion_splits_only_at_stable_record_boundaries() {
     )
     .await;
     f.stores
-        .finish_run(f.run.id, TerminalReason::FrontierExhausted, &CpuPool::default())
+        .finish_run(
+            f.run.id,
+            TerminalReason::FrontierExhausted,
+            &CpuPool::default(),
+            f.worker,
+        )
         .await
         .unwrap();
     let claims = f.repo.claim(f.run.id, f.worker, 10, 60).await.unwrap();
@@ -450,7 +478,12 @@ async fn every_filtered_item_still_commits_but_feed_publishes_only_one_empty_man
     let f = fixture(json!([policy]), "document_item_v1", false).await;
     accept(&f, &[json!({"keep":false}), json!({"keep":false})], false).await;
     f.stores
-        .finish_run(f.run.id, TerminalReason::FrontierExhausted, &CpuPool::default())
+        .finish_run(
+            f.run.id,
+            TerminalReason::FrontierExhausted,
+            &CpuPool::default(),
+            f.worker,
+        )
         .await
         .unwrap();
     let claims = f.repo.claim(f.run.id, f.worker, 10, 60).await.unwrap();
@@ -526,7 +559,7 @@ async fn terminal_article_fragments_preserve_real_serializers_and_native_collect
         f.repo.commit_fenced(commit).await.unwrap();
     }
     f.stores
-        .finish_run(f.run.id, TerminalReason::FrontierExhausted, &cpu)
+        .finish_run(f.run.id, TerminalReason::FrontierExhausted, &cpu, f.worker)
         .await
         .unwrap();
     let claims = f.repo.claim(f.run.id, f.worker, 16, 60).await.unwrap();
@@ -689,4 +722,132 @@ async fn destinations_keep_disjoint_volatile_deadline_namespaces() {
         terminal_page(&f.run, first, 0).unwrap(),
         terminal_page(&f.run, first, 1).unwrap()
     );
+}
+
+#[tokio::test]
+async fn sealed_terminal_feeds_are_written_under_the_finalizer_claim() {
+    let f = fixture(json!([feed("first", "json")]), "document_item_v1", false).await;
+    accept(&f, &[json!({"n":1}), json!({"n":2}), json!({"n":3})], false).await;
+    // Same run and artifact directory, but every Content write now needs a producer lease.
+    let sealed = Stores::over_memory_with_local_custody(f.repo.clone(), f._directory.path())
+        .await
+        .unwrap();
+    let probe = Redactor::new().verify_canonical_owned(b"[]\n".to_vec()).unwrap();
+    let refused = ArtifactSink::over(sealed.artifacts.as_ref())
+        .put_dataset(f.run.id, 0, "probe", "application/json", &probe)
+        .await;
+    assert!(matches!(refused, Err(StoreError::Unavailable(_))), "{refused:?}");
+    sealed
+        .finish_run(
+            f.run.id,
+            TerminalReason::FrontierExhausted,
+            &CpuPool::default(),
+            f.worker,
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.repo.get(f.run.id).await.unwrap().status, RunStatus::Completed);
+    let claims = f.repo.claim(f.run.id, f.worker, 10, 60).await.unwrap();
+    assert_eq!(claims.len(), 2);
+    for claim in &claims {
+        sealed
+            .artifacts
+            .get(claim.batch.content.artifact())
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn finalizer_claim_is_exclusive_fenced_and_ends_with_finalization() {
+    let mut policy = feed("first", "json");
+    policy["emptyPolicy"] = json!("skip");
+    let f = fixture(json!([policy]), "document_item_v1", false).await;
+    let ttl = std::time::Duration::from_secs(60);
+    let other = WorkerId::new();
+    assert!(matches!(
+        f.repo.claim_feed_finalizer(f.run.id, f.worker, ttl).await,
+        Err(StoreError::LeaseLost)
+    ));
+    f.repo
+        .begin_feed_finalization(f.run.id, Some(TerminalReason::FrontierExhausted))
+        .await
+        .unwrap();
+    let first = f
+        .repo
+        .claim_feed_finalizer(f.run.id, f.worker, ttl)
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.repo.claim_feed_finalizer(f.run.id, other, ttl).await,
+        Err(StoreError::Conflict(_))
+    ));
+    f.repo.release_feed_finalizer(&first).await.unwrap();
+    let second = f.repo.claim_feed_finalizer(f.run.id, other, ttl).await.unwrap();
+    assert!(second.fence > first.fence);
+    assert!(matches!(
+        f.repo.renew_feed_finalizer(&first, ttl).await,
+        Err(StoreError::LeaseLost)
+    ));
+    f.repo.renew_feed_finalizer(&second, ttl).await.unwrap();
+    f.clock.advance_ms(61_000);
+    assert!(matches!(
+        f.repo.renew_feed_finalizer(&second, ttl).await,
+        Err(StoreError::LeaseLost)
+    ));
+    let third = f
+        .repo
+        .claim_feed_finalizer(f.run.id, f.worker, ttl)
+        .await
+        .unwrap();
+    assert!(third.fence > second.fence);
+    f.repo
+        .finalize_run_feeds(
+            f.run.id,
+            RunStatus::Completed,
+            TerminalReason::FrontierExhausted,
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.repo.renew_feed_finalizer(&third, ttl).await,
+        Err(StoreError::LeaseLost)
+    ));
+    assert!(matches!(
+        f.repo.claim_feed_finalizer(f.run.id, f.worker, ttl).await,
+        Err(StoreError::LeaseLost)
+    ));
+}
+
+#[tokio::test]
+async fn finish_run_waits_out_another_workers_live_finalizer_claim() {
+    let f = fixture(json!([feed("first", "json")]), "document_item_v1", false).await;
+    accept(&f, &[json!({"n":1}), json!({"n":2}), json!({"n":3})], false).await;
+    f.repo
+        .begin_feed_finalization(f.run.id, Some(TerminalReason::FrontierExhausted))
+        .await
+        .unwrap();
+    let held = f
+        .repo
+        .claim_feed_finalizer(f.run.id, WorkerId::new(), std::time::Duration::from_secs(60))
+        .await
+        .unwrap();
+    let repo = f.repo.clone();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        repo.release_feed_finalizer(&held).await.unwrap();
+    });
+    f.stores
+        .finish_run(
+            f.run.id,
+            TerminalReason::FrontierExhausted,
+            &CpuPool::default(),
+            f.worker,
+        )
+        .await
+        .unwrap();
+    release.await.unwrap();
+    assert_eq!(f.repo.get(f.run.id).await.unwrap().status, RunStatus::Completed);
+    assert_eq!(f.repo.claim(f.run.id, f.worker, 10, 60).await.unwrap().len(), 2);
 }

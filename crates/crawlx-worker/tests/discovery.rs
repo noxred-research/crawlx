@@ -176,6 +176,7 @@ async fn site(park: bool) -> Site {
         .route("/fr", get(|| async { html("French article", "", "") }))
         .route("/dated/{name}", get(|| async { html("Dated sitemap article", "", "") }))
         .route("/fallback", get(|| async { html("Focused fallback", "", "") }))
+        .route("/listed/{name}", get(|| async { html("Listed article", "", r#"<a href="/fallback">Not a listed target</a>"#) }))
         .route("/outside", get(|| async { "must not be fetched" }))
         .route("/category/outside", get(|| async { "category cannot grant scope" }))
         .route("/robots-private", get(|| async { "robots must deny this" }))
@@ -305,6 +306,83 @@ async fn actual_worker_denies_feed_cycle_scope_robots_private_and_media_redirect
         !report.pages.iter().any(|page| page.url.url.path() == "/more"),
         "read-more is an explicit child artifact, not an unbudgeted second frontier fetch"
     );
+}
+
+#[tokio::test]
+async fn actual_url_list_discovery_deduplicates_in_order_and_obeys_scope_robots_and_known_limit() {
+    for max_known_urls in [4, 2] {
+        let site = site(false).await;
+        let dir = tempfile::tempdir().unwrap();
+        let stores =
+            crawlx_worker::Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
+                .await
+                .unwrap();
+        let mut request = crawl(&site);
+        request.scope.sources = vec![DiscoverySourceV1::UrlList];
+        request.scope.max_known_urls = max_known_urls;
+        request.scope.include_paths =
+            vec!["^/$".into(), "^/listed/(1|2)$".into(), "^/robots-private$".into()];
+        let policy = request.scope.discovery.as_mut().unwrap();
+        policy.media_probes = 0;
+        policy.read_more_hops = 0;
+        policy.max_source_documents = 1;
+        let paths = if max_known_urls == 4 {
+            vec![
+                "/listed/2",
+                "/listed/2#x",
+                "/listed/1",
+                "/robots-private",
+                "/outside",
+            ]
+        } else {
+            vec!["/listed/2", "/listed/2#x", "/listed/1"]
+        };
+        policy.url_list = Some(
+            crawlx_core::discovery::UrlListSourceV1::new(
+                paths.iter().map(|path| format!("{}{path}", site.base)).collect(),
+            )
+            .unwrap(),
+        );
+        let report = common::authorization::run_authorized_local_with(
+            crawlx_worker::LocalRun::new(request, config(dir.path())).with_stores(stores.clone()),
+        )
+        .await
+        .unwrap();
+        let expected: &[&str] = if max_known_urls == 4 {
+            &["/", "/listed/2", "/listed/1"]
+        } else {
+            &["/", "/listed/2"]
+        };
+        let mut rows = stores.frontier.list(report.run_id).await.unwrap();
+        rows.sort_by_key(|row| row.id);
+        assert_eq!(
+            rows.iter().map(|row| row.url.url.path()).collect::<Vec<_>>(),
+            expected,
+            "first-seen list order survives admission; the seed consumes one known-URL slot",
+        );
+        assert_eq!(report.pages.len(), expected.len());
+        for path in expected {
+            assert_eq!(site.count(path), 1, "each normalized target is fetched once");
+        }
+        for path in ["/robots-private", "/outside", "/feed", "/fallback"] {
+            assert_eq!(site.count(path), 0);
+        }
+        if max_known_urls == 2 {
+            assert_eq!(
+                site.count("/listed/1"),
+                0,
+                "the lifetime known-URL ceiling applies"
+            );
+        }
+        assert!(rows.iter().all(|row| row.url.url.fragment().is_none()));
+        let seed = report
+            .pages
+            .iter()
+            .find(|page| page.url.url.path() == "/")
+            .unwrap();
+        assert_eq!(seed.metadata["url_list"]["duplicates"], 1);
+        assert_eq!(seed.metadata["url_list"]["admitted"], expected.len() - 1);
+    }
 }
 
 #[tokio::test]

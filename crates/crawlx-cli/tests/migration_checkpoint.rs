@@ -7,7 +7,7 @@ use crawlx_core::repo::{FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::request::import::{decode_checkpoint_export, ImportAdmissionV1, SOURCE_PINS};
 use crawlx_core::{CrawlRunId, TenantId, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{MemoryStore, Pg, PgConfig};
+use crawlx_storage::{MemoryStore, Pg, StoreConfig};
 use serde_json::json;
 
 async fn checkpoint_contract<R: FrontierRepo + RunRepo>(repo: &R, reopened: &R, tenant: TenantId) {
@@ -113,9 +113,9 @@ async fn postgres_checkpoint_restart_epoch_and_cursor_are_fenced() {
     let schema = format!("checkpoint_{}", CrawlRunId::new().0.simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -125,9 +125,9 @@ async fn postgres_checkpoint_restart_epoch_and_cursor_are_fenced() {
     pg.ensure_tenant(tenant, "checkpoint-tests").await.unwrap();
     let reopened = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

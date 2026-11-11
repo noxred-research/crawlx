@@ -1,15 +1,8 @@
 {
   "version": 1,
   "fixture": "g32",
-  "recorded": "2026-10-20",
+  "recorded": "2026-11-11",
   "source": "expectedResults list of a crawl-maze scoring tool ported from an MIT-licensed upstream; see THIRD_PARTY_NOTICES.md; 91 targets, two stray /test prefixes normalized",
-  "unmeasured_static_additions": [
-    "/html/body/img/src-data.found",
-    "/html/head/profile.found",
-    "/html/head/comment-conditional.found",
-    "/html/head/meta/content-pinned-websites.found",
-    "/html/head/meta/content-reading-view.found"
-  ],
   "request": {
     "hybrid": {
       "dynamic": {
@@ -69,7 +62,7 @@
         "expected": 4
       },
       "html": {
-        "found": 51,
+        "found": 56,
         "expected": 57
       },
       "javascript": {
@@ -83,7 +76,7 @@
     },
     "per_plane": {
       "static": {
-        "found": 61,
+        "found": 66,
         "expected": 66
       },
       "browser": {
@@ -122,6 +115,7 @@
       "/html/body/img/dynsrc.found",
       "/html/body/img/lowsrc.found",
       "/html/body/img/longdesc.found",
+      "/html/body/img/src-data.found",
       "/html/body/img/src.found",
       "/html/body/img/srcset1x.found",
       "/html/body/img/srcset2x.found",
@@ -139,10 +133,14 @@
       "/html/body/video/src.found",
       "/html/body/video/track/src.found",
       "/html/body/video/poster.found",
+      "/html/head/profile.found",
       "/html/head/base/href.found",
+      "/html/head/comment-conditional.found",
       "/html/head/import/implementation.found",
       "/html/head/link/href.found",
       "/html/head/meta/content-csp.found",
+      "/html/head/meta/content-pinned-websites.found",
+      "/html/head/meta/content-reading-view.found",
       "/html/head/meta/content-redirect.found",
       "/html/misc/url/full-url.found",
       "/html/misc/url/path-relative-url.found",
@@ -177,11 +175,6 @@
     ],
     "missing": [
       "/html/body/form/action-post.found",
-      "/html/body/img/src-data.found",
-      "/html/head/profile.found",
-      "/html/head/comment-conditional.found",
-      "/html/head/meta/content-pinned-websites.found",
-      "/html/head/meta/content-reading-view.found",
       "/javascript/misc/automatic-post.found",
       "/javascript/interactive/js-delete.found",
       "/javascript/interactive/js-post.found",
@@ -190,7 +183,7 @@
       "/javascript/interactive/two-listeners-first.found",
       "/javascript/interactive/two-listeners-second.found"
     ],
-    "total": 78,
+    "total": 83,
     "expected": 91
   },
   "hybrid": {

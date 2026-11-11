@@ -84,7 +84,7 @@ fn actual_cli_replay_and_qa_report_real_baseline_and_absence() {
             .args(["--tenant", TENANT, "--out"])
             .arg(output)
             .args(["--seed", "7", "--sample", "3", "--page-filter", r"/index\.html$"]);
-        if operation == "qa" {
+        if operation == "qa" && baseline.is_some() {
             command.arg("--diff-images");
         }
         if let Some(baseline) = baseline {
@@ -185,4 +185,39 @@ fn zdr_difference_images_refuse_before_reading_baseline_or_writing_output() {
     assert!(!process.status.success());
     assert!(String::from_utf8_lossy(&process.stderr).contains("retention_denied"));
     assert!(!output.exists());
+}
+
+#[test]
+fn difference_images_require_a_baseline() {
+    let result = Command::new(env!("CARGO_BIN_EXE_crawlx"))
+        .args([
+            "archive",
+            "qa",
+            "missing.wacz",
+            "--tenant",
+            TENANT,
+            "--out",
+            "unused",
+            "--diff-images",
+        ])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("--baseline"));
+}
+
+#[test]
+fn missing_replay_output_parent_is_named_before_opening_input() {
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("missing");
+    let result = Command::new(env!("CARGO_BIN_EXE_crawlx"))
+        .args(["archive", "replay", "missing.wacz", "--tenant", TENANT, "--out"])
+        .arg(parent.join("output"))
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(error.contains("archive replay output directory"), "{error}");
+    assert!(error.contains("create it first"), "{error}");
+    assert!(!parent.exists());
 }

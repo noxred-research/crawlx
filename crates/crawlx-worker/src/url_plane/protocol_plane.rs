@@ -170,9 +170,9 @@ impl UrlPlaneRunner {
         if resource
             .target_status
             .is_some_and(|status| !(200..=299).contains(&status))
-            || (policy.validation.on_content_mismatch
-                == crawlx_core::acquisition::ContentMismatchActionV1::Fail
-                && !metadata.validation.content_accepted)
+            || metadata
+                .validation
+                .refuses_content(policy.validation.on_content_mismatch, resource.target_status)
         {
             return self
                 .fail(

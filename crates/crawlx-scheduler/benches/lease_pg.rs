@@ -12,7 +12,7 @@ use crawlx_core::repo::{CrawlRun, RunRepo, SessionStatus};
 use crawlx_core::{CrawlRunId, TenantId, WorkerId};
 use crawlx_scheduler::{RunPlanner, Scheduler};
 use crawlx_storage::testkit::{crawl_run, create_crawl};
-use crawlx_storage::{Pg, PgConfig};
+use crawlx_storage::{Pg, StoreConfig};
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -27,10 +27,10 @@ async fn connect(url: &str) -> Pg {
     let schema = format!("bench_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
             max_connections: 8,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

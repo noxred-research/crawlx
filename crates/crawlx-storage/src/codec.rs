@@ -104,7 +104,91 @@ pub(crate) fn get<'r, T>(row: &'r PgRow, col: &str) -> Result<T, StoreError>
 where
     T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
 {
+    row_get::<PgRow, T>(row, col)
+}
+
+/// Decode column `col` of a row of any engine.
+pub(crate) fn row_get<'r, R, T>(row: &'r R, col: &str) -> Result<T, StoreError>
+where
+    R: Row,
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+    T: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+{
     row.try_get::<T, _>(col).map_err(db)
+}
+
+/// Sentinel `"-infinity"` on SQLite: year 1, microseconds since the epoch. Bounded so that
+/// adding or subtracting any lease or spacing value stays an integer.
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) const SQLITE_NEG_INFINITY: i64 = crate::backend::dialect::SQLITE_NEG_INFINITY_MICROS;
+
+/// Sentinel `"infinity"` on SQLite: 9999-12-31T23:59:59.999999Z in microseconds.
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) const SQLITE_POS_INFINITY: i64 = crate::backend::dialect::SQLITE_POS_INFINITY_MICROS;
+
+/// Microseconds since the epoch, the SQLite column representation of a timestamp.
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) fn ts_to_micros(ts: chrono::DateTime<chrono::Utc>) -> i64 {
+    ts.timestamp_micros()
+}
+
+/// Decode a SQLite timestamp column; the infinity sentinels decode to the extreme finite
+/// times callers treat as "never" and "always".
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) fn ts_from_micros(micros: i64) -> Result<chrono::DateTime<chrono::Utc>, StoreError> {
+    chrono::DateTime::from_timestamp_micros(micros)
+        .ok_or_else(|| StoreError::Serialization(format!("timestamp {micros} out of range")))
+}
+
+/// The MariaDB bind form of a timestamp. `DateTime<Utc>` binds as `TIMESTAMP`, whose range
+/// ends in 2038 and silently stores out-of-range values as NULL; a naive UTC `DATETIME(6)`
+/// value keeps the full range (including the `1000-01-01` and `9999-12-31` sentinels).
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) fn ts_to_naive(ts: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDateTime {
+    ts.naive_utc()
+}
+
+/// Decode a MariaDB `DATETIME(6)` column read as a naive UTC value.
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) fn ts_from_naive(naive: chrono::NaiveDateTime) -> chrono::DateTime<chrono::Utc> {
+    naive.and_utc()
+}
+
+/// The text a JSON value is stored as on engines without a JSON binary type. The same
+/// rendering is hashed by the audit chain, so it must stay the compact `serde_json` form.
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) fn to_json_text(value: &serde_json::Value) -> String {
+    value.to_string()
+}
+
+/// Parse stored JSON text.
+#[allow(
+    dead_code,
+    reason = "used by the SQLite and MariaDB repositories of later slices"
+)]
+pub(crate) fn from_json_text(text: &str) -> Result<serde_json::Value, StoreError> {
+    serde_json::from_str(text).map_err(|e| StoreError::Serialization(e.to_string()))
 }
 
 /// Retention horizon of `days` days after `from`; `0` means no expiry.
@@ -173,6 +257,34 @@ mod tests {
         assert_eq!(signed_bits(u64::MAX).unwrap(), -1);
         assert!(conv::<u64, i64>(u64::MAX, "counter").is_err());
         assert!(conv::<i64, u64>(-1, "counter").is_err());
+    }
+
+    #[test]
+    fn timestamps_round_trip_on_every_representation() {
+        let ts = chrono::DateTime::from_timestamp_micros(1_700_000_000_123_456).unwrap();
+        assert_eq!(ts_from_micros(ts_to_micros(ts)).unwrap(), ts);
+        assert_eq!(ts_from_naive(ts_to_naive(ts)), ts);
+        // the sentinels are year 1 and year 9999 on both new engines
+        let never = ts_from_micros(SQLITE_POS_INFINITY).unwrap();
+        assert_eq!(never.to_rfc3339(), "9999-12-31T23:59:59.999999+00:00");
+        let always = ts_from_micros(SQLITE_NEG_INFINITY).unwrap();
+        assert_eq!(always.to_rfc3339(), "0001-01-01T00:00:00+00:00");
+        assert!(ts_from_micros(i64::MAX).is_err());
+        // a naive value past the TIMESTAMP range survives the MariaDB form
+        let far = chrono::NaiveDate::from_ymd_opt(9999, 12, 31)
+            .unwrap()
+            .and_hms_micro_opt(23, 59, 59, 999_999)
+            .unwrap();
+        assert_eq!(ts_to_naive(ts_from_naive(far)), far);
+    }
+
+    #[test]
+    fn json_text_is_compact_and_lossless() {
+        let value = serde_json::json!({ "b": [1, null, "x"], "a": "é𝄞" });
+        let text = to_json_text(&value);
+        assert_eq!(text, r#"{"a":"é𝄞","b":[1,null,"x"]}"#);
+        assert_eq!(from_json_text(&text).unwrap(), value);
+        assert!(from_json_text("{").is_err());
     }
 
     #[test]

@@ -366,7 +366,9 @@ async fn g31_closed_shadow_controls_and_the_webdriver_probe_per_launch_profile()
 async fn d1_spa_controls_are_found_the_ticker_never_blocks_idle_and_metadata_requests_are_denied() {
     let _slot = browser_slot().await;
     let gym = gym().await;
-    let manifest = FixtureManifest::embedded("d1").unwrap();
+    let mut manifest = FixtureManifest::embedded("d1").unwrap();
+    // the wall-clock ticker is the time-driven variant; the default d1 is seed-deterministic
+    manifest.url_path.push_str("?live=1");
     let mut policy = EgressPolicy::new(false);
     policy.extra_allow.push("127.0.0.1/32".parse().unwrap());
     policy.extra_ports.push(gym.port);

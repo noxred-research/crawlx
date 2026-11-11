@@ -912,7 +912,101 @@ fn empty_bytes(feed: &FeedDeclarationV1, article: bool) -> Result<Vec<u8>, Store
     Ok(bytes.to_vec())
 }
 
+/// Lifetime of one finalizer claim; the holder renews it every third of this.
+const FINALIZER_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Renew the claim until it cannot be renewed; resolves only with the error that ended it.
+async fn keep_finalizer_live(
+    repo: &dyn crawlx_core::orchestration::RequestCommitRepo,
+    lease: &crawlx_core::custody::CustodyLease,
+) -> StoreError {
+    let mut ticks = tokio::time::interval(FINALIZER_TTL / 3);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ticks.tick().await;
+    loop {
+        ticks.tick().await;
+        if let Err(error) = repo.renew_feed_finalizer(lease, FINALIZER_TTL).await {
+            return error;
+        }
+    }
+}
+
+/// How long a busy claim is polled before its owner is presumed stuck.
+const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+const CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Claim the finalizer of `run`, waiting out a live claim of another worker.
+///
+/// `None` means the finalization already completed elsewhere, so there is nothing left to seal.
+async fn claim_finalizer(
+    stores: &Stores,
+    run: crawlx_core::CrawlRunId,
+    worker: crawlx_core::WorkerId,
+) -> Result<Option<crawlx_core::custody::CustodyLease>, StoreError> {
+    let give_up = tokio::time::Instant::now() + CLAIM_WAIT;
+    loop {
+        match stores
+            .request_commits
+            .claim_feed_finalizer(run, worker, FINALIZER_TTL)
+            .await
+        {
+            Ok(lease) => return Ok(Some(lease)),
+            Err(StoreError::LeaseLost) => return Ok(None),
+            Err(StoreError::Conflict(_)) if tokio::time::Instant::now() < give_up => {
+                tokio::time::sleep(CLAIM_POLL).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Seal the terminal feed artifacts of `run` and end its feed finalization.
+///
+/// Terminal batches are sealed artifacts, so they are written under the run's claimed
+/// finalizer lease ([`crawlx_core::orchestration::RequestCommitRepo::claim_feed_finalizer`]) and
+/// its run-wide secret check. A run without terminal or empty-emit feeds writes nothing and
+/// needs no claim. A failed attempt releases its claim so recovery can take over at once.
 pub(crate) async fn finalize_feeds(
+    stores: &Stores,
+    run: &CrawlRun,
+    reason: crawlx_core::counters::TerminalReason,
+    cpu: &CpuPool,
+    worker: crawlx_core::WorkerId,
+) -> Result<(), StoreError> {
+    let seals = run.config.datasets.feeds.iter().any(|feed| {
+        feed.batching == FeedBatchingV1::Terminal || feed.empty_policy == EmptyFeedPolicyV1::Emit
+    });
+    if !seals {
+        return publish_terminal_feeds(stores, run, reason, cpu).await;
+    }
+    // Another worker may be finalizing the same run right now; wait for it to finish or for its
+    // claim to expire, rather than failing a run that is already being finished.
+    let Some(lease) = claim_finalizer(stores, run.id, worker).await? else {
+        return Ok(());
+    };
+    let work = async {
+        let publish = publish_terminal_feeds(stores, run, reason, cpu);
+        tokio::pin!(publish);
+        tokio::select! {
+            biased;
+            outcome = &mut publish => outcome,
+            error = keep_finalizer_live(stores.request_commits.as_ref(), &lease) => Err(error),
+        }
+    };
+    let outcome = crawlx_core::custody::with_producer(
+        lease.clone(),
+        crate::custody_renewal::with_custody_renewal(stores.secret_authority.clone(), lease.clone(), work),
+    )
+    .await;
+    if outcome.is_err() {
+        if let Err(error) = stores.request_commits.release_feed_finalizer(&lease).await {
+            tracing::warn!(run = %run.id, %error, "feed finalizer claim not released");
+        }
+    }
+    outcome
+}
+
+async fn publish_terminal_feeds(
     stores: &Stores,
     run: &CrawlRun,
     reason: crawlx_core::counters::TerminalReason,

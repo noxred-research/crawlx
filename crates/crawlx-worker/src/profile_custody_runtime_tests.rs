@@ -5,9 +5,10 @@ use crawlx_core::custody::RunSecretAuthority as _;
 use crawlx_core::repo::RunRepo as _;
 use crawlx_core::{PrincipalId, TenantId, WorkerId};
 use crawlx_storage::artifact_key_crypto::FileArtifactKeys;
+use crawlx_storage::custody::PgSecretAuthority;
 use crawlx_storage::leases::LeaseRepo as _;
 use crawlx_storage::testkit::{crawl_run, create_crawl, sessions};
-use crawlx_storage::{Pg, PgConfig};
+use crawlx_storage::{Pg, StoreConfig};
 use serde_json::json;
 use std::time::Duration;
 
@@ -382,7 +383,7 @@ fn runtime(
     save_changes: bool,
 ) -> ProfileCustodyRuntime {
     ProfileCustodyRuntime::new(ProfileCustodyInputs {
-        authority: Arc::clone(authority),
+        authority: Arc::new(crate::durable::DurableAuthority::Postgres((**authority).clone())),
         keys: Arc::clone(keys),
         lease: lease.clone(),
         custody,
@@ -405,12 +406,12 @@ async fn restart_restores_the_committed_generation_through_custody_and_refuses_e
     };
     let pg = Pg::connect(
         &database,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!(
                 "profile_runtime_{}",
                 crawlx_core::CrawlRunId::new().0.simple()
             )),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

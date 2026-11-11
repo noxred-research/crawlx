@@ -584,7 +584,11 @@ pub async fn support_ask(
             "Diagnose the problem and recommend a fix. Reply as {{\"answer\": \"...\", \"confidence\": \"high|medium|low\", \"fixParameters\": {{...}} or null}}; fixParameters holds API request parameters that may fix the issue.\n{}\n{}\n{}\n{}",
             fence("Question:", &question, 4_000),
             fence("Context:", rationale, 4_000),
-            fence("Recent failed jobs:", &Value::Array(failures.clone()).to_string(), 4_000),
+            fence(
+                "Recent failed jobs:",
+                &Value::Array(failures.clone()).to_string(),
+                4_000
+            ),
             fenced_passages(&hits),
         );
         let schema = json!({

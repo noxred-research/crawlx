@@ -88,7 +88,7 @@ async fn verify(state: &AppState, run: &CrawlRun, delta: &KvCasV1) -> ApiResult<
         _ => {
             return Err(HttpError::artifact_unavailable(
                 "KV content retention class mismatch",
-            ))
+            ));
         }
     }
     Ok(())

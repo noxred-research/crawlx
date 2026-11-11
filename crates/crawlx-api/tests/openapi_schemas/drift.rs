@@ -38,6 +38,35 @@ fn selector_wait_schema_accepts_optional_states_but_not_null() {
     assert!(!validate.is_valid(&request));
 }
 
+#[test]
+fn parse_upload_schema_accepts_omitted_options_without_a_null_default() {
+    let document = doc();
+    let operation = &document["paths"][format!("{V2}/parse")]["post"];
+    let (media, schema) = request_schema(operation).unwrap();
+    assert_eq!(media, "multipart/form-data");
+    let upload = resolve(&document, &schema);
+    let options = &upload["properties"]["options"];
+    assert_eq!(options["type"], "string");
+    assert!(options.get("default").is_none());
+    assert_eq!(upload["required"], json!(["file"]));
+
+    let validate = validator(&document, &schema);
+    let mut request = json!({"file": "document bytes"});
+    assert!(
+        validate.is_valid(&request),
+        "{:?}",
+        errors_of(&validate, &request)
+    );
+    request["options"] = json!("{}");
+    assert!(
+        validate.is_valid(&request),
+        "{:?}",
+        errors_of(&validate, &request)
+    );
+    request["options"] = Value::Null;
+    assert!(!validate.is_valid(&request));
+}
+
 // ---- walking schemas and examples ----------------------------------------------------------------
 
 /// What a request schema says, by *schema path*: `/a/b` for member `b` of member `a`, `/a[]/b` for

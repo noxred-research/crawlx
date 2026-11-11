@@ -23,7 +23,7 @@ use crawlx_core::{CanonicalUrl, Clock, CrawlRunId, CreateCrawl, SystemClock, Ten
 use crawlx_fetch::StaticResolver;
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use crawlx_worker::lease_loop::run_with;
 use crawlx_worker::scrape::cache;
 use crawlx_worker::{run_local_with, EgressConfig, LocalRun, RunReport, Stores, WorkerConfig};
@@ -117,9 +117,9 @@ async fn rig() -> Option<Rig> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_scrape_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -131,7 +131,11 @@ async fn rig() -> Option<Rig> {
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        TenantId::new(),
+    );
     stores.checkpoint_keys =
         Arc::new(crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap());
     let now = SystemClock.now();

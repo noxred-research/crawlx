@@ -191,9 +191,9 @@ impl BrowserCaptureSink for EvidenceSink {
         }
         crate::capture::check_run_secrets(bytes.as_ref(), &self.controls, Some(&self.captcha))?;
         let approved = if descriptor.kind == CaptureKind::Text {
-            let scrubbed =
-                crawlx_telemetry::Redactor::new().scrub_bytes(bytes.as_ref(), self.controls.secret_values());
-            Redactor::new().redact_artifact(scrubbed.as_ref())?
+            let scrubbed = crate::capture::scrub_admitted(bytes.as_ref(), self.controls.secret_values())?;
+            let scrubbed: &[u8] = scrubbed.value();
+            Redactor::new().redact_artifact(scrubbed)?
         } else {
             // Never rewrite encoded images, multipart snapshots, PDF or attachments.
             Redactor::new().verify_binary(bytes.as_ref())?

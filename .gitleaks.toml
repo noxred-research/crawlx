@@ -24,4 +24,8 @@ regexes = [
   '''^tok-4f9a8b2c71d0$''',
   '''^sess-9e8d7c6b5a40$''',
   '''^CRAWLX_S3_SECRET_KEY$''',
+  # A deliberately malformed (upper-case) bootstrap key that the refusal test feeds in.
+  '''^t=cx_live_ABCDEFGHIJKLMNOPQRSTUVWXYZ$''',
+  # Digest domain labels of the ZDR projection unit test, not credentials.
+  '''^crawlx/(?:test|other)/v1$''',
 ]

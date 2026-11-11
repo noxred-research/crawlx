@@ -1,12 +1,14 @@
-//! `crawlx inspect`: read a stored run from PostgreSQL.
+//! `crawlx inspect`: read a stored run from the database.
 
 use anyhow::{anyhow, Context as _};
 use clap::{Args, ValueEnum};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::repo::{ActionJournal, ArtifactStore, PageRepo, RunRepo, StateRepo};
 use crawlx_core::{CrawlRunId, Timestamp, TrustLane};
+use crawlx_storage::tenant::Tenancy;
 use crawlx_storage::trusted::{CoverageRow, LaneFilter, TrafficQuery, TrustedCorpus};
-use crawlx_storage::{FsArtifactStore, InspectRepo, Pg, PgConfig, S3ArtifactStore, S3Blobs, S3Config};
+use crawlx_storage::{Database, FsArtifactStore, InspectRepo, S3ArtifactStore, S3Blobs, S3Config, Store};
+use crawlx_worker::DurableStore;
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::PathBuf;
@@ -74,8 +76,8 @@ pub struct InspectArgs {
     /// both-lanes choice; every row still carries its lane.
     #[arg(long, value_enum, default_value = "all")]
     pub lane: LaneArg,
-    /// PostgreSQL URL of the store.
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    /// Database URL of the store (`postgres:`, `mariadb:` or `sqlite:`).
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     pub database_url: Option<String>,
     /// `trail`: filesystem artifact root used by the writer.
     #[arg(
@@ -96,19 +98,48 @@ pub struct InspectArgs {
     pub json: bool,
 }
 
-pub(crate) async fn connect(url: Option<&str>) -> anyhow::Result<Pg> {
+/// Why an operator command opens the database.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Open {
+    /// Read or change an existing database under the configured statement timeout.
+    Existing,
+    /// Apply migrations: may create a SQLite file, and runs without a statement timeout
+    /// because schema changes and the migration lock wait are not bounded request work.
+    Migrate,
+}
+
+/// Open the database an operator command reads or changes. Unless opened for
+/// [`Open::Migrate`], the database must exist already: a mistyped SQLite path fails instead
+/// of creating an empty file.
+pub(crate) async fn connect_database(url: Option<&str>, open: Open) -> anyhow::Result<Database> {
     // secrets come from files; `CRAWLX_DATABASE_URL_FILE` / `database.url_file`
     // are the production path, the flag and `CRAWLX_DATABASE_URL` the development one.
     let url = crate::config_check::database_url(url)?.ok_or_else(|| {
         anyhow!(
-            "this command reads PostgreSQL: pass --database-url, set CRAWLX_DATABASE_URL, \
+            "this command reads the database: pass --database-url, set CRAWLX_DATABASE_URL, \
              CRAWLX_DATABASE_URL_FILE or database.url_file in crawlx.toml \
              (an in-memory `crawl` writes the same data to DIR/report.json)"
         )
     })?;
-    Pg::connect(&url, PgConfig::default())
+    Database::open(&url, open_config(&url, open)?)
         .await
-        .map_err(|e| anyhow!("connecting to the database: {e}"))
+        .map_err(|e| anyhow!("connecting to the database: {}", crate::authz::chain(&e)))
+}
+
+/// The pool settings for opening `url` for `open`.
+fn open_config(url: &str, open: Open) -> anyhow::Result<crawlx_storage::StoreConfig> {
+    let mut cfg = crate::config_check::store_config(Some(url))?;
+    cfg.create_if_missing = open == Open::Migrate;
+    if open == Open::Migrate {
+        cfg.statement_timeout = None;
+    }
+    Ok(cfg)
+}
+
+/// [`connect_database`] for commands that use the repositories of an existing database.
+pub(crate) async fn connect(url: Option<&str>) -> anyhow::Result<DurableStore> {
+    let database = connect_database(url, Open::Existing).await?;
+    DurableStore::open(&database).map_err(|refusal| anyhow!("{refusal}"))
 }
 
 pub(crate) fn parse_run(s: &str) -> anyhow::Result<CrawlRunId> {
@@ -141,8 +172,10 @@ fn epoch(e: crawlx_core::ObservationEpoch) -> String {
     format!("{}.{}.{}", e.navigation_seq, e.document_seq, e.mutation_seq)
 }
 
-async fn run_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
-    let r = RunRepo::get(pg, run).await.map_err(|e| anyhow!("{e}"))?;
+async fn run_rows<B: Tenancy>(pg: &Store<B>, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
+    let r = RunRepo::get(pg, run)
+        .await
+        .map_err(|e| anyhow!("{}", crate::authz::chain(&e)))?;
     let mut rows = vec![json!({
         "run": r.id.0,
         "status": r.status.as_str(),
@@ -154,7 +187,7 @@ async fn run_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     })];
     for s in RunRepo::list_sessions(pg, run)
         .await
-        .map_err(|e| anyhow!("{e}"))?
+        .map_err(|e| anyhow!("{}", crate::authz::chain(&e)))?
     {
         rows.push(json!({
             "session": s.id.0,
@@ -172,11 +205,11 @@ async fn run_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     Ok(rows)
 }
 
-async fn state_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
+async fn state_rows<B: Tenancy>(pg: &Store<B>, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     let mut rows = Vec::new();
     for s in RunRepo::list_sessions(pg, run)
         .await
-        .map_err(|e| anyhow!("{e}"))?
+        .map_err(|e| anyhow!("{}", crate::authz::chain(&e)))?
     {
         if let Some(b) = &s.browser {
             rows.push(json!({
@@ -190,7 +223,7 @@ async fn state_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     }
     for st in StateRepo::list_states(pg, run)
         .await
-        .map_err(|e| anyhow!("{e}"))?
+        .map_err(|e| anyhow!("{}", crate::authz::chain(&e)))?
     {
         rows.push(json!({
             "state": st.id.0,
@@ -208,10 +241,14 @@ async fn state_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     Ok(rows)
 }
 
-async fn action_rows(pg: &Pg, run: CrawlRunId, filter: Option<ActionStatus>) -> anyhow::Result<Vec<Value>> {
+async fn action_rows<B: Tenancy>(
+    pg: &Store<B>,
+    run: CrawlRunId,
+    filter: Option<ActionStatus>,
+) -> anyhow::Result<Vec<Value>> {
     let rows = ActionJournal::list(pg, run, filter)
         .await
-        .map_err(|e| anyhow!("{e}"))?;
+        .map_err(|e| anyhow!("{}", crate::authz::chain(&e)))?;
     Ok(rows
         .into_iter()
         .map(|a| {
@@ -294,7 +331,11 @@ fn coverage_json(rows: &[CoverageRow], lane: LaneFilter) -> Vec<Value> {
     out
 }
 
-async fn coverage_rows(pg: &Pg, run: CrawlRunId, lane: LaneFilter) -> anyhow::Result<Vec<Value>> {
+async fn coverage_rows<B: Tenancy>(
+    pg: &Store<B>,
+    run: CrawlRunId,
+    lane: LaneFilter,
+) -> anyhow::Result<Vec<Value>> {
     let rows = TrustedCorpus::new(pg.clone())
         .coverage(run)
         .await
@@ -322,7 +363,7 @@ fn navigation_row(seq: u64, at: Timestamp, payload: &Value) -> Value {
     })
 }
 
-async fn epoch_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
+async fn epoch_rows<B: Tenancy>(pg: &Store<B>, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     let repo = InspectRepo::new(pg.clone());
     let epochs = repo.epochs(run).await.context("reading network_epochs")?;
     let navigations = repo.navigations(run).await.context("reading navigation events")?;
@@ -347,7 +388,7 @@ async fn epoch_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     Ok(out)
 }
 
-async fn transition_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
+async fn transition_rows<B: Tenancy>(pg: &Store<B>, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
     let rows = InspectRepo::new(pg.clone())
         .transitions(run)
         .await
@@ -369,7 +410,11 @@ async fn transition_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>>
         .collect())
 }
 
-async fn traffic_rows(pg: &Pg, run: CrawlRunId, lane: LaneFilter) -> anyhow::Result<Vec<Value>> {
+async fn traffic_rows<B: Tenancy>(
+    pg: &Store<B>,
+    run: CrawlRunId,
+    lane: LaneFilter,
+) -> anyhow::Result<Vec<Value>> {
     let rows = TrustedCorpus::new(pg.clone())
         .traffic(run, lane, &TrafficQuery::default())
         .await
@@ -397,8 +442,10 @@ async fn traffic_rows(pg: &Pg, run: CrawlRunId, lane: LaneFilter) -> anyhow::Res
         .collect())
 }
 
-async fn page_rows(pg: &Pg, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
-    let pages = PageRepo::list(pg, run).await.map_err(|e| anyhow!("{e}"))?;
+async fn page_rows<B: Tenancy>(pg: &Store<B>, run: CrawlRunId) -> anyhow::Result<Vec<Value>> {
+    let pages = PageRepo::list(pg, run)
+        .await
+        .map_err(|e| anyhow!("{}", crate::authz::chain(&e)))?;
     Ok(pages
         .into_iter()
         .map(|p| {
@@ -424,16 +471,17 @@ fn trail_s3_config(
 }
 
 async fn trail_artifacts(
-    pg: &Pg,
+    pg: &DurableStore,
     run: CrawlRunId,
     args: &InspectArgs,
 ) -> anyhow::Result<Option<Arc<dyn ArtifactStore>>> {
-    let run = RunRepo::get(pg, run).await?;
+    let run = crawlx_worker::on_store!(pg, store => RunRepo::get(store, run).await)?;
     if run.config.retention.mode == crawlx_core::config::RetentionMode::Zdr {
         // Durable inspection must not read or consume the ephemeral delivery buffer.
         return Ok(None);
     }
-    let runs: Arc<dyn RunRepo> = Arc::new(pg.clone());
+    let runs: Arc<dyn RunRepo> =
+        crawlx_worker::on_store!(pg, store => Arc::new(store.clone()) as Arc<dyn RunRepo>);
     let clock = Arc::new(crawlx_core::SystemClock);
     // Sealed artifacts are verified through the catalog; legacy ones keep their plaintext path.
     let (custody, keys) =
@@ -455,12 +503,16 @@ async fn trail_artifacts(
     }
 }
 
-async fn trail_rows(pg: &Pg, run: CrawlRunId, args: &InspectArgs) -> anyhow::Result<(Vec<Value>, bool)> {
+async fn trail_rows(
+    pg: &DurableStore,
+    run: CrawlRunId,
+    args: &InspectArgs,
+) -> anyhow::Result<(Vec<Value>, bool)> {
     let artifacts = trail_artifacts(pg, run, args).await?;
     let report = crawlx_bench::trail::verify_trail(
         run,
-        crawlx_bench::trail::TrailStore::Pg {
-            pg,
+        crawlx_bench::trail::TrailStore::Database {
+            store: pg,
             artifacts: artifacts.as_deref(),
         },
     )
@@ -488,19 +540,26 @@ async fn trail_rows(pg: &Pg, run: CrawlRunId, args: &InspectArgs) -> anyhow::Res
 
 pub(crate) async fn run(args: InspectArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     let run = parse_run(&args.run_id)?;
-    let pg = connect(args.database_url.as_deref()).await?;
+    let store = connect(args.database_url.as_deref()).await?;
     let mut exit = ExitCode::SUCCESS;
     let rows = match args.kind {
-        InspectKind::Run => run_rows(&pg, run).await?,
-        InspectKind::Pages => page_rows(&pg, run).await?,
-        InspectKind::States => state_rows(&pg, run).await?,
-        InspectKind::Epochs => epoch_rows(&pg, run).await?,
-        InspectKind::Actions => action_rows(&pg, run, args.status.flatten()).await?,
-        InspectKind::Transitions => transition_rows(&pg, run).await?,
-        InspectKind::Coverage => coverage_rows(&pg, run, args.lane.into()).await?,
-        InspectKind::Traffic => traffic_rows(&pg, run, args.lane.into()).await?,
+        InspectKind::Run => crawlx_worker::on_store!(&store, pg => run_rows(pg, run).await)?,
+        InspectKind::Pages => crawlx_worker::on_store!(&store, pg => page_rows(pg, run).await)?,
+        InspectKind::States => crawlx_worker::on_store!(&store, pg => state_rows(pg, run).await)?,
+        InspectKind::Epochs => crawlx_worker::on_store!(&store, pg => epoch_rows(pg, run).await)?,
+        InspectKind::Actions => {
+            let status = args.status.flatten();
+            crawlx_worker::on_store!(&store, pg => action_rows(pg, run, status).await)?
+        }
+        InspectKind::Transitions => crawlx_worker::on_store!(&store, pg => transition_rows(pg, run).await)?,
+        InspectKind::Coverage => {
+            crawlx_worker::on_store!(&store, pg => coverage_rows(pg, run, args.lane.into()).await)?
+        }
+        InspectKind::Traffic => {
+            crawlx_worker::on_store!(&store, pg => traffic_rows(pg, run, args.lane.into()).await)?
+        }
         InspectKind::Trail => {
-            let (rows, clean) = trail_rows(&pg, run, &args).await?;
+            let (rows, clean) = trail_rows(&store, run, &args).await?;
             if !clean {
                 exit = ExitCode::FAILURE;
             }
@@ -517,6 +576,17 @@ mod tests {
     use super::*;
     use crawlx_core::StateClusterId;
     use crawlx_storage::testkit::proposal;
+
+    #[test]
+    fn migrations_run_without_the_statement_timeout_and_never_create_for_other_commands() {
+        let url = "postgres://crawlx@127.0.0.1:1/crawlx";
+        let migrate = open_config(url, Open::Migrate).unwrap();
+        assert_eq!(migrate.statement_timeout, None);
+        assert!(migrate.create_if_missing);
+        let existing = open_config(url, Open::Existing).unwrap();
+        assert!(existing.statement_timeout.is_some());
+        assert!(!existing.create_if_missing);
+    }
 
     fn row(key_n: u32, trusted: u32, unreachable: u32, diagnostic: u32, denied: u32) -> CoverageRow {
         let key = proposal("anonymous", StateClusterId::new(), key_n).key;
@@ -655,11 +725,11 @@ mod tests {
             eprintln!("skipped: CRAWLX_TEST_DATABASE_URL is not set");
             return;
         };
-        let pg = Pg::connect(
+        let pg = crawlx_storage::Pg::connect(
             &url,
-            PgConfig {
+            crawlx_storage::StoreConfig {
                 schema: Some(format!("t_inspect_trail_{}", uuid::Uuid::now_v7().simple())),
-                ..PgConfig::default()
+                ..crawlx_storage::StoreConfig::default()
             },
         )
         .await
@@ -671,7 +741,11 @@ mod tests {
             .await
             .unwrap()
             .with_index(Arc::new(pg.clone()));
-        let stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
+        let stores = Stores::over_durable(
+            crawlx_worker::DurableStore::Postgres(pg.clone()),
+            Arc::new(artifacts),
+            TenantId::new(),
+        );
         let script = FakeScript::new()
             .page(
                 FakePage::new("https://example.test/")
@@ -711,6 +785,7 @@ mod tests {
         .await
         .unwrap();
         let run_id = report.run_id.to_string();
+        let durable = crawlx_worker::DurableStore::Postgres(pg.clone());
         let parsed = crate::Cli::try_parse_from([
             "crawlx",
             "inspect",
@@ -724,13 +799,13 @@ mod tests {
         let crate::Command::Inspect(mut args) = parsed.command else {
             panic!("inspect command");
         };
-        let (rows, clean) = trail_rows(&pg, report.run_id, &args).await.unwrap();
+        let (rows, clean) = trail_rows(&durable, report.run_id, &args).await.unwrap();
         assert!(clean, "{rows:?}");
         assert!(rows[0]["checked"]["fingerprints_verified"].as_u64().unwrap() > 0);
         assert_eq!(rows[0]["checked"]["fingerprints_unverifiable"], 0);
 
         args.artifacts_dir = dir.path().join("wrong-root");
-        let (rows, clean) = trail_rows(&pg, report.run_id, &args).await.unwrap();
+        let (rows, clean) = trail_rows(&durable, report.run_id, &args).await.unwrap();
         assert!(!clean, "{rows:?}");
         assert_eq!(rows[0]["violations"], 0);
         assert!(rows[0]["checked"]["fingerprints_unverifiable"].as_u64().unwrap() > 0);

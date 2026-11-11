@@ -2,7 +2,7 @@
 //! `queued` status for the worker lease loop and serves everything the worker journals.
 //!
 //! * [`router`] builds the `axum::Router` over an [`AppState`];
-//! * [`run`] wires repositories from an [`ApiConfig`] (PostgreSQL when `database_url` is
+//! * [`run`] wires repositories from an [`ApiConfig`] (the configured database when `database_url` is
 //!   set, in-memory otherwise), bootstraps development API keys, starts the webhook sender
 //!   and serves.
 //!
@@ -24,6 +24,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod database;
 pub mod errors;
 pub mod idempotency;
 pub mod intel;
@@ -32,7 +33,6 @@ pub mod metrics;
 pub mod openapi;
 pub(crate) mod openapi_schemas;
 pub mod ownership;
-pub mod pg;
 pub mod resources;
 pub mod routes;
 pub mod scrape_service;
@@ -43,17 +43,17 @@ pub mod util;
 pub mod webhooks;
 
 pub use config::{ApiConfig, ApiKeyBootstrap, CompatConfig, CompatMode, Settings};
+pub use database::{DatabaseApiStore, DatabaseEraser};
 pub use errors::{ApiError, Detail, HttpError};
 pub use memory::MemoryApiStore;
-pub use pg::{PgApiStore, PgEraser};
 pub use routes::router;
-pub use state::{AppState, AppStateBuilder, DeploymentBuild, Repos};
+pub use state::{AppState, AppStateBuilder, Background, DeploymentBuild, Repos};
 pub use store::{ApiStore, ArtifactSource, Eraser, Scope};
 pub use webhooks::{ReqwestTransport, WebhookSender, WebhookTransport};
 
 use crawlx_core::{Clock, SystemClock};
 use crawlx_policy::AdmissionPolicy;
-use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{Database, FsArtifactStore, MemoryStore};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -83,12 +83,12 @@ async fn bootstrap_keys(api: &dyn ApiStore, cfg: &ApiConfig) -> Result<(), ApiEr
         let record = auth::key_record_for(&b.key, tenant, Scope::all_set(), cfg.compat.prefixed_keys)
             .ok_or_else(|| {
                 ApiError::Config(format!(
-                    "API key for tenant {:?} must look like {}<{} base32 characters>{}",
+                    "API key for tenant {:?} must look like {}<{} lowercase letters a-z or digits 2-7>{}",
                     b.tenant,
                     auth::KEY_PREFIX,
                     auth::SECRET_LEN,
                     if cfg.compat.prefixed_keys {
-                        format!(" or {}<16..=64 alphanumerics>", auth::COMPAT_KEY_PREFIX)
+                        format!(" or {}<16..=64 ASCII letters or digits>", auth::COMPAT_KEY_PREFIX)
                     } else {
                         String::new()
                     }
@@ -163,7 +163,23 @@ pub async fn run_until_bound(
             "allow_owner_api is forbidden outside dev/ci".to_owned(),
         ));
     }
-    if cfg.database_url.is_some() && cfg.api_database_url.is_none() && !cfg.allow_owner_api {
+    let engine = match &cfg.database_url {
+        Some(url) => Some(
+            crawlx_storage::DatabaseUrl::parse(url)
+                .map_err(|refusal| ApiError::Store(refusal.into()))?
+                .kind(),
+        ),
+        None => None,
+    };
+    if engine == Some(crawlx_storage::BackendKind::Sqlite) && cfg.api_database_url.is_some() {
+        return Err(ApiError::Config(
+            crawlx_storage::BackendRefusal::sqlite_no_roles().to_string(),
+        ));
+    }
+    if engine == Some(crawlx_storage::BackendKind::Postgres)
+        && cfg.api_database_url.is_none()
+        && !cfg.allow_owner_api
+    {
         return Err(ApiError::Config(
             "postgresql API requires CRAWLX_API_DATABASE_URL with a restricted non-owner role; \
              allow_owner_api is for local development only"
@@ -208,26 +224,41 @@ pub async fn run_until_bound(
     let spool = Arc::new(crawlx_storage::UploadSpool::new(cfg.artifact_spool.clone())?);
     let repos = match &cfg.database_url {
         Some(url) => {
-            let pg = Pg::connect(url, PgConfig::default()).await?;
-            pg.migrate().await?;
-            let pg = match &cfg.api_database_url {
-                Some(api_url) => pg.with_api_role(api_url).await?,
-                None => pg,
-            };
-            let pg = pg.with_delivery_buffer(zdr.clone());
+            let database = Database::open(url, cfg.store.clone()).await?;
+            database.migrate().await?;
+            let bootstrap_tenants: Vec<_> = cfg
+                .api_keys
+                .iter()
+                .map(|b| auth::tenant_id_for(&b.tenant))
+                .collect();
+            crawlx_worker::durable::check_sqlite_single_tenant(&database, &bootstrap_tenants).await?;
             // The API never publishes sealed artifacts; it decrypts them through the catalog. Without
             // a key provider, sealed artifacts fail with a clear error and legacy ones stay readable.
-            let (custody, keys) =
-                crawlx_worker::config::read_only_custody_from_lookup(&pg, &|name| std::env::var(name).ok())
-                    .await
-                    .map_err(|error| ApiError::Config(error.to_string()))?;
-            let artifacts = FsArtifactStore::open(&cfg.artifacts_dir, Arc::new(pg.clone()), clock.clone())
-                .await?
-                .with_index(Arc::new(pg.clone()))
-                .with_zdr_buffer(zdr.clone())
-                .with_upload_spool(spool.clone())
-                .with_custody(custody, keys, crawlx_storage::CustodyWrites::ReadOnly);
-            Repos::pg(&pg, Arc::new(artifacts))
+            let durable = crawlx_worker::DurableStore::open(&database)
+                .map_err(|refusal| ApiError::Store(refusal.into()))?;
+            let (custody, keys) = crawlx_worker::config::read_only_custody_from_lookup(&durable, &|name| {
+                std::env::var(name).ok()
+            })
+            .await
+            .map_err(|error| ApiError::Config(error.to_string()))?;
+            let factory = FsArtifacts {
+                choice: crawlx_worker::ObjectStoreChoice::from_lookup(&cfg.artifacts_dir, &|name| {
+                    std::env::var(name).ok()
+                })
+                .map_err(|error| ApiError::Config(error.to_string()))?,
+                clock: clock.clone(),
+                zdr: zdr.clone(),
+                spool: spool.clone(),
+                custody,
+                keys,
+            };
+            Repos::database(
+                &database,
+                cfg.api_database_url.as_deref(),
+                Some(zdr.clone()),
+                &factory,
+            )
+            .await?
         }
         None => {
             let store = Arc::new(MemoryStore::new());
@@ -238,7 +269,7 @@ pub async fn run_until_bound(
             Repos::memory_with(store, Arc::new(artifacts))
         }
     };
-    bootstrap_keys(repos.api.as_ref(), &cfg).await?;
+    bootstrap_keys(repos.background.api.as_ref(), &cfg).await?;
     let mut builder = AppState::builder(repos, admission_policy(&cfg, clock.clone()), cfg.clone())
         .clock(clock.clone())
         .shutdown(shutdown.clone())
@@ -269,9 +300,9 @@ pub async fn run_until_bound(
     let jobs = state.jobs.clone();
     let sender = Arc::new(
         WebhookSender::new(
-            state.repos.api.clone(),
-            state.repos.runs.clone(),
-            state.repos.events.clone(),
+            state.repos.background.api.clone(),
+            state.repos.background.runs.clone(),
+            state.repos.background.events.clone(),
             Arc::new(ReqwestTransport),
             cfg.webhook_secret.clone(),
             clock,
@@ -343,4 +374,48 @@ async fn serve(
         .with_graceful_shutdown(async move { stop.cancelled().await })
         .await
         .map_err(ApiError::Serve)
+}
+
+/// The artifact store of a database deployment: filesystem objects, catalog and index in the
+/// database the repositories use. The API only reads sealed artifacts.
+struct FsArtifacts {
+    choice: crawlx_worker::ObjectStoreChoice,
+    clock: Arc<dyn Clock>,
+    zdr: Arc<crawlx_storage::DeliveryBuffer>,
+    spool: Arc<crawlx_storage::UploadSpool>,
+    custody: Arc<dyn crawlx_storage::ArtifactCustody>,
+    keys: Arc<dyn crawlx_storage::artifact_key_crypto::ArtifactKeys>,
+}
+
+impl state::ArtifactsFactory for FsArtifacts {
+    async fn open<B: crawlx_storage::tenant::Tenancy>(
+        &self,
+        store: &crawlx_storage::Store<B>,
+    ) -> Result<Arc<dyn ArtifactSource>, crawlx_core::StoreError> {
+        let runs: Arc<dyn crawlx_core::repo::RunRepo> = Arc::new(store.clone());
+        let writes = crawlx_storage::CustodyWrites::ReadOnly;
+        Ok(match &self.choice {
+            crawlx_worker::ObjectStoreChoice::Filesystem(dir) => Arc::new(
+                FsArtifactStore::open(dir, runs, self.clock.clone())
+                    .await?
+                    .with_index(Arc::new(store.clone()))
+                    .with_zdr_buffer(self.zdr.clone())
+                    .with_upload_spool(self.spool.clone())
+                    .with_custody(self.custody.clone(), self.keys.clone(), writes),
+            ),
+            crawlx_worker::ObjectStoreChoice::S3(config) => Arc::new(
+                crawlx_storage::S3ArtifactStore::new(
+                    crawlx_storage::S3Blobs::new(config).map_err(|error| {
+                        crawlx_core::StoreError::Unavailable(format!("object store: {error}"))
+                    })?,
+                    runs,
+                    self.clock.clone(),
+                )
+                .with_index(Arc::new(store.clone()))
+                .with_zdr_buffer(self.zdr.clone())
+                .with_upload_spool(self.spool.clone())
+                .with_custody(self.custody.clone(), self.keys.clone(), writes),
+            ),
+        })
+    }
 }

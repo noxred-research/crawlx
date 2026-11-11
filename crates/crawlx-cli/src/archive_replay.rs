@@ -69,8 +69,8 @@ pub struct QaArgs {
     /// Maximum normalized Unicode Levenshtein distance, 0..1.
     #[arg(long, default_value_t = 0.0)]
     pub max_text_distance: f64,
-    /// Retain bounded screenshot difference PNGs as sensitive expiring artifacts.
-    #[arg(long)]
+    /// Retain bounded screenshot difference PNGs as sensitive expiring artifacts. Needs `--baseline`.
+    #[arg(long, requires = "baseline")]
     pub diff_images: bool,
 }
 
@@ -101,7 +101,18 @@ async fn render(args: &ReplayArgs) -> anyhow::Result<ReplayReport> {
         bail!("retention_denied: durable archive replay and QA are forbidden under zero data retention");
     }
     if args.out.exists() {
-        bail!("archive replay output already exists");
+        bail!("archive replay output {} already exists", args.out.display());
+    }
+    let out_parent = args
+        .out
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if !out_parent.is_dir() {
+        bail!(
+            "archive replay output directory {} does not exist; create it first",
+            out_parent.display()
+        );
     }
     if !(1..=30).contains(&args.retention_days) {
         bail!("replay retention days must be 1..30");

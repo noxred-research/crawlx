@@ -302,13 +302,13 @@ mod tests {
                 "https://svc:hunter2@llm.internal:8443/v1?token=tokenInQuery",
             ),
             ("CRAWLX_LLM_API_KEY", SECRETS[0]),
-            ("CRAWLX_LLM_MODEL", "qwen3"),
-            ("CRAWLX_EMBEDDING_MODEL", "nomic-embed-text"),
+            ("CRAWLX_LLM_MODEL", "chat-model"),
+            ("CRAWLX_EMBEDDING_MODEL", "embed-model"),
             ("EXTRACTION_PROVIDER_BASE_URL", "http://llm-server:8000/v1"),
             ("EXTRACTION_PROVIDER_API_KEY", SECRETS[1]),
             ("EXTRACTION_PROVIDER_ROLLOUT_PERCENT", "25"),
             ("EXTRACTION_PROVIDER_TEAM_IDS", "team-a,team-b"),
-            ("BRANDING_LLM_MODEL", "qwen3-vl"),
+            ("BRANDING_LLM_MODEL", "vision-model"),
             ("BRANDING_LLM_API_KEY", SECRETS[2]),
             ("TYPESAFE_API_KEY", SECRETS[3]),
             ("BRANDING_JEV", "true"),
@@ -339,9 +339,9 @@ mod tests {
         assert_eq!(r.effective["llm"]["apiKey"]["status"], "present");
         assert_eq!(r.effective["extraction"]["rolloutPercent"], 25);
         assert_eq!(r.effective["extraction"]["teamIds"], json!(["team-a", "team-b"]));
-        assert_eq!(r.effective["embeddings"]["model"], "nomic-embed-text");
+        assert_eq!(r.effective["embeddings"]["model"], "embed-model");
         assert_eq!(r.effective["embeddings"]["endpointFrom"], "default llm");
-        assert_eq!(r.effective["branding"]["model"], "qwen3-vl");
+        assert_eq!(r.effective["branding"]["model"], "vision-model");
         assert_eq!(r.effective["branding"]["timeoutMs"], 5000);
         assert!(
             toml.contains("[intel.llm]") && toml.contains("[intel.extraction]"),

@@ -20,7 +20,7 @@ use crawlx_core::repo::{ActionJournal, OutcomeRecord, RunRepo, StateRepo};
 use crawlx_core::traffic::{Fidelity, TrafficEvent, TrafficOrigin};
 use crawlx_core::{ActionId, NetworkEpochId, SessionId, StateClusterId, TenantId, WorkerId};
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, new_state, proposal, sessions};
-use crawlx_storage::{LeaseRepo, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{LeaseRepo, MemoryStore, Pg, StoreConfig};
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -209,10 +209,10 @@ fn postgres(c: &mut Criterion) {
     let pg = rt.block_on(async {
         let pg = Pg::connect(
             &url,
-            PgConfig {
+            StoreConfig {
                 schema: Some(schema),
                 max_connections: 4,
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await

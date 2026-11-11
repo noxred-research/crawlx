@@ -131,6 +131,12 @@ async fn archive_routes_enforce_scopes_tenants_publication_and_erasure() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers["content-type"], "application/warc");
+    let disposition = headers["content-disposition"].to_str().unwrap();
+    assert!(
+        disposition.starts_with("attachment; filename=\"crawlx-archive-")
+            && disposition.ends_with(".warc.gz\""),
+        "{disposition}"
+    );
     let (decoded, payload) = warc::read_member(Cursor::new(body), Limits::default()).unwrap();
     assert_eq!(decoded.id, record.record_id);
     assert_eq!(payload, b"retained fixture");

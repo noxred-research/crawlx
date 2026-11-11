@@ -526,9 +526,9 @@ async fn postgres_cross_url_payload_revisits_match_memory_custody() {
     ));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("archive_payloads_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -542,7 +542,11 @@ async fn postgres_cross_url_payload_revisits_match_memory_custody() {
             .unwrap()
             .with_index(Arc::new(pg.clone())),
     );
-    let stores = Stores::over_pg(pg.clone(), artifacts, tenant);
+    let stores = Stores::over_durable(
+        crate::durable::DurableStore::Postgres(pg.clone()),
+        artifacts,
+        tenant,
+    );
     exercise(&stores, clock, root.path()).await;
     pg.drop_schema().await.unwrap();
 }

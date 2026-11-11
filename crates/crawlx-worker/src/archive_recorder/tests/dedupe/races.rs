@@ -108,13 +108,13 @@ async fn pg_fixture() -> Option<PgFixture> {
     let clock = Arc::new(ManualClock::new(now));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             max_connections: 4,
             schema: Some(format!(
                 "archive_dependency_races_{}",
                 uuid::Uuid::now_v7().simple()
             )),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -130,7 +130,11 @@ async fn pg_fixture() -> Option<PgFixture> {
             .unwrap()
             .with_index(Arc::new(pg.clone())),
     );
-    let stores = Stores::over_pg(pg.clone(), artifacts.clone(), tenant);
+    let stores = Stores::over_durable(
+        crate::durable::DurableStore::Postgres(pg.clone()),
+        artifacts.clone(),
+        tenant,
+    );
     Some(PgFixture {
         pg,
         stores,
@@ -283,7 +287,11 @@ async fn postgres_erase_waiting_for_dependency_commit_refreshes_closure_and_eras
         .await
         .unwrap();
     let mut tasks = tokio::task::JoinSet::new();
-    let stores = Stores::over_pg(fixture.pg.clone(), fixture.artifacts.clone(), dependent.tenant);
+    let stores = Stores::over_durable(
+        crate::durable::DurableStore::Postgres(fixture.pg.clone()),
+        fixture.artifacts.clone(),
+        dependent.tenant,
+    );
     let run = dependent.clone();
     let clock = fixture.clock.clone();
     let page = pages.pop().unwrap();

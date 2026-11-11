@@ -148,7 +148,7 @@ pub async fn rig_core_authorized_with_clock(
     initial_request: Option<crawlx_core::request::RequestEnvelopeV1>,
     clock: Arc<dyn Clock>,
 ) -> RigCore {
-    if let Some(pg) = &stores.pg {
+    if let Some(crawlx_worker::DurableStore::Postgres(pg)) = &stores.durable {
         pg.ensure_tenant(stores.tenant, "local").await.unwrap();
         authorization::register_verified(pg, &record).await;
     }

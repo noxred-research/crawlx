@@ -16,7 +16,7 @@ use crawlx_core::{
     ActionId, Clock as _, CrawlRunId, SessionId, StateClusterId, SystemClock, TenantId, WorkerId,
 };
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal, sessions};
-use crawlx_storage::{LeaseRepo, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{LeaseRepo, MemoryStore, Pg, StoreConfig};
 use proptest::prelude::*;
 use std::sync::Arc;
 
@@ -317,10 +317,10 @@ fn postgres_follows_the_same_status_machine() {
     let pg = rt.block_on(async {
         let pg = Pg::connect(
             &url,
-            PgConfig {
+            StoreConfig {
                 schema: Some(schema),
                 max_connections: 4,
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await

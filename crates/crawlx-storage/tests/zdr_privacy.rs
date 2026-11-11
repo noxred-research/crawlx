@@ -8,7 +8,7 @@ use crawlx_core::time::ManualClock;
 use crawlx_core::{Clock as _, CrawlRunId, StoreError, TenantId, TrustLane, WorkerId};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl, sessions};
 use crawlx_storage::{
-    BufferLimits, DeliveryBuffer, DeliveryStatus, LeaseRepo, Pg, PgApiRepo, PgConfig, WebhookDelivery,
+    BufferLimits, DeliveryBuffer, DeliveryStatus, LeaseRepo, Pg, PgApiRepo, StoreConfig, WebhookDelivery,
 };
 use std::sync::Arc;
 
@@ -21,10 +21,10 @@ async fn setup() -> Option<(Pg, Arc<DeliveryBuffer>, Arc<ManualClock>, TenantId)
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_{}", CrawlRunId::new().0.simple())),
             max_connections: 1,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

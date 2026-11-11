@@ -1,12 +1,17 @@
 //! Terminal feed publication shares the request transaction authority and existing outbox.
 
 use super::*;
-use crate::dataset::{apply_pg_source, apply_prepared, prepare_memory, read_payload, verify_pg_delivery};
-use crate::{codec::get, error::db, Pg};
+use crate::backend::strategy::Conn;
+use crate::backend::{Dialect, RowLock};
+use crate::dataset::{
+    apply_prepared, apply_source, config_tx, prepare_memory, read_payload, verify_delivery,
+};
+use crate::repos::effects::settle_run;
+use crate::sql::{db_clock, stmt, Sql, SqlRow};
+use crate::store::Store;
 use crawlx_core::dataset::{
     DeliveryBatchV1, DeliveryRangeV1, EmptyFeedPolicyV1, FeedBatchingV1, FeedFinalizationOutcomeV1,
 };
-use sqlx::Postgres;
 
 fn invalid() -> StoreError {
     StoreError::Conflict("invalid terminal feed publication".into())
@@ -81,8 +86,79 @@ fn check_batches(
     Ok(())
 }
 
+/// Longest finalizer lease; holders renew well before it ends.
+const MAX_FINALIZER_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn finalizer_ttl(ttl: std::time::Duration) -> Result<ChronoDuration, StoreError> {
+    if ttl.is_zero() || ttl > MAX_FINALIZER_TTL {
+        return Err(StoreError::Conflict(
+            "invalid feed finalizer lease duration".into(),
+        ));
+    }
+    ChronoDuration::from_std(ttl)
+        .map_err(|_| StoreError::Conflict("invalid feed finalizer lease duration".into()))
+}
+
+fn finalizer_expiry(
+    now: crawlx_core::Timestamp,
+    ttl: ChronoDuration,
+) -> Result<crawlx_core::Timestamp, StoreError> {
+    now.checked_add_signed(ttl)
+        .ok_or_else(|| StoreError::Conflict("feed finalizer lease overflow".into()))
+}
+
+fn next_fence(previous: i64) -> Result<i64, StoreError> {
+    previous
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Conflict("feed finalizer fence overflow".into()))
+}
+
+/// The finalizer claim a lease names, or `LeaseLost` when the lease is of another kind.
+fn finalizer_of(lease: &crawlx_core::custody::CustodyLease) -> Result<uuid::Uuid, StoreError> {
+    match lease.source {
+        crawlx_core::custody::CustodySource::FeedFinalization(finalizer) => Ok(finalizer),
+        _ => Err(StoreError::LeaseLost),
+    }
+}
+
+fn finalizer_matches(
+    claim: &crate::dataset::MemoryFinalizer,
+    lease: &crawlx_core::custody::CustodyLease,
+) -> bool {
+    lease.source == crawlx_core::custody::CustodySource::FeedFinalization(claim.id)
+        && lease.worker == claim.owner
+        && lease.fence == claim.fence
+}
+
 impl MemoryStore {
-    pub(crate) fn retire_expired_feed_finalization_owned(&self, id: CrawlRunId) -> Result<bool, StoreError> {
+    /// Whether a zero-retention run's feed finalization has lost its volatile operational
+    /// value: the delivery buffer no longer holds the run's configuration page. The check
+    /// awaits the buffer, so it runs before the state lock of the retirement is taken.
+    pub(crate) async fn feed_volatile_missing(&self, id: CrawlRunId) -> Result<bool, StoreError> {
+        let tenant = {
+            let state = self.inner.lock();
+            let run = state.runs.get(&id).ok_or_else(|| nf("crawl_run", id))?;
+            if run.config.retention.mode != RetentionMode::Zdr
+                || run.config.datasets.feeds.is_empty()
+                || state.dataset.feed_finalized.contains_key(&id)
+                || !(state.dataset.feed_finalizing.contains(&id)
+                    || (run.status.is_terminal() && !run.config.datasets.feeds.is_empty()))
+            {
+                return Ok(false);
+            }
+            run.tenant
+        };
+        let buffer = self.dataset_delivery.lock().clone().ok_or_else(|| {
+            StoreError::RetentionDenied("required volatile delivery backend unavailable".into())
+        })?;
+        Ok(buffer.get(tenant, id, i64::MIN).await?.is_none())
+    }
+
+    pub(crate) fn retire_expired_feed_finalization_owned(
+        &self,
+        id: CrawlRunId,
+        volatile_missing: bool,
+    ) -> Result<bool, StoreError> {
         let mut state = self.inner.lock();
         let run = state.runs.get(&id).ok_or_else(|| nf("crawl_run", id))?;
         if crate::tenant::current().is_some_and(|tenant| tenant != run.tenant) {
@@ -112,7 +188,7 @@ impl MemoryStore {
                             .any(|fragment| fragment.expires_at <= now)
                 })
         });
-        if !run_expired && !source_expired {
+        if !run_expired && !source_expired && !volatile_missing {
             return Ok(false);
         }
         for row in state
@@ -179,6 +255,88 @@ impl MemoryStore {
         state.dataset.feed_finalizing.insert(id);
         state.dataset.feed_reasons.insert(id, reason);
         Ok(Some(reason))
+    }
+
+    pub(crate) fn claim_feed_finalizer_owned(
+        &self,
+        id: CrawlRunId,
+        worker: crawlx_core::WorkerId,
+        ttl: std::time::Duration,
+    ) -> Result<crawlx_core::custody::CustodyLease, StoreError> {
+        let ttl = finalizer_ttl(ttl)?;
+        let now = self.clock.now();
+        let mut state = self.inner.lock();
+        let run = state.runs.get(&id).ok_or_else(|| nf("crawl_run", id))?;
+        let tenant = run.tenant;
+        if crate::tenant::current().is_some_and(|owner| owner != tenant) {
+            return Err(StoreError::AccessDenied("feed tenant mismatch".into()));
+        }
+        if state.dataset.feed_finalized.contains_key(&id) || !state.dataset.feed_finalizing.contains(&id) {
+            return Err(StoreError::LeaseLost);
+        }
+        let previous = state.dataset.feed_finalizers.get(&id).copied();
+        if previous.is_some_and(|claim| claim.expires_at > now) {
+            return Err(StoreError::Conflict(
+                "feed finalization is claimed by another worker".into(),
+            ));
+        }
+        let claim = crate::dataset::MemoryFinalizer {
+            id: uuid::Uuid::now_v7(),
+            owner: worker,
+            fence: next_fence(previous.map_or(0, |claim| claim.fence))?,
+            expires_at: finalizer_expiry(now, ttl)?,
+        };
+        state.dataset.feed_finalizers.insert(id, claim);
+        Ok(crawlx_core::custody::CustodyLease::for_feed_finalization(
+            tenant,
+            id,
+            claim.id,
+            worker,
+            claim.fence,
+        ))
+    }
+
+    pub(crate) fn renew_feed_finalizer_owned(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        let ttl = finalizer_ttl(ttl)?;
+        if crate::tenant::current().is_some_and(|owner| owner != lease.tenant) {
+            return Err(StoreError::AccessDenied("feed tenant mismatch".into()));
+        }
+        let now = self.clock.now();
+        let mut state = self.inner.lock();
+        let dataset = &mut state.dataset;
+        let active =
+            dataset.feed_finalizing.contains(&lease.run) && !dataset.feed_finalized.contains_key(&lease.run);
+        let claim = dataset
+            .feed_finalizers
+            .get_mut(&lease.run)
+            .filter(|claim| active && finalizer_matches(claim, lease) && claim.expires_at > now)
+            .ok_or(StoreError::LeaseLost)?;
+        claim.expires_at = finalizer_expiry(now, ttl)?;
+        Ok(())
+    }
+
+    pub(crate) fn release_feed_finalizer_owned(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+    ) -> Result<(), StoreError> {
+        if crate::tenant::current().is_some_and(|owner| owner != lease.tenant) {
+            return Err(StoreError::AccessDenied("feed tenant mismatch".into()));
+        }
+        let now = self.clock.now();
+        let mut state = self.inner.lock();
+        if let Some(claim) = state
+            .dataset
+            .feed_finalizers
+            .get_mut(&lease.run)
+            .filter(|claim| finalizer_matches(claim, lease))
+        {
+            claim.expires_at = claim.expires_at.min(now);
+        }
+        Ok(())
     }
 
     pub(crate) async fn stage_feed_batches_owned(
@@ -335,26 +493,44 @@ impl MemoryStore {
     }
 }
 
-impl Pg {
+/// Database time in the caller's transaction.
+fn sql_now<B: Sql>() -> &'static str {
+    <B::Dialect as Dialect>::now()
+}
+
+/// The locking clause that holds a run row until the transaction ends.
+fn lock_row<B: Sql>() -> &'static str {
+    <B::Dialect as Dialect>::row_lock(RowLock::Update)
+}
+
+impl<B: Sql> Store<B> {
     pub(crate) async fn retire_expired_feed_finalization_owned(
         &self,
         id: CrawlRunId,
         tenant: TenantId,
         zdr: bool,
     ) -> Result<bool, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let row = sqlx::query("SELECT feed_finalized,feed_finalizing,feed_required,status::text AS status,(expires_at IS NOT NULL AND expires_at<=now()) AS run_expired,EXISTS(SELECT 1 FROM dataset_items i WHERE i.run_id=$1 AND i.expires_at<=now()) AS source_expired FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2 FOR UPDATE")
-            .bind(id.0).bind(tenant.0).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(|| crate::error::not_found("crawl_run",id))?;
-        let terminal = matches!(
-            get::<String>(&row, "status")?.as_str(),
-            "completed" | "failed" | "cancelled"
-        );
-        if get::<bool>(&row, "feed_finalized")?
-            || !(get::<bool>(&row, "feed_finalizing")? || (terminal && get::<bool>(&row, "feed_required")?))
+        let mut tx = self.begin_write().await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT feed_finalized,feed_finalizing,feed_required,status::text AS status,(expires_at IS NOT NULL AND expires_at<={now}) AS run_expired,EXISTS(SELECT 1 FROM dataset_items i WHERE i.run_id=$1 AND i.expires_at<={now}) AS source_expired FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2{lock}",
+                now = sql_now::<B>(),
+                lock = lock_row::<B>()
+            )
+        )
+        .uuid(id.0)
+        .uuid(tenant.0)
+        .fetch_optional(tx.conn())
+        .await?
+        .ok_or_else(|| crate::error::not_found("crawl_run", id))?;
+        let terminal = matches!(row.text("status")?.as_str(), "completed" | "failed" | "cancelled");
+        if row.bool("feed_finalized")?
+            || !(row.bool("feed_finalizing")? || (terminal && row.bool("feed_required")?))
         {
             return Ok(false);
         }
-        let mut expired = get::<bool>(&row, "source_expired")? || (!zdr && get::<bool>(&row, "run_expired")?);
+        let mut expired = row.flag("source_expired")? || (!zdr && row.flag("run_expired")?);
         if zdr && !expired {
             let buffer = self.delivery.as_ref().ok_or_else(|| {
                 StoreError::RetentionDenied("required volatile delivery backend unavailable".into())
@@ -366,11 +542,27 @@ impl Pg {
         if !expired {
             return Ok(false);
         }
-        sqlx::query("UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND state IN ('pending','leased')")
-            .bind(tenant.0).bind(id.0).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("UPDATE crawl_runs SET terminal_reason=CASE WHEN status IN ('completed','failed','cancelled') THEN terminal_reason ELSE 'fatal_error'::terminal_reason END,status=CASE WHEN status IN ('completed','failed','cancelled') THEN status ELSE 'failed'::run_status END,finished_at=COALESCE(finished_at,now()),feed_finalizing=false,feed_finalized=true,feed_finalization_outcome='content_expired' WHERE run_id=$1 AND tenant_id=$2")
-            .bind(id.0).bind(tenant.0).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        stmt!(
+            B,
+            "UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND state IN ('pending','leased')"
+        )
+        .uuid(tenant.0)
+        .uuid(id.0)
+        .execute(tx.conn())
+        .await?;
+        stmt!(
+            B,
+            format!(
+                "UPDATE crawl_runs SET terminal_reason=CASE WHEN status IN ('completed','failed','cancelled') THEN terminal_reason ELSE 'fatal_error'::terminal_reason END,status=CASE WHEN status IN ('completed','failed','cancelled') THEN status ELSE 'failed'::run_status END,finished_at=COALESCE(finished_at,{}),feed_finalizing=false,feed_finalized=true,feed_finalization_outcome='content_expired' WHERE run_id=$1 AND tenant_id=$2",
+                sql_now::<B>()
+            )
+        )
+        .uuid(id.0)
+        .uuid(tenant.0)
+        .execute(tx.conn())
+        .await?;
+        settle_run::<B>(tx.conn(), id).await?;
+        tx.commit().await?;
         Ok(true)
     }
 
@@ -379,27 +571,34 @@ impl Pg {
         id: CrawlRunId,
         requested: Option<TerminalReason>,
     ) -> Result<Option<TerminalReason>, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let row = sqlx::query("SELECT tenant_id,status::text AS status,terminal_reason::text AS reason,feed_finalizing,feed_finalized,feed_terminal_reason::text AS feed_reason FROM crawl_runs WHERE run_id=$1 FOR UPDATE")
-            .bind(id.0).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(|| crate::error::not_found("crawl_run", id))?;
-        let tenant = TenantId(get(&row, "tenant_id")?);
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT tenant_id,status::text AS status,terminal_reason::text AS reason,feed_finalizing,feed_finalized,feed_terminal_reason::text AS feed_reason FROM crawl_runs WHERE run_id=$1{}",
+                lock_row::<B>()
+            )
+        )
+        .uuid(id.0)
+        .fetch_optional(tx.conn())
+        .await?
+        .ok_or_else(|| crate::error::not_found("crawl_run", id))?;
+        let tenant = TenantId(row.uuid("tenant_id")?);
         if crate::tenant::current().is_some_and(|owner| owner != tenant) {
             return Err(StoreError::AccessDenied("feed tenant mismatch".into()));
         }
-        if get::<bool>(&row, "feed_finalized")? {
+        if row.bool("feed_finalized")? {
             return Ok(None);
         }
-        let terminal = matches!(
-            get::<String>(&row, "status")?.as_str(),
-            "completed" | "failed" | "cancelled"
-        );
-        if requested.is_none() && !terminal && !get::<bool>(&row, "feed_finalizing")? {
+        let terminal = matches!(row.text("status")?.as_str(), "completed" | "failed" | "cancelled");
+        if requested.is_none() && !terminal && !row.bool("feed_finalizing")? {
             return Ok(None);
         }
         let stored: Option<String> = if terminal {
-            get(&row, "reason")?
+            row.opt_text("reason")?
         } else {
-            get(&row, "feed_reason")?
+            row.opt_text("feed_reason")?
         };
         let reason = match stored {
             Some(value) => Some(serde_json::from_value::<TerminalReason>(
@@ -410,26 +609,154 @@ impl Pg {
         let Some(reason) = reason else {
             return Ok(None);
         };
-        sqlx::query("UPDATE crawl_runs SET feed_finalizing=true,feed_terminal_reason=$2::text::terminal_reason WHERE run_id=$1")
-            .bind(id.0).bind(reason.as_str()).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        stmt!(
+            B,
+            "UPDATE crawl_runs SET feed_finalizing=true,feed_terminal_reason=$2::text::terminal_reason WHERE run_id=$1"
+        )
+        .uuid(id.0)
+        .text(reason.as_str())
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await?;
         Ok(Some(reason))
+    }
+
+    pub(crate) async fn claim_feed_finalizer_owned(
+        &self,
+        id: CrawlRunId,
+        worker: crawlx_core::WorkerId,
+        ttl: std::time::Duration,
+    ) -> Result<crawlx_core::custody::CustodyLease, StoreError> {
+        let ttl = finalizer_ttl(ttl)?;
+        self.scope()?;
+        let mut tx = self.begin_write().await?;
+        let now = db_clock::<B>(tx.conn()).await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT tenant_id,feed_finalizing,feed_finalized,feed_finalizer_fence,feed_finalizer_expires_at FROM crawl_runs WHERE run_id=$1{}",
+                lock_row::<B>()
+            )
+        )
+        .uuid(id.0)
+        .fetch_optional(tx.conn())
+        .await?
+        .ok_or_else(|| crate::error::not_found("crawl_run", id))?;
+        let tenant = TenantId(row.uuid("tenant_id")?);
+        if crate::tenant::current().is_some_and(|owner| owner != tenant) {
+            return Err(StoreError::AccessDenied("feed tenant mismatch".into()));
+        }
+        if row.bool("feed_finalized")? || !row.bool("feed_finalizing")? {
+            return Err(StoreError::LeaseLost);
+        }
+        if row
+            .opt_ts("feed_finalizer_expires_at")?
+            .is_some_and(|expires_at| expires_at > now)
+        {
+            return Err(StoreError::Conflict(
+                "feed finalization is claimed by another worker".into(),
+            ));
+        }
+        let finalizer = uuid::Uuid::now_v7();
+        let fence = next_fence(row.i64("feed_finalizer_fence")?)?;
+        stmt!(
+            B,
+            "UPDATE crawl_runs SET feed_finalizer_id=$2,feed_finalizer_owner=$3,feed_finalizer_fence=$4,feed_finalizer_expires_at=$5 WHERE run_id=$1"
+        )
+        .uuid(id.0)
+        .uuid(finalizer)
+        .uuid(worker.0)
+        .i64(fence)
+        .ts(finalizer_expiry(now, ttl)?)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await?;
+        Ok(crawlx_core::custody::CustodyLease::for_feed_finalization(
+            tenant, id, finalizer, worker, fence,
+        ))
+    }
+
+    pub(crate) async fn renew_feed_finalizer_owned(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+        ttl: std::time::Duration,
+    ) -> Result<(), StoreError> {
+        let ttl = finalizer_ttl(ttl)?;
+        let finalizer = finalizer_of(lease)?;
+        if crate::tenant::current().is_some_and(|owner| owner != lease.tenant) {
+            return Err(StoreError::AccessDenied("feed tenant mismatch".into()));
+        }
+        let mut tx = self.begin_write().await?;
+        let now = db_clock::<B>(tx.conn()).await?;
+        let renewed = stmt!(
+            B,
+            "UPDATE crawl_runs SET feed_finalizer_expires_at=$6 WHERE run_id=$1 AND tenant_id=$2 AND feed_finalizer_id=$3 AND feed_finalizer_owner=$4 AND feed_finalizer_fence=$5 AND feed_finalizing AND NOT feed_finalized AND feed_finalizer_expires_at>$7"
+        )
+        .uuid(lease.run.0)
+        .uuid(lease.tenant.0)
+        .uuid(finalizer)
+        .uuid(lease.worker.0)
+        .i64(lease.fence)
+        .ts(finalizer_expiry(now, ttl)?)
+        .ts(now)
+        .execute(tx.conn())
+        .await?;
+        if renewed == 0 {
+            return Err(StoreError::LeaseLost);
+        }
+        tx.commit().await
+    }
+
+    pub(crate) async fn release_feed_finalizer_owned(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+    ) -> Result<(), StoreError> {
+        let finalizer = finalizer_of(lease)?;
+        if crate::tenant::current().is_some_and(|owner| owner != lease.tenant) {
+            return Err(StoreError::AccessDenied("feed tenant mismatch".into()));
+        }
+        let mut tx = self.begin_write().await?;
+        let now = db_clock::<B>(tx.conn()).await?;
+        stmt!(
+            B,
+            "UPDATE crawl_runs SET feed_finalizer_expires_at=$6 WHERE run_id=$1 AND tenant_id=$2 AND feed_finalizer_id=$3 AND feed_finalizer_owner=$4 AND feed_finalizer_fence=$5 AND feed_finalizer_expires_at>$6"
+        )
+        .uuid(lease.run.0)
+        .uuid(lease.tenant.0)
+        .uuid(finalizer)
+        .uuid(lease.worker.0)
+        .i64(lease.fence)
+        .ts(now)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await
     }
 
     async fn feed_run_locked(
         &self,
-        tx: &mut sqlx::Transaction<'_, Postgres>,
+        conn: &mut Conn<B>,
         id: CrawlRunId,
     ) -> Result<(TenantId, crawlx_core::config::CreateCrawl, String, Option<String>), StoreError> {
-        let (tenant, config, _) = crate::dataset::config_tx(self, tx, id).await?;
-        let row = sqlx::query(
-            "SELECT status::text AS status,terminal_reason::text AS reason FROM crawl_runs WHERE run_id=$1",
+        let (tenant, config, _) = config_tx(self, conn, id).await?;
+        let row = stmt!(
+            B,
+            "SELECT status::text AS status,terminal_reason::text AS reason FROM crawl_runs WHERE run_id=$1"
         )
-        .bind(id.0)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
-        Ok((tenant, config, get(&row, "status")?, get(&row, "reason")?))
+        .uuid(id.0)
+        .fetch_one(conn)
+        .await?;
+        Ok((tenant, config, row.text("status")?, row.opt_text("reason")?))
+    }
+
+    async fn feed_finalized(&self, conn: &mut Conn<B>, id: CrawlRunId) -> Result<bool, StoreError> {
+        stmt!(
+            B,
+            "SELECT feed_finalized AS finalized FROM crawl_runs WHERE run_id=$1"
+        )
+        .uuid(id.0)
+        .fetch_one(conn)
+        .await?
+        .bool("finalized")
     }
 
     pub(crate) async fn stage_feed_batches_owned(
@@ -437,24 +764,18 @@ impl Pg {
         id: CrawlRunId,
         batches: &[DeliveryBatchV1],
     ) -> Result<(), StoreError> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (_, config, _, _) = self.feed_run_locked(&mut tx, id).await?;
-        let finalized: bool = sqlx::query_scalar("SELECT feed_finalized FROM crawl_runs WHERE run_id=$1")
-            .bind(id.0)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-        if finalized {
+        let mut tx = self.begin_write().await?;
+        let (_, config, _, _) = self.feed_run_locked(tx.conn(), id).await?;
+        if self.feed_finalized(tx.conn(), id).await? {
             return Err(invalid());
         }
         check_batches(&config.datasets, batches, false)?;
-        sqlx::query("UPDATE crawl_runs SET feed_finalizing=true WHERE run_id=$1")
-            .bind(id.0)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        apply_pg_source(self, &mut tx, id, 0, None, &[], &[], batches).await?;
-        tx.commit().await.map_err(db)
+        stmt!(B, "UPDATE crawl_runs SET feed_finalizing=true WHERE run_id=$1")
+            .uuid(id.0)
+            .execute(tx.conn())
+            .await?;
+        apply_source::<B>(self, tx.conn(), id, 0, None, &[], &[], batches).await?;
+        tx.commit().await
     }
 
     pub(crate) async fn staged_feed_batch_owned(
@@ -464,32 +785,42 @@ impl Pg {
         idempotency_key: &str,
     ) -> Result<Option<DeliveryBatchV1>, StoreError> {
         crawlx_core::dataset::validate_identifier(idempotency_key)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (tenant, config, now) = crate::dataset::config_tx(self, &mut tx, id).await?;
-        let authority = sqlx::query("SELECT feed_finalizing AND NOT feed_finalized AS active, expires_at FROM crawl_runs WHERE run_id=$1")
-            .bind(id.0).fetch_one(&mut *tx).await.map_err(db)?;
+        let mut tx = self.begin_write().await?;
+        let (tenant, config, now) = config_tx(self, tx.conn(), id).await?;
+        let authority = stmt!(
+            B,
+            "SELECT feed_finalizing AND NOT feed_finalized AS active, expires_at FROM crawl_runs WHERE run_id=$1"
+        )
+        .uuid(id.0)
+        .fetch_one(tx.conn())
+        .await?;
         staged_scope(
             &config.datasets,
             feed,
-            get(&authority, "active")?,
-            get(&authority, "expires_at")?,
+            authority.flag("active")?,
+            authority.opt_ts("expires_at")?,
             now,
         )?;
-        let row = sqlx::query("SELECT payload,volatile_page,terminal_source,state,expires_at FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3 AND idempotency_key=$4")
-            .bind(tenant.0).bind(id.0).bind(feed).bind(idempotency_key)
-            .fetch_optional(&mut *tx).await.map_err(db)?;
+        let row = stmt!(
+            B,
+            "SELECT payload,volatile_page,terminal_source,state,expires_at FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3 AND idempotency_key=$4"
+        )
+        .uuid(tenant.0)
+        .uuid(id.0)
+        .text(feed)
+        .text(idempotency_key)
+        .fetch_optional(tx.conn())
+        .await?;
         let Some(row) = row else {
-            tx.commit().await.map_err(db)?;
+            tx.commit().await?;
             return Ok(None);
         };
-        if get::<String>(&row, "state")? == "content_expired"
-            || get::<crawlx_core::Timestamp>(&row, "expires_at")? <= now
-        {
+        if row.text("state")? == "content_expired" || row.ts("expires_at")? <= now {
             return Err(StoreError::RetentionDenied(
                 "terminal feed manifest expired".into(),
             ));
         }
-        if !get::<bool>(&row, "terminal_source")? {
+        if !row.bool("terminal_source")? {
             return Err(invalid());
         }
         let batch: DeliveryBatchV1 = read_payload(self, tenant, id, &row, "dataset_delivery").await?;
@@ -497,8 +828,8 @@ impl Pg {
             return Err(invalid());
         }
         check_batches(&config.datasets, std::slice::from_ref(&batch), false)?;
-        verify_pg_delivery(self, &mut tx, tenant, id, &config, &batch, now).await?;
-        tx.commit().await.map_err(db)?;
+        verify_delivery(self, tx.conn(), tenant, id, &config, &batch, now).await?;
+        tx.commit().await?;
         Ok(Some(batch))
     }
 
@@ -512,27 +843,20 @@ impl Pg {
         if !status.is_terminal() {
             return Err(invalid());
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let (tenant, config, current, current_reason) = self.feed_run_locked(&mut tx, id).await?;
+        let mut tx = self.begin_write().await?;
+        let (tenant, config, current, current_reason) = self.feed_run_locked(tx.conn(), id).await?;
         if matches!(current.as_str(), "completed" | "failed" | "cancelled")
             && (current != status.as_str() || current_reason.as_deref() != Some(reason.as_str()))
         {
             return Err(invalid());
         }
-        let finalized: bool = sqlx::query_scalar("SELECT feed_finalized FROM crawl_runs WHERE run_id=$1")
-            .bind(id.0)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-        if finalized {
+        if self.feed_finalized(tx.conn(), id).await? {
             return Ok(());
         }
         check_batches(&config.datasets, batches, true)?;
         let mut eligible = Vec::with_capacity(batches.len());
         for batch in batches {
-            let row = sqlx::query("SELECT EXISTS(SELECT 1 FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3) AS present")
-                .bind(tenant.0).bind(id.0).bind(&batch.feed).fetch_one(&mut *tx).await.map_err(db)?;
-            if !get::<bool>(&row, "present")? {
+            if !self.feed_present(tx.conn(), tenant, id, &batch.feed).await? {
                 eligible.push(batch.clone());
             }
         }
@@ -545,15 +869,44 @@ impl Pg {
             if batches.iter().any(|batch| batch.feed == feed.id) {
                 continue;
             }
-            let present: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3)")
-                .bind(tenant.0).bind(id.0).bind(&feed.id).fetch_one(&mut *tx).await.map_err(db)?;
-            if !present {
+            if !self.feed_present(tx.conn(), tenant, id, &feed.id).await? {
                 return Err(invalid());
             }
         }
-        apply_pg_source(self, &mut tx, id, 0, None, &[], &[], &eligible).await?;
-        sqlx::query("UPDATE crawl_runs SET status=$2::text::run_status,terminal_reason=$3::text::terminal_reason,finished_at=COALESCE(finished_at,now()),feed_finalizing=false,feed_finalized=true,feed_finalization_outcome='completed' WHERE run_id=$1")
-            .bind(id.0).bind(status.as_str()).bind(reason.as_str()).execute(&mut *tx).await.map_err(db)?;
-        tx.commit().await.map_err(db)
+        apply_source::<B>(self, tx.conn(), id, 0, None, &[], &[], &eligible).await?;
+        stmt!(
+            B,
+            format!(
+                "UPDATE crawl_runs SET status=$2::text::run_status,terminal_reason=$3::text::terminal_reason,finished_at=COALESCE(finished_at,{}),feed_finalizing=false,feed_finalized=true,feed_finalization_outcome='completed' WHERE run_id=$1",
+                sql_now::<B>()
+            )
+        )
+        .uuid(id.0)
+        .text(status.as_str())
+        .text(reason.as_str())
+        .execute(tx.conn())
+        .await?;
+        settle_run::<B>(tx.conn(), id).await?;
+        tx.commit().await
+    }
+
+    /// Whether the run has an outbox row for `feed`.
+    async fn feed_present(
+        &self,
+        conn: &mut Conn<B>,
+        tenant: TenantId,
+        id: CrawlRunId,
+        feed: &str,
+    ) -> Result<bool, StoreError> {
+        stmt!(
+            B,
+            "SELECT EXISTS(SELECT 1 FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3) AS present"
+        )
+        .uuid(tenant.0)
+        .uuid(id.0)
+        .text(feed)
+        .fetch_one(conn)
+        .await?
+        .flag("present")
     }
 }

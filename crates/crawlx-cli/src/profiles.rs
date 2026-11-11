@@ -9,6 +9,8 @@ use crawlx_core::secret::{CredentialRef, SecretResolver};
 use crawlx_core::{CrawlRunId, SessionId, TenantId, WorkerId};
 use crawlx_storage::leases::SessionLease;
 use crawlx_storage::profiles::{BrowserProfileRepo, ProfileCipher, ProfileScopeV1, MAX_BUNDLE_BYTES};
+use crawlx_storage::sql::Sql;
+use crawlx_storage::Store;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -17,8 +19,8 @@ use std::sync::Arc;
 /// Authenticated encrypted-profile operations. Nothing opens a browser or fetches a URL.
 #[derive(Args, Debug)]
 pub struct ProfilesArgs {
-    /// PostgreSQL operator connection. The tenant's existing lease fence remains authority.
-    #[arg(long, env = "CRAWLX_DATABASE_URL", global = true)]
+    /// Operator database connection (PostgreSQL, MariaDB or SQLite URL). The tenant's existing lease fence remains authority.
+    #[arg(long, env = "CRAWLX_DATABASE_URL", global = true, hide_env_values = true)]
     pub database_url: Option<String>,
     /// Owning tenant UUID.
     #[arg(long)]
@@ -120,12 +122,20 @@ pub async fn run(args: ProfilesArgs) -> anyhow::Result<ExitCode> {
     if scope.tenant != args.tenant {
         bail!("profile scope tenant does not match operator tenant");
     }
-    let pg = crate::inspect::connect(args.database_url.as_deref()).await?;
-    let run = crawlx_storage::tenant::scope(args.tenant, RunRepo::get_metadata(&pg, args.run)).await?;
+    let durable = crate::inspect::connect(args.database_url.as_deref()).await?;
+    crawlx_worker::on_store!(&durable, store => run_on(store, args, scope).await)
+}
+
+async fn run_on<B: Sql>(
+    pg: &Store<B>,
+    args: ProfilesArgs,
+    scope: ProfileScopeV1,
+) -> anyhow::Result<ExitCode> {
+    let run = crawlx_storage::tenant::scope(args.tenant, RunRepo::get_metadata(pg, args.run)).await?;
     if run.tenant != args.tenant {
         bail!("profile run tenant mismatch");
     }
-    let session = crawlx_storage::tenant::scope(args.tenant, RunRepo::list_sessions(&pg, args.run))
+    let session = crawlx_storage::tenant::scope(args.tenant, RunRepo::list_sessions(pg, args.run))
         .await?
         .into_iter()
         .find(|session| session.id == args.session)
@@ -152,7 +162,7 @@ pub async fn run(args: ProfilesArgs) -> anyhow::Result<ExitCode> {
     // The encryption primitive owns its key schedule; do not retain a duplicate decoding buffer.
     key.fill(0);
     let cipher = cipher?;
-    let service = BrowserProfileRepo::new(&pg, &cipher);
+    let service = BrowserProfileRepo::new(pg, &cipher);
     let result = crawlx_storage::tenant::scope(args.tenant, async {
         match args.command {
             ProfilesCommand::Import {

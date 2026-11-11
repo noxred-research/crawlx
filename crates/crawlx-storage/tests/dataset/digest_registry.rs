@@ -349,9 +349,9 @@ async fn postgres_digest_claim_race_rollback_and_restart() {
     let Ok(url) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
         return;
     };
-    let config = PgConfig {
+    let config = StoreConfig {
         schema: Some(format!("digest_registry_{}", CrawlRunId::new().0.simple())),
-        ..PgConfig::default()
+        ..StoreConfig::default()
     };
     let pg = Pg::connect(&url, config.clone()).await.unwrap();
     pg.migrate().await.unwrap();

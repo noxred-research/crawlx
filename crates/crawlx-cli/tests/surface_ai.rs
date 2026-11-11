@@ -75,7 +75,7 @@ fn flags_parse_into_fields_and_no_flag_means_unset() {
         "--ai-url",
         "http://127.0.0.1:11434/v1",
         "--ai-model",
-        "llama3",
+        "chat-model",
         "--ai-key-env",
         "MY_KEY",
         "--ai-record",
@@ -85,7 +85,7 @@ fn flags_parse_into_fields_and_no_flag_means_unset() {
     ])
     .unwrap();
     assert_eq!(ai.ai_url.as_deref(), Some("http://127.0.0.1:11434/v1"));
-    assert_eq!(ai.ai_model.as_deref(), Some("llama3"));
+    assert_eq!(ai.ai_model.as_deref(), Some("chat-model"));
     assert_eq!(ai.ai_key_env.as_deref(), Some("MY_KEY"));
     assert_eq!(ai.ai_record.as_deref(), Some(Path::new("rec.jsonl")));
     assert_eq!(ai.ai_replay, None);

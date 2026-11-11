@@ -1,4 +1,4 @@
-//! PostgreSQL-fenced publication with a shared, volatile Redis secret registry.
+//! Database-fenced publication with a shared, volatile Redis secret registry.
 //!
 //! A durable pending operation is committed before Redis receives secret bytes.
 //! Unknown outcomes remain pending: no publication or handoff may infer success.
@@ -42,9 +42,11 @@
 //! already-enqueued commands or COMMIT may execute after cancellation. Errors
 //! never authorize credential delivery; durable pending intents remain barriers.
 
-use crate::codec::get;
-use crate::error::db;
-use crate::{ArtifactRow, Pg};
+use crate::backend::strategy::Conn;
+use crate::backend::{LockMode, PgBackend};
+use crate::sql::{stmt, Sql, SqlRow, Stmt};
+use crate::store::Store;
+use crate::ArtifactRow;
 use async_trait::async_trait;
 use crawlx_core::captcha::CaptchaSecrets;
 use crawlx_core::custody::{
@@ -54,7 +56,6 @@ use crawlx_core::hash::Digest;
 use crawlx_core::{ArtifactId, CrawlRunId, SecretOr, StoreError, TenantId, Timestamp, WorkerId};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
-use sqlx::{Postgres, Transaction};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::time::Duration;
@@ -62,12 +63,13 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 pub mod bootstrap;
+pub(crate) mod frag;
 pub mod frozen_archive;
 pub mod profiles;
 mod renewal;
 mod windows;
 pub use bootstrap::{
-    BootstrapAuthorization, BootstrapClaim, BootstrapLease, BootstrapProducerAuthorizer,
+    BootstrapAuthority, BootstrapAuthorization, BootstrapClaim, BootstrapLease, BootstrapProducerAuthorizer,
     PgBootstrapAuthority, BOOTSTRAP_PRODUCER_TTL, MAX_BOOTSTRAP_PRODUCER_TTL,
 };
 const SCRIPT: &str = include_str!("custody_redis.lua");
@@ -147,39 +149,66 @@ pub fn encrypted_object_key(
     key
 }
 
-const CUSTODY_ROW_QUERY: &str = "SELECT c.* FROM artifact_key_custody c JOIN artifacts a USING(artifact_id) \
+/// The statement that reads the custody row of one artifact, joined to every catalog and run
+/// fact that must still hold for the read to be authorized.
+fn custody_row_sql<B: Sql>() -> String {
+    let now = frag::clock::<B>();
+    let digest = frag::json_text::<B>("c.artifact_payload", "digest");
+    let hex = frag::hex::<B>("a.content_digest");
+    let size = frag::json_bigint::<B>("c.artifact_payload", "size_bytes");
+    let object_key = frag::json_text::<B>("c.artifact_payload", "object_key");
+    let bucket = frag::json_text::<B>("c.artifact_payload", "bucket");
+    let kind = frag::json_text::<B>("c.artifact_payload", "kind");
+    let content_type = frag::json_text::<B>("c.artifact_payload", "content_type");
+    let sensitivity = frag::json_text::<B>("c.artifact_payload", "sensitivity");
+    format!(
+        "SELECT c.* FROM artifact_key_custody c JOIN artifacts a USING(artifact_id) \
      JOIN crawl_runs r ON r.run_id=c.run_id AND r.tenant_id=c.tenant_id \
      JOIN run_secret_authority s ON s.tenant_id=c.tenant_id AND s.run_id=c.run_id \
      WHERE c.tenant_id=$1 AND c.run_id=$2 AND c.artifact_id=$3 \
        AND a.tenant_id=c.tenant_id AND a.run_id=c.run_id \
        AND a.content_digest=c.plaintext_digest AND a.size_bytes=c.plaintext_size \
-       AND c.artifact_payload->>'digest'=encode(a.content_digest,'hex') \
-       AND (c.artifact_payload->>'size_bytes')::bigint=a.size_bytes \
-       AND a.object_key=c.object_key AND a.object_key=c.artifact_payload->>'object_key' \
-       AND a.bucket=c.artifact_payload->>'bucket' AND a.kind=c.artifact_payload->>'kind' \
-       AND a.content_type=c.artifact_payload->>'content_type' \
-       AND a.sensitivity::text=c.artifact_payload->>'sensitivity' \
+       AND {digest}={hex} \
+       AND {size}=a.size_bytes \
+       AND a.object_key=c.object_key AND a.object_key={object_key} \
+       AND a.bucket={bucket} AND a.kind={kind} \
+       AND a.content_type={content_type} \
+       AND a.sensitivity::text={sensitivity} \
        AND a.created_at=c.created_at \
-       AND a.deleted_at IS NULL AND (a.expires_at IS NULL OR a.expires_at>clock_timestamp()) \
-       AND r.purge_requested_at IS NULL AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp()) \
-       AND (r.status NOT IN ('queued','running') OR (s.expires_at>clock_timestamp() \
-         AND s.pending_operation IS NULL AND s.pending_renewal_operation IS NULL))";
+       AND a.deleted_at IS NULL AND (a.expires_at IS NULL OR a.expires_at>{now}) \
+       AND r.purge_requested_at IS NULL AND (r.expires_at IS NULL OR r.expires_at>{now}) \
+       AND (r.status NOT IN ('queued','running') OR (s.expires_at>{now} \
+         AND s.pending_operation IS NULL AND s.pending_renewal_operation IS NULL))"
+    )
+}
 
-async fn custody_row<'e, E: sqlx::Executor<'e, Database = Postgres>>(
-    executor: E,
+fn custody_row_stmt<B: Sql>(tenant: TenantId, run: CrawlRunId, artifact: ArtifactId) -> Stmt<'static, B> {
+    stmt!(B, custody_row_sql::<B>())
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .uuid(artifact.0)
+}
+
+/// Decode and validate the key custody of one artifact from its authoritative row.
+fn custody_from_row<R: SqlRow>(
+    row: &R,
     tenant: TenantId,
     run: CrawlRunId,
-    artifact: ArtifactId,
-) -> Result<sqlx::postgres::PgRow, StoreError> {
-    scope(tenant)?;
-    sqlx::query(CUSTODY_ROW_QUERY)
-        .bind(tenant.0)
-        .bind(run.0)
-        .bind(artifact.0)
-        .fetch_optional(executor)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| denied("artifact key custody unavailable"))
+    id: ArtifactId,
+) -> Result<ArtifactKeyCustody, StoreError> {
+    let envelope: ArtifactKeyEnvelope =
+        serde_json::from_value(row.json("envelope")?).map_err(|_| denied("artifact key custody corrupt"))?;
+    envelope.validate(tenant, run, id)?;
+    let digest: [u8; 32] = row
+        .bytes("ciphertext_digest")?
+        .try_into()
+        .map_err(|_| denied("artifact ciphertext digest corrupt"))?;
+    let size = u64::try_from(row.i64("ciphertext_size")?)
+        .map_err(|_| denied("artifact ciphertext length corrupt"))?;
+    Ok(ArtifactKeyCustody {
+        envelope,
+        ciphertext: CiphertextIdentity::new(Digest(digest), size)?,
+    })
 }
 
 /// Durable KMS ciphertext for one artifact key; never contains a plaintext key.
@@ -244,14 +273,17 @@ impl ArtifactKeyEnvelope {
     }
 }
 
-/// Real distributed authority. Clones share PostgreSQL and Redis, not local secrets.
+/// Real distributed authority. Clones share the database and Redis, not local secrets.
 #[derive(Clone)]
-pub struct PgSecretAuthority {
-    pg: Pg,
+pub struct SecretAuthority<B: Sql> {
+    store: Store<B>,
     connection: Option<redis::aio::MultiplexedConnection>,
     ttl: Duration,
     hard_max: Duration,
 }
+
+/// The authority over PostgreSQL.
+pub type PgSecretAuthority = SecretAuthority<PgBackend>;
 
 /// Trusted service boundary implemented by the API's authenticated Principal
 /// adapter. Implementations must check actual authentication, tenant/run access
@@ -283,23 +315,23 @@ struct AuthorityRow {
 }
 
 impl AuthorityRow {
-    fn parse(tenant: TenantId, run: CrawlRunId, row: &sqlx::postgres::PgRow) -> Result<Self, StoreError> {
+    fn parse<R: SqlRow>(tenant: TenantId, run: CrawlRunId, row: &R) -> Result<Self, StoreError> {
+        let expires_at = row.ts("expires_at")?;
         Ok(Self {
             tenant,
             run,
-            incarnation: get(row, "incarnation")?,
-            epoch: get(row, "epoch")?,
-            pending: get(row, "pending_operation")?,
-            last: get(row, "last_operation")?,
-            commitment: get(row, "commitment")?,
-            pending_commitment: get(row, "pending_commitment")?,
-            pending_value_commitment: get(row, "pending_value_commitment")?,
-            last_value_commitment: get(row, "last_value_commitment")?,
-            expires_at: get(row, "expires_at")?,
-            retention_ceiling: get::<Option<Timestamp>>(row, "retention_ceiling")?
-                .unwrap_or(get(row, "expires_at")?),
-            use_window_ms: get(row, "use_window_ms")?,
-            sealed_at: get(row, "sealed_at")?,
+            incarnation: row.uuid("incarnation")?,
+            epoch: row.i64("epoch")?,
+            pending: row.opt_uuid("pending_operation")?,
+            last: row.opt_uuid("last_operation")?,
+            commitment: row.opt_bytes("commitment")?,
+            pending_commitment: row.opt_bytes("pending_commitment")?,
+            pending_value_commitment: row.opt_bytes("pending_value_commitment")?,
+            last_value_commitment: row.opt_bytes("last_value_commitment")?,
+            expires_at,
+            retention_ceiling: row.opt_ts("retention_ceiling")?.unwrap_or(expires_at),
+            use_window_ms: row.opt_i64("use_window_ms")?,
+            sealed_at: row.opt_ts("sealed_at")?,
         })
     }
 }
@@ -381,25 +413,22 @@ fn check_version(lease: &CustodyLease, expected: SecretEpoch, row: &AuthorityRow
     Ok(())
 }
 
-async fn run_lock(
-    tx: &mut Transaction<'_, Postgres>,
+async fn run_lock<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
     exclusive: bool,
 ) -> Result<(), StoreError> {
     scope(tenant)?;
-    let sql = if exclusive {
-        "SELECT pg_advisory_xact_lock(hashtextextended('crawlx/secret-authority/v1:' || $1::uuid::text || ':' || $2::uuid::text,0))"
+    // The key is the text the PostgreSQL implementation always hashed, so every engine's
+    // lock name is the same function of tenant and run.
+    let key = format!("crawlx/secret-authority/v1:{}:{}", tenant.0, run.0);
+    let mode = if exclusive {
+        LockMode::Exclusive
     } else {
-        "SELECT pg_advisory_xact_lock_shared(hashtextextended('crawlx/secret-authority/v1:' || $1::uuid::text || ':' || $2::uuid::text,0))"
+        LockMode::Shared
     };
-    sqlx::query(sql)
-        .bind(tenant.0)
-        .bind(run.0)
-        .execute(&mut **tx)
-        .await
-        .map_err(db)?;
-    Ok(())
+    B::xact_lock(conn, &key, mode).await
 }
 
 // Cancellation is a local veto, never remote rollback. A dropped command may
@@ -418,124 +447,228 @@ async fn locally_live<T>(
     result
 }
 
-pub(crate) async fn live(tx: &mut Transaction<'_, Postgres>, lease: &CustodyLease) -> Result<(), StoreError> {
-    locally_live(lease, live_locked(tx, lease)).await
+/// Check, inside the caller's write transaction, that `lease` still owns its producer slot:
+/// the run lock, the run, the producer source row, the authorization and the run's own
+/// deadlines are re-read under shared locks, so none can change before the caller commits.
+///
+/// # Errors
+/// Returns [`StoreError::LeaseLost`] when any fence no longer holds, and database errors.
+pub(crate) async fn live<B: Sql>(conn: &mut Conn<B>, lease: &CustodyLease) -> Result<(), StoreError> {
+    locally_live(lease, live_locked::<B>(conn, lease)).await
 }
 
-async fn live_locked(tx: &mut Transaction<'_, Postgres>, lease: &CustodyLease) -> Result<(), StoreError> {
-    run_lock(tx, lease.tenant, lease.run, false).await?;
+async fn live_locked<B: Sql>(conn: &mut Conn<B>, lease: &CustodyLease) -> Result<(), StoreError> {
+    run_lock::<B>(conn, lease.tenant, lease.run, false).await?;
     if lease.fence <= 0 {
         return Err(StoreError::LeaseLost);
     }
-    let owner: Option<Uuid> =
-        sqlx::query_scalar("SELECT run_id FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2 FOR SHARE")
-            .bind(lease.run.0)
-            .bind(lease.tenant.0)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?;
+    let owner = stmt!(
+        B,
+        format!(
+            "SELECT run_id FROM crawl_runs WHERE run_id=$1 AND tenant_id=$2{}",
+            frag::share::<B>()
+        )
+    )
+    .uuid(lease.run.0)
+    .uuid(lease.tenant.0)
+    .fetch_optional(conn)
+    .await?;
     if owner.is_none() {
         return Err(StoreError::LeaseLost);
     }
-    let query = match lease.source {
-        CustodySource::Session(id) => sqlx::query_scalar::<_, Option<Timestamp>>(
-            "SELECT lease_expires_at FROM crawl_sessions WHERE session_id=$1 AND run_id=$2 AND lease_owner=$3 AND fencing_token=$4 AND status IN ('running','recovering') FOR SHARE",
-        ).bind(id.0),
-        CustodySource::Url(id) => sqlx::query_scalar::<_, Option<Timestamp>>(
-            "SELECT lease_expires_at FROM url_frontier WHERE frontier_id=$1 AND run_id=$2 AND lease_owner=$3 AND fencing_token=$4 AND status='leased' FOR SHARE",
-        ).bind(id),
-        CustodySource::AuthenticatedProducer(id) => sqlx::query_scalar::<_, Option<Timestamp>>(
-            "SELECT LEAST(p.expires_at,k.expires_at) FROM run_custody_producers p JOIN api_keys k ON k.key_id=p.api_key_id AND k.tenant_id=p.tenant_id WHERE p.producer_id=$1 AND p.run_id=$2 AND p.owner=$3 AND p.fence=$4 AND k.revoked_at IS NULL FOR SHARE OF p,k",
-        ).bind(id),
+    let now = frag::clock::<B>();
+    let (query, column) = match lease.source {
+        CustodySource::Session(id) => (
+            stmt!(
+                B,
+                format!(
+                    "SELECT lease_expires_at FROM crawl_sessions WHERE session_id=$1 AND run_id=$2 AND lease_owner=$3 AND fencing_token=$4 AND status IN ('running','recovering'){}",
+                    frag::share::<B>()
+                )
+            )
+            .uuid(id.0),
+            "lease_expires_at",
+        ),
+        CustodySource::Url(id) => (
+            stmt!(
+                B,
+                format!(
+                    "SELECT lease_expires_at FROM url_frontier WHERE frontier_id=$1 AND run_id=$2 AND lease_owner=$3 AND fencing_token=$4 AND status='leased'{}",
+                    frag::share::<B>()
+                )
+            )
+            .i64(id),
+            "lease_expires_at",
+        ),
+        CustodySource::AuthenticatedProducer(id) => (
+            stmt!(
+                B,
+                format!(
+                    "SELECT {} AS expires_at FROM run_custody_producers p JOIN api_keys k ON k.key_id=p.api_key_id AND k.tenant_id=p.tenant_id WHERE p.producer_id=$1 AND p.run_id=$2 AND p.owner=$3 AND p.fence=$4 AND k.revoked_at IS NULL{}",
+                    frag::least::<B>(&["p.expires_at", "k.expires_at"]),
+                    frag::share_of::<B>("p,k")
+                )
+            )
+            .uuid(id),
+            "expires_at",
+        ),
         // archive_exports has no owner column: the catalog fences writers by export and fence
         // alone (`archive_catalog::writer`), so the worker bind ($3) is only typed, not compared.
         // The export row's tenant is bound to the run by its foreign key, and `live_locked`
         // has already verified that run belongs to `lease.tenant`.
-        CustodySource::ArchiveExport(id) => sqlx::query_scalar::<_, Option<Timestamp>>(
-            "SELECT lease_until FROM archive_exports WHERE export_id=$1 AND run_id=$2 AND $3::uuid IS NOT NULL AND fence=$4 AND state='recording' AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE",
-        ).bind(id),
-        CustodySource::Bootstrap(id) => sqlx::query_scalar::<_, Option<Timestamp>>(
-            "SELECT p.expires_at FROM run_bootstrap_producers p JOIN workers w ON w.worker_id=p.owner WHERE p.producer_id=$1 AND p.run_id=$2 AND p.owner=$3 AND p.fence=$4 AND p.state='running' AND NOT w.draining FOR SHARE OF p,w",
-        ).bind(id),
+        CustodySource::ArchiveExport(id) => (
+            stmt!(
+                B,
+                format!(
+                    "SELECT lease_until FROM archive_exports WHERE export_id=$1 AND run_id=$2 AND $3::uuid IS NOT NULL AND fence=$4 AND state='recording' AND (expires_at IS NULL OR expires_at>{now}){}",
+                    frag::share::<B>()
+                )
+            )
+            .uuid(id),
+            "lease_until",
+        ),
+        CustodySource::Bootstrap(id) => (
+            stmt!(
+                B,
+                format!(
+                    "SELECT p.expires_at FROM run_bootstrap_producers p JOIN workers w ON w.worker_id=p.owner WHERE p.producer_id=$1 AND p.run_id=$2 AND p.owner=$3 AND p.fence=$4 AND p.state='running' AND NOT w.draining{}",
+                    frag::share_of::<B>("p,w")
+                )
+            )
+            .uuid(id),
+            "expires_at",
+        ),
+        // The finalizer claim lives on the run row, which `live_locked` already holds shared.
+        // It is live only while that run's feed finalization is unfinished.
+        CustodySource::FeedFinalization(id) => (
+            stmt!(
+                B,
+                format!(
+                    "SELECT feed_finalizer_expires_at FROM crawl_runs WHERE feed_finalizer_id=$1 AND run_id=$2 AND feed_finalizer_owner=$3 AND feed_finalizer_fence=$4 AND feed_finalizing AND NOT feed_finalized{}",
+                    frag::share::<B>()
+                )
+            )
+            .uuid(id),
+            "feed_finalizer_expires_at",
+        ),
         _ => return Err(StoreError::Unavailable("unsupported custody producer authority".into())),
     };
     let expiry = query
-        .bind(lease.run.0)
-        .bind(lease.worker.0)
-        .bind(lease.fence)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(db)?
+        .uuid(lease.run.0)
+        .uuid(lease.worker.0)
+        .i64(lease.fence)
+        .fetch_optional(conn)
+        .await?
+        .map(|row| row.opt_ts(column))
+        .transpose()?
         .flatten()
         .ok_or(StoreError::LeaseLost)?;
-    let _: Option<Uuid> = sqlx::query_scalar(
-        "SELECT a.record_id FROM authorization_records a JOIN crawl_runs r ON a.record_id=r.authorization_record_id WHERE r.run_id=$1 FOR SHARE OF a",
-    ).bind(lease.run.0).fetch_optional(&mut **tx).await.map_err(db)?;
-    let now = database_now(tx).await?;
+    stmt!(
+        B,
+        format!(
+            "SELECT a.record_id FROM authorization_records a JOIN crawl_runs r ON a.record_id=r.authorization_record_id WHERE r.run_id=$1{}",
+            frag::share_of::<B>("a")
+        )
+    )
+    .uuid(lease.run.0)
+    .fetch_optional(conn)
+    .await?;
+    let now = database_now::<B>(conn).await?;
     if expiry <= now {
         return Err(StoreError::LeaseLost);
     }
-    let valid: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=$1 AND r.tenant_id=$2 \
+    // A feed finalizer runs because the run ended or is ending: its reason is a cancellation, a
+    // deadline or a terminal status, so those do not revoke it. Purge, expiry and a lost
+    // authorization record still do.
+    let validity = if matches!(lease.source, CustodySource::FeedFinalization(_)) {
+        stmt!(
+            B,
+            "SELECT EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=$1 AND r.tenant_id=$2 \
+         AND r.purge_requested_at IS NULL \
+         AND (r.expires_at IS NULL OR r.expires_at>$3) \
+         AND (r.authorization_record_id IS NULL OR EXISTS(SELECT 1 FROM authorization_records a \
+             WHERE a.record_id=r.authorization_record_id AND a.tenant_id=r.tenant_id \
+               AND a.revoked_at IS NULL AND a.valid_from<=$3 AND a.valid_to>$3 \
+               AND (r.authorization_body_digest IS NULL OR r.authorization_body_digest=a.body_digest)))) AS v"
+        )
+    } else {
+        stmt!(
+            B,
+            "SELECT EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=$1 AND r.tenant_id=$2 \
          AND r.status IN ('queued','running') AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
          AND (r.expires_at IS NULL OR r.expires_at>$3) \
          AND (r.deadline_at IS NULL OR r.deadline_at>$3) \
          AND (r.authorization_record_id IS NULL OR EXISTS(SELECT 1 FROM authorization_records a \
              WHERE a.record_id=r.authorization_record_id AND a.tenant_id=r.tenant_id \
                AND a.revoked_at IS NULL AND a.valid_from<=$3 AND a.valid_to>$3 \
-               AND (r.authorization_body_digest IS NULL OR r.authorization_body_digest=a.body_digest))))",
-    ).bind(lease.run.0).bind(lease.tenant.0).bind(now).fetch_one(&mut **tx).await.map_err(db)?;
+               AND (r.authorization_body_digest IS NULL OR r.authorization_body_digest=a.body_digest)))) AS v"
+        )
+    };
+    let valid = validity
+        .uuid(lease.run.0)
+        .uuid(lease.tenant.0)
+        .ts(now)
+        .fetch_one(conn)
+        .await?
+        .bool("v")?;
     if !valid {
         return Err(StoreError::LeaseLost);
     }
     Ok(())
 }
 
-async fn locked(
-    tx: &mut Transaction<'_, Postgres>,
-    lease: &CustodyLease,
-) -> Result<AuthorityRow, StoreError> {
-    live(tx, lease).await?;
+/// The secret authority row of the lease's run under an exclusive row lock, after `live`.
+async fn locked<B: Sql>(conn: &mut Conn<B>, lease: &CustodyLease) -> Result<AuthorityRow, StoreError> {
+    live::<B>(conn, lease).await?;
+    let greatest = frag::greatest::<B>(&["expires_at", "pending_renewal_deadline"]);
+    let now = frag::clock::<B>();
     let row = tokio::select! {
         biased;
         () = lease.cancelled() => return Err(StoreError::LeaseLost),
-        result = sqlx::query("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,GREATEST(expires_at,pending_renewal_deadline) AS expires_at,retention_ceiling,use_window_ms,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 AND GREATEST(expires_at,pending_renewal_deadline)>clock_timestamp() AND sealed_at IS NULL FOR UPDATE")
-            .bind(lease.tenant.0).bind(lease.run.0).fetch_optional(&mut **tx) => result.map_err(db)?,
+        result = stmt!(B, format!("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,{greatest} AS expires_at,retention_ceiling,use_window_ms,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 AND {greatest}>{now} AND sealed_at IS NULL{}", frag::update::<B>()))
+            .uuid(lease.tenant.0).uuid(lease.run.0).fetch_optional(conn) => result?,
     }.ok_or_else(|| denied(AUTHORITY_MISSING))?;
     lease.check_local_cancellation()?;
     AuthorityRow::parse(lease.tenant, lease.run, &row)
 }
 
-async fn read_locked(
-    tx: &mut Transaction<'_, Postgres>,
+async fn read_locked<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
 ) -> Result<(AuthorityRow, String), StoreError> {
     scope(tenant)?;
-    run_lock(tx, tenant, run, false).await?;
-    let status: Option<String> = sqlx::query_scalar(
-        "SELECT status::text FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 \
-         AND purge_requested_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE",
+    run_lock::<B>(conn, tenant, run, false).await?;
+    let now = frag::clock::<B>();
+    let status = stmt!(
+        B,
+        format!(
+            "SELECT status::text AS v FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 \
+         AND purge_requested_at IS NULL AND (expires_at IS NULL OR expires_at>{now}){}",
+            frag::share::<B>()
+        )
     )
-    .bind(tenant.0)
-    .bind(run.0)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
-    let status = status.ok_or_else(|| denied("artifact run authority unavailable"))?;
-    let row = sqlx::query("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,GREATEST(expires_at,pending_renewal_deadline) AS expires_at,retention_ceiling,use_window_ms,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE")
-        .bind(tenant.0).bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .fetch_optional(conn)
+    .await?;
+    let status = status
+        .ok_or_else(|| denied("artifact run authority unavailable"))?
+        .text("v")?;
+    let greatest = frag::greatest::<B>(&["expires_at", "pending_renewal_deadline"]);
+    let row = stmt!(B, format!("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,{greatest} AS expires_at,retention_ceiling,use_window_ms,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2{}", frag::update::<B>()))
+        .uuid(tenant.0).uuid(run.0).fetch_optional(conn).await?
         .ok_or_else(|| denied("artifact secret authority missing"))?;
     Ok((AuthorityRow::parse(tenant, run, &row)?, status))
 }
 
-async fn no_exposures(
-    tx: &mut Transaction<'_, Postgres>,
+async fn no_exposures<B: Sql>(
+    conn: &mut Conn<B>,
     tenant: TenantId,
     run: CrawlRunId,
 ) -> Result<(), StoreError> {
-    let open: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM run_artifact_exposures WHERE tenant_id=$1 AND run_id=$2 AND closed_at IS NULL)")
-        .bind(tenant.0).bind(run.0).fetch_one(&mut **tx).await.map_err(db)?;
+    let open = stmt!(B, "SELECT EXISTS(SELECT 1 FROM run_artifact_exposures WHERE tenant_id=$1 AND run_id=$2 AND closed_at IS NULL) AS v")
+        .uuid(tenant.0).uuid(run.0).fetch_one(conn).await?.bool("v")?;
     if open {
         return Err(denied(
             "artifact exposure remains open; producer quiescence required",
@@ -544,13 +677,13 @@ async fn no_exposures(
     Ok(())
 }
 
-impl PgSecretAuthority {
+impl<B: Sql> SecretAuthority<B> {
     /// Open a dedicated nonpersistent Redis authority. There is no local fallback.
     ///
     /// # Errors
     /// Rejects invalid TTL, inaccessible Redis or nonvolatile/replicated configuration.
-    pub async fn open(pg: Pg, url: &str, ttl: Duration) -> Result<Self, StoreError> {
-        Self::open_with_policy(pg, url, ttl, DEFAULT_AUTHORITY_HARD_MAX).await
+    pub async fn open(store: Store<B>, url: &str, ttl: Duration) -> Result<Self, StoreError> {
+        Self::open_with_policy(store, url, ttl, DEFAULT_AUTHORITY_HARD_MAX).await
     }
 
     /// Open renewable use windows under an immutable original retention ceiling.
@@ -561,7 +694,7 @@ impl PgSecretAuthority {
     /// # Errors
     /// Rejects invalid windows, inaccessible Redis or nonvolatile configuration.
     pub async fn open_with_policy(
-        pg: Pg,
+        store: Store<B>,
         url: &str,
         ttl: Duration,
         hard_max: Duration,
@@ -582,7 +715,7 @@ impl PgSecretAuthority {
             .await
             .map_err(|_| denied("secret authority Redis connection unavailable"))?;
         let authority = Self {
-            pg,
+            store,
             connection: Some(connection),
             ttl,
             hard_max,
@@ -595,9 +728,9 @@ impl PgSecretAuthority {
     /// Open only durable, finalized reads without Redis. Live runs, secret
     /// registration, initialization and publication remain explicitly unavailable.
     #[must_use]
-    pub fn finalized_reads(pg: Pg) -> Self {
+    pub fn finalized_reads(store: Store<B>) -> Self {
         Self {
-            pg,
+            store,
             connection: None,
             ttl: Duration::ZERO,
             hard_max: Duration::ZERO,
@@ -610,10 +743,9 @@ impl PgSecretAuthority {
         })
     }
 
-    async fn transaction(&self) -> Result<Transaction<'static, Postgres>, StoreError> {
-        let mut tx = self.pg.pool.begin().await.map_err(db)?;
-        sqlx::query("SELECT set_config('lock_timeout','10s',true),set_config('statement_timeout','30s',true),set_config('idle_in_transaction_session_timeout','90s',true)")
-            .execute(&mut *tx).await.map_err(db)?;
+    async fn transaction(&self) -> Result<crate::backend::WriteTx<B::Db>, StoreError> {
+        let mut tx = self.store.begin_write().await?;
+        frag::bound_waits::<B>(tx.conn()).await?;
         Ok(tx)
     }
 
@@ -665,20 +797,21 @@ impl PgSecretAuthority {
         Ok(())
     }
 
+    async fn pool_now(&self) -> Result<Timestamp, StoreError> {
+        stmt!(B, format!("SELECT {} AS v", frag::clock::<B>()))
+            .fetch_one_pool(&self.store.pool)
+            .await?
+            .ts("v")
+    }
+
     async fn validate_clock(&self) -> Result<(), StoreError> {
-        let before: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
-            .fetch_one(&self.pg.pool)
-            .await
-            .map_err(db)?;
+        let before: Timestamp = self.pool_now().await?;
         let mut connection = self.connection()?;
         let (seconds, micros): (i64, i64) = redis::cmd("TIME")
             .query_async(&mut connection)
             .await
             .map_err(|_| denied("secret authority Redis clock unavailable"))?;
-        let after: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
-            .fetch_one(&self.pg.pool)
-            .await
-            .map_err(db)?;
+        let after: Timestamp = self.pool_now().await?;
         let redis_ms = seconds
             .checked_mul(1000)
             .and_then(|value| value.checked_add(micros / 1000))
@@ -819,18 +952,30 @@ impl PgSecretAuthority {
         tokio::select! {
             biased;
             () = lease.cancelled() => return Err(StoreError::LeaseLost),
-            result = run_lock(&mut tx, lease.tenant, lease.run, true) => result?,
+            result = run_lock::<B>(tx.conn(), lease.tenant, lease.run, true) => result?,
         }
-        live(&mut tx, lease).await?;
+        live::<B>(tx.conn(), lease).await?;
         let incarnation = random_uuid()?;
         let ttl_ms =
             i64::try_from(self.ttl.as_millis()).map_err(|_| denied("secret authority TTL overflow"))?;
-        let (use_deadline, retention_ceiling) = self.initial_deadlines(&mut tx, lease).await?;
-        sqlx::query("INSERT INTO run_secret_authority(tenant_id,run_id,incarnation,epoch,pending_operation,expires_at,retention_ceiling,use_window_ms) VALUES($1,$2,$3,0,$3,$4,$5,$6) ON CONFLICT(tenant_id,run_id) DO NOTHING")
-            .bind(lease.tenant.0).bind(lease.run.0).bind(incarnation).bind(use_deadline)
-            .bind(retention_ceiling).bind(ttl_ms).execute(&mut *tx).await.map_err(db)?;
-        let row = locked(&mut tx, lease).await?;
-        tx.commit().await.map_err(db)?;
+        let (use_deadline, retention_ceiling) = self.initial_deadlines(tx.conn(), lease).await?;
+        stmt!(
+            B,
+            format!(
+                "INSERT INTO run_secret_authority(tenant_id,run_id,incarnation,epoch,pending_operation,expires_at,retention_ceiling,use_window_ms) VALUES($1,$2,$3,0,$3,$4,$5,$6) {}",
+                frag::on_conflict_nothing::<B>(&["tenant_id", "run_id"])
+            )
+        )
+        .uuid(lease.tenant.0)
+        .uuid(lease.run.0)
+        .uuid(incarnation)
+        .ts(use_deadline)
+        .ts(retention_ceiling)
+        .i64(ttl_ms)
+        .execute(tx.conn())
+        .await?;
+        let row = locked::<B>(tx.conn(), lease).await?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         if row.epoch > 0 {
             return self.snapshot(lease).await;
@@ -863,7 +1008,7 @@ impl PgSecretAuthority {
         value_commitment: Option<[u8; 32]>,
     ) -> Result<(), StoreError> {
         let mut tx = self.transaction().await?;
-        let row = locked(&mut tx, lease).await?;
+        let row = locked::<B>(tx.conn(), lease).await?;
         if row.incarnation != original.incarnation {
             return Err(denied("secret authority incarnation changed"));
         }
@@ -878,9 +1023,9 @@ impl PgSecretAuthority {
                     "secret authority pending set or exact value commitment mismatch",
                 ));
             }
-            sqlx::query("UPDATE run_secret_authority SET epoch=$3,pending_operation=NULL,last_operation=$4,commitment=$5,pending_commitment=NULL,pending_value_commitment=NULL,last_value_commitment=$6 WHERE tenant_id=$1 AND run_id=$2")
-                .bind(lease.tenant.0).bind(lease.run.0).bind(epoch).bind(operation).bind(commitment.as_slice())
-                .bind(value_commitment.as_ref().map(|value| value.as_slice())).execute(&mut *tx).await.map_err(db)?;
+            stmt!(B, "UPDATE run_secret_authority SET epoch=$3,pending_operation=NULL,last_operation=$4,commitment=$5,pending_commitment=NULL,pending_value_commitment=NULL,last_value_commitment=$6 WHERE tenant_id=$1 AND run_id=$2")
+                .uuid(lease.tenant.0).uuid(lease.run.0).i64(epoch).uuid(operation).bytes(commitment.as_slice())
+                .opt_bytes(value_commitment.as_ref().map(|value| value.as_slice())).execute(tx.conn()).await?;
         } else if row.pending.is_some()
             || row.epoch != epoch
             || row.last != Some(operation)
@@ -889,12 +1034,12 @@ impl PgSecretAuthority {
         {
             return Err(denied("secret authority recovery operation changed"));
         }
-        live(&mut tx, lease).await?;
-        if row.expires_at <= database_now(&mut tx).await? {
+        live::<B>(tx.conn(), lease).await?;
+        if row.expires_at <= database_now::<B>(tx.conn()).await? {
             return Err(denied("secret authority expired during registration"));
         }
         lease.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         Ok(())
     }
@@ -941,17 +1086,22 @@ impl PgSecretAuthority {
             serde_json::to_value(artifact).map_err(|_| denied("artifact publication metadata invalid"))?;
         let envelope_json =
             serde_json::to_value(envelope).map_err(|_| denied("artifact key custody metadata invalid"))?;
+        let plaintext_size =
+            i64::try_from(artifact.size_bytes).map_err(|_| denied("artifact plaintext size overflow"))?;
+        let ciphertext_size =
+            i64::try_from(ciphertext.size_bytes).map_err(|_| denied("artifact ciphertext size overflow"))?;
         let mut tx = self.transaction().await?;
-        let row = locked(&mut tx, lease).await?;
+        let row = locked::<B>(tx.conn(), lease).await?;
         check_version(lease, expected, &row)?;
-        let retained: bool = sqlx::query_scalar(
-            "SELECT retention_mode<>'zdr' FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2",
+        let retained = stmt!(
+            B,
+            "SELECT retention_mode<>'zdr' AS v FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2"
         )
-        .bind(lease.tenant.0)
-        .bind(lease.run.0)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(lease.tenant.0)
+        .uuid(lease.run.0)
+        .fetch_one(tx.conn())
+        .await?
+        .bool("v")?;
         if !retained {
             return Err(StoreError::RetentionDenied(
                 "zdr cannot publish retained artifact custody".into(),
@@ -992,47 +1142,43 @@ impl PgSecretAuthority {
             }
         }
         // Idempotent retry after an unknown COMMIT must match every immutable field.
-        let existing = sqlx::query("SELECT artifact_payload,envelope,incarnation,secret_epoch,ciphertext_digest,ciphertext_size,object_key FROM artifact_key_custody WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3")
-            .bind(lease.tenant.0).bind(lease.run.0).bind(artifact.id.0).fetch_optional(&mut *tx).await.map_err(db)?;
+        let existing = stmt!(B, "SELECT artifact_payload,envelope,incarnation,secret_epoch,ciphertext_digest,ciphertext_size,object_key FROM artifact_key_custody WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3")
+            .uuid(lease.tenant.0).uuid(lease.run.0).uuid(artifact.id.0).fetch_optional(tx.conn()).await?;
         lease.check_local_cancellation()?;
         if let Some(existing) = existing {
-            if get::<serde_json::Value>(&existing, "artifact_payload")? != row_json
-                || get::<serde_json::Value>(&existing, "envelope")? != envelope_json
-                || get::<Uuid>(&existing, "incarnation")? != expected.incarnation
-                || get::<i64>(&existing, "secret_epoch")? > expected.epoch
-                || get::<Vec<u8>>(&existing, "ciphertext_digest")?.as_slice()
-                    != ciphertext.digest.0.as_slice()
-                || u64::try_from(get::<i64>(&existing, "ciphertext_size")?)
+            if existing.json("artifact_payload")? != row_json
+                || existing.json("envelope")? != envelope_json
+                || existing.uuid("incarnation")? != expected.incarnation
+                || existing.i64("secret_epoch")? > expected.epoch
+                || existing.bytes("ciphertext_digest")?.as_slice() != ciphertext.digest.0.as_slice()
+                || u64::try_from(existing.i64("ciphertext_size")?)
                     .map_err(|_| denied("negative ciphertext length"))?
                     != ciphertext.size_bytes
-                || get::<String>(&existing, "object_key")? != artifact.object_key
+                || existing.text("object_key")? != artifact.object_key
             {
                 return Err(denied("artifact publication retry changed immutable custody"));
             }
             // Calling publish at a later epoch asserts a complete rescan of the
             // same immutable ciphertext against that newer complete snapshot.
-            sqlx::query("UPDATE artifact_key_custody SET secret_epoch=$4 WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3")
-                .bind(lease.tenant.0).bind(lease.run.0).bind(artifact.id.0).bind(expected.epoch)
-                .execute(&mut *tx).await.map_err(db)?;
+            stmt!(B, "UPDATE artifact_key_custody SET secret_epoch=$4 WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3")
+                .uuid(lease.tenant.0).uuid(lease.run.0).uuid(artifact.id.0).i64(expected.epoch)
+                .execute(tx.conn()).await?;
         } else {
-            sqlx::query("INSERT INTO artifacts(artifact_id,tenant_id,run_id,kind,bucket,object_key,size_bytes,content_digest,content_type,sensitivity,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text::sensitivity_class,$11,$12)")
-                .bind(artifact.id.0).bind(artifact.tenant.0).bind(artifact.run.0).bind(&artifact.kind).bind(&artifact.bucket)
-                .bind(&artifact.object_key).bind(i64::try_from(artifact.size_bytes).map_err(|_| denied("artifact plaintext size overflow"))?)
-                .bind(artifact.digest.0.as_slice()).bind(&artifact.content_type).bind(artifact.sensitivity.as_str())
-                .bind(artifact.created_at).bind(artifact.expires_at).execute(&mut *tx).await.map_err(db)?;
-            sqlx::query("INSERT INTO artifact_key_custody(artifact_id,tenant_id,run_id,incarnation,secret_epoch,object_key,plaintext_digest,plaintext_size,ciphertext_digest,ciphertext_size,envelope,artifact_payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
-                .bind(artifact.id.0).bind(lease.tenant.0).bind(lease.run.0).bind(expected.incarnation).bind(expected.epoch)
-                .bind(&artifact.object_key).bind(artifact.digest.0.as_slice())
-                .bind(i64::try_from(artifact.size_bytes).map_err(|_| denied("artifact plaintext size overflow"))?)
-                .bind(ciphertext.digest.0.as_slice()).bind(i64::try_from(ciphertext.size_bytes).map_err(|_| denied("artifact ciphertext size overflow"))?)
-                .bind(envelope_json).bind(row_json).bind(artifact.created_at).execute(&mut *tx).await.map_err(db)?;
+            insert_artifact::<B>(tx.conn(), artifact, plaintext_size).await?;
+            stmt!(B, "INSERT INTO artifact_key_custody(artifact_id,tenant_id,run_id,incarnation,secret_epoch,object_key,plaintext_digest,plaintext_size,ciphertext_digest,ciphertext_size,envelope,artifact_payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
+                .uuid(artifact.id.0).uuid(lease.tenant.0).uuid(lease.run.0).uuid(expected.incarnation).i64(expected.epoch)
+                .text(&artifact.object_key).bytes(artifact.digest.0.as_slice())
+                .i64(plaintext_size)
+                .bytes(ciphertext.digest.0.as_slice()).i64(ciphertext_size)
+                .json(&envelope_json).json(&row_json).ts(artifact.created_at)
+                .execute(tx.conn()).await?;
         }
-        live(&mut tx, lease).await?;
-        if row.expires_at <= database_now(&mut tx).await? {
+        live::<B>(tx.conn(), lease).await?;
+        if row.expires_at <= database_now::<B>(tx.conn()).await? {
             return Err(denied("secret authority expired during publication"));
         }
         lease.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         Ok(())
     }
@@ -1053,25 +1199,17 @@ impl PgSecretAuthority {
         run: CrawlRunId,
         id: ArtifactId,
     ) -> Result<ArtifactKeyCustody, StoreError> {
-        let row = custody_row(&self.pg.pool, tenant, run, id).await?;
-        let envelope: ArtifactKeyEnvelope = serde_json::from_value(get(&row, "envelope")?)
-            .map_err(|_| denied("artifact key custody corrupt"))?;
-        envelope.validate(tenant, run, id)?;
-        let digest: Vec<u8> = get(&row, "ciphertext_digest")?;
-        let digest: [u8; 32] = digest
-            .try_into()
-            .map_err(|_| denied("artifact ciphertext digest corrupt"))?;
-        let size = u64::try_from(get::<i64>(&row, "ciphertext_size")?)
-            .map_err(|_| denied("artifact ciphertext length corrupt"))?;
-        Ok(ArtifactKeyCustody {
-            envelope,
-            ciphertext: CiphertextIdentity::new(Digest(digest), size)?,
-        })
+        scope(tenant)?;
+        let row = custody_row_stmt::<B>(tenant, run, id)
+            .fetch_optional_pool(&self.store.pool)
+            .await?
+            .ok_or_else(|| denied("artifact key custody unavailable"))?;
+        custody_from_row(&row, tenant, run, id)
     }
 
     /// Tombstone a published artifact's catalog row (`deleted_at`), the same semantics as the
     /// store's other deletes: the custody row stays but is no longer readable
-    /// ([`CUSTODY_ROW_QUERY`] requires a live catalog row). Idempotent.
+    /// ([`custody_row_sql`] requires a live catalog row). Idempotent.
     ///
     /// # Errors
     /// Returns tenant scope or database errors; any error leaves withdrawal unconfirmed.
@@ -1082,15 +1220,18 @@ impl PgSecretAuthority {
         id: ArtifactId,
     ) -> Result<(), StoreError> {
         scope(tenant)?;
-        sqlx::query(
-            "UPDATE artifacts SET deleted_at=clock_timestamp() WHERE artifact_id=$1 AND tenant_id=$2 AND run_id=$3 AND deleted_at IS NULL",
+        stmt!(
+            B,
+            format!(
+                "UPDATE artifacts SET deleted_at={} WHERE artifact_id=$1 AND tenant_id=$2 AND run_id=$3 AND deleted_at IS NULL",
+                frag::clock::<B>()
+            )
         )
-        .bind(id.0)
-        .bind(tenant.0)
-        .bind(run.0)
-        .execute(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .uuid(id.0)
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .execute_write(&self.store.pool)
+        .await?;
         Ok(())
     }
 
@@ -1107,15 +1248,16 @@ impl PgSecretAuthority {
         id: ArtifactId,
     ) -> Result<Option<ArtifactKeyCustody>, StoreError> {
         scope(tenant)?;
-        let sealed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM artifact_key_custody WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3)",
+        let sealed = stmt!(
+            B,
+            "SELECT EXISTS(SELECT 1 FROM artifact_key_custody WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3) AS v"
         )
-        .bind(tenant.0)
-        .bind(run.0)
-        .bind(id.0)
-        .fetch_one(&self.pg.pool)
-        .await
-        .map_err(db)?;
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .uuid(id.0)
+        .fetch_one_pool(&self.store.pool)
+        .await?
+        .bool("v")?;
         if !sealed {
             return Ok(None);
         }
@@ -1154,17 +1296,18 @@ impl PgSecretAuthority {
     pub async fn finalize(&self, expected: SecretEpoch) -> Result<(), StoreError> {
         scope(expected.tenant)?;
         let mut tx = self.transaction().await?;
-        run_lock(&mut tx, expected.tenant, expected.run, true).await?;
-        let (row, status) = read_locked(&mut tx, expected.tenant, expected.run).await?;
-        no_exposures(&mut tx, expected.tenant, expected.run).await?;
-        let retained: bool = sqlx::query_scalar(
-            "SELECT retention_mode<>'zdr' FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2",
+        run_lock::<B>(tx.conn(), expected.tenant, expected.run, true).await?;
+        let (row, status) = read_locked::<B>(tx.conn(), expected.tenant, expected.run).await?;
+        no_exposures::<B>(tx.conn(), expected.tenant, expected.run).await?;
+        let retained = stmt!(
+            B,
+            "SELECT retention_mode<>'zdr' AS v FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2"
         )
-        .bind(expected.tenant.0)
-        .bind(expected.run.0)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        .uuid(expected.tenant.0)
+        .uuid(expected.run.0)
+        .fetch_one(tx.conn())
+        .await?
+        .bool("v")?;
         if !retained {
             return Err(StoreError::RetentionDenied(
                 "zdr cannot finalize retained artifact custody".into(),
@@ -1183,72 +1326,64 @@ impl PgSecretAuthority {
         if row.sealed_at.is_some() {
             return Ok(());
         }
-        if row.expires_at <= database_now(&mut tx).await? {
+        if row.expires_at <= database_now::<B>(tx.conn()).await? {
             return Err(denied("secret authority expired before finalization"));
         }
         let snapshot = self
             .invoke(&row, "snapshot", row.epoch, Uuid::nil(), "", 0)
             .await?;
         snapshot.check(row.commitment.as_deref())?;
-        let incomplete: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM artifacts a LEFT JOIN artifact_key_custody c USING(artifact_id) \
-             WHERE a.tenant_id=$1 AND a.run_id=$2 AND a.deleted_at IS NULL \
-             AND (a.expires_at IS NULL OR a.expires_at>clock_timestamp()) \
-             AND (c.artifact_id IS NULL OR c.tenant_id<>a.tenant_id OR c.run_id<>a.run_id \
-               OR c.incarnation<>$3 OR c.secret_epoch<>$4 OR c.plaintext_digest<>a.content_digest \
-               OR c.plaintext_size<>a.size_bytes OR c.object_key<>a.object_key \
-               OR c.artifact_payload->>'digest' IS DISTINCT FROM encode(a.content_digest,'hex') \
-               OR (c.artifact_payload->>'size_bytes')::bigint IS DISTINCT FROM a.size_bytes \
-               OR c.created_at IS DISTINCT FROM a.created_at \
-               OR c.artifact_payload->>'object_key' IS DISTINCT FROM a.object_key \
-               OR c.artifact_payload->>'bucket' IS DISTINCT FROM a.bucket \
-               OR c.artifact_payload->>'kind' IS DISTINCT FROM a.kind \
-               OR c.artifact_payload->>'content_type' IS DISTINCT FROM a.content_type \
-               OR c.artifact_payload->>'sensitivity' IS DISTINCT FROM a.sensitivity::text))",
-        )
-        .bind(row.tenant.0)
-        .bind(row.run.0)
-        .bind(row.incarnation)
-        .bind(row.epoch)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(db)?;
+        let incomplete = stmt!(B, incomplete_artifacts_sql::<B>())
+            .uuid(row.tenant.0)
+            .uuid(row.run.0)
+            .uuid(row.incarnation)
+            .i64(row.epoch)
+            .fetch_one(tx.conn())
+            .await?
+            .bool("v")?;
         if incomplete {
             return Err(denied(
                 "artifact finalization requires all live ciphertext at final epoch",
             ));
         }
-        if row.expires_at <= database_now(&mut tx).await? {
+        if row.expires_at <= database_now::<B>(tx.conn()).await? {
             return Err(denied("secret authority expired during finalization"));
         }
-        sqlx::query(
-            "UPDATE run_secret_authority SET sealed_at=clock_timestamp() WHERE tenant_id=$1 AND run_id=$2",
+        stmt!(
+            B,
+            format!(
+                "UPDATE run_secret_authority SET sealed_at={} WHERE tenant_id=$1 AND run_id=$2",
+                frag::clock::<B>()
+            )
         )
-        .bind(row.tenant.0)
-        .bind(row.run.0)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        tx.commit().await.map_err(db)?;
+        .uuid(row.tenant.0)
+        .uuid(row.run.0)
+        .execute(tx.conn())
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
     async fn read_state_on(
         &self,
-        tx: &mut Transaction<'_, Postgres>,
+        conn: &mut Conn<B>,
         tenant: TenantId,
         run: CrawlRunId,
         artifact: ArtifactId,
     ) -> Result<ArtifactReadState, StoreError> {
-        let (row, status) = read_locked(tx, tenant, run).await?;
+        let (row, status) = read_locked::<B>(conn, tenant, run).await?;
         if row.pending.is_some() || row.epoch < 1 {
             return Err(denied("artifact read secret registration pending"));
         }
-        let artifact_row = custody_row(&mut **tx, tenant, run, artifact).await?;
-        if get::<Uuid>(&artifact_row, "incarnation")? != row.incarnation {
+        scope(tenant)?;
+        let artifact_row = custody_row_stmt::<B>(tenant, run, artifact)
+            .fetch_optional(conn)
+            .await?
+            .ok_or_else(|| denied("artifact key custody unavailable"))?;
+        if artifact_row.uuid("incarnation")? != row.incarnation {
             return Err(denied("artifact incarnation mismatch"));
         }
-        let artifact_epoch: i64 = get(&artifact_row, "secret_epoch")?;
+        let artifact_epoch: i64 = artifact_row.i64("secret_epoch")?;
         let terminal = matches!(status.as_str(), "completed" | "failed" | "cancelled");
         // Terminal runs have permanently closed registration. An artifact validated at that
         // closed epoch (frozen archive output or finalized ciphertext) reads without the raw registry.
@@ -1258,31 +1393,35 @@ impl PgSecretAuthority {
             }
             ArtifactReadState::Finalized(SecretEpoch::new(tenant, run, row.incarnation, row.epoch))
         } else {
-            if row.expires_at <= database_now(tx).await? {
+            if row.expires_at <= database_now::<B>(conn).await? {
                 return Err(denied("artifact live secret authority expired"));
             }
             let snapshot = self
                 .invoke(&row, "snapshot", row.epoch, Uuid::nil(), "", 0)
                 .await?;
             snapshot.check(row.commitment.as_deref())?;
-            if row.expires_at <= database_now(tx).await? {
+            if row.expires_at <= database_now::<B>(conn).await? {
                 return Err(denied("artifact live secret authority expired"));
             }
             ArtifactReadState::Live(snapshot.snapshot)
         };
-        let retained: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM artifacts a JOIN crawl_runs r USING(run_id) \
-             WHERE a.artifact_id=$1 AND a.run_id=$2 AND a.tenant_id=$3 AND r.tenant_id=$3 \
-             AND a.deleted_at IS NULL AND r.purge_requested_at IS NULL \
-             AND (a.expires_at IS NULL OR a.expires_at>clock_timestamp()) \
-             AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp()))",
+        let now = frag::clock::<B>();
+        let retained = stmt!(
+            B,
+            format!(
+                "SELECT EXISTS(SELECT 1 FROM artifacts a JOIN crawl_runs r USING(run_id) \
+                 WHERE a.artifact_id=$1 AND a.run_id=$2 AND a.tenant_id=$3 AND r.tenant_id=$3 \
+                 AND a.deleted_at IS NULL AND r.purge_requested_at IS NULL \
+                 AND (a.expires_at IS NULL OR a.expires_at>{now}) \
+                 AND (r.expires_at IS NULL OR r.expires_at>{now})) AS v"
+            )
         )
-        .bind(artifact.0)
-        .bind(run.0)
-        .bind(tenant.0)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+        .uuid(artifact.0)
+        .uuid(run.0)
+        .uuid(tenant.0)
+        .fetch_one(conn)
+        .await?
+        .bool("v")?;
         if !retained {
             return Err(denied("artifact retention ended during read authorization"));
         }
@@ -1311,44 +1450,75 @@ impl PgSecretAuthority {
         }
         let key = authorization.authorize(tenant, run).await?;
         let mut tx = self.transaction().await?;
-        run_lock(&mut tx, tenant, run, false).await?;
-        let active: Option<Uuid> = sqlx::query_scalar("SELECT run_id FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 AND status IN ('queued','running') AND cancel_requested_at IS NULL AND purge_requested_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR UPDATE")
-            .bind(tenant.0).bind(run.0).fetch_optional(&mut *tx).await.map_err(db)?;
+        run_lock::<B>(tx.conn(), tenant, run, false).await?;
+        let now = frag::clock::<B>();
+        let active = stmt!(
+            B,
+            format!(
+                "SELECT run_id FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2 AND status IN ('queued','running') AND cancel_requested_at IS NULL AND purge_requested_at IS NULL AND (expires_at IS NULL OR expires_at>{now}){}",
+                frag::update::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .fetch_optional(tx.conn())
+        .await?;
         if active.is_none() {
             return Err(StoreError::LeaseLost);
         }
-        let valid_key: Option<Uuid> = sqlx::query_scalar("SELECT key_id FROM api_keys WHERE tenant_id=$1 AND key_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE")
-            .bind(tenant.0).bind(key).fetch_optional(&mut *tx).await.map_err(db)?;
+        let valid_key = stmt!(
+            B,
+            format!(
+                "SELECT key_id FROM api_keys WHERE tenant_id=$1 AND key_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>{now}){}",
+                frag::share::<B>()
+            )
+        )
+        .uuid(tenant.0)
+        .uuid(key)
+        .fetch_optional(tx.conn())
+        .await?;
         if valid_key.is_none() {
             return Err(StoreError::AccessDenied(
                 "authenticated producer key unavailable".into(),
             ));
         }
-        let sealed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 AND sealed_at IS NOT NULL)")
-            .bind(tenant.0).bind(run.0).fetch_one(&mut *tx).await.map_err(db)?;
+        let sealed = stmt!(B, "SELECT EXISTS(SELECT 1 FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 AND sealed_at IS NOT NULL) AS v")
+            .uuid(tenant.0).uuid(run.0).fetch_one(tx.conn()).await?.bool("v")?;
         if sealed {
             return Err(denied("authenticated producer authority sealed"));
         }
-        sqlx::query("DELETE FROM run_custody_producers p WHERE tenant_id=$1 AND run_id=$2 AND (p.expires_at<=clock_timestamp() OR EXISTS(SELECT 1 FROM api_keys k WHERE k.key_id=p.api_key_id AND (k.revoked_at IS NOT NULL OR k.expires_at<=clock_timestamp())))")
-            .bind(tenant.0).bind(run.0).execute(&mut *tx).await.map_err(db)?;
-        let count: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM run_custody_producers WHERE tenant_id=$1 AND run_id=$2")
-                .bind(tenant.0)
-                .bind(run.0)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
+        let expired = if frag::is_pg::<B>() {
+            format!(
+                "DELETE FROM run_custody_producers p WHERE tenant_id=$1 AND run_id=$2 AND (p.expires_at<={now} OR EXISTS(SELECT 1 FROM api_keys k WHERE k.key_id=p.api_key_id AND (k.revoked_at IS NOT NULL OR k.expires_at<={now})))"
+            )
+        } else {
+            format!(
+                "DELETE FROM run_custody_producers WHERE tenant_id=$1 AND run_id=$2 AND (expires_at<={now} OR EXISTS(SELECT 1 FROM api_keys k WHERE k.key_id=run_custody_producers.api_key_id AND (k.revoked_at IS NOT NULL OR k.expires_at<={now})))"
+            )
+        };
+        stmt!(B, expired)
+            .uuid(tenant.0)
+            .uuid(run.0)
+            .execute(tx.conn())
+            .await?;
+        let count = stmt!(
+            B,
+            "SELECT count(*) AS v FROM run_custody_producers WHERE tenant_id=$1 AND run_id=$2"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .fetch_one(tx.conn())
+        .await?
+        .i64("v")?;
         if count >= 32 {
             return Err(denied("authenticated producer capacity exceeded"));
         }
         let producer = random_uuid()?;
         let owner = WorkerId(random_uuid()?);
-        let fence: i64 = sqlx::query_scalar("INSERT INTO run_custody_producers(tenant_id,run_id,producer_id,owner,api_key_id,expires_at) SELECT $1,$2,$3,$4,$5,LEAST(clock_timestamp()+($6::bigint*interval '1 millisecond'),k.expires_at,r.expires_at) FROM api_keys k JOIN crawl_runs r ON r.run_id=$2 AND r.tenant_id=$1 WHERE k.key_id=$5 AND k.tenant_id=$1 RETURNING fence")
-            .bind(tenant.0).bind(run.0).bind(producer).bind(owner.0).bind(key).bind(ttl_ms)
-            .fetch_one(&mut *tx).await.map_err(db)?;
+        let fence = insert_producer::<B>(tx.conn(), tenant, run, producer, owner, key, ttl_ms).await?;
         let lease = CustodyLease::for_authenticated_producer(tenant, run, producer, owner, fence);
-        live(&mut tx, &lease).await?;
-        tx.commit().await.map_err(db)?;
+        live::<B>(tx.conn(), &lease).await?;
+        tx.commit().await?;
         Ok(lease)
     }
 
@@ -1365,33 +1535,149 @@ impl PgSecretAuthority {
             return Err(denied("producer release requires authenticated API source"));
         };
         let mut tx = self.transaction().await?;
-        run_lock(&mut tx, lease.tenant, lease.run, false).await?;
-        let row = sqlx::query("SELECT owner,fence FROM run_custody_producers WHERE tenant_id=$1 AND run_id=$2 AND producer_id=$3 FOR UPDATE")
-            .bind(lease.tenant.0).bind(lease.run.0).bind(producer).fetch_optional(&mut *tx).await.map_err(db)?;
+        run_lock::<B>(tx.conn(), lease.tenant, lease.run, false).await?;
+        let row = stmt!(
+            B,
+            format!(
+                "SELECT owner,fence FROM run_custody_producers WHERE tenant_id=$1 AND run_id=$2 AND producer_id=$3{}",
+                frag::update::<B>()
+            )
+        )
+        .uuid(lease.tenant.0)
+        .uuid(lease.run.0)
+        .uuid(producer)
+        .fetch_optional(tx.conn())
+        .await?;
         lease.check_local_cancellation()?;
         if let Some(row) = row {
-            if get::<Uuid>(&row, "owner")? != lease.worker.0 || get::<i64>(&row, "fence")? != lease.fence {
+            if row.uuid("owner")? != lease.worker.0 || row.i64("fence")? != lease.fence {
                 return Err(StoreError::LeaseLost);
             }
-            sqlx::query("DELETE FROM run_custody_producers WHERE tenant_id=$1 AND run_id=$2 AND producer_id=$3 AND owner=$4 AND fence=$5")
-                .bind(lease.tenant.0).bind(lease.run.0).bind(producer).bind(lease.worker.0).bind(lease.fence)
-                .execute(&mut *tx).await.map_err(db)?;
+            stmt!(B, "DELETE FROM run_custody_producers WHERE tenant_id=$1 AND run_id=$2 AND producer_id=$3 AND owner=$4 AND fence=$5")
+                .uuid(lease.tenant.0).uuid(lease.run.0).uuid(producer).uuid(lease.worker.0).i64(lease.fence)
+                .execute(tx.conn()).await?;
         }
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         Ok(())
     }
 }
 
-async fn database_now(tx: &mut Transaction<'_, Postgres>) -> Result<Timestamp, StoreError> {
-    sqlx::query_scalar("SELECT clock_timestamp()")
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)
+/// Insert the catalog row of a published artifact.
+pub(crate) async fn insert_artifact<B: Sql>(
+    conn: &mut Conn<B>,
+    artifact: &ArtifactRow,
+    plaintext_size: i64,
+) -> Result<(), StoreError> {
+    stmt!(B, "INSERT INTO artifacts(artifact_id,tenant_id,run_id,kind,bucket,object_key,size_bytes,content_digest,content_type,sensitivity,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text::sensitivity_class,$11,$12)")
+        .uuid(artifact.id.0).uuid(artifact.tenant.0).uuid(artifact.run.0).text(&artifact.kind).text(&artifact.bucket)
+        .text(&artifact.object_key).i64(plaintext_size).bytes(artifact.digest.0.as_slice()).text(&artifact.content_type)
+        .text(artifact.sensitivity.as_str()).ts(artifact.created_at).opt_ts(artifact.expires_at)
+        .execute(conn).await?;
+    Ok(())
+}
+
+/// Insert a producer row and return its fence. PostgreSQL and MariaDB draw it from the
+/// column's own identity; SQLite draws it from its sequence table. The expiry is the earliest
+/// of the TTL, the key and the run: PostgreSQL computes it in the statement, the others
+/// compute it from the same database clock in this process.
+async fn insert_producer<B: Sql>(
+    conn: &mut Conn<B>,
+    tenant: TenantId,
+    run: CrawlRunId,
+    producer: Uuid,
+    owner: WorkerId,
+    key: Uuid,
+    ttl_ms: i64,
+) -> Result<i64, StoreError> {
+    if frag::is_pg::<B>() {
+        return stmt!(B, "INSERT INTO run_custody_producers(tenant_id,run_id,producer_id,owner,api_key_id,expires_at) SELECT $1,$2,$3,$4,$5,LEAST(clock_timestamp()+($6::bigint*interval '1 millisecond'),k.expires_at,r.expires_at) FROM api_keys k JOIN crawl_runs r ON r.run_id=$2 AND r.tenant_id=$1 WHERE k.key_id=$5 AND k.tenant_id=$1 RETURNING fence")
+            .uuid(tenant.0).uuid(run.0).uuid(producer).uuid(owner.0).uuid(key).i64(ttl_ms)
+            .fetch_one(conn).await?.i64("fence");
+    }
+    let bounds = stmt!(B, "SELECT k.expires_at AS key_expires,r.expires_at AS run_expires FROM api_keys k JOIN crawl_runs r ON r.run_id=$2 AND r.tenant_id=$1 WHERE k.key_id=$3 AND k.tenant_id=$1")
+        .uuid(tenant.0).uuid(run.0).uuid(key).fetch_one(conn).await?;
+    let now = database_now::<B>(conn).await?;
+    let mut expires_at = now
+        .checked_add_signed(chrono::Duration::milliseconds(ttl_ms))
+        .ok_or_else(|| denied("producer deadline overflow"))?;
+    for bound in [bounds.opt_ts("key_expires")?, bounds.opt_ts("run_expires")?]
+        .into_iter()
+        .flatten()
+    {
+        expires_at = expires_at.min(bound);
+    }
+    if B::KIND == crate::backend::BackendKind::Sqlite {
+        let fence = stmt!(
+            B,
+            "UPDATE crawlx_sequences SET v=v+1 WHERE name='run_custody_producers.fence' RETURNING v"
+        )
+        .fetch_one(conn)
+        .await?
+        .i64("v")?;
+        stmt!(B, "INSERT INTO run_custody_producers(tenant_id,run_id,producer_id,owner,fence,api_key_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)")
+            .uuid(tenant.0).uuid(run.0).uuid(producer).uuid(owner.0).i64(fence).uuid(key).ts(expires_at)
+            .execute(conn).await?;
+        return Ok(fence);
+    }
+    stmt!(B, "INSERT INTO run_custody_producers(tenant_id,run_id,producer_id,owner,api_key_id,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING fence")
+        .uuid(tenant.0).uuid(run.0).uuid(producer).uuid(owner.0).uuid(key).ts(expires_at)
+        .fetch_one(conn).await?.i64("fence")
+}
+
+/// Whether a live artifact of the run lacks matching current-epoch encrypted custody.
+fn incomplete_artifacts_sql<B: Sql>() -> String {
+    let now = frag::clock::<B>();
+    let digest = frag::null_safe_ne::<B>(
+        &frag::json_text::<B>("c.artifact_payload", "digest"),
+        &frag::hex::<B>("a.content_digest"),
+    );
+    let size = frag::null_safe_ne::<B>(
+        &frag::json_bigint::<B>("c.artifact_payload", "size_bytes"),
+        "a.size_bytes",
+    );
+    let created = frag::null_safe_ne::<B>("c.created_at", "a.created_at");
+    let object_key = frag::null_safe_ne::<B>(
+        &frag::json_text::<B>("c.artifact_payload", "object_key"),
+        "a.object_key",
+    );
+    let bucket = frag::null_safe_ne::<B>(&frag::json_text::<B>("c.artifact_payload", "bucket"), "a.bucket");
+    let kind = frag::null_safe_ne::<B>(&frag::json_text::<B>("c.artifact_payload", "kind"), "a.kind");
+    let content_type = frag::null_safe_ne::<B>(
+        &frag::json_text::<B>("c.artifact_payload", "content_type"),
+        "a.content_type",
+    );
+    let sensitivity = frag::null_safe_ne::<B>(
+        &frag::json_text::<B>("c.artifact_payload", "sensitivity"),
+        "a.sensitivity::text",
+    );
+    format!(
+        "SELECT EXISTS(SELECT 1 FROM artifacts a LEFT JOIN artifact_key_custody c USING(artifact_id) \
+         WHERE a.tenant_id=$1 AND a.run_id=$2 AND a.deleted_at IS NULL \
+         AND (a.expires_at IS NULL OR a.expires_at>{now}) \
+         AND (c.artifact_id IS NULL OR c.tenant_id<>a.tenant_id OR c.run_id<>a.run_id \
+           OR c.incarnation<>$3 OR c.secret_epoch<>$4 OR c.plaintext_digest<>a.content_digest \
+           OR c.plaintext_size<>a.size_bytes OR c.object_key<>a.object_key \
+           OR {digest} \
+           OR {size} \
+           OR {created} \
+           OR {object_key} \
+           OR {bucket} \
+           OR {kind} \
+           OR {content_type} \
+           OR {sensitivity})) AS v"
+    )
+}
+
+pub(crate) async fn database_now<B: Sql>(conn: &mut Conn<B>) -> Result<Timestamp, StoreError> {
+    stmt!(B, format!("SELECT {} AS v", frag::clock::<B>()))
+        .fetch_one(conn)
+        .await?
+        .ts("v")
 }
 
 #[async_trait]
-impl RunSecretAuthority for PgSecretAuthority {
+impl<B: Sql> RunSecretAuthority for SecretAuthority<B> {
     async fn initialize(&self, lease: &CustodyLease) -> Result<RunSecretSnapshot, StoreError> {
         self.initialize_run(lease).await
     }
@@ -1403,14 +1689,14 @@ impl RunSecretAuthority for PgSecretAuthority {
         operation: Uuid,
         deadline: Timestamp,
     ) -> Result<RunSecretSnapshot, StoreError> {
-        PgSecretAuthority::renew_authority(self, lease, expected, operation, deadline).await
+        SecretAuthority::renew_authority(self, lease, expected, operation, deadline).await
     }
 
     async fn snapshot(&self, lease: &CustodyLease) -> Result<RunSecretSnapshot, StoreError> {
         scope(lease.tenant)?;
         lease.check_local_cancellation()?;
         let mut tx = self.transaction().await?;
-        let row = locked(&mut tx, lease).await?;
+        let row = locked::<B>(tx.conn(), lease).await?;
         if row.pending.is_some() || row.epoch == 0 {
             return Err(denied(SNAPSHOT_PENDING));
         }
@@ -1420,12 +1706,12 @@ impl RunSecretAuthority for PgSecretAuthority {
         )
         .await?;
         snapshot.check(row.commitment.as_deref())?;
-        live(&mut tx, lease).await?;
-        if row.expires_at <= database_now(&mut tx).await? {
+        live::<B>(tx.conn(), lease).await?;
+        if row.expires_at <= database_now::<B>(tx.conn()).await? {
             return Err(denied("secret authority expired during snapshot"));
         }
         lease.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         Ok(snapshot.snapshot)
     }
@@ -1447,8 +1733,8 @@ impl RunSecretAuthority for PgSecretAuthority {
     ) -> Result<ArtifactReadState, StoreError> {
         scope(tenant)?;
         let mut tx = self.transaction().await?;
-        let state = self.read_state_on(&mut tx, tenant, run, artifact).await?;
-        tx.commit().await.map_err(db)?;
+        let state = self.read_state_on(tx.conn(), tenant, run, artifact).await?;
+        tx.commit().await?;
         Ok(state)
     }
 
@@ -1470,9 +1756,9 @@ impl RunSecretAuthority for PgSecretAuthority {
             return Err(denied("secret registration operation or value out of bounds"));
         }
         let mut tx = self.transaction().await?;
-        let mut row = locked(&mut tx, lease).await?;
+        let mut row = locked::<B>(tx.conn(), lease).await?;
         check_version(lease, expected, &row)?;
-        no_exposures(&mut tx, lease.tenant, lease.run).await?;
+        no_exposures::<B>(tx.conn(), lease.tenant, lease.run).await?;
         let recovering = row.pending == Some(operation) && row.epoch == expected.epoch;
         let committed = row.pending.is_none()
             && row.last == Some(operation)
@@ -1494,9 +1780,9 @@ impl RunSecretAuthority for PgSecretAuthority {
             prior.check(row.commitment.as_deref())?;
             let exact_value = prior.value_commitment(operation, expected.epoch, value.expose())?;
             lease.check_local_cancellation()?;
-            sqlx::query("UPDATE run_secret_authority SET pending_operation=$3,pending_commitment=$4,pending_value_commitment=$5 WHERE tenant_id=$1 AND run_id=$2")
-                .bind(lease.tenant.0).bind(lease.run.0).bind(operation).bind(prior.proposed.as_slice()).bind(exact_value.as_slice())
-                .execute(&mut *tx).await.map_err(db)?;
+            stmt!(B, "UPDATE run_secret_authority SET pending_operation=$3,pending_commitment=$4,pending_value_commitment=$5 WHERE tenant_id=$1 AND run_id=$2")
+                .uuid(lease.tenant.0).uuid(lease.run.0).uuid(operation).bytes(prior.proposed.as_slice()).bytes(exact_value.as_slice())
+                .execute(tx.conn()).await?;
             row.pending_commitment = Some(prior.proposed.to_vec());
             row.pending_value_commitment = Some(exact_value.to_vec());
         }
@@ -1533,12 +1819,12 @@ impl RunSecretAuthority for PgSecretAuthority {
         }
         // This barrier MUST commit before secret bytes leave this process. If its
         // COMMIT outcome is unknown, do not touch Redis or deliver the secret.
-        live(&mut tx, lease).await?;
-        if row.expires_at <= database_now(&mut tx).await? {
+        live::<B>(tx.conn(), lease).await?;
+        if row.expires_at <= database_now::<B>(tx.conn()).await? {
             return Err(denied("secret authority expired before registration"));
         }
         lease.check_local_cancellation()?;
-        tx.commit().await.map_err(db)?;
+        tx.commit().await?;
         lease.check_local_cancellation()?;
         let snapshot = locally_live(
             lease,

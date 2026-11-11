@@ -7,7 +7,7 @@ use crawlx_core::{CheckpointId, TenantId};
 use crawlx_storage::artifacts::FsArtifactStore;
 use crawlx_storage::checkpoint_crypto::{CheckpointContext, CheckpointKeys, MemoryCheckpointKeys};
 use crawlx_storage::testkit::{crawl_run, create_crawl, sessions};
-use crawlx_storage::{Pg, PgConfig};
+use crawlx_storage::{Pg, StoreConfig};
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
@@ -18,9 +18,9 @@ async fn terminal_postgres_recovery_erases_ciphertext_without_deleting_checkpoin
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("checkpoint_lifecycle_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

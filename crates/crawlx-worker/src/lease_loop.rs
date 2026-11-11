@@ -258,10 +258,14 @@ async fn run_with_inner(
         tracing::warn!(error = %e, "initial reap failed");
     }
 
-    // Reuse the existing registry in PostgreSQL or its shared in-memory counterpart.
+    // Reuse the existing registry in the database or its shared in-memory counterpart.
     // Re-registration clears prior process/build claims before fresh facts are published.
-    let registry: Option<&dyn crawlx_storage::WorkerRegistry> = match (&stores.pg, &stores.memory) {
-        (Some(pg), _) => Some(pg),
+    let durable_registry = stores
+        .durable
+        .as_ref()
+        .map(crate::durable::DurableStore::worker_registry);
+    let registry: Option<&dyn crawlx_storage::WorkerRegistry> = match (&durable_registry, &stores.memory) {
+        (Some(registry), _) => Some(registry.as_ref()),
         (None, Some(memory)) => Some(memory.as_ref()),
         (None, None) => None,
     };
@@ -293,7 +297,7 @@ async fn run_with_inner(
                 () = delivery_cancel.cancelled() => break,
                 () = tokio::time::sleep(Duration::from_secs(1)) => {}
             }
-            if crate::delivery::recover_once(
+            if let Err(error) = crate::delivery::recover_once(
                 &delivery_stores,
                 &delivery_cfg,
                 &clock,
@@ -302,9 +306,8 @@ async fn run_with_inner(
                 &mut delivery_after,
             )
             .await
-            .is_err()
             {
-                tracing::warn!("delivery recovery deferred");
+                tracing::warn!(%error, "delivery recovery deferred");
             }
         }
     });
@@ -358,7 +361,9 @@ async fn run_with_inner(
                         } else {
                             export.terminal_reason
                         };
-                        stores.finish_run(row.id, reason, &cfg.cpu_pool).await?;
+                        stores
+                            .finish_run(row.id, reason, &cfg.cpu_pool, cfg.worker_id)
+                            .await?;
                         did_work = true;
                     }
                 }
@@ -406,6 +411,26 @@ async fn run_with_inner(
                     tracing::warn!(run=%run_id,reason,"acquisition unavailable; session returned for recovery");
                     continue;
                 }
+                Err(WorkerError::Config(_)) => {
+                    // Refuse this run without taking unrelated sessions down with it.
+                    match scheduler.fail(&lease).await {
+                        Ok(()) => {}
+                        Err(error) if error.is_lease_lost() => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                    stores
+                        .finish_run(run_id, TerminalReason::FatalError, &cfg.cpu_pool, cfg.worker_id)
+                        .await?;
+                    tracing::warn!(run = %run_id, "run configuration refused");
+                    continue;
+                }
+                Err(error) if admission_lease_lost(&error) => {
+                    // The run was cancelled or the session was fenced between leasing and
+                    // admission. Its new owner decides the run's fate; this worker only lost
+                    // one lease and keeps serving its other runs.
+                    tracing::warn!(run = %run_id, session = %lease.session.id, "session lease lost during run admission");
+                    continue;
+                }
                 Err(error) => return Err(error),
             };
             let Some(slot) = admission else {
@@ -441,7 +466,7 @@ async fn run_with_inner(
                             lease.clone(),
                             rc.stores.session_producer(rc.run, &lease),
                             rc.cancel.clone(),
-                            rc.stores.pg_secret_authority.clone(),
+                            rc.stores.secret_authority.clone(),
                         )
                         .instrument(slot.span.clone()),
                     ),
@@ -626,6 +651,19 @@ async fn run_with_inner(
     Ok(())
 }
 
+/// Did admission fail only because this worker's session lease was fenced or cancelled?
+///
+/// That outcome concerns one lease of one run, never the worker process.
+fn admission_lease_lost(error: &WorkerError) -> bool {
+    matches!(
+        error,
+        WorkerError::Store(crawlx_core::StoreError::LeaseLost)
+            | WorkerError::Scheduler(crawlx_scheduler::SchedulerError::Store(
+                crawlx_core::StoreError::LeaseLost
+            ))
+    )
+}
+
 /// Build the slot of `run_id`, or `None` when the run's authorization record is missing,
 /// unreadable, revoked, expired or not yet valid: the run is then ended as `failed` with
 /// `authorization_revoked` and an `authorization.revoked` event, and no session of it is served.
@@ -659,7 +697,7 @@ async fn slot_for<'a>(
             let authorization = match authorize(stores, cfg, &row).await {
                 Ok(guard) => guard,
                 Err(WorkerError::Authorization(stop)) => {
-                    refuse_run(stores, run_id, &stop, &cfg.cpu_pool).await;
+                    refuse_run(stores, run_id, &stop, &cfg.cpu_pool, cfg.worker_id).await;
                     return Ok(None);
                 }
                 Err(e) => return Err(e),
@@ -689,23 +727,33 @@ async fn slot_for<'a>(
             } else {
                 None
             };
-            let rc = Arc::new(
-                RunContext::build(
-                    &row,
-                    cfg,
-                    stores.clone(),
-                    backend.clone(),
-                    None,
-                    run_cancel,
-                    proxy.as_ref(),
-                    authorization.clone(),
-                )
-                .await?,
-            );
-            crate::acquisition::admit_runtime(&rc, cfg, backend.is_some(), false).await?;
-            let plane = if replay.is_some() || row.config.mode == CrawlMode::Dynamic {
-                None
-            } else {
+            let context = RunContext::build(
+                &row,
+                cfg,
+                stores.clone(),
+                backend.clone(),
+                None,
+                run_cancel,
+                proxy.as_ref(),
+                authorization.clone(),
+            )
+            .await;
+            let rc = match context {
+                Ok(context) => Arc::new(context),
+                Err(error) => {
+                    if let Some(proxy) = proxy {
+                        proxy.shutdown().await;
+                    }
+                    return Err(error);
+                }
+            };
+            // Everything below can fail on a lease that was fenced or cancelled after it was
+            // leased; the egress proxy must not outlive such an admission.
+            let admitted = async {
+                crate::acquisition::admit_runtime(&rc, cfg, backend.is_some(), false).await?;
+                if replay.is_some() || row.config.mode == CrawlMode::Dynamic {
+                    return Ok(None);
+                }
                 let (fetcher, _) = build_fetcher(
                     &row.config,
                     run_id,
@@ -753,7 +801,17 @@ async fn slot_for<'a>(
                 }
                 let plane = Arc::new(plane);
                 plane.seed_if_empty().await?;
-                Some(plane)
+                Ok::<_, WorkerError>(Some(plane))
+            }
+            .await;
+            let plane = match admitted {
+                Ok(plane) => plane,
+                Err(error) => {
+                    if let Some(proxy) = proxy {
+                        proxy.shutdown().await;
+                    }
+                    return Err(error);
+                }
             };
             let span = spans::crawl_span(
                 &run_id,
@@ -827,9 +885,10 @@ async fn refuse_run(
     run: CrawlRunId,
     stop: &AuthorizationStop,
     cpu: &crate::runtime::CpuPool,
+    worker: crawlx_core::WorkerId,
 ) {
     tracing::warn!(run = %run, reason = stop.reason(), "run refused: authorization record unusable");
-    end_unauthorized(stores, run, stop.reason(), None, cpu).await;
+    end_unauthorized(stores, run, stop.reason(), None, cpu, worker).await;
 }
 
 /// End a running run whose authorization was lost: the guard has cancelled its token, here the
@@ -842,7 +901,15 @@ async fn halt_unauthorized(stores: &Stores, slot: &mut RunSlot) {
     slot.halted = true;
     let reason = slot.authorization.as_ref().and_then(|guard| guard.stop());
     let code = reason.as_ref().map_or("revoked", AuthorizationStop::reason);
-    end_unauthorized(stores, slot.rc.run, code, Some(&slot.rc), &slot.rc.cpu_pool).await;
+    end_unauthorized(
+        stores,
+        slot.rc.run,
+        code,
+        Some(&slot.rc),
+        &slot.rc.cpu_pool,
+        slot.rc.worker,
+    )
+    .await;
 }
 
 async fn end_unauthorized(
@@ -851,6 +918,7 @@ async fn end_unauthorized(
     code: &str,
     rc: Option<&Arc<RunContext>>,
     cpu: &crate::runtime::CpuPool,
+    worker: crawlx_core::WorkerId,
 ) {
     let reason = TerminalReason::AuthorizationRevoked;
     if let Some(rc) = rc {
@@ -858,7 +926,7 @@ async fn end_unauthorized(
             tracing::warn!(run = %run, error = %e, "counters not persisted");
         }
     }
-    match stores.finish_run(run, reason, cpu).await {
+    match stores.finish_run(run, reason, cpu, worker).await {
         Ok(()) => {
             let _ = stores
                 .events
@@ -887,7 +955,7 @@ async fn static_coordinator(
     lease: crawlx_storage::SessionLease,
     producer: crawlx_core::custody::CustodyLease,
     cancel: CancellationToken,
-    authority: Option<Arc<crawlx_storage::custody::PgSecretAuthority>>,
+    authority: Option<Arc<crate::durable::DurableAuthority>>,
 ) -> SessionEnd {
     let keepalive_cancel = CancellationToken::new();
     let keepalive = scheduler.keep_alive(lease.clone(), HEARTBEAT_INTERVAL, keepalive_cancel.clone());
@@ -997,7 +1065,9 @@ async fn finalize_if_done(
             crate::archive_recorder::Finalization::Ready => {}
         }
     }
-    stores.finish_run(id, reason, &slot.rc.cpu_pool).await?;
+    stores
+        .finish_run(id, reason, &slot.rc.cpu_pool, slot.rc.worker)
+        .await?;
     let _ = stores
         .events
         .append(
@@ -1007,4 +1077,24 @@ async fn finalize_if_done(
         )
         .await;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use crawlx_core::StoreError;
+    use crawlx_scheduler::SchedulerError;
+
+    #[test]
+    fn only_a_lost_session_lease_is_survivable_at_admission() {
+        assert!(admission_lease_lost(&WorkerError::Store(StoreError::LeaseLost)));
+        assert!(admission_lease_lost(&WorkerError::Scheduler(
+            SchedulerError::Store(StoreError::LeaseLost)
+        )));
+        assert!(!admission_lease_lost(&WorkerError::Store(StoreError::Backend(
+            "down".into()
+        ))));
+        assert!(!admission_lease_lost(&WorkerError::Config("bad".into())));
+    }
 }

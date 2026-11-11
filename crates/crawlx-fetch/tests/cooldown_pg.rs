@@ -7,7 +7,7 @@
 
 use crawlx_core::CrawlRunId;
 use crawlx_fetch::{GlobalOriginCap, GovernorConfig, Origin, OriginGovernor};
-use crawlx_storage::{Pg, PgConfig, PgOriginAdmission};
+use crawlx_storage::{Pg, PgOriginAdmission, StoreConfig};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,10 +23,10 @@ fn config() -> GovernorConfig {
 async fn worker(url: &str, schema: &str) -> Arc<OriginGovernor> {
     let pg = Pg::connect(
         url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.to_owned()),
             max_connections: 4,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -44,10 +44,10 @@ async fn two_workers() -> Option<(Arc<OriginGovernor>, Arc<OriginGovernor>, Stri
     let schema = format!("t_{}", CrawlRunId::new().0.simple());
     let admin = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
             max_connections: 2,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

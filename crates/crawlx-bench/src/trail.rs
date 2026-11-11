@@ -9,8 +9,8 @@
 //! lane is a function of the fidelity, and transitions/epochs carry the
 //! action's lane.
 //!
-//! [`verify_trail`] builds the snapshot from a [`MemoryStore`] or a
-//! PostgreSQL [`Pg`] handle and runs [`verify_snapshot`], which is pure so
+//! [`verify_trail`] builds the snapshot from a [`MemoryStore`] or a database of any engine
+//! ([`DurableStore`]) and runs [`verify_snapshot`], which is pure so
 //! tests can inject each violation and assert it is reported.
 //!
 //! Correctness verification recomputes every state's applicable fingerprint. Missing
@@ -35,9 +35,11 @@ use crawlx_core::{
 };
 use crawlx_state::Fingerprinter;
 use crawlx_storage::memory::{MemoryNetworkEpoch, MemoryTransition};
-use crawlx_storage::{InspectRepo, LeaseRepo, MemoryStore, Pg, TrailReads};
+use crawlx_storage::tenant::Tenancy;
+use crawlx_storage::{InspectRepo, LeaseRepo, MemoryStore, Store, TrailReads};
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
+use crawlx_worker::DurableStore;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -990,7 +992,7 @@ pub fn check_fingerprint(state: &NewState, artifact: &[u8]) -> FingerprintOutcom
         Err(e) => {
             return FingerprintOutcome::Unreadable {
                 reason: format!("not a FingerprintInput: {e}"),
-            }
+            };
         }
     };
     let recomputed = Fingerprinter::default().fingerprint(&input.to_bundle(), &state.masks);
@@ -1160,13 +1162,21 @@ pub async fn snapshot_memory(
     })
 }
 
-/// Snapshot of a run held in PostgreSQL. Fingerprints are recomputed only when the
+/// Snapshot of a run held in a database. Fingerprints are recomputed only when the
 /// object store holding the run's artifacts is given.
 ///
 /// # Errors
 /// Any repository or query error while loading the rows.
-pub async fn snapshot_pg(
-    pg: &Pg,
+pub async fn snapshot_database(
+    store: &DurableStore,
+    artifacts: Option<&dyn ArtifactStore>,
+    run: CrawlRunId,
+) -> Result<TrailSnapshot, BenchError> {
+    crawlx_worker::on_store!(store, store => snapshot_on(store, artifacts, run).await)
+}
+
+async fn snapshot_on<B: Tenancy>(
+    pg: &Store<B>,
     artifacts: Option<&dyn ArtifactStore>,
     run: CrawlRunId,
 ) -> Result<TrailSnapshot, BenchError> {
@@ -1259,10 +1269,10 @@ pub enum TrailStore<'a> {
         /// Object store for artifact presence and fingerprint checks; `None` reports unverifiable states.
         artifacts: Option<&'a dyn ArtifactStore>,
     },
-    /// PostgreSQL, with the object store its states refer to.
-    Pg {
+    /// A database of any engine, with the object store its states refer to.
+    Database {
         /// The database.
-        pg: &'a Pg,
+        store: &'a DurableStore,
         /// Object store for fingerprints; `None` reports unverifiable states (the index is still checked).
         artifacts: Option<&'a dyn ArtifactStore>,
     },
@@ -1275,7 +1285,7 @@ pub enum TrailStore<'a> {
 pub async fn verify_trail(run: CrawlRunId, store: TrailStore<'_>) -> Result<TrailReport, BenchError> {
     let snapshot = match store {
         TrailStore::Memory { store, artifacts } => snapshot_memory(store, artifacts, run).await?,
-        TrailStore::Pg { pg, artifacts } => snapshot_pg(pg, artifacts, run).await?,
+        TrailStore::Database { store, artifacts } => snapshot_database(store, artifacts, run).await?,
     };
     Ok(verify_snapshot(&snapshot))
 }

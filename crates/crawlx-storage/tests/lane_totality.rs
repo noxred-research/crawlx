@@ -19,7 +19,7 @@ use crawlx_core::{
 };
 use crawlx_core::{BrowserAction, Clock as _};
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal, sessions};
-use crawlx_storage::{LeaseRepo, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{LeaseRepo, MemoryStore, Pg, StoreConfig};
 use proptest::prelude::*;
 use std::sync::Arc;
 
@@ -248,10 +248,10 @@ fn postgres_never_stores_an_action_without_its_fidelity_lane() {
     let pg = rt.block_on(async {
         let pg = Pg::connect(
             &url,
-            PgConfig {
+            StoreConfig {
                 schema: Some(schema),
                 max_connections: 4,
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await

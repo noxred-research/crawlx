@@ -10,7 +10,7 @@ use crawlx_core::{CrawlRunId, StateClusterId, StoreError, TenantId, Timestamp, W
 use crawlx_scheduler::{Reaper, ReaperConfig, RunPlanner, Scheduler};
 use crawlx_storage::leases::FrontierReap;
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, proposal};
-use crawlx_storage::{ActiveRun, LeaseRepo, Pg, PgConfig, ReapReport, SessionLease};
+use crawlx_storage::{ActiveRun, LeaseRepo, Pg, ReapReport, SessionLease, StoreConfig};
 use std::sync::Arc;
 
 async fn setup() -> Option<Pg> {
@@ -22,11 +22,11 @@ async fn setup_with_ttl(session_ttl: std::time::Duration) -> Option<Pg> {
     let schema = format!("t_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
             max_connections: 12,
             session_ttl,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

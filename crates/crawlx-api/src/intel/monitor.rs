@@ -60,15 +60,15 @@ impl MonitorEngine {
 #[async_trait]
 impl MonitorRunner for MonitorEngine {
     async fn run(&self, monitor: &MonitorRecord, trigger: &str) -> Result<Uuid, String> {
-        engine::run_check(&self.state, monitor, trigger).await
+        crawlx_storage::tenant::scope(monitor.tenant, engine::run_check(&self.state, monitor, trigger)).await
     }
 }
 
-/// The scheduler the ticker runs: claims through `state.repos.intel`, time from `state.clock`.
+/// The scheduler the ticker runs: claims through `state.repos.background.intel`, time from `state.clock`.
 #[must_use]
 pub fn scheduler(state: &AppState) -> MonitorScheduler {
     MonitorScheduler::new(
-        Arc::clone(&state.repos.intel),
+        Arc::clone(&state.repos.background.intel),
         Arc::new(MonitorEngine::new(state.clone())),
         Arc::clone(&state.clock),
         MonitorSchedulerConfig {
@@ -110,6 +110,7 @@ async fn purge_loop(state: &AppState, stop: CancellationToken) {
         }
         match state
             .repos
+            .background
             .intel
             .purge_expired(state.clock.now(), keep_ledger)
             .await

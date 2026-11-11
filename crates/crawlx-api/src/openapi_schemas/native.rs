@@ -542,8 +542,11 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
             super::reports::apply(schemas, operation, id);
         }
         "importDataset" => {
-            request_body(operation, dataset_import(),
-                "Import bounded safe JSON into a running admitted crawl under an existing live request fence.");
+            request_body(
+                operation,
+                dataset_import(),
+                "Import bounded safe JSON into a running admitted crawl under an existing live request fence.",
+            );
             if let Some(parameters) = operation["parameters"].as_array_mut() {
                 for name in ["requestId", "fence"] {
                     parameters.push(json!({"name":name,"in":"query","required":true,
@@ -593,15 +596,25 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                 }}}
             });
         }
-        "listArchives" => archive_response(operation, json!({"type":"object","required":["archives"],
+        "listArchives" => archive_response(
+            operation,
+            json!({"type":"object","required":["archives"],
             "properties":{"archives":{"type":"array","maxItems":100,"items":archive_export()}}}),
-            "Retained same-tenant export progress; expired/deleted exports are excluded."),
-        "getArchive" => archive_response(operation, archive_export(), "Retained progress, terminal failure or published manifest."),
+            "Retained same-tenant export progress; expired/deleted exports are excluded.",
+        ),
+        "getArchive" => archive_response(
+            operation,
+            archive_export(),
+            "Retained progress, terminal failure or published manifest.",
+        ),
         "listArchiveRecords" => {
-            archive_response(operation, json!({"type":"object","required":["records","next"],
+            archive_response(
+                operation,
+                json!({"type":"object","required":["records","next"],
                 "properties":{"records":{"type":"array","maxItems":64,"items":archive_record()},
                     "next":{"type":["integer","null"],"minimum":0,"maximum":9223372036854775807i64}}}),
-                "Bounded committed shard descriptors, never uncommitted offsets.");
+                "Bounded committed shard descriptors, never uncommitted offsets.",
+            );
             if let Some(parameters) = operation["parameters"].as_array_mut() {
                 parameters.push(json!({"name":"after","in":"query","required":false,
                     "schema":{"type":"integer","minimum":0,"maximum":9223372036854775807i64}}));
@@ -609,20 +622,25 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                     "schema":{"type":"integer","minimum":1,"maximum":64,"default":64}}));
             }
         }
-        "eraseArchive" => archive_response(operation, json!({"type":"object","required":["id","deleted"],
+        "eraseArchive" => archive_response(
+            operation,
+            json!({"type":"object","required":["id","deleted"],
             "properties":{"id":{"type":"string","format":"uuid"},"deleted":{"type":"boolean","const":true}}}),
-            "Archive/dependent catalog revoked and physical artifact erasure acknowledged. Repeating resumes cleanup."),
+            "Archive/dependent catalog revoked and physical artifact erasure acknowledged. Repeating resumes cleanup.",
+        ),
         "downloadArchive" => {
             operation["responses"]["200"] = json!({"description":"Published retained object streamed with bounded memory; no live fallback.",
                 "headers":{"Cache-Control":{"schema":{"type":"string","const":"private, no-store"}}},
                 "content":{"application/warc":{"schema":{"type":"string","format":"binary"}},
                     "application/wacz+zip":{"schema":{"type":"string","format":"binary"}}}});
-            operation["responses"]["409"]["description"] = json!("Archive is recording or failed; no published manifest exists.");
+            operation["responses"]["409"]["description"] =
+                json!("Archive is recording or failed; no published manifest exists.");
             operation["responses"]["410"]["description"] = json!("Archive source or dependency expired.");
         }
         "getArtifact" => {
-            for mime in ["application/warc","application/wacz+zip","application/cdxj"] {
-                operation["responses"]["200"]["content"][mime] = json!({"schema":{"type":"string","format":"binary"}});
+            for mime in ["application/warc", "application/wacz+zip", "application/cdxj"] {
+                operation["responses"]["200"]["content"][mime] =
+                    json!({"schema":{"type":"string","format":"binary"}});
             }
         }
         "createCrawl" => {
@@ -648,7 +666,11 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
             } else {
                 json!({"type":"object","description":"Pinned declarative source export. checkpoint_export_v1 uses the strict wrapper {version, source, producerEpoch, expectedCursor, endPosition, export}, with a pinned source export nested under export; source-specific fields are strictly validated."})
             };
-            let name = if id == "appendRequests" { "requests" } else { "export" };
+            let name = if id == "appendRequests" {
+                "requests"
+            } else {
+                "export"
+            };
             let mut properties = Map::new();
             properties.insert(name.to_owned(), input);
             properties.insert("producerEpoch".into(), json!({"type":"integer","minimum":1}));
@@ -662,32 +684,55 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                     "description":"Checkpoint exports own their cursor transition; omit outer expectedCursor and nextCursor."
                 }));
             }
-            request_body(operation, json!({"type":"object","additionalProperties":false,
+            request_body(
+                operation,
+                json!({"type":"object","additionalProperties":false,
                 "required":[name,"producerEpoch"],"properties":properties}),
-                "Server derives tenant and principal; body authority fields are not accepted.");
-            required_header(operation, "Idempotency-Key", "Stable printable batch receipt key.");
+                "Server derives tenant and principal; body authority fields are not accepted.",
+            );
+            required_header(
+                operation,
+                "Idempotency-Key",
+                "Stable printable batch receipt key.",
+            );
         }
-        "sealRequests" => request_body(operation, json!({
-            "type":"object","additionalProperties":false,"required":["producerEpoch"],
-            "properties":{"producerEpoch":{"type":"integer","minimum":1}}
-        }), "Seal only the matching current producer epoch."),
-        "captureAdaptiveSelector" => request_body(operation, json!({
-            "type":"object","additionalProperties":false,"required":["page","node","source","schema"],
-            "properties":{
-                "page":{"type":"integer"},"node":{"type":"integer","minimum":0},
-                "source":{"type":"string"},"schema":{"type":"string"},
-                "expiresAt":{"type":["string","null"],"format":"date-time"},
-                "threshold":{"type":["integer","null"],"minimum":0,"maximum":1000},
-                "runnerUpMargin":{"type":["integer","null"],"minimum":1,"maximum":1000},
-                "maxCandidates":{"type":["integer","null"],"minimum":1,"maximum":10000}
-            }
-        }), "Capture from retained authorized HTML; the server assigns identity and scope."),
-        "relocateAdaptiveSelector" => request_body(operation, json!({
-            "type":"object","additionalProperties":false,"required":["page","source","schema"],
-            "properties":{"page":{"type":"integer"},"source":{"type":"string"},"schema":{"type":"string"}}
-        }), "Relocation reads retained content only and never sends a network request."),
+        "sealRequests" => request_body(
+            operation,
+            json!({
+                "type":"object","additionalProperties":false,"required":["producerEpoch"],
+                "properties":{"producerEpoch":{"type":"integer","minimum":1}}
+            }),
+            "Seal only the matching current producer epoch.",
+        ),
+        "captureAdaptiveSelector" => request_body(
+            operation,
+            json!({
+                "type":"object","additionalProperties":false,"required":["page","node","source","schema"],
+                "properties":{
+                    "page":{"type":"integer"},"node":{"type":"integer","minimum":0},
+                    "source":{"type":"string"},"schema":{"type":"string"},
+                    "expiresAt":{"type":["string","null"],"format":"date-time"},
+                    "threshold":{"type":["integer","null"],"minimum":0,"maximum":1000},
+                    "runnerUpMargin":{"type":["integer","null"],"minimum":1,"maximum":1000},
+                    "maxCandidates":{"type":["integer","null"],"minimum":1,"maximum":10000}
+                }
+            }),
+            "Capture from retained authorized HTML; the server assigns identity and scope.",
+        ),
+        "relocateAdaptiveSelector" => request_body(
+            operation,
+            json!({
+                "type":"object","additionalProperties":false,"required":["page","source","schema"],
+                "properties":{"page":{"type":"integer"},"source":{"type":"string"},"schema":{"type":"string"}}
+            }),
+            "Relocation reads retained content only and never sends a network request.",
+        ),
         "putKvValue" | "deleteKvValue" => {
-            required_header(operation, "If-Match", "Exact quoted value version; use \"0\" for creation.");
+            required_header(
+                operation,
+                "If-Match",
+                "Exact quoted value version; use \"0\" for creation.",
+            );
         }
         "dropKvStore" => {
             operation["responses"]["200"] = json!({

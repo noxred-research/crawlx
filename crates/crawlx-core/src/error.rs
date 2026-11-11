@@ -172,6 +172,9 @@ pub enum StoreError {
     /// `sensitive` artifact); carries what was refused.
     #[error("access denied: {0}")]
     AccessDenied(String),
+    /// The run's fixed deadline closed request admission during an in-flight acquisition.
+    #[error("run deadline reached")]
+    RunDeadlineReached,
     /// Encoding or decoding a stored value failed; carries the underlying error text.
     #[error("serialization failed: {0}")]
     Serialization(String),
@@ -215,7 +218,9 @@ impl Classify for StoreError {
             | Self::ResourceExhausted { .. }
             | Self::Backend(_)
             | Self::Database { retryable: true, .. } => ErrorClass::Retryable,
-            Self::RetentionDenied(_) | Self::AccessDenied(_) => ErrorClass::PolicyDenied,
+            Self::RetentionDenied(_) | Self::AccessDenied(_) | Self::RunDeadlineReached => {
+                ErrorClass::PolicyDenied
+            }
         }
     }
 }

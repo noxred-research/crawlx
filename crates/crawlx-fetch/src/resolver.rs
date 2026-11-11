@@ -5,7 +5,7 @@
 use crate::error::FetchError;
 use async_trait::async_trait;
 use crawlx_core::hash::Digest;
-use crawlx_core::report_history::{DnsOutcomeV1, ReportDataV1};
+use crawlx_core::report_history::{report_host_key, DnsOutcomeV1, ReportDataV1};
 use hickory_resolver::config::{NameServerConfig, ResolveHosts, ResolverConfig, ResolverOpts};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError};
@@ -87,7 +87,7 @@ fn capture_dns_report(host: &str, data: &ReportDataV1) {
             return;
         }
         batch.observations.push(DnsReportObservationV1 {
-            host_key: Digest::of("crawlx:report:dns-host:v1", host.trim_end_matches('.').as_bytes()),
+            host_key: report_host_key(host),
             data: data.clone(),
         });
     });
@@ -1194,5 +1194,17 @@ mod tests {
         let (_, empty) = capture_dns_reports(async {}).await;
         assert!(empty.observations.is_empty());
         assert_eq!(empty.dropped, 0);
+    }
+
+    #[tokio::test]
+    async fn captured_dns_host_key_is_the_shared_report_host_identity() {
+        let resolver = StaticResolver::new();
+        let (_, batch) = capture_dns_reports(async {
+            let _ = resolver.resolve_with_report("missing.test").await;
+        })
+        .await;
+        assert_eq!(batch.observations.len(), 1);
+        assert_eq!(batch.observations[0].host_key, report_host_key("missing.test"));
+        assert_eq!(report_host_key("missing.test."), report_host_key("missing.test"));
     }
 }

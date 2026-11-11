@@ -19,6 +19,8 @@ COPY vendor ./vendor
 COPY chromium-pin.toml cdp-surface.toml ./
 # crawlx-bench compiles bench/seeds.toml in with `include_str!`
 COPY bench/seeds.toml ./bench/seeds.toml
+# crawlx-storage's testkit compiles the production API-role grants in with `include_str!`
+COPY docker/provision-api-role.sql ./docker/provision-api-role.sql
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --locked --release -p crawlx-bench --bin gym-server \

@@ -1,0 +1,2 @@
+-- no-op: PostgreSQL rewrites these rows in the enforce_zdr_confidentiality trigger (0024); the
+-- other engines add validator triggers for the same tables.

@@ -35,8 +35,7 @@ spec:
             {{- include "crawlx.deliveryEnv" . | nindent 12 }}
             {{- include "crawlx.capabilityEnv" (dict "root" . "worker" false) | nindent 12 }}
             {{- include "crawlx.artifactCustodyEnv" (dict "root" . "worker" false) | nindent 12 }}
-            - name: CRAWLX_API_DATABASE_URL_FILE
-              value: /run/secrets/crawlx/database_url_api
+            {{- include "crawlx.requestLoginEnv" . | nindent 12 }}
             - name: CRAWLX_WEBHOOK_SECRET_FILE
               value: {{ .Values.config.api.webhook.signing_key_file | quote }}
             - name: CRAWLX_PARSE_MEMORY_BYTES
@@ -57,6 +56,7 @@ spec:
             - { name: config, mountPath: /etc/crawlx, readOnly: true }
             - { name: secrets, mountPath: /run/secrets/crawlx, readOnly: true }
             - { name: artifacts, mountPath: /var/lib/crawlx/artifacts }
+            {{- include "crawlx.sqliteMount" . | nindent 12 }}
         {{- include "crawlx.metricsSidecar" . | nindent 8 }}
       volumes:
         - name: config
@@ -67,9 +67,7 @@ spec:
               - secret:
                   name: {{ .Values.secrets.database }}
                   items: [{ key: database_url, path: database_url }]
-              - secret:
-                  name: {{ .Values.secrets.databaseApi }}
-                  items: [{ key: database_url_api, path: database_url_api }]
+              {{- include "crawlx.requestLoginSource" . | nindent 14 }}
               - secret:
                   name: {{ .Values.secrets.webhook }}
                   items: [{ key: webhook_signing_key, path: webhook_signing_key }]
@@ -81,6 +79,7 @@ spec:
               {{- include "crawlx.artifactCustodySources" (dict "root" . "worker" false) | nindent 14 }}
         - name: artifacts
           persistentVolumeClaim: { claimName: {{ .Values.artifacts.existingClaim }} }
+        {{- include "crawlx.sqliteVolume" . | nindent 8 }}
         - name: metrics-config
           configMap: { name: {{ .Release.Name }}-metrics-sidecar }
 ---

@@ -43,6 +43,7 @@ pub mod delivery;
 pub mod diagnostics;
 pub(crate) mod driven;
 pub mod driver;
+pub mod durable;
 pub mod error;
 pub mod extension_recipes;
 pub mod extensions;
@@ -91,8 +92,8 @@ pub use actor::{
 };
 pub use analysis::{Analyzed, RunClusters, StateAnalyzer};
 pub use authorization::{
-    AuthorizationGuard, AuthorizationSource, AuthorizationStop, AuthorizationWatch, PgAuthorizationSource,
-    StaticAuthorizationSource, DEFAULT_RECHECK_INTERVAL,
+    AuthorizationGuard, AuthorizationSource, AuthorizationStop, AuthorizationWatch,
+    DatabaseAuthorizationSource, StaticAuthorizationSource, DEFAULT_RECHECK_INTERVAL,
 };
 pub use checkpoint::{CheckpointPayload, Checkpointer};
 pub use config::{EgressConfig, RetainedProfilePolicy, TierRoute, WorkerConfig};
@@ -104,6 +105,7 @@ pub use driver::{
     build_strategies, build_strategies_gated, build_strategy_set, DriverConfig, DriverEnd, ExplorationDriver,
     ShortlistRecording,
 };
+pub use durable::{DurableAuthority, DurableStore, OriginAdmissions};
 pub use error::{SessionError, WorkerError};
 pub use lease_loop::run;
 pub use login::{LoginCredential, LoginMaterial, MAX_LOGIN_ATTEMPTS};
@@ -128,7 +130,7 @@ pub use secrets::{
     ChainResolver, CloudSecretsResolver, EnvSecretResolver, FileSecretResolver, SecretError, TotpResolver,
     VaultResolver,
 };
-pub use stores::Stores;
+pub use stores::{ObjectStoreChoice, Stores};
 pub use supervisor::{SessionFailure, Supervisor};
 pub use url_plane::{UrlPlaneDeps, UrlPlaneOutcome, UrlPlaneRunner};
 pub use xhr::XhrSink;

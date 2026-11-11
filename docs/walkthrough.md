@@ -43,6 +43,13 @@ For a local run you are the authorizer and no ownership proof is needed. Save th
 gym-server --bind 127.0.0.1:34635                      # 14 fixtures under /<id>/
 export DB=postgres://crawlx@127.0.0.1:54329/crawlx CRAWLX_ALLOW_UNPINNED=1
 crawlx migrate --database-url $DB
+# Every PostgreSQL crawl (including the local CLI) needs encrypted artifact custody:
+# use a protected regular file containing 64 hexadecimal characters, and a persistence-free registry.
+export CRAWLX_ARTIFACT_KEY_FILE=/absolute/path/to/artifact-key
+export CRAWLX_SECRET_REDIS_URL=redis://127.0.0.1:6390
+# Browser runs additionally need a reachable key service and its checkpoint key identifier:
+export CRAWLX_CHECKPOINT_KMS_KEY_ID=<checkpoint-key-id>
+# See docs/design/data-and-secrets.md for key provisioning and registry requirements.
 # static plane: prints discovered 90 / admitted 30 / deduplicated 55 /
 # policy_blocked 3 / robots_blocked 2 / succeeded 28 / failed 2 and writes 28 pages.
 crawlx crawl http://127.0.0.1:34635/s1/ --mode static --authorization-record authz.local.json \
@@ -54,10 +61,13 @@ crawlx inspect states <run-id> --database-url $DB; crawlx inspect epochs <run-id
 # read_only interaction. kill -9 mid-action, then:
 crawlx worker --recover --database-url $DB             # intended -> unknown -> reconciled, never re-executed
 crawlx inspect actions <run-id> --status reconciled --database-url $DB
-# API: serve + worker must share --artifacts-dir when no S3-compatible store is configured. A PostgreSQL worker also
+# API: serve + worker use filesystem artifact storage and must share --artifacts-dir. A PostgreSQL worker also
 # needs an artifact key provider (CRAWLX_ARTIFACT_KEY_FILE or CRAWLX_ARTIFACT_KMS_KEY_ID) and CRAWLX_SECRET_REDIS_URL;
 # the API needs the key provider (see docs/design/data-and-secrets.md).
-crawlx serve --bind 127.0.0.1:38080 --database-url $DB --artifacts-dir ./crawlx-artifacts --api-key <tenant-uuid>=cx_live_<26 chars>
+# Provision a restricted API login first (docker/provision-api-role.sql), then set
+# CRAWLX_API_DATABASE_URL or CRAWLX_API_DATABASE_URL_FILE to its connection string.
+# Example key below uses exactly 26 characters from lowercase a-z and digits 2-7; replace it.
+crawlx serve --bind 127.0.0.1:38080 --database-url $DB --artifacts-dir ./crawlx-artifacts --api-key 00000000-0000-4000-8000-000000000002=cx_live_abcdefghijklmnopqrstuvwxyz
 crawlx worker --database-url $DB --artifacts-dir ./crawlx-artifacts
 ```
 

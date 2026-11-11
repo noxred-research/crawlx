@@ -131,7 +131,7 @@ fn parse_request(url: &str, options: &Value) -> Result<MapRequest, HttpError> {
                 "/",
                 "invalid_type",
                 "map options must be an object",
-            )]))
+            )]));
         }
     };
     let mut details = Vec::new();

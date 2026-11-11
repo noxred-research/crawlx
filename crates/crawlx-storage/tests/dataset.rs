@@ -18,7 +18,7 @@ use crawlx_core::time::ManualClock;
 use crawlx_core::{Clock, CrawlRunId, StoreError, TenantId, WorkerId};
 use crawlx_storage::artifacts::FsArtifactStore;
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{BufferLimits, DeliveryBuffer, MemoryStore, Pg, PgConfig, WorkerRegistry};
+use crawlx_storage::{BufferLimits, DeliveryBuffer, MemoryStore, Pg, StoreConfig, WorkerRegistry};
 use std::sync::Arc;
 
 const CANARY: &[u8] = b"{\"value\":\"dataset-private-canary-73d28\"}\n";
@@ -342,9 +342,9 @@ async fn postgres_transactional_append_cas_fencing_retry_isolation_and_physical_
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("dataset_{}", CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -449,9 +449,9 @@ async fn postgres_expired_rows_retire_and_physically_erase_even_with_expired_ope
     let buffer = Arc::new(DeliveryBuffer::new(clock.clone(), BufferLimits::default()));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("dataset_expiry_{}", CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -519,9 +519,9 @@ async fn postgres_restart_after_commit_and_after_send_preserves_items_and_batch_
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("dataset_crash_{}", CrawlRunId::new().0.simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

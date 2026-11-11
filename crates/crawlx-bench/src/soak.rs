@@ -39,7 +39,9 @@ use crawlx_core::seed::CrawlSeed;
 use crawlx_core::{Clock as _, SystemClock, TenantId, WorkerId};
 use crawlx_policy::authorization::{AuthorizationRecord, Evidence};
 use crawlx_policy::testkit::sample_record;
-use crawlx_storage::{FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::sql::Sql;
+use crawlx_storage::{Database, FsArtifactStore, MemoryStore, Store as SqlStore, StoreConfig};
+use crawlx_worker::DurableStore;
 use crawlx_worker::{run_local_with, LocalRun, Stores, WorkerConfig};
 use rand::RngExt as _;
 use std::collections::BTreeMap;
@@ -480,15 +482,15 @@ struct Progress {
     failures: AtomicU64,
 }
 
-struct PgStore {
-    pg: Pg,
+struct DatabaseStore {
+    database: Database,
     stores: Stores,
     record: AuthorizationRecord,
 }
 
 enum Store {
     Memory,
-    Pg(Box<PgStore>),
+    Database(Box<DatabaseStore>),
 }
 
 struct Rig {
@@ -585,7 +587,7 @@ impl Rig {
         cfg.worker_id = WorkerId::new();
         let stores = match &self.store {
             Store::Memory => Stores::over_memory(Arc::new(MemoryStore::new()), artifacts).await?,
-            Store::Pg(p) => p.stores.clone(),
+            Store::Database(p) => p.stores.clone(),
         };
         let mut local = LocalRun::new(req, cfg)
             .with_stores(stores.clone())
@@ -609,7 +611,7 @@ impl Rig {
         }
         if local.crawl.safety.authorization_record_ref.is_some() {
             let record = match &self.store {
-                Store::Pg(p) => p.record.clone(),
+                Store::Database(p) => p.record.clone(),
                 Store::Memory => loopback_record(&local.crawl.seed_url.origin().ascii_serialization())?,
             };
             local.crawl.safety.authorization_record_ref = Some(record.id);
@@ -641,11 +643,14 @@ impl Rig {
                 )
                 .await?
             }
-            Store::Pg(p) => {
+            Store::Database(p) => {
+                let Some(durable) = p.stores.durable.as_ref() else {
+                    return Err(BenchError::Trail("database store missing".to_owned()));
+                };
                 verify_trail(
                     report.run_id,
-                    TrailStore::Pg {
-                        pg: &p.pg,
+                    TrailStore::Database {
+                        store: durable,
                         artifacts: Some(stores.artifacts.as_ref()),
                     },
                 )
@@ -695,10 +700,7 @@ impl Rig {
     fn sample(&self) -> Sample {
         let (rss_self, rss_tree, rss_chromium, processes) = tree_rss(std::process::id());
         let (pool_size, pool_idle) = match &self.store {
-            Store::Pg(p) => (
-                p.pg.pool().size(),
-                u32::try_from(p.pg.pool().num_idle()).unwrap_or(u32::MAX),
-            ),
+            Store::Database(p) => pool_stats(&p.database),
             Store::Memory => (0, 0),
         };
         Sample {
@@ -841,25 +843,29 @@ async fn run_admitted(
                 None => url.clone(),
             };
             let schema = format!("soak_{}", uuid::Uuid::now_v7().simple());
-            let pg = Pg::connect(
+            let database = Database::open(
                 &url,
-                PgConfig {
+                StoreConfig {
                     schema: Some(schema),
                     max_connections: u32::try_from(cfg.workers * 4 + 4).unwrap_or(32).min(32),
-                    ..PgConfig::default()
+                    ..StoreConfig::default()
                 },
             )
             .await?;
-            pg.migrate().await?;
+            database.migrate().await?;
+            let durable = DurableStore::open(&database).map_err(crawlx_core::StoreError::from)?;
             let origin = url::Url::parse(&base_url)?.origin().ascii_serialization();
             let record = loopback_record(&origin)?;
-            pg.ensure_tenant(record.tenant, "soak").await?;
-            let runs: Arc<dyn RunRepo> = Arc::new(pg.clone());
-            let artifacts = FsArtifactStore::open(&scratch.join("artifacts"), runs, Arc::new(SystemClock))
-                .await?
-                .with_index(Arc::new(pg.clone()));
-            let stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), record.tenant);
-            Store::Pg(Box::new(PgStore { pg, stores, record }))
+            durable.ensure_tenant(record.tenant, "soak").await?;
+            let artifacts = crawlx_worker::on_store!(&durable, store => {
+                artifact_store(store, &scratch.join("artifacts")).await?
+            });
+            let stores = Stores::over_durable(durable, Arc::new(artifacts), record.tenant);
+            Store::Database(Box::new(DatabaseStore {
+                database,
+                stores,
+                record,
+            }))
         }
     };
 
@@ -1023,7 +1029,7 @@ async fn run_admitted(
     if let Some(gym) = rig.gym {
         gym.shutdown().await;
     }
-    if let Store::Pg(p) = rig.store {
+    if let Store::Database(p) = rig.store {
         if cfg.keep_schema {
             tracing::info!("soak: keeping schema");
         } else {
@@ -1032,7 +1038,7 @@ async fn run_admitted(
                 p.set_latency(Duration::ZERO);
                 p.set_blackhole(false);
             }
-            p.pg.drop_schema().await?;
+            p.database.teardown().await?;
         }
     }
     if let Some(p) = proxy {
@@ -1119,9 +1125,9 @@ fn summarise(
         elapsed_s: rig.elapsed_s(),
         workers: rig.cfg.workers,
         backend: rig.cfg.backend,
-        store: match rig.store {
+        store: match &rig.store {
             Store::Memory => "memory",
-            Store::Pg(_) => "postgres",
+            Store::Database(p) => p.database.kind().scheme(),
         },
         fixtures: rig.cfg.fixtures.clone(),
         cycles: u64::try_from(cycles.len()).unwrap_or(u64::MAX),
@@ -1346,4 +1352,29 @@ mod tests {
             "worker PSS grew by {per_cycle:.0} bytes/cycle after warmup: {retained:?}"
         );
     }
+}
+
+/// Connections open and idle in the pool of `database`.
+fn pool_stats(database: &Database) -> (u32, u32) {
+    if let Some(pg) = database.as_postgres() {
+        return (
+            pg.pool().size(),
+            u32::try_from(pg.pool().num_idle()).unwrap_or(u32::MAX),
+        );
+    }
+    if let Some(pool) = database.mariadb_pool() {
+        return (pool.size(), u32::try_from(pool.num_idle()).unwrap_or(u32::MAX));
+    }
+    if let Some(pool) = database.sqlite_pool() {
+        return (pool.size(), u32::try_from(pool.num_idle()).unwrap_or(u32::MAX));
+    }
+    (0, 0)
+}
+
+/// The filesystem artifact store of a soak run over `store`.
+async fn artifact_store<B: Sql>(store: &SqlStore<B>, dir: &Path) -> Result<FsArtifactStore, BenchError> {
+    let runs: Arc<dyn RunRepo> = Arc::new(store.clone());
+    Ok(FsArtifactStore::open(dir, runs, Arc::new(SystemClock))
+        .await?
+        .with_index(Arc::new(store.clone())))
 }

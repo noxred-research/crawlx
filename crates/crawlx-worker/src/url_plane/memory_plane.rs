@@ -42,7 +42,7 @@ impl AdmittedBytes {
 
 /// Reservation for the document derived from `input_len` decoded bytes, saturating so an
 /// overflow is refused by the budget rather than wrapped.
-pub(super) fn derived_bytes(input_len: usize) -> usize {
+pub(crate) fn derived_bytes(input_len: usize) -> usize {
     input_len.saturating_mul(DERIVED_BYTES_PER_INPUT_BYTE)
 }
 
@@ -50,7 +50,7 @@ pub(super) fn derived_bytes(input_len: usize) -> usize {
 ///
 /// # Errors
 /// Returns typed pressure or oversize without reserving anything.
-pub(super) fn reserve_derived(bytes: usize) -> Result<BytePermit, ByteAdmissionError> {
+pub(crate) fn reserve_derived(bytes: usize) -> Result<BytePermit, ByteAdmissionError> {
     crawlx_core::parser_memory::global().try_reserve(bytes)
 }
 
@@ -88,7 +88,7 @@ pub(super) fn owned_bytes(response: &FetchResponse) -> bytes::Bytes {
 }
 
 /// Result of an isolated extraction attempt.
-pub(super) enum IsolatedOutcome {
+pub(crate) enum IsolatedOutcome {
     /// Parsed document with the reservation that still covers it.
     Parsed(Box<crawlx_extract::Document>, BytePermit),
     /// The parser refused the input; the reservation was released with it.
@@ -105,7 +105,7 @@ pub(crate) const DYNAMIC_SECRET_SNAPSHOT_BYTES: usize = crawlx_extract::isolated
 /// Extract one HTML body through the bounded isolated parser. The input's permit covers the
 /// derived document and moves with the bytes into the parser, so it is released only after the
 /// parse finished or its detached work dropped the bytes.
-pub(super) async fn extract_isolated(
+pub(crate) async fn extract_isolated(
     cpu: &crate::runtime::CpuPool,
     input: crawlx_core::parser_memory::Budgeted<bytes::Bytes>,
     base: Url,

@@ -12,7 +12,7 @@ use crawlx_core::repo::{FrontierRepo, KnownPage, PageRecord, PageRepo, RunRepo};
 use crawlx_core::scrape::{ScrapeDocument, ScrapeOptions};
 use crawlx_core::{CrawlRunId, TenantId, TrustLane};
 use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
-use crawlx_storage::{MemoryStore, Pg, PgConfig};
+use crawlx_storage::{MemoryStore, Pg, StoreConfig};
 use serde_json::{json, Value};
 use sqlx::Row as _;
 
@@ -293,10 +293,10 @@ async fn setup() -> Option<Env> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_{}", CrawlRunId::new().0.simple())),
             max_connections: 4,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

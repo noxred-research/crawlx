@@ -177,7 +177,7 @@ catalog! {
     SCHEDULER_LEASE_DURATION = Histogram "crawlx.scheduler.lease.duration" Seconds [] SLOW_BUCKETS, "Lease hold duration";
     SCHEDULER_OP_DURATION = Histogram "crawlx.scheduler.op.duration" Seconds ["op"] FAST_BUCKETS, "Scheduler operation duration";
     FETCH_ORIGIN_WAIT = Histogram "crawlx.fetch.origin_wait" Seconds [] SLOW_BUCKETS, "Time spent waiting for per-origin politeness";
-    BROWSER_RSS_BYTES = Gauge "crawlx.browser.rss_bytes" None [] &[], "Browser resident set size";
+    BROWSER_RSS_BYTES = Gauge "crawlx.browser.rss_bytes" None [] &[], "Sum of resident set sizes of live sampled browser trees";
     CPU_POOL_QUEUE_DEPTH = Gauge "crawlx.cpu_pool.queue_depth" None [] &[], "CPU pool queue depth";
     // --- API and operations
     API_REQUESTS = Counter "crawlx.api.requests" None ["route", "outcome"] &[], "API requests";

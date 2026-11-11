@@ -11,7 +11,7 @@ use crawlx_core::repo::{ActionJournal, CheckpointRepo, RunRepo};
 use crawlx_core::{CreateCrawl, SystemClock, TenantId};
 use crawlx_fetch::StaticResolver;
 use crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys;
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use crawlx_worker::{run_local_with, EgressConfig, LocalRun, Stores, WorkerConfig};
 use std::sync::Arc;
 
@@ -24,9 +24,9 @@ async fn a_dynamic_run_over_postgres_journals_checkpoints_and_transitions() {
     let schema = format!("t_worker_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -38,7 +38,11 @@ async fn a_dynamic_run_over_postgres_journals_checkpoints_and_transitions() {
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        TenantId::new(),
+    );
     stores.checkpoint_keys = Arc::new(MemoryCheckpointKeys::new().unwrap());
 
     let script = FakeScript::new()
@@ -115,9 +119,9 @@ async fn cancellation_before_browser_admission_closes_unleased_sessions_on_postg
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_worker_cancel_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -129,7 +133,11 @@ async fn cancellation_before_browser_admission_closes_unleased_sessions_on_postg
         .await
         .unwrap()
         .with_index(Arc::new(pg.clone()));
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        TenantId::new(),
+    );
     stores.checkpoint_keys = Arc::new(MemoryCheckpointKeys::new().unwrap());
     for mode in [CrawlMode::Dynamic, CrawlMode::Hybrid] {
         let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());

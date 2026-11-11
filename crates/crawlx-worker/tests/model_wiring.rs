@@ -581,9 +581,17 @@ async fn a_plan_that_names_a_non_candidate_is_discarded_and_nothing_runs() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn without_a_planner_endpoint_the_planner_mode_is_inert() {
-    let baseline = run(three_page_app(), crawl(|_| {}), |_| {}).await;
-    let out = run(three_page_app(), crawl(with_planner), |_| {}).await;
-    assert_eq!(out.performed, baseline.performed);
-    assert_eq!(out.report.terminal_reason, baseline.report.terminal_reason);
+async fn without_a_planner_endpoint_explicit_planner_modes_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = Arc::new(FakeBackend::builder().script(three_page_app()).build());
+    let error = run_local_with(
+        LocalRun::new(crawl(with_planner), worker_cfg(dir.path())).with_backend(backend.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&error, crawlx_worker::WorkerError::Config(message) if message.contains("--planner-endpoint")),
+        "{error}"
+    );
+    assert!(backend.context_handles().is_empty());
 }

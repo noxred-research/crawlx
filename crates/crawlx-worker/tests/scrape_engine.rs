@@ -2539,7 +2539,6 @@ fn native_policy(crawl: &mut CreateCrawl) {
 async fn native_acquisition_validates_real_http_without_keyword_false_positives() {
     let site = start().await;
     for (status, body, expected) in [
-        (200, "<form id=challenge-form>Verify you are human</form>", "challenge"),
         (200, "<article><h1>Edge CAPTCHA research</h1><p>An ordinary article about challenge detection.</p></article>", "valid"),
         (200, "<main><h1>Contact us</h1><form><div class=g-recaptcha></div></form></main>", "valid"), // wire-compat: widget marker
         (200, "<article>News</article><input type=password>", "valid"),
@@ -2567,6 +2566,45 @@ async fn native_acquisition_validates_real_http_without_keyword_false_positives(
 }
 
 #[tokio::test]
+async fn genuine_200_challenge_is_refused_not_stored_under_every_mismatch_action() {
+    use crawlx_core::acquisition::{AcquisitionPolicyV1, ContentMismatchActionV1};
+    let site = start().await;
+    for action in [
+        None,
+        Some(ContentMismatchActionV1::Report),
+        Some(ContentMismatchActionV1::Fail),
+    ] {
+        let rig = Rig::new().await;
+        site.set_page(200, "<form id=challenge-form>Verify you are human</form>");
+        let before = site.count("/mutable");
+        let done = go(
+            &rig,
+            Spec::new(site.url("/mutable"), md()).tweak(move |crawl| {
+                crawl.acquisition = action.map(|action| {
+                    let mut policy = AcquisitionPolicyV1::default();
+                    policy.validation.on_content_mismatch = action;
+                    policy
+                });
+            }),
+        )
+        .await;
+        assert_eq!(site.count("/mutable") - before, 1, "{action:?}");
+        let row = done.row("/mutable").await;
+        assert_eq!(
+            (row.status, row.denial_reason.as_deref()),
+            (FrontierStatus::Failed, Some("unsupported_content")),
+            "{action:?}"
+        );
+        assert!(done.report.pages.is_empty(), "{action:?}");
+        let failed = done.events("page.failed").await;
+        assert!(
+            failed[0]["message"].as_str().unwrap().contains("Challenge"),
+            "{action:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn native_acquisition_checks_mime_selectors_completeness_and_redirect_truth() {
     let site = start().await;
     let rig = Rig::new().await;
@@ -2575,10 +2613,13 @@ async fn native_acquisition_checks_mime_selectors_completeness_and_redirect_trut
         Spec::new(site.url("/native-header-challenge"), md()).tweak(native_policy),
     )
     .await;
+    // An authoritative challenge header on a 200 is refused, never stored as the target page.
+    let row = done.row("/native-header-challenge").await;
     assert_eq!(
-        done.page("/native-header-challenge").metadata["acquisition"]["validation"]["category"],
-        "challenge"
+        (row.status, row.denial_reason.as_deref()),
+        (FrontierStatus::Failed, Some("unsupported_content"))
     );
+    assert!(done.report.pages.is_empty());
 
     let rig = Rig::new().await;
     let done = go(

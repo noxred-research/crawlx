@@ -23,7 +23,7 @@ use crawlx_elements::IdentityResolver;
 use crawlx_observe::spec;
 use crawlx_scheduler::{CheckpointReason, Scheduler, HEARTBEAT_INTERVAL};
 use crawlx_state::{score, ClusterConfig, Prototype};
-use crawlx_storage::{PgApiRepo, SessionLease, TransitionFilter};
+use crawlx_storage::{SessionLease, TransitionFilter};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -551,8 +551,8 @@ async fn journal_afterstate(
             .find(|transition| transition.action == action.id && transition.session == action.session)
             .and_then(|transition| transition.after));
     }
-    if let Some(pg) = &rc.stores.pg {
-        let transitions = PgApiRepo::new(pg.clone())
+    if let Some(durable) = &rc.stores.durable {
+        let transitions = durable
             .transitions_list(
                 rc.run,
                 &TransitionFilter {
@@ -881,7 +881,7 @@ pub(crate) async fn run_session(
     spec: Value,
 ) -> SessionEnd {
     let producer = rc.stores.session_producer(rc.run, &lease);
-    let authority = rc.stores.pg_secret_authority.clone();
+    let authority = rc.stores.secret_authority.clone();
     let result = crawlx_core::custody::with_producer(
         producer.clone(),
         crate::custody_renewal::with_custody_renewal(authority, producer, async {

@@ -126,6 +126,22 @@ pub struct Repos {
     pub eraser: Arc<dyn Eraser>,
     /// Jobs, monitors, checks and the usage ledger of the compatibility-API LLM products.
     pub intel: Arc<dyn crawlx_storage::IntelRepo>,
+    /// The same stores under operator authority, for work that crosses tenants (the webhook
+    /// sender, the monitor ticker, key bootstrap). Request-facing code never uses it.
+    pub background: Background,
+}
+
+/// Repositories for cross-tenant background work; see [`Repos::background`].
+#[derive(Clone)]
+pub struct Background {
+    /// API-owned tables: keys, idempotency, approvals, webhooks, audit.
+    pub api: Arc<dyn ApiStore>,
+    /// Crawl runs.
+    pub runs: Arc<dyn RunRepo>,
+    /// Append-only run events.
+    pub events: Arc<dyn EventRepo>,
+    /// Jobs, monitors, checks and the usage ledger.
+    pub intel: Arc<dyn crawlx_storage::IntelRepo>,
 }
 
 impl Repos {
@@ -176,7 +192,15 @@ impl Repos {
         artifacts: Arc<dyn ArtifactSource>,
         eraser: Arc<dyn Eraser>,
     ) -> Self {
+        let background = Background {
+            api: api.clone(),
+            runs: store.clone(),
+            events: store.clone(),
+            intel: Arc::new(crawlx_storage::MemoryIntel::new()),
+        };
         Self {
+            intel: background.intel.clone(),
+            background,
             runs: store.clone(),
             pages: store.clone(),
             states: store.clone(),
@@ -196,37 +220,135 @@ impl Repos {
             artifacts,
             api,
             eraser,
-            intel: Arc::new(crawlx_storage::MemoryIntel::new()),
         }
     }
 
-    /// All repositories over PostgreSQL.
+    /// All repositories over `operator`, a handle of any engine, with `artifacts`.
+    ///
+    /// PostgreSQL enforces tenancy in the database, so one handle serves requests and
+    /// background work. On the other engines request-facing repositories are request handles
+    /// that refuse statements outside a tenant scope, and [`Repos::background`] keeps the
+    /// operator handle.
     #[must_use]
-    pub fn pg(pg: &crawlx_storage::Pg, artifacts: Arc<dyn ArtifactSource>) -> Self {
-        let pg_arc = Arc::new(pg.clone());
+    pub fn over_store<B>(operator: &crawlx_storage::Store<B>, artifacts: Arc<dyn ArtifactSource>) -> Self
+    where
+        B: crawlx_storage::tenant::Tenancy,
+        crawlx_storage::Store<B>: crawlx_storage::WorkerRegistry,
+    {
+        let requests = if B::KIND.capabilities().database_enforced_tenancy {
+            operator.clone()
+        } else {
+            operator.request_handle()
+        };
+        let store = Arc::new(requests.clone());
+        let operator_arc = Arc::new(operator.clone());
+        let api: Arc<dyn ApiStore> = Arc::new(crate::database::DatabaseApiStore::new(requests.clone()));
         Self {
-            runs: pg_arc.clone(),
-            pages: pg_arc.clone(),
-            states: pg_arc.clone(),
-            ledger: pg_arc.clone(),
-            events: pg_arc.clone(),
-            journal: pg_arc.clone(),
-            frontier: pg_arc.clone(),
-            datasets: pg_arc.clone(),
-            request_commits: pg_arc.clone(),
-            report_history: pg_arc.clone(),
-            url_graph: pg_arc.clone(),
-            kv: pg_arc.clone(),
-            source_memo: pg_arc.clone(),
-            adaptive_selectors: pg_arc.clone(),
-            archives: pg_arc.clone(),
-            worker_registry: pg_arc.clone(),
-            api: Arc::new(crate::pg::PgApiStore::new(pg.clone())),
-            eraser: Arc::new(crate::pg::PgEraser::new(pg.clone(), Some(artifacts.clone()))),
-            intel: pg_arc,
+            runs: store.clone(),
+            pages: store.clone(),
+            states: store.clone(),
+            ledger: store.clone(),
+            events: store.clone(),
+            journal: store.clone(),
+            frontier: store.clone(),
+            datasets: store.clone(),
+            request_commits: store.clone(),
+            report_history: store.clone(),
+            url_graph: store.clone(),
+            kv: store.clone(),
+            source_memo: store.clone(),
+            adaptive_selectors: store.clone(),
+            archives: store.clone(),
+            worker_registry: store.clone(),
+            api,
+            eraser: Arc::new(crate::database::DatabaseEraser::new(
+                requests,
+                Some(artifacts.clone()),
+            )),
+            intel: store,
+            background: Background {
+                api: Arc::new(crate::database::DatabaseApiStore::new(operator.clone())),
+                runs: operator_arc.clone(),
+                events: operator_arc.clone(),
+                intel: operator_arc,
+            },
             artifacts,
         }
     }
+
+    /// All repositories over `database`, of any engine.
+    ///
+    /// PostgreSQL enforces tenancy in the database, so one handle serves requests and
+    /// background work; `request_login` names the restricted non-owner role requests use.
+    /// On the other engines request-facing repositories are request handles that refuse
+    /// statements outside a tenant scope, and [`Repos::background`] keeps the operator handle.
+    ///
+    /// # Errors
+    /// Returns [`crawlx_core::StoreError`] when the restricted role is unusable, and the
+    /// refusals `sqlite_no_roles` (a request login next to SQLite) and `backend_unimplemented`
+    /// (a request login on MariaDB, which has none yet).
+    pub async fn database<F: ArtifactsFactory>(
+        database: &crawlx_storage::Database,
+        request_login: Option<&str>,
+        delivery: Option<Arc<DeliveryBuffer>>,
+        artifacts: &F,
+    ) -> Result<Self, crawlx_core::StoreError> {
+        async fn over<B, F>(
+            store: &crawlx_storage::Store<B>,
+            delivery: Option<Arc<DeliveryBuffer>>,
+            factory: &F,
+        ) -> Result<Repos, crawlx_core::StoreError>
+        where
+            F: ArtifactsFactory,
+            B: crawlx_storage::tenant::Tenancy,
+            crawlx_storage::Store<B>: crawlx_storage::WorkerRegistry,
+        {
+            let operator = match delivery {
+                Some(delivery) => store.clone().with_delivery_buffer(delivery),
+                None => store.clone(),
+            };
+            let artifacts = factory.open(&operator).await?;
+            Ok(Repos::over_store(&operator, artifacts))
+        }
+        if let Some(store) = database.as_postgres() {
+            let store = match request_login {
+                Some(url) => store.with_api_role(url).await?,
+                None => store.clone(),
+            };
+            return over(&store, delivery, artifacts).await;
+        }
+        if request_login.is_some() {
+            return Err(match database.kind() {
+                crawlx_storage::BackendKind::Sqlite => crawlx_storage::BackendRefusal::sqlite_no_roles(),
+                kind => crawlx_storage::BackendRefusal::unimplemented(kind, "a restricted request login"),
+            }
+            .into());
+        }
+        if let Some(store) = database.as_mariadb() {
+            return over(store, delivery, artifacts).await;
+        }
+        if let Some(store) = database.as_sqlite() {
+            return over(store, delivery, artifacts).await;
+        }
+        Err(crawlx_storage::BackendRefusal::unimplemented(
+            database.kind(),
+            crawlx_storage::Feature::Repositories.name(),
+        )
+        .into())
+    }
+}
+
+/// Opens the artifact source of a deployment over the operator handle of whichever engine
+/// [`Repos::database`] selected, so the source and the repositories share one pool.
+pub trait ArtifactsFactory: Sync {
+    /// The artifact source reading and writing through `store`.
+    ///
+    /// # Errors
+    /// Returns [`crawlx_core::StoreError`] if the store cannot be opened.
+    fn open<B: crawlx_storage::tenant::Tenancy>(
+        &self,
+        store: &crawlx_storage::Store<B>,
+    ) -> impl std::future::Future<Output = Result<Arc<dyn ArtifactSource>, crawlx_core::StoreError>> + Send;
 }
 
 struct MemoryEraser {

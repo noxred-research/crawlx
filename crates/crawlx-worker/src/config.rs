@@ -495,8 +495,11 @@ impl RetainedProfilePolicy {
 /// Everything a worker process (or an in-process local run) needs.
 #[derive(Clone)]
 pub struct WorkerConfig {
-    /// PostgreSQL URL. `None` runs against an in-memory store (CLI local runs, tests).
+    /// Database URL (`postgres:`, `mariadb:`/`mysql:` or `sqlite:`). `None` runs against an
+    /// in-memory store (CLI local runs, tests).
     pub database_url: Option<String>,
+    /// Pool size and timeouts of the connection to `database_url`.
+    pub store: crawlx_storage::StoreConfig,
     /// Operator root for tenant-keyed credential/cache identity; never serialized or logged.
     pub request_identity_key: Option<crawlx_core::secret::SecretOr<[u8; 32]>>,
     /// Operator-provisioned durable checkpoint encryption; local memory stores use ephemeral custody.
@@ -541,7 +544,7 @@ pub struct WorkerConfig {
     pub article_language_detector: Option<crawlx_core::article_language::ArticleLanguageHandle>,
     /// Operator-approved bounded source traversal and finalized metadata projection.
     pub source_dispatch: Option<Arc<crate::source_dispatch::SourceDispatcher>>,
-    /// LLM planner endpoint; `None` runs without a planner (`dynamic.llmPlanner` is then ignored).
+    /// LLM planner endpoint; required when `dynamic.llmPlanner` is not `off`.
     pub planner: Option<PlannerConfig>,
     /// Milestone gates the run may rely on. Default grants none.
     /// Production loads authenticated evidence through [`Gates::load`].
@@ -629,6 +632,7 @@ impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             database_url: None,
+            store: crawlx_storage::StoreConfig::default(),
             request_identity_key: None,
             checkpoint_keys: None,
             artifact_keys: None,
@@ -817,22 +821,18 @@ impl ArtifactKeySelection {
 /// # Errors
 /// Rejects contradictory or malformed key settings, as [`artifact_keys_from_lookup`] does.
 pub fn read_only_custody_from_lookup(
-    pg: &crawlx_storage::Pg,
+    store: &crate::durable::DurableStore,
     getenv: &dyn Fn(&str) -> Option<String>,
 ) -> impl std::future::Future<Output = Result<ReadOnlyCustody, WorkerError>> + Send {
     let selection = ArtifactKeySelection::from_lookup(getenv);
-    let pg = pg.clone();
+    let authority = crate::durable::DurableAuthority::finalized_reads(store);
     async move {
         let keys: Arc<dyn crawlx_storage::artifact_key_crypto::ArtifactKeys> = match selection?.open().await?
         {
             Some(keys) => keys,
             None => Arc::new(crawlx_storage::artifact_key_crypto::UnavailableArtifactKeys),
         };
-        let custody = crawlx_storage::PgArtifactCustody::new(
-            crawlx_storage::custody::PgSecretAuthority::finalized_reads(pg),
-        );
-        let custody: Arc<dyn crawlx_storage::ArtifactCustody> = Arc::new(custody);
-        Ok((custody, keys))
+        Ok((authority.custody(), keys))
     }
 }
 
@@ -932,8 +932,7 @@ impl WorkerConfig {
     pub fn data_capabilities(
         &self,
     ) -> Result<crawlx_core::data_capabilities::WorkerDataCapabilitiesV1, WorkerError> {
-        let mut facts = crawlx_core::data_capabilities::WorkerDataCapabilitiesV1::default();
-        facts.destinations = self.delivery.capabilities();
+        let mut facts = self.delivery.capabilities();
         if let Some(handle) = &self.article_language_detector {
             facts.language_bundles.insert(handle.detector().bundle_digest());
         }
@@ -994,6 +993,7 @@ impl fmt::Debug for WorkerConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WorkerConfig")
             .field("database_url", &self.database_url.as_ref().map(|_| "[set]"))
+            .field("store", &self.store)
             .field("artifacts_dir", &self.artifacts_dir)
             .field("artifact_spool", &self.artifact_spool)
             .field("worker_id", &self.worker_id)

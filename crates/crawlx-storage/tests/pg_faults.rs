@@ -16,7 +16,7 @@ use crawlx_core::{
     ActionId, CrawlRunId, NetworkEpochId, SessionId, StateClusterId, StoreError, TenantId, WorkerId,
 };
 use crawlx_storage::testkit::{allow_verdict, crawl_run, create_crawl, new_state, proposal, sessions};
-use crawlx_storage::{LeaseRepo, Pg, PgConfig};
+use crawlx_storage::{LeaseRepo, Pg, StoreConfig};
 
 const SNAPSHOT_V008: &str = include_str!("../schema/v008.sql");
 
@@ -32,11 +32,11 @@ struct Env {
     tenant: TenantId,
 }
 
-fn config(schema: &str, max_connections: u32) -> PgConfig {
-    PgConfig {
+fn config(schema: &str, max_connections: u32) -> StoreConfig {
+    StoreConfig {
         schema: Some(schema.to_owned()),
         max_connections,
-        ..PgConfig::default()
+        ..StoreConfig::default()
     }
 }
 
@@ -222,7 +222,7 @@ async fn pg_terminated_connection_between_t1_and_t2_leaves_intended_and_nothing_
     // behind a transparent reconnect, so T2's first statement meets it.
     let worker = Pg::connect(
         &env.url,
-        PgConfig {
+        StoreConfig {
             test_before_acquire: false,
             ..config(&env.schema, 1)
         },

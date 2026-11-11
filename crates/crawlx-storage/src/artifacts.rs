@@ -1999,54 +1999,69 @@ impl ArtifactBlobs for MemBlobs {
 }
 
 #[async_trait]
-impl ArtifactIndex for crate::Pg {
+impl<B: crate::sql::Sql> ArtifactIndex for crate::Store<B> {
     async fn record(&self, row: &ArtifactRow) -> Result<(), StoreError> {
-        sqlx::query(
+        let size = i64::try_from(row.size_bytes)
+            .map_err(|_| StoreError::Serialization("artifact too large".to_owned()))?;
+        crate::sql::stmt!(
+            B,
             "INSERT INTO artifacts (artifact_id, tenant_id, run_id, kind, bucket, object_key, size_bytes, content_digest, content_type, sensitivity, created_at, expires_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::sensitivity_class, $11, $12)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::sensitivity_class, $11, $12)"
         )
-        .bind(row.id.0)
-        .bind(row.tenant.0)
-        .bind(row.run.0)
-        .bind(&row.kind)
-        .bind(&row.bucket)
-        .bind(&row.object_key)
-        .bind(i64::try_from(row.size_bytes).map_err(|_| StoreError::Serialization("artifact too large".to_owned()))?)
-        .bind(row.digest.0.to_vec())
-        .bind(&row.content_type)
-        .bind(row.sensitivity.as_str())
-        .bind(row.created_at)
-        .bind(row.expires_at)
-        .execute(&self.pool)
-        .await
-        .map_err(crate::error::db)?;
+        .uuid(row.id.0)
+        .uuid(row.tenant.0)
+        .uuid(row.run.0)
+        .text(&row.kind)
+        .text(&row.bucket)
+        .text(&row.object_key)
+        .i64(size)
+        .bytes(&row.digest.0)
+        .text(&row.content_type)
+        .text(row.sensitivity.as_str())
+        .ts(row.created_at)
+        .opt_ts(row.expires_at)
+        .execute_write(&self.pool)
+        .await?;
         Ok(())
     }
 
     async fn retention(&self, id: ArtifactId) -> Result<Option<ArtifactRetention>, StoreError> {
-        let row = sqlx::query("SELECT expires_at, deleted_at FROM artifacts WHERE artifact_id = $1")
-            .bind(id.0)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(crate::error::db)?;
+        use crate::sql::SqlRow as _;
+        let row = crate::sql::stmt!(
+            B,
+            "SELECT expires_at, deleted_at FROM artifacts WHERE artifact_id = $1"
+        )
+        .uuid(id.0)
+        .fetch_optional_pool(&self.pool)
+        .await?;
         row.map(|row| {
             Ok(ArtifactRetention {
-                expires_at: crate::codec::get(&row, "expires_at")?,
-                deleted_at: crate::codec::get(&row, "deleted_at")?,
+                expires_at: row.opt_ts("expires_at")?,
+                deleted_at: row.opt_ts("deleted_at")?,
             })
         })
         .transpose()
     }
 
     async fn mark_deleted(&self, ids: &[ArtifactId]) -> Result<(), StoreError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
         let raw: Vec<uuid::Uuid> = ids.iter().map(|i| i.0).collect();
-        sqlx::query(
-            "UPDATE artifacts SET deleted_at = now() WHERE artifact_id = ANY($1) AND deleted_at IS NULL",
-        )
-        .bind(raw)
-        .execute(&self.pool)
-        .await
-        .map_err(crate::error::db)?;
-        Ok(())
+        let now = <B::Dialect as crate::backend::Dialect>::now();
+        let chunk = <B::Dialect as crate::backend::Dialect>::MAX_BIND_PARAMS
+            .saturating_sub(1)
+            .max(1);
+        let mut tx = self.begin_write().await?;
+        for ids in raw.chunks(chunk) {
+            crate::sql::Stmt::<B>::dynamic(&format!(
+                "UPDATE artifacts SET deleted_at = {now} WHERE artifact_id {} AND deleted_at IS NULL",
+                crate::sql::in_ids::<B>(1, ids.len())
+            ))
+            .uuid_list(ids)
+            .execute(tx.conn())
+            .await?;
+        }
+        tx.commit().await
     }
 }

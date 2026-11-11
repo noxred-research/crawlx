@@ -1,4 +1,4 @@
-//! `crawlx admin`: operator commands against PostgreSQL.
+//! `crawlx admin`: operator commands against the database.
 
 use crate::inspect::connect;
 use anyhow::{anyhow, bail, Context as _};
@@ -6,7 +6,8 @@ use chrono::{Days, NaiveDate, Utc};
 use clap::{Args, Subcommand};
 use crawlx_core::TenantId;
 use crawlx_storage::audit::export_key;
-use crawlx_storage::{ArtifactBlobs, FsBlobs, MerkleExport, S3Blobs, S3Config};
+use crawlx_storage::sql::Sql;
+use crawlx_storage::{ArtifactBlobs, FsBlobs, MerkleExport, S3Blobs, S3Config, Store};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -63,7 +64,7 @@ pub struct AuditExportArgs {
     /// profile supports it.
     #[arg(long, value_name = "BUCKET")]
     pub s3_bucket: Option<String>,
-    #[arg(long, env = "CRAWLX_DATABASE_URL")]
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
     /// Database url.
     pub database_url: Option<String>,
 }
@@ -94,32 +95,39 @@ fn previous_day(today: NaiveDate) -> anyhow::Result<NaiveDate> {
         .ok_or_else(|| anyhow!("no day before {today}"))
 }
 
+async fn export_records<B: Sql>(
+    pg: &Store<B>,
+    blobs: Arc<dyn ArtifactBlobs>,
+    args: &AuditExportArgs,
+    day: NaiveDate,
+) -> anyhow::Result<Vec<crawlx_storage::AuditDayExport>> {
+    let export = MerkleExport::new(pg.clone(), blobs);
+    if args.all {
+        return export
+            .export_all(day)
+            .await
+            .map_err(|e| anyhow!("exporting every tenant for {day}: {}", crate::authz::chain(&e)));
+    }
+    let Some(tenant) = args.tenant.as_deref() else {
+        bail!("pass --tenant <TENANT_ID> or --all");
+    };
+    let tenant: TenantId = tenant
+        .parse()
+        .map_err(|e| anyhow!("{tenant:?} is not a tenant id: {e}"))?;
+    Ok(vec![export.export_day(tenant, day).await.map_err(|e| {
+        anyhow!("exporting tenant {tenant} for {day}: {}", crate::authz::chain(&e))
+    })?])
+}
+
 async fn audit_export(args: AuditExportArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     let day = match args.day {
         Some(d) => d,
         None => previous_day(Utc::now().date_naive())?,
     };
-    let pg = connect(args.database_url.as_deref()).await?;
+    let store = connect(args.database_url.as_deref()).await?;
     let blobs = audit_blobs(&args).await?;
     let bucket = blobs.bucket().to_owned();
-    let export = MerkleExport::new(pg, blobs);
-    let records = if args.all {
-        export
-            .export_all(day)
-            .await
-            .map_err(|e| anyhow!("exporting every tenant for {day}: {e}"))?
-    } else {
-        let Some(tenant) = args.tenant.as_deref() else {
-            bail!("pass --tenant <TENANT_ID> or --all");
-        };
-        let tenant: TenantId = tenant
-            .parse()
-            .map_err(|e| anyhow!("{tenant:?} is not a tenant id: {e}"))?;
-        vec![export
-            .export_day(tenant, day)
-            .await
-            .map_err(|e| anyhow!("exporting tenant {tenant} for {day}: {e}"))?]
-    };
+    let records = crawlx_worker::on_store!(&store, pg => export_records(pg, blobs, &args, day).await)?;
     for rec in &records {
         let mut line = serde_json::to_value(rec)?;
         if let Some(obj) = line.as_object_mut() {

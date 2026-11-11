@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 use crawlx_browser::{CdpContext, ChromiumBackend, LaunchConfig};
-use crawlx_core::browser::{BrowserContext, ContextConfig};
+use crawlx_core::browser::{BrowserContext, BrowserError, ContextConfig};
 use crawlx_core::browser_capture::{
     BrowserCaptureSink, CaptureCompleteness, CaptureDescriptor, CaptureKind, CaptureSpec,
 };
@@ -29,6 +29,17 @@ const PAGE: &str = r#"<!doctype html><html><head><link rel="stylesheet" href="/s
 <body><p>retained public document</p><img src="/image.svg"></body></html>"#;
 const STYLE: &str = "p { color: rgb(12, 34, 56); }";
 const IMAGE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="green"/></svg>"#;
+// Twelve stylesheets, each below the per-resource privacy bound, whose re-serialized rules
+// together are larger than one metadata reply.
+const BIG_STYLE_RULES: usize = 6_000;
+const BIG_PAGE: &str = r#"<!doctype html><html><head>
+<link rel="stylesheet" href="/big-0.css"><link rel="stylesheet" href="/big-1.css">
+<link rel="stylesheet" href="/big-2.css"><link rel="stylesheet" href="/big-3.css">
+<link rel="stylesheet" href="/big-4.css"><link rel="stylesheet" href="/big-5.css">
+<link rel="stylesheet" href="/big-6.css"><link rel="stylesheet" href="/big-7.css">
+<link rel="stylesheet" href="/big-8.css"><link rel="stylesheet" href="/big-9.css">
+<link rel="stylesheet" href="/big-10.css"><link rel="stylesheet" href="/big-11.css">
+</head><body><p>large retained document</p></body></html>"#;
 
 #[derive(Debug, Default)]
 struct RecordingStore {
@@ -174,6 +185,11 @@ async fn exchange(mut stream: TcpStream) {
     }
     let request = String::from_utf8(request).unwrap();
     let path = request.split_whitespace().nth(1).unwrap();
+    let big_style = path.starts_with("/big-").then(|| {
+        (0..BIG_STYLE_RULES)
+            .map(|rule| format!(".r{rule}{{color:red}}"))
+            .collect::<String>()
+    });
     let (status, mime, body) = match path {
         "/" => ("200 OK", "text/html", PAGE),
         "/style.css" => ("200 OK", "text/css", STYLE),
@@ -183,6 +199,8 @@ async fn exchange(mut stream: TcpStream) {
         "/secret" => ("200 OK", "text/html", "<!doctype html><body>retained-browser-private-canary-673284</body>"),
         "/password" => ("200 OK", "text/html", "<!doctype html><body><input type=password value=private></body>"),
         "/large" => ("200 OK", "text/html", "<!doctype html><body><script>document.body.append('x'.repeat(1048577))</script></body>"),
+        "/big" => ("200 OK", "text/html", BIG_PAGE),
+        _ if big_style.is_some() => ("200 OK", "text/css", big_style.as_deref().unwrap()),
         _ => ("404 Not Found", "text/plain", "missing"),
     };
     let header = format!("HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", body.len());
@@ -436,5 +454,36 @@ async fn retained_pdf_and_text_use_typed_policy_dispatch() {
     assert_eq!(text.completeness, CaptureCompleteness::Clipped);
     assert!(text.descriptor.truncated);
     assert!(text.bytes <= 8);
+    backend.close().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mhtml_above_the_metadata_cap_is_admitted_and_refused_above_its_limit() {
+    let Some(backend) = launch().await else { return };
+    let origin = Origin::start().await;
+    let sink = Arc::new(PolicySink::public());
+    let mut ctx = context(&backend, Arc::clone(&sink)).await;
+    navigate(&mut ctx, &origin, "/big").await;
+    let artifact = ctx
+        .retained_capture(CaptureSpec::Mhtml { max_bytes: LIMIT })
+        .await
+        .unwrap();
+    let stored = sink.store.get(&artifact.artifact).await.unwrap();
+    // A snapshot this large cannot have passed through the 1 MiB metadata-reply cap.
+    assert!(stored.len() > 1024 * 1024, "{} bytes", stored.len());
+    assert_eq!(artifact.bytes, u64::try_from(stored.len()).unwrap());
+    assert_eq!(sink.store.writes.lock().len(), 1);
+    // The very same snapshot against a smaller limit is refused with the typed memory error.
+    let refused = ctx
+        .retained_capture(CaptureSpec::Mhtml {
+            max_bytes: 1024 * 1024,
+        })
+        .await;
+    assert!(matches!(refused, Err(BrowserError::Memory(_))), "{refused:?}");
+    assert_eq!(
+        sink.store.writes.lock().len(),
+        1,
+        "the refused snapshot is never stored"
+    );
     backend.close().await.unwrap();
 }

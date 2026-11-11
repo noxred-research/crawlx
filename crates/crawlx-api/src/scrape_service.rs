@@ -425,7 +425,7 @@ pub fn failure_code(reason: &str) -> FailureCode {
                 500,
                 "SCRAPE_SITE_ERROR",
                 "The site answered with an error status",
-            )
+            );
         }
         r => r,
     };
@@ -836,7 +836,7 @@ pub async fn scrape_one(
                 "/",
                 "invalid_type",
                 "scrape options must be an object",
-            )]))
+            )]));
         }
     };
     let target = parse_target(url, "/url").map_err(|d| HttpError::bad_request(vec![d]))?;

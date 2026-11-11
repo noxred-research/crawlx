@@ -88,6 +88,12 @@ pub enum Extraction {
         #[serde(default)]
         group: usize,
     },
+    /// Named built-in pattern (`email`, `url`, `uuid`, ...), bare or versioned (`email.v1`);
+    /// the value is the built-in's own capture group.
+    Builtin {
+        /// Built-in name from `crawlx_extract::regex_builtins`.
+        name: String,
+    },
     /// Declarative item fields and offline schema.
     Item {
         /// Versioned native recipe.
@@ -115,6 +121,14 @@ impl Extraction {
                     bail!("regex capture group is out of range");
                 }
                 CompiledExtraction::Regex { regex, group }
+            }
+            Self::Builtin { name } => {
+                let found = crawlx_extract::regex_builtins::builtin(&name)?;
+                let regex = crawlx_extract::regex_builtins::compile_regex(found.pattern)?;
+                CompiledExtraction::Regex {
+                    regex,
+                    group: found.group,
+                }
             }
             Self::Item { recipe } => CompiledExtraction::Item(CompiledItemLoader::compile(&recipe)?),
         };
@@ -159,14 +173,18 @@ pub struct ScrapeArgs {
     #[arg(long, value_name = "FILE")]
     pub request: Option<PathBuf>,
     /// CSS expression evaluated only against the stored page.
-    #[arg(long, conflicts_with_all = ["xpath", "regex", "extraction"])]
+    #[arg(long, conflicts_with_all = ["xpath", "regex", "regex_builtin", "extraction"])]
     pub css: Option<String>,
     /// XPath expression evaluated only against the stored page.
-    #[arg(long, conflicts_with_all = ["regex", "extraction"])]
+    #[arg(long, conflicts_with_all = ["regex", "regex_builtin", "extraction"])]
     pub xpath: Option<String>,
     /// Linear-time regex evaluated only against the stored page.
-    #[arg(long, conflicts_with = "extraction")]
+    #[arg(long, conflicts_with_all = ["regex_builtin", "extraction"])]
     pub regex: Option<String>,
+    /// Built-in regex pattern by name (`email`, `url`, `uuid`, ...), bare or versioned
+    /// (`email.v1`), evaluated only against the stored page.
+    #[arg(long, value_name = "NAME", conflicts_with = "extraction")]
+    pub regex_builtin: Option<String>,
     /// JSON Extraction object. No code, imports or process commands are accepted.
     #[arg(long, value_name = "FILE")]
     pub extraction: Option<PathBuf>,
@@ -271,6 +289,9 @@ fn effective(args: &ScrapeArgs) -> anyhow::Result<Effective> {
             pattern: pattern.clone(),
             group: 0,
         });
+    }
+    if let Some(name) = &args.regex_builtin {
+        extraction = Some(Extraction::Builtin { name: name.clone() });
     }
     if let Some(path) = &args.extraction {
         extraction = Some(
@@ -444,8 +465,8 @@ pub async fn shell(
 
 /// Start a stored-page REPL with bounded input and caller-owned cancellation.
 ///
-/// Commands are `css EXPRESSION`, `xpath EXPRESSION`, `regex PATTERN`, `item JSON`, and
-/// `quit`. Item JSON is an inline native ItemLoaderV1, never a filename or executable import.
+/// Commands are `css EXPRESSION`, `xpath EXPRESSION`, `regex PATTERN`, `builtin NAME`,
+/// `item JSON`, and `quit`. Item JSON is an inline native ItemLoaderV1, never a filename or executable import.
 /// Each successful command emits one JSON line. Errors stop without exposing command contents.
 ///
 /// # Errors
@@ -495,7 +516,7 @@ pub async fn shell_with_input<R: AsyncBufRead + Unpin>(
         let (kind, expression) = command
             .split_once(char::is_whitespace)
             .filter(|(_, expression)| !expression.trim().is_empty())
-            .context("expected css, xpath, regex, item or quit")?;
+            .context("expected css, xpath, regex, builtin, item or quit")?;
         let expression = expression.trim();
         let rule = match kind {
             "css" => Extraction::Css {
@@ -507,6 +528,9 @@ pub async fn shell_with_input<R: AsyncBufRead + Unpin>(
             "regex" => Extraction::Regex {
                 pattern: expression.into(),
                 group: 0,
+            },
+            "builtin" => Extraction::Builtin {
+                name: expression.into(),
             },
             "item" => Extraction::Item {
                 recipe: serde_json::from_str(expression).context("invalid inline item recipe")?,

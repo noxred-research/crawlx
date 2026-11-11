@@ -21,7 +21,7 @@ use crawlx_storage::retention::RetentionSweeper;
 use crawlx_storage::testkit::{
     allow_verdict, canonical_url, crawl_run, create_crawl, new_state, proposal, sessions, verdict,
 };
-use crawlx_storage::{LeaseRepo, Pg, PgConfig, TrailReads};
+use crawlx_storage::{LeaseRepo, Pg, StoreConfig, TrailReads};
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
 use std::collections::BTreeSet;
@@ -46,10 +46,10 @@ async fn setup() -> Option<Env> {
     let schema = format!("t_{}", uuid_simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
             max_connections: 12,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await

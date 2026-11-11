@@ -43,9 +43,14 @@ with secret-manager files instead of environment values containing credentials.
   policy and native-only webhook signatures. `CRAWLX_COMPAT_MODE` supplies the same setting;
   an explicit flag wins, including `--compat-mode strict`. The default remains `strict`.
   Library hosts can set `ApiConfig.compat_mode_override` for the same explicit precedence.
+* **Tenant engine routing.** `crawlx admin engine --tenant ID --set upstream` does not make
+  CrawlX an upstream HTTP proxy. An operator gateway must send new requests to that engine.
+  CrawlX refuses new compatibility crawls with `409 engine_mismatch` while the tenant is
+  `upstream`; `shadow` accepts only mirrored requests (`X-Crawlx-Shadow: 1`), subject to sampling.
+  Existing CrawlX crawl status remains readable; changing the flag does not move stored runs.
 * **Without the key switch** a bootstrap `fc-` key is refused at startup (`bootstrap_keys`,
-  `crates/crawlx-api/src/lib.rs`): `API key for tenant "acme" must look like cx_live_<26 base32
-  characters>` (same test, third phase: the process exits non-zero with that message).
+  `crates/crawlx-api/src/lib.rs`). The diagnostic names the required native key shape:
+  `cx_live_` followed by 26 lowercase letters `a-z` or digits `2-7`.
 * **Key shape.** `fc-` followed by 16 to 64 ASCII alphanumerics (`parse_compat_key`,
   `crates/crawlx-api/src/auth.rs`). An `fc-` key authenticates only on `/compat/...` routes and
   never opens a native `/v1/...` route (`auth_layer`); a `cx_live_` key works on both.
@@ -110,9 +115,9 @@ Mounted by `crates/crawlx-api/src/routes/mod.rs` behind the key check, all under
 | map | `POST /v2/map` |
 | search | `POST /v2/search`, `POST /v2/search/{jobId}/feedback`, `GET`/`POST /v2/search/developer`, `GET`/`POST /v2/search/gov`, `GET /v2/search/research/papers[/{paperId}[/similar]]` |
 | extract | `POST /v2/extract`, `GET /v2/extract/{id}` |
-| agent | `GET`/`POST /v2/agent`, `GET`/`DELETE /v2/agent/{jobId}`, `GET /v2/agent/{jobId}/trace` |
+| agent | `GET`/`POST /v2/agent`, `GET`/`DELETE /v2/agent/{jobId}`, `GET /v2/agent/{jobId}/trace`, `GET /v2/agent/{jobId}/snapshots/{snapshotId}` |
 | parse | `POST /v2/parse`, `GET /v2/parse/formats` |
-| monitor | `POST`/`GET /v2/monitor`, `/v2/monitor/{id}`, `/run`, `/checks` |
+| monitor | `POST`/`GET /v2/monitor`, `GET`/`PATCH`/`DELETE /v2/monitor/{monitorId}`, `POST /v2/monitor/{monitorId}/run`, `GET /v2/monitor/{monitorId}/checks[/{checkId}]` |
 | team | `GET /v2/team/credit-usage[/historical]`, `/token-usage[/historical]`, `/queue-status`, `/activity`; `POST /v2/feedback`, `/v2/support/ask`, `/v2/support/docs-search` |
 | probes (no key) | `GET /v0/health/readiness`, `/v0/health/liveness` |
 
@@ -233,6 +238,12 @@ to wait for more results or a terminal status; a null `next` does not mean the c
 
 ## 7. Caveats
 
+* **Private and loopback targets.** Compatibility scrape/crawl/map requests do not expose the
+  native `safety.allowPrivateNetworks` and authorization-record binding. A private target is
+  refused by egress admission, even when the API itself listens on loopback. For an authorized
+  local fixture, use native `/v1/crawls` with a verified operator-signed authorization record,
+  or the foreground CLI walkthrough. The client-fixture tests explicitly supply fixture
+  authorization; they do not certify an unrestricted loopback compatibility deployment.
 * **The Python client library and its dependents (the framework loaders) need the `/v2/*` rewrite** (section 3); without it
   they get 404 for every call. Everything that builds URLs by concatenation (Node library, CLI, the app builder, the workflow platform) takes the
   `/compat` prefix as is.

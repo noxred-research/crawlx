@@ -193,6 +193,72 @@ async fn leased_hybrid_preserves_imported_handler_through_http_and_browser_redir
 }
 
 #[tokio::test]
+async fn leased_hybrid_explicit_http_route_never_acquires_browser() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(|| async {
+                axum::response::Html(
+                    r#"<html><body><div id="app"></div><script type="module" src="/main.js"></script></body></html>"#,
+                )
+            }),
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let mut crawl = CreateCrawl::new(url::Url::parse(&format!("{base}/")).unwrap());
+    crawl.mode = CrawlMode::Hybrid;
+    crawl.seed = Some(7);
+    crawl.safety.allow_private_networks = true;
+    crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
+    crawl.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
+    crawl.scope.known_files.clear();
+    crawl.politeness.delay_ms = 0;
+    crawl.dynamic.observe_only = true;
+    crawl.dynamic.always_browser_paths = vec![".*".into()];
+    crawl.protocol.routes.push(
+        serde_json::from_value(serde_json::json!({
+            "id": "native-http", "schemes": ["http"], "origin": base,
+            "pathPattern": "^/", "schedulerMetadata": {"source_kind": "url_plane"},
+            "backend": "http", "delegateId": null, "requiredCapabilities": [],
+            "maxBodyBytes": 1048576, "maxElapsedMs": 10000, "policyRevision": "revision-1"
+        }))
+        .unwrap(),
+    );
+    let record = common::authorization::verified_record(&crawl, stores.tenant);
+    let stores =
+        stores.with_authorization_source(Arc::new(crawlx_worker::StaticAuthorizationSource::new(record)));
+    let run = enqueue(&stores, crawl).await;
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(FakeScript::new().page(FakePage::new(&format!("{base}/"))))
+            .clock(Arc::new(SystemClock))
+            .build(),
+    );
+    let mut config = cfg(dir.path());
+    config.checkpoint_keys = Some(Arc::new(
+        crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap(),
+    ));
+    run_with(
+        config,
+        stores.clone(),
+        Some(backend.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    server.abort();
+    assert_eq!(stores.runs.get(run).await.unwrap().status, RunStatus::Completed);
+    assert!(stores.states.list_states(run).await.unwrap().is_empty());
+    assert!(backend.context_handles().is_empty());
+}
+
+#[tokio::test]
 async fn bodyless_head_preserves_get_document_and_never_enters_article_ingestion() {
     use axum::{http::header, routing::get, Router};
     use crawlx_core::hash::Digest;
@@ -563,6 +629,45 @@ async fn the_worker_claims_a_queued_dynamic_run_explores_it_and_finalizes() {
     assert!(row.counters.interactions.attempted >= 2);
     let sessions = stores.runs.list_sessions(run).await.unwrap();
     assert!(sessions.iter().all(|s| s.status == SessionStatus::Completed));
+}
+
+#[tokio::test]
+async fn invalid_retained_profile_run_does_not_stop_a_healthy_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let mut crawl = CreateCrawl::new("https://example.test/".parse().unwrap());
+    crawl.mode = CrawlMode::Dynamic;
+    crawl.limits.interactions = 2;
+    let mut invalid = crawl.clone();
+    invalid.dynamic.browser_profile = Some(crawlx_core::config::BrowserProfile {
+        name: "unapproved".to_owned(),
+        generation: 0,
+        save_changes: true,
+    });
+    let rejected = enqueue(&stores, invalid).await;
+    let healthy = enqueue(&stores, crawl).await;
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(app())
+            .clock(Arc::new(SystemClock))
+            .build(),
+    );
+    run_with(
+        cfg(dir.path()),
+        stores.clone(),
+        Some(backend),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let rejected = stores.runs.get(rejected).await.unwrap();
+    assert_eq!(rejected.status, RunStatus::Failed);
+    assert_eq!(rejected.terminal_reason, Some(TerminalReason::FatalError));
+    let healthy = stores.runs.get(healthy).await.unwrap();
+    assert_eq!(healthy.status, RunStatus::Completed);
+    assert!(healthy.counters.interactions.succeeded > 0);
 }
 
 #[tokio::test]

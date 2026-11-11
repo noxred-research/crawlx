@@ -17,6 +17,15 @@ allow = ["bzip2-1.0.6"]
 [advisories]
 yanked = "deny"
 unmaintained = "workspace"
+ignore = [
+  # Bundled SQLite before 3.54.0 can return stale page-cache bytes when it opens a database file
+  # together with a crafted `-wal` file written by a less trusted party. sqlx 0.9 accepts only
+  # `libsqlite3-sys < 0.38`, so the patched 0.39 release cannot be selected yet. CrawlX opens
+  # only the operator-configured local database file and refuses non-local paths, so the
+  # attacker-written file pair the advisory needs is outside its threat model. Remove this
+  # entry as soon as sqlx accepts `libsqlite3-sys >= 0.39`.
+  { id = "RUSTSEC-2026-0459", reason = "sqlx 0.9 pins libsqlite3-sys < 0.38; only operator-owned local database files are opened" },
+]
 
 [bans]
 multiple-versions = "warn"

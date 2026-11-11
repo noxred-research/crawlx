@@ -30,7 +30,7 @@ use crawlx_core::{
 use crawlx_fetch::StaticResolver;
 use crawlx_scheduler::{RunPlanner, Scheduler};
 use crawlx_storage::checkpoint_crypto::{CheckpointKeys, MemoryCheckpointKeys};
-use crawlx_storage::{testkit, FsArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{testkit, FsArtifactStore, MemoryStore, Pg, StoreConfig};
 use crawlx_worker::lease_loop::run_with;
 use crawlx_worker::{EgressConfig, Stores, WorkerConfig};
 use std::path::Path;
@@ -70,9 +70,9 @@ impl Backing {
         let schema = format!("t_counters_{}", uuid::Uuid::now_v7().simple());
         let admin = Pg::connect(
             &url,
-            PgConfig {
+            StoreConfig {
                 schema: Some(schema.clone()),
-                ..PgConfig::default()
+                ..StoreConfig::default()
             },
         )
         .await
@@ -104,9 +104,9 @@ impl Backing {
             } => {
                 let pg = Pg::connect(
                     url,
-                    PgConfig {
+                    StoreConfig {
                         schema: Some(schema.clone()),
-                        ..PgConfig::default()
+                        ..StoreConfig::default()
                     },
                 )
                 .await
@@ -117,7 +117,11 @@ impl Backing {
                     .await
                     .unwrap()
                     .with_index(Arc::new(pg.clone()));
-                let mut stores = Stores::over_pg(pg, Arc::new(artifacts), tenant);
+                let mut stores = Stores::over_durable(
+                    crawlx_worker::DurableStore::Postgres(pg),
+                    Arc::new(artifacts),
+                    tenant,
+                );
                 stores.checkpoint_keys = Arc::clone(checkpoint_keys);
                 stores
             }

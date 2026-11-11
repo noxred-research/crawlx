@@ -3,9 +3,11 @@
 
 use super::*;
 use crate::artifact_key_crypto::{FileArtifactKeys, MemoryArtifactKeys};
+use crate::codec::get;
+use crate::custody::PgSecretAuthority;
 use crate::leases::LeaseRepo as _;
 use crate::testkit::{crawl_run, create_crawl, sessions};
-use crate::{Pg, PgConfig};
+use crate::{Pg, StoreConfig};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::repo::RunRepo as _;
 use crawlx_core::{PrincipalId, TenantId, WorkerId};
@@ -259,9 +261,9 @@ async fn fixture() -> Option<Fixture> {
     let redis = std::env::var("CRAWLX_TEST_SECRET_REDIS_URL").ok()?;
     let pg = Pg::connect(
         &database,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("profile_custody_{}", Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -338,7 +340,7 @@ async fn postgres_profile_round_trip_registers_before_release_and_checks_generat
     .fetch_one(f.pg.pool())
     .await
     .unwrap();
-    let ciphertext: Vec<u8> = get(&row, "encrypted_bundle").unwrap();
+    let ciphertext: Vec<u8> = sqlx::Row::try_get(&row, "encrypted_bundle").unwrap();
     let opaque = canary("cookie");
     assert!(!ciphertext
         .windows(opaque.len())

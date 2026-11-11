@@ -147,6 +147,10 @@ pub enum WorkerError {
     #[error("storage error: {0}")]
     /// Store.
     Store(#[from] StoreError),
+    /// The selected database engine cannot serve this deployment; the message is the stable
+    /// `refused: <code>: <message>` text of the refusal.
+    #[error("{0}")]
+    Refused(#[from] crawlx_storage::BackendRefusal),
     /// Operator-approved delivery failed.
     #[error("delivery error: {0}")]
     Delivery(#[from] crate::delivery::DeliveryError),
@@ -270,6 +274,7 @@ impl Classify for WorkerError {
                 ErrorClass::Retryable
             }
             Self::Extraction(_)
+            | Self::Refused(_)
             | Self::AcquisitionPolicy(_)
             | Self::AcquisitionUnavailable(_)
             | Self::ArticleLanguage(_)

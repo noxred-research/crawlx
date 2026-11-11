@@ -23,9 +23,10 @@ use crawlx_core::observation::{
     ActionReceipt, DomSelector, NavigationResult, ObservationBundle, ObservationSpec, QuiescencePolicy,
     Revalidation, RuntimeLocator, SettleReport,
 };
+use crawlx_core::parser_memory::{Budgeted, ByteBudget};
 use crawlx_core::repo::{ArtifactStore, Sensitivity};
 use crawlx_core::request_controls::RequestControls;
-use crawlx_core::secret::ArtifactSink;
+use crawlx_core::secret::{ArtifactSink, BoundedScrubError};
 use crawlx_core::traffic::{Protocol, TrafficEvent};
 use crawlx_core::{
     ArtifactRef, BrowserContext, BrowserError, CanonicalUrl, Clock, CrawlRunId, NetworkEpochId, SessionId,
@@ -33,6 +34,7 @@ use crawlx_core::{
 };
 use crawlx_observe::{CdpTraffic, ProxyCaptureStats, ProxyTraffic, TrafficSource as _};
 use parking_lot::Mutex;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Capacity of the flow channel between the proxy / fetch plane and the source. The
@@ -59,6 +61,55 @@ pub(crate) fn check_run_secrets(
         ));
     }
     Ok(())
+}
+
+/// [`scrub_admitted_in`] against the process-wide byte budget, each stage capped at that budget.
+pub(crate) fn scrub_admitted<'bytes, 'secret>(
+    bytes: &'bytes [u8],
+    secrets: impl IntoIterator<Item = &'secret str>,
+) -> Result<Budgeted<Cow<'bytes, [u8]>>, StoreError> {
+    let budget = crawlx_core::parser_memory::global();
+    scrub_admitted_in(budget, bytes, secrets, budget.limit())
+}
+
+/// Scrub registered and run secrets from an opaque body with every live byte admitted before
+/// it is allocated.
+///
+/// Each stage's exact output length is computed, checked against `max_output` and reserved
+/// from `budget` first, so redaction growth (a short secret becomes the longer placeholder)
+/// is bounded and charged and no intermediate is ever uncharged. The result borrows `bytes`
+/// when nothing changed. Otherwise it owns the scrubbed copy, and its permit covers exactly
+/// that copy for as long as it lives. `bytes` stays its caller's to account for.
+///
+/// # Errors
+/// [`StoreError::ResourceExhausted`] when a stage exceeds `max_output`, the budget refuses
+/// it, or its allocation fails; [`StoreError::RetentionDenied`] when the scrub cannot be
+/// sized exactly. Nothing is retained after a refusal.
+pub(crate) fn scrub_admitted_in<'bytes, 'secret>(
+    budget: &Arc<ByteBudget>,
+    bytes: &'bytes [u8],
+    secrets: impl IntoIterator<Item = &'secret str>,
+    max_output: usize,
+) -> Result<Budgeted<Cow<'bytes, [u8]>>, StoreError> {
+    let exhausted = |requested: usize, available: usize| StoreError::ResourceExhausted {
+        resource: "capture_redaction",
+        requested,
+        available,
+        source: None,
+    };
+    let mut permit = budget
+        .try_reserve(0)
+        .map_err(|refused| exhausted(refused.requested, refused.available))?;
+    let scrubbed = crawlx_core::secret::Redactor::new()
+        .scrub_bytes_bounded(bytes, secrets, &mut permit, max_output)
+        .map_err(|error| match error {
+            BoundedScrubError::Admission(refused) => exhausted(refused.requested, refused.available),
+            BoundedScrubError::OutputLimit { max } => exhausted(max.saturating_add(1), max),
+            BoundedScrubError::Allocation => exhausted(max_output, 0),
+            _ => StoreError::RetentionDenied("capture redaction size unavailable".into()),
+        })?;
+    let body = scrubbed.map_or(Cow::Borrowed(bytes), Cow::Owned);
+    Ok(Budgeted::new(body, permit))
 }
 
 /// Policy boundary for retained response bodies before bytes enter artifact storage.
@@ -244,10 +295,11 @@ impl ResponseBodySink for RetainedBodySink {
         if !self.permits(content_type, bytes, truncated) {
             return Ok(None);
         }
-        let scrubbed = crawlx_telemetry::Redactor::new().scrub_bytes(bytes, std::iter::empty::<&str>());
+        let admitted = scrub_admitted(bytes, std::iter::empty::<&str>())?;
+        let scrubbed: &[u8] = admitted.value();
         let limit = if truncated { 64 * 1024 } else { self.body_limit };
         let mut end = scrubbed.len().min(limit);
-        if let Ok(text) = std::str::from_utf8(&scrubbed) {
+        if let Ok(text) = std::str::from_utf8(scrubbed) {
             while !text.is_char_boundary(end) {
                 end = end.saturating_sub(1);
             }
@@ -1242,5 +1294,51 @@ mod tests {
         let body = vec![b'x'; 1024 * 1024 + 1];
         let artifact = sink.store("text/plain", &body, false).await.unwrap().unwrap();
         assert_eq!(store.get(&artifact).await.unwrap(), body);
+    }
+
+    #[test]
+    fn redaction_growth_is_charged_exactly_before_it_is_built() {
+        let budget = Arc::new(ByteBudget::new(1024));
+        // Each one-byte secret becomes the ten-byte placeholder: 4 bytes in, 40 out.
+        let scrubbed = scrub_admitted_in(&budget, b"xxxx", ["x"], 1024).unwrap();
+        assert_eq!(scrubbed.value().as_ref(), "[REDACTED]".repeat(4).as_bytes());
+        assert_eq!(
+            budget.used(),
+            40,
+            "exactly the grown output is charged, nothing for the input"
+        );
+        drop(scrubbed);
+        assert_eq!(budget.used(), 0, "the charge ends with the scrubbed copy");
+        let unchanged = scrub_admitted_in(&budget, b"ordinary text", ["q"], 1024).unwrap();
+        assert!(
+            matches!(unchanged.value(), Cow::Borrowed(_)),
+            "an unchanged body is not copied"
+        );
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn redaction_growth_beyond_its_cap_or_the_budget_is_refused_without_a_charge() {
+        let budget = Arc::new(ByteBudget::new(1024));
+        let refused = scrub_admitted_in(&budget, b"xxxx", ["x"], 39);
+        assert!(matches!(
+            refused,
+            Err(StoreError::ResourceExhausted {
+                resource: "capture_redaction",
+                ..
+            })
+        ));
+        assert_eq!(budget.used(), 0, "a cap refusal reserves nothing");
+        let tight = Arc::new(ByteBudget::new(39));
+        let refused = scrub_admitted_in(&tight, b"xxxx", ["x"], 1024);
+        assert!(matches!(
+            refused,
+            Err(StoreError::ResourceExhausted {
+                resource: "capture_redaction",
+                requested: 40,
+                ..
+            })
+        ));
+        assert_eq!(tight.used(), 0, "an admission refusal reserves nothing");
     }
 }

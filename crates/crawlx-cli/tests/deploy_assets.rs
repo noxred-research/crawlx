@@ -440,11 +440,24 @@ fn helm_chart_refuses_to_render_without_complete_artifact_custody() {
         (&[HELM_SECRET_REDIS][..], "requires an artifact key provider"),
         (&[HELM_KEY_FILE][..], "secretRedis.existingSecret is required"),
         (&[HELM_KMS][..], "secretRedis.existingSecret is required"),
-        (&[HELM_KEY_FILE, HELM_KMS, HELM_SECRET_REDIS][..], "mutually exclusive"),
-        (&[HELM_KEY_FILE, HELM_SECRET_REDIS, ttl_zero.as_str()][..], "ttlSeconds must be 1..86400"),
-        (&[HELM_KEY_FILE, HELM_SECRET_REDIS, ttl_over.as_str()][..], "ttlSeconds must be 1..86400"),
         (
-            &[HELM_KEY_FILE, HELM_SECRET_REDIS, "capabilities.retainedProfiles.enabled=true"][..],
+            &[HELM_KEY_FILE, HELM_KMS, HELM_SECRET_REDIS][..],
+            "mutually exclusive",
+        ),
+        (
+            &[HELM_KEY_FILE, HELM_SECRET_REDIS, ttl_zero.as_str()][..],
+            "ttlSeconds must be 1..86400",
+        ),
+        (
+            &[HELM_KEY_FILE, HELM_SECRET_REDIS, ttl_over.as_str()][..],
+            "ttlSeconds must be 1..86400",
+        ),
+        (
+            &[
+                HELM_KEY_FILE,
+                HELM_SECRET_REDIS,
+                "capabilities.retainedProfiles.enabled=true",
+            ][..],
             "profile_unavailable: retained browser profiles are unavailable while encrypted artifact custody is enabled",
         ),
     ] {
@@ -1508,4 +1521,314 @@ fn checkpoint_kms_deployment_setting_is_opt_in_without_a_default_key() {
     );
     let configured: Value = serde_json::from_slice(&configured.stdout).unwrap();
     assert_eq!(raw_env(service(&configured, "worker"))[setting], key_id);
+}
+
+// ---- database engine overlays and chart values -----------------------------
+
+/// `docker compose config --format json` of the base stack with `overlay` applied.
+fn overlay_stack(overlay: &str) -> Option<Value> {
+    if !compose_available() {
+        eprintln!("skipping: `docker compose` is not available");
+        return None;
+    }
+    let output = docker_compose(
+        &[
+            "-f",
+            COMPOSE,
+            "-f",
+            overlay,
+            "--profile",
+            "smoke",
+            "--profile",
+            "ops",
+            "config",
+            "--format",
+            "json",
+        ],
+        &[],
+    )
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{overlay}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(serde_json::from_slice(&output.stdout).unwrap())
+}
+
+fn secret_names(svc: &Value) -> BTreeSet<String> {
+    svc["secrets"]
+        .as_array()
+        .map(|all| {
+            all.iter()
+                .filter_map(|s| s["source"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn secret_file<'a>(stack: &'a Value, name: &str) -> &'a str {
+    stack["secrets"][name]["file"]
+        .as_str()
+        .unwrap_or_else(|| panic!("secret {name}"))
+}
+
+/// Which services a service waits for.
+fn waits_for(svc: &Value) -> BTreeSet<String> {
+    svc["depends_on"]
+        .as_object()
+        .map(|all| all.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn mariadb_overlay_replaces_postgresql_and_drops_the_request_login() {
+    let Some(stack) = overlay_stack("docker/compose.mariadb.yml") else {
+        return;
+    };
+    let services = stack["services"].as_object().unwrap();
+    assert!(!services.contains_key("postgres") && !services.contains_key("api-role-init"));
+    assert!(services.contains_key("mariadb"));
+    assert!(tag_of(&image_of(&stack, "mariadb")).is_some_and(|tag| tag.starts_with("11.")));
+    assert!(secret_file(&stack, "database_url").ends_with("database_url_mariadb"));
+    assert!(secret_file(&stack, "database_url_migrate").ends_with("database_url_mariadb"));
+    for name in ["migrate", "api", "worker", "admin"] {
+        let svc = service(&stack, name);
+        let waits = waits_for(svc);
+        assert!(
+            waits.contains("mariadb"),
+            "{name} must wait for the database: {waits:?}"
+        );
+        assert!(
+            !waits.contains("postgres") && !waits.contains("api-role-init"),
+            "{name}: {waits:?}"
+        );
+        assert_eq!(
+            svc["depends_on"]["mariadb"]["condition"], "service_healthy",
+            "{name}"
+        );
+    }
+    let api = service(&stack, "api");
+    assert!(
+        raw_env(api)
+            .get("CRAWLX_API_DATABASE_URL_FILE")
+            .is_none_or(String::is_empty),
+        "MariaDB has no restricted request login"
+    );
+    assert!(!secret_names(api).contains("database_url_api"));
+    assert!(secret_names(api).contains("database_url"));
+    // the server settings the storage layer checks at open
+    let command = strings(&service(&stack, "mariadb")["command"]);
+    for flag in ["--innodb-default-row-format=dynamic", "--binlog-format=ROW"] {
+        assert!(command.iter().any(|c| c == flag), "{flag} in {command:?}");
+    }
+    // the password never travels in the environment or the command line
+    let env = raw_env(service(&stack, "mariadb"));
+    assert!(env.keys().all(|key| !key.ends_with("PASSWORD")), "{env:?}");
+}
+
+#[test]
+fn sqlite_overlay_has_no_database_service_and_pins_one_worker_to_one_volume() {
+    let Some(stack) = overlay_stack("docker/compose.sqlite.yml") else {
+        return;
+    };
+    let services = stack["services"].as_object().unwrap();
+    for absent in ["postgres", "api-role-init", "mariadb"] {
+        assert!(!services.contains_key(absent), "{absent}");
+    }
+    assert!(secret_file(&stack, "database_url").ends_with("database_url_sqlite"));
+    assert!(secret_file(&stack, "database_url_migrate").ends_with("database_url_sqlite"));
+    for name in ["migrate", "api", "worker", "admin", "db-init"] {
+        let volumes: Vec<_> = service(&stack, name)["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| v["target"] == "/var/lib/crawlx/db")
+            .collect();
+        assert_eq!(volumes.len(), 1, "{name} mounts the database volume");
+        assert_eq!(volumes[0]["source"], "dbdata", "{name}");
+    }
+    assert_eq!(
+        service(&stack, "worker")["deploy"]["replicas"],
+        1,
+        "one worker process per file"
+    );
+    assert!(raw_env(service(&stack, "api"))
+        .get("CRAWLX_API_DATABASE_URL_FILE")
+        .is_none_or(String::is_empty));
+    assert!(!secret_names(service(&stack, "api")).contains("database_url_api"));
+    for name in ["migrate", "api", "worker"] {
+        let waits = waits_for(service(&stack, name));
+        assert!(!waits.contains("postgres"), "{name}: {waits:?}");
+    }
+    assert!(waits_for(service(&stack, "migrate")).contains("db-init"));
+}
+
+#[test]
+fn init_compose_writes_each_engines_database_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    for (engine, secret, prefix) in [
+        ("postgres", "database_url", "postgres://"),
+        ("mariadb", "database_url_mariadb", "mysql://crawlx:"),
+        ("sqlite", "database_url_sqlite", "sqlite:///var/lib/crawlx/db/"),
+    ] {
+        let target = dir.path().join(engine);
+        let output = std::process::Command::new("bash")
+            .arg(root().join("docker/init-compose.sh"))
+            .args(["--engine", engine])
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{engine}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let url = std::fs::read_to_string(target.join("secrets").join(secret)).unwrap();
+        assert!(url.starts_with(prefix), "{engine}: {url}");
+        let overlay = format!("docker/compose.{engine}.yml");
+        let hint = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(engine == "postgres", !hint.contains(&overlay), "{engine}: {hint}");
+    }
+    let refused = std::process::Command::new("bash")
+        .arg(root().join("docker/init-compose.sh"))
+        .args(["--engine", "oracle"])
+        .arg(dir.path().join("oracle"))
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("unknown storage engine: oracle"));
+}
+
+#[test]
+fn helm_chart_selects_the_storage_engine_and_refuses_what_an_engine_cannot_serve() {
+    let sets = |extra: &[&'static str]| -> Vec<&'static str> {
+        let mut all = vec![HELM_KEY_FILE, HELM_SECRET_REDIS];
+        all.extend_from_slice(extra);
+        all
+    };
+    // postgres (the default) keeps the restricted request login and the 5432 egress rule
+    let Some(default) = helm_template(&sets(&[])) else {
+        return;
+    };
+    let documents = rendered_documents(&default);
+    let api = named(&documents, "Deployment", "custody-api").unwrap();
+    assert_eq!(
+        container_env(api)
+            .get("CRAWLX_API_DATABASE_URL_FILE")
+            .map(String::as_str),
+        Some("/run/secrets/crawlx/database_url_api")
+    );
+    let policies = documents
+        .iter()
+        .filter(|d| d["kind"] == "NetworkPolicy")
+        .map(Value::to_string)
+        .collect::<String>();
+    assert!(
+        policies.contains("5432") && !policies.contains("3306"),
+        "{policies}"
+    );
+
+    // mariadb: no request login, the server port of the network policy, no auditor
+    let mariadb = helm_template(&sets(&["storage.engine=mariadb", "safetyAuditor.enabled=false"])).unwrap();
+    let documents = rendered_documents(&mariadb);
+    let api = named(&documents, "Deployment", "custody-api").unwrap();
+    assert!(!container_env(api).contains_key("CRAWLX_API_DATABASE_URL_FILE"));
+    assert!(!projected_secrets(api)
+        .iter()
+        .any(|(_, path)| path == "database_url_api"));
+    let policies = documents
+        .iter()
+        .filter(|d| d["kind"] == "NetworkPolicy")
+        .map(Value::to_string)
+        .collect::<String>();
+    assert!(
+        policies.contains("3306") && !policies.contains("5432"),
+        "{policies}"
+    );
+
+    // sqlite: the database volume replaces the database egress rule
+    let sqlite = helm_template(&sets(&[
+        "storage.engine=sqlite",
+        "safetyAuditor.enabled=false",
+        "api.replicas=1",
+        "worker.replicas=1",
+    ]))
+    .unwrap();
+    let documents = rendered_documents(&sqlite);
+    for (kind, name) in [
+        ("Deployment", "custody-api"),
+        ("Deployment", "custody-worker"),
+        ("Job", "custody-migrate"),
+    ] {
+        let workload = named(&documents, kind, name).unwrap_or_else(|| panic!("{kind} {name}"));
+        let spec = &workload["spec"]["template"]["spec"];
+        assert!(
+            spec["volumes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["name"] == "database"),
+            "{name} mounts the database volume"
+        );
+        assert!(
+            spec["containers"][0]["volumeMounts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["mountPath"] == "/var/lib/crawlx/db"),
+            "{name}"
+        );
+    }
+    let policies = documents
+        .iter()
+        .filter(|d| d["kind"] == "NetworkPolicy")
+        .map(Value::to_string)
+        .collect::<String>();
+    assert!(
+        !policies.contains("5432") && !policies.contains("3306"),
+        "{policies}"
+    );
+
+    for (extra, message) in [
+        (
+            &["storage.engine=oracle"][..],
+            "storage.engine must be postgres, mariadb or sqlite",
+        ),
+        (
+            &["storage.engine=mariadb"][..],
+            "refused: backend_unimplemented: the independent safety auditor is not available on mariadb",
+        ),
+        (&["storage.engine=sqlite"][..], "refused: sqlite_safety_auditor"),
+        (
+            &["storage.engine=sqlite", "safetyAuditor.enabled=false"][..],
+            "refused: sqlite_second_worker",
+        ),
+        (
+            &[
+                "storage.engine=sqlite",
+                "safetyAuditor.enabled=false",
+                "api.replicas=1",
+                "worker.replicas=1",
+                "worker.canary.enabled=true",
+                "worker.canary.chromiumVersion=1",
+            ][..],
+            "refused: sqlite_second_worker",
+        ),
+        (
+            &[
+                "storage.engine=sqlite",
+                "safetyAuditor.enabled=false",
+                "api.replicas=1",
+                "worker.replicas=1",
+                "storage.sqlite.existingClaim=",
+            ][..],
+            "storage.sqlite.existingClaim is required",
+        ),
+    ] {
+        let output = helm_template(&sets(extra)).unwrap();
+        assert!(!output.status.success(), "{extra:?} must not render");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{extra:?}: {stderr}");
+    }
 }

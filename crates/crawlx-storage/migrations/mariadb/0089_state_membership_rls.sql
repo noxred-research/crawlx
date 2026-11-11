@@ -1,0 +1,3 @@
+-- no-op: MariaDB has no row-level security. Tenant isolation of state cluster membership is
+-- the request handle's scoped statement: the registry keys the table through its state
+-- (`TenantKey::ViaState`) and every request-surface read carries that predicate.

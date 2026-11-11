@@ -1,8 +1,9 @@
 //! Hash-only first-commit arbitration. No independent claim API can outlive a failed page commit.
 
-use crate::codec::get;
-use crate::error::db;
-use crate::Pg;
+use crate::backend::strategy::Conn;
+use crate::backend::{BackendKind, Dialect};
+use crate::sql::{stmt, Sql, SqlRow};
+use crate::store::Store;
 use crawlx_core::digest_registry::{
     ContentDedupeClaimV1, DigestDispositionV1, DigestOutcomeV1, DigestRegistryRepo, DigestStageV1,
 };
@@ -200,48 +201,81 @@ fn reject_scrape_article(
     meta.remove("extensionItem");
 }
 
-pub(crate) async fn claim_pg(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+/// Claim every stage of `claim` for `frontier` inside the request transaction on `conn`.
+///
+/// # Errors
+/// Returns [`StoreError::RetentionDenied`] while the source run is being purged, or a database
+/// error; the caller rolls its transaction back.
+pub(crate) async fn claim<B: Sql>(
+    conn: &mut Conn<B>,
     claim: &ContentDedupeClaimV1,
     frontier: i64,
 ) -> Result<DigestOutcomeV1, StoreError> {
     // The owning run is already locked by the request transaction. It serializes both stages
     // without cross-stage partial winners, and every failed later operation rolls these rows back.
-    let available: bool = sqlx::query_scalar(
-        "SELECT purge_requested_at IS NULL FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2",
+    // PostgreSQL keeps the historic unnamed result columns; the other engines name them.
+    let postgres = B::KIND == BackendKind::Postgres;
+    let alias = if postgres { "" } else { " AS available" };
+    let available = stmt!(
+        B,
+        format!("SELECT purge_requested_at IS NULL{alias} FROM crawl_runs WHERE tenant_id=$1 AND run_id=$2")
     )
-    .bind(claim.tenant.0)
-    .bind(claim.run.0)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(db)?;
+    .uuid(claim.tenant.0)
+    .uuid(claim.run.0)
+    .fetch_one(&mut *conn)
+    .await?
+    .flag(if postgres { "?column?" } else { "available" })?;
     if !available {
         return Err(StoreError::RetentionDenied(
             "content digest source is being purged".into(),
         ));
     }
     for (stage, digest) in claim.stages() {
-        let prior = sqlx::query("SELECT first_frontier_id,committed_at FROM content_digest_registry WHERE tenant_id=$1 AND run_id=$2 AND scope_digest=$3 AND stage=$4 AND digest=$5")
-            .bind(claim.tenant.0).bind(claim.run.0).bind(claim.scope.0.as_slice())
-            .bind(stage.as_str()).bind(digest.0.as_slice()).fetch_optional(&mut **tx).await.map_err(db)?;
+        let prior = stmt!(
+            B,
+            "SELECT first_frontier_id,committed_at FROM content_digest_registry WHERE tenant_id=$1 AND run_id=$2 AND scope_digest=$3 AND stage=$4 AND digest=$5"
+        )
+        .uuid(claim.tenant.0)
+        .uuid(claim.run.0)
+        .bytes(claim.scope.0.as_slice())
+        .text(stage.as_str())
+        .bytes(digest.0.as_slice())
+        .fetch_optional(&mut *conn)
+        .await?;
         if let Some(prior) = prior {
             return Ok(DigestOutcomeV1::new(
                 DigestDispositionV1::DuplicateMain,
                 claim.scope,
-                get(&prior, "first_frontier_id")?,
-                get(&prior, "committed_at")?,
+                prior.i64("first_frontier_id")?,
+                prior.ts("committed_at")?,
             ));
         }
     }
-    let now: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+    let alias = if postgres { "" } else { " AS now" };
+    let now: Timestamp = stmt!(
+        B,
+        format!(
+            "SELECT {clock}{alias}",
+            clock = <B::Dialect as Dialect>::clock_timestamp()
+        )
+    )
+    .fetch_one(&mut *conn)
+    .await?
+    .ts(if postgres { "clock_timestamp" } else { "now" })?;
     for (stage, digest) in claim.stages() {
-        sqlx::query("INSERT INTO content_digest_registry (tenant_id,run_id,scope_digest,stage,digest,first_frontier_id,committed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)")
-            .bind(claim.tenant.0).bind(claim.run.0).bind(claim.scope.0.as_slice())
-            .bind(stage.as_str()).bind(digest.0.as_slice()).bind(frontier).bind(now)
-            .execute(&mut **tx).await.map_err(db)?;
+        stmt!(
+            B,
+            "INSERT INTO content_digest_registry (tenant_id,run_id,scope_digest,stage,digest,first_frontier_id,committed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)"
+        )
+        .uuid(claim.tenant.0)
+        .uuid(claim.run.0)
+        .bytes(claim.scope.0.as_slice())
+        .text(stage.as_str())
+        .bytes(digest.0.as_slice())
+        .i64(frontier)
+        .ts(now)
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(DigestOutcomeV1::new(
         DigestDispositionV1::Canonical,
@@ -252,7 +286,7 @@ pub(crate) async fn claim_pg(
 }
 
 #[async_trait::async_trait]
-impl DigestRegistryRepo for Pg {
+impl<B: Sql> DigestRegistryRepo for Store<B> {
     async fn digest_outcome(
         &self,
         run: CrawlRunId,
@@ -260,17 +294,24 @@ impl DigestRegistryRepo for Pg {
     ) -> Result<Option<DigestOutcomeV1>, StoreError> {
         let source = self.get(run).await?;
         check_source(&source, chrono::Utc::now())?;
-        let row = sqlx::query("SELECT f.content_dedupe_outcome,r.purge_requested_at IS NULL AS available FROM url_frontier f JOIN crawl_runs r ON r.tenant_id=f.tenant_id AND r.run_id=f.run_id WHERE f.tenant_id=$1 AND f.run_id=$2 AND f.frontier_id=$3")
-            .bind(source.tenant.0).bind(run.0).bind(frontier_id).fetch_optional(&self.pool).await.map_err(db)?;
+        let row = stmt!(
+            B,
+            "SELECT f.content_dedupe_outcome,r.purge_requested_at IS NULL AS available FROM url_frontier f JOIN crawl_runs r ON r.tenant_id=f.tenant_id AND r.run_id=f.run_id WHERE f.tenant_id=$1 AND f.run_id=$2 AND f.frontier_id=$3"
+        )
+        .uuid(source.tenant.0)
+        .uuid(run.0)
+        .i64(frontier_id)
+        .fetch_optional_pool(&self.pool)
+        .await?;
         let Some(row) = row else {
             return Ok(None);
         };
-        if !get::<bool>(&row, "available")? {
+        if !row.flag("available")? {
             return Err(StoreError::RetentionDenied(
                 "content digest source is being purged".into(),
             ));
         }
-        let payload: Option<serde_json::Value> = get(&row, "content_dedupe_outcome")?;
+        let payload = row.opt_json("content_dedupe_outcome")?;
         payload
             .map(serde_json::from_value)
             .transpose()

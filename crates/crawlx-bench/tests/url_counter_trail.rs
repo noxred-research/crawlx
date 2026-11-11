@@ -23,7 +23,7 @@ use crawlx_core::repo::{FrontierStatus, RunRepo};
 use crawlx_core::{Clock, CrawlRunId, SystemClock, TenantId};
 use crawlx_policy::testkit::sample_record;
 use crawlx_policy::AuthorizationRecord;
-use crawlx_storage::{FsArtifactStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, Pg, StoreConfig};
 use crawlx_worker::{run_local_with, LocalRun, RunCounters, Stores};
 use std::path::Path;
 use std::sync::Arc;
@@ -44,10 +44,10 @@ fn loopback_record(tenant: TenantId) -> AuthorizationRecord {
     }
 }
 
-async fn trail(stores: &Stores, pg: Option<&Pg>, run: CrawlRunId) -> TrailReport {
+async fn trail(stores: &Stores, _pg: Option<&Pg>, run: CrawlRunId) -> TrailReport {
     let artifacts = Some(stores.artifacts.as_ref());
-    let store = match (pg, stores.memory.as_ref()) {
-        (Some(pg), _) => TrailStore::Pg { pg, artifacts },
+    let store = match (stores.durable.as_ref(), stores.memory.as_ref()) {
+        (Some(store), _) => TrailStore::Database { store, artifacts },
         (None, Some(store)) => TrailStore::Memory { store, artifacts },
         (None, None) => panic!("neither store"),
     };
@@ -146,9 +146,9 @@ async fn a_lost_counter_flush_is_reported_then_repaired_on_postgres() {
     };
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("t_urltrail_{}", uuid::Uuid::now_v7().simple())),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -162,7 +162,11 @@ async fn a_lost_counter_flush_is_reported_then_repaired_on_postgres() {
         .with_index(Arc::new(pg.clone()));
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "url-counter-trail").await.unwrap();
-    let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), tenant);
+    let mut stores = Stores::over_durable(
+        crawlx_worker::DurableStore::Postgres(pg.clone()),
+        Arc::new(artifacts),
+        tenant,
+    );
     stores.checkpoint_keys =
         Arc::new(crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap());
     lost_flush_is_reported_then_repaired(

@@ -23,6 +23,8 @@ use crawlx_browser::launch::find_executable;
 use crawlx_core::config::SafetyProfile;
 use crawlx_core::counters::ActionStatus;
 use crawlx_storage::MemoryStore;
+use crawlx_telemetry::metrics::{names, SeriesValue};
+use crawlx_telemetry::Metrics;
 use crawlx_worker::action_trace::{ActionTrace, TraceStep};
 use crawlx_worker::replay::{ReplayMode, ReplayPlan, ReplayRunner};
 use crawlx_worker::{run_local_with, DriverConfig, LocalRun, RunReport, StaticAuthorizationSource, Stores};
@@ -219,6 +221,22 @@ fn scratch_root() -> Result<PathBuf, BenchError> {
     Ok(dir)
 }
 
+/// Proposals this process dropped as stale so far (`proposals.stale`, every strategy and
+/// reason). A drop is not journaled but advances the decision index and cools the key down,
+/// so it shifts the seeded tie-break stream: a run-to-run trace difference is explained by
+/// a difference in this count, and the log line makes that visible.
+fn stale_proposals() -> u64 {
+    Metrics::global()
+        .snapshot_family(names::PROPOSALS_STALE)
+        .unwrap_or_default()
+        .iter()
+        .map(|series| match series.value {
+            SeriesValue::Counter(count) => count,
+            _ => 0,
+        })
+        .sum()
+}
+
 async fn assemble(args: &Args) -> Result<G1Report, BenchError> {
     let gym = GymServer::start(
         "127.0.0.1:0"
@@ -246,11 +264,19 @@ async fn assemble_in(args: &Args, gym: &GymHandle, scratch: &Path) -> Result<G1R
             crawl_once(gym, &manifest, args, &scratch.join(id).join("1")).await?;
         let rows = rows_from_report(&first, &manifest, args.seed, VARIANT, PROFILE, gym);
         let card = Scorecard::compute(&manifest, &rows, &gym.ledger());
+        eprintln!(
+            "g1-report: {id}: run 1 stale-dropped proposals so far: {}",
+            stale_proposals()
+        );
         eprintln!("g1-report: {id}: run 2 (same seed)");
         let (second, _, _, second_trace) =
             crawl_once(gym, &manifest, args, &scratch.join(id).join("2")).await?;
         let rows2 = rows_from_report(&second, &manifest, args.seed, VARIANT, PROFILE, gym);
         let card2 = Scorecard::compute(&manifest, &rows2, &gym.ledger());
+        eprintln!(
+            "g1-report: {id}: run 2 stale-dropped proposals so far: {}",
+            stale_proposals()
+        );
         scorecards.push(card.with_run_to_run(&card2));
         eprintln!(
             "g1-report: {id}: replaying {} recorded paths",

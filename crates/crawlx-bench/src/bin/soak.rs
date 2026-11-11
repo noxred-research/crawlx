@@ -23,7 +23,7 @@ const USAGE: &str = "usage: soak [options]\n\
   --workers N                 parallel worker loops (default 4)\n\
   --fixtures IDS              comma-separated gym fixture ids (default: the D1 set)\n\
   --fake                      FakeBackend scripted from the manifests instead of Chromium\n\
-  --database-url URL          PostgreSQL (default: $CRAWLX_TEST_DATABASE_URL)\n\
+  --database-url URL          postgres:, mariadb: or sqlite: URL (default: $CRAWLX_TEST_DATABASE_URL)\n\
   --memory                    in-memory store per cycle even when the env var is set\n\
   --sample-interval D         RSS/pool sampling period (default 30s)\n\
   --seed N                    base crawl seed (default 20261020)\n\
@@ -31,8 +31,8 @@ const USAGE: &str = "usage: soak [options]\n\
   --cycle-seconds N           wall-clock limit per cycle (default 120)\n\
   --max-slope-mib-per-hour X  leak-slope ceiling (default 32)\n\
   --min-slope-window D        shortest fitted window for a leak verdict (default 8m)\n\
-  --fault-every D             one seeded network fault per period through the netfault proxy (PostgreSQL only)\n\
-  --keep-schema               keep the PostgreSQL schema after the run\n\
+  --fault-every D             one seeded network fault per period through the netfault proxy (network databases only: postgres, mariadb)\n\
+  --keep-schema               keep the isolated schema (PostgreSQL) after the run\n\
   --out DIR                   report directory (default bench/out)";
 
 struct Args {
@@ -106,7 +106,7 @@ fn parse(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
         cfg.database_url = None;
     }
     if cfg.fault_every.is_some() && cfg.database_url.is_none() {
-        return Err("--fault-every needs a PostgreSQL database".to_owned());
+        return Err("--fault-every needs a postgres or mariadb database".to_owned());
     }
     Ok(Args { cfg, out })
 }

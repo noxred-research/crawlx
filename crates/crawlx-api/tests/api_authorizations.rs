@@ -19,7 +19,7 @@ use crawlx_policy::attestation::OperatorKeys;
 use crawlx_policy::authorization::{AuthorizationRecord, OwnershipProof};
 use crawlx_policy::egress_lists::{EgressLists, SharedEgressLists};
 use crawlx_policy::testkit::sample_record;
-use crawlx_storage::{FsArtifactStore, MemoryArtifactStore, MemoryStore, Pg, PgConfig};
+use crawlx_storage::{FsArtifactStore, MemoryArtifactStore, MemoryStore, Pg, StoreConfig};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -92,10 +92,10 @@ async fn postgres(opts: &Opts) -> Option<Harness> {
     let url = std::env::var("CRAWLX_TEST_DATABASE_URL").ok()?;
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(format!("authz_{}", CrawlRunId::new().0.simple())),
             max_connections: 8,
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -109,7 +109,7 @@ async fn postgres(opts: &Opts) -> Option<Harness> {
             .unwrap()
             .with_index(Arc::new(pg.clone())),
     );
-    let repos = Repos::pg(&pg, artifacts);
+    let repos = Repos::over_store(&pg, artifacts);
     let probe = Arc::new(StaticProbe::new());
     let keys = OperatorKeys::parse(OPERATOR_KEYS).unwrap();
     let config = config(opts, &probe, &keys);

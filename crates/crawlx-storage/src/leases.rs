@@ -7,14 +7,19 @@
 //! arithmetic uses the database clock (`now()`), never the caller's.
 
 use crate::admin::AdmissionMode;
-use crate::codec::{from_json, get};
-use crate::error::db;
-use crate::pg::Pg;
-use crate::repos::{flip_intended_to_unknown, SESSION_COLS};
+use crate::backend::strategy::{FenceSeq, SessionClaim};
+use crate::backend::{Dialect, RowLock};
+use crate::codec::{conv, from_json};
+use crate::repos::{flip_intended_to_unknown, session_from_row, SESSION_COLS};
+use crate::sql::{in_ids, returning, stmt, Sql, SqlRow, Stmt};
+use crate::store::Store;
+use crate::worker_eligibility::{claim_eligible, WorkerFacts};
 use async_trait::async_trait;
-use crawlx_core::repo::{CrawlSession, SessionStatus};
+use crawlx_core::repo::{CrawlSession, RunRepo, SessionStatus};
 use crawlx_core::{ActionId, CrawlRunId, CreateCrawl, SessionId, StoreError, Timestamp, WorkerId};
+use std::sync::LazyLock;
 use std::time::Duration;
+use uuid::Uuid;
 
 /// Session lease TTL.
 pub const DEFAULT_SESSION_TTL: Duration = Duration::from_secs(30);
@@ -203,107 +208,230 @@ pub(crate) fn secs(d: Duration) -> f64 {
     d.as_secs_f64()
 }
 
-async fn claim_pg(
-    pg: &Pg,
+/// The columns a claimed session row carries: the session plus its fence and expiry.
+static CLAIM_COLUMNS: LazyLock<String> =
+    LazyLock::new(|| format!("{SESSION_COLS},s.fencing_token,s.lease_expires_at"));
+
+/// `scheduler.admission` of the cluster; `Open` when the setting is absent.
+pub(crate) async fn admission<B: Sql>(store: &Store<B>) -> Result<AdmissionMode, StoreError> {
+    let key = B::Dialect::reserved_ident("key");
+    let row = Stmt::<B>::dynamic(&format!(
+        "SELECT value FROM cluster_settings WHERE {key} = 'scheduler.admission'"
+    ))
+    .fetch_optional_pool(&store.pool)
+    .await?;
+    row.map(|row| row.text("value"))
+        .transpose()?
+        .as_deref()
+        .map_or(Ok(AdmissionMode::Open), AdmissionMode::parse)
+}
+
+/// What a claim needs from the worker: the acquisition backends and data capabilities the
+/// run's admitted configuration asks for.
+struct ClaimNeeds {
+    required: Vec<String>,
+    data_required: bool,
+}
+
+fn claim_needs(config: &CreateCrawl) -> Result<ClaimNeeds, StoreError> {
+    let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(config)?;
+    let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
+    let required = if let Some(policy) = &config.acquisition {
+        policy
+            .validate()
+            .map_err(|error| StoreError::Conflict(error.to_string()))?;
+        policy.backend_ids.clone()
+    } else {
+        Vec::new()
+    };
+    Ok(ClaimNeeds {
+        required,
+        data_required,
+    })
+}
+
+fn lease_from_row<R: SqlRow>(row: &R, worker: WorkerId) -> Result<SessionLease, StoreError> {
+    Ok(SessionLease {
+        session: session_from_row(row)?,
+        worker,
+        fencing_token: row.i64("fencing_token")?,
+        expires_at: row.ts("lease_expires_at")?,
+    })
+}
+
+async fn claim_inner<B: Sql>(
+    store: &Store<B>,
     run: CrawlRunId,
     worker: WorkerId,
     parallel_roles_allowed: bool,
     requested: Option<SessionId>,
-) -> Result<Option<SessionLease>, StoreError> {
-    if !crate::admin::admission_of(pg).await?.grants_leases() {
+) -> Result<Option<SessionLease>, StoreError>
+where
+    Store<B>: RunRepo,
+{
+    if !admission(store).await?.grants_leases() {
         return Ok(None);
     }
-    let admitted = <Pg as crawlx_core::repo::RunRepo>::get(pg, run).await?;
-    let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(&admitted.config)?;
-    let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
-    let required = if let Some(policy) = admitted.config.acquisition {
-        policy
-            .validate()
-            .map_err(|error| StoreError::Conflict(error.to_string()))?;
-        policy.backend_ids
-    } else {
-        Vec::new()
-    };
-    let _timer = pg.query_timer("leases.claim_session");
-    // Parallel runs probe only claimable states and an indexed availability range.
-    // Recovering holders retain their state, so live recovery leases must also leave
-    // the searchable range. Serial runs inspect exactly the first unfinished slot;
-    // skipping a locked head must never grant its successor.
-    let candidate = if parallel_roles_allowed {
-        "SELECT c.session_id FROM crawl_sessions c \
-         WHERE c.run_id=$2 AND c.lease_kind='role' AND c.status IN ('pending','recovering') \
-           AND ($4::uuid IS NULL OR c.session_id=$4) \
-           AND COALESCE(c.lease_expires_at,'-infinity'::timestamptz)<clock_timestamp() \
-         ORDER BY COALESCE(c.lease_expires_at,'-infinity'::timestamptz),c.schedule_slot \
-         LIMIT 1 FOR UPDATE SKIP LOCKED"
-    } else {
-        "SELECT c.session_id FROM crawl_sessions c \
-         WHERE c.session_id=(SELECT p.session_id FROM crawl_sessions p WHERE p.run_id=$2 \
-           AND p.lease_kind='role' AND p.status NOT IN ('completed','failed','cancelled') ORDER BY p.schedule_slot LIMIT 1) \
-           AND ($4::uuid IS NULL OR c.session_id=$4) AND c.status IN ('pending','recovering') \
-           AND COALESCE(c.lease_expires_at,'-infinity'::timestamptz)<clock_timestamp() \
-         FOR UPDATE SKIP LOCKED"
-    };
-    let sql = format!(
-        "UPDATE crawl_sessions s SET status=CASE WHEN s.status='pending' THEN 'running' ELSE s.status END, \
-         lease_owner=$1,lease_expires_at=clock_timestamp()+make_interval(secs=>$3), \
-         fencing_token=nextval('lease_fence_seq'),last_heartbeat_at=clock_timestamp(), \
-         started_at=COALESCE(s.started_at,clock_timestamp()) \
-         WHERE EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=$2 AND r.status IN ('queued','running') \
-           AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL) \
-           AND ((cardinality($5::text[])=0 AND NOT $6::boolean) OR EXISTS(SELECT 1 FROM workers w \
-             WHERE w.worker_id=$1 AND NOT w.draining AND w.last_heartbeat_at<=clock_timestamp() \
-               AND w.last_heartbeat_at>=clock_timestamp()-interval '90 seconds' \
-               AND (w.capacity->'acceptsQueued'='true'::jsonb OR w.capacity->>'localRun'=$2::text) \
-               AND NOT EXISTS(SELECT 1 FROM unnest($5::text[]) required(backend_id) \
-                 WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.capacity->'acquisition','[]'::jsonb)) fact \
-                   WHERE fact->>'backendId'=required.backend_id AND fact->'available'='true'::jsonb)))) \
-           AND crawlx_worker_data_eligible($1,(SELECT data_requirements FROM crawl_runs WHERE run_id=$2)) \
-           AND s.session_id=({candidate}) RETURNING {SESSION_COLS},s.fencing_token,s.lease_expires_at");
-    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(worker.0)
-        .bind(run.0)
-        .bind(secs(pg.cfg.session_ttl))
-        .bind(requested.map(|session| session.0))
-        .bind(required)
-        .bind(data_required)
-        .fetch_optional(&pg.pool)
-        .await
-        .map_err(db)?;
+    let admitted = RunRepo::get(store, run).await?;
+    let needs = claim_needs(&admitted.config)?;
+    let _timer = store.query_timer("leases.claim_session");
+    let row = B::claim_sessions(
+        &store.pool,
+        SessionClaim {
+            run: run.0,
+            worker: worker.0,
+            ttl_secs: secs(store.cfg.session_ttl),
+            parallel_roles: parallel_roles_allowed,
+            requested: requested.map(|session| session.0),
+            required_backends: &needs.required,
+            data_required: needs.data_required,
+            columns: CLAIM_COLUMNS.as_str(),
+        },
+    )
+    .await?;
+    row.map(|row| lease_from_row(&row, worker)).transpose()
+}
+
+/// The `workers` row a claim judges eligibility on.
+async fn worker_facts<B: Sql>(
+    conn: &mut crate::backend::strategy::Conn<B>,
+    worker: Uuid,
+) -> Result<Option<WorkerFacts>, StoreError> {
+    let row = stmt!(
+        B,
+        "SELECT capacity, draining, last_heartbeat_at FROM workers WHERE worker_id = $1"
+    )
+    .uuid(worker)
+    .fetch_optional(conn)
+    .await?;
     row.map(|row| {
-        Ok(SessionLease {
-            session: crate::repos::session_from_row(&row)?,
-            worker,
-            fencing_token: get(&row, "fencing_token")?,
-            expires_at: get(&row, "lease_expires_at")?,
+        Ok(WorkerFacts {
+            capacity: row.json("capacity")?,
+            draining: row.bool("draining")?,
+            last_heartbeat_at: row.ts("last_heartbeat_at")?,
         })
     })
     .transpose()
 }
 
+/// Atomically create and lease a render child where the engine cannot do it in one
+/// statement: eligibility is evaluated in Rust inside one write transaction.
+async fn create_render_portable<B: Sql>(
+    store: &Store<B>,
+    session: &CrawlSession,
+    worker: WorkerId,
+    needs: &ClaimNeeds,
+) -> Result<SessionLease, StoreError> {
+    let unavailable =
+        || StoreError::Unavailable("render parent run or assigned worker is unavailable".into());
+    let slot = i32::try_from(session.schedule_slot)
+        .map_err(|_| StoreError::Conflict("render slot overflow".into()))?;
+    let mut tx = store.begin_write().await?;
+    let now = B::db_now(&store.pool).await?;
+    let run = stmt!(
+        B,
+        "SELECT config, data_requirements FROM crawl_runs r WHERE r.run_id = $1 AND r.status IN ('queued','running') \
+         AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL"
+    )
+    .uuid(session.run.0)
+    .fetch_optional(tx.conn())
+    .await?
+    .ok_or_else(unavailable)?;
+    let config = run.json("config")?;
+    let facts = worker_facts::<B>(tx.conn(), worker.0).await?;
+    if !claim_eligible(
+        facts.as_ref(),
+        session.run.0,
+        now,
+        &needs.required,
+        needs.data_required,
+        &run.json("data_requirements")?,
+    ) {
+        return Err(unavailable());
+    }
+    let profile = config
+        .get("dynamic")
+        .and_then(|dynamic| dynamic.get("launchProfile"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("standard");
+    let fence = B::next_fence(tx.conn(), FenceSeq::Lease).await?;
+    let clock = <B::Dialect as Dialect>::clock_timestamp();
+    let expires = <B::Dialect as Dialect>::add_seconds(clock, "$9");
+    Stmt::<B>::dynamic(&format!(
+        "INSERT INTO crawl_sessions (session_id,run_id,role,run_index,schedule_slot,status,action_seq,launch_profile, \
+           console_capture,lease_kind,lease_owner,lease_expires_at,fencing_token,last_heartbeat_at,started_at) \
+         VALUES ($1,$2,$3,$4,$5,'running',0,$6,$7,'render',$8,{expires},$10,{clock},{clock})"
+    ))
+    .uuid(session.id.0)
+    .uuid(session.run.0)
+    .text(&session.role.0)
+    .i32(i32::from(session.run_index))
+    .i32(slot)
+    .text(profile)
+    .bool(profile != "stealth")
+    .uuid(worker.0)
+    .f64(secs(store.cfg.session_ttl))
+    .i64(fence)
+    .execute(tx.conn())
+    .await?;
+    let row = Stmt::<B>::dynamic(&format!(
+        "SELECT {} FROM crawl_sessions s WHERE s.session_id = $1",
+        CLAIM_COLUMNS.as_str()
+    ))
+    .uuid(session.id.0)
+    .fetch_one(tx.conn())
+    .await?;
+    tx.commit().await?;
+    lease_from_row(&row, worker)
+}
+
+/// The PostgreSQL render-session statement: insert, eligibility and the lease in one.
+fn render_statement() -> String {
+    format!("INSERT INTO crawl_sessions AS s \
+        (session_id,run_id,role,run_index,schedule_slot,status,action_seq,launch_profile,console_capture,lease_kind, \
+         lease_owner,lease_expires_at,fencing_token,last_heartbeat_at,started_at) \
+        SELECT $1,r.run_id,$3,$4,$5,'running',0,COALESCE(r.config->'dynamic'->>'launchProfile','standard'), \
+         COALESCE(r.config->'dynamic'->>'launchProfile','standard')<>'stealth','render', \
+         $6,clock_timestamp()+make_interval(secs=>$7),nextval('lease_fence_seq'),clock_timestamp(),clock_timestamp() \
+        FROM crawl_runs r WHERE r.run_id=$2 AND r.status IN ('queued','running') \
+          AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
+          AND ((cardinality($8::text[])=0 AND NOT $9::boolean) OR EXISTS(SELECT 1 FROM workers w \
+            WHERE w.worker_id=$6 AND NOT w.draining AND w.last_heartbeat_at<=clock_timestamp() \
+              AND w.last_heartbeat_at>=clock_timestamp()-interval '90 seconds' \
+              AND (w.capacity->'acceptsQueued'='true'::jsonb OR w.capacity->>'localRun'=$2::text) \
+              AND NOT EXISTS(SELECT 1 FROM unnest($8::text[]) required(backend_id) \
+                WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.capacity->'acquisition','[]'::jsonb)) fact \
+                  WHERE fact->>'backendId'=required.backend_id AND fact->'available'='true'::jsonb)))) \
+          AND crawlx_worker_data_eligible($6,r.data_requirements) \
+        RETURNING {SESSION_COLS},s.fencing_token,s.lease_expires_at")
+}
+
 #[async_trait]
-impl LeaseRepo for Pg {
+impl<B: Sql> LeaseRepo for Store<B>
+where
+    Store<B>: RunRepo,
+{
     async fn now(&self) -> Result<Timestamp, StoreError> {
-        self.db_now().await
+        B::db_now(&self.pool).await
     }
 
     async fn admission(&self) -> Result<AdmissionMode, StoreError> {
-        crate::admin::admission_of(self).await
+        admission(self).await
     }
 
     async fn active_runs(&self) -> Result<Vec<ActiveRun>, StoreError> {
         let _timer = self.query_timer("leases.active_runs");
-        let rows = sqlx::query(
+        let rows = stmt!(
+            B,
             "SELECT run_id, config FROM crawl_runs r WHERE r.status IN ('queued','running') \
              AND EXISTS (SELECT 1 FROM crawl_sessions s WHERE s.run_id = r.run_id AND s.lease_kind='role' AND s.status IN ('pending','recovering')) \
-             ORDER BY r.run_id",
+             ORDER BY r.run_id"
         )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
+        .fetch_all_pool(&self.pool)
+        .await?;
         rows.iter()
             .map(|r| {
-                let value: serde_json::Value = get(r, "config")?;
+                let value = r.json("config")?;
                 let parallel_roles_allowed =
                     if value.get("privacy").and_then(serde_json::Value::as_str) == Some("zdr") {
                         value
@@ -317,7 +445,7 @@ impl LeaseRepo for Pg {
                         cfg.parallel_roles_allowed()
                     };
                 Ok(ActiveRun {
-                    run: CrawlRunId(get(r, "run_id")?),
+                    run: CrawlRunId(r.uuid("run_id")?),
                     parallel_roles_allowed,
                 })
             })
@@ -330,7 +458,7 @@ impl LeaseRepo for Pg {
         worker: WorkerId,
         parallel_roles_allowed: bool,
     ) -> Result<Option<SessionLease>, StoreError> {
-        claim_pg(self, run, worker, parallel_roles_allowed, None).await
+        claim_inner(self, run, worker, parallel_roles_allowed, None).await
     }
 
     async fn claim_session_exact(
@@ -340,7 +468,7 @@ impl LeaseRepo for Pg {
         worker: WorkerId,
         parallel_roles_allowed: bool,
     ) -> Result<Option<SessionLease>, StoreError> {
-        claim_pg(self, run, worker, parallel_roles_allowed, Some(session)).await
+        claim_inner(self, run, worker, parallel_roles_allowed, Some(session)).await
     }
 
     async fn create_render_session(
@@ -349,82 +477,69 @@ impl LeaseRepo for Pg {
         worker: WorkerId,
     ) -> Result<SessionLease, StoreError> {
         validate_render_session(session)?;
-        if !self.admission().await?.grants_leases() {
+        if !LeaseRepo::admission(self).await?.grants_leases() {
             return Err(StoreError::Unavailable("session admission is closed".into()));
         }
-        let admitted = <Pg as crawlx_core::repo::RunRepo>::get(self, session.run).await?;
-        let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(&admitted.config)?;
-        let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
-        let required = if let Some(policy) = admitted.config.acquisition {
-            policy
-                .validate()
-                .map_err(|error| StoreError::Conflict(error.to_string()))?;
-            policy.backend_ids
-        } else {
-            Vec::new()
-        };
-        let sql = format!("INSERT INTO crawl_sessions AS s \
-            (session_id,run_id,role,run_index,schedule_slot,status,action_seq,launch_profile,console_capture,lease_kind, \
-             lease_owner,lease_expires_at,fencing_token,last_heartbeat_at,started_at) \
-            SELECT $1,r.run_id,$3,$4,$5,'running',0,COALESCE(r.config->'dynamic'->>'launchProfile','standard'), \
-             COALESCE(r.config->'dynamic'->>'launchProfile','standard')<>'stealth','render', \
-             $6,clock_timestamp()+make_interval(secs=>$7),nextval('lease_fence_seq'),clock_timestamp(),clock_timestamp() \
-            FROM crawl_runs r WHERE r.run_id=$2 AND r.status IN ('queued','running') \
-              AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
-              AND ((cardinality($8::text[])=0 AND NOT $9::boolean) OR EXISTS(SELECT 1 FROM workers w \
-                WHERE w.worker_id=$6 AND NOT w.draining AND w.last_heartbeat_at<=clock_timestamp() \
-                  AND w.last_heartbeat_at>=clock_timestamp()-interval '90 seconds' \
-                  AND (w.capacity->'acceptsQueued'='true'::jsonb OR w.capacity->>'localRun'=$2::text) \
-                  AND NOT EXISTS(SELECT 1 FROM unnest($8::text[]) required(backend_id) \
-                    WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.capacity->'acquisition','[]'::jsonb)) fact \
-                      WHERE fact->>'backendId'=required.backend_id AND fact->'available'='true'::jsonb)))) \
-              AND crawlx_worker_data_eligible($6,r.data_requirements) \
-            RETURNING {SESSION_COLS},s.fencing_token,s.lease_expires_at");
-        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(session.id.0)
-            .bind(session.run.0)
-            .bind(&session.role.0)
-            .bind(i32::from(session.run_index))
-            .bind(
-                i32::try_from(session.schedule_slot)
-                    .map_err(|_| StoreError::Conflict("render slot overflow".into()))?,
-            )
-            .bind(worker.0)
-            .bind(secs(self.cfg.session_ttl))
-            .bind(required)
-            .bind(data_required)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
+        let admitted = RunRepo::get(self, session.run).await?;
+        let needs = claim_needs(&admitted.config)?;
+        if B::KIND != crate::backend::BackendKind::Postgres {
+            return create_render_portable(self, session, worker, &needs).await;
+        }
+        let slot = i32::try_from(session.schedule_slot)
+            .map_err(|_| StoreError::Conflict("render slot overflow".into()))?;
+        let row = stmt!(B, render_statement())
+            .uuid(session.id.0)
+            .uuid(session.run.0)
+            .text(&session.role.0)
+            .i32(i32::from(session.run_index))
+            .i32(slot)
+            .uuid(worker.0)
+            .f64(secs(self.cfg.session_ttl))
+            .text_list(&needs.required)
+            .bool(needs.data_required)
+            .fetch_optional_write(&self.pool)
+            .await?
             .ok_or_else(|| {
                 StoreError::Unavailable("render parent run or assigned worker is unavailable".into())
             })?;
-        Ok(SessionLease {
-            session: crate::repos::session_from_row(&row)?,
-            worker,
-            fencing_token: get(&row, "fencing_token")?,
-            expires_at: get(&row, "lease_expires_at")?,
-        })
+        lease_from_row(&row, worker)
     }
 
     async fn heartbeat(&self, lease: &SessionLease) -> Result<Timestamp, StoreError> {
         let _timer = self.query_timer("leases.heartbeat");
-        let row = sqlx::query(
-            "UPDATE crawl_sessions SET lease_expires_at = clock_timestamp() + make_interval(secs => $4), last_heartbeat_at = clock_timestamp() \
-             WHERE session_id = $1 AND lease_owner = $2 AND fencing_token = $3 AND status IN ('running','recovering') AND lease_expires_at > clock_timestamp() \
-             RETURNING lease_expires_at",
-        )
-        .bind(lease.session.id.0)
-        .bind(lease.worker.0)
-        .bind(lease.fencing_token)
-        .bind(secs(self.cfg.session_ttl))
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        match row {
-            Some(r) => get(&r, "lease_expires_at"),
-            None => Err(StoreError::LeaseLost),
+        let ttl = secs(self.cfg.session_ttl);
+        if B::KIND == crate::backend::BackendKind::Postgres {
+            let row = stmt!(B, heartbeat_sql::<B>(" RETURNING lease_expires_at"))
+                .uuid(lease.session.id.0)
+                .uuid(lease.worker.0)
+                .i64(lease.fencing_token)
+                .f64(ttl)
+                .fetch_optional_write(&self.pool)
+                .await?;
+            return row.ok_or(StoreError::LeaseLost)?.ts("lease_expires_at");
         }
+        // no `UPDATE .. RETURNING` shared by every other engine: update and read the row
+        // back in one transaction
+        let mut tx = self.begin_write().await?;
+        let matched = stmt!(B, heartbeat_sql::<B>(""))
+            .uuid(lease.session.id.0)
+            .uuid(lease.worker.0)
+            .i64(lease.fencing_token)
+            .f64(ttl)
+            .execute(tx.conn())
+            .await?;
+        if matched == 0 {
+            return Err(StoreError::LeaseLost);
+        }
+        let row = stmt!(
+            B,
+            "SELECT lease_expires_at FROM crawl_sessions WHERE session_id = $1"
+        )
+        .uuid(lease.session.id.0)
+        .fetch_one(tx.conn())
+        .await?;
+        tx.commit().await?;
+        row.ts("lease_expires_at")
     }
 
     async fn release(&self, lease: &SessionLease, to: SessionStatus) -> Result<(), StoreError> {
@@ -435,47 +550,75 @@ impl LeaseRepo for Pg {
                 to.as_str()
             )));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let row = sqlx::query(
-            "UPDATE crawl_sessions SET status = $4, lease_owner = NULL, lease_expires_at = NULL, \
-               finished_at = CASE WHEN $5 THEN now() ELSE finished_at END \
-             WHERE session_id = $1 AND lease_owner = $2 AND fencing_token = $3 AND status IN ('running','recovering') AND lease_expires_at > clock_timestamp() \
-             RETURNING session_id",
+        let mut tx = self.begin_write().await?;
+        let released = stmt!(
+            B,
+            format!(
+                "UPDATE crawl_sessions SET status = $4, lease_owner = NULL, lease_expires_at = NULL, \
+                   finished_at = CASE WHEN $5 THEN {now} ELSE finished_at END \
+                 WHERE session_id = $1 AND lease_owner = $2 AND fencing_token = $3 AND status IN ('running','recovering') AND lease_expires_at > {clock}{ret}",
+                now = <B::Dialect as Dialect>::now(),
+                clock = <B::Dialect as Dialect>::clock_timestamp(),
+                ret = returning::<B>("session_id"),
+            )
         )
-        .bind(lease.session.id.0)
-        .bind(lease.worker.0)
-        .bind(lease.fencing_token)
-        .bind(to.as_str())
-        .bind(to.is_terminal())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
-        if row.is_none() {
+        .uuid(lease.session.id.0)
+        .uuid(lease.worker.0)
+        .i64(lease.fencing_token)
+        .text(to.as_str())
+        .bool(to.is_terminal())
+        .matched(tx.conn())
+        .await?;
+        if !released {
             return Err(StoreError::LeaseLost);
         }
         if to == SessionStatus::Recovering {
-            flip_intended_to_unknown(&mut tx, &[lease.session.id.0]).await?;
+            flip_intended_to_unknown::<B>(tx.conn(), &[lease.session.id.0]).await?;
         }
-        tx.commit().await.map_err(db)
+        tx.commit().await
     }
 
     async fn reap(&self, now: Timestamp) -> Result<ReapReport, StoreError> {
         let _timer = self.query_timer("leases.reap");
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        let rows = sqlx::query(
-            "UPDATE crawl_sessions SET status = 'recovering', lease_owner = NULL, lease_expires_at = NULL \
-             WHERE status = 'running' AND lease_expires_at < $1 RETURNING session_id",
-        )
-        .bind(now)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(db)?;
-        let ids = rows
+        let mut tx = self.begin_write().await?;
+        let ids: Vec<Uuid> = if B::KIND == crate::backend::BackendKind::Postgres {
+            stmt!(
+                B,
+                "UPDATE crawl_sessions SET status = 'recovering', lease_owner = NULL, lease_expires_at = NULL \
+                 WHERE status = 'running' AND lease_expires_at < $1 RETURNING session_id"
+            )
+            .ts(now)
+            .fetch_all(tx.conn())
+            .await?
             .iter()
-            .map(|r| get::<uuid::Uuid>(r, "session_id"))
-            .collect::<Result<Vec<_>, _>>()?;
-        let actions = flip_intended_to_unknown(&mut tx, &ids).await?;
-        tx.commit().await.map_err(db)?;
+            .map(|r| r.uuid("session_id"))
+            .collect::<Result<_, _>>()?
+        } else {
+            // lock the expired holders, then move exactly those rows
+            let lock = <B::Dialect as Dialect>::row_lock(RowLock::Update);
+            let ids: Vec<Uuid> = Stmt::<B>::dynamic(&format!(
+                "SELECT session_id FROM crawl_sessions WHERE status = 'running' AND lease_expires_at < $1{lock}"
+            ))
+            .ts(now)
+            .fetch_all(tx.conn())
+            .await?
+            .iter()
+            .map(|r| r.uuid("session_id"))
+            .collect::<Result<_, _>>()?;
+            for chunk in ids.chunks(chunk_size::<B>()) {
+                Stmt::<B>::dynamic(&format!(
+                    "UPDATE crawl_sessions SET status = 'recovering', lease_owner = NULL, lease_expires_at = NULL \
+                     WHERE session_id {}",
+                    in_ids::<B>(1, chunk.len())
+                ))
+                .uuid_list(chunk)
+                .execute(tx.conn())
+                .await?;
+            }
+            ids
+        };
+        let actions = flip_intended_to_unknown::<B>(tx.conn(), &ids).await?;
+        tx.commit().await?;
         Ok(ReapReport {
             sessions_recovering: ids.into_iter().map(SessionId).collect(),
             actions_unknown: actions,
@@ -484,30 +627,85 @@ impl LeaseRepo for Pg {
 
     async fn reap_frontier(&self, now: Timestamp, max_attempts: u16) -> Result<FrontierReap, StoreError> {
         let _timer = self.query_timer("leases.reap_frontier");
-        let rows = sqlx::query(
-            "UPDATE url_frontier SET \
-               status = CASE WHEN attempts >= $2 THEN 'failed' ELSE 'pending' END, \
-               error_code = CASE WHEN attempts >= $2 THEN 'lease_expired' ELSE error_code END, \
-               finished_at = CASE WHEN attempts >= $2 THEN now() ELSE NULL END, \
-               lease_owner = NULL, lease_expires_at = NULL \
-             WHERE status = 'leased' AND lease_expires_at < $1 RETURNING status,via",
-        )
-        .bind(now)
-        .bind(crate::codec::conv::<u16, i16>(max_attempts, "max_attempts")?)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
-        let mut out = FrontierReap::default();
-        for r in &rows {
-            if get::<String>(r, "via")? == "interaction" {
-                continue;
+        let max = conv::<u16, i16>(max_attempts, "max_attempts")?;
+        if B::KIND == crate::backend::BackendKind::Postgres {
+            let rows = stmt!(
+                B,
+                "UPDATE url_frontier SET \
+                   status = CASE WHEN attempts >= $2 THEN 'failed' ELSE 'pending' END, \
+                   error_code = CASE WHEN attempts >= $2 THEN 'lease_expired' ELSE error_code END, \
+                   finished_at = CASE WHEN attempts >= $2 THEN now() ELSE NULL END, \
+                   lease_owner = NULL, lease_expires_at = NULL \
+                 WHERE status = 'leased' AND lease_expires_at < $1 RETURNING status,via"
+            )
+            .ts(now)
+            .i16(max)
+            .fetch_all_pool(&self.pool)
+            .await?;
+            let mut out = FrontierReap::default();
+            for r in &rows {
+                if r.text("via")? == "interaction" {
+                    continue;
+                }
+                if r.text("status")? == "failed" {
+                    out.failed += 1;
+                } else {
+                    out.requeued += 1;
+                }
             }
-            if get::<String>(r, "status")? == "failed" {
-                out.failed += 1;
+            return Ok(out);
+        }
+        let mut tx = self.begin_write().await?;
+        let lock = <B::Dialect as Dialect>::row_lock(RowLock::Update);
+        let rows = Stmt::<B>::dynamic(&format!(
+            "SELECT frontier_id, attempts, via FROM url_frontier WHERE status = 'leased' AND lease_expires_at < $1{lock}"
+        ))
+        .ts(now)
+        .fetch_all(tx.conn())
+        .await?;
+        let mut out = FrontierReap::default();
+        let mut failed = Vec::new();
+        let mut requeued = Vec::new();
+        for r in &rows {
+            let id = r.i64("frontier_id")?;
+            let exhausted = r.i32("attempts")? >= i32::from(max);
+            if exhausted {
+                failed.push(id);
             } else {
-                out.requeued += 1;
+                requeued.push(id);
+            }
+            if r.text("via")? != "interaction" {
+                if exhausted {
+                    out.failed += 1;
+                } else {
+                    out.requeued += 1;
+                }
             }
         }
+        let clock = <B::Dialect as Dialect>::now();
+        for chunk in failed.chunks(chunk_size::<B>()) {
+            let mut statement = Stmt::<B>::dynamic(&format!(
+                "UPDATE url_frontier SET status = 'failed', error_code = 'lease_expired', finished_at = {clock}, \
+                   lease_owner = NULL, lease_expires_at = NULL WHERE frontier_id {}",
+                in_ids::<B>(1, chunk.len())
+            ));
+            for id in chunk {
+                statement = statement.i64(*id);
+            }
+            statement.execute(tx.conn()).await?;
+        }
+        for chunk in requeued.chunks(chunk_size::<B>()) {
+            let mut statement = Stmt::<B>::dynamic(&format!(
+                "UPDATE url_frontier SET status = 'pending', finished_at = NULL, lease_owner = NULL, lease_expires_at = NULL \
+                 WHERE frontier_id {}",
+                in_ids::<B>(1, chunk.len())
+            ));
+            for id in chunk {
+                statement = statement.i64(*id);
+            }
+            statement.execute(tx.conn()).await?;
+        }
+        tx.commit().await?;
         Ok(out)
     }
 
@@ -517,24 +715,25 @@ impl LeaseRepo for Pg {
         leases: &[(i64, i64)],
     ) -> Result<Vec<i64>, StoreError> {
         let _timer = self.query_timer("leases.heartbeat_frontier");
-        let (ids, fences): (Vec<i64>, Vec<i64>) = leases.iter().copied().unzip();
-        let rows = sqlx::query(
-            "UPDATE url_frontier f SET lease_expires_at = now() + make_interval(secs => $4) \
-             FROM unnest($1::bigint[], $2::bigint[]) AS held(frontier_id, fencing_token) \
-             WHERE f.frontier_id = held.frontier_id AND f.fencing_token = held.fencing_token \
-               AND f.lease_owner = $3 AND f.status = 'leased' AND f.lease_expires_at > now() RETURNING f.frontier_id",
-        )
-        .bind(ids)
-        .bind(fences)
-        .bind(worker.0)
-        .bind(secs(self.cfg.url_batch_ttl))
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
-        rows.iter().map(|r| get::<i64>(r, "frontier_id")).collect()
+        B::heartbeat_frontier(&self.pool, worker.0, secs(self.cfg.url_batch_ttl), leases).await
     }
 
     fn url_batch_ttl(&self) -> Duration {
         self.cfg.url_batch_ttl
     }
+}
+
+/// The fenced heartbeat update; `suffix` is ` RETURNING ..` where the engine has it.
+fn heartbeat_sql<B: Sql>(suffix: &str) -> String {
+    let clock = <B::Dialect as Dialect>::clock_timestamp();
+    let expires = <B::Dialect as Dialect>::add_seconds(clock, "$4");
+    format!(
+        "UPDATE crawl_sessions SET lease_expires_at = {expires}, last_heartbeat_at = {clock} \
+         WHERE session_id = $1 AND lease_owner = $2 AND fencing_token = $3 AND status IN ('running','recovering') AND lease_expires_at > {clock}{suffix}"
+    )
+}
+
+/// Most ids one `IN` list carries: the engine's placeholder cap minus the fixed parameters.
+fn chunk_size<B: Sql>() -> usize {
+    <B::Dialect as Dialect>::MAX_BIND_PARAMS.saturating_sub(8).max(1)
 }

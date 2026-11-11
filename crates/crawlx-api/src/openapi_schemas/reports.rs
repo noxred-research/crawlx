@@ -1269,6 +1269,10 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                 "x-envelope-schema":page}
         }
     });
-    operation["responses"]["410"]["description"] = json!("Source retention expired or zero-data-retention source is unavailable; no retained report facts are returned.");
-    operation["responses"]["422"]["description"] = json!("Unknown, unsupported, malformed, over-budget or contradictory structured query. The report-specific allowlist is authoritative; raw text, SQL and scripts are never accepted.");
+    operation["responses"]["410"]["description"] = json!(
+        "Source retention expired or zero-data-retention source is unavailable; no retained report facts are returned."
+    );
+    operation["responses"]["422"]["description"] = json!(
+        "Unknown, unsupported, malformed, over-budget or contradictory structured query. The report-specific allowlist is authoritative; raw text, SQL and scripts are never accepted."
+    );
 }

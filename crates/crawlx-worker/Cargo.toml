@@ -78,6 +78,7 @@ sqlx.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+zip = { workspace = true }
 
 [lints]
 workspace = true

@@ -31,9 +31,9 @@ async fn archive_boundary_child() {
     let clock = Arc::new(ManualClock::new(now));
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -44,7 +44,7 @@ async fn archive_boundary_child() {
             .unwrap()
             .with_index(Arc::new(pg.clone())),
     );
-    let stores = Stores::over_pg(pg, artifacts, tenant);
+    let stores = Stores::over_durable(crate::durable::DurableStore::Postgres(pg), artifacts, tenant);
     let run = stores.runs.get(run).await.unwrap();
     let result = finalize(
         &stores,
@@ -66,9 +66,9 @@ async fn sigkill_at_each_archive_boundary_recovers_one_package_without_lost_or_d
     let schema = format!("archive_crash_{}", uuid::Uuid::now_v7().simple());
     let pg = Pg::connect(
         &url,
-        PgConfig {
+        StoreConfig {
             schema: Some(schema.clone()),
-            ..PgConfig::default()
+            ..StoreConfig::default()
         },
     )
     .await
@@ -92,7 +92,11 @@ async fn sigkill_at_each_archive_boundary_recovers_one_package_without_lost_or_d
                 .unwrap()
                 .with_index(Arc::new(pg.clone())),
         );
-        let stores = Stores::over_pg(pg.clone(), artifacts, tenant);
+        let stores = Stores::over_durable(
+            crate::durable::DurableStore::Postgres(pg.clone()),
+            artifacts,
+            tenant,
+        );
         let (run, _) = generations(&stores, clock.as_ref(), Some(1024)).await;
         // The running parent's executable inode stays pinned even if another build replaces its path.
         let mut child = tokio::process::Command::new(format!("/proc/{}/exe", std::process::id()))

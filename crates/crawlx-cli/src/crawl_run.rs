@@ -236,8 +236,12 @@ pub(crate) async fn run(
                 report,
                 dir: seed_dir(&output, seed, seeds.len()),
             }),
-            Some(Err(e)) if seeds.len() == 1 => failures.push(format!("crawl failed: {e}")),
-            Some(Err(e)) => failures.push(format!("seed {seed}: crawl failed: {e}")),
+            Some(Err(e)) if seeds.len() == 1 => {
+                failures.push(format!("crawl failed: {}", crate::authz::chain(&e)));
+            }
+            Some(Err(e)) => {
+                failures.push(format!("seed {seed}: crawl failed: {}", crate::authz::chain(&e)));
+            }
             None => {}
         }
     }
@@ -333,6 +337,7 @@ pub(crate) fn base_config(
     let gates_dir = args.gates_dir.clone().unwrap_or_else(|| PathBuf::from("gates"));
     let mut cfg = WorkerConfig {
         database_url: args.database_url.clone(),
+        store: crate::config_check::store_config(args.database_url.as_deref())?,
         artifacts_dir: output.join("artifacts"),
         artifact_spool: crate::config_check::artifact_spool_from_env(getenv)?,
         retained_profiles: crawlx_worker::RetainedProfilePolicy::from_env(getenv)?,

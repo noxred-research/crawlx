@@ -163,6 +163,13 @@ pub struct ReplayReport {
     pub resources: Vec<ReplayResource>,
     /// Actual proxy refusals. Refusals never cause a network fallback.
     pub denied_requests: u64,
+    /// Refusals among `denied_requests` whose host is a browser-owned background service
+    /// ([`crawlx_browser::egress::BROWSER_BACKGROUND_HOST_SUFFIXES`]). The browser, not the
+    /// archived page, starts these, and their number and hosts vary between launches, so QA
+    /// compares `denied_requests` without them. Counted from the bounded event log: a storm
+    /// that overflows the log under-counts and so keeps the surplus in the page-attributed count.
+    #[serde(default)]
+    pub browser_background_denials: u64,
     /// Last bounded redacted proxy refusals, without timestamps or request headers.
     /// This is diagnostic evidence; `denied_requests` remains the complete counter.
     #[serde(default)]
@@ -283,9 +290,11 @@ impl ReplayArchive {
                 return Err(ReplayError::Refused("archive resource URL bound"));
             }
             let identity = url.to_string();
+            // A same-instant record (the extracted-text rendition written beside the protocol
+            // body) never replaces the resource captured first.
             if assets
                 .get(&identity)
-                .is_some_and(|asset| asset.captured_at > record.date)
+                .is_some_and(|asset| asset.captured_at >= record.date)
             {
                 continue;
             }
@@ -1226,8 +1235,15 @@ pub async fn replay(
         .await
         .map_err(ReplayError::Cleanup)?;
     let denied_requests = proxy.denials();
-    let denial_evidence = proxy
-        .denied_events()
+    let denied_events = proxy.denied_events();
+    let browser_background_denials = u64::try_from(
+        denied_events
+            .iter()
+            .filter(|event| crawlx_browser::egress::is_browser_background_host(&event.host))
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let denial_evidence = denied_events
         .into_iter()
         .rev()
         .take(32)
@@ -1279,6 +1295,7 @@ pub async fn replay(
         pages: result?,
         resources,
         denied_requests,
+        browser_background_denials,
         denial_evidence,
         limitations: vec![
             "available retained representations only; no original-wire/completeness claim".into(),
@@ -1450,6 +1467,49 @@ mod tests {
             Vec::new(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn same_capture_markdown_does_not_replace_html_entry_point() {
+        let mut file = std::io::Cursor::new(Vec::new());
+        for (ordinal, mime, bytes) in [
+            (
+                1,
+                "text/html",
+                b"<html><body>Retained page</body></html>".as_slice(),
+            ),
+            (2, "text/markdown", b"# Retained page".as_slice()),
+        ] {
+            let header = crawlx_storage::archive::warc::RecordHeader {
+                fields: BTreeMap::from([
+                    ("WARC-Type".into(), "resource".into()),
+                    (
+                        "WARC-Record-ID".into(),
+                        format!("<urn:uuid:00000000-0000-8000-8000-{ordinal:012}>"),
+                    ),
+                    ("WARC-Date".into(), "2026-11-04T12:34:56.789Z".into()),
+                    ("WARC-Target-URI".into(), "https://fixture.example.test/".into()),
+                    ("Content-Type".into(), mime.into()),
+                ]),
+                payload_offset: 0,
+            };
+            crawlx_storage::archive::warc::write_record(
+                &mut file,
+                &header,
+                &mut std::io::Cursor::new(bytes),
+                u64::try_from(bytes.len()).unwrap(),
+                Limits::default(),
+            )
+            .unwrap();
+        }
+        let archive = ReplayArchive::from_snapshot(
+            file.into_inner(),
+            "00000000-0000-8000-8000-000000000002".parse().unwrap(),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(archive.pages, ["https://fixture.example.test/"]);
+        assert_eq!(archive.assets["https://fixture.example.test/"].mime, "text/html");
     }
 
     async fn exchange(address: SocketAddr, request: &str) -> Vec<u8> {
