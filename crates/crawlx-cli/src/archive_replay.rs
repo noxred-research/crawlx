@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Context as _};
 use clap::Args;
 use crawlx_core::config::{CreateCrawl, RetentionMode};
 use crawlx_core::counters::{PlaneCounters, RunStatus, TerminalReason};
+use crawlx_core::parser_memory::{global, AdmittedBytes};
 use crawlx_core::repo::{CrawlRun, RunRepo, Sensitivity};
 use crawlx_core::secret::ArtifactSink;
 use crawlx_core::seed::CrawlSeed;
@@ -328,14 +329,20 @@ async fn baseline_artifact(
     artifact: &ArtifactRef,
     class: Sensitivity,
     maximum: u64,
-) -> anyhow::Result<Option<Vec<u8>>> {
-    match store.get_bounded(artifact, class, maximum).await {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(BoundedArtifactError::Store(crawlx_core::StoreError::NotFound { .. })) => Ok(None),
+) -> anyhow::Result<Option<AdmittedBytes>> {
+    // Reserve the whole bound before the store allocates; keep only what was actually read.
+    let mut permit = global().try_reserve(usize::try_from(maximum)?)?;
+    let bytes = match store.get_bounded(artifact, class, maximum).await {
+        Ok(bytes) => bytes,
+        Err(BoundedArtifactError::Store(crawlx_core::StoreError::NotFound { .. })) => return Ok(None),
         // Keep raw serde index details inside the library's source chain, not CLI logs.
         Err(BoundedArtifactError::Index(_)) => bail!("baseline artifact index schema invalid"),
-        Err(error) => Err(error.into()),
-    }
+        Err(error) => return Err(error.into()),
+    };
+    permit.grow_to(bytes.capacity())?;
+    let kept = permit.split(bytes.capacity())?;
+    drop(permit);
+    Ok(Some(AdmittedBytes::new(bytes, kept)))
 }
 
 async fn load(path: &Path, tenant: TenantId) -> anyhow::Result<Option<ReplayReport>> {

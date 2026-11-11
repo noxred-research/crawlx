@@ -645,90 +645,94 @@ impl ReplayRunner {
             lease.fencing_token,
         );
         let (rc, handle, report) = crawlx_core::custody::with_producer(
-            producer,
-            Box::pin(async {
-                let rc = Arc::new(
-                    RunContext::build(
-                        &run,
-                        &cfg,
-                        stores.clone(),
-                        backend,
-                        secrets,
-                        Default::default(),
-                        Some(&proxy),
-                        authorization,
-                    )
-                    .await?,
-                );
-                let mut scfg = rc.session_config(&session);
-                if run.config.safety.profile == crawlx_core::SafetyProfile::AuthorizedSecurityTest {
-                    scfg.epoch_policy = EpochPolicy::strict();
-                }
-                let login = rc.prepare_session_login(&session, &mut scfg).await?;
-                let pooled = acquire_replay_session(&rc, &lease, &mut scfg).await?;
-                let login_bounds = crate::run::LoginBounds::from(&scfg);
-                if let Some(recorded) = &plan.session.browser {
-                    if recorded.chromium_version != pooled.build.chromium_version
-                        || recorded.cdp_revision != pooled.build.cdp_revision
-                    {
-                        return Err(WorkerError::Config("replay browser build mismatch".to_owned()));
+            producer.clone(),
+            crate::custody_renewal::with_custody_renewal(
+                stores.pg_secret_authority.clone(),
+                producer,
+                Box::pin(async {
+                    let rc = Arc::new(
+                        RunContext::build(
+                            &run,
+                            &cfg,
+                            stores.clone(),
+                            backend,
+                            secrets,
+                            Default::default(),
+                            Some(&proxy),
+                            authorization,
+                        )
+                        .await?,
+                    );
+                    let mut scfg = rc.session_config(&session);
+                    if run.config.safety.profile == crawlx_core::SafetyProfile::AuthorizedSecurityTest {
+                        scfg.epoch_policy = EpochPolicy::strict();
                     }
-                } else {
-                    return Err(WorkerError::Config(
-                        "replay source browser build is unrecorded".to_owned(),
-                    ));
-                }
-                let analyzer = Arc::new(StateAnalyzer::new(
-                    rc.run,
-                    session.id,
-                    rc.clusters.clone(),
-                    Arc::clone(&stores.artifacts),
-                    Arc::clone(&clock),
-                    run.config.capture.clone(),
-                    (&rc.controls, &rc.captcha_secrets),
-                ));
-                let handle = SessionActor::spawn(
-                    scfg,
-                    rc.services(),
-                    Arc::clone(&analyzer),
-                    run.config.retention.days,
-                    pooled,
-                )
-                .await?;
-                tracing::debug!(run = %run.id, seed = %run.config.seed_url, "replay session ready");
-                let report = async {
-                    if let Some(guard) = &rc.authorization {
-                        guard.check_now().await?;
-                        guard
-                            .record()
-                            .check_profile(rc.crawl.safety.profile)
-                            .map_err(|e| WorkerError::PolicyDenied(e.to_string()))?;
-                        if guard.record().tenant != run.tenant {
-                            return Err(WorkerError::PolicyDenied(
-                                "authorization tenant mismatch".to_owned(),
-                            ));
+                    let login = rc.prepare_session_login(&session, &mut scfg).await?;
+                    let pooled = acquire_replay_session(&rc, &lease, &mut scfg).await?;
+                    let login_bounds = crate::run::LoginBounds::from(&scfg);
+                    if let Some(recorded) = &plan.session.browser {
+                        if recorded.chromium_version != pooled.build.chromium_version
+                            || recorded.cdp_revision != pooled.build.cdp_revision
+                        {
+                            return Err(WorkerError::Config("replay browser build mismatch".to_owned()));
                         }
-                        guard
-                            .scope()
-                            .check_covers_url(&rc.seed_url()?.url)
-                            .map_err(|e| WorkerError::PolicyDenied(e.to_string()))?;
+                    } else {
+                        return Err(WorkerError::Config(
+                            "replay source browser build is unrecorded".to_owned(),
+                        ));
                     }
-                    handle
-                        .navigate(crawlx_core::request::RequestEnvelopeV1::get(
-                            rc.seed_url()?,
-                            0,
-                            None,
-                        ))
-                        .await?;
-                    if let Some(material) = login {
-                        rc.login_session_bounded(&session, &handle, &analyzer, material, login_bounds)
+                    let analyzer = Arc::new(StateAnalyzer::new(
+                        rc.run,
+                        session.id,
+                        rc.clusters.clone(),
+                        Arc::clone(&stores.artifacts),
+                        Arc::clone(&clock),
+                        run.config.capture.clone(),
+                        (&rc.controls, &rc.captcha_secrets),
+                    ));
+                    let handle = SessionActor::spawn(
+                        scfg,
+                        rc.services(),
+                        Arc::clone(&analyzer),
+                        run.config.retention.days,
+                        pooled,
+                    )
+                    .await?;
+                    tracing::debug!(run = %run.id, seed = %run.config.seed_url, "replay session ready");
+                    let report = async {
+                        if let Some(guard) = &rc.authorization {
+                            guard.check_now().await?;
+                            guard
+                                .record()
+                                .check_profile(rc.crawl.safety.profile)
+                                .map_err(|e| WorkerError::PolicyDenied(e.to_string()))?;
+                            if guard.record().tenant != run.tenant {
+                                return Err(WorkerError::PolicyDenied(
+                                    "authorization tenant mismatch".to_owned(),
+                                ));
+                            }
+                            guard
+                                .scope()
+                                .check_covers_url(&rc.seed_url()?.url)
+                                .map_err(|e| WorkerError::PolicyDenied(e.to_string()))?;
+                        }
+                        handle
+                            .navigate(crawlx_core::request::RequestEnvelopeV1::get(
+                                rc.seed_url()?,
+                                0,
+                                None,
+                            ))
                             .await?;
+                        if let Some(material) = login {
+                            rc.login_session_bounded(&session, &handle, &analyzer, material, login_bounds)
+                                .await?;
+                        }
+                        Self::steps(&rc, &session.role, &handle, &analyzer, &plan, mode, None).await
                     }
-                    Self::steps(&rc, &session.role, &handle, &analyzer, &plan, mode, None).await
-                }
-                .await;
-                Ok::<_, WorkerError>((rc, handle, report))
-            }),
+                    .await;
+                    Ok::<_, WorkerError>((rc, handle, report))
+                }),
+            ),
         )
         .await?;
         let cleanup = handle.shutdown(crate::actor::ShutdownReason::Cancelled).await;

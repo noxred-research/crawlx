@@ -213,6 +213,9 @@ jobs:
           docker run --rm -v "$PWD:/src:ro" "$SYFT_IMAGE" dir:/src \
             --exclude './dist/**' --source-name crawlx --source-version "$VERSION" \
             -o cyclonedx-json > "dist/crawlx-${VERSION}-source.cdx.json"
+          python3 -B ci/identity-sbom.py "dist/crawlx-${VERSION}-source.cdx.json" \
+            --output "dist/crawlx-${VERSION}-source.identity.cdx.json"
+          mv "dist/crawlx-${VERSION}-source.identity.cdx.json" "dist/crawlx-${VERSION}-source.cdx.json"
           (cd dist && sha256sum "crawlx-${VERSION}-source.tar.gz" "crawlx-${VERSION}-source.cdx.json" > SHA256SUMS && sha256sum --check SHA256SUMS)
       - name: Attest build provenance of the release files
         # Attestations of private repositories need a plan that includes them, so the

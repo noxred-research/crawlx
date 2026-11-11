@@ -410,6 +410,46 @@ fn approval_flow_is_single_use_and_bound_to_the_action() {
 }
 
 #[test]
+fn parked_adjudication_issues_one_request_per_action_and_ungranted_ignores_store_grants() {
+    let clock = manual_clock();
+    let store = Arc::new(InMemoryApprovalStore::new(Arc::new(clock.clone())));
+    let k = kernel_with_clock(TE, &clock).with_approval_store(store.clone());
+
+    let (p, c) = delete_case().build();
+    let Adjudication::ApprovalRequired(_, first) = k.adjudicate_parked(p, &c, None) else {
+        panic!("expected approval_required")
+    };
+    // an identical action parked again is a different parked action: it gets its own request
+    let (p, c) = delete_case().build();
+    let Adjudication::ApprovalRequired(_, second) = k.adjudicate_parked(p, &c, None) else {
+        panic!("expected approval_required")
+    };
+    assert_ne!(first.approval_id, second.approval_id);
+    assert_eq!(store.len(), 2);
+
+    // a grant in the synchronous store ranks the action for the legacy gate only
+    store.approve_now(first.approval_id, "reviewer").unwrap();
+    store.approve_now(second.approval_id, "reviewer").unwrap();
+    let (p, c) = delete_case().build();
+    assert_eq!(k.classify(&p, &c).decision, SafetyDecision::Allow);
+    let ungranted = k.classify_ungranted(&p, &c);
+    assert_eq!(ungranted.decision, SafetyDecision::ApprovalRequired);
+    assert_eq!(ungranted.approval, None);
+}
+
+#[test]
+fn parked_request_expires_at_the_given_run_deadline() {
+    let clock = manual_clock();
+    let k = kernel_with_clock(TE, &clock);
+    let deadline = clock.now() + chrono::Duration::hours(2);
+    let (p, c) = delete_case().build();
+    let Adjudication::ApprovalRequired(_, req) = k.adjudicate_parked(p, &c, Some(deadline)) else {
+        panic!("expected approval_required")
+    };
+    assert_eq!(req.expires_at, deadline);
+}
+
+#[test]
 fn approval_expires_after_24_hours() {
     let clock = manual_clock();
     let store = Arc::new(InMemoryApprovalStore::new(Arc::new(clock.clone())));

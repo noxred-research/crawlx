@@ -1,6 +1,7 @@
 //! Observation capture: AX snapshot, DOM supplement for
 //! escalated nodes, optional `DOMSnapshot`/screenshot blobs, HTML, frames and tabs.
 
+use super::page_ops::admit_text;
 use super::state::{join_node_id, ChildFrame};
 use super::CdpContext;
 use crate::cdp::CdpSession;
@@ -9,8 +10,6 @@ use crate::snapshot::{
     snapshot_only_candidates, supplement_for, SnapshotIndex, LISTENER_EVENTS, LISTENER_PROBE_BUDGET,
     MAX_SUPPLEMENT_NODES,
 };
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine as _;
 use crawlx_core::browser::BrowserError;
 use crawlx_core::hash::Digest;
 use crawlx_core::ids::{BackendNodeId, FrameId, TabId};
@@ -18,6 +17,7 @@ use crawlx_core::observation::{
     AxSnapshot, BoundingBox, DomSupplement, FrameInfo, MutationStats, ObservationBundle, ObservationCost,
     ObservationSpec,
 };
+use crawlx_core::parser_memory::{AdmittedBytes, AdmittedText, Budgeted};
 use crawlx_url::Canonicalizer;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -139,12 +139,15 @@ impl CdpContext {
         let mut trees: Vec<(u32, Vec<crate::cdp::RawFrame>)> = vec![(0, raw_frames.clone())];
 
         let want_snapshot = spec.ax || spec.dom_supplement || spec.dom_snapshot;
-        let snap_raw: Option<Value> = if want_snapshot {
+        let snap_raw: Option<Budgeted<Value>> = if want_snapshot {
             Some(sess.dom_snapshot().await?)
         } else {
             None
         };
-        let mut snap: SnapshotIndex = snap_raw.as_ref().map(parse_snapshot).unwrap_or_default();
+        let mut snap: SnapshotIndex = snap_raw
+            .as_ref()
+            .map(|raw| parse_snapshot(raw.value()))
+            .unwrap_or_default();
         for (root, child) in &children {
             let csess = session_of(child.index);
             let child_frames = match csess.frame_tree().await {
@@ -171,7 +174,7 @@ impl CdpContext {
                     .and_then(|id| snap.nodes.get(&id).and_then(|n| n.bounds));
                 let (dx, dy) = owner.map_or((0.0, 0.0), |b| (b.x, b.y));
                 let mut csnap = match csess.dom_snapshot().await {
-                    Ok(v) => parse_snapshot(&v),
+                    Ok(v) => parse_snapshot(v.value()),
                     Err(BrowserError::Protocol { .. }) => continue,
                     Err(e) => return Err(e),
                 };
@@ -262,25 +265,27 @@ impl CdpContext {
             }
         }
 
-        let mut raw_artifacts: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut raw_artifacts: Vec<(String, AdmittedBytes)> = Vec::new();
         if spec.dom_snapshot {
             if let Some(v) = &snap_raw {
-                let bytes = serde_json::to_vec(v).map_err(|e| BrowserError::Script(e.to_string()))?;
+                let bytes = crate::cdp::to_admitted_json(self.ctl.client.budget(), v.value())?;
                 raw_artifacts.push(("dom_snapshot".to_owned(), bytes));
             }
         }
         if spec.screenshot {
             let shot = sess
-                .send(
+                .send_budgeted(
                     "Page.captureScreenshot",
                     json!({ "format": "png", "captureBeyondViewport": false }),
                 )
                 .await?;
-            let data = shot.get("data").and_then(Value::as_str).unwrap_or_default();
-            let bytes = STANDARD.decode(data).map_err(|e| BrowserError::Protocol {
-                method: "Page.captureScreenshot".to_owned(),
-                message: e.to_string(),
-            })?;
+            let data = shot
+                .value()
+                .get("data")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let bytes =
+                crate::cdp::decode_admitted_base64(self.ctl.client.budget(), "Page.captureScreenshot", data)?;
             raw_artifacts.push(("screenshot".to_owned(), bytes));
         }
 
@@ -348,8 +353,8 @@ impl CdpContext {
         bundle.dialogs = dialogs;
         bundle.tabs = tabs;
         bundle.title = title;
-        let bytes =
-            html.as_ref().map_or(0, String::len) + raw_artifacts.iter().map(|(_, b)| b.len()).sum::<usize>();
+        let bytes = html.as_ref().map_or(0, |html| html.len())
+            + raw_artifacts.iter().map(|(_, b)| b.len()).sum::<usize>();
         bundle.html = html;
         bundle.raw_artifacts = raw_artifacts;
         bundle.discovered_urls = discovered_urls;
@@ -362,8 +367,9 @@ impl CdpContext {
         self.mask_captcha_observation(bundle)
     }
 
-    /// Main-document HTML via `DOM.getOuterHTML`, falling back to the documentElement.
-    async fn capture_html(&self, sess: &CdpSession, snap: &SnapshotIndex) -> Option<String> {
+    /// Main-document HTML via `DOM.getOuterHTML`, falling back to the documentElement. The text
+    /// is moved out of the charged response and carries its own reservation.
+    async fn capture_html(&self, sess: &CdpSession, snap: &SnapshotIndex) -> Option<AdmittedText> {
         let root = match snap.document_roots.first() {
             Some(r) => Some(*r),
             None => sess
@@ -377,23 +383,47 @@ impl CdpContext {
                 }),
         };
         if let Some(root) = root {
-            if let Ok(v) = sess
-                .send("DOM.getOuterHTML", json!({ "backendNodeId": root }))
+            if let Ok(mut reply) = sess
+                .send_budgeted("DOM.getOuterHTML", json!({ "backendNodeId": root }))
                 .await
             {
-                if let Some(h) = v.get("outerHTML").and_then(Value::as_str) {
-                    return Some(h.to_owned());
+                if let Some(Value::String(html)) = reply.value_mut().get_mut("outerHTML") {
+                    let html = std::mem::take(html);
+                    let (rest, permit) = reply.into_parts();
+                    return admit_text(html, rest, permit).ok();
                 }
             }
         }
-        self.world_eval(
-            None,
-            "document.documentElement ? document.documentElement.outerHTML : ''",
-            false,
-        )
-        .await
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
+        self.document_element_html().await
+    }
+
+    /// `documentElement.outerHTML` from the isolated world, retrying once if the context was
+    /// replaced; the text is moved out of the charged response.
+    async fn document_element_html(&self) -> Option<AdmittedText> {
+        const EXPRESSION: &str = "document.documentElement ? document.documentElement.outerHTML : ''";
+        for attempt in 0..2 {
+            let (target_id, sess, ctx) = self.world(None).await.ok()?;
+            match sess.evaluate_in_budgeted(ctx, EXPRESSION, false).await {
+                Err(BrowserError::Protocol { message, .. })
+                    if attempt == 0 && message.to_ascii_lowercase().contains("context") =>
+                {
+                    self.invalidate_world(&target_id);
+                }
+                Err(_) => return None,
+                Ok(mut reply) => {
+                    if reply.value().get("exceptionDetails").is_some() {
+                        return None;
+                    }
+                    let Some(Value::String(html)) = reply.value_mut().pointer_mut("/result/value") else {
+                        return None;
+                    };
+                    let html = std::mem::take(html);
+                    let (rest, permit) = reply.into_parts();
+                    return admit_text(html, rest, permit).ok();
+                }
+            }
+        }
+        None
     }
 
     /// Tabs of this context from `Target.getTargets`, merged into the tab graph.

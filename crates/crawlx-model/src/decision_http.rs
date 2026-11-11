@@ -130,6 +130,10 @@ impl WireAnswer {
 }
 
 /// Typed-decision engine over HTTP.
+#[allow(
+    clippy::disallowed_types,
+    reason = "typed decision adapter owns the raw reqwest client"
+)]
 pub struct DecisionHttpEngine {
     client: reqwest::Client,
     endpoint: reqwest::Url,
@@ -170,6 +174,10 @@ impl DecisionHttpEngine {
         Self::build(config, true)
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "typed decision adapter builds the raw reqwest client"
+    )]
     fn build(config: DecisionHttpConfig, fixture: bool) -> Result<Self, ModelError> {
         let endpoint = reqwest::Url::parse(&config.endpoint)
             .map_err(|e| ModelError::InvalidRequest(format!("endpoint: {e}")))?;
@@ -233,10 +241,18 @@ impl DecisionHttpEngine {
             }
             bytes.extend_from_slice(&chunk);
         }
-        serde_json::from_slice(&bytes).map_err(|e| ModelError::Malformed(format!("response schema: {e}")))
+        decode_response(&bytes)
     }
 }
 
+fn decode_response(bytes: &[u8]) -> Result<WireResponse, ModelError> {
+    serde_json::from_slice(bytes).map_err(|_| ModelError::Malformed("response schema invalid".into()))
+}
+
+#[allow(
+    clippy::disallowed_types,
+    reason = "typed decision adapter translates the raw reqwest error"
+)]
 fn map_transport(e: reqwest::Error, budget_ms: u64) -> ModelError {
     let e = e.without_url();
     if e.is_timeout() {
@@ -447,4 +463,24 @@ pub fn served_response(decision: &TypedDecision) -> serde_json::Value {
         })
         .collect();
     serde_json::json!({ "answers": answers })
+}
+
+#[cfg(test)]
+mod response_privacy_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    #[test]
+    fn malformed_provider_values_never_enter_error_display_debug_or_source() {
+        use std::error::Error;
+        let secret = "private-provider-value";
+        let body = serde_json::json!({
+            "answers":[{"kind":"noul","id":"fixture","p_yes":secret}]
+        });
+        let error = super::decode_response(&serde_json::to_vec(&body).unwrap())
+            .err()
+            .unwrap();
+        assert!(!error.to_string().contains(secret));
+        assert!(!format!("{error:?}").contains(secret));
+        assert!(error.source().is_none());
+    }
 }

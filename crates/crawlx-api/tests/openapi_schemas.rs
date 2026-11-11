@@ -27,6 +27,10 @@ mod rigs;
 
 use async_trait::async_trait;
 use axum::body::Body;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::Router;
 use common::Env;

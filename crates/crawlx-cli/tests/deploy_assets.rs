@@ -498,7 +498,7 @@ fn helm_chart_wires_artifact_custody_into_api_worker_and_config_check() {
             env["CRAWLX_SECRET_REDIS_URL_FILE"],
             "/run/secrets/crawlx/secret_redis_url"
         );
-        assert_eq!(env["CRAWLX_SECRET_AUTHORITY_TTL_SECS"], "86400");
+        assert_eq!(env["CRAWLX_SECRET_AUTHORITY_TTL_SECS"], "3600");
         assert!(!env.contains_key("CRAWLX_ARTIFACT_KMS_KEY_ID"));
         assert!(
             !env.contains_key("CRAWLX_SECRET_REDIS_URL"),
@@ -513,7 +513,7 @@ fn helm_chart_wires_artifact_custody_into_api_worker_and_config_check() {
     let Some(output) = helm_template(&[
         HELM_KMS,
         HELM_SECRET_REDIS,
-        "artifactCustody.secretRedis.ttlSeconds=3600",
+        "artifactCustody.secretRedis.ttlSeconds=7200",
     ]) else {
         return;
     };
@@ -533,7 +533,7 @@ fn helm_chart_wires_artifact_custody_into_api_worker_and_config_check() {
         assert!(!env.contains_key("CRAWLX_ARTIFACT_KEY_FILE"), "{name}");
         assert!(!projected_secrets(workload).contains(&key_file), "{name}");
         if name != "custody-api" {
-            assert_eq!(env["CRAWLX_SECRET_AUTHORITY_TTL_SECS"], "3600", "{name}");
+            assert_eq!(env["CRAWLX_SECRET_AUTHORITY_TTL_SECS"], "7200", "{name}");
         }
     }
 }

@@ -87,7 +87,10 @@ mod tests {
         let path = staged.path().to_owned();
         let mut reader = staged.reader().unwrap();
         drop(staged);
-        assert!(!path.exists());
+        // The descriptor number may be reused by another thread once the owner drops, so the
+        // path must no longer resolve to the staged inode rather than to nothing at all.
+        let staged_inode = reader.metadata().unwrap().ino();
+        assert!(!std::fs::metadata(&path).is_ok_and(|meta| meta.ino() == staged_inode));
         bytes.clear();
         reader.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"archive\0bytes\xff");

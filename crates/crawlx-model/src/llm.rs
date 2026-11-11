@@ -25,6 +25,7 @@
 //! of the planner DSL above: their output is shaped into API responses, never into crawler actions.
 
 pub mod chat_completions;
+pub mod content_strategy;
 pub mod embeddings;
 pub mod extractor;
 pub mod mock_llm;

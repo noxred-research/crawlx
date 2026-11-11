@@ -626,7 +626,7 @@ fn terminal_page(run: &CrawlRun, feed: &FeedDeclarationV1, first: u64) -> Result
         .ok_or_else(|| StoreError::Conflict("feed page overflow".into()))
 }
 
-type ReservedAccumulator = (Accumulator, tokio::sync::OwnedSemaphorePermit);
+type ReservedAccumulator = (Accumulator, crawlx_core::parser_memory::BytePermit);
 
 fn encoding_limit(codec: FeedCompressionV1, maximum: usize) -> Result<usize, StoreError> {
     if codec == FeedCompressionV1::None {

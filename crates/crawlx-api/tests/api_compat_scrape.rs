@@ -1076,6 +1076,21 @@ mod scripted {
     };
     use serde_json::json;
 
+    /// Browser text as the render seam carries it: reserved against the shared budget first.
+    fn admitted(text: &str) -> crawlx_core::parser_memory::AdmittedText {
+        let permit = crawlx_core::parser_memory::global()
+            .try_reserve(text.len())
+            .unwrap();
+        crawlx_core::parser_memory::AdmittedText::new(text.to_owned(), permit)
+    }
+
+    fn admitted_bytes(bytes: Vec<u8>) -> crawlx_core::parser_memory::AdmittedBytes {
+        let permit = crawlx_core::parser_memory::global()
+            .try_reserve(bytes.len())
+            .unwrap();
+        crawlx_core::parser_memory::AdmittedBytes::new(bytes, permit)
+    }
+
     pub const PNG: &[u8] = b"\x89PNG\r\n\x1a\nscripted-screenshot";
 
     /// Renders every page as a fixed document with a screenshot and one result per action kind,
@@ -1095,26 +1110,28 @@ mod scripted {
                 headers: vec![("content-type".to_owned(), "text/html".to_owned())],
                 content_type: Some("text/html".to_owned()),
                 evidence: None,
-                html: "<html><head><title>Rendered</title></head><body><main><h1>Rendered page</h1></main></body></html>".to_owned(),
+                html: admitted(
+                    "<html><head><title>Rendered</title></head><body><main><h1>Rendered page</h1></main></body></html>",
+                ),
                 screenshot: Some(Shot {
-                    bytes: PNG.to_vec(),
+                    bytes: admitted_bytes(PNG.to_vec()),
                     content_type: "image/png",
                 }),
                 actions: ActionOutputs {
                     screenshots: vec![Shot {
-                        bytes: PNG.to_vec(),
+                        bytes: admitted_bytes(PNG.to_vec()),
                         content_type: "image/png",
                     }],
                     scrapes: vec![ActionScrape {
                         url: req.request.url.url.to_string(),
-                        html: "<p>step</p>".to_owned(),
+                        html: admitted("<p>step</p>"),
                     }],
                     javascript_returns: vec![JavascriptReturn {
                         kind: "number".to_owned(),
                         value: json!(2),
                     }],
                     pdfs: vec![Shot {
-                        bytes: super::scrape_rig::pdf(&["Scripted PDF"]),
+                        bytes: admitted_bytes(super::scrape_rig::pdf(&["Scripted PDF"])),
                         content_type: "application/pdf",
                     }],
                     ..ActionOutputs::default()

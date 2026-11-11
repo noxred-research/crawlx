@@ -43,6 +43,10 @@ fn shown(url: &url::Url) -> String {
     plain.to_string()
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "operator health probe builds the raw reqwest client"
+)]
 pub(crate) async fn run(args: HealthcheckArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     let client = reqwest::Client::builder()
         .timeout(args.timeout)

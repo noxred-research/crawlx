@@ -134,7 +134,8 @@ fn acquisition_manifest<'a>(
     cfg: &'a WorkerConfig,
     backend: Option<&'a Arc<dyn BrowserBackend>>,
     cancel: &'a CancellationToken,
-) -> impl Future<Output = Vec<crawlx_core::acquisition::BackendCapabilitiesV1>> + Send + 'a {
+) -> impl Future<Output = Result<Vec<crawlx_core::acquisition::BackendCapabilitiesV1>, WorkerError>> + Send + 'a
+{
     Box::pin(acquisition_manifest_inner(cfg, backend, cancel))
 }
 
@@ -142,9 +143,18 @@ async fn acquisition_manifest_inner(
     cfg: &WorkerConfig,
     backend: Option<&Arc<dyn BrowserBackend>>,
     cancel: &CancellationToken,
-) -> Vec<crawlx_core::acquisition::BackendCapabilitiesV1> {
+) -> Result<Vec<crawlx_core::acquisition::BackendCapabilitiesV1>, WorkerError> {
     use crawlx_core::acquisition::BackendCapabilitiesV1;
     let http = BackendCapabilitiesV1::native_http("crawlx-fetch/native", env!("CARGO_PKG_VERSION"));
+    let mut probe_launch = cfg.launch.clone();
+    if let Some(settings) = crate::netns::NamespaceSettings::from_env(&|name| std::env::var(name).ok())
+        .map_err(|error| WorkerError::Config(error.to_string()))?
+    {
+        settings
+            .prepare(&mut probe_launch)
+            .await
+            .map_err(|error| WorkerError::Config(error.to_string()))?;
+    }
     let browser = if cfg.renderer.is_some() {
         BackendCapabilitiesV1::native_browser_unavailable("operator_renderer_capability_unattested")
     } else if let Some(backend) = backend {
@@ -155,6 +165,16 @@ async fn acquisition_manifest_inner(
         capability
     } else if cfg.launch.cdp_ws_url.is_some() {
         BackendCapabilitiesV1::native_browser_unavailable("attached_browser_requires_run_admission")
+    } else if probe_launch.namespace.is_some() {
+        match crate::netns::probe_namespaced_build(&probe_launch, cancel).await {
+            Ok(build) => {
+                let mut capability = BackendCapabilitiesV1::native_browser(build);
+                capability.limitations.push("startup_probe_build_only".to_owned());
+                capability.limitations.push("namespace_isolated_probe".to_owned());
+                capability
+            }
+            Err(reason) => BackendCapabilitiesV1::native_browser_unavailable(reason.reason()),
+        }
     } else {
         let mut launch = cfg.launch.clone();
         launch.user_data_dir = None;
@@ -182,7 +202,20 @@ async fn acquisition_manifest_inner(
             None => BackendCapabilitiesV1::native_browser_unavailable("browser_startup_probe_failed"),
         }
     };
-    vec![http, browser]
+    let registry = match &cfg.protocol_registry {
+        Some(registry) => Some(Arc::clone(registry)),
+        None => crate::protocol::ProtocolRegistry::from_operator_env().await?,
+    };
+    let mut capabilities = vec![http, browser];
+    if let Some(service) = registry
+        .as_deref()
+        .map(crate::protocol::ProtocolRegistry::acquisition_capability)
+        .transpose()?
+        .flatten()
+    {
+        capabilities.push(service);
+    }
+    Ok(capabilities)
 }
 
 /// [`run`] over explicit stores, backend and cancellation (tests).
@@ -237,7 +270,7 @@ async fn run_with_inner(
         registry
             .register_worker(cfg.worker_id, &hostname, env!("CARGO_PKG_VERSION"))
             .await?;
-        let manifest = acquisition_manifest(&cfg, backend.as_ref(), &cancel).await;
+        let manifest = acquisition_manifest(&cfg, backend.as_ref(), &cancel).await?;
         registry
             .publish_acquisition_capabilities(cfg.worker_id, &manifest)
             .await?;
@@ -408,6 +441,7 @@ async fn run_with_inner(
                             lease.clone(),
                             rc.stores.session_producer(rc.run, &lease),
                             rc.cancel.clone(),
+                            rc.stores.pg_secret_authority.clone(),
                         )
                         .instrument(slot.span.clone()),
                     ),
@@ -853,12 +887,17 @@ async fn static_coordinator(
     lease: crawlx_storage::SessionLease,
     producer: crawlx_core::custody::CustodyLease,
     cancel: CancellationToken,
+    authority: Option<Arc<crawlx_storage::custody::PgSecretAuthority>>,
 ) -> SessionEnd {
     let keepalive_cancel = CancellationToken::new();
     let keepalive = scheduler.keep_alive(lease.clone(), HEARTBEAT_INTERVAL, keepalive_cancel.clone());
     // Discovery and any write outside a leased URL row publish under the coordinator's
     // session fence; each leased row narrows this to its own frontier lease.
-    let result = crawlx_core::custody::with_producer(producer, Box::pin(plane.run(&cancel))).await;
+    let result = crawlx_core::custody::with_producer(
+        producer.clone(),
+        crate::custody_renewal::with_custody_renewal(authority, producer, Box::pin(plane.run(&cancel))),
+    )
+    .await;
     keepalive_cancel.cancel();
     let _ = keepalive.await;
     let (end, release) = match result {

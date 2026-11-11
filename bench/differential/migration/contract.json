@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "source_revision": "0123456789abcdef0123456789abcdef01234567",
+  "origin": "https://fixture.invalid/",
+  "urls": ["https://fixture.invalid/catalog?edition=2"],
+  "item_count": {"min": 1, "max": 1},
+  "item_schema": {
+    "type": "object",
+    "properties": {
+      "name": {"type": "string", "max_length": 80},
+      "price": {"type": "integer"},
+      "labels": {"type": "array", "items": {"type": "string", "max_length": 16}, "max_items": 4}
+    },
+    "required": ["name", "price"]
+  },
+  "privacy": "retained",
+  "thresholds": {
+    "markdown_page": 1.0,
+    "markdown_corpus": 1.0,
+    "links": 1.0,
+    "metadata": 1.0,
+    "block_f1": 1.0,
+    "max_evaluation_micros": 60000000
+  }
+}

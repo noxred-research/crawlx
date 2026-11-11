@@ -5,6 +5,7 @@ use crate::epoch::ObservationEpoch;
 use crate::ids::{
     ArtifactRef, AxNodeId, BackendNodeId, FrameId, NetworkEpochId, RemoteObjectId, SessionId, TabId,
 };
+use crate::parser_memory::{AdmittedBytes, AdmittedText};
 use crate::time::Timestamp;
 use crate::url::{CanonicalUrl, RouteKey};
 use serde::{Deserialize, Serialize};
@@ -516,13 +517,15 @@ pub struct ObservationBundle {
     /// Cost of producing this bundle.
     pub cost: ObservationCost,
     /// Raw HTML of the main document when captured (static-plane parity, extraction).
-    pub html: Option<String>,
+    /// Charged: clones share the one allocation and its byte reservation.
+    pub html: Option<AdmittedText>,
     /// Document title; `None` when the page has none.
     pub title: Option<String>,
     /// Blobs captured while observing (`"dom_snapshot"`, `"screenshot"`), keyed by
     /// artifact kind, for the caller to put in the object store and reference through
-    /// `dom_snapshot` / `screenshot`. Empty unless the spec asked for them.
-    pub raw_artifacts: Vec<(String, Vec<u8>)>,
+    /// `dom_snapshot` / `screenshot`. Empty unless the spec asked for them. Each blob keeps
+    /// its byte reservation for as long as any clone of the bundle holds it.
+    pub raw_artifacts: Vec<(String, AdmittedBytes)>,
     /// URLs the page-hooks discovery sink captured since the previous observation, as
     /// `(url, source)` with `source` one of `history.pushState`, `history.replaceState`,
     /// `window.open`, `hashchange`, `websocket`, `eventsource`, `fetch`, `xhr`.
@@ -573,9 +576,9 @@ impl ObservationBundle {
             .map(|(_, bytes)| bytes.as_slice())
     }
 
-    /// Attach a captured blob for artifact `kind`, replacing any earlier one.
+    /// Attach a captured, charged blob for artifact `kind`, replacing any earlier one.
     #[must_use]
-    pub fn with_raw_artifact(mut self, kind: impl Into<String>, bytes: Vec<u8>) -> Self {
+    pub fn with_raw_artifact(mut self, kind: impl Into<String>, bytes: AdmittedBytes) -> Self {
         let kind = kind.into();
         self.raw_artifacts.retain(|(k, _)| *k != kind);
         self.raw_artifacts.push((kind, bytes));

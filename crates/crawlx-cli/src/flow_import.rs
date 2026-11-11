@@ -1,11 +1,25 @@
 //! Offline recorded-flow inspection and exact-subset conversion. Never executes source code.
+//!
+//! The additional neutral wire contract is `dialect: "declarative-flow"`,
+//! `dialectVersion: 1`. Navigation and initial desktop viewport use the recorder
+//! fields below. Native input uses `click {selector}`, `fill {selector,text}`,
+//! `write {text}`, `press {key}`, `scroll {direction,selector?}`, and
+//! `wait {milliseconds}` or `wait {selector,state?}`. Scroll means one current
+//! viewport-height relative vertical movement, including for an element target;
+//! it never means absolute coordinates or arbitrary pixel deltas. Keys are
+//! complete chords, not separate down/up events. Selector waits use the native
+//! first-match attached/visible/hidden/detached contract and native deadline.
+//! Repeated literal entries remain separate required source steps. Retries,
+//! loops, run-once scheduling, scripts and executable callbacks are not inferred.
+//! This is a native neutral interchange, not a claim of upstream runtime parity.
 
 use anyhow::{bail, Context};
 use clap::{Args, Subcommand};
 use crawlx_core::{
     archive_behaviors::{RecipeReferenceV1, RecipeSourceV1, RecipeStepV1, RecipeV1},
     hash::Digest,
-    scrape::{ScrapeAction, ScreenshotViewport},
+    page_op::SelectorState,
+    scrape::{ScrapeAction, ScreenshotViewport, ScrollDirection, MAX_WAIT_MS},
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -14,6 +28,7 @@ use tokio::io::AsyncReadExt;
 
 const MAX_FLOW_BYTES: usize = 1_048_576;
 const MAX_SOURCE_STEPS: usize = 52;
+const MAX_FLOW_DEPTH: usize = 16;
 
 /// Inspect or convert a local recorded JSON flow without browser or network access.
 #[derive(Debug, Args)]
@@ -106,6 +121,7 @@ pub fn inspect(bytes: &[u8], id: String, version: u32) -> anyhow::Result<(FlowRe
     if bytes.len() > MAX_FLOW_BYTES {
         bail!("recorded flow exceeds byte cap");
     }
+    check_depth(bytes)?;
     let value: Value =
         serde_json::from_slice(bytes).map_err(|_| anyhow::anyhow!("invalid recorded flow JSON"))?;
     let root = value.as_object().context("recorded flow must be an object")?;
@@ -130,8 +146,9 @@ pub fn inspect(bytes: &[u8], id: String, version: u32) -> anyhow::Result<(FlowRe
         convertible: true,
         operator_approval_required: true,
     };
+    let neutral = is_neutral_dialect(root, &mut report.source_refusals);
     for key in root.keys() {
-        if !matches!(key.as_str(), "title" | "steps") {
+        if !matches!(key.as_str(), "title" | "steps" | "dialect" | "dialectVersion") {
             report
                 .source_refusals
                 .push("unsupported top-level behavior, initialization, timing or driver configuration");
@@ -146,10 +163,11 @@ pub fn inspect(bytes: &[u8], id: String, version: u32) -> anyhow::Result<(FlowRe
         let source_index = u32::try_from(index)?;
         let source_type = source_type(step.get("type").and_then(Value::as_str));
         let mapped = match step.as_object() {
-            Some(step) => translate(
+            Some(step) => translate_step(
                 step,
                 &mut recipe,
                 source_index,
+                neutral,
                 &mut navigated,
                 &mut viewport_seen,
             ),
@@ -181,6 +199,31 @@ pub fn inspect(bytes: &[u8], id: String, version: u32) -> anyhow::Result<(FlowRe
         && report.dispositions.iter().all(|step| step.state == "translated");
     let candidate = report.convertible.then_some(recipe);
     Ok((report, candidate))
+}
+
+fn is_neutral_dialect(root: &Map<String, Value>, source_refusals: &mut Vec<&'static str>) -> bool {
+    let neutral = root.get("dialect").and_then(Value::as_str) == Some("declarative-flow")
+        && root.get("dialectVersion").and_then(Value::as_u64) == Some(1);
+    if (root.contains_key("dialect") || root.contains_key("dialectVersion")) && !neutral {
+        source_refusals.push("unsupported or incomplete flow dialect pin");
+    }
+    neutral
+}
+
+fn translate_step(
+    step: &Map<String, Value>,
+    recipe: &mut RecipeV1,
+    index: u32,
+    neutral: bool,
+    navigated: &mut bool,
+    viewport_seen: &mut bool,
+) -> Result<&'static str, &'static str> {
+    let result = if neutral {
+        translate_neutral(step, recipe, index, *navigated)
+    } else {
+        None
+    };
+    result.unwrap_or_else(|| translate(step, recipe, index, navigated, viewport_seen))
 }
 
 fn translate(
@@ -250,6 +293,9 @@ fn translate(
                 .ok_or("navigation URL is required")?
                 .parse()
                 .map_err(|_| "navigation URL is invalid")?;
+            if url.as_str().len() > 8_192 {
+                return Err("navigation URL exceeds native bound");
+            }
             if !matches!(url.scheme(), "http" | "https")
                 || url.host_str().is_none()
                 || !url.username().is_empty()
@@ -330,6 +376,244 @@ fn translate(
     }
 }
 
+/// Reject excessive structure before allocating the JSON value tree.
+fn check_depth(bytes: &[u8]) -> anyhow::Result<()> {
+    let mut depth = 0_usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    for byte in bytes {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == b'"' {
+                quoted = false;
+            }
+        } else {
+            match byte {
+                b'"' => quoted = true,
+                b'{' | b'[' => {
+                    depth += 1;
+                    if depth > MAX_FLOW_DEPTH {
+                        bail!("recorded flow exceeds nesting cap");
+                    }
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Only explicit neutral types use this path; recorder types keep their refusals.
+fn translate_neutral(
+    step: &Map<String, Value>,
+    recipe: &mut RecipeV1,
+    index: u32,
+    navigated: bool,
+) -> Option<Result<&'static str, &'static str>> {
+    let kind = step.get("type").and_then(Value::as_str)?;
+    if !matches!(kind, "click" | "fill" | "write" | "press" | "scroll" | "wait") {
+        return None;
+    }
+    Some((|| {
+        if !navigated {
+            return Err("native input and waits require initial navigation");
+        }
+        if recipe.steps.len() >= crawlx_core::archive_behaviors::MAX_RECIPE_STEPS {
+            return Err("native action count exceeds bound");
+        }
+        let action = match kind {
+            "click" => {
+                fields(step, &["type", "selector"])?;
+                ScrapeAction::Click {
+                    selector: neutral_selector(step)?,
+                    all: false,
+                }
+            }
+            "fill" => {
+                fields(step, &["type", "selector", "text"])?;
+                ScrapeAction::Fill {
+                    selector: neutral_selector(step)?,
+                    text: literal(step, "text", true)?,
+                }
+            }
+            "write" => {
+                fields(step, &["type", "text"])?;
+                ScrapeAction::Write {
+                    text: literal(step, "text", false)?,
+                }
+            }
+            "press" => {
+                fields(step, &["type", "key"])?;
+                let key = literal(step, "key", false)?;
+                if !neutral_key(&key) {
+                    return Err("key chord is outside the pinned native key subset");
+                }
+                ScrapeAction::Press { key }
+            }
+            "scroll" => {
+                fields(step, &["type", "direction", "selector"])?;
+                let direction = match step.get("direction").and_then(Value::as_str) {
+                    Some("up") => ScrollDirection::Up,
+                    Some("down") => ScrollDirection::Down,
+                    _ => return Err("relative viewport scroll needs an explicit vertical direction"),
+                };
+                let selector = if step.contains_key("selector") {
+                    Some(neutral_selector(step)?)
+                } else {
+                    None
+                };
+                ScrapeAction::Scroll { direction, selector }
+            }
+            "wait" => {
+                fields(step, &["type", "milliseconds", "selector", "state"])?;
+                if step.contains_key("milliseconds") {
+                    if step.contains_key("selector") || step.contains_key("state") {
+                        return Err("fixed wait cannot contain selector or state semantics");
+                    }
+                    let milliseconds = step["milliseconds"]
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok())
+                        .filter(|value| *value <= MAX_WAIT_MS)
+                        .ok_or("fixed wait exceeds native bound")?;
+                    let waited: u64 = recipe
+                        .steps
+                        .iter()
+                        .filter_map(|step| match &step.action {
+                            ScrapeAction::Wait {
+                                milliseconds: Some(ms),
+                                ..
+                            } => Some(u64::from(*ms)),
+                            _ => None,
+                        })
+                        .sum();
+                    if waited + u64::from(milliseconds) > u64::from(MAX_WAIT_MS) {
+                        return Err("total fixed wait exceeds native bound");
+                    }
+                    ScrapeAction::Wait {
+                        milliseconds: Some(milliseconds),
+                        selector: None,
+                        state: SelectorState::Attached,
+                    }
+                } else {
+                    let state = match step.get("state").and_then(Value::as_str) {
+                        None if !step.contains_key("state") => SelectorState::Attached,
+                        Some("attached") => SelectorState::Attached,
+                        Some("visible") => SelectorState::Visible,
+                        Some("hidden") => SelectorState::Hidden,
+                        Some("detached") => SelectorState::Detached,
+                        _ => return Err("unknown native selector wait state"),
+                    };
+                    ScrapeAction::Wait {
+                        milliseconds: None,
+                        selector: Some(neutral_selector(step)?),
+                        state,
+                    }
+                }
+            }
+            _ => return Err("unsupported neutral action"),
+        };
+        let target = match &action {
+            ScrapeAction::Click { .. } => "ScrapeAction.click",
+            ScrapeAction::Fill { .. } => "ScrapeAction.fill",
+            ScrapeAction::Write { .. } => "ScrapeAction.write",
+            ScrapeAction::Press { .. } => "ScrapeAction.press",
+            ScrapeAction::Scroll { .. } => "ScrapeAction.scroll",
+            ScrapeAction::Wait { .. } => "ScrapeAction.wait",
+            _ => return Err("unsupported neutral action"),
+        };
+        recipe.steps.push(RecipeStepV1::new(index, action));
+        Ok(target)
+    })())
+}
+
+fn literal(step: &Map<String, Value>, field: &str, empty: bool) -> Result<String, &'static str> {
+    step.get(field)
+        .and_then(Value::as_str)
+        .filter(|value| (empty || !value.is_empty()) && value.len() <= 4_096)
+        .map(str::to_owned)
+        .ok_or("native literal is absent, invalid or exceeds bound")
+}
+
+fn neutral_selector(step: &Map<String, Value>) -> Result<String, &'static str> {
+    let selector = literal(step, "selector", false)?;
+    if selector.contains(" >> ")
+        || ["aria/", "text/", "xpath/", "pierce/"]
+            .iter()
+            .any(|prefix| selector.starts_with(prefix))
+    {
+        return Err("native selector must be one CSS selector");
+    }
+    Ok(selector)
+}
+
+/// Deliberately narrower than the actor parser: canonical names and unique modifiers.
+fn neutral_key(chord: &str) -> bool {
+    if chord.len() > 64 {
+        return false;
+    }
+    if chord == "+" {
+        return true;
+    }
+    let mut parts = chord.rsplit('+');
+    let Some(key) = parts.next() else {
+        return false;
+    };
+    let character = key.chars().count() == 1 && !key.chars().any(char::is_whitespace);
+    if !character
+        && !matches!(
+            key,
+            "Enter"
+                | "Escape"
+                | "Tab"
+                | "Backspace"
+                | "Delete"
+                | "Insert"
+                | "ArrowUp"
+                | "ArrowDown"
+                | "ArrowLeft"
+                | "ArrowRight"
+                | "Home"
+                | "End"
+                | "PageUp"
+                | "PageDown"
+                | "Space"
+                | "F1"
+                | "F2"
+                | "F3"
+                | "F4"
+                | "F5"
+                | "F6"
+                | "F7"
+                | "F8"
+                | "F9"
+                | "F10"
+                | "F11"
+                | "F12"
+        )
+    {
+        return false;
+    }
+    let mut seen = 0_u8;
+    for modifier in parts {
+        let bit = match modifier {
+            "Control" => 1,
+            "Alt" => 2,
+            "Shift" => 4,
+            "Meta" => 8,
+            _ => return false,
+        };
+        if seen & bit != 0 {
+            return false;
+        }
+        seen |= bit;
+    }
+    true
+}
+
 fn fields(step: &Map<String, Value>, allowed: &[&str]) -> Result<(), &'static str> {
     if step.keys().any(|key| !allowed.contains(&key.as_str())) {
         Err("unsupported step field, timing, script, driver argument or input semantics")
@@ -377,6 +661,10 @@ fn source_type(kind: Option<&str>) -> &'static str {
         Some("navigate") => "navigate",
         Some("change") => "change",
         Some("click") => "click",
+        Some("fill") => "fill",
+        Some("write") => "write",
+        Some("press") => "press",
+        Some("wait") => "wait",
         Some("scroll") => "scroll",
         Some("keyDown") => "keyDown",
         Some("keyUp") => "keyUp",
@@ -469,6 +757,327 @@ pub async fn run(args: FlowImportArgs, out: &mut dyn Write) -> anyhow::Result<Ex
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn pinned_key_chords_match_native_complete_press_grammar_without_down_up_inference() {
+        for key in ["+", "é", "Control+é", "Shift+Tab", "F12", "Alt+Insert"] {
+            assert!(neutral_key(key));
+        }
+        for key in [
+            "",
+            " ",
+            "Control+",
+            "Control++",
+            "Control+Control+A",
+            "Shift+private-secret",
+            "private-modifier+A",
+            "F13",
+            " Enter",
+        ] {
+            assert!(!neutral_key(key));
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_neutral_commands_emit_valid_recipe_or_complete_value_free_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("neutral.json");
+        tokio::fs::write(
+            &path,
+            br#"{
+            "dialect":"declarative-flow","dialectVersion":1,"steps":[
+            {"type":"navigate","url":"https://fixture.test/"},
+            {"type":"scroll","direction":"down"},
+            {"type":"press","key":"Enter"},
+            {"type":"wait","selector":"body","state":"attached"}]}"#,
+        )
+        .await
+        .unwrap();
+        let args = || FlowArgs {
+            flow: path.clone(),
+            id: "fixture".into(),
+            version: 1,
+        };
+        let mut output = Vec::new();
+        assert_eq!(
+            run(
+                FlowImportArgs {
+                    command: FlowImportCommand::Convert(args())
+                },
+                &mut output
+            )
+            .await
+            .unwrap(),
+            ExitCode::SUCCESS
+        );
+        let converted: Value = serde_json::from_slice(&output).unwrap();
+        let recipe: RecipeV1 = serde_json::from_value(converted["recipe"].clone()).unwrap();
+        assert_eq!(
+            converted["digest"],
+            serde_json::to_value(recipe.digest().unwrap()).unwrap()
+        );
+        assert_eq!(converted["reference"]["digest"], converted["digest"]);
+        tokio::fs::write(
+            &path,
+            br#"{
+            "dialect":"declarative-flow","dialectVersion":1,"steps":[
+            {"type":"navigate","url":"https://fixture.test/"},
+            {"type":"press","key":"Enter","callback":"private-secret"}]}"#,
+        )
+        .await
+        .unwrap();
+        for command in [
+            FlowImportCommand::Inspect(args()),
+            FlowImportCommand::Convert(args()),
+        ] {
+            output.clear();
+            assert_eq!(
+                run(FlowImportArgs { command }, &mut output).await.unwrap(),
+                ExitCode::from(2)
+            );
+            let report: Value = serde_json::from_slice(&output).unwrap();
+            assert_eq!(report["dispositions"].as_array().unwrap().len(), 2);
+            assert_eq!(report["dispositions"][1]["state"], "unsupported");
+            assert!(report.get("recipe").is_none());
+            assert!(!String::from_utf8(output.clone())
+                .unwrap()
+                .contains("private-secret"));
+        }
+    }
+
+    #[test]
+    fn pinned_neutral_flow_preserves_every_native_action_and_repeated_literal_entry() {
+        let bytes = br##"{"dialect":"declarative-flow","dialectVersion":1,"steps":[
+            {"type":"setViewport","width":800,"height":600,"deviceScaleFactor":1,"isMobile":false,"hasTouch":false,"isLandscape":false},
+            {"type":"navigate","url":"https://fixture.test/"},
+            {"type":"click","selector":"#open"},
+            {"type":"fill","selector":"#input","text":"value"},
+            {"type":"fill","selector":"#input","text":"value"},
+            {"type":"write","text":"suffix"},
+            {"type":"press","key":"Control+Shift+A"},
+            {"type":"scroll","direction":"down"},
+            {"type":"scroll","direction":"up","selector":"#list"},
+            {"type":"wait","milliseconds":25},
+            {"type":"wait","selector":"#present"},
+            {"type":"wait","selector":"#visible","state":"visible"},
+            {"type":"wait","selector":"#hidden","state":"hidden"},
+            {"type":"wait","selector":"#gone","state":"detached"}]}"##;
+        let (report, candidate) = inspect(bytes, "fixture".into(), 1).unwrap();
+        assert!(report.convertible);
+        assert_eq!(report.dispositions.len(), 14);
+        let recipe = candidate.unwrap();
+        assert_eq!(recipe.source.as_ref().unwrap().step_count, 14);
+        assert_eq!(recipe.steps.len(), 12);
+        for (index, step) in recipe.steps.iter().enumerate() {
+            assert_eq!(step.source_index, u32::try_from(index + 2).unwrap());
+        }
+        assert_eq!(recipe.steps[1].action, recipe.steps[2].action);
+        assert!(matches!(&recipe.steps[4].action, ScrapeAction::Press { key } if key == "Control+Shift+A"));
+        assert!(matches!(
+            &recipe.steps[5].action,
+            ScrapeAction::Scroll {
+                direction: ScrollDirection::Down,
+                selector: None
+            }
+        ));
+        assert!(matches!(&recipe.steps[6].action,
+            ScrapeAction::Scroll { direction: ScrollDirection::Up, selector: Some(selector) } if selector == "#list"));
+        assert!(matches!(
+            &recipe.steps[8].action,
+            ScrapeAction::Wait {
+                state: SelectorState::Attached,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &recipe.steps[9].action,
+            ScrapeAction::Wait {
+                state: SelectorState::Visible,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &recipe.steps[10].action,
+            ScrapeAction::Wait {
+                state: SelectorState::Hidden,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &recipe.steps[11].action,
+            ScrapeAction::Wait {
+                state: SelectorState::Detached,
+                ..
+            }
+        ));
+        let roundtrip: RecipeV1 = serde_json::from_slice(&serde_json::to_vec(&recipe).unwrap()).unwrap();
+        assert_eq!(recipe.digest().unwrap(), roundtrip.digest().unwrap());
+    }
+
+    #[test]
+    fn neutral_dialect_requires_exact_pin_and_never_reinterprets_recorder_events() {
+        for pin in [
+            "",
+            r#""dialect":"declarative-flow","#,
+            r#""dialectVersion":1,"#,
+            r#""dialect":"declarative-flow","dialectVersion":2,"#,
+            r#""dialect":"private-unknown","dialectVersion":1,"#,
+        ] {
+            let bytes = format!(
+                r#"{{{pin}"steps":[
+                {{"type":"navigate","url":"https://fixture.test/"}},
+                {{"type":"press","key":"Enter"}}]}}"#
+            );
+            let (report, candidate) = inspect(bytes.as_bytes(), "fixture".into(), 1).unwrap();
+            assert!(!report.convertible);
+            assert!(candidate.is_none());
+            assert!(!serde_json::to_string(&report).unwrap().contains("private-"));
+        }
+        for pin in ["", r#""dialect":"declarative-flow","dialectVersion":1,"#] {
+            let bytes = format!(
+                r#"{{{pin}"steps":[
+                {{"type":"navigate","url":"https://fixture.test/"}},
+                {{"type":"scroll","x":0,"y":100}},
+                {{"type":"keyDown","key":"Enter"}},
+                {{"type":"keyUp","key":"Enter"}},
+                {{"type":"waitForElement","selectors":[["body"]],"count":1}}]}}"#
+            );
+            let (report, candidate) = inspect(bytes.as_bytes(), "fixture".into(), 1).unwrap();
+            assert!(candidate.is_none());
+            assert_eq!(report.dispositions.len(), 5);
+            assert!(report.dispositions[1..]
+                .iter()
+                .all(|step| step.state == "unsupported"));
+        }
+    }
+
+    #[test]
+    fn neutral_malicious_unknown_and_inexact_fields_get_complete_secret_free_refusals() {
+        let bytes = br##"{"dialect":"declarative-flow","dialectVersion":1,
+            "runOnce":true,"retries":3,"private-field":"private-root","steps":[
+            {"type":"navigate","url":"https://fixture.test/private-url"},
+            {"type":"click","selector":"#private-selector","callback":"private-script"},
+            {"type":"fill","selector":"#private-selector","text":"private-value","repeat":2},
+            {"type":"press","key":"private-key"},
+            {"type":"press","key":"Control+Control+A"},
+            {"type":"scroll","direction":"down","dy":100},
+            {"type":"wait","selector":"#private-selector","state":"private-state"},
+            {"type":"wait","milliseconds":1,"selector":"#private-selector"},
+            {"type":"wait","selector":"body","timeout":100},
+            {"type":"customStep","script":"private-script"},
+            {"type":"waitForExpression","expression":"private-expression"},
+            {"type":"private-type","private-field":"private-secret"},
+            {"type":"executeJavascript","script":"private-script"},
+            {"type":"click","selector":"body","frame":[0]},
+            null,
+            {"type":"press","key":"Enter"}]}"##;
+        let (report, candidate) = inspect(bytes, "fixture".into(), 1).unwrap();
+        assert!(candidate.is_none());
+        assert_eq!(report.dispositions.len(), 16);
+        assert_eq!(report.source_refusals.len(), 4);
+        assert_eq!(
+            report.source_refusals.last(),
+            Some(&"native recipe identity, action or byte bounds failed")
+        );
+        assert_eq!(report.dispositions[0].state, "translated");
+        assert_eq!(report.dispositions[15].state, "translated");
+        assert!(report.dispositions[1..15]
+            .iter()
+            .all(|step| step.state == "unsupported"));
+        assert!(!serde_json::to_string(&report).unwrap().contains("private-"));
+        assert!(!format!("{report:?}").contains("private-"));
+    }
+
+    #[test]
+    fn neutral_wait_limits_refuse_each_bad_step_without_dropping_later_entries() {
+        let bytes = br##"{"dialect":"declarative-flow","dialectVersion":1,"steps":[
+            {"type":"navigate","url":"https://fixture.test/"},
+            {"type":"wait","milliseconds":60000},
+            {"type":"wait","milliseconds":1},
+            {"type":"wait","milliseconds":-1},
+            {"type":"wait","milliseconds":1.5},
+            {"type":"wait","milliseconds":4294967296},
+            {"type":"wait","selector":null},
+            {"type":"wait","selector":"body","state":null},
+            {"type":"wait","milliseconds":0},
+            {"type":"press","key":"Shift+Tab"}]}"##;
+        let (report, candidate) = inspect(bytes, "fixture".into(), 1).unwrap();
+        assert!(candidate.is_none());
+        assert_eq!(report.dispositions.len(), 10);
+        assert!(report.dispositions[2..8]
+            .iter()
+            .all(|step| step.state == "unsupported"));
+        assert!(report.dispositions[8..]
+            .iter()
+            .all(|step| step.state == "translated"));
+    }
+
+    #[test]
+    fn flow_byte_depth_and_step_caps_refuse_without_source_error_values() {
+        let oversize = vec![b' '; MAX_FLOW_BYTES + 1];
+        assert_eq!(
+            inspect(&oversize, "fixture".into(), 1).unwrap_err().to_string(),
+            "recorded flow exceeds byte cap"
+        );
+        let deep = format!(
+            r#"{{"private-field":{}"private-secret"{},"steps":[]}}"#,
+            "[".repeat(MAX_FLOW_DEPTH),
+            "]".repeat(MAX_FLOW_DEPTH)
+        );
+        assert_eq!(
+            inspect(deep.as_bytes(), "fixture".into(), 1)
+                .unwrap_err()
+                .to_string(),
+            "recorded flow exceeds nesting cap"
+        );
+        let steps = vec![serde_json::json!({"type":"private-type"}); MAX_SOURCE_STEPS + 1];
+        let bytes = serde_json::to_vec(&serde_json::json!({"steps":steps})).unwrap();
+        assert_eq!(
+            inspect(&bytes, "fixture".into(), 1).unwrap_err().to_string(),
+            "recorded flow exceeds step cap"
+        );
+        let malformed = br#"{"private-secret": private-source-error}"#;
+        assert_eq!(
+            inspect(malformed, "fixture".into(), 1).unwrap_err().to_string(),
+            "invalid recorded flow JSON"
+        );
+        let quoted = serde_json::to_vec(&serde_json::json!({
+            "title": format!("{}\\\"{}", "[".repeat(100), "]".repeat(100)),
+            "steps": [{"type":"navigate","url":"https://fixture.test/"}]
+        }))
+        .unwrap();
+        assert!(inspect(&quoted, "fixture".into(), 1).unwrap().0.convertible);
+    }
+
+    #[test]
+    fn neutral_action_count_and_literal_bounds_refuse_before_candidate_output() {
+        let mut steps = vec![serde_json::json!({"type":"navigate","url":"https://fixture.test/"})];
+        steps.extend((0..51).map(|_| serde_json::json!({"type":"press","key":"Enter"})));
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "dialect":"declarative-flow","dialectVersion":1,"steps":steps
+        }))
+        .unwrap();
+        let (report, candidate) = inspect(&bytes, "fixture".into(), 1).unwrap();
+        assert!(candidate.is_none());
+        assert_eq!(report.dispositions.len(), 52);
+        assert_eq!(report.dispositions[51].state, "unsupported");
+        for action in [
+            serde_json::json!({"type":"fill","selector":"body","text":"x".repeat(4097)}),
+            serde_json::json!({"type":"write","text":""}),
+            serde_json::json!({"type":"click","selector":"x".repeat(4097)}),
+            serde_json::json!({"type":"click","selector":"xpath/private-secret"}),
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "dialect":"declarative-flow","dialectVersion":1,
+                "steps":[{"type":"navigate","url":"https://fixture.test/"},action]
+            }))
+            .unwrap();
+            let (report, candidate) = inspect(&bytes, "fixture".into(), 1).unwrap();
+            assert!(candidate.is_none());
+            assert_eq!(report.dispositions[1].state, "unsupported");
+            assert!(!serde_json::to_string(&report).unwrap().contains("private-secret"));
+        }
+    }
 
     #[test]
     fn exact_flow_converts_without_dropping_source_steps_or_leaking_report_values() {

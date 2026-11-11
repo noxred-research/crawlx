@@ -29,6 +29,12 @@ pub struct Stores {
     pub frontier: Arc<dyn FrontierRepo>,
     /// Fenced request result transactions, including accepted items and delivery intent.
     pub request_commits: Arc<dyn RequestCommitRepo>,
+    /// Durable exact-binding reviewer approval repository.
+    pub approvals: Arc<dyn crawlx_storage::approvals::ApprovalRepository>,
+    /// Tenant-scoped bounded measured processor history.
+    pub report_history: Arc<dyn crawlx_core::report_history::ReportHistoryRepo>,
+    /// Privacy-safe versioned URL graph repository.
+    pub url_graph: Arc<dyn crawlx_core::url_graph::UrlGraphRepo>,
     /// Append-only accepted items.
     pub datasets: Arc<dyn DatasetRepo>,
     /// Versioned run-local state.
@@ -71,6 +77,10 @@ pub struct Stores {
     /// stores whose artifact store writes without it (tests that install their own store):
     /// their CAPTCHA tokens stay in the run-local registry.
     pub custody: Option<Arc<dyn ArtifactCustody>>,
+    /// Shared renewable authority; absent for memory and read-only stores.
+    pub pg_secret_authority: Option<Arc<PgSecretAuthority>>,
+    /// Exact artifact key provider shared by structured profile custody.
+    pub artifact_keys: Option<Arc<dyn ArtifactKeys>>,
     /// Same quota authority used by artifact writes; required before dispatching delivery content.
     pub delivery_spool: Option<Arc<UploadSpool>>,
     /// The tenant runs created by this process belong to.
@@ -187,6 +197,7 @@ impl Stores {
             .with_index(store.clone())
             .with_zdr_buffer(zdr)
             .with_upload_spool(spool.clone());
+        let artifact_keys = custody.as_ref().map(|(_, keys)| Arc::clone(keys));
         let (artifacts, custody) = match custody {
             Some((custody, keys)) => (
                 artifacts.with_custody(Arc::clone(&custody), keys, CustodyWrites::Required),
@@ -198,6 +209,9 @@ impl Stores {
             runs: store.clone(),
             frontier: store.clone(),
             request_commits: store.clone(),
+            approvals: store.clone(),
+            report_history: store.clone(),
+            url_graph: store.clone(),
             datasets: store.clone(),
             kv: store.clone(),
             source_memo: store.clone(),
@@ -220,6 +234,8 @@ impl Stores {
                 .map_err(crate::error::SessionError::from)?,
             artifacts: Arc::new(artifacts),
             custody,
+            pg_secret_authority: None,
+            artifact_keys,
             delivery_spool: Some(spool),
             tenant: TenantId::new(),
             memory: Some(store),
@@ -264,14 +280,18 @@ impl Stores {
                     .as_ref()
                     .ok_or_else(|| WorkerError::Config(CUSTODY_CONFIG_HELP.into()))?;
                 let pg = Pg::connect(url, PgConfig::default()).await?;
-                let authority =
-                    PgSecretAuthority::open(pg.clone(), registry.expose(), cfg.secret_authority_ttl)
-                        .await
-                        .map_err(|error| {
-                            WorkerError::Config(format!("secret registry is unavailable: {error}"))
-                        })?;
-                let custody: Arc<dyn ArtifactCustody> = Arc::new(PgArtifactCustody::new(authority));
-                Self::open_pg(cfg, pg, custody, keys, CustodyWrites::Required).await
+                let authority = PgSecretAuthority::open_with_policy(
+                    pg.clone(),
+                    registry.expose(),
+                    cfg.secret_authority_ttl,
+                    cfg.secret_authority_hard_max,
+                )
+                .await
+                .map_err(|error| WorkerError::Config(format!("secret registry is unavailable: {error}")))?;
+                let custody: Arc<dyn ArtifactCustody> = Arc::new(PgArtifactCustody::new(authority.clone()));
+                let mut stores = Self::open_pg(cfg, pg, custody, keys, CustodyWrites::Required).await?;
+                stores.pg_secret_authority = Some(Arc::new(authority));
+                Ok(stores)
             }
         }
     }
@@ -309,6 +329,7 @@ impl Stores {
         let pg = pg.with_delivery_buffer(zdr.clone());
         let runs: Arc<dyn RunRepo> = Arc::new(pg.clone());
         let spool = Arc::new(UploadSpool::new(cfg.artifact_spool.clone())?);
+        let artifact_keys = Arc::clone(&keys);
         let artifacts = FsArtifactStore::open(&cfg.artifacts_dir, runs, clock)
             .await?
             .with_index(Arc::new(pg.clone()))
@@ -318,6 +339,7 @@ impl Stores {
         let mut stores = Self::over_pg(pg, Arc::new(artifacts), TenantId::new());
         stores.delivery_spool = Some(spool);
         stores.custody = Some(custody);
+        stores.artifact_keys = Some(artifact_keys);
         Ok(stores)
     }
 
@@ -328,6 +350,9 @@ impl Stores {
             runs: Arc::new(pg.clone()),
             frontier: Arc::new(pg.clone()),
             request_commits: Arc::new(pg.clone()),
+            approvals: Arc::new(pg.clone()),
+            report_history: Arc::new(pg.clone()),
+            url_graph: Arc::new(pg.clone()),
             datasets: Arc::new(pg.clone()),
             kv: Arc::new(pg.clone()),
             source_memo: Arc::new(pg.clone()),
@@ -349,6 +374,8 @@ impl Stores {
             artifacts,
             delivery_spool: None,
             custody: None,
+            pg_secret_authority: None,
+            artifact_keys: None,
             tenant,
             memory: None,
             authorization: Some(Arc::new(PgAuthorizationSource::new(pg.clone()))),

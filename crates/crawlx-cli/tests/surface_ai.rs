@@ -49,7 +49,7 @@ async fn chat_completions_server() -> MockServer {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "choices": [{ "message": { "content": content } }],
+            "choices": [{ "message": { "content": content }, "finish_reason":"stop" }],
             "usage": { "prompt_tokens": 7, "completion_tokens": 3 },
         })))
         .mount(&server)

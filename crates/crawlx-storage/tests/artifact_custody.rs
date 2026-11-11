@@ -1375,3 +1375,87 @@ async fn pg_lost_publication_reply_then_secret_leaves_no_live_row_or_object() {
     assert_eq!((live, tombstoned), (0, 1));
     assert!(store.blobs().list("").await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn active_reads_obey_durable_use_expiry_pending_barriers_and_terminal_closure() {
+    let Some(w) = pg_world().await else { return };
+    let (_dir, key_path) = temp_key_file(0x6b);
+    let store = ObjectArtifactStore::new(
+        PausedBlobs::new(),
+        Arc::new(w.pg.clone()),
+        Arc::new(crawlx_core::SystemClock),
+    )
+    .with_index(Arc::new(w.pg.clone()))
+    .with_custody(w.custody_a.clone(), file_keys(&key_path), CustodyWrites::Required);
+    let clean = with_producer(
+        w.lease_a.clone(),
+        store.put(
+            w.run,
+            Sensitivity::Content,
+            "text/plain",
+            b"retained-public-value",
+        ),
+    )
+    .await
+    .unwrap();
+    let original: crawlx_core::Timestamp = sqlx::query_scalar("SELECT expires_at FROM run_secret_authority")
+        .fetch_one(w.pg.pool())
+        .await
+        .unwrap();
+    assert_eq!(store.get(&clean).await.unwrap(), b"retained-public-value");
+    sqlx::query("UPDATE run_secret_authority SET expires_at=clock_timestamp()-interval '1 second'")
+        .execute(w.pg.pool())
+        .await
+        .unwrap();
+    assert!(store.get(&clean).await.is_err());
+    assert!(store.read_content_limited(&clean, 1024).await.is_err());
+    assert!(store.stream_content(&clean, 1024).await.is_err());
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1,pending_operation=$2,pending_commitment=commitment,pending_value_commitment=$3")
+        .bind(original).bind(Uuid::now_v7()).bind([7u8; 32].as_slice())
+        .execute(w.pg.pool()).await.unwrap();
+    assert!(store.get(&clean).await.is_err());
+    assert!(store.stream_content(&clean, 1024).await.is_err());
+    sqlx::query("UPDATE run_secret_authority SET pending_operation=NULL,pending_commitment=NULL,pending_value_commitment=NULL,pending_renewal_operation=$1,pending_renewal_deadline=expires_at+interval '1 minute'")
+        .bind(Uuid::now_v7()).execute(w.pg.pool()).await.unwrap();
+    assert!(store.get(&clean).await.is_err());
+    assert!(store.stream_content(&clean, 1024).await.is_err());
+    sqlx::query(
+        "UPDATE run_secret_authority SET pending_renewal_operation=NULL,pending_renewal_deadline=NULL",
+    )
+    .execute(w.pg.pool())
+    .await
+    .unwrap();
+    let crawlx_core::custody::CustodySource::Session(session) = w.lease_a.source else {
+        panic!("session fixture required")
+    };
+    sqlx::query("UPDATE crawl_sessions SET fencing_token=fencing_token+1 WHERE session_id=$1")
+        .bind(session.0)
+        .execute(w.pg.pool())
+        .await
+        .unwrap();
+    assert!(w.custody_a.snapshot(&w.lease_a).await.is_err());
+    assert!(with_producer(
+        w.lease_a.clone(),
+        store.put(w.run, Sensitivity::Content, "text/plain", b"stale producer"),
+    )
+    .await
+    .is_err());
+    w.pg.set_status(
+        w.run,
+        crawlx_core::counters::RunStatus::Completed,
+        Some(crawlx_core::counters::TerminalReason::FrontierExhausted),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE run_secret_authority SET expires_at=clock_timestamp()-interval '1 second'")
+        .execute(w.pg.pool())
+        .await
+        .unwrap();
+    // Terminal registration is permanently closed; this is not a live re-scan grant.
+    assert_eq!(store.get(&clean).await.unwrap(), b"retained-public-value");
+    assert_eq!(
+        store.read_content_limited(&clean, 1024).await.unwrap(),
+        b"retained-public-value"
+    );
+    assert!(store.presign(&clean, Duration::from_secs(30)).await.is_err());
+}

@@ -431,6 +431,9 @@ pub struct RecrawlPolicyV1 {
     /// Conditional fetch behavior; only exact retained published history may supply validators.
     #[serde(default)]
     pub validator_mode: RecrawlValidatorModeV1,
+    /// Optional deterministic change/error feedback; absent preserves fixed scheduling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive: Option<AdaptiveRecrawlV1>,
 }
 impl RecrawlPolicyV1 {
     /// Allocate next immutable visit within policy and admitted run deadline.
@@ -472,6 +475,9 @@ impl RecrawlPolicyV1 {
     /// # Errors
     /// Returns a conflict for invalid or overflowing intervals.
     pub fn validate(&self) -> Result<(), StoreError> {
+        if let Some(adaptive) = &self.adaptive {
+            adaptive.validate()?;
+        }
         if self.version != 1
             || self.min_interval_ms == 0
             || self.max_interval_ms < self.min_interval_ms
@@ -482,6 +488,260 @@ impl RecrawlPolicyV1 {
             return Err(StoreError::Conflict("invalid recrawl bounds".into()));
         }
         Ok(())
+    }
+}
+
+/// Integer-only versioned recurrence. Factors are thousandths of the previous interval.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct AdaptiveRecrawlV1 {
+    /// Exactly one.
+    pub version: u16,
+    /// Modified content shortens the interval.
+    pub changed_permille: u16,
+    /// Unmodified content lengthens the interval.
+    pub unchanged_permille: u16,
+    /// Failed acquisitions lengthen the interval.
+    pub error_permille: u16,
+    /// Typed status/change eligibility and deterministic ranking expression.
+    pub ranking: crate::priority::EligibilityRankingV1,
+}
+
+impl Default for AdaptiveRecrawlV1 {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            changed_permille: 500,
+            unchanged_permille: 2000,
+            error_permille: 4000,
+            ranking: crate::priority::EligibilityRankingV1::default(),
+        }
+    }
+}
+
+impl AdaptiveRecrawlV1 {
+    /// Check bounded, monotone factors.
+    ///
+    /// # Errors
+    /// Rejects unknown versions, zero factors, or factors that reverse feedback.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        if self.version != 1
+            || !(1..=1000).contains(&self.changed_permille)
+            || !(1000..=16_000).contains(&self.unchanged_permille)
+            || !(1000..=16_000).contains(&self.error_permille)
+        {
+            return Err(StoreError::Conflict("invalid adaptive recrawl policy".into()));
+        }
+        self.ranking.validate()
+    }
+}
+
+/// Actual acquisition comparison; unavailable evidence stays unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RecrawlChangeV1 {
+    /// Both approved content digests exist and differ.
+    Changed,
+    /// Both approved content digests exist and match.
+    Unchanged,
+    /// Terminal acquisition failed.
+    Error,
+    /// No comparable approved representation exists.
+    Unknown,
+}
+
+/// Injected approved archive/history baseline. This value grants no byte-read authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct RecrawlBaselineV1 {
+    /// Last measured representation, absent when no body was acquired.
+    pub content_digest: Option<Digest>,
+    /// Injected transaction/capture time.
+    pub observed_at: Timestamp,
+    /// Previous bounded interval.
+    pub interval_ms: u64,
+    /// Smoothed measured change frequency in thousandths.
+    pub change_rate_permille: u16,
+    /// Consecutive actual failed acquisitions; unknown responses do not imply failure.
+    #[serde(default)]
+    pub consecutive_errors: u32,
+}
+
+impl RecrawlBaselineV1 {
+    /// Construct a baseline from approved history, without opening archive bytes.
+    #[must_use]
+    pub fn new(content_digest: Option<Digest>, observed_at: Timestamp, interval_ms: u64) -> Self {
+        Self {
+            content_digest,
+            observed_at,
+            interval_ms,
+            change_rate_permille: 500,
+            consecutive_errors: 0,
+        }
+    }
+}
+
+/// Pure schedule result; durable append still requires the original live request fence.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+#[must_use]
+pub struct RecrawlDecisionV1 {
+    /// Fresh immutable generation proposed for re-admission.
+    pub request: RequestEnvelopeV1,
+    /// Actual comparison used by this decision.
+    pub change: RecrawlChangeV1,
+    /// Clamped recurrence interval.
+    pub interval_ms: u64,
+    /// Smoothed change frequency; errors do not masquerade as unchanged.
+    pub change_rate_permille: u16,
+    /// Ascending scheduling key; the durable row ID remains the final dispatch tie-break.
+    pub rank_key: (i64, i64),
+}
+
+const RECRAWL_BASELINE_KEY: &str = "crawlx_recrawl_baseline_v1";
+
+impl RecrawlPolicyV1 {
+    /// Schedule using real terminal commit facts and the prior committed baseline.
+    /// A supplied archive baseline overrides queue history only after its caller checks custody.
+    ///
+    /// # Errors
+    /// Rejects malformed history, policy bounds, future baselines, or arithmetic overflow.
+    pub fn next_visit_after_commit(
+        &self,
+        current: &RequestEnvelopeV1,
+        commit: &RequestCommitV1,
+        committed_at: Timestamp,
+        run_deadline: Timestamp,
+        archive_baseline: Option<&RecrawlBaselineV1>,
+    ) -> Result<Option<RecrawlDecisionV1>, StoreError> {
+        self.validate()?;
+        if !matches!(
+            commit.status,
+            FrontierStatus::Succeeded | FrontierStatus::Failed | FrontierStatus::Unreachable
+        ) || (self.adaptive.is_none() && commit.status != FrontierStatus::Succeeded)
+        {
+            return Ok(None);
+        }
+        let queued = current
+            .metadata
+            .get(RECRAWL_BASELINE_KEY)
+            .map(RecrawlBaselineV1::deserialize)
+            .transpose()
+            .map_err(|_| StoreError::Conflict("invalid recrawl baseline".into()))?;
+        let baseline = archive_baseline.or(queued.as_ref());
+        if baseline.is_some_and(|value| {
+            value.observed_at > committed_at
+                || value.change_rate_permille > 1000
+                || value.interval_ms < self.min_interval_ms
+                || value.interval_ms > self.max_interval_ms
+        }) {
+            return Err(StoreError::Conflict("invalid recrawl baseline bounds".into()));
+        }
+        let digest = commit.page.as_ref().map(|page| page.content_digest);
+        let change = if matches!(
+            commit.status,
+            FrontierStatus::Failed | FrontierStatus::Unreachable
+        ) || commit.page.as_ref().is_some_and(|page| page.status >= 400)
+        {
+            RecrawlChangeV1::Error
+        } else if commit.status == FrontierStatus::Succeeded {
+            match (baseline.and_then(|value| value.content_digest), digest) {
+                (Some(previous), Some(current)) if previous == current => RecrawlChangeV1::Unchanged,
+                (Some(_), Some(_)) => RecrawlChangeV1::Changed,
+                _ => RecrawlChangeV1::Unknown,
+            }
+        } else {
+            return Ok(None);
+        };
+        let previous_interval = if self.adaptive.is_some() {
+            baseline.map_or(self.min_interval_ms, |value| value.interval_ms)
+        } else {
+            self.min_interval_ms
+        };
+        let previous_rate = baseline.map_or(500, |value| value.change_rate_permille);
+        let rate = match change {
+            RecrawlChangeV1::Changed => (u32::from(previous_rate) * 3 + 1000) / 4,
+            RecrawlChangeV1::Unchanged => u32::from(previous_rate) * 3 / 4,
+            RecrawlChangeV1::Error | RecrawlChangeV1::Unknown => u32::from(previous_rate),
+        };
+        let factor = self.adaptive.as_ref().map_or(1000, |policy| match change {
+            RecrawlChangeV1::Changed => policy.changed_permille,
+            RecrawlChangeV1::Unchanged => policy.unchanged_permille,
+            RecrawlChangeV1::Error => policy.error_permille,
+            RecrawlChangeV1::Unknown => 1000,
+        });
+        let interval_ms = previous_interval
+            .checked_mul(u64::from(factor))
+            .ok_or_else(|| StoreError::Conflict("recrawl recurrence overflow".into()))?
+            .checked_div(1000)
+            .ok_or_else(|| StoreError::Conflict("recrawl divisor is zero".into()))?
+            .clamp(self.min_interval_ms, self.max_interval_ms);
+        // Reuse generation/deadline checks without mutating the admitted policy.
+        let mut bounded = self.clone();
+        bounded.min_interval_ms = interval_ms;
+        let Some(mut request) = bounded.next_visit(current, commit.request_id, committed_at, run_deadline)?
+        else {
+            return Ok(None);
+        };
+        let change_rate_permille =
+            u16::try_from(rate).map_err(|_| StoreError::Conflict("recrawl change rate overflow".into()))?;
+        let consecutive_errors = if change == RecrawlChangeV1::Error {
+            baseline
+                .map_or(0, |value| value.consecutive_errors)
+                .saturating_add(1)
+        } else {
+            0
+        };
+        let default_ranking = crate::priority::EligibilityRankingV1::default();
+        let ranking = self
+            .adaptive
+            .as_ref()
+            .map_or(&default_ranking, |policy| &policy.ranking);
+        let Some(rank_key) = ranking.key(
+            committed_at,
+            None,
+            commit.page.as_ref().map(|page| page.status),
+            current.priority,
+            change_rate_permille,
+            consecutive_errors,
+            commit.request_id,
+        )?
+        else {
+            return Ok(None);
+        };
+        let next_baseline = RecrawlBaselineV1 {
+            // Errors preserve the most recent measured representation, not a fabricated body.
+            content_digest: if change == RecrawlChangeV1::Error {
+                baseline.and_then(|value| value.content_digest)
+            } else {
+                digest.or_else(|| baseline.and_then(|value| value.content_digest))
+            },
+            observed_at: committed_at,
+            interval_ms,
+            change_rate_permille,
+            consecutive_errors,
+        };
+        request.metadata.insert(
+            RECRAWL_BASELINE_KEY.into(),
+            serde_json::to_value(next_baseline)
+                .map_err(|_| StoreError::Conflict("recrawl baseline encoding failed".into()))?,
+        );
+        request
+            .metadata
+            .insert("crawlx_recrawl_rank_v1".into(), serde_json::json!(rank_key.0));
+        request
+            .validate()
+            .map_err(|_| StoreError::Conflict("recrawl metadata limit exceeded".into()))?;
+        Ok(Some(RecrawlDecisionV1 {
+            request,
+            change,
+            interval_ms,
+            change_rate_permille,
+            rank_key,
+        }))
     }
 }
 /// A settled rendition proposed under a real browser session lease.
@@ -678,6 +938,10 @@ pub struct RequestCommitV1 {
     pub accepted: Vec<crate::dataset::AcceptedBatchV1>,
     /// Extension/loader state deltas checked atomically with accepted items.
     pub state_deltas: Vec<crate::dataset::KvCasV1>,
+    /// Complete bounded callback trail committed under the same request fence.
+    pub extensions: Vec<crate::extensions::ExtensionReceiptV1>,
+    /// Measured privacy-safe facts committed with this processing result.
+    pub report_facts: Vec<crate::report_history::ReportFactV1>,
     /// Immutable delivery intents; transport acknowledgement happens separately.
     pub outbox: Vec<crate::dataset::DeliveryBatchV1>,
     /// Session and epoch checked by observed-capable stores in the result transaction.
@@ -709,9 +973,38 @@ impl RequestCommitV1 {
             children: None,
             accepted: Vec::new(),
             state_deltas: Vec::new(),
+            extensions: Vec::new(),
+            report_facts: Vec::new(),
             outbox: Vec::new(),
             observation: None,
         }
+    }
+    /// Validate bounded callback and report evidence before a result transaction.
+    ///
+    /// # Errors
+    /// Rejects malformed callback sequences, foreign report scope and excessive facts.
+    pub fn validate_processing_evidence(&self) -> Result<(), StoreError> {
+        crate::extensions::validate_extension_receipts(&self.extensions)
+            .map_err(|_| StoreError::Conflict("invalid extension attempt receipts".into()))?;
+        if self.report_facts.len() > 64 {
+            return Err(StoreError::Conflict("request report fact limit exceeded".into()));
+        }
+        for fact in &self.report_facts {
+            fact.validate()?;
+            let source_matches = match &self.observation {
+                Some((lease, _)) => {
+                    fact.tenant == lease.tenant && fact.source == lease.source && fact.fence == lease.fence
+                }
+                None => {
+                    fact.fence == self.fence
+                        && fact.source == crate::custody::CustodySource::Url(self.request_id)
+                }
+            };
+            if fact.run != self.run || fact.request_id != Some(self.request_id) || !source_matches {
+                return Err(StoreError::LeaseLost);
+            }
+        }
+        Ok(())
     }
     /// Validate a closed, body-free acquisition observation and hash the immutable result receipt.
     /// Storage must separately check the queued HEAD method and bind `acquisition.tenant` to the
@@ -838,6 +1131,7 @@ fn closed_head_acquisition(value: &serde_json::Value) -> bool {
             "truncated",
             "backend",
             "connection",
+            "dnsReport",
             "validation",
             "attempts",
             "attemptSummaries",
@@ -862,6 +1156,7 @@ fn closed_head_acquisition(value: &serde_json::Value) -> bool {
                 "browser",
                 "available",
                 "limitations",
+                "identityProfile",
             ],
         ),
         (
@@ -873,6 +1168,9 @@ fn closed_head_acquisition(value: &serde_json::Value) -> bool {
                 "proxyRoute",
                 "tlsVerification",
                 "certificateObserved",
+                "poolSession",
+                "poolExitIp",
+                "negotiatedProtocol",
             ],
         ),
         (
@@ -1033,6 +1331,22 @@ pub trait RequestCommitRepo: Send + Sync + crate::digest_registry::DigestRegistr
     /// # Errors
     /// Returns lease loss, state conflict, quota or storage errors without partial writes.
     async fn commit_fenced(&self, commit: RequestCommitV1) -> Result<(), StoreError>;
+    /// Persist a complete nonterminal attempt trail before handing back its live fence.
+    ///
+    /// # Errors
+    /// Rejects stale leases, malformed receipts and changed replay content.
+    async fn record_extension_attempt(
+        &self,
+        _run: CrawlRunId,
+        _request_id: i64,
+        _fence: i64,
+        _attempt: u32,
+        _receipts: &[crate::extensions::ExtensionReceiptV1],
+    ) -> Result<(), StoreError> {
+        Err(StoreError::AccessDenied(
+            "extension attempt persistence unsupported".into(),
+        ))
+    }
 }
 
 impl crate::acquisition::AcquisitionAllowanceV1 {
@@ -1377,5 +1691,240 @@ mod tests {
         let mut changed = commit;
         changed.fence = 4;
         assert_ne!(changed.head_response_receipt().unwrap(), Some(original));
+    }
+}
+
+#[cfg(test)]
+mod adaptive_schedule_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    fn now() -> Timestamp {
+        "2026-01-01T00:00:00Z".parse().unwrap()
+    }
+
+    fn request() -> RequestEnvelopeV1 {
+        let url = url::Url::parse("https://schedule.test/page").unwrap();
+        RequestEnvelopeV1::get(
+            crate::url::CanonicalUrl {
+                key: Digest::of("schedule-test", b"url"),
+                origin: url.origin().ascii_serialization(),
+                route_template: crate::url::RouteTemplate(url.path().into()),
+                params: Vec::new(),
+                url,
+            },
+            0,
+            None,
+        )
+    }
+
+    fn policy() -> RecrawlPolicyV1 {
+        RecrawlPolicyV1 {
+            version: 1,
+            min_interval_ms: 100,
+            max_interval_ms: 10_000,
+            max_visits: 10,
+            end_at: now() + chrono::Duration::hours(1),
+            validator_mode: RecrawlValidatorModeV1::Disabled,
+            adaptive: Some(AdaptiveRecrawlV1::default()),
+        }
+    }
+
+    fn commit(status: FrontierStatus, digest: Option<Digest>) -> RequestCommitV1 {
+        let mut commit =
+            RequestCommitV1::terminal(CrawlRunId(uuid::Uuid::from_u128(1)), 9, 7, 1, status, None);
+        if let Some(content_digest) = digest {
+            commit.page = Some(crate::repo::PageRecord {
+                run: commit.run,
+                frontier_id: commit.request_id,
+                url: request().url,
+                status: 200,
+                content_type: None,
+                content_digest,
+                title: None,
+                markdown: None,
+                html: None,
+                metadata: serde_json::json!({}),
+                links: Vec::new(),
+                fetched_at: now(),
+                lane: crate::traffic::TrustLane::Diagnostic,
+            });
+        }
+        commit
+    }
+
+    #[test]
+    fn hand_computed_changed_unchanged_and_error_intervals() {
+        let old = Digest::of("schedule-test", b"old");
+        let new = Digest::of("schedule-test", b"new");
+        let baseline = RecrawlBaselineV1::new(Some(old), now(), 1000);
+        for (status, digest, expected_change, interval, rate) in [
+            (
+                FrontierStatus::Succeeded,
+                Some(new),
+                RecrawlChangeV1::Changed,
+                500,
+                625,
+            ),
+            (
+                FrontierStatus::Succeeded,
+                Some(old),
+                RecrawlChangeV1::Unchanged,
+                2000,
+                375,
+            ),
+            (FrontierStatus::Failed, None, RecrawlChangeV1::Error, 4000, 500),
+            (
+                FrontierStatus::Succeeded,
+                None,
+                RecrawlChangeV1::Unknown,
+                1000,
+                500,
+            ),
+        ] {
+            let decision = policy()
+                .next_visit_after_commit(
+                    &request(),
+                    &commit(status, digest),
+                    now(),
+                    policy().end_at,
+                    Some(&baseline),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(decision.change, expected_change);
+            assert_eq!(decision.interval_ms, interval);
+            assert_eq!(decision.change_rate_permille, rate);
+            assert_eq!(decision.request.revisit_generation, 1);
+            assert_eq!(decision.request.parent, Some(9));
+            assert_eq!(
+                decision.request.not_before,
+                Some(now() + chrono::Duration::milliseconds(i64::try_from(interval).unwrap()))
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_deadline_generation_and_denial_are_not_overridden() {
+        let old = Digest::of("schedule-test", b"old");
+        let baseline = RecrawlBaselineV1::new(Some(old), now(), 9000);
+        let failed = commit(FrontierStatus::Failed, None);
+        let decision = policy()
+            .next_visit_after_commit(&request(), &failed, now(), policy().end_at, Some(&baseline))
+            .unwrap()
+            .unwrap();
+        assert_eq!(decision.interval_ms, 10_000);
+        assert!(policy()
+            .next_visit_after_commit(
+                &request(),
+                &failed,
+                now(),
+                now() + chrono::Duration::seconds(10),
+                Some(&baseline),
+            )
+            .unwrap()
+            .is_none());
+        let mut exhausted = request();
+        exhausted.revisit_generation = 9;
+        assert!(policy()
+            .next_visit_after_commit(&exhausted, &failed, now(), policy().end_at, None,)
+            .unwrap()
+            .is_none());
+        for denied in [
+            FrontierStatus::PolicyBlocked,
+            FrontierStatus::RobotsBlocked,
+            FrontierStatus::Abandoned,
+        ] {
+            assert!(policy()
+                .next_visit_after_commit(&request(), &commit(denied, None), now(), policy().end_at, None,)
+                .unwrap()
+                .is_none());
+        }
+        let mut invalid_rate = RecrawlBaselineV1::new(Some(old), now(), 1000);
+        invalid_rate.change_rate_permille = 1001;
+        assert!(policy()
+            .next_visit_after_commit(&request(), &failed, now(), policy().end_at, Some(&invalid_rate),)
+            .is_err());
+        let minimum = RecrawlBaselineV1::new(Some(old), now(), 100);
+        let modified = commit(
+            FrontierStatus::Succeeded,
+            Some(Digest::of("schedule-test", b"new")),
+        );
+        assert_eq!(
+            policy()
+                .next_visit_after_commit(&request(), &modified, now(), policy().end_at, Some(&minimum),)
+                .unwrap()
+                .unwrap()
+                .interval_ms,
+            100
+        );
+        let future = RecrawlBaselineV1::new(Some(old), now() + chrono::Duration::seconds(1), 1000);
+        assert!(policy()
+            .next_visit_after_commit(&request(), &failed, now(), policy().end_at, Some(&future),)
+            .is_err());
+    }
+
+    #[test]
+    fn typed_status_eligibility_executes_in_native_commit_schedule() {
+        let digest = Digest::of("schedule-test", b"body");
+        let mut policy = policy();
+        policy.adaptive.as_mut().unwrap().ranking.status_range = Some((200, 299));
+        assert!(policy
+            .next_visit_after_commit(
+                &request(),
+                &commit(FrontierStatus::Failed, None),
+                now(),
+                policy.end_at,
+                None,
+            )
+            .unwrap()
+            .is_none());
+        let accepted = policy
+            .next_visit_after_commit(
+                &request(),
+                &commit(FrontierStatus::Succeeded, Some(digest)),
+                now(),
+                policy.end_at,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.request.metadata["crawlx_recrawl_rank_v1"], 0);
+        policy.adaptive.as_mut().unwrap().ranking.version = 2;
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn immutable_generation_history_survives_restart() {
+        let old = Digest::of("schedule-test", b"old");
+        let baseline = RecrawlBaselineV1::new(Some(old), now(), 1000);
+        let first = policy()
+            .next_visit_after_commit(
+                &request(),
+                &commit(FrontierStatus::Succeeded, Some(old)),
+                now(),
+                policy().end_at,
+                Some(&baseline),
+            )
+            .unwrap()
+            .unwrap();
+        let restored: RequestEnvelopeV1 =
+            serde_json::from_slice(&serde_json::to_vec(&first.request).unwrap()).unwrap();
+        let at = now() + chrono::Duration::seconds(2);
+        let second = policy()
+            .next_visit_after_commit(
+                &restored,
+                &commit(FrontierStatus::Succeeded, Some(old)),
+                at,
+                policy().end_at,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.interval_ms, 4000);
+        assert_eq!(second.change_rate_permille, 281);
+        assert_eq!(second.request.revisit_generation, 2);
+        assert_eq!(request().revisit_generation, 0);
     }
 }

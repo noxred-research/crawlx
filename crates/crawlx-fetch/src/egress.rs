@@ -9,6 +9,9 @@
 //! connection to the pinned address: HTTP/1.1 upstream for an HTTP/1.x client,
 //! HTTP/2 with prior knowledge upstream when the client itself spoke HTTP/2
 //! (the listener accepts both).
+//! Visible HTTP requests retain the authorization record's exact origins, prefixes and excluded
+//! paths. Opaque CONNECT tunnels check the exact HTTPS origin and port; encrypted paths still
+//! require the browser's full navigation scope guard and are not inspected by this proxy.
 //!
 //! With [`EgressProxy::serve_with_capture`] every forwarded request and every
 //! tunnel produces exactly one [`ProxyFlow`] (the proxy capture backend). Credential
@@ -30,9 +33,19 @@ use crawlx_core::traffic::{
 use crawlx_policy::egress::EgressPolicy;
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
-use http::{header, HeaderMap, HeaderName, Method, Request, Response, StatusCode, Version};
+use http::{header, HeaderMap, HeaderName, Method, StatusCode, Version};
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
+use http::{Request, Response};
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
-use hyper::body::{Body, Frame, Incoming, SizeHint};
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
+use hyper::body::Incoming;
+use hyper::body::{Body, Frame, SizeHint};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use parking_lot::Mutex;
@@ -60,15 +73,27 @@ pub const PROXY_ERROR_HEADER: &str = "x-crawlx-proxy-error";
 const MAX_LOGGED_DENIALS: usize = 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 type ProxyBody = BoxBody<Bytes, hyper::Error>;
 
 /// Retain physical capacity through response completion, error or early drop,
 /// independently of whether flow capture is enabled.
 struct AdmittedBody {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+    )]
     inner: ProxyBody,
     physical: Option<PhysicalPermit>,
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 impl Body for AdmittedBody {
     type Data = Bytes;
     type Error = hyper::Error;
@@ -293,6 +318,10 @@ impl<B> Drop for CapturedBody<B> {
 
 /// Skeleton of a flow for a request that just arrived; configured header and cookie values
 /// are masked ([`RequestControls::mask_headers`]).
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 fn flow_for(
     req: &Request<Incoming>,
     url: String,
@@ -437,7 +466,23 @@ impl Shared {
     ) -> Result<BoxIo, Refusal> {
         let Some(up) = &self.upstream else {
             return match connect_any(addrs).await {
-                Ok(s) => Ok(Box::new(s)),
+                Ok(stream) => {
+                    let peer = stream.peer_addr().map_err(|error| {
+                        Box::new(upstream_failure(&format!(
+                            "cannot inspect upstream peer: {error}\n"
+                        )))
+                    })?;
+                    if !addrs.contains(&peer) {
+                        return Err(Box::new(upstream_failure("upstream peer was not pinned\n")));
+                    }
+                    if let Err(denied) = self.policy.check_all(host, &[peer.ip()]) {
+                        self.record_denial(method, host, port, Some(peer.ip()), denied.rule.as_str());
+                        return Err(Box::new(reject_response(&Reject::Denied {
+                            rule: denied.rule.as_str().to_owned(),
+                        })));
+                    }
+                    Ok(Box::new(stream))
+                }
                 Err(e) => Err(Box::new(upstream_failure(&format!(
                     "upstream connect failed: {e}\n"
                 )))),
@@ -476,6 +521,10 @@ impl Shared {
 /// An answer of the proxy itself for a failed upstream connect, handshake or exchange. It is
 /// marked with [`PROXY_ERROR_HEADER`] so a client that routes through this proxy can tell it
 /// from a `502` the origin sent.
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 fn upstream_failure(msg: &str) -> Response<ProxyBody> {
     let mut resp = text_response(StatusCode::BAD_GATEWAY, msg);
     resp.headers_mut().insert(
@@ -485,6 +534,10 @@ fn upstream_failure(msg: &str) -> Response<ProxyBody> {
     resp
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 fn text_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
     let body = Full::new(Bytes::from(msg.to_owned()))
         .map_err(|never| match never {})
@@ -498,6 +551,10 @@ fn text_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
     resp
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 fn reject_response(r: &Reject) -> Response<ProxyBody> {
     match r {
         Reject::Denied { rule } => {
@@ -516,6 +573,10 @@ fn reject_response(r: &Reject) -> Response<ProxyBody> {
 }
 
 /// An answer the proxy gives instead of forwarding (boxed: it is the `Err` of the dial helpers).
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 type Refusal = Box<Response<ProxyBody>>;
 
 /// Connect to the first reachable pinned address.
@@ -569,6 +630,10 @@ fn strip_hop_by_hop(headers: &mut HeaderMap) {
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 async fn handle(
     shared: Arc<Shared>,
     peer: SocketAddr,
@@ -581,6 +646,10 @@ async fn handle(
     })
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 async fn handle_connect(
     shared: &Arc<Shared>,
     peer: SocketAddr,
@@ -612,6 +681,22 @@ async fn handle_connect(
     };
     let host = strip_brackets(authority.host()).to_ascii_lowercase();
     let port = authority.port_u16().unwrap_or(443);
+    let target = match url::Url::parse(&format!("https://{authority}/")) {
+        Ok(target) => target,
+        Err(_) => return text_response(StatusCode::BAD_REQUEST, "invalid CONNECT authority\n"),
+    };
+    if let Err(denied) = shared.policy.check_connect_authority(&target) {
+        shared.record_denial(
+            "CONNECT",
+            &host,
+            port,
+            parse_ip_literal(&host),
+            denied.rule.as_str(),
+        );
+        return reject_response(&Reject::Denied {
+            rule: denied.rule.as_str().to_owned(),
+        });
+    }
     let (addrs, physical) = match shared.authorize("CONNECT", &host, port).await {
         Ok(a) => a,
         Err(r) => return reject_response(&r),
@@ -660,9 +745,17 @@ async fn handle_connect(
     Response::new(Full::new(Bytes::new()).map_err(|never| match never {}).boxed())
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 type UpstreamBody = BoxBody<Bytes, hyper::Error>;
 
 /// Drive an upstream connection until it ends or the proxy shuts down.
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 fn spawn_conn(cancel: CancellationToken, conn: impl Future<Output = hyper::Result<()>> + Send + 'static) {
     tokio::spawn(async move {
         tokio::select! {
@@ -678,6 +771,10 @@ fn spawn_conn(cancel: CancellationToken, conn: impl Future<Output = hyper::Resul
 
 /// One request over a fresh upstream connection: HTTP/2 with prior knowledge when the
 /// client spoke HTTP/2, HTTP/1.1 otherwise.
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 async fn send_upstream(
     shared: &Arc<Shared>,
     upstream: BoxIo,
@@ -705,6 +802,10 @@ async fn send_upstream(
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 async fn handle_forward(
     shared: &Arc<Shared>,
     peer: SocketAddr,
@@ -721,23 +822,21 @@ async fn handle_forward(
     };
     let host = strip_brackets(authority.host()).to_ascii_lowercase();
     let port = authority.port_u16().unwrap_or(80);
-    if shared.policy.fixture_scope.is_some() {
-        let url = match url::Url::parse(&uri.to_string()) {
-            Ok(url) => url,
-            Err(_) => return text_response(StatusCode::BAD_REQUEST, "invalid fixture resource URL\n"),
-        };
-        if let Err(denied) = shared.policy.check_url(&url) {
-            shared.record_denial(
-                &method_name,
-                &host,
-                port,
-                parse_ip_literal(&host),
-                denied.rule.as_str(),
-            );
-            return reject_response(&Reject::Denied {
-                rule: denied.rule.as_str().to_owned(),
-            });
-        }
+    let url = match url::Url::parse(&uri.to_string()) {
+        Ok(url) => url,
+        Err(_) => return text_response(StatusCode::BAD_REQUEST, "invalid resource URL\n"),
+    };
+    if let Err(denied) = shared.policy.check_url(&url) {
+        shared.record_denial(
+            &method_name,
+            &host,
+            port,
+            parse_ip_literal(&host),
+            denied.rule.as_str(),
+        );
+        return reject_response(&Reject::Denied {
+            rule: denied.rule.as_str().to_owned(),
+        });
     }
     let (addrs, physical) = match shared.authorize(&method_name, &host, port).await {
         Ok(a) => a,
@@ -1028,6 +1127,10 @@ impl EgressProxy {
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed policy-pinned proxy transport owns raw messages and translates bounded domain results"
+)]
 async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
     loop {
         tokio::select! {

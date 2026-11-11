@@ -438,13 +438,15 @@ async fn raw_feed_fixture(endpoint: url::Url) -> RawFeedFixture {
     run.config.seed_url = endpoint.clone();
     run.config.safety.allow_private_networks = true;
     let address: std::net::IpAddr = endpoint.host_str().unwrap().parse().unwrap();
-    let mut config = crate::WorkerConfig::default();
-    config
-        .egress
-        .extra_allow
-        .push(format!("{address}/32").parse().unwrap());
+    let config = crate::WorkerConfig::default();
+    let mut record = crawlx_policy::testkit::sample_record(
+        run.tenant,
+        "2026-01-01T00:00:00Z".parse().unwrap(),
+        &[&endpoint.origin().ascii_serialization()],
+    );
+    record.authorized_networks = vec![format!("{address}/32").parse().unwrap()];
     let authority = DeliveryAuthority {
-        policy: Arc::new(config.egress.policy_for_run(&run.config, None)),
+        policy: Arc::new(config.egress.policy_for_run(&run.config, Some(&record)).unwrap()),
         resolver: Arc::new(crawlx_fetch::StaticResolver::new().with(endpoint.host_str().unwrap(), [address])),
         governor: Arc::new(crawlx_fetch::OriginGovernor::new(
             crawlx_fetch::GovernorConfig::from_politeness(&run.config.politeness, run.seed),

@@ -13,7 +13,9 @@
 //! The kernel is synchronous, does no I/O of its own and never depends on
 //! model output: a [`ModelHint`] can only raise the class or ask for approval.
 
-use crate::approvals::{ApprovalRequest, ApprovalState, ApprovalStore, InMemoryApprovalStore};
+use crate::approvals::{
+    ApprovalAuthority, ApprovalRequest, ApprovalState, ApprovalStore, InMemoryApprovalStore, VerifiedApproval,
+};
 use crate::audit::{summarize, AuditEntry, AuditError, AuditPhase, AuditSink};
 use crate::classify::{severity, Classification, Classifier, ScopeRules};
 use crate::lexicon::Normalized;
@@ -170,9 +172,16 @@ pub struct AdmittedAction {
     base_decision: SafetyDecision,
     identity: Digest,
     context: SafetyContext,
+    approval_authority: Option<ApprovalAuthority>,
 }
 
 impl AdmittedAction {
+    /// Durable authority and original parked action, when admission spent an approval.
+    #[must_use]
+    pub const fn approval_authority(&self) -> Option<&ApprovalAuthority> {
+        self.approval_authority.as_ref()
+    }
+
     /// The proposal that was admitted.
     #[must_use]
     pub const fn proposal(&self) -> &ActionProposal {
@@ -222,6 +231,17 @@ enum Resolved {
     Pending(ApprovalRequest),
     Consumed(ApprovalId),
     Denied(&'static str),
+}
+
+/// How the kernel obtains the approval request of an approval-gated action.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ApprovalAsk {
+    /// A reviewer-granted request the caller presents.
+    Presented(ApprovalId),
+    /// Reuse the open request of the same binding, issuing one when none is open.
+    OpenOrNew,
+    /// Always issue a new request, expiring at `deadline` or else the kernel's run deadline.
+    NewOnly { deadline: Option<Timestamp> },
 }
 
 /// Extra deny rules evaluated after classification (tenant-specific policy).
@@ -388,10 +408,70 @@ impl SafetyKernel {
         c: &SafetyContext,
         opts: AdjudicateOptions,
     ) -> Adjudication {
+        self.adjudicate_inner(p, c, opts, None, None)
+    }
+
+    /// [`Self::adjudicate`] for a caller that binds each approval request to exactly one
+    /// parked action. An approval-gated verdict always carries a newly issued request,
+    /// never an open request another action already holds for the same binding. The request
+    /// expires at `run_deadline` when given (the live, possibly extended deadline of the run)
+    /// instead of the deadline the kernel was built with.
+    #[must_use]
+    pub fn adjudicate_parked(
+        &self,
+        p: ActionProposal,
+        c: &SafetyContext,
+        run_deadline: Option<Timestamp>,
+    ) -> Adjudication {
+        self.adjudicate_inner(p, c, AdjudicateOptions::default(), None, Some(run_deadline))
+    }
+
+    /// Reclassify and spend one preloaded durable capability without storage I/O.
+    /// `expected` comes from the trusted actor, never from the reviewer request.
+    #[must_use]
+    pub fn adjudicate_verified(
+        &self,
+        p: ActionProposal,
+        c: &SafetyContext,
+        expected: ApprovalAuthority,
+        verified: &mut VerifiedApproval,
+    ) -> Adjudication {
+        self.adjudicate_inner(
+            p,
+            c,
+            AdjudicateOptions::default(),
+            Some((expected, verified)),
+            None,
+        )
+    }
+
+    /// Build a pure arbiter gate from durable decision snapshots. Snapshots affect
+    /// ranking only; admission still requires asynchronous durable consumption.
+    #[must_use]
+    pub fn preview_gate<'a>(&'a self, requests: &'a [ApprovalRequest]) -> ApprovalPreviewGate<'a> {
+        ApprovalPreviewGate {
+            kernel: self,
+            requests,
+        }
+    }
+
+    fn adjudicate_inner(
+        &self,
+        p: ActionProposal,
+        c: &SafetyContext,
+        opts: AdjudicateOptions,
+        verified: Option<(ApprovalAuthority, &mut VerifiedApproval)>,
+        // `Some(deadline)` parks the action: its request is always new and expires at `deadline`
+        // (else the kernel's run deadline).
+        park: Option<Option<Timestamp>>,
+    ) -> Adjudication {
         let now = self.clock.now();
         let c = self.effective_context(c);
         let action_key = p.key.id();
         let Some(ev) = self.evaluate_caught(&p, &c, opts.hint, now) else {
+            if let Some((_, verified)) = verified {
+                verified.invalidate();
+            }
             return Adjudication::Deny(self.deny_panic(&p, &c, action_key, now));
         };
         let summary = summarize(&p.key, ev.risk, &ev.classification, &c);
@@ -400,15 +480,42 @@ impl SafetyKernel {
         let mut decision = ev.decision;
         let mut approval = None;
         let mut pending = None;
-        if decision == SafetyDecision::ApprovalRequired {
-            match self.resolve_approval(&p, ev.risk, opts.approval, action_key, &summary, now) {
+        let mut approval_authority = None;
+        if verified.is_some() || decision == SafetyDecision::ApprovalRequired {
+            let resolved = if let Some((expected, verified)) = verified {
+                match verified.consume(
+                    expected,
+                    action_key,
+                    ev.risk,
+                    &params_digest(&p.action),
+                    p.epoch,
+                    now,
+                ) {
+                    Ok(id) => {
+                        approval_authority = Some(expected);
+                        Resolved::Consumed(id)
+                    }
+                    Err(error) => Resolved::Denied(error.rule()),
+                }
+            } else {
+                let ask = match (opts.approval, park) {
+                    (Some(id), _) => ApprovalAsk::Presented(id),
+                    (None, None) => ApprovalAsk::OpenOrNew,
+                    (None, Some(deadline)) => ApprovalAsk::NewOnly { deadline },
+                };
+                self.resolve_approval(&p, ev.risk, ask, action_key, &summary, now)
+            };
+            match resolved {
                 Resolved::Pending(req) => {
                     approval = Some(req.approval_id);
                     pending = Some(req);
                     rules.push("approval.pending".to_owned());
                 }
                 Resolved::Consumed(id) => {
-                    decision = SafetyDecision::Allow;
+                    // Approval never waives a current hard denial.
+                    if decision != SafetyDecision::Deny {
+                        decision = SafetyDecision::Allow;
+                    }
                     approval = Some(id);
                     rules.push("approval.consumed".to_owned());
                 }
@@ -451,6 +558,7 @@ impl SafetyKernel {
                 proposal: p,
                 _seal: Seal,
                 verdict,
+                approval_authority,
             }),
             (SafetyDecision::ApprovalRequired, Some(req)) => Adjudication::ApprovalRequired(verdict, req),
             (SafetyDecision::Deny, _) => Adjudication::Deny(verdict),
@@ -710,31 +818,35 @@ impl SafetyKernel {
         &self,
         p: &ActionProposal,
         risk: RiskClass,
-        presented: Option<ApprovalId>,
+        ask: ApprovalAsk,
         action_key: ActionContextId,
         summary: &str,
         now: Timestamp,
     ) -> Resolved {
         let params = params_digest(&p.action);
-        let Some(id) = presented else {
-            return match self.approvals.find_open(action_key, risk, &params, now) {
-                Ok(Some(rec)) => Resolved::Pending(rec.request),
-                Ok(None) => {
-                    let req = ApprovalRequest::new(
-                        action_key,
-                        risk,
-                        params,
-                        summary.to_owned(),
-                        now,
+        let id = match ask {
+            ApprovalAsk::Presented(id) => id,
+            ApprovalAsk::OpenOrNew | ApprovalAsk::NewOnly { .. } => {
+                let (open, deadline) = match ask {
+                    ApprovalAsk::NewOnly { deadline } => (Ok(None), deadline.or(self.run_deadline)),
+                    _ => (
+                        self.approvals.find_open(action_key, risk, &params, now),
                         self.run_deadline,
-                    );
-                    match self.approvals.issue(req.clone()) {
-                        Ok(()) => Resolved::Pending(req),
-                        Err(e) => Resolved::Denied(e.rule()),
+                    ),
+                };
+                return match open {
+                    Ok(Some(rec)) => Resolved::Pending(rec.request),
+                    Ok(None) => {
+                        let req =
+                            ApprovalRequest::new(action_key, risk, params, summary.to_owned(), now, deadline);
+                        match self.approvals.issue(req.clone()) {
+                            Ok(()) => Resolved::Pending(req),
+                            Err(e) => Resolved::Denied(e.rule()),
+                        }
                     }
-                }
-                Err(e) => Resolved::Denied(e.rule()),
-            };
+                    Err(e) => Resolved::Denied(e.rule()),
+                };
+            }
         };
         let rec = match self.approvals.get(id) {
             Ok(Some(rec)) => rec,
@@ -799,45 +911,23 @@ impl SafetyKernel {
     }
 }
 
-impl SafetyGate for SafetyKernel {
-    /// Verdict for arbiter-time filtering. No audit write, request creation or consumption.
-    /// A matching granted approval makes a proposal rankable, but admission must still
-    /// atomically consume that exact approval and perform the ordinary live confirmation.
-    fn classify(&self, p: &ActionProposal, c: &SafetyContext) -> SafetyVerdict {
+impl SafetyKernel {
+    /// Verdict for arbiter-time filtering that ignores every grant in the synchronous
+    /// approval store: an approval-gated action stays `ApprovalRequired`. Durable reviewer
+    /// decisions are loaded asynchronously and layered on top by [`ApprovalPreviewGate`].
+    /// No audit write, request creation or consumption.
+    #[must_use]
+    pub fn classify_ungranted(&self, p: &ActionProposal, c: &SafetyContext) -> SafetyVerdict {
         let c = self.effective_context(c);
         let now = self.clock.now();
         match self.evaluate_caught(p, &c, ModelHint::default(), now) {
-            Some(ev) => {
-                let mut verdict = SafetyVerdict {
-                    decision_id: SafetyDecisionId::new(),
-                    decision: ev.decision,
-                    risk_class: ev.risk,
-                    rules: ev.rules,
-                    approval: None,
-                };
-                if verdict.decision == SafetyDecision::ApprovalRequired {
-                    let params = params_digest(&p.action);
-                    match self.approvals.find_open(p.key.id(), ev.risk, &params, now) {
-                        Ok(Some(record))
-                            if matches!(record.state, ApprovalState::Approved { .. })
-                                && !record.request.is_expired(now)
-                                && record.request.action_key == p.key.id()
-                                && record.request.risk == ev.risk
-                                && record.request.params_digest == params =>
-                        {
-                            verdict.decision = SafetyDecision::Allow;
-                            verdict.approval = Some(record.request.approval_id);
-                            verdict.rules.push("approval.granted_preview".to_owned());
-                        }
-                        Err(error) => {
-                            verdict.decision = SafetyDecision::Deny;
-                            verdict.rules.push(error.rule().to_owned());
-                        }
-                        _ => {}
-                    }
-                }
-                verdict
-            }
+            Some(ev) => SafetyVerdict {
+                decision_id: SafetyDecisionId::new(),
+                decision: ev.decision,
+                risk_class: ev.risk,
+                rules: ev.rules,
+                approval: None,
+            },
             None => SafetyVerdict {
                 decision_id: SafetyDecisionId::new(),
                 decision: SafetyDecision::Deny,
@@ -846,6 +936,67 @@ impl SafetyGate for SafetyKernel {
                 approval: None,
             },
         }
+    }
+}
+
+impl SafetyGate for SafetyKernel {
+    /// Verdict for arbiter-time filtering. No audit write, request creation or consumption.
+    /// A matching granted approval makes a proposal rankable, but admission must still
+    /// atomically consume that exact approval and perform the ordinary live confirmation.
+    fn classify(&self, p: &ActionProposal, c: &SafetyContext) -> SafetyVerdict {
+        let mut verdict = self.classify_ungranted(p, c);
+        if verdict.decision == SafetyDecision::ApprovalRequired {
+            let params = params_digest(&p.action);
+            let now = self.clock.now();
+            match self
+                .approvals
+                .find_open(p.key.id(), verdict.risk_class, &params, now)
+            {
+                Ok(Some(record))
+                    if matches!(record.state, ApprovalState::Approved { .. })
+                        && !record.request.is_expired(now)
+                        && record.request.action_key == p.key.id()
+                        && record.request.risk == verdict.risk_class
+                        && record.request.params_digest == params =>
+                {
+                    verdict.decision = SafetyDecision::Allow;
+                    verdict.approval = Some(record.request.approval_id);
+                    verdict.rules.push("approval.granted_preview".to_owned());
+                }
+                Err(error) => {
+                    verdict.decision = SafetyDecision::Deny;
+                    verdict.rules.push(error.rule().to_owned());
+                }
+                _ => {}
+            }
+        }
+        verdict
+    }
+}
+
+/// Pure, per-round approval preview. It cannot construct admitted actions.
+pub struct ApprovalPreviewGate<'a> {
+    kernel: &'a SafetyKernel,
+    requests: &'a [ApprovalRequest],
+}
+
+impl SafetyGate for ApprovalPreviewGate<'_> {
+    fn classify(&self, p: &ActionProposal, c: &SafetyContext) -> SafetyVerdict {
+        let mut verdict = self.kernel.classify_ungranted(p, c);
+        if verdict.decision == SafetyDecision::ApprovalRequired {
+            let params = params_digest(&p.action);
+            if let Some(request) = self.requests.iter().find(|request| {
+                request.action_key == p.key.id()
+                    && request.risk == verdict.risk_class
+                    && request.params_digest == params
+                    && !request.is_expired(self.kernel.clock.now())
+            }) {
+                verdict.decision = SafetyDecision::Allow;
+                verdict.approval = Some(request.approval_id);
+                verdict.rules.push("approval.durable_preview".into());
+            }
+        }
+        verdict
     }
 }
 
@@ -896,7 +1047,8 @@ fn identity_digest(f: &LiveTargetFacts) -> Digest {
 }
 
 /// Digest of the non-secret, non-runtime parameters an approval binds to.
-fn params_digest(a: &BrowserAction) -> Digest {
+#[must_use]
+pub fn params_digest(a: &BrowserAction) -> Digest {
     let mut buf = Vec::with_capacity(64);
     push_field(&mut buf, a.kind().as_str().as_bytes());
     match a {

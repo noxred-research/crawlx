@@ -29,8 +29,13 @@ it with a node-level DaemonSet; the kubelet does not read ConfigMaps for seccomp
 user namespaces: the nodes must run with `user.max_user_namespaces > 0` and, on Debian/Ubuntu kernels,
 `kernel.unprivileged_userns_clone = 1`.
 
-`egress.mode = netns` deployments isolate each worker's browsers in a network namespace whose only route
-is the loopback egress proxy; `nftables-netns.example` is the host ruleset for that mode.
+`CRAWLX_EGRESS_MODE=netns` selects privileged namespace launch; `netns-rootless`
+selects ordinary-user launch with a subordinate browser identity. Both require the
+verified helper and explicit browser UID/GID settings in
+[`namespace.env.example`](../isolation/namespace.env.example). Browser traffic can
+reach only the owned proxy/CDP routes; helper preflight and launch attestation fail
+closed. Rootless mode additionally requires host subordinate-id mappings and
+unprivileged user namespaces. Kubernetes/CNI enforcement still needs deployment proof.
 
 Emergency stop (RB-11 level 3): `kubectl apply -f deploy/k8s/networkpolicy.yaml` already contains the
 `crawlx-worker-deny-all-egress` policy with `enabled: "false"` in its label selector; flip the label on the worker
@@ -60,8 +65,12 @@ user default on ><password> ~crawlx:secrets:* &* -@all +@read +@write +@keyspace
   The registry is volatile: a restart loses every run's secret authority and durable content writes
   of those runs fail closed until the run ends. An operator-supplied Redis must also allow the worker
   pods through the NetworkPolicy (`networkpolicy.yaml` allows `app: crawlx-secret-registry`).
-- `CRAWLX_SECRET_AUTHORITY_TTL_SECS` (optional, default and maximum 86400): lifetime of a run's volatile
-  authority, not renewed.
+- `CRAWLX_SECRET_AUTHORITY_TTL_SECS` (optional, default 3600, maximum 86400):
+  renewable fenced use window. Renewal rechecks the live producer, authorization
+  and retention and never extends Redis secret TTLs.
+- `CRAWLX_SECRET_AUTHORITY_HARD_MAX_SECS` (optional, default 259200): original
+  absolute ceiling, narrowed by explicit retention and authorization expiry.
+  Missing either permission caps the ceiling at 86400 seconds.
 
 Keep decrypt access to every KMS key (or the exact key file) while sealed artifacts exist; see the
 operations runbook for rotation limits. Helm enables the managed registry with

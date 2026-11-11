@@ -121,6 +121,10 @@ pub struct ReqwestTransport;
 
 #[async_trait]
 impl WebhookTransport for ReqwestTransport {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "pinned webhook delivery builds the raw reqwest client"
+    )]
     async fn post(&self, req: WebhookRequest) -> Result<u16, TransportError> {
         let host = req
             .url

@@ -64,6 +64,8 @@ pub const IMG_LONGDESC: EndpointSource = src("img", "longdesc");
 pub const IMG_LOWSRC: EndpointSource = src("img", "lowsrc");
 /// `img src`.
 pub const IMG_SRC: EndpointSource = src("img", "src");
+/// HTTP(S) image references decoded from bounded inline SVG data images.
+pub const IMG_DATA: EndpointSource = src("img", "data-image");
 /// `img srcset` candidates.
 pub const IMG_SRCSET: EndpointSource = src("img", "srcset");
 /// `object data`.
@@ -120,6 +122,10 @@ pub const FORM_ACTION: EndpointSource = src("form", "action");
 pub const META_REFRESH: EndpointSource = src("meta", "refresh");
 /// Endpoints mined from any `meta content`.
 pub const META_CONTENT: EndpointSource = src("meta", "content");
+/// Whitespace-separated HTML metadata profiles on `head`.
+pub const HEAD_PROFILE: EndpointSource = src("head", "profile");
+/// Structural references inside complete conditional comments.
+pub const CONDITIONAL_COMMENT: EndpointSource = src("html", "conditional-comment");
 /// `hx-get`.
 pub const HTMX_GET: EndpointSource = src("htmx", "hx-get");
 /// `hx-post`.
@@ -182,6 +188,7 @@ struct Ctx<'a> {
     out: &'a mut Vec<DiscoveredEndpoint>,
     /// Unresolved URL expressions of the AST pass (inline scripts, handlers).
     unresolved: &'a mut UnresolvedLog,
+    embedded: super::embedded::Budget,
 }
 
 impl Ctx<'_> {
@@ -353,12 +360,14 @@ pub(super) fn parse(
         javascript_mode,
         out,
         unresolved,
+        embedded: super::embedded::Budget::default(),
     };
     doctype(doc, &mut cx);
     walk(doc.tree.root(), |el| {
         element(el, &mut cx);
         true
     });
+    conditional_comments(doc, &mut cx);
 }
 
 fn doctype(doc: &Html, cx: &mut Ctx<'_>) {
@@ -369,6 +378,39 @@ fn doctype(doc: &Html, cx: &mut Ctx<'_>) {
                 cx.get(system, HTML_DOCTYPE);
             }
             return;
+        }
+    }
+}
+
+fn conditional_comments(doc: &Html, cx: &mut Ctx<'_>) {
+    for node in doc.tree.nodes() {
+        let scraper::Node::Comment(comment) = node.value() else {
+            continue;
+        };
+        let Some(payload) = super::embedded::conditional(comment) else {
+            continue;
+        };
+        if !cx.embedded.admit(payload.len()) {
+            continue;
+        }
+        // Admission limits the infallible HTML parser; it does not make its allocator fallible.
+        let Ok(_charge) = crate::parse_budget::charge(payload.len()) else {
+            continue;
+        };
+        let fragment = Html::parse_fragment(payload);
+        let mode = cx.javascript_mode;
+        cx.javascript_mode = JavascriptMode::Off;
+        let start = cx.out.len();
+        walk(fragment.tree.root(), |el| {
+            if matches!(el.value().name(), "script" | "template") {
+                return false;
+            }
+            element(el, cx);
+            true
+        });
+        cx.javascript_mode = mode;
+        for endpoint in &mut cx.out[start..] {
+            endpoint.source = CONDITIONAL_COMMENT;
         }
     }
 }
@@ -385,6 +427,7 @@ fn element(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
             cx.attr_urls(el, "ping", AREA_PING);
         }
         "link" => cx.attr(el, "href", LINK_HREF),
+        "head" => cx.attr_urls(el, "profile", HEAD_PROFILE),
         "embed" => cx.attr(el, "src", EMBED_SRC),
         "frame" => cx.attr(el, "src", FRAME_SRC),
         "iframe" => {
@@ -431,7 +474,9 @@ fn element(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
             cx.attr(el, "longdesc", IMG_LONGDESC);
             cx.attr(el, "lowsrc", IMG_LOWSRC);
             if let Some(s) = v.attr("src").filter(|s| !s.is_empty() && *s != "#") {
-                if !s.starts_with("data:") {
+                if s.trim().get(..5).is_some_and(|p| p.eq_ignore_ascii_case("data:")) {
+                    cx.embedded.image(s, cx.base, cx.depth, cx.out);
+                } else {
                     cx.get(s, IMG_SRC);
                 }
             }
@@ -491,6 +536,18 @@ fn meta(el: ElementRef<'_>, cx: &mut Ctx<'_>) {
     {
         if let Some(raw) = parse_refresh(content) {
             cx.get(raw, META_REFRESH);
+        }
+    }
+    if v.attr("name").is_some_and(|name| {
+        name.eq_ignore_ascii_case("msapplication-config") || name.eq_ignore_ascii_case("reading-view")
+    }) {
+        let content = content.trim();
+        if content.eq_ignore_ascii_case("none") {
+            return;
+        }
+        // These metadata slots carry one URL, not arbitrary prose or a refresh expression.
+        if !content.chars().any(char::is_whitespace) {
+            cx.get(content, META_CONTENT);
         }
     }
     cx.regex(content, META_CONTENT);

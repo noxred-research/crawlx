@@ -1050,8 +1050,9 @@ impl Resolved {
         }
         let request = match &args.request {
             Some(path) => {
-                let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-                Some(serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))?)
+                let bytes = config_file::read_document(path)?;
+                let body = serde_json::from_slice(&bytes).context("parsing request JSON")?;
+                Some(config_file::checked_body_over(body, layer.as_ref(), path)?)
             }
             None => None,
         };

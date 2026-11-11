@@ -457,6 +457,10 @@ impl crawlx_api::store::ArtifactSource for Presigning {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 async fn content_artifacts_redirect_to_a_presigned_url_when_the_store_offers_one() {
     use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
     use crawlx_api::{AppState, Repos, Scope};

@@ -17,7 +17,9 @@ use crate::custody::{
 };
 use bytes::Bytes;
 use crawlx_core::captcha::CaptchaSecrets;
-use crawlx_core::custody::{current_producer, CustodyLease, CustodySource, SecretEpoch};
+use crawlx_core::custody::{
+    current_frozen_archive, current_producer, CustodyLease, CustodySource, FrozenArchiveGrant, SecretEpoch,
+};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{RunMetadata, Sensitivity};
 use crawlx_core::secret::{SecretByteScanner, SecretScanError, SecretScanLimits, SecretScanMode};
@@ -98,6 +100,40 @@ fn producer_for(tenant: TenantId, run: CrawlRunId) -> Result<CustodyLease, Store
     Ok(lease)
 }
 
+/// Terminal-run archive output authority.
+///
+/// A terminal run has closed secret registration, so no live snapshot exists to rescan against.
+/// Every output of its claimed export must carry a [`FrozenArchiveGrant`] bound to exactly this
+/// producer; the plaintext path no longer exists. Live runs return `None` and are unchanged.
+/// The returned expiry is clamped to the grant, never extended.
+fn frozen_output(
+    lease: &CustodyLease,
+    run: &RunMetadata,
+    class: Sensitivity,
+    kind: &str,
+    content_type: &str,
+    expires_at: Option<Timestamp>,
+) -> Result<Option<(FrozenArchiveGrant, Option<Timestamp>)>, StoreError> {
+    if !run.status.is_terminal() {
+        return Ok(None);
+    }
+    if !matches!(lease.source, CustodySource::ArchiveExport(_)) {
+        return Err(StoreError::RetentionDenied(
+            "run ended; artifact not retained".into(),
+        ));
+    }
+    let grant = current_frozen_archive().ok_or_else(|| {
+        StoreError::RetentionDenied("terminal archive output requires a frozen archive grant".into())
+    })?;
+    grant.check_lease(lease)?;
+    let expires_at = match (expires_at, grant.custody.expires_at) {
+        (Some(output), Some(ceiling)) => Some(output.min(ceiling)),
+        (output, ceiling) => output.or(ceiling),
+    };
+    grant.check_output(class, expires_at, kind, content_type)?;
+    Ok(Some((grant, expires_at)))
+}
+
 async fn hash_file(path: &Path, domain: &str) -> Result<(Digest, u64), StoreError> {
     let mut input = tokio::fs::File::open(path)
         .await
@@ -169,26 +205,36 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
     ///
     /// A terminal run has closed secret registration, so a Session or Url producer still
     /// writing for it is refused: a plaintext write would bypass the run-wide secret check.
-    /// Archive-export producers (inputs are already-published sealed artifacts) and writes
-    /// without any producer (operator inputs) keep the legacy plaintext path.
+    /// Archive-export producers of a terminal run are sealed under a frozen archive grant, never
+    /// plaintext. Writes without any producer (operator inputs) keep the legacy plaintext path.
     pub(super) fn sealing(
         &self,
         class: Sensitivity,
         run: &RunMetadata,
     ) -> Result<Option<&StoreCustody>, StoreError> {
+        let producer = current_producer().map(|lease| lease.source);
+        let terminal_archive =
+            run.status.is_terminal() && matches!(producer, Some(CustodySource::ArchiveExport(_)));
         let Some(custody) = self.custody.as_ref().filter(|custody| {
             custody.writes == CustodyWrites::Required
                 && matches!(class, Sensitivity::Content | Sensitivity::Sensitive)
         }) else {
+            if terminal_archive && matches!(class, Sensitivity::Content | Sensitivity::Sensitive) {
+                return Err(StoreError::RetentionDenied(
+                    "terminal archive output requires sealed custody".into(),
+                ));
+            }
             return Ok(None);
         };
         if !run.status.is_terminal() {
             return Ok(Some(custody));
         }
-        match current_producer().map(|lease| lease.source) {
+        match producer {
             Some(CustodySource::Session(_) | CustodySource::Url(_)) => Err(StoreError::RetentionDenied(
                 "run ended; artifact not retained".into(),
             )),
+            // The grant itself is demanded by the sealed write, never a plaintext fallback.
+            Some(CustodySource::ArchiveExport(_)) => Ok(Some(custody)),
             _ => Ok(None),
         }
     }
@@ -308,9 +354,17 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         expires_at: Option<Timestamp>,
     ) -> Result<ArtifactRef, StoreError> {
         let lease = producer_for(run_row.tenant, run_row.id)?;
-        let snapshot = attached.custody.snapshot(&lease).await?;
+        let frozen = frozen_output(&lease, run_row, class, kind, content_type, expires_at)?;
+        let expires_at = frozen.as_ref().map_or(expires_at, |(_, clamped)| *clamped);
         let plaintext = Plaintext::Bytes(bytes);
-        rescan(&plaintext, &snapshot.secrets).await?;
+        // A terminal run has no live registry: its sources were validated when they were sealed.
+        let version = if let Some((grant, _)) = &frozen {
+            grant.epoch
+        } else {
+            let snapshot = attached.custody.snapshot(&lease).await?;
+            rescan(&plaintext, &snapshot.secrets).await?;
+            snapshot.version
+        };
         let size =
             u64::try_from(bytes.len()).map_err(|_| StoreError::Conflict("artifact size overflow".into()))?;
         let id = ArtifactId::new();
@@ -365,7 +419,8 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         self.publish_confirmed(
             attached,
             &lease,
-            snapshot.version,
+            version,
+            frozen.as_ref().map(|(grant, _)| grant),
             &row,
             &identity,
             &prepared.envelope,
@@ -392,7 +447,23 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         expires_at: Option<Timestamp>,
     ) -> Result<ArtifactRef, StoreError> {
         let lease = producer_for(run_row.tenant, run_row.id)?;
-        let snapshot = attached.custody.snapshot(&lease).await?;
+        let frozen = frozen_output(&lease, run_row, class, "evidence", content_type, expires_at)?;
+        let expires_at = frozen.as_ref().map_or(expires_at, |(_, clamped)| *clamped);
+        // A terminal run has no live registry; its sources were validated when they were sealed.
+        let snapshot = if frozen.is_some() {
+            None
+        } else {
+            Some(attached.custody.snapshot(&lease).await?)
+        };
+        let version = match (&frozen, &snapshot) {
+            (Some((grant, _)), _) => grant.epoch,
+            (None, Some(snapshot)) => snapshot.version,
+            (None, None) => {
+                return Err(StoreError::Unavailable(
+                    "secret authority snapshot unavailable".into(),
+                ))
+            }
+        };
         let input = tokio::fs::File::open(file)
             .await
             .map_err(|e| io(&e, "open archive"))?;
@@ -419,14 +490,19 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             .open(&temporary)
             .await
             .map_err(|e| io(&e, "open sealed archive spool"))?;
-        let scanner = snapshot
-            .secrets
-            .scoped_byte_scanner(SecretScanMode::Auto, SecretScanLimits::new(size))
-            .map_err(scan_error)?;
+        let scanner = match &snapshot {
+            Some(snapshot) => Some(
+                snapshot
+                    .secrets
+                    .scoped_byte_scanner(SecretScanMode::Auto, SecretScanLimits::new(size))
+                    .map_err(scan_error)?,
+            ),
+            None => None,
+        };
         let mut source = ScannedFile {
             inner: input,
             hasher: domain_hasher(DIGEST_DOMAIN),
-            scanner: Some(scanner),
+            scanner,
             failure: None,
         };
         let sealed = prepared.encryption.seal(&mut source, &mut output).await;
@@ -475,7 +551,8 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         self.publish_confirmed(
             attached,
             &lease,
-            snapshot.version,
+            version,
+            frozen.as_ref().map(|(grant, _)| grant),
             &row,
             &identity,
             &prepared.envelope,
@@ -498,6 +575,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         attached: &StoreCustody,
         lease: &CustodyLease,
         mut version: SecretEpoch,
+        frozen: Option<&FrozenArchiveGrant>,
         row: &ArtifactRow,
         identity: &CiphertextIdentity,
         envelope: &ArtifactKeyEnvelope,
@@ -512,12 +590,27 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
                     "archive source expired before publication".into(),
                 ));
             }
-            match attached
-                .custody
-                .publish(lease, version, row, identity, envelope)
-                .await
-            {
+            let published = match frozen {
+                Some(grant) => {
+                    attached
+                        .custody
+                        .publish_frozen_archive(grant, lease, row, identity, envelope)
+                        .await
+                }
+                None => {
+                    attached
+                        .custody
+                        .publish(lease, version, row, identity, envelope)
+                        .await
+                }
+            };
+            match published {
                 Ok(()) => return Ok(()),
+                // A closed terminal epoch cannot be raced: there is nothing to refresh or rescan.
+                Err(error) if frozen.is_some() && is_stale_epoch(&error) => {
+                    self.reject_staged(attached, row, unknown > 0).await?;
+                    return Err(error);
+                }
                 Err(error) if is_stale_epoch(&error) => {
                     stale += 1;
                     if stale > MAX_PUBLISH_ATTEMPTS {

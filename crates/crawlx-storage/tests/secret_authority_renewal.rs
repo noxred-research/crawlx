@@ -101,6 +101,19 @@ async fn pending(
     previous: Timestamp,
     deadline: Timestamp,
 ) {
+    // Reproduce a migrated historical authority, whose physical expiry was its
+    // original use deadline. New authorities never send a Redis renewal command.
+    sqlx::query("UPDATE run_secret_authority SET use_window_ms=NULL,retention_ceiling=expires_at")
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    let mut connection = f.redis.clone();
+    let _: bool = redis::cmd("PEXPIREAT")
+        .arg(&f.key)
+        .arg(previous.timestamp_millis() - 2000)
+        .query_async(&mut connection)
+        .await
+        .unwrap();
     // Real durable pre-command boundary, not a mock or process-local authority.
     sqlx::query("INSERT INTO run_secret_authority_renewals(tenant_id,run_id,operation,incarnation,secret_epoch,previous_deadline,deadline) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(f.lease.tenant.0).bind(f.lease.run.0).bind(operation).bind(expected.incarnation)
@@ -746,7 +759,7 @@ async fn changed_secret_set_never_receives_requested_renewal() {
 }
 
 #[tokio::test]
-async fn authorized_soak_renewal_stays_unavailable_without_atomic_revocation() {
+async fn renewal_rejects_requests_larger_than_the_configured_use_window() {
     let Some(mut f) = fixture(Duration::from_secs(60)).await else {
         return;
     };
@@ -802,4 +815,498 @@ async fn overlong_absolute_window_is_rejected_before_pending_barrier() {
             .unwrap();
     assert!(pending.is_none());
     assert_eq!(expiry(&f).await, previous);
+}
+
+async fn physical_expiry(f: &mut Fixture) -> i64 {
+    redis::cmd("PEXPIRETIME")
+        .arg(&f.key)
+        .query_async(&mut f.redis)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn durable_renewal_commits_once_and_never_changes_redis_retention() {
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let ceiling: Timestamp = sqlx::query_scalar("SELECT retention_ceiling FROM run_secret_authority")
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+    let physical = physical_expiry(&mut f).await;
+    assert_eq!(physical, ceiling.timestamp_millis() - 2000);
+    let now = f.pg.now().await.unwrap();
+    // Enter a shorter remaining use window without changing its original policy.
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1")
+        .bind(target(now, 10))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    let deadline = target(now, 50);
+    let operation = Uuid::now_v7();
+    let renewed = f
+        .authority
+        .renew_authority(&f.lease, initial.version, operation, deadline)
+        .await
+        .unwrap();
+    assert_eq!(renewed.version, initial.version);
+    assert_eq!(expiry(&f).await, deadline);
+    assert_eq!(physical_expiry(&mut f).await, physical);
+    // Recover the durable receipt through a fresh authority, as after process loss.
+    let redis_url = std::env::var("CRAWLX_TEST_SECRET_REDIS_URL").unwrap();
+    let recovered_authority = PgSecretAuthority::open(f.pg.clone(), &redis_url, Duration::from_secs(3600))
+        .await
+        .unwrap();
+    recovered_authority
+        .renew_authority(&f.lease, initial.version, operation, deadline)
+        .await
+        .unwrap();
+    assert!(recovered_authority
+        .renew_authority(&f.lease, initial.version, Uuid::now_v7(), target(now, 120))
+        .await
+        .is_err());
+    let registered = f
+        .authority
+        .register(
+            &f.lease,
+            initial.version,
+            Uuid::now_v7(),
+            &SecretOr::secret("renewed-registry-value".into()),
+        )
+        .await
+        .unwrap();
+    let recovered = f
+        .authority
+        .renew_authority(&f.lease, initial.version, operation, deadline)
+        .await
+        .unwrap();
+    assert_eq!(recovered.version, registered.version);
+    assert_eq!(physical_expiry(&mut f).await, physical);
+    let receipts: i64 = sqlx::query_scalar("SELECT count(*) FROM run_secret_authority_renewals")
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+    assert_eq!(receipts, 1);
+    assert!(f
+        .authority
+        .renew_authority(&f.lease, initial.version, operation, target(deadline, 1))
+        .await
+        .is_err());
+    assert_eq!(expiry(&f).await, deadline);
+}
+
+#[tokio::test]
+async fn frozen_ceiling_never_grows_after_run_policy_is_relaxed() {
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let now = f.pg.now().await.unwrap();
+    sqlx::query("UPDATE crawl_runs SET expires_at=$1,deadline_at=$1")
+        .bind(target(now, 45))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let original: Timestamp = sqlx::query_scalar("SELECT retention_ceiling FROM run_secret_authority")
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE crawl_runs SET expires_at=$1,deadline_at=$1")
+        .bind(target(now, 3600))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1")
+        .bind(target(now, 10))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    assert!(f
+        .authority
+        .renew_authority(&f.lease, initial.version, Uuid::now_v7(), target(original, 1))
+        .await
+        .is_err());
+    f.authority
+        .renew_authority(&f.lease, initial.version, Uuid::now_v7(), original)
+        .await
+        .unwrap();
+    assert_eq!(physical_expiry(&mut f).await, original.timestamp_millis() - 2000);
+}
+
+#[tokio::test]
+async fn expired_use_authority_never_resurrects_even_with_surviving_redis_values() {
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let now = f.pg.now().await.unwrap();
+    let physical = physical_expiry(&mut f).await;
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1")
+        .bind(target(now, -1))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    assert!(f
+        .authority
+        .renew_authority(&f.lease, initial.version, Uuid::now_v7(), target(now, 30))
+        .await
+        .is_err());
+    assert!(f.authority.initialize(&f.lease).await.is_err());
+    assert!(f.authority.snapshot(&f.lease).await.is_err());
+    assert_eq!(physical_expiry(&mut f).await, physical);
+    let receipts: i64 = sqlx::query_scalar("SELECT count(*) FROM run_secret_authority_renewals")
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+    assert_eq!(receipts, 0);
+}
+
+#[tokio::test]
+async fn renewal_registration_race_requires_current_epoch_without_losing_retry_identity() {
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let now = f.pg.now().await.unwrap();
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1")
+        .bind(target(now, 10))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    let registered = f
+        .authority
+        .register(
+            &f.lease,
+            initial.version,
+            Uuid::now_v7(),
+            &SecretOr::secret("registration-race-value".into()),
+        )
+        .await
+        .unwrap();
+    let deadline = target(now, 50);
+    let operation = Uuid::now_v7();
+    let error = f
+        .authority
+        .renew_authority(&f.lease, initial.version, operation, deadline)
+        .await
+        .unwrap_err();
+    assert!(crawlx_storage::is_stale_epoch(&error));
+    let renewed = f
+        .authority
+        .renew_authority(&f.lease, registered.version, Uuid::now_v7(), deadline)
+        .await
+        .unwrap();
+    assert_eq!(renewed.version, registered.version);
+    let physical = physical_expiry(&mut f).await;
+    sqlx::query("UPDATE crawl_sessions SET fencing_token=fencing_token+1")
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.authority
+            .renew_authority(&f.lease, registered.version, Uuid::now_v7(), target(deadline, 1))
+            .await,
+        Err(crawlx_core::StoreError::LeaseLost)
+    ));
+    assert_eq!(physical_expiry(&mut f).await, physical);
+}
+
+#[tokio::test]
+async fn lost_redis_registry_never_rebuilds_during_a_durable_renewal() {
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let now = f.pg.now().await.unwrap();
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1")
+        .bind(target(now, 10))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    let _: i64 = redis::cmd("DEL")
+        .arg(&f.key)
+        .query_async(&mut f.redis)
+        .await
+        .unwrap();
+    assert!(f
+        .authority
+        .renew_authority(&f.lease, initial.version, Uuid::now_v7(), target(now, 50))
+        .await
+        .is_err());
+    let exists: bool = redis::cmd("EXISTS")
+        .arg(&f.key)
+        .query_async(&mut f.redis)
+        .await
+        .unwrap();
+    assert!(!exists);
+    assert_eq!(expiry(&f).await, target(now, 10));
+}
+
+#[tokio::test]
+async fn paused_redis_response_cannot_renew_a_cancelled_producer_or_change_physical_expiry() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let now = f.pg.now().await.unwrap();
+    let previous = target(now, 10);
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1")
+        .bind(previous)
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    let physical = physical_expiry(&mut f).await;
+    let source = url::Url::parse(&std::env::var("CRAWLX_TEST_SECRET_REDIS_URL").unwrap()).unwrap();
+    let host = source.host_str().unwrap().to_owned();
+    let port = source.port().unwrap_or(6379);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut endpoint = source;
+    endpoint.set_host(Some("127.0.0.1")).unwrap();
+    endpoint.set_port(Some(address.port())).unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let entered = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let proxy = {
+        let armed = Arc::clone(&armed);
+        let entered = Arc::clone(&entered);
+        let release = Arc::clone(&release);
+        tokio::spawn(async move {
+            let (client, _) = listener.accept().await.unwrap();
+            let server = tokio::net::TcpStream::connect((host.as_str(), port))
+                .await
+                .unwrap();
+            let (mut client_read, mut client_write) = client.into_split();
+            let (mut server_read, mut server_write) = server.into_split();
+            let requests = tokio::io::copy(&mut client_read, &mut server_write);
+            let responses = async {
+                let mut buffer = [0u8; 8192];
+                loop {
+                    let count = server_read.read(&mut buffer).await?;
+                    if count == 0 {
+                        return Ok::<(), std::io::Error>(());
+                    }
+                    if armed.swap(false, Ordering::SeqCst) {
+                        entered.add_permits(1);
+                        release.acquire().await.unwrap().forget();
+                    }
+                    client_write.write_all(&buffer[..count]).await?;
+                }
+            };
+            let _ = tokio::try_join!(requests, responses);
+        })
+    };
+    let authority = PgSecretAuthority::open(f.pg.clone(), endpoint.as_str(), Duration::from_secs(60))
+        .await
+        .unwrap();
+    let token = tokio_util::sync::CancellationToken::new();
+    let lease = f.lease.clone().with_cancellation(token.clone());
+    armed.store(true, Ordering::SeqCst);
+    let renewal = tokio::spawn(async move {
+        authority
+            .renew_authority(&lease, initial.version, Uuid::now_v7(), target(now, 50))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    token.cancel();
+    release.add_permits(1);
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(5), renewal)
+            .await
+            .unwrap()
+            .unwrap(),
+        Err(crawlx_core::StoreError::LeaseLost)
+    ));
+    assert_eq!(expiry(&f).await, previous);
+    assert_eq!(physical_expiry(&mut f).await, physical);
+    let receipts: i64 = sqlx::query_scalar("SELECT count(*) FROM run_secret_authority_renewals")
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+    assert_eq!(receipts, 0);
+    proxy.abort();
+    let _ = proxy.await;
+}
+
+#[tokio::test]
+async fn original_retention_above_one_day_requires_both_explicit_permissions_and_operator_ceiling() {
+    for (explicit_retention, explicit_authorization, maximum_hours, expected_hours) in [
+        (false, false, 72, 24),
+        (true, false, 72, 24),
+        (false, true, 72, 24),
+        (true, true, 72, 72),
+        (true, true, 30, 30),
+    ] {
+        let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+            return;
+        };
+        let before = f.pg.now().await.unwrap();
+        let permission = before + TimeDelta::hours(96);
+        sqlx::query("UPDATE crawl_runs SET expires_at=$1,deadline_at=NULL")
+            .bind(explicit_retention.then_some(permission))
+            .execute(f.pg.pool())
+            .await
+            .unwrap();
+        if explicit_authorization {
+            let key = Uuid::now_v7();
+            sqlx::query("INSERT INTO api_keys(key_id,tenant_id,prefix,key_hash,scopes) VALUES($1,$2,$3,$4,ARRAY['crawl:write'])")
+                .bind(key).bind(f.lease.tenant.0).bind(format!("window-{key}")).bind([9u8; 32].as_slice())
+                .execute(f.pg.pool()).await.unwrap();
+            let authorization = Uuid::now_v7();
+            sqlx::query("INSERT INTO authorization_records(record_id,tenant_id,body,body_digest,valid_from,valid_to,created_by) VALUES($1,$2,'{}'::jsonb,$3,$4,$5,$6)")
+                .bind(authorization).bind(f.lease.tenant.0).bind([5u8; 32].as_slice())
+                .bind(before-TimeDelta::hours(1)).bind(permission).bind(key)
+                .execute(f.pg.pool()).await.unwrap();
+            sqlx::query("UPDATE crawl_runs SET authorization_record_id=$1")
+                .bind(authorization)
+                .execute(f.pg.pool())
+                .await
+                .unwrap();
+        }
+        let redis_url = std::env::var("CRAWLX_TEST_SECRET_REDIS_URL").unwrap();
+        let authority = PgSecretAuthority::open_with_policy(
+            f.pg.clone(),
+            &redis_url,
+            Duration::from_secs(60),
+            Duration::from_secs(maximum_hours * 3600),
+        )
+        .await
+        .unwrap();
+        authority.initialize(&f.lease).await.unwrap();
+        let after = f.pg.now().await.unwrap();
+        let ceiling: Timestamp = sqlx::query_scalar("SELECT retention_ceiling FROM run_secret_authority")
+            .fetch_one(f.pg.pool())
+            .await
+            .unwrap();
+        let earliest = target(before + TimeDelta::hours(expected_hours), 0);
+        assert!(ceiling >= earliest);
+        assert!(ceiling <= after + TimeDelta::hours(expected_hours));
+        assert_eq!(physical_expiry(&mut f).await, ceiling.timestamp_millis() - 2000);
+    }
+}
+
+#[tokio::test]
+async fn terminal_retained_projector_uses_only_surviving_original_secret_values() {
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let secret = SecretOr::secret(format!("retained-projector-{}", Uuid::now_v7()));
+    let current = f
+        .authority
+        .register(&f.lease, initial.version, Uuid::now_v7(), &secret)
+        .await
+        .unwrap();
+    assert!(f
+        .authority
+        .retained_snapshot(f.lease.tenant, f.lease.run, initial.version)
+        .await
+        .is_err());
+    f.pg.set_status(
+        f.lease.run,
+        RunStatus::Completed,
+        Some(crawlx_core::counters::TerminalReason::FrontierExhausted),
+    )
+    .await
+    .unwrap();
+    f.authority.finalize(current.version).await.unwrap();
+    let snapshot = f
+        .authority
+        .retained_snapshot(f.lease.tenant, f.lease.run, current.version)
+        .await
+        .unwrap();
+    assert_eq!(snapshot.version, current.version);
+    assert!(snapshot
+        .secrets
+        .contains_bytes(secret.expose().as_bytes())
+        .unwrap());
+    let physical = physical_expiry(&mut f).await;
+    assert!(f
+        .authority
+        .retained_snapshot(TenantId::new(), f.lease.run, current.version)
+        .await
+        .is_err());
+    assert_eq!(physical_expiry(&mut f).await, physical);
+    let _: i64 = redis::cmd("DEL")
+        .arg(&f.key)
+        .query_async(&mut f.redis)
+        .await
+        .unwrap();
+    assert!(f
+        .authority
+        .retained_snapshot(f.lease.tenant, f.lease.run, current.version)
+        .await
+        .is_err());
+    let exists: bool = redis::cmd("EXISTS")
+        .arg(&f.key)
+        .query_async(&mut f.redis)
+        .await
+        .unwrap();
+    assert!(!exists);
+}
+
+#[tokio::test]
+async fn retained_source_projector_refuses_zdr_even_with_live_secret_values() {
+    let Some(f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let mut metadata = f.pg.get_metadata(f.lease.run).await.unwrap();
+    metadata.retention.mode = crawlx_core::config::RetentionMode::Zdr;
+    metadata.retention.days = 0;
+    sqlx::query("UPDATE crawl_runs SET retention_mode='zdr',retention_days=0,config=jsonb_build_object('privacy','zdr','metadata',$2::jsonb) WHERE run_id=$1")
+        .bind(f.lease.run.0)
+        .bind(serde_json::to_value(metadata).unwrap())
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    assert!(f
+        .authority
+        .retained_snapshot(f.lease.tenant, f.lease.run, initial.version)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn competing_live_renewals_request_refresh_instead_of_failing_valid_producer_work() {
+    let Some(mut f) = fixture(Duration::from_secs(60)).await else {
+        return;
+    };
+    let initial = f.authority.initialize(&f.lease).await.unwrap();
+    let now = f.pg.now().await.unwrap();
+    sqlx::query("UPDATE run_secret_authority SET expires_at=$1")
+        .bind(target(now, 10))
+        .execute(f.pg.pool())
+        .await
+        .unwrap();
+    let redis_url = std::env::var("CRAWLX_TEST_SECRET_REDIS_URL").unwrap();
+    let peer = PgSecretAuthority::open(f.pg.clone(), &redis_url, Duration::from_secs(60))
+        .await
+        .unwrap();
+    let deadline = target(now, 50);
+    let physical = physical_expiry(&mut f).await;
+    let (first, second) = tokio::join!(
+        f.authority
+            .renew_authority(&f.lease, initial.version, Uuid::now_v7(), deadline),
+        peer.renew_authority(&f.lease, initial.version, Uuid::now_v7(), deadline),
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    let refused = first.err().or_else(|| second.err()).unwrap();
+    assert!(crawlx_storage::is_stale_epoch(&refused));
+    assert_eq!(expiry(&f).await, deadline);
+    assert_eq!(physical_expiry(&mut f).await, physical);
+    let receipts: i64 = sqlx::query_scalar("SELECT count(*) FROM run_secret_authority_renewals")
+        .fetch_one(f.pg.pool())
+        .await
+        .unwrap();
+    assert_eq!(receipts, 1);
 }

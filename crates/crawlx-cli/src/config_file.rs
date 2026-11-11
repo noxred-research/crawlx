@@ -28,13 +28,29 @@ pub(crate) enum ConfigLayer {
     Crawl(Value),
 }
 
+/// Read one bounded regular configuration document without following symbolic links.
+pub(crate) fn read_document(path: &Path) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read as _;
+    const MAX_BYTES: u64 = 1_048_576;
+    let meta = std::fs::symlink_metadata(path).context("reading configuration metadata")?;
+    if !meta.is_file() || meta.len() > MAX_BYTES {
+        bail!("configuration must be a regular file of at most one MiB");
+    }
+    let file = std::fs::File::open(path).context("opening configuration")?;
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > usize::try_from(MAX_BYTES)? {
+        bail!("configuration exceeds one MiB");
+    }
+    Ok(bytes)
+}
+
 /// Read and validate `path`.
 ///
 /// # Errors
 /// An unreadable or malformed file, an unknown key, or a value its flag or field rejects.
 pub(crate) fn load(path: &Path) -> anyhow::Result<ConfigLayer> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading config file {}", path.display()))?;
+    let text = String::from_utf8(read_document(path)?).context("configuration must contain UTF-8 text")?;
     let at = |what: &str| format!("config file {}: {what}", path.display());
     let ext = path
         .extension()
@@ -144,7 +160,13 @@ fn clap_message(e: &clap::Error) -> String {
 }
 
 /// Validate a `CreateCrawl` body: it must be an object, deserialize, and use known keys only.
-fn checked_body(body: Value, path: &Path) -> anyhow::Result<Value> {
+pub(crate) fn checked_body(body: Value, path: &Path) -> anyhow::Result<Value> {
+    checked_body_over(body, None, path)
+}
+
+/// [`checked_body`] for a body that is applied over `lower`: a partial section the body
+/// leaves incomplete (a captcha section without its provider) is judged after the merge.
+pub(crate) fn checked_body_over(body: Value, lower: Option<&Value>, path: &Path) -> anyhow::Result<Value> {
     let at = |what: &str| format!("config file {}: {what}", path.display());
     if !body.is_object() {
         bail!(at("expected an object (a CreateCrawl body)"));
@@ -153,6 +175,9 @@ fn checked_body(body: Value, path: &Path) -> anyhow::Result<Value> {
         url::Url::parse("https://config.invalid/").map_err(|e| anyhow!(e))?,
     ))?;
     let mut merged = base;
+    if let Some(lower) = lower {
+        deep_merge(&mut merged, lower);
+    }
     deep_merge(&mut merged, &body);
     serde_json::from_value::<CreateCrawl>(merged.clone()).map_err(|e| anyhow!(at(&e.to_string())))?;
     let mut unknown = Vec::new();
@@ -244,6 +269,9 @@ fn walk(merged: &Value, round_trip: &Value, layer: &Value, path: &mut Vec<Seg>, 
                     walk(merged, round_trip, child, path, out);
                 }
                 path.pop();
+                if !out.is_empty() {
+                    return;
+                }
             }
         }
         Value::Array(items) => {
@@ -253,6 +281,9 @@ fn walk(merged: &Value, round_trip: &Value, layer: &Value, path: &mut Vec<Seg>, 
                     walk(merged, round_trip, child, path, out);
                 }
                 path.pop();
+                if !out.is_empty() {
+                    return;
+                }
             }
         }
         _ => {}

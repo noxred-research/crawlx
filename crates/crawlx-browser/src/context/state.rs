@@ -1435,6 +1435,7 @@ mod tests {
             method: method.to_owned(),
             session_id: session.map(str::to_owned),
             params,
+            charge: None,
         }
     }
 

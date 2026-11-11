@@ -16,6 +16,10 @@ use crawlx_storage::{
     tenant, AuthorizationRow, FsArtifactStore, IntelRepo, JobKind, JobRecord, JobStatus, Pg, PgApiRepo,
     PgConfig,
 };
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
 use std::sync::Arc;

@@ -8,6 +8,10 @@
 mod scan;
 
 use axum::body::Body;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{Method, Request, StatusCode};
 use axum::Router;
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};

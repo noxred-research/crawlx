@@ -8,6 +8,7 @@
 //! scroll) stays a [`crate::BrowserAction`] so it is adjudicated and journaled.
 
 use crate::observation::RuntimeLocator;
+use crate::parser_memory::{AdmittedBytes, AdmittedText};
 use serde::{Deserialize, Serialize};
 
 /// Per-request emulation, applied before the navigation (CDP
@@ -169,15 +170,16 @@ pub enum PageOpResult {
     Json(serde_json::Value),
     /// The serialized DOM and the document URL (`Html`).
     Html {
-        /// `<!DOCTYPE ...>` plus `outerHTML` of the document element.
-        html: String,
+        /// `<!DOCTYPE ...>` plus `outerHTML` of the document element. Cloning shares the
+        /// bytes and their byte reservation; copying them needs a new reservation.
+        html: AdmittedText,
         /// Current document URL.
         url: String,
     },
     /// Encoded bytes (`Screenshot`: PNG or JPEG, `PrintToPdf`: PDF).
     Bytes {
-        /// The encoded image or document.
-        bytes: Vec<u8>,
+        /// The encoded image or document. Cloning shares the bytes and their reservation.
+        bytes: AdmittedBytes,
         /// Media type: `image/png`, `image/jpeg` or `application/pdf`.
         content_type: &'static str,
     },

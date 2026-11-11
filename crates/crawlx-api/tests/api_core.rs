@@ -395,6 +395,10 @@ async fn malformed_scrape_content_policy_is_rejected_before_native_or_facade_que
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 async fn bad_bodies_and_urls_have_specific_codes() {
     let e = env();
     let (s, _, b) = e.send(Method::POST, "/v1/crawls", Some(&e.key), &[], None).await;

@@ -83,6 +83,10 @@ pub fn auto_check_enabled(getenv: &dyn Fn(&str) -> Option<String>, disabled: boo
 /// # Errors
 /// The request fails, answers with a non-success status or a body without a semantic
 /// `tag_name`.
+#[allow(
+    clippy::disallowed_types,
+    reason = "release metadata download builds the raw reqwest client"
+)]
 pub async fn check(url: &str, current: &str) -> anyhow::Result<UpdateStatus> {
     let client = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)

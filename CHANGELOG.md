@@ -8,6 +8,66 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added: bounded lifecycle execution and immutable recipes
+
+Reviewed native extensions execute typed header, response, item, error, terminal,
+checkpoint and browser lifecycle stages with bounded ordered receipts. Header
+rejection stops body consumption. Immutable recipe pins cover start requests,
+allowlisted actor actions and ordered HTML/sitemap discovery; every proposal retains
+native authorization, scope, robots and budget admission. Result streams retain
+committed item references under backpressure and close on cancellation.
+
+### Added: safe single-page scraping and stored-page shell
+
+`crawlx scrape` supports explicit GET/HEAD, output formats and bounded declarative
+extraction. `crawlx shell` acquires one admitted page, then evaluates only stored-page
+CSS, XPath, regex and item recipes. Commands cannot execute code, spawn processes or
+perform further network requests. Strict immutable configuration layers reject
+unknown fields and JSON output without extraction.
+
+### Added: scoped operational history and offline migration contracts
+
+Measured processor, DNS and wire facts remain distinct from unavailable observations.
+Tenant-scoped URL graphs, bounded advisory queue fairness and adaptive revisit
+policies preserve the existing governor and fenced frontier. Delivery completion
+requires actual outbox acknowledgement. Offline neutral exports and pinned contract
+fixtures report unsupported settings and unavailable external references explicitly.
+
+### Added: renewable custody and local interactive profile control
+
+Renewable fenced use windows preserve the original absolute secret-retention ceiling;
+Redis secret TTLs never extend. Structured encrypted profile custody checks owner,
+generation, build and retention. Local authenticated control shares the exact worker
+registry; unproven screencast frames are suppressed before capture. Namespace
+launchers fail closed without verified isolation; privileged deployment proof remains
+an operator requirement.
+Encrypted artifact custody covers worker producers and terminal archives; authenticated operator
+inputs remain in custody mode `ReadOnly`, with `SecretFree`, retention-gated plaintext writes and
+catalog-mediated sealed reads. No API producer leases are introduced.
+
+### Added: shared parser admission and bounded model content strategies
+
+Decoded input, parser admission and transient output share one byte budget, with
+permits retained through blocking work and sink I/O. Text-only parsing avoids DOM
+allocation. Bounded nested source traversal and static embedded-link discovery never
+execute source content. Optional model table/content extraction enforces per-call
+token and response-byte limits, privacy projection and explicit external-processing
+consent; native defaults remain deterministic.
+
+### Added: acquisition service and digest-bound identity profiles
+
+Registered acquisition adapters validate scoped attestations and finite response
+budgets. Coherent identity selections bind the pinned Chromium build, profile digest
+and session generation; provenance records artifact and transitive-notice hashes.
+No exact wire equivalence, external-service acceptance or distribution approval is
+claimed without the corresponding evidence.
+
+### Fixed: sensitive provider errors
+
+Malformed decision responses expose a fixed schema-error category rather than
+provider values in error display, debug output or source chains.
+
+
 ### Fixed: browser observation and URL-work isolation
 
 Dynamic page output records already-settled browser documents without adding navigation

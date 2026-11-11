@@ -1532,6 +1532,69 @@ fn native_fetch_control_schema_matches_typed_control_validation() {
 }
 
 #[test]
+fn native_identity_and_service_selectors_match_typed_fetch_and_backend_policy() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request);
+    let validate = validator(&document, &schema["properties"]["fetch"].clone());
+    let installed = crawlx_core::identity_profile::IdentityProfileV1::pinned_chromium()
+        .digest()
+        .unwrap()
+        .to_hex();
+    for value in [
+        json!({"identityProfile": installed}),
+        json!({"identityProfile": null, "acquisitionService": null}),
+        json!({"acquisitionService": "operator-registry-id"}),
+    ] {
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        serde_json::from_value::<crawlx_core::config::Fetch>(value).unwrap();
+    }
+    for value in [
+        json!({"identityProfile": "zz"}),
+        json!({"identityProfile": installed.to_uppercase()}),
+        json!({"acquisitionService": ""}),
+        json!({"acquisitionService": "x".repeat(129)}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+    }
+    let policy = validator(&document, &schema["properties"]["acquisition"].clone());
+    assert!(errors_of(&policy, &json!({"backendIds": ["acquisition_service"]})).is_empty());
+    assert!(!errors_of(&policy, &json!({"backendIds": ["unregistered"]})).is_empty());
+    assert!(schema["properties"]
+        .as_object()
+        .unwrap()
+        .contains_key("extensionRecipe"));
+}
+
+#[test]
+fn native_browser_profile_generation_schema_matches_typed_config() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["dynamic"].clone();
+    let validate = validator(&document, &schema);
+    for profile in [
+        json!({"name": "main"}),
+        json!({"name": "main", "saveChanges": false, "generation": 0}),
+        json!({"name": "main", "generation": 9_223_372_036_854_775_807_u64}),
+    ] {
+        let value = json!({"browserProfile": profile});
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        serde_json::from_value::<crawlx_core::config::BrowserProfile>(profile).unwrap();
+    }
+    for profile in [
+        json!({"generation": 1}),
+        json!({"name": "has space"}),
+        json!({"name": "main", "generation": -1}),
+        json!({"name": "main", "generation": "1"}),
+    ] {
+        let value = json!({"browserProfile": profile});
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+    }
+}
+
+#[test]
 fn archive_dedupe_schema_matches_native_modes_and_omission() {
     let document = doc();
     let (_, _, operation) = op_by_id(&document, "createCrawl");

@@ -23,6 +23,8 @@ pub mod datasets;
 pub mod datasets_import;
 pub mod events;
 pub mod extensions;
+pub mod interactive_profiles;
+pub(crate) mod interactive_screencast;
 pub mod kv;
 pub mod login_flows;
 pub mod memo;
@@ -112,6 +114,30 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/crawls/{id}/export", get(pages::export))
         .route("/v1/crawls/{id}/events", get(events::events))
+        .route(
+            "/v1/crawls/{id}/interactive-profiles/{session}/start",
+            post(interactive_profiles::start),
+        )
+        .route(
+            "/v1/crawls/{id}/interactive-profiles/{session}/status",
+            post(interactive_profiles::status),
+        )
+        .route(
+            "/v1/crawls/{id}/interactive-profiles/{session}/input",
+            post(interactive_profiles::input),
+        )
+        .route(
+            "/v1/crawls/{id}/interactive-profiles/{session}/finish",
+            post(interactive_profiles::finish),
+        )
+        .route(
+            "/v1/crawls/{id}/interactive-profiles/{session}/cancel",
+            post(interactive_profiles::cancel),
+        )
+        .route(
+            "/v1/crawls/{id}/sessions/{session}/screencast",
+            post(interactive_screencast::subscribe),
+        )
         .route("/v1/crawls/{id}/errors", get(pages::errors))
         .route("/v1/crawls/{id}/states", get(states::states))
         .route("/v1/crawls/{id}/transitions", get(transitions::transitions))
@@ -155,6 +181,7 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), auth_layer));
     Router::new()
         .route("/v1/openapi.json", get(openapi))
+        .route("/v1/interactive-profiles/ui", get(interactive_profiles::ui))
         .merge(compat_team::health_routes())
         .merge(authed)
         .fallback(not_found)

@@ -128,11 +128,16 @@ fn joined<'a>(names: impl Iterator<Item = &'a str>) -> String {
     joined
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "checked transport adapter encapsulates both raw native clients"
+)]
 pub(crate) enum HttpClient {
     Rustls(reqwest::Client),
     Randomized {
         client: wreq::Client,
         socks: Option<Box<SocksAdapter>>,
+        coherent: bool,
     },
 }
 
@@ -146,6 +151,10 @@ pub(crate) struct SocksAdapter {
 }
 
 impl HttpClient {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "checked transport adapter binds resolver and proxy policy before construction"
+    )]
     pub(crate) fn randomized<R: wreq::dns::Resolve + 'static>(
         cfg: &FetchConfig,
         pins: Arc<R>,
@@ -153,11 +162,15 @@ impl HttpClient {
         resolver: Arc<dyn Resolver>,
         pool_adapter: Option<SocketAddr>,
     ) -> Result<Self, FetchError> {
-        let tls = SelectedHello::from_seed(cfg.seed).into_config(cfg.controls.skip_tls_verification());
-        let provider = wreq::EmulationProvider::builder().tls_config(tls).build();
+        let coherent = cfg.identity_profile.is_some();
+        let provider = if coherent {
+            crate::identity_profile::emulation()?
+        } else {
+            let tls = SelectedHello::from_seed(cfg.seed).into_config(cfg.controls.skip_tls_verification());
+            wreq::EmulationProvider::builder().tls_config(tls).build()
+        };
         let mut builder = wreq::Client::builder()
             .emulation(provider)
-            .user_agent(cfg.user_agent())
             .redirect(wreq::redirect::Policy::none())
             .referer(false)
             .no_proxy()
@@ -168,6 +181,11 @@ impl HttpClient {
             .gzip(false)
             .brotli(false)
             .tls_info(true);
+        if !coherent {
+            builder = builder.user_agent(cfg.user_agent());
+        }
+        // Acquisition owns every retry and allowance reservation, including HTTP/2 retries.
+        builder = builder.http2_max_retry_count(0);
         if let Some(read) = cfg.read_timeout {
             builder = builder.read_timeout(read);
         }
@@ -200,9 +218,17 @@ impl HttpClient {
         let client = builder
             .build()
             .map_err(|error| FetchError::ClientBuild(error.into()))?;
-        Ok(Self::Randomized { client, socks })
+        Ok(Self::Randomized {
+            client,
+            socks,
+            coherent,
+        })
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "checked transport adapter exclusively sends native requests"
+    )]
     pub(crate) async fn send(
         &self,
         method: Method,
@@ -217,7 +243,14 @@ impl HttpClient {
                 .await
                 .map(HttpResponse::Rustls)
                 .map_err(FetchError::from_reqwest),
-            Self::Randomized { client, socks } => {
+            Self::Randomized {
+                client,
+                socks,
+                coherent,
+            } => {
+                if *coherent {
+                    crate::identity_profile::check_request_headers(&headers)?;
+                }
                 let adapter = match socks {
                     Some(route) => Some(
                         EgressProxy::serve_with(
@@ -243,6 +276,10 @@ impl HttpClient {
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "checked transport adapter retains raw responses until bounded decoding"
+)]
 pub(crate) enum HttpResponse {
     Rustls(reqwest::Response),
     Randomized {

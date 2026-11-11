@@ -3,6 +3,7 @@
 use super::CdpContext;
 use crawlx_core::browser::{BrowserContext as _, BrowserError};
 use crawlx_core::captcha::{CaptchaChallenge, CaptchaError, CaptchaKind};
+use crawlx_core::parser_memory::AdmittedText;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -81,6 +82,41 @@ impl CdpContext {
         serde_json::from_value(json).map_err(|_| CaptchaError::Delivery.into())
     }
 
+    /// Redact registered secrets from retained document text. Unchanged text keeps its
+    /// handle. A redacted copy is a new allocation, so it is reserved first (twice the source
+    /// length bounds every realistic replacement; a copy that still outgrows it is admitted
+    /// afterwards and refused when it does not fit) and the source stays charged until the
+    /// copy exists.
+    fn mask_admitted_text(&self, text: AdmittedText) -> Result<AdmittedText, BrowserError> {
+        if !self.ctl.config.captcha_secrets.has_values()? {
+            return Ok(text);
+        }
+        let mut permit = self
+            .ctl
+            .client
+            .budget()
+            .try_reserve(text.len().saturating_mul(2))
+            .map_err(BrowserError::Memory)?;
+        let redacted = match self.ctl.config.captcha_secrets.redact_if_present(&text)? {
+            std::borrow::Cow::Borrowed(_) => None,
+            std::borrow::Cow::Owned(redacted) => Some(redacted),
+        };
+        let Some(redacted) = redacted else {
+            return Ok(text);
+        };
+        let keep = redacted.capacity();
+        if permit.bytes() < keep {
+            if let Err(refused) = permit.grow_to(keep) {
+                drop(redacted);
+                drop(permit);
+                return Err(BrowserError::Memory(refused));
+            }
+        } else if let Ok(surplus) = permit.split(permit.bytes() - keep) {
+            drop(surplus);
+        }
+        Ok(AdmittedText::new(redacted, permit))
+    }
+
     pub(super) fn mask_captcha_page_result(
         &self,
         mut result: crawlx_core::page_op::PageOpResult,
@@ -98,7 +134,7 @@ impl CdpContext {
                 }
             }
             PageOpResult::Html { html, url } => {
-                *html = secrets.redact(html)?;
+                *html = self.mask_admitted_text(html.clone())?;
                 *url = secrets.redact(url)?;
             }
             PageOpResult::Response {
@@ -141,7 +177,11 @@ impl CdpContext {
         bundle.dom_supplement.nodes = self.mask_captcha(bundle.dom_supplement.nodes)?;
         bundle.network = self.mask_captcha(bundle.network)?;
         bundle.dialogs = self.mask_captcha(bundle.dialogs)?;
-        bundle.html = self.mask_captcha(bundle.html)?;
+        bundle.html = bundle
+            .html
+            .take()
+            .map(|html| self.mask_admitted_text(html))
+            .transpose()?;
         bundle.title = self.mask_captcha(bundle.title)?;
         bundle.discovered_urls = self.mask_captcha(bundle.discovered_urls)?;
         Ok(bundle)

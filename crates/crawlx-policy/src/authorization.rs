@@ -325,6 +325,22 @@ impl RecordScope {
         self.hosts.iter().map(String::as_str)
     }
 
+    /// Check only an opaque tunnel's exact scheme, host and port.
+    ///
+    /// Prefix-only records cover their exact origin, not any additional URL paths.
+    /// Visible requests must still pass [`Self::check_request`]; a tunnel cannot attest paths.
+    ///
+    /// # Errors
+    /// [`AuthzFailure::NotCovered`] when the authority is absent from the record.
+    pub fn check_origin(&self, url: &Url) -> Result<(), AuthzFailure> {
+        let origin = origin_string(url);
+        if self.origins.contains(&origin) || self.prefix_origins.contains(&origin) {
+            Ok(())
+        } else {
+            Err(AuthzFailure::NotCovered(origin))
+        }
+    }
+
     /// Does the target cover `url` (origin or prefix match, and the path is not excluded)?
     ///
     /// # Errors

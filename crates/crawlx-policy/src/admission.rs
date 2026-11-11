@@ -17,8 +17,9 @@
 //! a run exists. Every violation is returned, not just the first.
 
 use crate::authorization::{AuthorizationRecord, AuthzFailure};
-use crate::egress::EgressPolicy;
+use crate::egress::{EgressPolicy, PrivateHostScope};
 use crate::egress_lists::SharedEgressLists;
+use crate::scope::ExcludeHosts;
 use crawlx_core::config::{CreateCrawl, ExternalCommunication, LaunchProfile, RetentionMode, SafetyProfile};
 use crawlx_core::error::CoreError;
 use crawlx_core::gates::GateStatus;
@@ -456,6 +457,17 @@ impl AdmissionPolicy {
         errs: &mut Vec<AdmissionError>,
     ) -> EgressPolicy {
         let mut policy = EgressPolicy::new(false).with_seed_port(&crawl.seed_url);
+        match ExcludeHosts::new(&crawl.scope.exclude_hosts) {
+            Ok(exclusions) => policy = policy.with_host_exclusions(exclusions),
+            Err(error) => {
+                errs.push(AdmissionError::new(
+                    "/scope/excludeHosts",
+                    "invalid_pattern",
+                    error.to_string(),
+                ));
+                return policy;
+            }
+        }
         for role in &crawl.roles {
             if let Some(u) = &role.replica_base_url {
                 policy = policy.with_seed_port(u);
@@ -466,7 +478,9 @@ impl AdmissionPolicy {
         }
         policy.deployment_exempt = crawl.safety.profile == SafetyProfile::TestEnvironment;
         if let Some(record) = record {
-            policy = policy.with_record_scope(record.scope());
+            policy = policy
+                .with_record_scope(record.scope())
+                .with_authorized_private_networks(Vec::new());
         }
         if !crawl.safety.allow_private_networks {
             return policy;
@@ -494,7 +508,7 @@ impl AdmissionPolicy {
                 }
             }
         }
-        policy.with_authorized_private_networks(record.authorized_networks.clone())
+        policy.with_private_host_scope(PrivateHostScope::new(record))
     }
     fn check_robots_override(
         crawl: &CreateCrawl,
@@ -926,6 +940,56 @@ mod tests {
         assert!(a.egress.check_ip("10.21.9.9".parse().unwrap()).is_err());
         assert!(a.egress.check_ip("169.254.169.254".parse().unwrap()).is_err());
         assert!(a.egress.check_ip("192.168.0.1".parse().unwrap()).is_err());
+    }
+
+    #[test]
+    fn private_authority_preserves_explicit_host_exclusions_at_admission() {
+        let mut r = record();
+        r.origins = vec!["http://10.20.0.5".into()];
+        r.authorized_networks = vec!["10.20.0.0/16".parse().unwrap()];
+        for excluded in ["private-ips", "10.20.0.0/16", "10.20.0.5", "^10\\.20\\.0\\.5$"] {
+            let mut c = private_crawl("http://10.20.0.5/", &r);
+            c.scope.exclude_hosts = vec![excluded.into()];
+            let errors = admit(&mut c, Some(&r)).unwrap_err();
+            assert!(
+                codes(&errors).contains(&("/seedUrl", "url_denied")),
+                "{excluded}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn admitted_private_host_keeps_dns_and_path_denials() {
+        let mut r = record();
+        r.origins = vec!["https://staging.example.test".into()];
+        r.excluded_paths = vec!["/billing/*".into()];
+        r.authorized_networks = vec!["10.20.0.0/16".parse().unwrap()];
+        let mut c = private_crawl("https://staging.example.test/", &r);
+        c.scope.exclude_hosts = vec!["10.20.0.9".into()];
+        let admitted = admit(&mut c, Some(&r)).unwrap();
+        assert!(admitted
+            .egress
+            .check_all("staging.example.test", &["10.20.0.8".parse().unwrap()])
+            .is_ok());
+        assert_eq!(
+            admitted
+                .egress
+                .check_all(
+                    "staging.example.test",
+                    &["10.20.0.8".parse().unwrap(), "10.20.0.9".parse().unwrap()],
+                )
+                .unwrap_err()
+                .rule,
+            crate::egress::DenyRule::HostExcluded
+        );
+        assert_eq!(
+            admitted
+                .egress
+                .check_url(&Url::parse("https://staging.example.test/billing/x").unwrap())
+                .unwrap_err()
+                .rule,
+            crate::egress::DenyRule::AuthorizationScope
+        );
     }
 
     #[test]

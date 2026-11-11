@@ -290,7 +290,16 @@ impl Classify for WorkerError {
                 | FetchError::AcquisitionCancelled
                 | FetchError::MetaRefresh { .. }
                 | FetchError::MetaRefreshTarget { .. }
-                | FetchError::AcquisitionUnavailable => ErrorClass::Terminal,
+                | FetchError::AcquisitionUnavailable
+                // skipped by policy, or no hidden fallback after a failed identity, service
+                // or isolated parser: repeating the attempt cannot change the outcome
+                | FetchError::ExtensionHeaderSkipped
+                | FetchError::Identity(_)
+                | FetchError::AcquisitionService(_)
+                | FetchError::AcquisitionParser(_) => ErrorClass::Terminal,
+                // a refusal larger than the whole budget never fits; transient pressure clears
+                FetchError::MemoryAdmission(refused) if refused.exceeds_budget() => ErrorClass::Terminal,
+                FetchError::MemoryAdmission(_) => ErrorClass::Retryable,
                 FetchError::Resolve { .. } | FetchError::Transport(_) => ErrorClass::Retryable,
                 // the request may have reached the origin: idempotent GET/HEAD only, so a
                 // retry is still safe, but the class records that the outcome is not known

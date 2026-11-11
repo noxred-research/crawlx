@@ -11,6 +11,10 @@ async fn gym() -> crawlx_bench::gym::GymHandle {
     GymServer::start("127.0.0.1:0".parse().unwrap()).await.unwrap()
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn every_fixture_serves_200_and_its_manifest_parses() {
     let gym = gym().await;
@@ -133,6 +137,10 @@ fn manifests_agree_with_their_pages() {
         .any(|c| c.expected == ExpectedClass::Actionable));
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn ledger_records_beacons_ops_and_forms_and_reset_clears_it() {
     let gym = gym().await;
@@ -241,6 +249,10 @@ async fn ledger_records_beacons_ops_and_forms_and_reset_clears_it() {
     gym.shutdown().await;
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn checkpoints_restore_exact_fixture_state_without_rewinding_evidence() {
     let gym = gym().await;
@@ -307,6 +319,10 @@ async fn checkpoints_restore_exact_fixture_state_without_rewinding_evidence() {
     gym.shutdown().await;
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn pages_are_deterministic_for_a_seed() {
     let gym = gym().await;
@@ -404,6 +420,10 @@ async fn s1_link_graph_matches_the_manifest_counters() {
 }
 
 /// A client that never follows redirects, so tests see the 3xx responses themselves.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 fn no_redirects() -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())

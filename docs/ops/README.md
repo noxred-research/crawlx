@@ -267,15 +267,16 @@ opt-in deployment. The chart renders no optional Secret reference when its setti
 
 Retained profiles require explicit operator enablement and `CRAWLX_PROFILE_KEY_REF`;
 the profile overlay supplies both, while the Helm chart requires an existing profile Secret.
-Saving full Chromium preferences/extensions additionally requires
-`CRAWLX_PROFILE_EXECUTABLE_PREFERENCES=true`, or the matching Helm
-`executablePreferencesApproved=true`. Default false is intentional. TTL is
-`CRAWLX_PROFILE_MAX_TTL_SECONDS`, or Helm `maxTtlSeconds`, bounded to 1–86400 seconds.
-The worker rejects retained profiles for ZDR runs; Helm also refuses combining retained
-profiles with `zdr.enabled`. Plaintext leases use private mode-0700 directories under
-`/dev/shm`, backed by Compose's sized shared-memory tmpfs or Helm's Memory emptyDir.
-Encrypted profile ciphertext stays in the separate PostgreSQL catalog. Never mount a
-persistent plaintext profile directory or use the retired `--profiles-dir` flag.
+Custody mode accepts bounded structured cookies and local/session storage only.
+Opaque Chromium directories, executable preferences and extensions are not imported.
+TTL is `CRAWLX_PROFILE_MAX_TTL_SECONDS`, or Helm `maxTtlSeconds`, bounded to
+1–86400 seconds and additionally narrowed by source authority and retention.
+The worker rejects retained profiles for ZDR runs; Helm also refuses combining
+profiles with `zdr.enabled`. The fresh browser context receives approved storage
+only after owner, principal, origin, build, egress, generation and fence verification
+and registration of every opaque name and value. Encrypted profile ciphertext stays
+in the separate PostgreSQL catalog. Never mount persistent plaintext profile
+directories or use the retired `--profiles-dir` flag.
 
 Protocol registries use strict JSON `schemaVersion: 1`, `approvedTenants`, `services`,
 and optional `whois`. Each service uses the real

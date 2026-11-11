@@ -113,6 +113,26 @@ impl HttpSessionAuthority for ExistingSessionAuthority {
     }
 }
 
+/// Installed coherent identity profile for this run, as its backend build and identity-policy digests.
+///
+/// Absent selection keeps the ordinary client identity. A selected digest that is not the installed
+/// pinned profile fails closed; it never degrades to ordinary transport.
+fn coherent_profile(rc: &RunContext) -> Result<Option<(Digest, Digest)>, WorkerError> {
+    let Some(selected) = rc.crawl.fetch.identity_profile else {
+        return Ok(None);
+    };
+    let profile = crawlx_core::identity_profile::IdentityProfileV1::pinned_chromium();
+    let installed = profile
+        .digest()
+        .map_err(|error| WorkerError::Config(error.to_string()))?;
+    if installed != selected {
+        return Err(WorkerError::Config(
+            "fetch.identityProfile not installed".to_owned(),
+        ));
+    }
+    Ok(Some((profile.backend_build_digest(), installed)))
+}
+
 /// Register a default HTTP session from an existing real coordinator lease.
 /// The client starts only when its first admitted request arrives.
 pub(crate) async fn register_http_session(
@@ -121,17 +141,23 @@ pub(crate) async fn register_http_session(
     fetcher: &Fetcher,
 ) -> Result<HttpSessionRegistration, WorkerError> {
     let metadata = rc.stores.runs.get_metadata(rc.run).await?;
+    let coherent = coherent_profile(rc)?;
     let identity = SessionIdentityV1::new(
         metadata.tenant,
         &lease.session,
         Digest::of_value("crawlx/http-session-acquisition/v1", &rc.crawl.fetch)
             .map_err(|error| WorkerError::Config(error.to_string()))?,
-        Digest::of(
-            "crawlx/http-session-client/v1",
-            env!("CARGO_PKG_VERSION").as_bytes(),
+        coherent.map_or_else(
+            || {
+                Digest::of(
+                    "crawlx/http-session-client/v1",
+                    env!("CARGO_PKG_VERSION").as_bytes(),
+                )
+            },
+            |(build, _)| build,
         ),
         rc.egress.route_for(&rc.crawl)?.egress_digest(),
-        metadata.config_digest,
+        coherent.map_or(metadata.config_digest, |(_, policy)| policy),
         None,
     );
     let deadline = rc.budget.lock().deadline();
@@ -164,6 +190,17 @@ pub(crate) fn register_bound_http_session(
         return Err(unavailable().into());
     }
     let mut config = fetcher.config().clone();
+    if rc.crawl.fetch.identity_profile.is_some() {
+        // Exact trusted binding or nothing: a mismatched build/policy/generation never falls back.
+        coherent_profile(rc)?;
+        config.identity_profile = Some(
+            crawlx_core::identity_profile::IdentitySelectionV1::new(
+                binding.identity.clone(),
+                binding.generation,
+            )
+            .map_err(|error| WorkerError::Config(error.to_string()))?,
+        );
+    }
     config.pool = rc.session_pool_binding(&binding, lease)?;
     config.shared_governor = Some(Arc::clone(fetcher.governor()));
     let manager = Arc::new(
@@ -196,6 +233,8 @@ pub(crate) fn register_bound_http_session(
 }
 
 /// Replace only a proven drained anonymous generation within its admitted rotation budget.
+/// A coherent identity selection is pinned to its exact generation, so a replacement is refused
+/// (never re-bound or downgraded to ordinary transport) when `fetch.identityProfile` is selected.
 pub(crate) async fn replace_retired_generation(
     rc: &Arc<RunContext>,
     lease: &SessionLease,
@@ -207,6 +246,7 @@ pub(crate) async fn replace_retired_generation(
         .as_ref()
         .map_or(0, |policy| policy.attempts.max_session_rotations);
     if rc.cancel.is_cancelled()
+        || rc.crawl.fetch.identity_profile.is_some()
         || rotations == 0
         || retired.generation > u64::from(rotations)
         || retired.identity.principal != crawlx_core::PrincipalId::anonymous()
@@ -342,9 +382,14 @@ async fn run_local_http_plane_inner(
             let registration = register_http_session(rc, &lease, fetcher).await?;
             plane.set_http_sessions(registration.manager, registration.authority);
         }
+        let producer = rc.stores.session_producer(rc.run, &lease);
         let outcome = crawlx_core::custody::with_producer(
-            rc.stores.session_producer(rc.run, &lease),
-            Box::pin(plane.run(cancel)),
+            producer.clone(),
+            crate::custody_renewal::with_custody_renewal(
+                rc.stores.pg_secret_authority.clone(),
+                producer,
+                Box::pin(plane.run(cancel)),
+            ),
         )
         .await?;
         Ok::<_, WorkerError>(outcome)
@@ -485,3 +530,7 @@ mod tests {
         )));
     }
 }
+
+#[cfg(test)]
+#[path = "session_identity_tests.rs"]
+mod identity_tests;

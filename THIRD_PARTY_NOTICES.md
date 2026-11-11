@@ -67,6 +67,16 @@ dictionaries (SCOWL and others, under GPL/LGPL/MPL terms). No Chromium binary is
 distributed with a source release. Review those licenses before publishing any Chromium
 build or container image that contains it.
 
+The selected native HTTP identity reference is the repository-pinned Chromium
+`155.0.8059.84` Linux x86_64 artifact. Its archive, measured executable, embedded
+notice bundle and TLS/compression/CA notice digests are recorded in
+[`docs/identity-profile-provenance.json`](docs/identity-profile-provenance.json).
+Release and image SBOM generation merges those receipts without replacing scanner
+findings. Notice hashes are provenance, not a license determination:
+`distributionApproval` remains `external_required` and unmeasured licenses remain
+`NOASSERTION`. The native derived profile does not claim exact reference wire
+equivalence or HTTP/3 support.
+
 ## Cargo dependencies
 
 Dependencies fetched from crates.io are not vendored, so their license texts are not

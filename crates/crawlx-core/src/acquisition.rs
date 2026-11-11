@@ -210,11 +210,12 @@ impl AcquisitionPolicyV1 {
         if self.backend_ids.is_empty() || self.backend_ids.len() > 4 || self.fallback_backend_ids.len() > 4 {
             return Err(AcquisitionPolicyError("backend count"));
         }
-        if self
-            .backend_ids
-            .iter()
-            .any(|id| !matches!(id.as_str(), "native_http" | "native_browser"))
-        {
+        if self.backend_ids.iter().any(|id| {
+            !matches!(
+                id.as_str(),
+                "native_http" | "native_browser" | "acquisition_service"
+            )
+        }) {
             return Err(AcquisitionPolicyError("backend unavailable"));
         }
         if self
@@ -541,6 +542,9 @@ pub struct BackendCapabilitiesV1 {
     pub available: bool,
     /// Stable explicit limitations.
     pub limitations: Vec<String>,
+    /// Installed coherent HTTP profile; absent for ordinary HTTP or unattested service claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_profile: Option<Digest>,
 }
 impl BackendCapabilitiesV1 {
     /// Package-backed HTTP capability; no certificate or HTTP/3 claim.
@@ -557,6 +561,7 @@ impl BackendCapabilitiesV1 {
                 "certificate_evidence_unavailable".to_owned(),
                 "build_digest_unavailable".to_owned(),
             ],
+            identity_profile: None,
         }
     }
     /// Capability from a real browser backend's observed build.
@@ -573,6 +578,7 @@ impl BackendCapabilitiesV1 {
                 "build_digest_unavailable".to_owned(),
             ],
             browser: Some(build),
+            identity_profile: None,
             available: true,
         }
     }
@@ -587,6 +593,7 @@ impl BackendCapabilitiesV1 {
             browser: None,
             available: false,
             limitations: vec![reason.to_owned(), "build_digest_unavailable".to_owned()],
+            identity_profile: None,
         }
     }
     /// Check bounded structural capability facts before publishing or accepting a heartbeat.
@@ -594,13 +601,28 @@ impl BackendCapabilitiesV1 {
     /// # Errors
     /// Rejects unknown native IDs, oversized evidence, or an available browser without observed build facts.
     pub fn validate_evidence(&self) -> Result<(), AcquisitionPolicyError> {
-        if !matches!(self.backend_id.as_str(), "native_http" | "native_browser")
-            || self.implementation.is_empty()
+        if let Some(digest) = self.identity_profile {
+            let installed = crate::identity_profile::IdentityProfileV1::pinned_chromium();
+            let expected = installed
+                .digest()
+                .map_err(|_| AcquisitionPolicyError("identity profile encoding"))?;
+            if self.backend_id != "native_http"
+                || digest != expected
+                || self.implementation != installed.implementation
+            {
+                return Err(AcquisitionPolicyError("identity capability mismatch"));
+            }
+        }
+        if !matches!(
+            self.backend_id.as_str(),
+            "native_http" | "native_browser" | "acquisition_service"
+        ) || self.implementation.is_empty()
             || self.implementation.len() > 128
             || self.version.len() > 128
             || self.limitations.len() > 16
             || self.limitations.iter().any(|value| value.len() > 128)
             || (self.backend_id == "native_browser" && self.available && self.browser.is_none())
+            || (self.backend_id == "acquisition_service" && self.available && self.build_digest.is_none())
             || self.browser.as_ref().is_some_and(|build| {
                 build.chromium_version.len() > 256
                     || build.cdp_revision.len() > 256
@@ -762,6 +784,9 @@ pub struct ConnectionEvidenceV1 {
     pub tls_verification: Option<String>,
     /// Observed certificate material is unavailable in these native adapters.
     pub certificate_observed: bool,
+    /// Observed final-response application protocol; absent for unmeasured service reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub negotiated_protocol: Option<crate::traffic::Protocol>,
 }
 
 /// One body-free completed dispatch summary, capped at eight per result.
@@ -870,6 +895,9 @@ pub struct AcquisitionResultV1 {
     pub backend: BackendCapabilitiesV1,
     /// Checked connection evidence and explicit unobserved facts.
     pub connection: ConnectionEvidenceV1,
+    /// Measured checked DNS fact; absent when the resolver did not provide one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_report: Option<crate::report_history::ReportDataV1>,
     /// Independent validation.
     pub validation: ValidationOutcomeV1,
     /// Total navigation dispatches across all backends.
@@ -915,6 +943,7 @@ impl AcquisitionResultV1 {
             transport_succeeded: false,
             extraction_succeeded: None,
             connection: ConnectionEvidenceV1::default(),
+            dns_report: None,
             attempt_summaries: Vec::new(),
             final_url_evidence: UrlEvidenceV1::Unavailable,
             redirects: Vec::new(),

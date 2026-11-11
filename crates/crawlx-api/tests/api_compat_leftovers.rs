@@ -348,7 +348,12 @@ impl PageRenderer for BrandRenderer {
             status: 200,
             headers: vec![("content-type".to_owned(), "text/html".to_owned())],
             content_type: Some("text/html".to_owned()),
-            html: BRAND_PAGE.to_owned(),
+            html: {
+                let permit = crawlx_core::parser_memory::global()
+                    .try_reserve(BRAND_PAGE.len())
+                    .unwrap();
+                crawlx_core::parser_memory::AdmittedText::new(BRAND_PAGE.to_owned(), permit)
+            },
             screenshot: None,
             actions: ActionOutputs::default(),
             computed_styles: req.options.wants("branding").then(brand_report),

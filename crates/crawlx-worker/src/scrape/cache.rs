@@ -390,6 +390,8 @@ pub fn native_key(
         &crawl.fetch.user_agent,
         crawl.fetch.skip_tls_verification,
         &crawl.fetch.tls_impersonation,
+        &crawl.fetch.identity_profile,
+        &crawl.fetch.acquisition_service,
         &request.url,
         &request.method,
         &request.route,
@@ -401,10 +403,17 @@ pub fn native_key(
     CacheKeyV1::new(
         principal,
         Digest::of("crawlx/acquisition-profile/v1", &profile),
-        format!(
-            "crawlx-fetch/{};native-http-capability/1",
-            env!("CARGO_PKG_VERSION")
-        ),
+        match crawl.fetch.identity_profile {
+            Some(profile) => format!(
+                "crawlx-fetch/{};native-http-capability/1;identity/{}",
+                env!("CARGO_PKG_VERSION"),
+                profile.to_hex()
+            ),
+            None => format!(
+                "crawlx-fetch/{};native-http-capability/1",
+                env!("CARGO_PKG_VERSION")
+            ),
+        },
         crawl
             .acquisition
             .as_ref()
@@ -417,9 +426,13 @@ pub fn native_key(
 /// Whether native response identity can be correlated without exposing credential hashes.
 #[must_use]
 pub fn native_eligible(crawl: &crawlx_core::CreateCrawl, credential_identity: Option<Digest>) -> bool {
+    // External-service bytes and coherent-identity session bytes are bound to a live actor
+    // generation or a third party; neither may be served to or from the shared native cache.
     ((crawl.fetch.extra_headers.is_empty() && crawl.fetch.cookies.is_empty())
         || credential_identity.is_some())
         && crawl.protocol.routes.is_empty()
+        && crawl.fetch.acquisition_service.is_none()
+        && crawl.fetch.identity_profile.is_none()
 }
 
 fn refresh_compatible(metadata: &AcquisitionResultV1, policy: Option<&AcquisitionPolicyV1>) -> bool {
@@ -551,6 +564,10 @@ pub(crate) async fn lookup_native(
                 .map_err(|e| StoreError::Serialization(e.to_string()))?,
             headers,
             body: bytes::Bytes::from(body),
+            body_permit: None,
+            wire_bytes: None,
+            dns_report: None,
+            negotiated_protocol: None,
             truncated: false,
             redirects: Vec::new(),
             hops: Vec::new(),
@@ -712,5 +729,54 @@ mod tests {
         let original = key(&options, Some(&p), first).digest();
         p.validation.minimum_text_bytes = 80;
         assert_ne!(original, key(&options, Some(&p), first).digest());
+    }
+
+    fn native_crawl() -> (crawlx_core::CreateCrawl, crawlx_core::request::RequestEnvelopeV1) {
+        let crawl = crawlx_core::CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
+        let url = crawlx_url::Canonicalizer::canonicalize_url(
+            &url::Url::parse("https://example.test/page").unwrap(),
+            &crawlx_url::CanonicalizeOptions::default(),
+        )
+        .unwrap();
+        (crawl, crawlx_core::request::RequestEnvelopeV1::get(url, 0, None))
+    }
+
+    #[test]
+    fn identity_and_service_selectors_never_share_native_keys_or_eligibility() {
+        let run = CrawlRunId::new();
+        let (mut crawl, request) = native_crawl();
+        let ordinary = native_key(&crawl, &request, run, None);
+        assert!(native_eligible(&crawl, None));
+
+        crawl.fetch.identity_profile = Some(
+            crawlx_core::identity_profile::IdentityProfileV1::pinned_chromium()
+                .digest()
+                .unwrap(),
+        );
+        let coherent = native_key(&crawl, &request, run, None);
+        assert_ne!(ordinary.digest(), coherent.digest());
+        assert!(
+            !native_eligible(&crawl, None),
+            "coherent session bytes are never shared"
+        );
+
+        crawl.fetch.identity_profile = None;
+        crawl.fetch.acquisition_service = Some("render-a".to_owned());
+        let service_a = native_key(&crawl, &request, run, None);
+        crawl.fetch.acquisition_service = Some("render-b".to_owned());
+        let service_b = native_key(&crawl, &request, run, None);
+        assert_ne!(ordinary.digest(), service_a.digest());
+        assert_ne!(service_a.digest(), service_b.digest());
+        assert!(
+            !native_eligible(&crawl, None),
+            "external-service bytes never enter the native cache"
+        );
+
+        crawl.fetch.acquisition_service = None;
+        assert_eq!(
+            ordinary.digest(),
+            native_key(&crawl, &request, run, None).digest()
+        );
+        assert!(native_eligible(&crawl, None));
     }
 }

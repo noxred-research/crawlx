@@ -373,9 +373,10 @@ fn document_skeleton(content: &str, language: Option<&str>) -> String {
     out
 }
 
-fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
+/// Extraction options of one HTML compose: the request's own view over the shared options.
+fn html_extract_options(input: &ComposeInput) -> ExtractOptions {
     let options = &*input.options;
-    let extract = ExtractOptions {
+    ExtractOptions {
         status: input.status,
         headers: input.headers.clone(),
         content_type: input.content_type.clone(),
@@ -394,29 +395,161 @@ fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
             _ => Vec::new(),
         },
         ..input.extract.clone()
-    };
-    let mut doc = match input.document.take() {
-        Some(document) => document,
-        None => match &input.captcha_secrets {
-            Some(captcha) => crate::acquisition::extract_document_with_secrets(
-                &input.body,
-                &input.base,
-                &extract,
-                &input.controls,
-                captcha,
-            ),
-            None if extract.content.is_none() => {
-                crate::acquisition::extract_document(&input.body, &input.base, &extract, &input.controls)
-            }
-            None => {
-                return Err(ComposeError::Extract(
-                    "dynamic-secret registry unavailable".into(),
-                ))
-            }
+    }
+}
+
+/// Largest byte length `redact` can produce from `len` input bytes, or `None` when it cannot be
+/// bounded (an unknown replacement style, or arithmetic overflow).
+///
+/// `Mask` and `Remove` never grow the text, so the capacity `redact` starts with (`len`) holds.
+/// `Tag` replaces every hit (at least one byte) by a marker of at most `max marker` bytes, and
+/// `redact`'s output `String` doubles when it fills, so its capacity stays below twice the
+/// largest possible output.
+pub(crate) fn redaction_bound(
+    len: usize,
+    options: &crawlx_extract::parse::redact::RedactOptions,
+) -> Option<usize> {
+    use crawlx_extract::parse::redact::{RedactEntity, ReplaceStyle};
+    match options.replace_style {
+        ReplaceStyle::Mask | ReplaceStyle::Remove => Some(len),
+        ReplaceStyle::Tag => {
+            let marker = if options.entities.is_empty() {
+                RedactEntity::ALL.iter().map(|entity| entity.name().len()).max()
+            } else {
+                options.entities.iter().map(|entity| entity.name().len()).max()
+            }?
+            .checked_add(2)?;
+            len.checked_mul(marker)?.checked_mul(2)
         }
-        .map(Box::new)
-        .map_err(|e| ComposeError::Extract(e.to_string()))?,
+        _ => None,
+    }
+}
+
+/// Largest captcha-secret snapshot (bytes, including per-string overhead) one parse may copy.
+const MAX_CAPTCHA_SNAPSHOT_BYTES: usize = 1024 * 1024;
+
+/// A typed scrub failure as a [`crawlx_fetch::FetchError`]: an admission refusal keeps its
+/// typed source, every other bound or allocation failure is an allowance refusal.
+fn scrub_failure(error: &(dyn std::error::Error + 'static)) -> crawlx_fetch::FetchError {
+    match std::error::Error::source(error)
+        .and_then(|source| source.downcast_ref::<crawlx_core::parser_memory::ByteAdmissionError>())
+    {
+        Some(admission) => crawlx_fetch::FetchError::MemoryAdmission(*admission),
+        None => crawlx_fetch::FetchError::AcquisitionAllowance,
+    }
+}
+
+/// Admitted parser input for `body`, after native credential redaction.
+///
+/// `owned` means the bytes already own their byte reservation (a transport body or a charged
+/// DOM): the very same allocation then travels with a zero-byte carrier and nothing is charged
+/// twice. Any other source is charged for real before it reaches the parser.
+///
+/// Without a content policy nothing is rewritten. With one, the credential scrub runs through
+/// [`Redactor::scrub_bytes_bounded`](crawlx_core::secret::Redactor::scrub_bytes_bounded): every
+/// stage's exact output size is computed, capped at the global budget and reserved BEFORE it is
+/// allocated, so no intermediate is ever uncharged. A scrub that leaves the bytes unchanged
+/// shares the original allocation.
+///
+/// # Errors
+/// [`FetchError`](crawlx_fetch::FetchError): a refused reservation, a stage over the cap or a
+/// failed allocation.
+pub(crate) fn parser_input(
+    body: &Bytes,
+    controls: &crawlx_core::request_controls::RequestControls,
+    extract: &ExtractOptions,
+    owned: bool,
+) -> Result<crawlx_core::parser_memory::Budgeted<Bytes>, crawlx_fetch::FetchError> {
+    use crawlx_core::parser_memory::Budgeted;
+    let budget = crawlx_core::parser_memory::global();
+    let mut permit = budget.try_reserve(0)?;
+    let scrubbed = if extract.content.is_none() {
+        None
+    } else {
+        crawlx_core::secret::Redactor::new()
+            .scrub_bytes_bounded(body, controls.secret_values(), &mut permit, budget.limit())
+            .map_err(|error| scrub_failure(&error))?
     };
+    match scrubbed {
+        // A fresh, already admitted allocation: `Bytes::from(Vec)` keeps it without copying.
+        Some(scrubbed) => Ok(Budgeted::new(Bytes::from(scrubbed), permit)),
+        None if owned => Ok(Budgeted::new(body.clone(), permit)),
+        None => {
+            permit.grow_by(body.len())?;
+            Ok(Budgeted::new(body.clone(), permit))
+        }
+    }
+}
+
+/// Parse the HTML of `input` once through the shared isolated parser, before [`compose`] runs.
+///
+/// There is no direct, unadmitted fallback: an unsupported isolation policy, a refused
+/// reservation or a parser failure is an explicit error. The returned reservation covers the
+/// document and must be held until the last sink consumed what is derived from it.
+///
+/// # Errors
+/// [`ComposeError::Extract`] for every refusal, including cancellation.
+pub(crate) async fn prepare_document(
+    input: &ComposeInput,
+    cpu: &crate::runtime::CpuPool,
+    owned_body: bool,
+) -> Result<crawlx_core::parser_memory::Budgeted<Box<crawlx_extract::Document>>, ComposeError> {
+    let refuse = |reason: &str| ComposeError::Extract(reason.to_owned());
+    let extract = html_extract_options(input);
+    if extract.content.is_some() && input.captcha_secrets.is_none() {
+        return Err(refuse("dynamic-secret registry unavailable"));
+    }
+    let body = parser_input(&input.body, &input.controls, &extract, owned_body)
+        .map_err(|_| refuse("parser memory budget refused the document"))?;
+    let dynamic = match input.captcha_secrets.as_ref() {
+        Some(captcha) => Some(
+            captcha
+                .literal_snapshot_admitted(MAX_CAPTCHA_SNAPSHOT_BYTES)
+                .map_err(|_| refuse("dynamic-secret snapshot unavailable"))?,
+        ),
+        None => None,
+    };
+    let no_dynamic: Vec<String> = Vec::new();
+    // The admitted snapshot stays alive until the isolated secrets are built from it.
+    let secrets = crawlx_extract::isolated::IsolatedSecrets::new(
+        input.controls.secret_values(),
+        dynamic
+            .as_ref()
+            .map_or(&no_dynamic, |admitted| &**admitted.value())
+            .iter()
+            .map(String::as_str),
+    )
+    .map_err(|error| ComposeError::Extract(error.to_string()))?;
+    drop(dynamic);
+    let parser =
+        crate::isolated_parser::shared().map_err(|error| ComposeError::Extract(error.to_string()))?;
+    let page = Box::pin(parser.extract_page(
+        cpu,
+        body,
+        crate::isolated_parser::PageRequest {
+            base: input.base.clone(),
+            options: extract,
+            engine: crawlx_extract::isolated::Engine::Pipeline,
+            secrets,
+        },
+        &input.cancel,
+    ))
+    .await
+    .map_err(|error| {
+        if input.cancel.is_cancelled() {
+            refuse("scrape cancelled during document parsing")
+        } else {
+            ComposeError::Extract(error.to_string())
+        }
+    })?;
+    Ok(page.document)
+}
+
+fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
+    let options = &*input.options;
+    let mut doc = input.document.take().ok_or_else(|| {
+        ComposeError::Extract("prepared document unavailable; direct unbounded extraction is disabled".into())
+    })?;
     let images = if options.wants("images") {
         Some(
             doc.image_urls
@@ -771,13 +904,32 @@ mod tests {
         assert!(c.html.is_none() && c.links.is_empty());
     }
 
+    /// Compose an HTML page the way the engine does: parse it once through the isolated parser
+    /// first, keep the reservation, then compose from the prepared document.
+    async fn compose_html(page: &[u8]) -> Composed {
+        let mut input = input(BodyKind::Html, page, ScrapeOptions::default());
+        let (document, _permit) = prepare_document(&input, &crate::runtime::CpuPool::default(), false)
+            .await
+            .ok()
+            .unwrap()
+            .into_parts();
+        input.document = Some(document);
+        compose(&mut input).ok().unwrap()
+    }
+
     #[test]
-    fn html_yields_markdown_links_and_title() {
+    fn html_without_a_prepared_document_is_an_explicit_error() {
+        let err = compose(&mut input(BodyKind::Html, b"<p>x</p>", ScrapeOptions::default()))
+            .err()
+            .unwrap();
+        assert!(matches!(err, ComposeError::Extract(_)));
+    }
+
+    #[tokio::test]
+    async fn html_yields_markdown_links_and_title() {
         let page = br#"<html><head><title>T</title></head><body><main><h1>Hi</h1>
             <a href="/b">b</a><img src="data:image/png;base64,AAAA"></main></body></html>"#;
-        let c = compose(&mut input(BodyKind::Html, page, ScrapeOptions::default()))
-            .ok()
-            .unwrap();
+        let c = compose_html(page).await;
         assert_eq!(c.title.as_deref(), Some("T"));
         assert!(c.markdown.unwrap().contains("# Hi"));
         assert_eq!(c.links[0].as_str(), "https://example.test/b");
@@ -787,14 +939,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn html_is_a_document_with_doctype_and_language() {
+    #[tokio::test]
+    async fn html_is_a_document_with_doctype_and_language() {
         let page = br#"<!doctype html><html lang="en-GB"><head><title>T</title></head><body><main><h1>Hi</h1></main></body></html>"#;
-        let html = compose(&mut input(BodyKind::Html, page, ScrapeOptions::default()))
-            .ok()
-            .unwrap()
-            .html
-            .unwrap();
+        let html = compose_html(page).await.html.unwrap();
         assert!(
             html.starts_with("<!DOCTYPE html><html lang=\"en-GB\">\n<body>\n<main>"),
             "{html}"
@@ -804,11 +952,7 @@ mod tests {
             "{html}"
         );
         let no_lang = br#"<html><body><main>x</main></body></html>"#;
-        let html = compose(&mut input(BodyKind::Html, no_lang, ScrapeOptions::default()))
-            .ok()
-            .unwrap()
-            .html
-            .unwrap();
+        let html = compose_html(no_lang).await.html.unwrap();
         assert!(html.starts_with("<!DOCTYPE html><html>\n<body>"), "{html}");
     }
 

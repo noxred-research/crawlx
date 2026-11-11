@@ -347,6 +347,19 @@ fn approval_from_row(r: &PgRow) -> Result<ApprovalRecord, StoreError> {
     })
 }
 
+pub(crate) async fn approval_in_transaction(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: ApprovalId,
+) -> Result<ApprovalRecord, StoreError> {
+    let sql = format!("SELECT {APPROVAL_COLS} FROM approvals WHERE approval_id=$1");
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id.0)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db)?;
+    approval_from_row(&row)
+}
+
 const WEBHOOK_COLS: &str =
     "delivery_id, run_id, event_seq, event_type, url, status, attempts, next_attempt_at, delivered_at, last_status, last_error";
 
@@ -694,9 +707,9 @@ impl PgApiRepo {
         row.as_ref().map(approval_from_row).transpose()
     }
 
-    /// Apply `Approved` or `Denied` to a pending, unexpired, unconsumed approval in one
-    /// transaction; approving releases the held action (`actions.hold = 'none'`), denying
-    /// marks it `denied`.
+    /// Apply `Approved` or `Denied` to a pending, unexpired, unconsumed approval.
+    /// Approval preserves the hold: only fenced verified T1 may release it.
+    /// Durable decision time comes from the database after acquiring the row lock.
     ///
     /// # Errors
     /// Returns [`StoreError::Conflict`] when `decision` is `Pending` or `Expired`, and other
@@ -708,11 +721,11 @@ impl PgApiRepo {
         decision: ApprovalDecision,
         decided_by: Uuid,
         reason: Option<&str>,
-        now: Timestamp,
+        _now: Timestamp,
     ) -> Result<DecideOutcome, StoreError> {
         let _timer = self.pg.query_timer("api.approval_decide");
         let hold = match decision {
-            ApprovalDecision::Approved => "none",
+            ApprovalDecision::Approved => "awaiting_approval",
             ApprovalDecision::Denied => "denied",
             ApprovalDecision::Pending | ApprovalDecision::Expired => {
                 return Err(StoreError::Conflict(format!(
@@ -735,12 +748,27 @@ impl PgApiRepo {
             return Ok(DecideOutcome::NotFound);
         };
         let current = approval_from_row(&row)?;
-        if current.decision == decision {
+        let now: Timestamp = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+        let revoked: bool =
+            sqlx::query_scalar("SELECT revoked_at IS NOT NULL FROM approvals WHERE approval_id=$1")
+                .bind(id.0)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+        if current.decision == decision
+            && current.expires_at > now
+            && current.consumed_at.is_none()
+            && !revoked
+        {
             return Ok(DecideOutcome::Unchanged(current));
         }
         if current.decision != ApprovalDecision::Pending
             || current.expires_at <= now
             || current.consumed_at.is_some()
+            || revoked
         {
             return Ok(DecideOutcome::NotPending(current));
         }

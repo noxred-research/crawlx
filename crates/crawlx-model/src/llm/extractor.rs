@@ -2,10 +2,10 @@
 //! `question`, `highlights` formats, `/extract`, `/agent`, `/monitor` judging and
 //! `crawl/params-preview`).
 //!
-//! [`LlmExtractor`] has one required primitive, [`LlmExtractor::complete`] (a JSON-mode chat
-//! completion that returns a parsed JSON value and the tokens it cost); every product method is a
-//! provided method layered on it, so a wrapper (recording, rate capping) that overrides only
-//! `complete` covers all of them.
+//! [`LlmExtractor::complete`] is the compatibility JSON completion primitive.
+//! Product helpers layer on it. [`LlmExtractor::complete_bounded`] is a separate,
+//! fail-closed capability: providers and wrappers must explicitly forward token,
+//! response-byte and cancellation limits rather than silently use `complete`.
 //!
 //! Page text is untrusted: it is fenced between [`DATA_OPEN`] and [`DATA_CLOSE`] after the
 //! delimiter sequences inside it are neutralised, and the system prompt tells the model that the
@@ -17,6 +17,119 @@ use async_trait::async_trait;
 use crawlx_core::scrape::QueryMode;
 use serde_json::{json, Map, Value};
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
+
+/// A provider-enforced per-call completion token ceiling, never a byte estimate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+#[must_use]
+pub struct MaxOutputTokens(u32);
+
+impl MaxOutputTokens {
+    /// Validate a positive ceiling of at most 65,536 tokens.
+    ///
+    /// # Errors
+    /// Returns [`LlmError::InvalidRequest`] outside the supported range.
+    pub fn new(tokens: u32) -> Result<Self, LlmError> {
+        if tokens == 0 || tokens > 65_536 {
+            return Err(LlmError::InvalidRequest(
+                "output tokens must be in 1..=65536".to_owned(),
+            ));
+        }
+        Ok(Self(tokens))
+    }
+
+    /// The token ceiling sent to the provider.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u32> for MaxOutputTokens {
+    type Error = LlmError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<MaxOutputTokens> for u32 {
+    fn from(value: MaxOutputTokens) -> Self {
+        value.0
+    }
+}
+
+/// Independent provider-token and decoded-response-byte limits for one call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "RawCompletionLimits", into = "RawCompletionLimits")]
+#[must_use]
+pub struct CompletionLimits {
+    max_output_tokens: MaxOutputTokens,
+    max_response_bytes: usize,
+}
+
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RawCompletionLimits {
+    max_output_tokens: MaxOutputTokens,
+    max_response_bytes: usize,
+}
+
+impl CompletionLimits {
+    /// Create a ceiling of at most 8 MiB of decoded response bytes.
+    ///
+    /// # Errors
+    /// Returns [`LlmError::InvalidRequest`] for zero or excessive bytes.
+    pub fn new(max_output_tokens: MaxOutputTokens, max_response_bytes: usize) -> Result<Self, LlmError> {
+        if max_response_bytes == 0 || max_response_bytes > 8 * 1024 * 1024 {
+            return Err(LlmError::InvalidRequest(
+                "response bytes must be in 1..=8388608".to_owned(),
+            ));
+        }
+        Ok(Self {
+            max_output_tokens,
+            max_response_bytes,
+        })
+    }
+
+    /// The provider token ceiling.
+    pub const fn max_output_tokens(self) -> MaxOutputTokens {
+        self.max_output_tokens
+    }
+
+    /// The decoded HTTP response ceiling, including protocol metadata.
+    #[must_use]
+    pub const fn max_response_bytes(self) -> usize {
+        self.max_response_bytes
+    }
+}
+
+impl Default for CompletionLimits {
+    fn default() -> Self {
+        Self {
+            max_output_tokens: MaxOutputTokens(4096),
+            max_response_bytes: 1024 * 1024,
+        }
+    }
+}
+
+impl TryFrom<RawCompletionLimits> for CompletionLimits {
+    type Error = LlmError;
+
+    fn try_from(raw: RawCompletionLimits) -> Result<Self, Self::Error> {
+        Self::new(raw.max_output_tokens, raw.max_response_bytes)
+    }
+}
+
+impl From<CompletionLimits> for RawCompletionLimits {
+    fn from(value: CompletionLimits) -> Self {
+        Self {
+            max_output_tokens: value.max_output_tokens,
+            max_response_bytes: value.max_response_bytes,
+        }
+    }
+}
 
 /// Longest input (characters) the provided methods send to the model unless an implementation
 /// overrides [`LlmExtractor::max_input_chars`].
@@ -83,6 +196,30 @@ pub enum LlmError {
     /// A call could not be recorded to the replay log.
     #[error("LLM recording failed: {0}")]
     RecordingFailed(String),
+    /// The provider or wrapper cannot enforce a per-call token budget.
+    #[error("provider does not support bounded completions")]
+    UnsupportedOutputBudget,
+    /// Caller cancellation won; no late output is returned.
+    #[error("model call cancelled")]
+    Cancelled,
+    /// Usage was absent, malformed, inconsistent, or overflowed.
+    #[error("provider returned invalid token usage")]
+    InvalidUsage,
+    /// The provider reported more completion tokens than authorized.
+    #[error("provider exceeded output token limit of {max}")]
+    OutputTokenLimitExceeded {
+        /// Authorized completion tokens.
+        max: u32,
+    },
+    /// The provider did not report normal completion.
+    #[error("provider returned truncated or incomplete output")]
+    TruncatedOutput,
+    /// The decoded body crossed the independent byte ceiling.
+    #[error("model response exceeds {max} bytes")]
+    ResponseBytesExceeded {
+        /// Authorized decoded response bytes.
+        max: usize,
+    },
 }
 
 /// Tokens a call consumed, as reported by the endpoint (or estimated by [`MockLlm`](super::MockLlm)).
@@ -250,6 +387,28 @@ pub trait LlmExtractor: Send + Sync {
         user: &str,
         schema: Option<&Value>,
     ) -> Result<Completion<Value>, LlmError>;
+    /// A completion with enforceable per-call token and response-byte ceilings.
+    ///
+    /// Implementations must send the token ceiling to the provider, reject missing
+    /// usage and non-normal termination, and drop in-flight work on cancellation.
+    /// The default refuses unsupported providers and wrappers before any I/O.
+    ///
+    /// # Errors
+    /// Returns [`LlmError::UnsupportedOutputBudget`] unless explicitly implemented.
+    /// Supported implementations also return limit, usage and cancellation errors.
+    async fn complete_bounded(
+        &self,
+        _system: &str,
+        _user: &str,
+        _schema: Option<&Value>,
+        _limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        if cancel.is_cancelled() {
+            return Err(LlmError::Cancelled);
+        }
+        Err(LlmError::UnsupportedOutputBudget)
+    }
 
     /// Longest page text (characters) the provided methods send; longer text is cut.
     fn max_input_chars(&self) -> usize {
@@ -515,6 +674,18 @@ impl<T: LlmExtractor + ?Sized> LlmExtractor for std::sync::Arc<T> {
         schema: Option<&Value>,
     ) -> Result<Completion<Value>, LlmError> {
         (**self).complete(system, user, schema).await
+    }
+    async fn complete_bounded(
+        &self,
+        system: &str,
+        user: &str,
+        schema: Option<&Value>,
+        limits: CompletionLimits,
+        cancel: &CancellationToken,
+    ) -> Result<Completion<Value>, LlmError> {
+        (**self)
+            .complete_bounded(system, user, schema, limits, cancel)
+            .await
     }
 
     fn can_transcribe(&self) -> bool {

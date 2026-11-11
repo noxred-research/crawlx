@@ -6,6 +6,10 @@ use crate::errors::{ErrorParts, HttpError};
 use crate::state::AppState;
 use axum::body::{Body, HttpBody};
 use axum::extract::{FromRequest, FromRequestParts, Request};
+#[allow(
+    clippy::disallowed_types,
+    reason = "HTTP ingress extraction reads the raw request parts"
+)]
 use axum::http::request::Parts;
 use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::middleware::Next;
@@ -151,6 +155,10 @@ impl Params {
 impl<S: Send + Sync> FromRequestParts<S> for Params {
     type Rejection = HttpError;
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "HTTP ingress extraction reads the raw request parts"
+    )]
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
         let mut m = BTreeMap::new();
         if let Some(q) = parts.uri.query() {

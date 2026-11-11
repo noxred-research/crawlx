@@ -470,6 +470,8 @@ async fn ignoring_robots_under_a_record_navigates_the_disallowed_path() {
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
     let mut record = crawlx_policy::testkit::sample_record(stores.tenant, SystemClock.now(), &[&site.base]);
     record.verified_at = Some(SystemClock.now());
+    // the fixture lives on loopback: the record signs that network
+    record.authorized_networks = vec!["127.0.0.0/8".parse().unwrap()];
     record.robots_override_acknowledged = true;
     let mut c = crawl(&site.base, CrawlMode::Dynamic);
     c.dynamic.observe_only = true;

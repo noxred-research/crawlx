@@ -12,18 +12,16 @@
 //! pipeline work; parse, select, metadata and quality run inside the extractor or parser the
 //! route selects and are reported from their results.
 //!
-//! Limits only narrow the limits of the underlying parsers. Hard limits (input, nodes, depth,
-//! operations, children, output) refuse the input with [`PipelineError::Limit`]; they never
-//! return a silently shortened record. Page, slide and sheet counts keep the document
-//! parser's soft truncation with a warning.
+//! Limits only narrow the limits of the underlying parsers. Hard limits refuse input instead
+//! of silently shortening records. Native page/sheet/slide warnings remain explicit.
+//! Text-only input policy may request an explicit decoded-text byte cap; its provenance records
+//! truncation. Text-only output is source text verbatim, including any markup, without a DOM.
 //!
-//! Page decode options apply to the original bytes before depth checks. Without decode options,
-//! the legacy BOM-aware UTF-8/UTF-16 path remains in use. Extraction reuses the decoded text,
-//! retains its diagnostics, and hashes the original input rather than the converted text.
+//! Format evidence is ordered: recognized signature, declared MIME, then filename. Conflicts
+//! survive in output provenance. Text decoding selects BOM, declared charset, then UTF-8.
+//! Explicit native decode options retain their own bounded metadata-charset prescan.
 //!
 //! No network, clock, filesystem or randomness is used.
-
-use std::borrow::Cow;
 
 use crawlx_core::{
     extraction::{ParserPipelineV1, PipelineRouteV1, PipelineStageV1, StageReportV1, StageStatusV1},
@@ -35,8 +33,10 @@ use url::Url;
 
 use crate::{
     document::Document,
-    parse::{detect_format, parse_document_with, ParseError, ParseFormat, ParseOptions, ParsedDocument},
-    parse_budget, ExtractError, ExtractOptions, Extractor,
+    parse::{parse_document_with, ParseError, ParseFormat, ParseOptions, ParsedDocument},
+    parse_budget,
+    parser_policy::{self, InputPolicy, InputProvenance, ModelPolicy},
+    ExtractError, ExtractOptions, Extractor,
 };
 
 /// Transient privacy/content projection: `None` keeps a string, `Some` replaces it.
@@ -134,6 +134,7 @@ pub struct PipelineInput<'a> {
     page_options: Option<&'a ExtractOptions>,
     document_options: Option<&'a ParseOptions>,
     projection: Option<&'a Projection<'a>>,
+    policy: InputPolicy,
 }
 
 impl<'a> PipelineInput<'a> {
@@ -148,6 +149,10 @@ impl<'a> PipelineInput<'a> {
             page_options: None,
             document_options: None,
             projection: None,
+            policy: InputPolicy {
+                model: ModelPolicy::Document,
+                max_text_bytes: None,
+            },
         }
     }
 
@@ -158,7 +163,7 @@ impl<'a> PipelineInput<'a> {
         self
     }
 
-    /// Declared `Content-Type`, a format hint after the bytes and file name.
+    /// Declared `Content-Type`, a format hint after signatures and before filename.
     #[must_use]
     pub const fn with_content_type(mut self, content_type: &'a str) -> Self {
         self.content_type = Some(content_type);
@@ -193,6 +198,13 @@ impl<'a> PipelineInput<'a> {
         self.projection = Some(projection);
         self
     }
+
+    /// Set explicit decoded-text versus document-model policy.
+    #[must_use]
+    pub const fn with_input_policy(mut self, policy: InputPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
 }
 
 /// Parsed content of one run, by route.
@@ -223,6 +235,8 @@ pub struct PipelineOutput {
     pub stages: Vec<StageReportV1>,
     /// Non-fatal findings of the pipeline and the parser.
     pub warnings: Vec<String>,
+    /// Ordered format/charset evidence and explicit truncation diagnostics.
+    pub provenance: InputProvenance,
 }
 
 impl PipelineOutput {
@@ -353,11 +367,16 @@ impl ParserPipeline {
         let parse_options = self.document_options(input.document_options);
 
         // detect
-        let format = detect_format(
+        let (format, mut provenance) = parser_policy::detect_declared(
             input.bytes,
             input.filename,
             input.content_type,
+            input
+                .page_options
+                .and_then(|options| options.decode.as_ref())
+                .and_then(|decode| decode.declared_charset.as_deref()),
             &parse_options.limits,
+            input.policy,
         )
         .map_err(|e| parse_error(e, true))?;
         let route = self.spec.route(format.name()).ok_or(PipelineError::Unrouted {
@@ -371,23 +390,34 @@ impl ParserPipeline {
             1,
         ));
 
-        let (content, warnings) = match route {
-            PipelineRouteV1::Html => self.run_page(&input, &mut stages)?,
-            PipelineRouteV1::Document => self.run_document(&input, &parse_options, &mut stages)?,
-            _ => {
-                return Err(PipelineError::Unrouted {
-                    format: format.name(),
-                })
+        let (content, warnings) = if input.policy.model == ModelPolicy::TextOnly {
+            self.run_text(&input, format, &mut provenance, &mut stages)?
+        } else {
+            match route {
+                PipelineRouteV1::Html => self.run_page(&input, &mut provenance, &mut stages)?,
+                PipelineRouteV1::Document => {
+                    self.run_document(&input, format, &mut provenance, &parse_options, &mut stages)?
+                }
+                _ => {
+                    return Err(PipelineError::Unrouted {
+                        format: format.name(),
+                    })
+                }
             }
         };
         let mut output = PipelineOutput {
-            record_version: self.record_version.clone(),
+            record_version: if input.policy == InputPolicy::default() {
+                self.record_version.clone()
+            } else {
+                format!("{}.{}", self.record_version, provenance.policy_digest)
+            },
             pipeline_digest: self.digest,
             format,
             route,
             content,
             stages,
             warnings,
+            provenance,
         };
 
         // project
@@ -416,6 +446,94 @@ impl ParserPipeline {
         Ok(output)
     }
 
+    fn run_text(
+        &self,
+        input: &PipelineInput<'_>,
+        format: ParseFormat,
+        provenance: &mut InputProvenance,
+        stages: &mut Vec<StageReportV1>,
+    ) -> Result<(PipelineContent, Vec<String>), PipelineError> {
+        if !matches!(
+            format,
+            ParseFormat::Html | ParseFormat::Txt | ParseFormat::Md | ParseFormat::Csv
+        ) {
+            return Err(PipelineError::Unrouted {
+                format: format.name(),
+            });
+        }
+        let operations = widen(input.bytes.len());
+        if operations > self.spec.limits.max_operations {
+            return Err(PipelineError::Limit {
+                what: "operations",
+                limit: self.spec.limits.max_operations,
+                actual: operations,
+            });
+        }
+        let decoded = parser_policy::decode(input.bytes, input.content_type, provenance)
+            .map_err(|e| parse_error(e, false))?;
+        let cap = input
+            .policy
+            .max_text_bytes
+            .unwrap_or(usize::MAX)
+            .min(narrow(self.spec.limits.max_output_bytes));
+        if decoded.len() > cap && input.policy.max_text_bytes.is_none() {
+            return Err(PipelineError::Limit {
+                what: "output bytes",
+                limit: self.spec.limits.max_output_bytes,
+                actual: widen(decoded.len()),
+            });
+        }
+        let mut end = decoded.len().min(cap);
+        while !decoded.is_char_boundary(end) {
+            end -= 1;
+        }
+        provenance.truncated = end < decoded.len();
+        let source = &decoded[..end];
+        let text = input
+            .projection
+            .and_then(|project| project(source))
+            .unwrap_or_else(|| source.to_owned());
+        let parsed = ParsedDocument {
+            format,
+            content_type: format.content_type(),
+            title: None,
+            markdown: String::new(),
+            html: String::new(),
+            raw_html: String::new(),
+            text,
+            links: Vec::new(),
+            images: Vec::new(),
+            metadata: Default::default(),
+            num_pages: None,
+            total_pages: None,
+            pages: Vec::new(),
+            layout: Vec::new(),
+            warnings: Vec::new(),
+        };
+        for stage in PipelineStageV1::ALL.iter().copied().skip(1).take(6) {
+            let status = match stage {
+                PipelineStageV1::DecodeInput => StageStatusV1::Completed,
+                PipelineStageV1::Transform if input.projection.is_some() => StageStatusV1::Completed,
+                PipelineStageV1::Parse | PipelineStageV1::Metadata | PipelineStageV1::Quality => {
+                    StageStatusV1::NotApplicable
+                }
+                _ => StageStatusV1::PassThrough,
+            };
+            stages.push(StageReportV1::new(
+                stage,
+                status,
+                operations,
+                widen(parsed.text.len()),
+            ));
+        }
+        let warnings = if provenance.truncated {
+            vec!["decoded source truncated by explicit text-only policy".to_owned()]
+        } else {
+            Vec::new()
+        };
+        Ok((PipelineContent::Document(Box::new(parsed)), warnings))
+    }
+
     /// Document parser options narrowed by the pipeline limits.
     fn document_options(&self, supplied: Option<&ParseOptions>) -> ParseOptions {
         let limits = &self.spec.limits;
@@ -430,6 +548,7 @@ impl ParserPipeline {
     fn run_page(
         &self,
         input: &PipelineInput<'_>,
+        provenance: &mut InputProvenance,
         stages: &mut Vec<StageReportV1>,
     ) -> Result<(PipelineContent, Vec<String>), PipelineError> {
         let limits = &self.spec.limits;
@@ -438,6 +557,9 @@ impl ParserPipeline {
             return Err(PipelineError::ProjectionNeedsContentPolicy);
         }
         let mut options = input.page_options.cloned().unwrap_or_default();
+        if options.content_type.is_none() {
+            options.content_type = input.content_type.map(str::to_owned);
+        }
         options.max_input_bytes = options.max_input_bytes.min(narrow(limits.max_input_bytes));
         options.max_nodes = options.max_nodes.min(narrow(limits.max_nodes));
         if let Some(policy) = &options.content {
@@ -474,9 +596,24 @@ impl ParserPipeline {
             let converted = report
                 .as_ref()
                 .is_some_and(|report| report.bom_len > 0 || report.encoding != "UTF-8");
+            if let Some(report) = &report {
+                provenance.encoding = Encoding::for_label(report.encoding.as_bytes()).map(Encoding::name);
+                provenance.charset_evidence = Some(match report.source {
+                    crate::decode::EncodingSource::Bom => parser_policy::CharsetEvidence::Bom,
+                    crate::decode::EncodingSource::Declared => parser_policy::CharsetEvidence::Declared,
+                    crate::decode::EncodingSource::Meta => parser_policy::CharsetEvidence::Meta,
+                    _ => parser_policy::CharsetEvidence::DefaultUtf8,
+                });
+                provenance.lossy = report.issue_count > 0;
+                provenance.charset_conflict = report.declaration_conflict;
+            }
             (decoded, report, lossy, converted)
         } else {
-            let (decoded, lossy, converted) = decode_markup(input.bytes);
+            let decoded = parser_policy::decode(input.bytes, input.content_type, provenance)
+                .map_err(|e| parse_error(e, false))?;
+            let lossy = provenance.lossy;
+            let converted = provenance.encoding != Some("UTF-8")
+                || provenance.charset_evidence == Some(parser_policy::CharsetEvidence::Bom);
             (decoded, None, lossy, converted)
         };
         charge
@@ -568,18 +705,36 @@ impl ParserPipeline {
     fn run_document(
         &self,
         input: &PipelineInput<'_>,
+        format: ParseFormat,
+        provenance: &mut InputProvenance,
         options: &ParseOptions,
         stages: &mut Vec<StageReportV1>,
     ) -> Result<(PipelineContent, Vec<String>), PipelineError> {
         let input_len = widen(input.bytes.len());
+        let decoded = if matches!(
+            format,
+            ParseFormat::Html | ParseFormat::Txt | ParseFormat::Md | ParseFormat::Csv
+        ) {
+            Some(
+                parser_policy::decode(input.bytes, input.content_type, provenance)
+                    .map_err(|e| parse_error(e, false))?,
+            )
+        } else {
+            None
+        };
+        let bytes = decoded.as_ref().map_or(input.bytes, |text| text.as_bytes());
         // Container decompression and entry limits are enforced inside the parse stage.
         stages.push(StageReportV1::new(
             PipelineStageV1::DecodeInput,
-            StageStatusV1::PassThrough,
+            if decoded.is_some() {
+                StageStatusV1::Completed
+            } else {
+                StageStatusV1::PassThrough
+            },
             input_len,
-            input_len,
+            widen(bytes.len()),
         ));
-        let mut parsed = parse_document_with(input.bytes, input.filename, input.content_type, options)
+        let mut parsed = parse_document_with(bytes, None, Some(format.content_type()), options)
             .map_err(|e| parse_error(e, false))?;
         let units = parsed.num_pages.map_or(1, |n| u64::from(n.max(1)));
         stages.push(StageReportV1::new(
@@ -630,36 +785,57 @@ impl ParserPipeline {
 fn project_document(parsed: &mut ParsedDocument, project: &Projection<'_>) {
     let apply = |value: &mut String| {
         if let Some(replacement) = project(value) {
+            let changed = replacement != *value;
             *value = replacement;
+            changed
+        } else {
+            false
         }
     };
+    fn json(value: &mut serde_json::Value, project: &Projection<'_>) {
+        match value {
+            serde_json::Value::String(text) => {
+                if let Some(replacement) = project(text) {
+                    *text = replacement;
+                }
+            }
+            serde_json::Value::Array(values) => values.iter_mut().for_each(|value| json(value, project)),
+            serde_json::Value::Object(values) => values.values_mut().for_each(|value| json(value, project)),
+            _ => {}
+        }
+    }
     if let Some(title) = &mut parsed.title {
         apply(title);
     }
+    let mapping_changed = apply(&mut parsed.markdown);
     apply(&mut parsed.text);
-    apply(&mut parsed.markdown);
     apply(&mut parsed.html);
     apply(&mut parsed.raw_html);
     for page in &mut parsed.pages {
         apply(&mut page.markdown);
     }
-    for value in parsed.metadata.values_mut() {
-        if let serde_json::Value::String(text) = value {
-            apply(text);
+    for page in &mut parsed.layout {
+        for block in &mut page.items {
+            let changed = apply(&mut block.content);
+            if let Some(label) = &mut block.label {
+                apply(label);
+            }
+            if mapping_changed || changed {
+                block.markdown_span = None;
+            }
         }
     }
-}
-
-/// Decode markup bytes: a byte-order mark selects UTF-8/UTF-16, otherwise UTF-8. Returns the
-/// text, whether invalid sequences were replaced, and whether a conversion changed the bytes.
-fn decode_markup(bytes: &[u8]) -> (Cow<'_, str>, bool, bool) {
-    if let Some((encoding, bom_len)) = Encoding::for_bom(bytes) {
-        let (text, had_errors) = encoding.decode_without_bom_handling(&bytes[bom_len..]);
-        return (text, had_errors, true);
+    for value in parsed.metadata.values_mut() {
+        json(value, project);
     }
-    match std::str::from_utf8(bytes) {
-        Ok(text) => (Cow::Borrowed(text), false, false),
-        Err(_) => (String::from_utf8_lossy(bytes), true, true),
+    for link in &mut parsed.links {
+        apply(link);
+    }
+    for image in &mut parsed.images {
+        apply(image);
+    }
+    for warning in &mut parsed.warnings {
+        apply(warning);
     }
 }
 
@@ -682,4 +858,53 @@ fn check_depth(markup: &str, max_depth: u32) -> Result<(), PipelineError> {
         stack.extend(node.children().map(|child| (child, child_depth)));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use crate::parse::pdf::{LayoutConfidence, PdfLayoutBlock, PdfPageBlocks};
+
+    #[test]
+    fn document_projection_covers_nested_metadata_links_and_layout_lineage() {
+        let mut parsed =
+            parse_document_with(b"canary", None, Some("text/plain"), &ParseOptions::default()).unwrap();
+        parsed
+            .metadata
+            .insert("nested".into(), serde_json::json!({"values":["canary"]}));
+        parsed.links.push("https://example.test/canary".into());
+        parsed.images.push("https://example.test/canary.png".into());
+        parsed.layout.push(PdfPageBlocks {
+            page_number: 1,
+            width: None,
+            height: None,
+            status: "ok",
+            items: vec![PdfLayoutBlock {
+                id: "p1.b0".into(),
+                kind: "text",
+                label: Some("canary".into()),
+                bbox: None,
+                content: "canary".into(),
+                markdown_span: Some([0, 6]),
+                reading_order: 0,
+                source: "native_text",
+                confidence: LayoutConfidence {
+                    layout: None,
+                    ocr: None,
+                },
+            }],
+        });
+        project_document(&mut parsed, &|value| {
+            value
+                .contains("canary")
+                .then(|| value.replace("canary", "[REDACTED]"))
+        });
+        assert!(!parsed.text.contains("canary"));
+        assert!(!parsed.metadata["nested"].to_string().contains("canary"));
+        assert!(!parsed.links[0].contains("canary"));
+        assert!(!parsed.images[0].contains("canary"));
+        assert!(!parsed.layout[0].items[0].content.contains("canary"));
+        assert!(parsed.layout[0].items[0].markdown_span.is_none());
+    }
 }

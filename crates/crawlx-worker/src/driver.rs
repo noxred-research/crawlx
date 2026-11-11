@@ -26,7 +26,9 @@ use crawlx_core::dom_ops::CssFilter;
 use crawlx_core::hash::Digest;
 use crawlx_core::observation::{LiveTargetFacts, ObservationBundle, QuiescencePolicy};
 use crawlx_core::proposal::{ActionProposal, ExpectedEffect};
-use crawlx_core::repo::{DiscoveryOutcome, FrontierStatus, IdentityAlias, NewState, SafetyContext};
+use crawlx_core::repo::{
+    DiscoveryOutcome, FrontierStatus, IdentityAlias, NewState, SafetyContext, SafetyGate as _,
+};
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::safety::SafetyDecision;
 use crawlx_core::seed::CrawlSeed;
@@ -42,8 +44,10 @@ use crawlx_forms::is_logout_path;
 use crawlx_graph::Confounders;
 use crawlx_observe::spec;
 use crawlx_policy::{BudgetKind, ScopePolicy, ScopeVerdict};
+use crawlx_safety::approvals::{ApprovalAuthority, ApprovalRequest, VerifiedApproval};
 use crawlx_safety::Adjudication;
 use crawlx_state::OutcomeClass;
+use crawlx_storage::approvals::{ApprovalBindingV1, ApprovalRequestV1};
 use crawlx_strategies::{
     merge_plan, registry, run_strategies, Arbiter, ArbiterConfig, ArbiterRound, BudgetView, DecisionContext,
     ExplorationConfig, ExplorationState, Gates, LedgerView, LlmPlanner, OutcomeReport, PlanProgress,
@@ -59,6 +63,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::Instrument as _;
+
+#[path = "driver_interactive.rs"]
+mod interactive;
+pub use interactive::InteractiveDeps;
 
 /// Knobs of the driver (planning defaults).
 #[derive(Clone)]
@@ -448,6 +456,9 @@ pub(crate) async fn record_robots_blocked(
 pub const TAB_POLICY: &str = "tab_policy";
 /// Version of the tab policy, recorded on its actions.
 pub const TAB_POLICY_VERSION: u32 = 2;
+/// Observation rounds a round waits for the decision on an approval it just requested, so an
+/// immediate decision is spent at the epoch it was requested at.
+const APPROVAL_GRACE_ROUNDS: u32 = 3;
 
 /// Synthetic element identity of "the tab showing this URL" for tab-policy keys.
 #[must_use]
@@ -632,6 +643,10 @@ pub struct ExplorationDriver {
     seen_ops: BTreeSet<String>,
     retry: BTreeMap<ActionContextId, ActionId>,
     blocked_seen: BTreeSet<ActionContextId>,
+    /// Consecutive rounds that waited for a just-requested approval decision.
+    approval_holds: u32,
+    /// Approval-gated proposals already parked, per observed epoch.
+    parked_epochs: BTreeSet<(ActionContextId, crawlx_core::epoch::ObservationEpoch)>,
     /// Records of System 1 calls waiting to be written to `model_decisions`.
     records: Option<mpsc::Receiver<System1Record>>,
     /// Records taken off the channel while the round ran (dataset recording), written to
@@ -684,6 +699,16 @@ pub struct ExplorationDriver {
     /// Popup tabs the tab policy closed to stay within `dynamic.maxTabs`.
     tab_evictions: u64,
     role_budget: Option<RoleBudget>,
+    /// Trusted lease for durable approval persistence, find and consume.
+    approval_lease: Option<crawlx_storage::SessionLease>,
+    /// Durable approvals this session already spent; they can never keep it polling.
+    spent_approvals: std::collections::BTreeSet<crawlx_core::ApprovalId>,
+    /// Parked approval requests by action key, so polling survives `blocked_seen` dedupe.
+    pending_approvals: BTreeMap<ActionContextId, crawlx_core::ApprovalId>,
+    /// Approved actor recipe run once before exploration; never raw callbacks.
+    extension_recipe: Option<Arc<crawlx_core::archive_behaviors::RecipeV1>>,
+    /// Local manual interactive control; `None` keeps ordinary behavior.
+    interactive: Option<InteractiveDeps>,
 }
 
 /// The observation a round starts from, already folded into the exploration state.
@@ -755,6 +780,8 @@ impl ExplorationDriver {
             seen_ops: BTreeSet::new(),
             retry: BTreeMap::new(),
             blocked_seen: BTreeSet::new(),
+            approval_holds: 0,
+            parked_epochs: BTreeSet::new(),
             suppressed: BTreeMap::new(),
             drop_counts: BTreeMap::new(),
             live_facts: BTreeMap::new(),
@@ -778,6 +805,11 @@ impl ExplorationDriver {
             follow_through: BTreeSet::new(),
             home_pages: BTreeSet::new(),
             role_budget: None,
+            approval_lease: None,
+            spent_approvals: std::collections::BTreeSet::new(),
+            pending_approvals: BTreeMap::new(),
+            extension_recipe: None,
+            interactive: None,
         }
     }
 
@@ -792,6 +824,22 @@ impl ExplorationDriver {
     #[must_use]
     pub(crate) fn with_role_budget(mut self, budget: RoleBudget) -> Self {
         self.role_budget = Some(budget);
+        self
+    }
+
+    /// Install the approved, already registry-resolved actor recipe. Compilation alone is never
+    /// approval; the caller must pass only a recipe resolved through the operator registry.
+    #[must_use]
+    pub fn with_extension_recipe(mut self, recipe: Arc<crawlx_core::archive_behaviors::RecipeV1>) -> Self {
+        self.extension_recipe = Some(recipe);
+        self
+    }
+
+    /// Install the trusted scheduler lease for durable reviewer decisions. Its snapshot expiry
+    /// is never trusted: the repository checks the current durable owner, fence and expiry.
+    #[must_use]
+    pub fn with_approval_lease(mut self, lease: crawlx_storage::SessionLease) -> Self {
+        self.approval_lease = Some(lease);
         self
     }
 
@@ -828,13 +876,78 @@ impl ExplorationDriver {
         result
     }
 
+    /// Run the operator-approved actor recipe through the ordinary driven path: every step is a
+    /// fresh observation, locator, `ActionProposal`, kernel adjudication and journaled actor
+    /// execution. A denied or failed step stops the recipe; the crawl itself continues.
+    async fn run_extension_recipe(&mut self) -> Result<(), WorkerError> {
+        let Some(recipe) = self.extension_recipe.clone() else {
+            return Ok(());
+        };
+        let mut progress = crate::archive_behaviors::RecipeProgress::default();
+        let driver = crate::driven::Driver {
+            handle: &self.handle,
+            rc: &self.rc,
+            kernel: self.rc.kernel.as_ref(),
+            session: &self.session,
+            analyzer: &self.analyzer,
+            settle: self.cfg.action_settle(),
+        };
+        let outcome =
+            crate::scrape::render::run_approved_recipe(driver, &recipe, &mut progress, 1_048_576).await;
+        let cancelled = matches!(&outcome, Err(crate::scrape::RenderError::Cancelled));
+        progress
+            .record(&self.rc, self.session.id, &recipe, cancelled)
+            .await
+            .map_err(|error| WorkerError::Other(error.to_string()))?;
+        match outcome {
+            Ok(()) => Ok(()),
+            Err(crate::scrape::RenderError::Cancelled) => Err(SessionError::Cancelled.into()),
+            Err(error) => {
+                self.event(
+                    "extension_recipe_stopped",
+                    serde_json::json!({
+                        "sessionId": self.session.id.0,
+                        "recipeId": recipe.id,
+                        "recipeVersion": recipe.version,
+                        "reason": error.to_string(),
+                    }),
+                )
+                .await;
+                Ok(())
+            }
+        }
+    }
+
     async fn explore_session(&mut self, mut start: Vec<RequestEnvelopeV1>) -> Result<DriverEnd, WorkerError> {
+        // Explicit local mode: operator commands replace autonomous exploration entirely. It is
+        // selected before any checkpoint restoration, recipe or role-budget exploration step.
+        if let Some(deps) = self.interactive.take() {
+            if self.role_budget.is_none() {
+                self.role_budget = Some(RoleBudget::load(&self.rc, &self.session).await?);
+            }
+            let result = self.run_interactive(deps).await;
+            if let Err(e) = self
+                .rc
+                .counters
+                .persist(self.rc.stores.runs.as_ref(), self.rc.run)
+                .await
+            {
+                tracing::warn!(error = %e, "counters not persisted");
+            }
+            return result;
+        }
+        let mut recovered = false;
         if let (Some((url, route)), Some(request)) = (self.resume_if_recovering().await?, start.first_mut()) {
             request.url = url;
             request.route = route;
+            // A recovered session continues; an already executed recipe is never replayed.
+            recovered = true;
         }
         if self.role_budget.is_none() {
             self.role_budget = Some(RoleBudget::load(&self.rc, &self.session).await?);
+        }
+        if self.extension_recipe.is_some() && !recovered {
+            self.run_extension_recipe().await?;
         }
         let observe_only = self.cfg.observe_only
             || self.rc.crawl.dynamic.observe_only
@@ -1618,236 +1731,391 @@ impl ExplorationDriver {
             });
             let base = self.safety_base();
             let on_popup = self.is_popup(&current.bundle.tab);
-            let (chosen_admitted, chosen_proposal, parked, shortlist_note) = if let Some(p) = tab_round {
-                // the tab policy bypasses the strategies, never the kernel
-                let sc = SafetyContext {
-                    target: LiveTargetFacts {
-                        current_url: current.bundle.url.url.to_string(),
-                        ..LiveTargetFacts::default()
-                    },
-                    ..base.clone()
-                };
-                let verdict = self.rc.kernel.adjudicate(p.clone(), &sc);
-                (Some((p.clone(), verdict)), Some(p), Vec::new(), None)
-            } else {
-                async {
-                    let round_input = RoundInput::new(
-                        Arc::clone(&current.bundle),
-                        std::mem::take(&mut current.candidates),
-                        std::mem::take(&mut current.resolved),
-                        current.cluster,
-                        self.decision_index,
-                        self.rc.crawl.safety.profile,
-                        self.budget_view(),
-                        now,
-                    )
-                    .with_phase(phase);
-                    let ctx = self
-                        .state
-                        .context(round_input)
-                        .map_err(|e| WorkerError::Other(e.to_string()))?;
-                    // the runner drives every strategy concurrently, so one span covers them all
-                    let strategy_round = run_strategies(&self.strategies, &ctx, &self.cfg.deadlines)
-                        .instrument(child::deterministic_proposals("all", 0))
-                        .await;
-                    let metrics = Metrics::global();
-                    for (name, err) in &strategy_round.errors {
-                        tracing::debug!(strategy = name, error = %err, "strategy contributed nothing");
-                        let outcome = match err {
-                            StrategyError::Timeout(_) => {
-                                metrics
-                                    .counter(names::STRATEGY_TIMEOUTS)
-                                    .inc_by(1, &[("strategy", name)]);
-                                "timeout"
-                            }
-                            StrategyError::ModelUnavailable(_) => "unavailable",
-                            _ => continue,
-                        };
-                        // System 1's errors are engine errors: count them as model requests that
-                        // produced no record (the planner's provider is not the engine's)
-                        if *name == crawlx_strategies::system1::NAME {
-                            if let Some(engine) = self.rc.models.engine_id() {
-                                record_model_error(
-                                    &engine.provider,
-                                    &engine.model,
-                                    self.rc.models.system1_mode(self.rc.crawl.dynamic.system1_mode),
-                                    outcome,
-                                );
-                            }
-                        }
-                    }
-                    // dataset recording: take System 1's record of this round off the channel
-                    // now (the strategies have finished), so the pick can be matched to it
-                    let shortlist_record = if self.cfg.record_shortlists.is_some() {
-                        hold_round_record(self.records.as_mut(), &mut self.held_records, self.decision_index)
-                    } else {
-                        None
+            let (chosen_admitted, chosen_proposal, parked, shortlist_note, awaiting_approval) =
+                if let Some(p) = tab_round {
+                    // the tab policy bypasses the strategies, never the kernel
+                    let sc = SafetyContext {
+                        target: LiveTargetFacts {
+                            current_url: current.bundle.url.url.to_string(),
+                            ..LiveTargetFacts::default()
+                        },
+                        ..base.clone()
                     };
-                    let mut proposals = strategy_round.proposals;
-                    for proposal in &mut proposals {
-                        ctx.ledger.normalize_key(&mut proposal.key);
-                    }
-                    let per_strategy = metrics.counter(names::STRATEGY_PROPOSALS);
-                    let proposed = metrics.counter(names::INTERACTIONS_PROPOSED);
-                    for p in &proposals {
-                        per_strategy.inc_by(1, &[("strategy", p.strategy)]);
-                        proposed.inc_by(
-                            1,
-                            &[
-                                ("role", &self.session.role.0),
-                                ("lane", p.action.fidelity().lane().as_str()),
-                                ("strategy", p.strategy),
-                                ("kind", p.key.action_kind.as_str()),
-                            ],
-                        );
-                    }
-                    // `Planner` is entered once deterministic recovery is exhausted: the deterministic
-                    // strategies only have repeats left, which would race the plan's coordinated steps
-                    // (and win ties by name). Everything still passes the arbiter and the kernel.
-                    if phase == crawlx_strategies::Phase::Planner && self.planner.is_some() {
-                        proposals.retain(|p| p.strategy == crawlx_strategies::llm_planner::NAME);
-                    }
-                    let index = self.decision_index;
-                    // an authenticated session never logs itself out
-                    if self.authenticated {
-                        let before = proposals.len();
-                        let page = current.bundle.url.url.clone();
-                        proposals.retain(|p| !targets_logout(p, &page));
-                        let excluded = before - proposals.len();
-                        if excluded > 0 {
-                            tracing::debug!(excluded, "logout navigations excluded from the round");
-                        }
-                    }
-                    proposals.retain(|p| {
-                        self.suppressed
-                            .get(&p.key.id())
-                            .is_none_or(|until| *until < index)
-                    });
-                    // The arbiter may choose interactions, but cannot reorder queued URLs.
-                    let ordered_navigation = proposals
-                        .iter()
-                        .position(|proposal| proposal.strategy == DISCOVERED_URLS_STRATEGY)
-                        .map(|index| proposals.swap_remove(index));
-                    if let Some(proposal) = ordered_navigation {
-                        proposals
-                            .retain(|proposal| !matches!(proposal.action, BrowserAction::Navigate { .. }));
-                        proposals.push(proposal);
-                    }
-                    // reveal follow-through: controls the previous trusted
-                    // activation revealed (a menu's items, a dialog's buttons, a tree's leaves) are
-                    // exercised before any other action can hide them again, which would cost a
-                    // replay of their precondition per control. Still-visible, unexercised reveals
-                    // with a proposal of their own restrict the round to those proposals.
-                    self.follow_through
-                        .retain(|h| ctx.candidate_index(h).is_some() && !ctx.exercised.contains(h));
-                    if proposals
-                        .iter()
-                        .any(|p| self.follow_through.contains(&p.key.element))
-                    {
-                        proposals.retain(|p| self.follow_through.contains(&p.key.element));
-                    }
-                    let arbitration = child::arbitration();
-                    let arbiter_started = Instant::now();
-                    let mut arbiter_round = arbitration.in_scope(|| {
-                        self.arbiter
-                            .choose(proposals, &ctx, self.rc.kernel.as_ref(), &base)
-                    });
-                    let mut propensity = None;
-                    if let (Some(recording), Some(idx)) = (self.cfg.record_shortlists, shortlist_record) {
-                        if recording.explore {
-                            if let Some(rec) = self.held_records.get(idx) {
-                                propensity = explore_shortlist(
-                                    &mut arbiter_round,
-                                    &rec.shortlist,
-                                    &ctx.seed,
-                                    &ctx.principal,
-                                    self.decision_index,
-                                );
+                    let run_deadline = self.rc.budget.lock().deadline();
+                    let verdict = self
+                        .rc
+                        .kernel
+                        .adjudicate_parked(p.clone(), &sc, Some(run_deadline));
+                    (Some((p.clone(), verdict)), Some(p), Vec::new(), None, false)
+                } else {
+                    async {
+                        // The kernel was built with the run's nominal deadline; time credited for
+                        // login moves the live budget's deadline out, and a parked approval
+                        // request must live as long as the run does.
+                        let run_deadline = self.rc.budget.lock().deadline();
+                        let round_input = RoundInput::new(
+                            Arc::clone(&current.bundle),
+                            std::mem::take(&mut current.candidates),
+                            std::mem::take(&mut current.resolved),
+                            current.cluster,
+                            self.decision_index,
+                            self.rc.crawl.safety.profile,
+                            self.budget_view(),
+                            now,
+                        )
+                        .with_phase(phase);
+                        let ctx = self
+                            .state
+                            .context(round_input)
+                            .map_err(|e| WorkerError::Other(e.to_string()))?;
+                        // the runner drives every strategy concurrently, so one span covers them all
+                        let strategy_round = run_strategies(&self.strategies, &ctx, &self.cfg.deadlines)
+                            .instrument(child::deterministic_proposals("all", 0))
+                            .await;
+                        let metrics = Metrics::global();
+                        for (name, err) in &strategy_round.errors {
+                            tracing::debug!(strategy = name, error = %err, "strategy contributed nothing");
+                            let outcome = match err {
+                                StrategyError::Timeout(_) => {
+                                    metrics
+                                        .counter(names::STRATEGY_TIMEOUTS)
+                                        .inc_by(1, &[("strategy", name)]);
+                                    "timeout"
+                                }
+                                StrategyError::ModelUnavailable(_) => "unavailable",
+                                _ => continue,
+                            };
+                            // System 1's errors are engine errors: count them as model requests that
+                            // produced no record (the planner's provider is not the engine's)
+                            if *name == crawlx_strategies::system1::NAME {
+                                if let Some(engine) = self.rc.models.engine_id() {
+                                    record_model_error(
+                                        &engine.provider,
+                                        &engine.model,
+                                        self.rc.models.system1_mode(self.rc.crawl.dynamic.system1_mode),
+                                        outcome,
+                                    );
+                                }
                             }
                         }
-                    }
-                    metrics
-                        .histogram(names::ARBITER_DECISION_DURATION)
-                        .observe_duration(arbiter_started.elapsed(), &[]);
-                    if let Some(c) = &arbiter_round.chosen {
-                        arbitration.record("key_id", tracing::field::display(c.proposal.key.id()));
-                        arbitration.record("utility", f64::from(c.utility));
-                    }
-                    drop(arbitration);
-                    if arbiter_round.chosen.is_none() {
-                        // nothing revealed was admissible: the next round is unrestricted
-                        self.follow_through.clear();
-                    }
-                    let mut parked: Vec<(ActionProposal, crawlx_core::SafetyVerdict)> = Vec::new();
-                    for (p, v) in &arbiter_round.denied {
-                        parked.push((p.clone(), v.clone()));
-                    }
-                    for (p, _) in &arbiter_round.approval_required {
-                        if !self.blocked_seen.contains(&p.key.id()) {
-                            // Bind requests to the observed target, not empty fallback facts.
-                            let sc = ctx.safety_context(&base, &p.key);
-                            let pending = self.rc.kernel.adjudicate(p.clone(), &sc);
-                            parked.push((p.clone(), pending.verdict().clone()));
-                        }
-                    }
-                    let adjudication = arbiter_round.chosen.as_ref().map(|c| {
-                        let mut sc = ctx.safety_context(&base, &c.proposal.key);
-                        // a refused confirmation taught us what the page really is: classify on that
-                        if let Some(live) = self.live_facts.get(&c.proposal.key.id()) {
-                            sc.target = live.clone();
-                            // Retain only this round's structural channel evidence.
-                            sc.target.observed_form_hint.clone_from(&sc.form_hint);
-                        }
-                        let classification = child::safety_classification();
-                        let verdict = classification.in_scope(|| {
-                            self.rc.kernel.adjudicate_with(
-                                c.proposal.clone(),
-                                &sc,
-                                crawlx_safety::AdjudicateOptions {
-                                    approval: c.verdict.approval,
-                                    ..crawlx_safety::AdjudicateOptions::default()
-                                },
+                        // dataset recording: take System 1's record of this round off the channel
+                        // now (the strategies have finished), so the pick can be matched to it
+                        let shortlist_record = if self.cfg.record_shortlists.is_some() {
+                            hold_round_record(
+                                self.records.as_mut(),
+                                &mut self.held_records,
+                                self.decision_index,
                             )
+                        } else {
+                            None
+                        };
+                        let mut proposals = strategy_round.proposals;
+                        for proposal in &mut proposals {
+                            ctx.ledger.normalize_key(&mut proposal.key);
+                        }
+                        let per_strategy = metrics.counter(names::STRATEGY_PROPOSALS);
+                        let proposed = metrics.counter(names::INTERACTIONS_PROPOSED);
+                        for p in &proposals {
+                            per_strategy.inc_by(1, &[("strategy", p.strategy)]);
+                            proposed.inc_by(
+                                1,
+                                &[
+                                    ("role", &self.session.role.0),
+                                    ("lane", p.action.fidelity().lane().as_str()),
+                                    ("strategy", p.strategy),
+                                    ("kind", p.key.action_kind.as_str()),
+                                ],
+                            );
+                        }
+                        // `Planner` is entered once deterministic recovery is exhausted: the deterministic
+                        // strategies only have repeats left, which would race the plan's coordinated steps
+                        // (and win ties by name). Everything still passes the arbiter and the kernel.
+                        if phase == crawlx_strategies::Phase::Planner && self.planner.is_some() {
+                            proposals.retain(|p| p.strategy == crawlx_strategies::llm_planner::NAME);
+                        }
+                        let index = self.decision_index;
+                        // an authenticated session never logs itself out
+                        if self.authenticated {
+                            let before = proposals.len();
+                            let page = current.bundle.url.url.clone();
+                            proposals.retain(|p| !targets_logout(p, &page));
+                            let excluded = before - proposals.len();
+                            if excluded > 0 {
+                                tracing::debug!(excluded, "logout navigations excluded from the round");
+                            }
+                        }
+                        // Durable reviewer decisions are loaded for fresh candidates only, so a
+                        // preview ranks the exact observed proposal and never admits it.
+                        let mut durable_approvals = BTreeMap::new();
+                        if let Some(lease) = &self.approval_lease {
+                            for p in &proposals {
+                                let sc = ctx.safety_context(&base, &p.key);
+                                let v = self.rc.kernel.classify_ungranted(p, &sc);
+                                if v.decision == SafetyDecision::ApprovalRequired {
+                                    if let Some(record) = self
+                                        .rc
+                                        .stores
+                                        .approvals
+                                        .find_approval(
+                                            self.rc.stores.tenant,
+                                            lease,
+                                            p.key.id(),
+                                            v.risk_class,
+                                            crawlx_safety::kernel::params_digest(&p.action),
+                                            p.epoch,
+                                        )
+                                        .await?
+                                    {
+                                        self.suppressed.remove(&p.key.id());
+                                        durable_approvals.insert(record.request.id, record);
+                                    }
+                                }
+                            }
+                        }
+                        let preview_requests: Vec<ApprovalRequest> = durable_approvals
+                            .values()
+                            .map(|record| {
+                                let r = &record.request;
+                                ApprovalRequest {
+                                    approval_id: r.id,
+                                    action_key: r.binding.action_key,
+                                    risk: r.binding.risk,
+                                    params_digest: r.binding.params_digest,
+                                    summary: r.summary.clone(),
+                                    created_at: r.created_at,
+                                    expires_at: r.expires_at,
+                                }
+                            })
+                            .collect();
+                        let approval_gate = self.rc.kernel.preview_gate(&preview_requests);
+                        proposals.retain(|p| {
+                            self.suppressed
+                                .get(&p.key.id())
+                                .is_none_or(|until| *until < index)
                         });
-                        let decision = verdict.decision();
-                        classification.record(
-                            match decision {
-                                SafetyDecision::Allow => "allow",
-                                SafetyDecision::Deny => "deny",
-                                SafetyDecision::ApprovalRequired => "approval",
-                            },
-                            1_u64,
-                        );
+                        // The arbiter may choose interactions, but cannot reorder queued URLs.
+                        let ordered_navigation = proposals
+                            .iter()
+                            .position(|proposal| proposal.strategy == DISCOVERED_URLS_STRATEGY)
+                            .map(|index| proposals.swap_remove(index));
+                        if let Some(proposal) = ordered_navigation {
+                            proposals.retain(|proposal| {
+                                !matches!(proposal.action, BrowserAction::Navigate { .. })
+                            });
+                            proposals.push(proposal);
+                        }
+                        // reveal follow-through: controls the previous trusted
+                        // activation revealed (a menu's items, a dialog's buttons, a tree's leaves) are
+                        // exercised before any other action can hide them again, which would cost a
+                        // replay of their precondition per control. Still-visible, unexercised reveals
+                        // with a proposal of their own restrict the round to those proposals.
+                        self.follow_through
+                            .retain(|h| ctx.candidate_index(h).is_some() && !ctx.exercised.contains(h));
+                        if proposals
+                            .iter()
+                            .any(|p| self.follow_through.contains(&p.key.element))
+                        {
+                            proposals.retain(|p| self.follow_through.contains(&p.key.element));
+                        }
+                        let arbitration = child::arbitration();
+                        let arbiter_started = Instant::now();
+                        let mut arbiter_round = arbitration
+                            .in_scope(|| self.arbiter.choose(proposals, &ctx, &approval_gate, &base));
+                        let mut propensity = None;
+                        if let (Some(recording), Some(idx)) = (self.cfg.record_shortlists, shortlist_record) {
+                            if recording.explore {
+                                if let Some(rec) = self.held_records.get(idx) {
+                                    propensity = explore_shortlist(
+                                        &mut arbiter_round,
+                                        &rec.shortlist,
+                                        &ctx.seed,
+                                        &ctx.principal,
+                                        self.decision_index,
+                                    );
+                                }
+                            }
+                        }
+                        // A decided request binds to this exact epoch, and any other action changes
+                        // the page: the best-ranked action with a decision to spend runs first.
+                        if let Some(spend) = arbiter_round.ranked.iter().find(|r| {
+                            r.verdict
+                                .approval
+                                .is_some_and(|id| durable_approvals.contains_key(&id))
+                        }) {
+                            arbiter_round.chosen = Some(spend.clone());
+                        }
                         metrics
-                            .counter(names::SAFETY_VERDICTS)
-                            .inc_by(1, &[("verdict", decision.as_str())]);
-                        (c.proposal.clone(), verdict)
-                    });
-                    let proposal = arbiter_round.chosen.as_ref().map(|c| c.proposal.clone());
-                    let shortlist_note = shortlist_record.map(|record| ShortlistNote {
-                        record,
-                        chosen: proposal.as_ref().map(|p| p.key.id()),
-                        propensity,
-                    });
-                    // the arbiter's view of the round is folded into the exploration state below
-                    let round_for_state = arbiter_round;
-                    drop(ctx);
-                    self.state.ingest_round(&round_for_state);
-                    self.record_coverage();
-                    Ok::<_, WorkerError>((adjudication, proposal, parked, shortlist_note))
-                }
-                .instrument(round_span)
-                .await?
-            };
+                            .histogram(names::ARBITER_DECISION_DURATION)
+                            .observe_duration(arbiter_started.elapsed(), &[]);
+                        if let Some(c) = &arbiter_round.chosen {
+                            arbitration.record("key_id", tracing::field::display(c.proposal.key.id()));
+                            arbitration.record("utility", f64::from(c.utility));
+                        }
+                        drop(arbitration);
+                        if arbiter_round.chosen.is_none() {
+                            // nothing revealed was admissible: the next round is unrestricted
+                            self.follow_through.clear();
+                        }
+                        let mut parked: Vec<(ActionProposal, crawlx_core::SafetyVerdict)> = Vec::new();
+                        for (p, v) in &arbiter_round.denied {
+                            parked.push((p.clone(), v.clone()));
+                        }
+                        for (p, _) in &arbiter_round.approval_required {
+                            if !self.blocked_seen.contains(&p.key.id())
+                                && !self.parked_epochs.contains(&(p.key.id(), p.epoch))
+                            {
+                                // Bind requests to the observed target, not empty fallback facts.
+                                let sc = ctx.safety_context(&base, &p.key);
+                                let pending =
+                                    self.rc
+                                        .kernel
+                                        .adjudicate_parked(p.clone(), &sc, Some(run_deadline));
+                                parked.push((p.clone(), pending.verdict().clone()));
+                            }
+                        }
+                        let adjudication = if let Some(c) = arbiter_round.chosen.as_ref() {
+                            let mut sc = ctx.safety_context(&base, &c.proposal.key);
+                            // a refused confirmation taught us what the page really is: classify on that
+                            if let Some(live) = self.live_facts.get(&c.proposal.key.id()) {
+                                sc.target = live.clone();
+                                // Retain only this round's structural channel evidence.
+                                sc.target.observed_form_hint.clone_from(&sc.form_hint);
+                            }
+                            // Durable approvals are spent here, before any synchronous classification
+                            // scope. Ordinary live authorization checks still apply downstream; an
+                            // approval never waives them. Any consume failure aborts fail-closed.
+                            let consumed = if let Some(snapshot) =
+                                c.verdict.approval.and_then(|id| durable_approvals.get(&id))
+                            {
+                                let lease = self
+                                    .approval_lease
+                                    .as_ref()
+                                    .ok_or(crawlx_core::StoreError::LeaseLost)?;
+                                let receipt = self
+                                    .rc
+                                    .stores
+                                    .approvals
+                                    .consume_approval(self.rc.stores.tenant, lease, snapshot)
+                                    .await?;
+                                let r = receipt.request;
+                                let authority = ApprovalAuthority::new(
+                                    self.rc.stores.tenant,
+                                    self.rc.run,
+                                    self.session.id,
+                                    r.binding.action,
+                                    receipt.fence,
+                                    r.binding.epoch,
+                                );
+                                self.spent_approvals.insert(r.id);
+                                let request = ApprovalRequest {
+                                    approval_id: r.id,
+                                    action_key: r.binding.action_key,
+                                    risk: r.binding.risk,
+                                    params_digest: r.binding.params_digest,
+                                    summary: r.summary,
+                                    created_at: r.created_at,
+                                    expires_at: r.expires_at,
+                                };
+                                Some((authority, VerifiedApproval::from_consumed(request, authority)))
+                            } else {
+                                None
+                            };
+                            let classification = child::safety_classification();
+                            let verdict = classification.in_scope(|| match consumed {
+                                Some((authority, mut verified)) => self.rc.kernel.adjudicate_verified(
+                                    c.proposal.clone(),
+                                    &sc,
+                                    authority,
+                                    &mut verified,
+                                ),
+                                // No presented approval id: only a consumed durable capability grants.
+                                None => self.rc.kernel.adjudicate_parked(
+                                    c.proposal.clone(),
+                                    &sc,
+                                    Some(run_deadline),
+                                ),
+                            });
+                            let decision = verdict.decision();
+                            classification.record(
+                                match decision {
+                                    SafetyDecision::Allow => "allow",
+                                    SafetyDecision::Deny => "deny",
+                                    SafetyDecision::ApprovalRequired => "approval",
+                                },
+                                1_u64,
+                            );
+                            metrics
+                                .counter(names::SAFETY_VERDICTS)
+                                .inc_by(1, &[("verdict", decision.as_str())]);
+                            Some((c.proposal.clone(), verdict))
+                        } else {
+                            None
+                        };
+                        // A pending, unexpired request keeps the session observing rather than
+                        // exhausting it; the injected kernel clock decides expiry. A request the
+                        // kernel store already decided or spent can never become executable by
+                        // polling, so it must not keep the session alive.
+                        let now = self.rc.clock.now();
+                        let live_request = |id: crawlx_core::ApprovalId| {
+                            self.rc
+                                .kernel
+                                .approvals()
+                                .get(id)
+                                .ok()
+                                .flatten()
+                                .is_some_and(|record| {
+                                    matches!(record.state, crawlx_safety::approvals::ApprovalState::Pending)
+                                        && !record.request.is_expired(now)
+                                        && !self.spent_approvals.contains(&id)
+                                })
+                        };
+                        let awaiting_approval = adjudication.is_none()
+                            && (parked.iter().any(|(_, v)| v.approval.is_some_and(live_request))
+                                || arbiter_round.approval_required.iter().any(|(p, _)| {
+                                    self.pending_approvals
+                                        .get(&p.key.id())
+                                        .copied()
+                                        .is_some_and(live_request)
+                                }));
+                        let proposal = arbiter_round.chosen.as_ref().map(|c| c.proposal.clone());
+                        let shortlist_note = shortlist_record.map(|record| ShortlistNote {
+                            record,
+                            chosen: proposal.as_ref().map(|p| p.key.id()),
+                            propensity,
+                        });
+                        // the arbiter's view of the round is folded into the exploration state below
+                        let round_for_state = arbiter_round;
+                        drop(ctx);
+                        self.state.ingest_round(&round_for_state);
+                        self.record_coverage();
+                        Ok::<_, WorkerError>((
+                            adjudication,
+                            proposal,
+                            parked,
+                            shortlist_note,
+                            awaiting_approval,
+                        ))
+                    }
+                    .instrument(round_span)
+                    .await?
+                };
             if let Some(note) = &shortlist_note {
                 self.emit_shortlist_event(note).await;
             }
             self.flush_model_records().await;
             self.flush_identity_aliases().await;
             self.merge_finished_plans();
-            self.record_blocked(parked).await;
+            let requested = self.record_blocked(parked).await?;
 
             let Some((proposal, adjudication)) = chosen_admitted else {
+                if awaiting_approval {
+                    // An unexpired durable request is pending: keep observing under the stop,
+                    // deadline and cancel guards at the top of the loop instead of exhausting
+                    // the session. An old request never gets a new epoch.
+                    empty_rounds = 0;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
                 empty_rounds += 1;
                 if empty_rounds >= self.cfg.max_empty_rounds {
                     empty_rounds = 0;
@@ -1868,6 +2136,22 @@ impl ExplorationDriver {
                 }
                 continue;
             };
+            // A request just parked binds to this exact epoch. Executing another action now would
+            // advance the page and strand a decision that lands moments later, so the round waits
+            // a bounded number of observations for it, and never when it is itself spending an
+            // approved action.
+            let spends_approval =
+                matches!(&adjudication, Adjudication::Allow(a) if a.approval_authority().is_some());
+            if requested
+                && !spends_approval
+                && matches!(&adjudication, Adjudication::Allow(_))
+                && self.approval_holds < APPROVAL_GRACE_ROUNDS
+            {
+                self.approval_holds += 1;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            self.approval_holds = 0;
             empty_rounds = 0;
             let _ = chosen_proposal;
             let admitted = match adjudication {
@@ -1876,7 +2160,7 @@ impl ExplorationDriver {
                     self.rc
                         .counters
                         .discovery(Plane::Interactions, DiscoveryOutcome::PolicyBlocked);
-                    self.journal_blocked(&proposal, &v).await;
+                    self.journal_blocked(&proposal, &v).await?;
                     self.suppressed.insert(proposal.key.id(), u64::MAX);
                     continue;
                 }
@@ -1884,7 +2168,7 @@ impl ExplorationDriver {
                     self.rc
                         .counters
                         .discovery(Plane::Interactions, DiscoveryOutcome::PolicyBlocked);
-                    self.journal_blocked(&proposal, &v).await;
+                    self.journal_blocked(&proposal, &v).await?;
                     self.event(
                         "approval_required",
                         serde_json::json!({
@@ -2088,52 +2372,117 @@ impl ExplorationDriver {
         Ok(None)
     }
 
-    /// Denied and approval-gated proposals are journaled once per key (hold = denied /
-    /// awaiting approval) so the audit trail shows what the kernel stopped.
-    async fn record_blocked(&mut self, parked: Vec<(ActionProposal, crawlx_core::SafetyVerdict)>) {
+    /// Denied proposals are journaled once per key (hold = denied) so the audit trail shows
+    /// what the kernel stopped. An approval-gated proposal is journaled once per key and
+    /// observed epoch: a reviewer decision binds to the exact epoch it was requested at, so
+    /// after the page changed the action needs a new request on a new parked action.
+    /// Returns whether a new approval request was journaled.
+    async fn record_blocked(
+        &mut self,
+        parked: Vec<(ActionProposal, crawlx_core::SafetyVerdict)>,
+    ) -> Result<bool, WorkerError> {
+        let mut requested = false;
         for (p, v) in parked {
             let id = p.key.id();
-            if !self.blocked_seen.insert(id) {
+            let first = if v.approval.is_some() {
+                self.parked_epochs.insert((id, p.epoch))
+            } else {
+                self.blocked_seen.insert(id)
+            };
+            if !first {
                 continue;
             }
             self.rc
                 .counters
                 .discovery(Plane::Interactions, DiscoveryOutcome::PolicyBlocked);
-            self.journal_blocked(&p, &v).await;
+            self.journal_blocked(&p, &v).await?;
+            if let Some(approval) = v.approval {
+                self.pending_approvals.insert(id, approval);
+                requested = true;
+            }
         }
+        Ok(requested)
     }
 
-    async fn journal_blocked(&self, p: &ActionProposal, v: &crawlx_core::SafetyVerdict) {
+    async fn journal_blocked(
+        &self,
+        p: &ActionProposal,
+        v: &crawlx_core::SafetyVerdict,
+    ) -> Result<(), WorkerError> {
         if v.rules.iter().any(|r| r == SINK_REQUIRED_RULE) {
             Metrics::global().counter(names::FORM_DENIED_NO_SINK).inc();
         }
-        match self
+        let action_id = self
             .rc
             .stores
             .journal
             .propose(self.rc.run, self.session.id, p, v)
-            .await
-        {
-            Ok(id) => {
-                let kind = if v.decision == SafetyDecision::Deny {
-                    "action"
-                } else {
-                    "approval_required"
-                };
-                self.event(
-                    kind,
-                    serde_json::json!({
-                        "actionId": id.0,
-                        "status": "proposed",
-                        "decision": v.decision.as_str(),
-                        "risk": v.risk_class.as_str(),
-                        "rules": v.rules,
-                    }),
-                )
-                .await;
+            .await?;
+        // The reviewer decides on exactly this request, bound to the parked action, lease
+        // fence and epoch. A failure to persist it must never be swallowed: nothing could
+        // ever execute the approval.
+        if let Some(id) = v.approval {
+            let request = self
+                .rc
+                .kernel
+                .approvals()
+                .get(id)
+                .map_err(|_| crawlx_core::StoreError::Unavailable("approval request unavailable".into()))?
+                .ok_or_else(|| crawlx_core::StoreError::Conflict("approval request missing".into()))?
+                .request;
+            let lease = self
+                .approval_lease
+                .as_ref()
+                .ok_or(crawlx_core::StoreError::LeaseLost)?;
+            // A request capped by the run deadline that has already passed can never be
+            // decided or spent, and the session ends at the next stop check.
+            if request.is_expired(self.rc.clock.now()) {
+                tracing::debug!(approval = %id, "approval request expired before it was persisted");
+            } else {
+                // Each parked action owns the request the kernel issued for it
+                // (`adjudicate_parked`); a binding conflict here is a real failure.
+                self.rc
+                    .stores
+                    .approvals
+                    .persist_approval(
+                        self.rc.stores.tenant,
+                        lease,
+                        &ApprovalRequestV1::new(
+                            request.approval_id,
+                            ApprovalBindingV1::new(
+                                self.rc.stores.tenant,
+                                lease,
+                                action_id,
+                                request.action_key,
+                                request.risk,
+                                request.params_digest,
+                                p.epoch,
+                            ),
+                            request.summary,
+                            request.created_at,
+                            request.expires_at,
+                        ),
+                    )
+                    .await?;
             }
-            Err(e) => tracing::warn!(error = %e, "blocked action not journaled"),
         }
+        let kind = if v.decision == SafetyDecision::Deny {
+            "action"
+        } else {
+            "approval_required"
+        };
+        self.event(
+            kind,
+            serde_json::json!({
+                "actionId": action_id.0,
+                "status": "proposed",
+                "decision": v.decision.as_str(),
+                "risk": v.risk_class.as_str(),
+                "rules": v.rules,
+            }),
+        )
+        .await;
+        Ok(())
     }
 
     /// Is `tab` a popup (not the tab the session started on)?

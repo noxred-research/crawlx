@@ -13,7 +13,12 @@
 
 #[path = "discovery.rs"]
 mod discovery;
+mod dispatch_plane;
+mod lifecycle_plane;
+pub(crate) mod memory_plane;
+mod projection_plane;
 mod protocol_plane;
+mod recipe_plane;
 mod scrape_plane;
 
 /// The configuration the URL plane of a run executes with, which decides what the run's
@@ -26,6 +31,7 @@ pub(crate) fn effective_crawl(crawl: CreateCrawl) -> CreateCrawl {
 use crate::authorization::AuthorizationGuard;
 use crate::counters::{Attempt, Plane, RunCounters};
 use crate::error::WorkerError;
+use crate::report_history::ReportStageTimer;
 use crate::robots_gate::{RobotsDecision, RobotsGate};
 use crate::routes::RouteLearner;
 use crate::run::RunContext;
@@ -204,6 +210,20 @@ impl crate::acquisition::HopAdmission for NativeHopAdmission<'_> {
 
     fn requires_checked_hops(&self) -> bool {
         self.session.is_some()
+    }
+
+    fn identity_selection(
+        &self,
+    ) -> Result<Option<crawlx_core::identity_profile::IdentitySelectionV1>, FetchError> {
+        // A selected coherent profile is never silently replaced by the ordinary transport:
+        // without a valid bound session the attempt is refused.
+        if self.runner.crawl.fetch.identity_profile.is_none() {
+            return Ok(None);
+        }
+        let binding = self.session.as_ref().ok_or(FetchError::AcquisitionUnavailable)?;
+        crawlx_core::identity_profile::IdentitySelectionV1::new(binding.identity.clone(), binding.generation)
+            .map(Some)
+            .map_err(|_| FetchError::AcquisitionUnavailable)
     }
 
     async fn fetch_attempt(
@@ -677,6 +697,7 @@ pub struct UrlPlaneRunner {
     worker: WorkerId,
     deps: UrlPlaneDeps,
     fetcher: Arc<Fetcher>,
+    initial_request_method: http::Method,
     http_sessions: Option<(
         Arc<crate::http_sessions::NamedHttpSessions>,
         Arc<dyn crate::http_sessions::HttpSessionAuthority>,
@@ -741,6 +762,24 @@ pub struct UrlPlaneRunner {
     /// leased by [`Self::run`], renewed by its heartbeat while a batch is in flight, gone once
     /// the row is finished, handed back or found lost. A row not in here is never completed.
     held: Mutex<BTreeMap<i64, i64>>,
+    /// One extension lifecycle and its measured evidence per leased attempt, created before any
+    /// admission branch can finish the row and removed once the row's fence is settled.
+    attempts: Mutex<BTreeMap<i64, lifecycle_plane::ActiveAttempt>>,
+    /// The run's immutable reviewed recipe, compiled once; proposals only, never authority.
+    recipe: Option<Arc<crate::extension_recipes::CompiledExtensionRecipe>>,
+    /// Remote custody authority renewing every producer's lease while its work runs.
+    custody_authority: Option<Arc<crawlx_storage::custody::PgSecretAuthority>>,
+    /// Retained-only URL graph evidence sink and its explicit analysis policy.
+    url_graph: Option<(
+        Arc<crate::url_graph::UrlGraphProducer>,
+        crawlx_core::url_graph::UrlGraphPolicyV1,
+    )>,
+    /// Shared advisory fairness controller; narrows dispatch, never grants it.
+    advisory: Option<Arc<crawlx_scheduler::frontier::AdvisoryFrontierV1>>,
+    /// Operator-approved source dispatcher; only its projection is consumed on this plane.
+    source_dispatch: Option<Arc<crate::source_dispatch::SourceDispatcher>>,
+    /// Run-clock instant the advisory controller's millisecond time is measured from.
+    started_at: crawlx_core::Timestamp,
 }
 
 impl UrlPlaneRunner {
@@ -851,13 +890,17 @@ impl UrlPlaneRunner {
             ));
         }
         let dedupe_scope = options.dedupe_cache.clone();
+        // Reserve the copy and its derived document before allocating either.
+        let hold =
+            memory_plane::reserve_derived(html.len().saturating_add(memory_plane::derived_bytes(html.len())))
+                .map_err(|error| WorkerError::Other(format!("browser document memory admission: {error}")))?;
         let body = html.as_bytes().to_vec();
         let base = bundle.url.url.clone();
         let controls = rc.controls.clone();
         let captcha = rc.captcha_secrets.clone();
         let secrets_key = self.secrets_key;
         let validate_tokens = self.validators.is_some();
-        let (mut document, secret_pairs) = self
+        let (body, options, secret_pairs, hold) = self
             .cpu_pool
             .run(move || {
                 let secret_pairs: Vec<(SecretFinding, Option<SecretToken>)> = match secrets_key {
@@ -877,23 +920,27 @@ impl UrlPlaneRunner {
                     }
                     None => Vec::new(),
                 };
-                let redactor = crawlx_core::secret::Redactor::new();
-                let projected = redactor.scrub_bytes(&body, controls.secret_values());
-                let text = String::from_utf8_lossy(&projected);
-                let projected = captcha.redact_if_present(&text).map_err(|_| {
-                    StoreError::RetentionDenied("browser DOM secret projection unavailable".into())
-                })?;
-                let document = crate::acquisition::extract_document_with_secrets(
-                    projected.as_bytes(),
-                    &base,
-                    &options,
-                    &controls,
-                    &captcha,
-                )?;
-                Ok::<_, WorkerError>((Box::new(document), secret_pairs))
+                (bytes::Bytes::from(body), options, secret_pairs, hold)
             })
             .await
-            .map_err(WorkerError::BrowserExtractionTask)??;
+            .map_err(WorkerError::BrowserExtractionTask)?;
+        let (mut document, browser_hold) = match memory_plane::extract_isolated(
+            &self.cpu_pool,
+            crawlx_core::parser_memory::Budgeted::new(body, hold),
+            base,
+            options,
+            &controls,
+            Some(&captcha),
+            &rc.hard_cancel,
+        )
+        .await
+        {
+            memory_plane::IsolatedOutcome::Parsed(document, hold) => (document, hold),
+            memory_plane::IsolatedOutcome::Failed(error) => return Err(error.into()),
+            memory_plane::IsolatedOutcome::Cancelled => return Err(FetchError::AcquisitionCancelled.into()),
+        };
+        // Owned until this publication returns: the copy, the parsed document and its outputs.
+        let _document_hold = browser_hold;
         let dedupe_commit = document.dedupe_commit.take();
         let (secrets, tokens): (Vec<_>, Vec<_>) = secret_pairs.into_iter().unzip();
         let mut links: BTreeMap<String, Url> = document
@@ -1000,6 +1047,8 @@ impl UrlPlaneRunner {
             return Err(StoreError::Conflict("browser page lease identity mismatch".into()).into());
         }
         self.held.lock().insert(entry.id, fence);
+        self.begin_attempt(entry.id)?;
+        self.note_url_key(entry.id, queued.identity.key);
         // Preserve the session's caller-hard-stop and abort veto under this URL fence.
         let mut producer = session_lease.clone();
         producer.source = crawlx_core::custody::CustodySource::Url(entry.id);
@@ -1172,25 +1221,55 @@ impl UrlPlaneRunner {
                 .map_err(|_| {
                     StoreError::RetentionDenied("browser page secret projection unavailable".into())
                 })?;
-            if rc.hard_cancel.is_cancelled()
-                || self.authorization_lost().await
-                || self.held.lock().get(&entry.id).copied() != Some(fence)
-            {
+            if self.authorization_lost().await || self.held.lock().get(&entry.id).copied() != Some(fence) {
                 return Err(WorkerError::Store(StoreError::LeaseLost));
             }
+            // The caller's stop ends the session recoverably: nothing is published under it, the
+            // row goes back, and the session is handed over rather than failed.
+            if rc.hard_cancel.is_cancelled() {
+                return Err(crate::error::SessionError::Cancelled.into());
+            }
+            // Every boundary the settled document really crossed. Denial wins and publishes no page.
+            let stop = [
+                crawlx_core::extensions::ExtensionEventV1::Response,
+                crawlx_core::extensions::ExtensionEventV1::Html,
+                crawlx_core::extensions::ExtensionEventV1::Parse,
+            ]
+            .into_iter()
+            .find_map(|event| self.dispatch(entry.id, event, &rc.cancel));
+            let (status, reason) = match stop {
+                None => (FrontierStatus::Succeeded, None),
+                Some(lifecycle_plane::LifecycleStop::Denied) => (
+                    FrontierStatus::PolicyBlocked,
+                    Some("extension_policy_denied".to_owned()),
+                ),
+                Some(lifecycle_plane::LifecycleStop::Cancelled) => {
+                    // a run stop interrupted the boundary: hand the session over, not a lost fence
+                    return Err(if rc.cancel.is_cancelled() {
+                        crate::error::SessionError::Cancelled.into()
+                    } else {
+                        WorkerError::Store(StoreError::LeaseLost)
+                    });
+                }
+                Some(_) => (FrontierStatus::Failed, Some("extension_failed".to_owned())),
+            };
             let mut commit = crawlx_core::orchestration::RequestCommitV1::terminal(
                 self.run,
                 entry.id,
                 fence,
                 queued.state_version,
-                FrontierStatus::Succeeded,
-                None,
+                status,
+                reason,
             );
-            commit.page = Some(record);
-            if self.durable_dedupe {
-                commit.content_dedupe =
-                    content_dedupe_claim(run.tenant, self.run, dedupe_scope.as_ref(), &document)?;
+            if status == FrontierStatus::Succeeded {
+                commit.page = Some(record);
+                if self.durable_dedupe {
+                    commit.content_dedupe =
+                        content_dedupe_claim(run.tenant, self.run, dedupe_scope.as_ref(), &document)?;
+                }
             }
+            commit.extensions = self.seal_extensions(entry.id, status)?.receipts;
+            commit.report_facts = self.attempt_report_facts(&entry, fence, status).await?;
             match self
                 .deps
                 .request_commits
@@ -1202,16 +1281,25 @@ impl UrlPlaneRunner {
                     return Err(StoreError::AccessDenied("unsupported observed commit outcome".into()).into())
                 }
             }
-            if !self.durable_dedupe {
+            if !self.durable_dedupe && status == FrontierStatus::Succeeded {
                 if let Some(commit) = dedupe_commit {
                     commit.record();
                 }
             }
-            let mut written = self.pages_written.lock();
-            *written = written.saturating_add(1);
+            if status == FrontierStatus::Succeeded {
+                let mut written = self.pages_written.lock();
+                *written = written.saturating_add(1);
+            }
             Ok::<(), WorkerError>(())
         };
-        let publication = crawlx_core::custody::with_producer(producer, Box::pin(publication));
+        let publication = crawlx_core::custody::with_producer(
+            producer.clone(),
+            crate::custody_renewal::with_custody_renewal(
+                self.custody_authority.clone(),
+                producer,
+                Box::pin(publication),
+            ),
+        );
         let result = tokio::select! {
             result = publication => result,
             heartbeat = self.keep_browser_page_alive(entry.id, fence) => match heartbeat {
@@ -1219,7 +1307,19 @@ impl UrlPlaneRunner {
                 Err(error) => Err(error),
             },
         };
+        if result.is_err() {
+            // Receipts persist under the still-live fence before it is released.
+            let _ = self
+                .release_attempt(
+                    &entry,
+                    crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                        crawlx_core::extensions::ExtensionReasonV1::Cancelled,
+                    ),
+                )
+                .await;
+        }
         self.held.lock().remove(&entry.id);
+        self.end_attempt(entry.id);
         if result.is_err() {
             // Parsing never grants another browser acquisition. Return only this exact row.
             let _ = self.deps.frontier.give_back(entry.id, fence).await;
@@ -1321,8 +1421,9 @@ impl UrlPlaneRunner {
         let content_dedupe = Arc::new(std::sync::Mutex::new(crawlx_core::extraction::DedupeCache::new(
             65_536,
         )?));
-        let budget = Budget::new(&crawl.limits, deps.clock.now())
-            .with_max_pages_per_host(crawl.scope.max_pages_per_host);
+        let started_at = deps.clock.now();
+        let budget =
+            Budget::new(&crawl.limits, started_at).with_max_pages_per_host(crawl.scope.max_pages_per_host);
         // one gate decides for this plane and, through `with_surface_services`, for the run's
         // browser plane too
         let robots = RobotsGate::for_crawl(&crawl, Arc::clone(&fetcher), Arc::clone(&deps.clock));
@@ -1415,12 +1516,20 @@ impl UrlPlaneRunner {
             .protocol
             .compile()
             .map_err(|e| WorkerError::Config(e.to_string()))?;
+        let recipe = crawl
+            .extension_recipe
+            .clone()
+            .map(crate::extension_recipes::CompiledExtensionRecipe::new)
+            .transpose()
+            .map_err(|error| WorkerError::Config(error.to_string()))?
+            .map(Arc::new);
         Ok(Self {
             run,
             crawl: Box::new(crawl),
             worker,
             deps,
             fetcher,
+            initial_request_method: http::Method::GET,
             http_sessions: None,
             scope,
             routes: RouteLearner::new(Arc::clone(&canon.templater)),
@@ -1457,7 +1566,55 @@ impl UrlPlaneRunner {
             graceful_drain: None,
             hard_cancel: None,
             held: Mutex::new(BTreeMap::new()),
+            attempts: Mutex::new(BTreeMap::new()),
+            recipe,
+            custody_authority: None,
+            url_graph: None,
+            advisory: None,
+            source_dispatch: None,
+            started_at,
         })
+    }
+
+    /// Publish proposed outlink evidence of every retained page to the URL graph, before its
+    /// terminal commit and only after ordinary scope, robots and budget re-admission. Failure of
+    /// this advisory sink never grants or removes navigation authority; lease loss still stops.
+    #[must_use]
+    pub fn with_url_graph(
+        mut self,
+        producer: Arc<crate::url_graph::UrlGraphProducer>,
+        policy: crawlx_core::url_graph::UrlGraphPolicyV1,
+    ) -> Self {
+        self.url_graph = Some((producer, policy));
+        self
+    }
+
+    /// Keep every producer lease alive under the remote custody authority while its work runs.
+    /// `None` keeps local, non-persistent stores unrenewed.
+    #[must_use]
+    pub fn with_custody_authority(
+        mut self,
+        authority: Option<Arc<crawlx_storage::custody::PgSecretAuthority>>,
+    ) -> Self {
+        self.custody_authority = authority;
+        self
+    }
+
+    /// Select the seed's read-only HTTP method without changing discovered children.
+    ///
+    /// # Errors
+    /// Rejects body-bearing methods and HEAD on browser or scrape runs.
+    pub fn with_initial_request_method(mut self, method: http::Method) -> Result<Self, WorkerError> {
+        if !matches!(method, http::Method::GET | http::Method::HEAD)
+            || (method == http::Method::HEAD
+                && (self.crawl.mode != CrawlMode::Static || self.scrape.is_some()))
+        {
+            return Err(WorkerError::Config(
+                "initial request requires native GET or HEAD".into(),
+            ));
+        }
+        self.initial_request_method = method;
+        Ok(self)
     }
 
     /// Bind the plane to the run's authorization record: every URL it discovers
@@ -1568,8 +1725,12 @@ impl UrlPlaneRunner {
         &self,
         queued: &crawlx_core::orchestration::QueuedRequestV1,
     ) -> Result<Option<crawlx_core::session_binding::SessionBindingV1>, FetchError> {
-        let Some(generation) = queued.envelope.session_generation else {
-            return Ok(None);
+        // A selected coherent identity profile binds every request to the run's default HTTP
+        // session, so an anonymous request can never fall back to the ordinary transport.
+        let generation = match queued.envelope.session_generation {
+            Some(generation) => Some(generation),
+            None if self.crawl.fetch.identity_profile.is_some() => None,
+            None => return Ok(None),
         };
         let (sessions, authority) = self
             .http_sessions
@@ -1584,7 +1745,7 @@ impl UrlPlaneRunner {
             .get_metadata(self.run)
             .await
             .map_err(FetchError::OriginAdmission)?;
-        if binding.generation != generation
+        if generation.is_some_and(|expected| binding.generation != expected)
             || binding.identity.tenant != run.tenant
             || binding.identity.run != self.run
             || binding.identity.principal.0 != queued.principal
@@ -1628,6 +1789,13 @@ impl UrlPlaneRunner {
             .transpose()
             .map_err(|e| e.to_string());
         self.admission_browser = Some(rc.pool.clone());
+        self.custody_authority.clone_from(&rc.stores.pg_secret_authority);
+        self.advisory = Some(Arc::clone(&rc.advisory_frontier));
+        self.source_dispatch.clone_from(&rc.source_dispatch);
+        self.url_graph = rc
+            .url_graph_producer
+            .as_ref()
+            .map(|producer| (Arc::clone(producer), rc.url_graph_policy.clone()));
         // the browser plane's navigations and this plane's frontier share one `robots.txt` cache
         self.robots = rc.robots.with_fetcher(Arc::clone(&self.fetcher));
         self.scrape = self
@@ -1753,6 +1921,22 @@ impl UrlPlaneRunner {
         action_bearing: bool,
         source: Option<RequestSource>,
     ) -> Result<DiscoveryOutcome, StoreError> {
+        self.discover_with(url, depth, from, action_bearing, source, None)
+            .await
+    }
+
+    /// [`Self::discover`] for a complete reviewed proposal whose route, method and metadata must
+    /// survive admission. The proposal's identity fields (URL, depth, parent) are replaced by the
+    /// admitted values; it passes the same scope, robots, budget and frontier gates as a link.
+    async fn discover_with(
+        &self,
+        url: CanonicalUrl,
+        depth: u16,
+        from: Option<i64>,
+        action_bearing: bool,
+        source: Option<RequestSource>,
+        proposal: Option<crawlx_core::request::RequestEnvelopeV1>,
+    ) -> Result<DiscoveryOutcome, StoreError> {
         if self.ledger.lock().carried.contains(url.url.as_str()) {
             // a stopped run already fetched it (`seed_resume`)
             self.counters
@@ -1760,20 +1944,41 @@ impl UrlPlaneRunner {
             return Ok(DiscoveryOutcome::Duplicate);
         }
         let (denial, counted_as, code) = self.discovery_admission(&url, depth, from, action_bearing).await;
-        let (mut outcome, id) = if let Some(parent) = from {
-            let fence = self
-                .held
-                .lock()
-                .get(&parent)
-                .copied()
-                .ok_or(StoreError::LeaseLost)?;
+        let head_seed = self.initial_request_method == http::Method::HEAD
+            && depth == 0
+            && from.is_none()
+            && url.url == self.crawl.seed_url;
+        let parent_fence = from
+            .map(|parent| {
+                self.held
+                    .lock()
+                    .get(&parent)
+                    .copied()
+                    .map(|fence| (parent, fence))
+                    .ok_or(StoreError::LeaseLost)
+            })
+            .transpose()?;
+        let mut pending_is_get = true;
+        let (mut outcome, id) = if parent_fence.is_some() || head_seed || proposal.is_some() {
             let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
-            let request = crawlx_core::request::RequestEnvelopeV1::get(url.clone(), depth, from);
+            let mut request = match proposal {
+                Some(mut proposal) => {
+                    proposal.url = url.clone();
+                    proposal.depth = depth;
+                    proposal.parent = from;
+                    proposal
+                }
+                None => crawlx_core::request::RequestEnvelopeV1::get(url.clone(), depth, from),
+            };
+            if head_seed {
+                request.method = "HEAD".into();
+            }
+            pending_is_get = request.method == "GET";
             // A canonical key alone can recur with different envelopes or admission outcomes.
             // Bind retries to their full content and live parent fence; identity dedupe stays in storage.
             let batch_id = crawlx_core::hash::Digest::of_value(
                 "crawlx/child-discovery/v1",
-                &(tenant, self.run, (parent, fence), &request, &denial),
+                &(tenant, self.run, parent_fence, &request, &denial),
             )
             .map_err(|error| StoreError::Serialization(error.to_string()))?;
             let outcome = match &denial {
@@ -1788,7 +1993,7 @@ impl UrlPlaneRunner {
                 batch_id,
                 vec![request],
             );
-            batch.parent_fence = Some((parent, fence));
+            batch.parent_fence = parent_fence;
             batch.initial_denial = denial;
             let receipt = self.deps.frontier.append_batch(batch).await?;
             if let Some(id) = receipt.inserted.first() {
@@ -1813,7 +2018,7 @@ impl UrlPlaneRunner {
                     id,
                     PendingUrl {
                         resume: ResumeEntry::new(url.url.to_string(), depth),
-                        is_get: true,
+                        is_get: pending_is_get && !head_seed,
                     },
                 );
             }
@@ -2001,7 +2206,9 @@ impl UrlPlaneRunner {
                 let mut ledger = self.ledger.lock();
                 for e in existing {
                     let is_get = methods.get(&e.id).is_some_and(|method| method == "GET");
-                    if is_get
+                    if methods
+                        .get(&e.id)
+                        .is_some_and(|method| method == self.initial_request_method.as_str())
                         && seed.as_ref().is_some_and(|seed| seed.url == e.url.url)
                         && !matches!(
                             e.status,
@@ -2069,6 +2276,10 @@ impl UrlPlaneRunner {
         let resumed = self.resume_seed.lock().take();
         let seed_excluded = self.prefetch.check(&seed.url).is_some();
         self.discover(seed.clone(), 0, None, bearing, None).await?;
+        if self.initial_request_method == http::Method::HEAD {
+            return self.persist_counters().await;
+        }
+        self.discover_recipe_start().await?;
         self.seed_batch_urls().await?;
         if !seed_excluded {
             self.climb(&seed, 0, None, &seed.url).await?;
@@ -2154,6 +2365,11 @@ impl UrlPlaneRunner {
             if let Ok(default) = seed.url.join("/sitemap.xml") {
                 roots.push(default.to_string());
             }
+        }
+        if self.recipe_wants_sitemaps() {
+            // The recipe's ordered rules, not the generic traversal, choose each page's route:
+            // root sitemap documents become ordinary requests and are evaluated when fetched.
+            return self.discover_recipe_sitemap_roots(seed, &roots).await;
         }
         let mut traversal = SitemapTraversal::new();
         let mut queue: Vec<(String, usize, bool)> = roots.into_iter().map(|r| (r, 0, true)).collect();
@@ -2354,7 +2570,15 @@ impl UrlPlaneRunner {
                         self.worker,
                         fence,
                     );
-                    crawlx_core::custody::with_producer(producer, leased).await
+                    crawlx_core::custody::with_producer(
+                        producer.clone(),
+                        crate::custody_renewal::with_custody_renewal(
+                            self.custody_authority.clone(),
+                            producer,
+                            leased,
+                        ),
+                    )
+                    .await
                 }
                 None => leased.await,
             };
@@ -2372,68 +2596,121 @@ impl UrlPlaneRunner {
         self.persist_counters().await
     }
 
-    /// One row of a leased batch.
+    /// One row of a leased batch. The row's extension lifecycle exists before any admission
+    /// branch can finish it and is forgotten once its fence is settled, on every exit.
     async fn process_leased(
         &self,
         entry: &FrontierEntry,
         cancel: &CancellationToken,
         cancelled: bool,
     ) -> Result<(), WorkerError> {
-        if !self.held.lock().contains_key(&entry.id) {
-            // the heartbeat found the lease gone: nothing is fetched or counted for this row
-            return Err(StoreError::LeaseLost.into());
+        if self.held.lock().contains_key(&entry.id) {
+            self.begin_attempt(entry.id)?;
         }
-        // a revoked or expired record stops the run like a cancel, a spent
-        // budget ends it: the rows of the batch in hand are abandoned with the run
-        if cancelled
-            || self.authorization_lost().await
-            || self.budget.lock().exhausted(self.deps.clock.now()).is_some()
-        {
-            self.finish(entry, FrontierStatus::Abandoned, Some("run_stopped".to_owned()))
+        let result = self.process_leased_inner(entry, cancel, cancelled).await;
+        self.end_attempt(entry.id);
+        result
+    }
+
+    async fn process_leased_inner(
+        &self,
+        entry: &FrontierEntry,
+        cancel: &CancellationToken,
+        cancelled: bool,
+    ) -> Result<(), WorkerError> {
+        let mut cancelled = cancelled;
+        // A refused advisory slot keeps the row leased here and asks again after a bounded wait,
+        // so every gate below is re-read on each pass.
+        let ticket = loop {
+            if !self.held.lock().contains_key(&entry.id) {
+                // the heartbeat found the lease gone: nothing is fetched or counted for this row
+                return Err(StoreError::LeaseLost.into());
+            }
+            // a revoked or expired record stops the run like a cancel, a spent
+            // budget ends it: the rows of the batch in hand are abandoned with the run
+            if cancelled
+                || self.authorization_lost().await
+                || self.budget.lock().exhausted(self.deps.clock.now()).is_some()
+            {
+                self.finish(entry, FrontierStatus::Abandoned, Some("run_stopped".to_owned()))
+                    .await?;
+                self.counters
+                    .attempt_with_reason(Plane::Urls, Attempt::Abandoned, "run_stopped");
+                return Ok(());
+            }
+            // The worker drains (SIGTERM, operator drain) but the run goes on: a row never
+            // fetched returns to `pending` unattempted, for the worker that takes the run over.
+            // Abandoned rows are never leased again.
+            if self.stop_requested(cancel) {
+                self.release_attempt(
+                    entry,
+                    crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                        crawlx_core::extensions::ExtensionReasonV1::Cancelled,
+                    ),
+                )
                 .await?;
-            self.counters
-                .attempt_with_reason(Plane::Urls, Attempt::Abandoned, "run_stopped");
-            return Ok(());
-        }
-        // The worker drains (SIGTERM, operator drain) but the run goes on: a row never
-        // fetched returns to `pending` unattempted, for the worker that takes the run over.
-        // Abandoned rows are never leased again.
-        if self.stop_requested(cancel) {
-            let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
-            self.deps.frontier.give_back(entry.id, fence).await?;
-            return Ok(());
-        }
-        if self.admission_ceiling.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-            let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
-            self.deps.frontier.give_back(entry.id, fence).await?;
-            return Ok(());
-        }
-        let cooldown = if self.crawl.cache_only() {
-            Duration::ZERO
-        } else {
-            self.fetcher
-                .governor()
-                .shared_cooldown_remaining(&crawlx_fetch::Origin::from_url(&entry.url.url))
-                .await?
+                let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
+                self.deps.frontier.give_back(entry.id, fence).await?;
+                return Ok(());
+            }
+            if self.admission_ceiling.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                self.release_attempt(
+                    entry,
+                    crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                        crawlx_core::extensions::ExtensionReasonV1::Cancelled,
+                    ),
+                )
+                .await?;
+                let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
+                self.deps.frontier.give_back(entry.id, fence).await?;
+                return Ok(());
+            }
+            let cooldown = if self.crawl.cache_only() {
+                Duration::ZERO
+            } else {
+                self.fetcher
+                    .governor()
+                    .shared_cooldown_remaining(&crawlx_fetch::Origin::from_url(&entry.url.url))
+                    .await?
+            };
+            if !cooldown.is_zero() {
+                let delay = chrono::Duration::from_std(cooldown)
+                    .map_err(|_| WorkerError::Config("origin cooldown exceeds timestamp range".into()))?;
+                let not_before = self
+                    .deps
+                    .clock
+                    .now()
+                    .checked_add_signed(delay)
+                    .ok_or_else(|| WorkerError::Config("origin cooldown timestamp overflow".into()))?;
+                self.release_attempt(
+                    entry,
+                    crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                        crawlx_core::extensions::ExtensionReasonV1::Cancelled,
+                    ),
+                )
+                .await?;
+                let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
+                self.deps
+                    .frontier
+                    .defer_fenced(entry.id, fence, not_before)
+                    .await?;
+                return Ok(());
+            }
+            match self.reserve_dispatch(entry).await? {
+                dispatch_plane::Dispatch::Reserved(ticket) => break Some(ticket),
+                dispatch_plane::Dispatch::Unmetered => break None,
+                dispatch_plane::Dispatch::Wait(wait) => {
+                    self.pause_for_dispatch(wait, cancel).await;
+                    // a cancel through the API flips the run row, not the token
+                    cancelled = self.deps.runs.get_metadata(self.run).await?.status == RunStatus::Cancelled;
+                }
+            }
         };
-        if !cooldown.is_zero() {
-            let delay = chrono::Duration::from_std(cooldown)
-                .map_err(|_| WorkerError::Config("origin cooldown exceeds timestamp range".into()))?;
-            let not_before = self
-                .deps
-                .clock
-                .now()
-                .checked_add_signed(delay)
-                .ok_or_else(|| WorkerError::Config("origin cooldown timestamp overflow".into()))?;
-            let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
-            self.deps
-                .frontier
-                .defer_fenced(entry.id, fence, not_before)
-                .await?;
-            return Ok(());
-        }
         let resources = crate::runtime_admission::TaskResourceSample::start().await;
         let result = self.process_entry(entry, cancel).await;
+        if let Some(ticket) = ticket {
+            self.settle_dispatch(entry, ticket, result.is_ok());
+        }
         let observation = resources.finish(entry.id, result.is_ok()).await;
         let recorded = self
             .deps
@@ -2470,6 +2747,13 @@ impl UrlPlaneRunner {
             .now()
             .checked_add_signed(delay)
             .ok_or_else(|| WorkerError::Config("origin cooldown timestamp overflow".into()))?;
+        self.release_attempt(
+            entry,
+            crawlx_core::extensions::ExtensionTerminalV1::Failed(
+                crawlx_core::extensions::ExtensionReasonV1::Processing,
+            ),
+        )
+        .await?;
         let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
         let pending = self
             .deps
@@ -2595,6 +2879,54 @@ impl UrlPlaneRunner {
             (status, reason, accepted, state_deltas)
         };
         let fence = *self.held.lock().get(&entry.id).ok_or(StoreError::LeaseLost)?;
+        // The lifecycle chooses its single terminal here, together with the row. A policy denial
+        // or failure it recorded can only downgrade the row's status, never raise it.
+        let sealed = self.seal_extensions(entry.id, status)?;
+        let denied = matches!(
+            sealed.terminal,
+            Some(crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                crawlx_core::extensions::ExtensionReasonV1::PolicyDenied
+            ))
+        );
+        let failed = matches!(
+            sealed.terminal,
+            Some(crawlx_core::extensions::ExtensionTerminalV1::Failed(_))
+        );
+        let (status, reason, accepted, state_deltas, page, outbox, head_response) = if denied
+            && !matches!(
+                status,
+                FrontierStatus::PolicyBlocked | FrontierStatus::RobotsBlocked | FrontierStatus::Abandoned
+            ) {
+            (
+                FrontierStatus::PolicyBlocked,
+                Some("extension_policy_denied".into()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                Vec::new(),
+                None,
+            )
+        } else if failed && status == FrontierStatus::Succeeded {
+            (
+                FrontierStatus::Failed,
+                Some("extension_failed".into()),
+                Vec::new(),
+                Vec::new(),
+                None,
+                Vec::new(),
+                None,
+            )
+        } else {
+            (
+                status,
+                reason,
+                accepted,
+                state_deltas,
+                page,
+                outbox,
+                head_response,
+            )
+        };
         // Terminal rows never reopen. Retries preserve this version until the single commit.
         let mut commit = crawlx_core::orchestration::RequestCommitV1::terminal(
             self.run, entry.id, fence, 1, status, reason,
@@ -2610,6 +2942,8 @@ impl UrlPlaneRunner {
         };
         commit.head_response =
             head_response.filter(|_| matches!(status, FrontierStatus::Succeeded | FrontierStatus::Failed));
+        commit.extensions = sealed.receipts;
+        commit.report_facts = self.attempt_report_facts(entry, fence, status).await?;
         self.deps.request_commits.commit_fenced(commit).await?;
         if status == FrontierStatus::Succeeded {
             if let Some(local_dedupe) = local_dedupe {
@@ -2659,6 +2993,14 @@ impl UrlPlaneRunner {
         entry: &FrontierEntry,
         reason: &DenialReason,
     ) -> Result<(), WorkerError> {
+        // This row ends through the frontier, not a result commit: its receipts persist first.
+        self.release_attempt(
+            entry,
+            crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                crawlx_core::extensions::ExtensionReasonV1::PolicyDenied,
+            ),
+        )
+        .await?;
         let fence = self.held.lock().remove(&entry.id).ok_or(StoreError::LeaseLost)?;
         self.deps
             .frontier
@@ -2867,8 +3209,13 @@ impl UrlPlaneRunner {
                 }
             }
         }
-        let mut lifecycle = crate::extensions::RequestLifecycle::new(&self.crawl.extensions)
-            .map_err(|e| WorkerError::Config(e.to_string()))?;
+        // The attempt's shared lifecycle was created when the row was leased, before any
+        // admission branch could finish it; a direct caller gets one here.
+        let mut lifecycle = match self.attempt_lifecycle(entry.id) {
+            Some(lifecycle) => lifecycle,
+            None => self.begin_attempt(entry.id)?,
+        };
+        self.note_url_key(entry.id, queued.identity.key);
         let prepared = match lifecycle.before_acquisition(&queued.envelope, cancel) {
             Ok(prepared) => prepared,
             Err(crawlx_core::extensions::ExtensionError::PolicyDenied) => {
@@ -2882,7 +3229,16 @@ impl UrlPlaneRunner {
                     .await;
             }
             Err(error) => {
-                let _ = lifecycle.finalize(false);
+                let _ = lifecycle.finish(match error {
+                    crawlx_core::extensions::ExtensionError::Cancelled => {
+                        crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                            crawlx_core::extensions::ExtensionReasonV1::Cancelled,
+                        )
+                    }
+                    _ => crawlx_core::extensions::ExtensionTerminalV1::Failed(
+                        crawlx_core::extensions::ExtensionReasonV1::Processing,
+                    ),
+                });
                 return self
                     .fail(
                         entry,
@@ -2896,7 +3252,13 @@ impl UrlPlaneRunner {
         };
         if let Some(replacement) = prepared.replacement {
             let admitted = self.admit_extension_replacement(entry, replacement).await?;
-            let _ = lifecycle.finalize(!admitted);
+            let _ = if admitted {
+                lifecycle.finish(crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                    crawlx_core::extensions::ExtensionReasonV1::Rejected,
+                ))
+            } else {
+                Ok(lifecycle.finalize(true))
+            };
             return self
                 .finish(
                     entry,
@@ -2917,12 +3279,14 @@ impl UrlPlaneRunner {
                 .await;
         }
         if prepared.route == crawlx_core::extensions::HandlerV1::Skip {
-            let _ = lifecycle.finalize(false);
+            let _ = lifecycle.finish(crawlx_core::extensions::ExtensionTerminalV1::Skipped(
+                crawlx_core::extensions::ExtensionReasonV1::Rejected,
+            ));
             return self
                 .finish(entry, FrontierStatus::Failed, Some("extension_skipped".into()))
                 .await;
         }
-        if queued.envelope.session_generation.is_some()
+        if (queued.envelope.session_generation.is_some() || self.crawl.fetch.identity_profile.is_some())
             && (self.strict_http_binding(&queued).await.is_err()
                 || self.scrape.is_some()
                 || crate::protocol::select_route(&self.protocol_routes, &entry.url.url)
@@ -3167,7 +3531,7 @@ impl UrlPlaneRunner {
         cancel: &CancellationToken,
         queued: crawlx_core::orchestration::QueuedRequestV1,
         discovery: Option<DenialReason>,
-        mut lifecycle: crate::extensions::RequestLifecycle,
+        lifecycle: crate::extensions::RequestLifecycle,
         legacy_reserved_effects: Option<u32>,
     ) -> Result<(), WorkerError> {
         let cache_only = self.crawl.cache_only();
@@ -3242,6 +3606,16 @@ impl UrlPlaneRunner {
             None
         };
         let mut primary_options = crate::acquisition::fetch_options(&self.crawl.fetch);
+        if self.crawl.extensions.configured() {
+            // Real header-stage execution, before any body byte is polled or any redirect followed.
+            // An adapter cannot honour a prebody gate: only a real header policy installs one,
+            // and then the service refuses the attempt rather than ignore the policy.
+            if self.crawl.fetch.acquisition_service.is_none()
+                || self.crawl.extensions.header_policies().next().is_some()
+            {
+                primary_options.header_gate = Some(lifecycle.header_gate());
+            }
+        }
         if method_head {
             primary_options.method = http::Method::HEAD;
         }
@@ -3401,8 +3775,40 @@ impl UrlPlaneRunner {
                     .await;
             }
         }
+        let fetch_timer = ReportStageTimer::start();
         let fetched = if let Some(response) = cached_response {
             Ok(response)
+        } else if let (Some(service), Some(policy), Some(budget)) = (
+            self.crawl.fetch.acquisition_service.as_deref(),
+            acquisition_policy.as_ref(),
+            shared_acquisition_budget.as_mut(),
+        ) {
+            // The operator-registered service is the only acquisition backend of this run; a
+            // failure is reported, never retried over the native transport.
+            let mut extract = scoped_extract.clone();
+            extract.depth = u32::from(entry.depth);
+            let (served, dns) = crawlx_fetch::resolver::capture_dns_reports(self.fetch_via_service(
+                entry,
+                &queued,
+                service,
+                policy,
+                budget,
+                &primary_options,
+                &extract,
+                cancel,
+                tenant,
+                http_session_binding.as_ref(),
+            ))
+            .await;
+            self.note_dns(entry.id, dns);
+            match served {
+                Ok((response, metadata, document)) => {
+                    prepared_document = document;
+                    acquisition_metadata = Some(metadata);
+                    Ok(response)
+                }
+                Err(error) => Err(error),
+            }
         } else if let (Some(policy), Some(budget)) =
             (acquisition_policy.as_ref(), shared_acquisition_budget.as_mut())
         {
@@ -3412,24 +3818,26 @@ impl UrlPlaneRunner {
             let observe = |url: &Url, fetched: &Result<FetchResponse, FetchError>| {
                 self.record_exchange_method(&queued.envelope.method, url, fetched);
             };
-            match crate::acquisition::fetch_native(
-                &self.fetcher,
-                &entry.url.url,
-                &primary_options,
-                policy,
-                budget,
-                cancel,
-                &extract,
-                &self.cpu_pool,
-                self.run,
-                tenant,
-                &observe,
-                false,
-                self.captcha_secrets.as_ref(),
-                Some(&NativeHopAdmission::new(self, entry)?.with_session(http_session_binding.clone())),
-            )
-            .await
-            {
+            let (native, dns) =
+                crawlx_fetch::resolver::capture_dns_reports(crate::acquisition::fetch_native(
+                    &self.fetcher,
+                    &entry.url.url,
+                    &primary_options,
+                    policy,
+                    budget,
+                    cancel,
+                    &extract,
+                    &self.cpu_pool,
+                    self.run,
+                    tenant,
+                    &observe,
+                    false,
+                    self.captcha_secrets.as_ref(),
+                    Some(&NativeHopAdmission::new(self, entry)?.with_session(http_session_binding.clone())),
+                ))
+                .await;
+            self.note_dns(entry.id, dns);
+            match native {
                 Ok(acquired) => {
                     prepared_document = acquired.document;
                     acquisition_metadata = Some(acquired.metadata);
@@ -3438,7 +3846,13 @@ impl UrlPlaneRunner {
                 Err(error) => Err(error),
             }
         } else {
-            let fetched = self.fetch_legacy(entry, &primary_options, cancel).await;
+            let (fetched, dns) = crawlx_fetch::resolver::capture_dns_reports(self.fetch_legacy(
+                entry,
+                &primary_options,
+                cancel,
+            ))
+            .await;
+            self.note_dns(entry.id, dns);
             self.record_exchange_method(&queued.envelope.method, &entry.url.url, &fetched);
             fetched
         };
@@ -3480,6 +3894,26 @@ impl UrlPlaneRunner {
             }
             (fetched, _) => fetched,
         };
+        // Measured fetch evidence: a response that never crossed the network has no fetch
+        // stage and no wire bytes.
+        if cached_source.is_none() {
+            self.note_stage(
+                entry.id,
+                &fetch_timer,
+                crawlx_core::report_history::ProcessorStageV1::Fetch,
+                match &fetched {
+                    Ok(_) => crawlx_core::report_history::StageOutcomeV1::Succeeded,
+                    Err(FetchError::AcquisitionCancelled) => {
+                        crawlx_core::report_history::StageOutcomeV1::Cancelled
+                    }
+                    Err(_) => crawlx_core::report_history::StageOutcomeV1::Failed,
+                },
+                crawlx_core::report_history::ProcessorIdentityV1::NativeHttp,
+            );
+            if let Ok(response) = &fetched {
+                self.note_wire(entry.id, response);
+            }
+        }
         // Transfer acquisition state into response processing instead of retaining its
         // large future-construction temporary throughout response polling.
         Self::phase_future(|| async move {
@@ -3564,12 +3998,12 @@ impl UrlPlaneRunner {
                     )
                     .await?;
             }
-            let _ = lifecycle.finalize(false);
+            // `defer_rate_limited` persists this attempt's receipts before releasing its fence.
             return self.defer_rate_limited(entry, &resp.final_url).await;
         }
         let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
         let mut acquisition_metadata = acquisition_metadata.unwrap_or_else(|| {
-            crate::acquisition::http_metadata(self.run, tenant, &entry.url.url, &resp, &self.fetcher)
+            crate::acquisition::http_metadata(self.run, tenant, &entry.url.url, &resp, &self.fetcher, None)
         });
         let mut accepted_not_modified = false;
         if !method_head && resp.not_modified() {
@@ -3606,6 +4040,23 @@ impl UrlPlaneRunner {
                     baseline.record.ordinal,
                 ));
             accepted_not_modified = true;
+        }
+        if cached_source.is_some() || accepted_not_modified {
+            // Retained bytes carry no transport admission: charge them before anything uses them.
+            resp.body_permit = None;
+            if memory_plane::admit_retained(&mut resp).is_err() {
+                self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                    .await?;
+                return self
+                    .fail(
+                        entry,
+                        "memory_admission",
+                        "memory_admission",
+                        Attempt::Failed,
+                        serde_json::json!({"reason":"retained body memory admission refused"}),
+                    )
+                    .await;
+            }
         }
         if let Some(budget) = shared_acquisition_budget.as_ref() {
             budget.stamp(&mut acquisition_metadata);
@@ -3746,7 +4197,9 @@ impl UrlPlaneRunner {
                 &self.fetcher.config().controls,
                 self.captcha_secrets.as_ref(),
             )?;
-            let _ = lifecycle.finalize(false);
+            if let Some(stop) = self.dispatch(entry.id, crawlx_core::extensions::ExtensionEventV1::Response, cancel) {
+                return self.stop_request(entry, stop).await;
+            }
             self.finish_with_results(
                 entry,
                 if success {
@@ -3778,6 +4231,13 @@ impl UrlPlaneRunner {
             // HEAD is an acquisition result, not a document. In particular, never
             // replace the GET page projection or manufacture an empty article.
             return Ok(());
+        }
+        // Every non-HEAD response, cached or live, reaches the reviewed response boundary
+        // before its status or body decides anything else.
+        if let Some(stop) = self.dispatch(entry.id, crawlx_core::extensions::ExtensionEventV1::Response, cancel) {
+            self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                .await?;
+            return self.stop_request(entry, stop).await;
         }
         let code = resp.status.as_u16();
         let headers = header_pairs(&resp.headers);
@@ -3914,10 +4374,23 @@ impl UrlPlaneRunner {
                 &mut record,
                 expand,
                 shared_acquisition_budget.as_ref(),
+                cancel,
             )
             .await?;
+        if source_response {
+            // A feed or sitemap document is consumed by native source discovery.
+            if let Some(stop) = self.dispatch(entry.id, crawlx_core::extensions::ExtensionEventV1::Feed, cancel) {
+                self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                    .await?;
+                return self.stop_request(entry, stop).await;
+            }
+        }
         let mut links: Vec<Url> = Vec::new();
+        // Bounded anchor text by absolute URL, correlated only as a keyed handle in the graph.
+        let mut link_anchors: BTreeMap<String, String> = BTreeMap::new();
         let mut page_type: Option<PageType> = None;
+        // Admission of the extracted document, held until the row's terminal commit settles.
+        let mut document_hold: Option<crawlx_core::parser_memory::BytePermit> = None;
         let mut accepted_items = Vec::new();
         let mut extension_outbox = Vec::new();
         let mut content_dedupe = None;
@@ -3938,34 +4411,92 @@ impl UrlPlaneRunner {
                 }),
                 ..scoped_extract.clone()
             };
-            let body = resp.body.clone();
+            // The derived document is reserved before any extraction allocation. The body's
+            // admission and this reservation both move into the blocking job and stay there
+            // until it exits, even when this await is cancelled.
+            let hold = match memory_plane::reserve_derived(memory_plane::derived_bytes(resp.body.len())) {
+                Ok(permit) => permit,
+                Err(_) => {
+                    self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                        .await?;
+                    return self
+                        .fail(
+                            entry,
+                            "memory_admission",
+                            "memory_admission",
+                            Attempt::Failed,
+                            serde_json::json!({"reason":"document memory admission refused"}),
+                        )
+                        .await;
+                }
+            };
             let controls = self.fetcher.config().controls.clone();
             let captcha = self.captcha_secrets.clone();
             let base = resp.final_url.clone();
-            let extracted = match prepared_document.take() {
-                Some(document) => Ok(document),
-                None => self
-                    .cpu_pool
-                    .run(move || {
-                        let document = match &captcha {
-                            Some(captcha) => crate::acquisition::extract_document_with_secrets(
-                                &body, &base, &opts, &controls, captcha,
-                            ),
-                            None if opts.content.is_none() => {
-                                crate::acquisition::extract_document(&body, &base, &opts, &controls)
-                            }
-                            None => Err(crawlx_extract::ExtractError::InvalidContentPolicy(
-                                crawlx_core::CoreError::Invalid {
-                                    field: "extract.privacy",
-                                    reason: "dynamic-secret registry unavailable".into(),
-                                },
-                            )),
-                        };
-                        document.map(Box::new)
-                    })
+            let parse_timer = ReportStageTimer::start();
+            // The isolated parser carries the dedupe cache as a hash-only snapshot and keeps the
+            // language detector in the parent; only a content policy without the run's dynamic
+            // secret registry cannot be parsed there, and is refused below, never parsed unbounded.
+            let isolable = captcha.is_some() || opts.content.is_none();
+            let (extracted, parse_hold) = match prepared_document.take() {
+                Some(document) => {
+                    // The acquisition's own reservation covers this document; keep exactly that
+                    // carrier and release the speculative extra one.
+                    let (document, permit) = document.into_parts();
+                    drop(hold);
+                    (Ok(document), Some(permit))
+                }
+                None if isolable => {
+                    match memory_plane::extract_isolated(
+                        &self.cpu_pool,
+                        crawlx_core::parser_memory::Budgeted::new(memory_plane::owned_bytes(&resp), hold),
+                        base,
+                        opts,
+                        &controls,
+                        captcha.as_ref(),
+                        // A graceful drain lets the response in hand finish; only a hard stop interrupts.
+                        &self.event_cancel(cancel),
+                    )
                     .await
-                    .map_err(|e| WorkerError::Other(format!("extraction task failed: {e}")))?,
+                    {
+                        memory_plane::IsolatedOutcome::Parsed(document, permit) => (Ok(document), Some(permit)),
+                        memory_plane::IsolatedOutcome::Failed(error) => (Err(error), None),
+                        memory_plane::IsolatedOutcome::Cancelled => {
+                            self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                                .await?;
+                            return self.stop_request(entry, lifecycle_plane::LifecycleStop::Cancelled).await;
+                        }
+                    }
+                }
+                None => {
+                    // A content policy needs the run's dynamic-secret registry inside the isolation
+                    // boundary, and an unbounded in-process parse is never a fallback: refuse explicitly.
+                    drop(hold);
+                    self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                        .await?;
+                    return self
+                        .fail(
+                            entry,
+                            "isolated_parse_unsupported",
+                            "isolated_parse_unsupported",
+                            Attempt::Failed,
+                            serde_json::json!({"reason":"extraction policy cannot be honoured by the bounded isolated parser"}),
+                        )
+                        .await;
+                }
             };
+            document_hold = parse_hold;
+            self.note_stage(
+                entry.id,
+                &parse_timer,
+                crawlx_core::report_history::ProcessorStageV1::Parse,
+                if extracted.is_ok() {
+                    crawlx_core::report_history::StageOutcomeV1::Succeeded
+                } else {
+                    crawlx_core::report_history::StageOutcomeV1::Failed
+                },
+                crawlx_core::report_history::ProcessorIdentityV1::Parser,
+            );
             match extracted {
                 Ok(mut doc) => {
                     if self.durable_dedupe {
@@ -3978,9 +4509,20 @@ impl UrlPlaneRunner {
                     } else {
                         local_dedupe = doc.dedupe_commit.take();
                     }
+                    for event in [
+                        crawlx_core::extensions::ExtensionEventV1::Html,
+                        crawlx_core::extensions::ExtensionEventV1::Parse,
+                    ] {
+                        if let Some(stop) = self.dispatch(entry.id, event, cancel) {
+                            self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                                .await?;
+                            return self.stop_request(entry, stop).await;
+                        }
+                    }
                     let pipeline = self.crawl.extensions.clone();
                     let label = queued.envelope.route.clone();
                     let token = cancel.clone();
+                    let held = document_hold.take();
                     let transformed = self
                         .cpu_pool
                         .run(move || {
@@ -4006,12 +4548,13 @@ impl UrlPlaneRunner {
                             } else {
                                 Ok(None)
                             };
-                            (doc, result)
+                            (doc, result, held)
                         })
                         .await
                         .map_err(|e| WorkerError::Other(format!("extension task failed: {e}")))?;
-                    let (mut doc, candidate) = transformed;
-                    let candidate = match candidate {
+                    let (mut doc, candidate, held) = transformed;
+                    document_hold = held;
+                    let mut candidate = match candidate {
                         Ok(candidate) => candidate.flatten(),
                         Err(crawlx_core::extensions::ExtensionError::Rejected) => {
                             record.metadata["extensions"] =
@@ -4035,6 +4578,24 @@ impl UrlPlaneRunner {
                                 .await;
                         }
                     };
+                    if self.crawl.extensions.configured() {
+                        match self.dispatch(entry.id, crawlx_core::extensions::ExtensionEventV1::Item, cancel) {
+                            None => {}
+                            Some(lifecycle_plane::LifecycleStop::Skipped) => {
+                                candidate = None;
+                                record.metadata["extensions"] =
+                                    serde_json::json!({"version":1,"outcome":"rejected"});
+                                record.metadata["itemPipeline"] = serde_json::json!({
+                                    "accepted": 0, "rejected": 1, "reason": "extension_item_rejected",
+                                });
+                            }
+                            Some(stop) => {
+                                self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                                    .await?;
+                                return self.stop_request(entry, stop).await;
+                            }
+                        }
+                    }
                     if let Some(candidate) = candidate {
                         record.metadata["itemPipeline"] = serde_json::json!({
                             "accepted": 1, "rejected": 0,
@@ -4077,6 +4638,12 @@ impl UrlPlaneRunner {
                             )
                             .await;
                     }
+                    let projection = self.project_article(entry, &doc).await?;
+                    if let Some(status) = projection.status {
+                        record.metadata["sourceProjection"] = status;
+                    }
+                    accepted_items.extend(projection.accepted);
+                    extension_outbox.extend(projection.outbox);
                     record.metadata["acquisition"]["extractionSucceeded"] = serde_json::json!(true);
                     if let Some(validation) = &doc.validation {
                         record.metadata["acquisition"]["validation"] = serde_json::to_value(validation)
@@ -4136,6 +4703,37 @@ impl UrlPlaneRunner {
                         }
                     }
                     links = doc.links.iter().map(|l| l.url.clone()).collect();
+                    // Typed source relations keep their kind, tag and original-tree node. They are
+                    // evidence only: embeds and prerequisites gain no authority, and a form action
+                    // is recorded as a proposal, never submitted.
+                    if !doc.source_hops.is_empty() || doc.source_hops_truncated {
+                        let mut counts = BTreeMap::<&'static str, u64>::new();
+                        for hop in &doc.source_hops {
+                            let kind = match hop.kind {
+                                crawlx_extract::source_policy::HopKind::Link => "link",
+                                crawlx_extract::source_policy::HopKind::Embed => "embed",
+                                crawlx_extract::source_policy::HopKind::Prerequisite => "prerequisite",
+                                crawlx_extract::source_policy::HopKind::FormActionProposal => "formActionProposal",
+                                _ => "other",
+                            };
+                            *counts.entry(kind).or_default() += 1;
+                            if hop.kind == crawlx_extract::source_policy::HopKind::Link && !hop.anchor.is_empty() {
+                                link_anchors
+                                    .entry(hop.url.to_string())
+                                    .or_insert_with(|| hop.anchor.chars().take(512).collect());
+                            }
+                        }
+                        record.metadata["sourceHops"] = serde_json::json!({
+                            "version": 1, "counts": counts, "truncated": doc.source_hops_truncated,
+                        });
+                    }
+                    for link in &doc.links {
+                        if !link.text.is_empty() {
+                            link_anchors
+                                .entry(link.url.to_string())
+                                .or_insert_with(|| link.text.chars().take(512).collect());
+                        }
+                    }
                     let filled = if !cache_only && self.crawl.extract.form_fill.enabled {
                         Some(self.fill_forms(&doc, entry.depth).await)
                     } else {
@@ -4165,6 +4763,13 @@ impl UrlPlaneRunner {
                 }
             }
         } else {
+            if content_type.as_deref().is_some_and(|c| c.contains("xml")) {
+                if let Some(stop) = self.dispatch(entry.id, crawlx_core::extensions::ExtensionEventV1::Xml, cancel) {
+                    self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                        .await?;
+                    return self.stop_request(entry, stop).await;
+                }
+            }
             // scripts, stylesheets, JSON and other textual bodies are mined for endpoints
             // (binary bodies never are: the textual guard decides)
             if !self.extract.custom_fields.is_empty()
@@ -4339,14 +4944,69 @@ impl UrlPlaneRunner {
             (None, true) => Some("filtered_page_type".to_owned()),
             (None, false) => None,
         };
+        // Reviewed recipe rules choose which links of this page become requests and with which
+        // exact route; the generic link set is replaced, never merged, so a hard deny holds.
+        let recipe_html = is_html
+            && !source_response
+            && expand
+            && dedupe.is_none()
+            && !filtered_type
+            && self.recipe_has_rules(crawlx_core::extension_recipes::RecipeSourceV1::Html);
+        let recipe_sitemap = !is_html
+            && !source_response
+            && expand
+            && self.recipe_wants_sitemaps()
+            && self.crawl.scope.discovery.is_none();
+        let mut recipe_candidates = Vec::new();
+        let recipe_failure = if recipe_html {
+            match self.recipe_html_candidates(&resp, cancel).await {
+                Ok(candidates) => {
+                    recipe_candidates = candidates;
+                    None
+                }
+                Err(error) => Some(error),
+            }
+        } else if recipe_sitemap {
+            match self
+                .recipe_sitemap_candidates(&resp, queued.envelope.metadata.get(recipe_plane::SITEMAP_DEPTH_KEY), cancel)
+                .await
+            {
+                Ok(candidates) => {
+                    recipe_candidates = candidates;
+                    None
+                }
+                Err(error) => Some(error),
+            }
+        } else {
+            None
+        };
+        if let Some(error) = recipe_failure {
+            return self.fail_recipe(entry, &error).await;
+        }
         if expand
             && dedupe.is_none()
             && !filtered_type
             && self.crawl.scope.discovery.is_none()
             && self.source_enabled(crawlx_core::discovery::DiscoverySourceV1::Html)
         {
-            self.follow_page(entry, &resp.final_url, &links, fetchable)
-                .await?;
+            // Anchor endpoints duplicate the generic link set. A recipe replaces that set, so
+            // they must not re-admit the links its rules did not select.
+            let (generic, fetchable): (&[Url], Vec<DiscoveredEndpoint>) = if recipe_html {
+                let fetchable = fetchable.into_iter().filter(|e| !links.contains(&e.url)).collect();
+                (&[], fetchable)
+            } else {
+                (&links, fetchable)
+            };
+            self.follow_page(entry, &resp.final_url, generic, fetchable).await?;
+        }
+        let followed_recipe = self.follow_recipe_candidates(entry, &recipe_candidates).await?;
+        if dedupe.is_none() && !filtered_type {
+            let graph_urls: Vec<Url> = if recipe_html || recipe_sitemap {
+                followed_recipe
+            } else {
+                links.clone()
+            };
+            self.publish_url_graph(entry, &graph_urls, &link_anchors, cancel).await?;
         }
         let event = serde_json::json!({
             "pageId": entry.id, "url": entry.url.url.as_str(), "status": code, "title": record.title
@@ -4366,6 +5026,7 @@ impl UrlPlaneRunner {
             },
         )
         .await?;
+        drop(document_hold);
         *self.pages_written.lock() += 1;
         // counted once the row is finished: a holder that lost its lease leaves the counting to
         // the next one
@@ -6362,6 +7023,10 @@ mod tests {
             status: http::StatusCode::OK,
             headers: http::HeaderMap::new(),
             body: bytes::Bytes::from_static(b"retained prefix"),
+            body_permit: None,
+            wire_bytes: None,
+            dns_report: None,
+            negotiated_protocol: None,
             truncated: false,
             redirects: Vec::new(),
             hops: Vec::new(),

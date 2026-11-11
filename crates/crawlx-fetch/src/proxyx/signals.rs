@@ -267,6 +267,10 @@ async fn vet(target: &ReportTarget, host: &str, port: u16) -> Result<Vec<SocketA
     Ok(addrs.into_iter().map(|ip| SocketAddr::new(ip, port)).collect())
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "ProxyX signal transport builds the raw reqwest client"
+)]
 async fn post(target: &ReportTarget, batch: &[BlockSignal]) -> Outcome {
     let Some(host) = target.control.host_str() else {
         return Outcome::Rejected;
@@ -342,6 +346,10 @@ fn retry_after(headers: &HeaderMap) -> Duration {
         .max(Duration::from_secs(1))
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "ProxyX signal transport reads the raw reqwest response"
+)]
 async fn read_reply(mut response: reqwest::Response) -> Reply {
     let mut body = Vec::new();
     while let Ok(Some(chunk)) = response.chunk().await {

@@ -105,10 +105,14 @@ model engines receive page text only inside provenance-tagged fields.
 **Run-wide secret registry.** Secrets discovered *during* a run (for example a captcha token) are
 registered in a registry before they are delivered to the page. It lives in PostgreSQL (a fence) and
 a dedicated, persistence-free Redis-compatible server (`CRAWLX_SECRET_REDIS_URL`). Limits: 256 values,
-1 MiB per run, 16 KiB per value; the authority lives at most 24 hours per run
-(`CRAWLX_SECRET_AUTHORITY_TTL_SECS`) with no renewal, after which durable content writes of that run
-fail closed. The server must have no RDB or AOF persistence, no replicas, `noeviction`, and a bounded
-clock skew.
+1 MiB per run and 16 KiB per value. PostgreSQL grants a renewable fenced use window
+(`CRAWLX_SECRET_AUTHORITY_TTL_SECS`, default one hour, maximum 24 hours). Renewal
+revalidates current ownership, cancellation, authorization and retention; it never extends
+the Redis secret TTL. The original absolute ceiling is the minimum of explicit run
+retention, authorization expiry and `CRAWLX_SECRET_AUTHORITY_HARD_MAX_SECS` (default
+72 hours). Missing either explicit permission caps that ceiling at 24 hours. Expired
+authority cannot be resurrected. The server requires no RDB or AOF persistence,
+no replicas, `noeviction` and bounded clock skew.
 
 **Request identity key.** Features that correlate credential-bearing requests (cache identity, source
 import) use a keyed digest under `CRAWLX_REQUEST_IDENTITY_KEY` or `_FILE`: exactly 64 hex characters,
@@ -124,7 +128,12 @@ provider is opt-in and needs an operator-supplied validator file; without one, f
 
 ## Encrypted artifact custody
 
-Retained `content` and `sensitive` artifacts are sealed before they reach the object store.
+Worker-produced retained `content` and `sensitive` artifacts, including terminal archive exports,
+are sealed before they reach the object store.
+
+Authenticated API and CLI operator inputs, including evidence, login flows and archive replay
+saves, remain in custody mode `ReadOnly`: `SecretFree` and retention-gated plaintext writes.
+They read sealed artifacts through the catalog. This boundary introduces no API producer leases.
 
 - **Format.** AES-256-GCM in 64 KiB frames (a `CXAR` v1 stream) with a random nonce prefix and an
   authenticated terminal frame. The additional authenticated data binds the domain, the header, the
@@ -135,14 +144,20 @@ Retained `content` and `sensitive` artifacts are sealed before they reach the ob
   run and artifact) or an operator key file (`CRAWLX_ARTIFACT_KEY_FILE`, 64 hex characters, wrapping
   data keys under AES-256-GCM bound to tenant, run and artifact). Setting both is a startup error.
   Never replace the key file or retire a KMS key while sealed artifacts exist.
-- **Publish gate.** Publication writes the catalog row, the secret-registry epoch check and the key
-  custody envelope atomically. If the run's secret registry changed after the bytes were scanned, the
-  publication is rejected and the staged ciphertext is deleted; a retry rescans. A captcha token
-  registered while an upload is in flight therefore can never be published or read back.
+- **Publish gate.** Live-worker publication atomically writes the catalog row, secret-registry
+  epoch check and key-custody envelope. If the registry changed after scanning, publication is
+  rejected and a retry rescans; bytes containing the newly registered value are refused and their
+  staged ciphertext is deleted. Terminal archive exports instead use a frozen-epoch grant bound
+  to their verified source artifacts, classification, retention and export fence. They remain
+  encrypted after volatile registry loss without claiming a final-epoch secret rescan.
 - **Serving.** Raw presigned object-store URLs are refused for sealed artifacts (presign TTL is at
-  most 60 s and only for the plaintext classes); the API serves decrypted bytes instead.
-- **Retained browser profiles are unavailable** while custody is enabled, which is always the case with
-  PostgreSQL.
+  most 60 s and only for the plaintext classes); sealed reads go through the catalog, and the API
+  serves authenticated decrypted bytes instead.
+- **Retained browser profiles.** Custody accepts only complete bounded structured cookies
+  and local/session storage, sealed under fresh wrapped artifact keys. Owner, principal,
+  origin, build, egress, generation, fence and retention must match. Every opaque name and
+  value joins the secret registry before import. Arbitrary Chromium directories remain
+  unavailable in custody mode; ZDR refuses profile retention.
 - **Local runs.** A local in-process `crawlx crawl` seals under a process-lifetime random key unless an
   operator key provider is configured. Its `pages/*.md`, `metadata.json` and `report.json` are the
   readable output; the sealed objects under `artifacts/` cannot be read after the process exits.
@@ -151,6 +166,10 @@ Retained `content` and `sensitive` artifacts are sealed before they reach the ob
 - **Checkpoints.** Session checkpoints (cookies, storage, URL) are sealed in a separate AES-256-GCM
   envelope (`CXCP`) with a fresh KMS data key per seal (`CRAWLX_CHECKPOINT_KMS_KEY_ID`); browser
   checkpoints fail without it, and plaintext checkpoint storage is revoked by migration.
+- **Read authority.** Reads during queued/running work require an unexpired durable use
+  window and no pending registration or renewal. Terminal reads retain their approved
+  retention because secret registration is closed. This gate does not claim a new
+  secret scan on every read or transport-lifetime exposure fencing.
 
 Secrets known at run start (request controls, role credentials, the captcha key) keep their existing
 per-producer scans and are not registered run-wide.
@@ -189,6 +208,11 @@ until the DOM is dropped. The factor is the measured worst case over an adversar
 per input byte at the 16 MiB input cap) plus margin, and is enforced by the
 `parse_memory_ceiling` test in `crawlx-extract` (an ignored, slow test; run it with `--ignored`).
 
+Decoded acquisition input, measured parser admission and transient output reservations
+share one process-wide byte budget. Owned permits move through blocking work and sink
+I/O; cancelling a waiter does not release bytes still owned by a running closure.
+The in-process HTML parser still uses measured admission, not allocator-level fallibility.
+
 - A parse that does not fit right now fails as retryable (transient pressure); one larger than the
   whole budget fails terminally. At 4 GiB the largest HTML a worker parses is about 8 MiB.
 - Memory is bounded by this ceiling and the budget, not by fully fallible allocation: the parser can
@@ -211,7 +235,10 @@ What CrawlX does:
   egress policy to every request, so these hosts are refused with `403` and `x-crawlx-egress-denied`
   whenever the run's scope bounds them out (a fixture or authorization-record scope), and no
   connection to them is made. Each denial is logged (`egress denied (browser plane)`) and counted
-  in `crawlx.egress.denials{plane="browser",reason}`.
+  in `crawlx.egress.denials{plane="browser",reason}`. Requests a page's tabs issue are also paused
+  in the browser and checked against the same policy before dispatch; a refusal there never reaches
+  the proxy and is logged (`egress denied (browser network guard)`) and counted in
+  `crawlx.egress.denials{plane="browser_guard",reason}`.
 - Add the hosts to `egress.operator_blocklist` if a deployment must guarantee that none is ever
   dialed regardless of scope.
 
@@ -243,6 +270,6 @@ neither artifact key providers are configured.
 
 ## Known limitations
 
-See the [changelog](../../CHANGELOG.md). In short: the secret authority has no mid-run renewal; the
-retention sweeper is an operator-scheduled command; background Chromium requests are contained but not
-prevented; and HTML parsing memory is bounded by a measured ceiling rather than fallible allocation.
+The retention sweeper is an operator-scheduled command. Background Chromium requests
+are contained but not prevented. In-process HTML parsing uses measured admission,
+not allocator-level fallibility; process isolation provides the separate hard-failure boundary.

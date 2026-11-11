@@ -74,9 +74,19 @@ struct Seal {
     producer_epoch: u64,
 }
 
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ImportFormat {
+    #[default]
+    RequestExportV1,
+    CheckpointExportV1,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Import {
+    #[serde(default)]
+    format: ImportFormat,
     export: serde_json::Value,
     producer_epoch: u64,
     #[serde(default)]
@@ -139,13 +149,61 @@ pub async fn import(
     );
     let source =
         serde_json::to_vec(&input.export).map_err(|_| HttpError::malformed("invalid request export"))?;
-    let requests = crawlx_core::request::import::decode_export(&source, &tenant_key.0, batch_id, |url| {
-        Canonicalizer::canonicalize_url(url, &canonical)
-            .map_err(|_| crawlx_core::request::import::ImportError::Request)
-    })
-    .map_err(|error| HttpError::malformed(error.to_string()))?;
+    let batch = match input.format {
+        ImportFormat::RequestExportV1 => {
+            let requests =
+                crawlx_core::request::import::decode_export(&source, &tenant_key.0, batch_id, |url| {
+                    Canonicalizer::canonicalize_url(url, &canonical)
+                        .map_err(|_| crawlx_core::request::import::ImportError::Request)
+                })
+                .map_err(|error| HttpError::malformed(error.to_string()))?;
+            let mut batch = RequestBatchV1::new(run.tenant, run.id, "anonymous".into(), batch_id, requests);
+            batch.producer_epoch = input.producer_epoch;
+            batch.expected_cursor = input.expected_cursor;
+            batch.next_cursor = input.next_cursor;
+            batch
+        }
+        ImportFormat::CheckpointExportV1 => {
+            if input.expected_cursor.is_some() || input.next_cursor.is_some() {
+                return Err(HttpError::malformed(
+                    "checkpoint export owns its cursor transition",
+                ));
+            }
+            let loader = input
+                .export
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= 64
+                        && id
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+                })
+                .ok_or_else(|| HttpError::malformed("invalid checkpoint source identifier"))?;
+            let current = state.repos.frontier.loader_cursor(run.id, loader).await?;
+            let authority = crawlx_core::request::import::ImportAdmissionV1::new(
+                run.tenant,
+                run.id,
+                "anonymous".into(),
+                batch_id,
+                input.producer_epoch,
+            );
+            crawlx_core::request::import::decode_checkpoint_export(
+                &source,
+                &tenant_key.0,
+                authority,
+                current.as_ref(),
+                |url| {
+                    Canonicalizer::canonicalize_url(url, &canonical)
+                        .map_err(|_| crawlx_core::request::import::ImportError::Request)
+                },
+            )
+            .map_err(|error| HttpError::malformed(error.to_string()))?
+        }
+    };
     let scope = ScopePolicy::new(&run.config).map_err(|_| HttpError::malformed("invalid run scope"))?;
-    for request in &requests {
+    for request in &batch.requests {
         if !scope.decide(&request.url, request.depth).is_admitted() {
             return Err(HttpError::malformed(
                 "imported request outside admitted run scope",
@@ -156,10 +214,6 @@ pub async fn import(
             .route(&request.route)
             .map_err(|_| HttpError::malformed("unknown imported request route"))?;
     }
-    let mut batch = RequestBatchV1::new(run.tenant, run.id, "anonymous".into(), batch_id, requests);
-    batch.producer_epoch = input.producer_epoch;
-    batch.expected_cursor = input.expected_cursor;
-    batch.next_cursor = input.next_cursor;
     let receipt = state.repos.frontier.append_batch(batch).await?;
     Ok(json_response(StatusCode::OK, &json!({"data":receipt})))
 }

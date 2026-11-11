@@ -1,0 +1,19 @@
+{
+  "status": "completed",
+  "terminal_reason": null,
+  "counters": {
+    "discovered": 1, "admitted": 1, "deduplicated": 0,
+    "policy_blocked": 0, "robots_blocked": 0,
+    "attempted": 1, "succeeded": 1, "failed": 0,
+    "abandoned": 0, "unreachable": 0, "unknown_outcome": 0
+  },
+  "pages": [{
+    "url": "https://fixture.invalid/catalog?edition=2",
+    "status": 200,
+    "title": "Catalog",
+    "content_type": "text/html",
+    "markdown": "# Catalog\n\nA bounded local fixture.",
+    "links": []
+  }],
+  "frontier": [{"url": "https://fixture.invalid/catalog?edition=2", "status": "succeeded", "depth": 0}]
+}

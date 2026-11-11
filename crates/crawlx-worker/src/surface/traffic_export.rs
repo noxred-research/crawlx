@@ -96,6 +96,10 @@ const RESERVED_KEYS: [&str; 9] = [
 
 /// Why a traffic exporter cannot be configured or built.
 #[derive(Debug, Error)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "traffic export failures wrap the raw reqwest error as their source"
+)]
 #[non_exhaustive]
 pub enum TrafficExportError {
     /// Only one of the endpoint and the token variables is set.
@@ -455,6 +459,10 @@ impl TrafficExporter {
     ///
     /// # Panics
     /// Never; but it spawns a Tokio task, so it must run inside a Tokio runtime.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "traffic export builds the raw reqwest client"
+    )]
     pub fn new(config: TrafficExportConfig) -> Result<Self, TrafficExportError> {
         config.validate()?;
         let client = reqwest::Client::builder()
@@ -612,6 +620,10 @@ impl TrafficExporter {
 }
 
 /// The sender task's state.
+#[allow(
+    clippy::disallowed_types,
+    reason = "traffic export sender owns the raw reqwest client"
+)]
 struct Sender {
     client: reqwest::Client,
     endpoint: Url,

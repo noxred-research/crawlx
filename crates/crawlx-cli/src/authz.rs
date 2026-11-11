@@ -239,6 +239,10 @@ fn read_record(path: &Path) -> anyhow::Result<AuthorizationRecord> {
 }
 
 /// One request to `/v1/authorizations[/…]`; prints the answer.
+#[allow(
+    clippy::disallowed_types,
+    reason = "authorization API client builds the raw reqwest client"
+)]
 async fn call(
     target: &ApiTarget,
     method: Method,

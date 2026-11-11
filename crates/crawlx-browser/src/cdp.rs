@@ -1,39 +1,86 @@
-//! The CDP adapter boundary: the only module that touches `chromiumoxide`.
+//! The CDP adapter boundary: the only module that touches the WebSocket transport.
 //!
-//! chromiumoxide's high-level `Handler` initializes every target with `Runtime.enable`,
-//! which the `Stealth` profile must never send, so only its message types are used. The
-//! WebSocket transport enforces frame and assembled-message limits before decoding JSON.
+//! The high-level `chromiumoxide` `Handler` initializes every target with `Runtime.enable`,
+//! which the `Stealth` profile must never send, so the adapter speaks the protocol itself.
 //! Every command goes through [`CdpClient::call`], which records the method name in a transcript.
+//!
+//! # Byte admission
+//!
+//! Every byte the connection holds is charged to a [`ByteBudget`] (the process-wide
+//! [`parser_memory::global`] budget unless [`CdpClient::connect_with_budget`] injects another)
+//! before it is allocated:
+//!
+//! * inbound frames are admitted by `meter::FrameMeter` from their header, before the
+//!   WebSocket codec allocates the payload buffer; the charge moves with the decoded text;
+//! * the JSON value (and the parser's scratch buffer) is reserved from a bound computed from
+//!   the text before decoding, and travels with the result as a [`Budgeted<Value>`]
+//!   ([`CdpClient::call_budgeted`]) or with the event ([`CdpEvent::charge`]);
+//! * every command is serialized into reserved memory by its caller and queued as admitted
+//!   text, so the command queue and the pending table are bounded in bytes and in entries;
+//! * a result whose caller timed out is dropped with its reservation: the value first, then the
+//!   permit.
+//!
+//! Boundary: [`CdpClient::call`] and [`CdpSession::send`] hand the caller a bare
+//! [`serde_json::Value`] and release its reservation on return, so the caller's copy is not
+//! charged. Producers that retain large results use the `*_budgeted` variants. Only plaintext
+//! `ws://` endpoints are supported: the meter must see the plaintext frames. The decode bound is
+//! an upper estimate (one pass over the text), not a measurement.
 //!
 //! Params are built as JSON and results are deserialized into small crawlx-owned structs
 //! that carry only the fields the adapter reads.
 
-use chromiumoxide::types::{CallId, EventMessage, Message, Method, MethodCall, MethodId};
 use crawlx_core::browser::BrowserError;
+use crawlx_core::parser_memory::{self, AdmittedBytes, Budgeted, ByteAdmissionError, ByteBudget, BytePermit};
 use futures::{SinkExt, StreamExt};
 use parking_lot::Mutex;
-use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::de::{DeserializeOwned, Error as _};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio_tungstenite::tungstenite::{protocol::WebSocketConfig, Message as WsMessage};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tokio::time::{sleep, Instant};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::{protocol::WebSocketConfig, Message as WsMessage, Utf8Bytes};
+use tokio_tungstenite::WebSocketStream;
+
+mod meter;
 
 /// Default per-command timeout.
 pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default capacity of the command queue to the connection driver
-/// ([`crate::LaunchConfig::cdp_queue`]); senders wait when it is full (backpressure).
+/// ([`crate::LaunchConfig::cdp_queue`]); senders wait when it is full (backpressure). The
+/// driver also never holds more unanswered commands than this.
 pub const COMMAND_QUEUE: usize = 1024;
 const EVENT_BUFFER: usize = 8192;
 const TRANSCRIPT_CAP: usize = 20_000;
+/// Longest an admission request waits for other owners to release bytes before it fails.
+const ADMISSION_WAIT: Duration = Duration::from_secs(5);
+/// Pause between two admission attempts while the budget is exhausted.
+const ADMISSION_RETRY: Duration = Duration::from_millis(10);
+/// Heap the codec owns per connection regardless of traffic (read and write buffers).
+const TRANSPORT_BUFFER: usize = 16 * 1024;
+const TRANSPORT_BASELINE: usize = 4 * TRANSPORT_BUFFER;
+/// Heap bound per JSON container element or member: a `Value` plus map-node overhead.
+const ELEMENT_BYTES: usize = 96;
+
+/// Largest decoded reply, in bytes, a plain [`CdpClient::call`] returns. The caller owns that
+/// value after its reservation ends, so its size is bounded here instead. Methods that may
+/// answer with more (page content, response bodies, snapshots, accessibility trees, cookies)
+/// use the budgeted calls, which keep the value charged while it is held.
+pub const METADATA_REPLY_LIMIT: usize = 1024 * 1024;
+
+type Conn = WebSocketStream<meter::FrameMeter<TcpStream>>;
+type Reply = Result<Budgeted<Value>, BrowserError>;
+type Pending = HashMap<u64, (String, Option<usize>, oneshot::Sender<Reply>)>;
 
 /// A CDP event as received.
-#[derive(Debug, Clone)]
+///
+/// Not `Clone`: the decoded `params` are charged once, through [`Self::charge`].
+#[derive(Debug)]
 pub struct CdpEvent {
     /// CDP event name, e.g. `Page.frameNavigated`; the synthetic `crawlx.connectionClosed`
     /// is emitted once when the connection ends.
@@ -42,27 +89,9 @@ pub struct CdpEvent {
     pub session_id: Option<String>,
     /// Raw event parameters as sent by the browser; `Value::Null` when absent.
     pub params: Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawEvent {
-    method: String,
-    #[serde(rename = "sessionId")]
-    session_id: Option<String>,
-    #[serde(default)]
-    params: Value,
-}
-
-impl Method for RawEvent {
-    fn identifier(&self) -> MethodId {
-        Cow::Owned(self.method.clone())
-    }
-}
-
-impl EventMessage for RawEvent {
-    fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
-    }
+    /// Reservation covering `params`; released when the last handle to the event drops.
+    /// `None` for synthetic events.
+    pub charge: Option<BytePermit>,
 }
 
 /// Largest inbound CDP frame [`decode_frame`] accepts, in bytes (64 MiB: tungstenite's
@@ -81,7 +110,7 @@ pub struct CdpProtocolError {
 }
 
 /// One inbound frame after [`decode_frame`].
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum CdpFrame {
     /// Reply to a command: the call id and either the `result` object (`Null` when the
@@ -113,35 +142,48 @@ pub enum FrameDecodeError {
     Json(#[source] serde_json::Error),
 }
 
-impl From<Message<RawEvent>> for CdpFrame {
-    fn from(msg: Message<RawEvent>) -> Self {
-        match msg {
-            Message::Response(resp) => Self::Response {
-                // chromiumoxide keeps `CallId(usize)` opaque; it serializes as a JSON number.
-                id: serde_json::to_value(resp.id)
-                    .ok()
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(u64::MAX),
-                outcome: match resp.error {
-                    Some(err) => Err(CdpProtocolError {
-                        code: err.code,
-                        message: err.message,
-                    }),
-                    None => Ok(resp.result.unwrap_or(Value::Null)),
-                },
-            },
-            Message::Event(ev) => Self::Event(CdpEvent {
-                method: ev.method,
-                session_id: ev.session_id,
-                params: ev.params,
-            }),
-        }
-    }
+#[derive(Deserialize)]
+struct WireError {
+    code: i64,
+    message: String,
 }
 
-/// Decode one inbound text frame with the adapter's message types (the same
-/// `Message<RawEvent>` the connection driver receives from `chromiumoxide`), bounded by
-/// [`MAX_FRAME_BYTES`]. Unknown fields are ignored; `params` defaults to `Null`.
+/// Classify one decoded JSON value as a response (`id`) or an event (`method`). Unknown
+/// members are ignored and `params` defaults to `Null`. The value is consumed member by
+/// member, so no second copy of the tree exists.
+fn frame_from_value(value: Value) -> Result<CdpFrame, serde_json::Error> {
+    let Value::Object(mut frame) = value else {
+        return Err(serde_json::Error::custom("cdp frame is not an object"));
+    };
+    if let Some(id) = frame.get("id").and_then(Value::as_u64) {
+        let outcome = match frame.remove("error") {
+            None | Some(Value::Null) => Ok(frame.remove("result").unwrap_or(Value::Null)),
+            Some(error) => {
+                let WireError { code, message } = serde_json::from_value(error)?;
+                Err(CdpProtocolError { code, message })
+            }
+        };
+        return Ok(CdpFrame::Response { id, outcome });
+    }
+    let Some(Value::String(method)) = frame.remove("method") else {
+        return Err(serde_json::Error::custom("cdp frame has neither id nor method"));
+    };
+    let session_id = match frame.remove("sessionId") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(id)) => Some(id),
+        Some(_) => return Err(serde_json::Error::custom("sessionId is not a string")),
+    };
+    Ok(CdpFrame::Event(CdpEvent {
+        method,
+        session_id,
+        params: frame.remove("params").unwrap_or(Value::Null),
+        charge: None,
+    }))
+}
+
+/// Decode one inbound text frame, bounded by [`MAX_FRAME_BYTES`]. Unknown fields are
+/// ignored; `params` defaults to `Null`. The result carries no byte reservation
+/// ([`CdpEvent::charge`] is `None`); the connection driver reserves before it decodes.
 ///
 /// # Errors
 /// [`FrameDecodeError::Oversized`] when `text` is longer than [`MAX_FRAME_BYTES`];
@@ -153,16 +195,229 @@ pub fn decode_frame(text: &str) -> Result<CdpFrame, FrameDecodeError> {
             max: MAX_FRAME_BYTES,
         });
     }
-    serde_json::from_str::<Message<RawEvent>>(text)
-        .map(CdpFrame::from)
+    serde_json::from_str::<Value>(text)
+        .and_then(frame_from_value)
         .map_err(FrameDecodeError::Json)
+}
+
+/// Upper bound of the heap decoding one JSON text needs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct DecodeCost {
+    /// The decoded `Value` tree: string and number text plus per-element overhead.
+    value: usize,
+    /// The parser's unescape buffer, alive only while decoding.
+    scratch: usize,
+}
+
+/// Bound the decoding cost of `text` without allocating: one string-aware pass counting
+/// containers, separators and the longest string.
+fn decode_cost(text: &str) -> DecodeCost {
+    let (mut elements, mut run, mut longest) = (1usize, 0usize, 0usize);
+    let (mut in_string, mut escaped) = (false, false);
+    for &byte in text.as_bytes() {
+        if in_string {
+            match (escaped, byte) {
+                (true, _) => {
+                    escaped = false;
+                    run += 1;
+                }
+                (false, b'\\') => {
+                    escaped = true;
+                    run += 1;
+                }
+                (false, b'"') => {
+                    in_string = false;
+                    longest = longest.max(run);
+                }
+                _ => run += 1,
+            }
+        } else {
+            match byte {
+                b'"' => {
+                    in_string = true;
+                    run = 0;
+                }
+                b'{' | b'[' | b',' => elements = elements.saturating_add(1),
+                _ => {}
+            }
+        }
+    }
+    DecodeCost {
+        value: text.len().saturating_add(elements.saturating_mul(ELEMENT_BYTES)),
+        scratch: longest.saturating_mul(2),
+    }
+}
+
+/// The numeric `id` a response text announces, read from its prefix without decoding.
+fn response_id(text: &str) -> Option<u64> {
+    let digits = text.strip_prefix("{\"id\":")?;
+    let end = digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len());
+    digits[..end].parse().ok()
+}
+
+/// Reserve `bytes`, waiting up to `wait` for other owners to release memory.
+async fn admit(
+    budget: &Arc<ByteBudget>,
+    bytes: usize,
+    wait: Duration,
+) -> Result<BytePermit, ByteAdmissionError> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match budget.try_reserve(bytes) {
+            Ok(permit) => return Ok(permit),
+            Err(refused) if refused.exceeds_budget() || Instant::now() >= deadline => return Err(refused),
+            Err(_) => sleep(ADMISSION_RETRY).await,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct Command<'a> {
+    id: u64,
+    method: &'a str,
+    #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
+    session_id: Option<&'a str>,
+    params: &'a Value,
+}
+
+/// Serializes into memory reserved ahead of every growth step.
+struct AdmittedWriter {
+    buf: Vec<u8>,
+    permit: BytePermit,
+    limit: usize,
+    refusal: Option<ByteAdmissionError>,
+}
+
+impl std::io::Write for AdmittedWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        let needed = self.buf.len().saturating_add(data.len());
+        if needed > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "command exceeds the frame limit",
+            ));
+        }
+        if needed > self.buf.capacity() {
+            let doubled = self.buf.capacity().saturating_mul(2).max(256);
+            let target = std::cmp::min(self.limit, needed.max(doubled));
+            if let Err(refused) = self.permit.grow_to(target) {
+                self.refusal = Some(refused);
+                return Err(std::io::Error::other(refused));
+            }
+            self.buf
+                .try_reserve_exact(target - self.buf.len())
+                .map_err(std::io::Error::other)?;
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Serialize one command into admitted memory. `params` are consumed: their allocation ends
+/// here and the admitted text carries the queue-resident bytes instead.
+fn encode_command(
+    budget: &Arc<ByteBudget>,
+    limit: usize,
+    id: u64,
+    method: &str,
+    session: Option<&str>,
+    params: Value,
+) -> Result<Budgeted<String>, BrowserError> {
+    let mut writer = AdmittedWriter {
+        buf: Vec::new(),
+        permit: budget.try_reserve(0).map_err(BrowserError::Memory)?,
+        limit,
+        refusal: None,
+    };
+    let command = Command {
+        id,
+        method,
+        session_id: session,
+        params: &params,
+    };
+    let written = serde_json::to_writer(&mut writer, &command);
+    drop(params);
+    if let Err(error) = written {
+        return Err(writer.refusal.map_or_else(
+            || BrowserError::Transport(error.to_string()),
+            BrowserError::Memory,
+        ));
+    }
+    let AdmittedWriter { buf, permit, .. } = writer;
+    let text = String::from_utf8(buf).map_err(|e| BrowserError::Transport(e.to_string()))?;
+    Ok(Budgeted::new(text, permit))
+}
+
+/// Serialize `value` to JSON bytes that carry their own reservation, reserved ahead of every
+/// growth step.
+///
+/// # Errors
+/// [`BrowserError::Memory`] when the bytes are not admitted, [`BrowserError::Script`] when
+/// serialization fails.
+pub(crate) fn to_admitted_json(
+    budget: &Arc<ByteBudget>,
+    value: &Value,
+) -> Result<AdmittedBytes, BrowserError> {
+    let mut writer = AdmittedWriter {
+        buf: Vec::new(),
+        permit: budget.try_reserve(0).map_err(BrowserError::Memory)?,
+        limit: usize::MAX,
+        refusal: None,
+    };
+    if let Err(error) = serde_json::to_writer(&mut writer, value) {
+        return Err(writer
+            .refusal
+            .map_or_else(|| BrowserError::Script(error.to_string()), BrowserError::Memory));
+    }
+    let AdmittedWriter { buf, mut permit, .. } = writer;
+    if buf.capacity() > permit.bytes() {
+        if let Err(refused) = permit.grow_to(buf.capacity()) {
+            drop(buf);
+            drop(permit);
+            return Err(BrowserError::Memory(refused));
+        }
+    }
+    Ok(AdmittedBytes::new(buf, permit))
+}
+
+/// Decode the base64 `data` of a command result into bytes that carry their own reservation,
+/// reserved before the output buffer is allocated.
+///
+/// # Errors
+/// [`BrowserError::Memory`] when the decoded size is not admitted,
+/// [`BrowserError::Protocol`] (naming `method`) when `data` is not valid base64.
+pub(crate) fn decode_admitted_base64(
+    budget: &Arc<ByteBudget>,
+    method: &str,
+    data: &str,
+) -> Result<AdmittedBytes, BrowserError> {
+    use base64::Engine as _;
+    let estimate = base64::decoded_len_estimate(data.len());
+    let permit = budget.try_reserve(estimate).map_err(BrowserError::Memory)?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(estimate)
+        .map_err(|e| BrowserError::Io(e.to_string()))?;
+    base64::engine::general_purpose::STANDARD
+        .decode_vec(data, &mut bytes)
+        .map_err(|e| BrowserError::Protocol {
+            method: method.to_owned(),
+            message: e.to_string(),
+        })?;
+    Ok(AdmittedBytes::new(bytes, permit))
 }
 
 struct Call {
     method: String,
-    session: Option<String>,
-    params: Value,
-    reply: oneshot::Sender<Result<Value, BrowserError>>,
+    id: u64,
+    /// Decoded-size cap of a plain call's reply; `None` for budgeted calls.
+    cap: Option<usize>,
+    wire: Budgeted<String>,
+    reply: oneshot::Sender<Reply>,
 }
 
 /// Shared handle to one DevTools WebSocket connection.
@@ -172,15 +427,21 @@ pub struct CdpClient {
     events: broadcast::Sender<Arc<CdpEvent>>,
     transcript: Arc<Mutex<VecDeque<String>>>,
     calls: Arc<AtomicU64>,
+    ids: Arc<AtomicU64>,
     closed: Arc<AtomicBool>,
+    budget: Arc<ByteBudget>,
+    limit: usize,
 }
 
 impl CdpClient {
     /// Connect to the browser endpoint (`ws://127.0.0.1:<port>/devtools/browser/<id>`) with
-    /// a command queue of [`COMMAND_QUEUE`] entries.
+    /// a command queue of [`COMMAND_QUEUE`] entries, charging the shared
+    /// [`parser_memory::global`] budget.
     ///
     /// # Errors
-    /// Returns [`BrowserError::Transport`] if the WebSocket connection cannot be established.
+    /// Returns [`BrowserError::Transport`] if the WebSocket connection cannot be established
+    /// (or the endpoint is not plaintext `ws://`) and [`BrowserError::Memory`] when the
+    /// connection's buffers cannot be admitted.
     pub async fn connect(ws_url: &str) -> Result<Self, BrowserError> {
         Self::connect_with_queue(ws_url, COMMAND_QUEUE).await
     }
@@ -188,29 +449,89 @@ impl CdpClient {
     /// [`Self::connect`] with an explicit command-queue capacity (`0` is treated as `1`).
     ///
     /// # Errors
-    /// Returns [`BrowserError::Transport`] if the WebSocket connection cannot be established.
+    /// Same as [`Self::connect`].
     pub async fn connect_with_queue(ws_url: &str, queue: usize) -> Result<Self, BrowserError> {
-        Self::connect_bounded(ws_url, queue, MAX_FRAME_BYTES).await
+        Self::connect_with_budget(ws_url, queue, parser_memory::global()).await
     }
 
-    async fn connect_bounded(ws_url: &str, queue: usize, limit: usize) -> Result<Self, BrowserError> {
+    /// [`Self::connect_with_queue`] charging `budget` instead of the process-wide one.
+    ///
+    /// # Errors
+    /// Same as [`Self::connect`].
+    pub async fn connect_with_budget(
+        ws_url: &str,
+        queue: usize,
+        budget: &Arc<ByteBudget>,
+    ) -> Result<Self, BrowserError> {
+        Self::connect_bounded(ws_url, queue, MAX_FRAME_BYTES, budget).await
+    }
+
+    async fn connect_bounded(
+        ws_url: &str,
+        queue: usize,
+        limit: usize,
+        budget: &Arc<ByteBudget>,
+    ) -> Result<Self, BrowserError> {
+        let transport = |error: &dyn std::fmt::Display| BrowserError::Transport(error.to_string());
+        let request = ws_url.into_client_request().map_err(|e| transport(&e))?;
+        let uri = request.uri();
+        if uri.scheme_str() != Some("ws") {
+            return Err(BrowserError::Transport(
+                "only plaintext ws:// DevTools endpoints are supported".to_owned(),
+            ));
+        }
+        let host = uri
+            .host()
+            .ok_or_else(|| BrowserError::Transport("DevTools endpoint has no host".to_owned()))?;
+        let address = format!("{host}:{}", uri.port_u16().unwrap_or(80));
+        let tcp = TcpStream::connect(address).await.map_err(|e| transport(&e))?;
+        let baseline = budget
+            .try_reserve(TRANSPORT_BASELINE)
+            .map_err(BrowserError::Memory)?;
+        let admission = meter::Admission::new(budget, limit, ADMISSION_WAIT);
+        let stream = meter::FrameMeter::new(tcp, Arc::clone(&admission));
         let config = WebSocketConfig::default()
             .max_frame_size(Some(limit))
-            .max_message_size(Some(limit));
-        let (conn, _) = tokio_tungstenite::connect_async_with_config(ws_url, Some(config), false)
+            .max_message_size(Some(limit))
+            .read_buffer_size(TRANSPORT_BUFFER)
+            .write_buffer_size(TRANSPORT_BUFFER);
+        let (conn, _) = tokio_tungstenite::client_async_with_config(request, stream, Some(config))
             .await
-            .map_err(|e| BrowserError::Transport(e.to_string()))?;
-        let (tx, rx) = mpsc::channel(queue.max(1));
+            .map_err(|e| transport(&e))?;
+        let capacity = queue.max(1);
+        let (tx, rx) = mpsc::channel(capacity);
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let closed = Arc::new(AtomicBool::new(false));
-        tokio::spawn(drive(conn, rx, events.clone(), Arc::clone(&closed)));
+        let link = Link {
+            budget: Arc::clone(budget),
+            admission,
+            max_pending: capacity,
+        };
+        tokio::spawn(drive(
+            conn,
+            rx,
+            events.clone(),
+            Arc::clone(&closed),
+            link,
+            baseline,
+        ));
         Ok(Self {
             tx,
             events,
             transcript: Arc::new(Mutex::new(VecDeque::new())),
             calls: Arc::new(AtomicU64::new(0)),
+            ids: Arc::new(AtomicU64::new(0)),
             closed,
+            budget: Arc::clone(budget),
+            limit,
         })
+    }
+
+    /// The budget this connection charges; producers reserve against it before they copy a
+    /// result they retain.
+    #[must_use]
+    pub fn budget(&self) -> &Arc<ByteBudget> {
+        &self.budget
     }
 
     /// Has the connection closed (browser exited)?
@@ -239,10 +560,14 @@ impl CdpClient {
 
     /// Send `method` on `session` (`None` = browser endpoint) and await the result.
     ///
+    /// The returned value is not charged to the budget once this returns; see the module
+    /// documentation and [`Self::call_budgeted`].
+    ///
     /// # Errors
     /// Returns [`BrowserError::TargetClosed`] if the connection is closed or closes before the
     /// reply, [`BrowserError::Timeout`] after [`COMMAND_TIMEOUT`], [`BrowserError::Transport`] if
-    /// the command cannot be sent, and [`BrowserError::Protocol`] if the browser answers with an
+    /// the command cannot be sent, [`BrowserError::Memory`] if byte admission refused the
+    /// command or its reply, and [`BrowserError::Protocol`] if the browser answers with an
     /// error response.
     pub async fn call(
         &self,
@@ -265,6 +590,54 @@ impl CdpClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, BrowserError> {
+        let reply = self
+            .exchange(method, session, params, timeout, Some(METADATA_REPLY_LIMIT))
+            .await?;
+        // The caller takes the bare value, so its reply was capped at the metadata limit: it is
+        // small by construction. Its reservation ends here (module documentation).
+        let (value, permit) = reply.into_parts();
+        drop(permit);
+        Ok(value)
+    }
+
+    /// [`Self::call`] that keeps the result charged: the reservation covering the decoded
+    /// value travels with it and is released when the [`Budgeted`] drops.
+    ///
+    /// # Errors
+    /// Same as [`Self::call`].
+    pub async fn call_budgeted(
+        &self,
+        method: &str,
+        session: Option<&str>,
+        params: Value,
+    ) -> Result<Budgeted<Value>, BrowserError> {
+        self.call_budgeted_with_timeout(method, session, params, COMMAND_TIMEOUT)
+            .await
+    }
+
+    /// [`Self::call_budgeted`] with an explicit timeout. A reply that arrives after the
+    /// caller gave up is dropped by the driver together with its reservation.
+    ///
+    /// # Errors
+    /// Same as [`Self::call`], except [`BrowserError::Timeout`] fires after `timeout`.
+    pub async fn call_budgeted_with_timeout(
+        &self,
+        method: &str,
+        session: Option<&str>,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Budgeted<Value>, BrowserError> {
+        self.exchange(method, session, params, timeout, None).await
+    }
+
+    async fn exchange(
+        &self,
+        method: &str,
+        session: Option<&str>,
+        params: Value,
+        timeout: Duration,
+        cap: Option<usize>,
+    ) -> Result<Budgeted<Value>, BrowserError> {
         if self.is_closed() {
             return Err(BrowserError::TargetClosed);
         }
@@ -281,11 +654,16 @@ impl CdpClient {
             t.push_back(recorded);
         }
         self.calls.fetch_add(1, Ordering::Relaxed);
+        let id = self.ids.fetch_add(1, Ordering::Relaxed);
+        // The command is serialized by the caller into reserved memory; the queue holds
+        // admitted text, not the caller's params.
+        let wire = encode_command(&self.budget, self.limit, id, method, session, params)?;
         let (reply, rx) = oneshot::channel();
         let call = Call {
             method: method.to_owned(),
-            session: session.map(str::to_owned),
-            params,
+            id,
+            cap,
+            wire,
             reply,
         };
         // the deadline covers queueing (backpressure when the driver is behind) and the reply
@@ -323,91 +701,174 @@ impl CdpClient {
     }
 }
 
+/// What the driver needs besides the socket.
+struct Link {
+    budget: Arc<ByteBudget>,
+    admission: Arc<meter::Admission>,
+    /// Most unanswered commands the driver keeps; the bounded queue backs the rest up.
+    max_pending: usize,
+}
+
+/// Write one admitted command. `false` ends the connection.
+async fn transmit(conn: &mut Conn, link: &Link, pending: &mut Pending, call: Call) -> bool {
+    let Call {
+        method,
+        id,
+        cap,
+        wire,
+        reply,
+    } = call;
+    let (text, mut permit) = wire.into_parts();
+    // the codec copies the frame into its own write buffer
+    match admit(&link.budget, text.len(), ADMISSION_WAIT).await {
+        Ok(copy) => {
+            // same budget: merging only fails on arithmetic overflow, which dropping handles
+            let _ = permit.merge(copy);
+        }
+        Err(refused) => {
+            let _ = reply.send(Err(BrowserError::Memory(refused)));
+            return true;
+        }
+    }
+    let sent = tokio::time::timeout(COMMAND_TIMEOUT, conn.send(WsMessage::Text(text.into()))).await;
+    drop(permit);
+    match sent {
+        Ok(Ok(())) => {
+            pending.insert(id, (method, cap, reply));
+            true
+        }
+        result => {
+            let error = match result {
+                Ok(Err(error)) => BrowserError::Transport(error.to_string()),
+                _ => BrowserError::Timeout(30_000),
+            };
+            let _ = reply.send(Err(error));
+            false
+        }
+    }
+}
+
+/// Refuse one inbound frame whose decode bytes were not admitted: answer the command it
+/// belongs to, or drop the event.
+fn refuse(pending: &mut Pending, text: &str, refused: ByteAdmissionError) {
+    match response_id(text).and_then(|id| pending.remove(&id)) {
+        Some((_, _, reply)) => {
+            let _ = reply.send(Err(BrowserError::Memory(refused)));
+        }
+        None => tracing::warn!(
+            requested = refused.requested,
+            available = refused.available,
+            "CDP event dropped: byte admission refused"
+        ),
+    }
+}
+
+/// Decode one admitted text frame and route it. The frame's own bytes (`wire`) are released
+/// as soon as the value exists; the value's reservation moves to its owner.
+async fn dispatch(
+    link: &Link,
+    wire: Budgeted<Utf8Bytes>,
+    pending: &mut Pending,
+    events: &broadcast::Sender<Arc<CdpEvent>>,
+) {
+    let text = wire.value().as_str();
+    let cost = decode_cost(text);
+    // A plain call hands the caller a bare `Value` that outlives its reservation, so its reply
+    // is held to the metadata cap; replies that may be larger use the budgeted calls.
+    let cap = response_id(text)
+        .and_then(|id| pending.get(&id))
+        .and_then(|(_, cap, _)| *cap);
+    if let Some(cap) = cap {
+        // a throwaway budget of exactly `cap` bytes yields the typed refusal
+        if let Err(refused) = Arc::new(ByteBudget::new(cap)).try_reserve(cost.value) {
+            refuse(pending, text, refused);
+            return;
+        }
+    }
+    let mut permit = match admit(
+        &link.budget,
+        cost.value.saturating_add(cost.scratch),
+        ADMISSION_WAIT,
+    )
+    .await
+    {
+        Ok(permit) => permit,
+        Err(refused) => {
+            refuse(pending, text, refused);
+            return;
+        }
+    };
+    let parsed = serde_json::from_str::<Value>(text).and_then(frame_from_value);
+    drop(wire);
+    if let Ok(scratch) = permit.split(cost.scratch) {
+        drop(scratch);
+    }
+    match parsed {
+        Err(error) => tracing::debug!(%error, "ignoring undecodable CDP message"),
+        Ok(CdpFrame::Response { id, outcome }) => {
+            if let Some((method, _, reply)) = pending.remove(&id) {
+                let out = match outcome {
+                    Err(error) => Err(BrowserError::Protocol {
+                        method,
+                        message: error.message,
+                    }),
+                    Ok(value) => Ok(Budgeted::new(value, permit)),
+                };
+                // a caller that already gave up drops the value, then its permit
+                let _ = reply.send(out);
+            }
+        }
+        Ok(CdpFrame::Event(mut event)) => {
+            event.charge = Some(permit);
+            let _ = events.send(Arc::new(event));
+        }
+    }
+}
+
 async fn drive(
-    mut conn: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    mut conn: Conn,
     mut rx: mpsc::Receiver<Call>,
     events: broadcast::Sender<Arc<CdpEvent>>,
     closed: Arc<AtomicBool>,
+    link: Link,
+    _baseline: BytePermit,
 ) {
-    let mut pending: HashMap<
-        chromiumoxide::types::CallId,
-        (String, oneshot::Sender<Result<Value, BrowserError>>),
-    > = HashMap::new();
-    let mut next_id = 0usize;
+    let mut pending = Pending::new();
     // A timed-out caller no longer owns its reply. Do not retain its method indefinitely
     // when Chromium never answers (for example, an evaluation awaiting a page promise).
     loop {
-        pending.retain(|_, (_, reply)| !reply.is_closed());
+        pending.retain(|_, (_, _, reply)| !reply.is_closed());
         tokio::select! {
-            call = rx.recv() => match call {
+            call = rx.recv(), if pending.len() < link.max_pending => match call {
                 Some(call) => {
-                    let id = CallId::new(next_id);
-                    let Some(next) = next_id.checked_add(1) else {
-                        let _ = call.reply.send(Err(BrowserError::TargetClosed));
+                    if !transmit(&mut conn, &link, &mut pending, call).await {
                         break;
-                    };
-                    next_id = next;
-                    let command = MethodCall {
-                        id,
-                        method: Cow::Owned(call.method),
-                        session_id: call.session,
-                        params: call.params,
-                    };
-                    let text = match serde_json::to_string(&command) {
-                        Ok(text) => text,
-                        Err(error) => {
-                            let _ = call.reply.send(Err(BrowserError::Transport(error.to_string())));
-                            continue;
-                        }
-                    };
-                    match tokio::time::timeout(COMMAND_TIMEOUT, conn.send(WsMessage::Text(text.into()))).await {
-                        Ok(Ok(())) => {
-                            pending.insert(id, (command.method.into_owned(), call.reply));
-                        }
-                        result => {
-                            let error = match result {
-                                Ok(Err(error)) => BrowserError::Transport(error.to_string()),
-                                _ => BrowserError::Timeout(30_000),
-                            };
-                            let _ = call.reply.send(Err(error));
-                            break;
-                        }
                     }
                 }
                 // No client can consume any pending reply once every sender is gone.
                 None => break,
             },
+            // Abandoned calls free their pending slot even while the browser stays silent.
+            () = sleep(ADMISSION_RETRY * 25), if pending.len() >= link.max_pending => {}
             msg = conn.next() => match msg {
-                Some(Ok(WsMessage::Text(text))) => match serde_json::from_str::<Message<RawEvent>>(&text) {
-                Ok(Message::Response(resp)) => {
-                    if let Some((method, reply)) = pending.remove(&resp.id) {
-                        let out = match resp.error {
-                            Some(err) => Err(BrowserError::Protocol { method, message: err.message }),
-                            None => Ok(resp.result.unwrap_or(Value::Null)),
-                        };
-                        let _ = reply.send(out);
+                Some(Ok(message)) => {
+                    // every message, control frames included, owns the bytes admitted for its frames
+                    let Ok(permit) = link.admission.take_message() else { break };
+                    match message {
+                        WsMessage::Text(text) => {
+                            dispatch(&link, Budgeted::new(text, permit), &mut pending, &events).await;
+                        }
+                        WsMessage::Ping(_) | WsMessage::Pong(_) => drop(permit),
+                        WsMessage::Close(_) => break,
+                        _ => {
+                            tracing::debug!("unexpected binary CDP message");
+                            break;
+                        }
                     }
                 }
-                Ok(Message::Event(ev)) => {
-                    let _ = events.send(Arc::new(CdpEvent {
-                        method: ev.method,
-                        session_id: ev.session_id,
-                        params: ev.params,
-                    }));
-                }
-                Err(error) => {
-                    tracing::debug!(%error, "ignoring undecodable CDP message");
-                }
-                },
-                Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_))) => {}
-                Some(Ok(WsMessage::Close(_))) => break,
-                Some(Ok(_)) => {
-                    tracing::debug!("unexpected binary CDP message");
-                    break;
-                }
                 Some(Err(error)) => {
-                    // Transport limits and I/O failures close the driver and release
-                    // every pending reply, rather than leaving calls to time out.
+                    // Transport limits, admission refusals and I/O failures close the driver
+                    // and release every pending reply, rather than leaving calls to time out.
                     tracing::debug!(%error, "CDP transport closed");
                     break;
                 }
@@ -416,14 +877,18 @@ async fn drive(
         }
     }
     closed.store(true, Ordering::Release);
-    for (_, (_, reply)) in pending.drain() {
-        let _ = reply.send(Err(BrowserError::TargetClosed));
+    let refusal = link.admission.refusal();
+    for (_, (_, _, reply)) in pending.drain() {
+        let _ = reply.send(Err(
+            refusal.map_or(BrowserError::TargetClosed, BrowserError::Memory)
+        ));
     }
     // wake event consumers so they can observe the closure
     let _ = events.send(Arc::new(CdpEvent {
         method: "crawlx.connectionClosed".to_owned(),
         session_id: None,
         params: Value::Null,
+        charge: None,
     }));
 }
 
@@ -694,9 +1159,11 @@ impl CdpSession {
     /// nodes do not deserialize.
     pub async fn ax_full_tree(&self, frame: Option<&str>) -> Result<Vec<RawAxNode>, BrowserError> {
         let params = frame.map_or_else(|| json!({}), |f| json!({ "frameId": f }));
-        let v = self.call("Accessibility.getFullAXTree", params).await?;
-        let nodes = v.get("nodes").cloned().unwrap_or(Value::Null);
-        serde_json::from_value(nodes).map_err(|e| BrowserError::Protocol {
+        // The response stays charged while the typed nodes are built from it, without a
+        // second copy of the JSON tree; only the (smaller, field-subset) typed nodes outlive it.
+        let reply = self.send_budgeted("Accessibility.getFullAXTree", params).await?;
+        let nodes = reply.value().get("nodes").unwrap_or(&Value::Null);
+        Vec::<RawAxNode>::deserialize(nodes).map_err(|e| BrowserError::Protocol {
             method: "Accessibility.getFullAXTree".to_owned(),
             message: e.to_string(),
         })
@@ -726,12 +1193,13 @@ impl CdpSession {
         }
     }
 
-    /// `DOMSnapshot.captureSnapshot` with the styles and rects the discovery ladder needs.
+    /// `DOMSnapshot.captureSnapshot` with the styles and rects the discovery ladder needs. The
+    /// result stays charged to the budget until the caller drops it.
     ///
     /// # Errors
-    /// Returns the [`CdpClient::call`] errors.
-    pub async fn dom_snapshot(&self) -> Result<Value, BrowserError> {
-        self.call(
+    /// Returns the [`CdpClient::call_budgeted`] errors.
+    pub async fn dom_snapshot(&self) -> Result<Budgeted<Value>, BrowserError> {
+        self.send_budgeted(
             "DOMSnapshot.captureSnapshot",
             json!({
                 "computedStyles": ["cursor", "pointer-events", "display", "visibility"],
@@ -984,6 +1452,30 @@ impl CdpSession {
         runtime_result("Runtime.evaluate", &v)
     }
 
+    /// [`Self::evaluate_in`] returning the whole `Runtime.evaluate` response, still charged to
+    /// the budget, for results the caller retains. The caller reads `exceptionDetails` and
+    /// `result.value` itself, moving large strings out instead of cloning them.
+    ///
+    /// # Errors
+    /// Returns the [`CdpClient::call_budgeted`] errors.
+    pub async fn evaluate_in_budgeted(
+        &self,
+        context_id: i64,
+        expression: &str,
+        await_promise: bool,
+    ) -> Result<Budgeted<Value>, BrowserError> {
+        self.send_budgeted(
+            "Runtime.evaluate",
+            json!({
+                "expression": expression,
+                "contextId": context_id,
+                "returnByValue": true,
+                "awaitPromise": await_promise,
+            }),
+        )
+        .await
+    }
+
     /// `Input.dispatchMouseEvent`.
     ///
     /// `x`/`y` are CSS px relative to the viewport; `delta` is the wheel `(deltaX, deltaY)`.
@@ -1049,6 +1541,16 @@ impl CdpSession {
     /// Returns the [`CdpClient::call`] errors.
     pub async fn send(&self, method: &str, params: Value) -> Result<Value, BrowserError> {
         self.call(method, params).await
+    }
+
+    /// [`Self::send`] that keeps the result charged to the budget while the caller holds it.
+    ///
+    /// # Errors
+    /// Returns the [`CdpClient::call_budgeted`] errors.
+    pub async fn send_budgeted(&self, method: &str, params: Value) -> Result<Budgeted<Value>, BrowserError> {
+        self.client
+            .call_budgeted(method, Some(&self.session_id), params)
+            .await
     }
 }
 
@@ -1140,7 +1642,9 @@ mod tests {
                 drop(socket);
             });
             let client = if fragmented {
-                CdpClient::connect_bounded(&endpoint, 1, 1024).await.unwrap()
+                CdpClient::connect_bounded(&endpoint, 1, 1024, parser_memory::global())
+                    .await
+                    .unwrap()
             } else {
                 CdpClient::connect(&endpoint).await.unwrap()
             };
@@ -1154,6 +1658,203 @@ mod tests {
             assert!(client.is_closed());
             assert_eq!(events.recv().await.unwrap().method, "crawlx.connectionClosed");
         }
+    }
+
+    /// A loopback DevTools peer: reads `commands` commands, reports each id on `seen`, waits for
+    /// the gate, answers every command with `pad` bytes of result, then emits one event.
+    async fn peer(pad: usize, commands: usize) -> (String, oneshot::Sender<()>, mpsc::Receiver<u64>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let (gate, gated) = oneshot::channel::<()>();
+        let (seen_tx, seen) = mpsc::channel(commands.max(1));
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let mut ids = Vec::new();
+            for _ in 0..commands {
+                let message = socket.next().await.unwrap().unwrap();
+                let command: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+                let id = command["id"].as_u64().unwrap();
+                ids.push(id);
+                let _ = seen_tx.send(id).await;
+            }
+            let _ = gated.await;
+            for id in ids {
+                let reply = json!({ "id": id, "result": { "pad": "x".repeat(pad) } });
+                socket
+                    .send(WsMessage::Text(reply.to_string().into()))
+                    .await
+                    .unwrap();
+            }
+            let event = json!({ "method": "Page.frameStoppedLoading", "params": { "n": 1 } });
+            socket
+                .send(WsMessage::Text(event.to_string().into()))
+                .await
+                .unwrap();
+            while socket.next().await.is_some() {}
+        });
+        (endpoint, gate, seen)
+    }
+
+    async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let waited = tokio::time::timeout(Duration::from_secs(10), async {
+            while !done() {
+                sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "timed out waiting for {what}");
+    }
+
+    #[tokio::test]
+    async fn reply_above_the_budget_is_refused_from_its_header() {
+        let budget = Arc::new(ByteBudget::new(TRANSPORT_BASELINE + 128 * 1024));
+        let (endpoint, gate, mut seen) = peer(150_000, 1).await;
+        let client = CdpClient::connect_with_budget(&endpoint, 4, &budget)
+            .await
+            .unwrap();
+        let release = async {
+            seen.recv().await.unwrap();
+            let _ = gate.send(());
+        };
+        let (result, ()) = tokio::join!(
+            client.call_with_timeout("Browser.getVersion", None, json!({}), Duration::from_secs(10)),
+            release
+        );
+        match result {
+            Err(BrowserError::Memory(refused)) => assert!(refused.exceeds_budget(), "{refused:?}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(client.is_closed());
+        drop(client);
+        wait_until("the driver to release the connection", || budget.used() == 0).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_replies_stay_charged_until_each_caller_drops_its_result() {
+        let budget = Arc::new(ByteBudget::new(64 * 1024 * 1024));
+        let (endpoint, gate, mut seen) = peer(20_000, 2).await;
+        let client = CdpClient::connect_with_budget(&endpoint, 4, &budget)
+            .await
+            .unwrap();
+        let baseline = budget.used();
+        let mut events = client.subscribe();
+        let release = async {
+            seen.recv().await.unwrap();
+            seen.recv().await.unwrap();
+            let _ = gate.send(());
+        };
+        let (first, second, ()) = tokio::join!(
+            client.call_budgeted("Browser.getVersion", None, json!({})),
+            client.call_budgeted("Browser.getVersion", None, json!({})),
+            release
+        );
+        let (first, second) = (first.unwrap(), second.unwrap());
+        // the peer's closing event proves all traffic was processed; release it before measuring
+        while events.recv().await.unwrap().method != "Page.frameStoppedLoading" {}
+        assert_eq!(first.value()["pad"].as_str().unwrap().len(), 20_000);
+        let both = budget.used();
+        assert!(both >= baseline + 2 * 20_000, "{both} vs {baseline}");
+        drop(first);
+        let one = budget.used();
+        assert!(one >= baseline + 20_000 && one < both, "{one} vs {both}");
+        drop(second);
+        assert_eq!(budget.used(), baseline);
+    }
+
+    #[tokio::test]
+    async fn abandoned_call_and_event_release_only_after_their_bytes_drop() {
+        let budget = Arc::new(ByteBudget::new(64 * 1024 * 1024));
+        let (endpoint, gate, mut seen) = peer(20_000, 1).await;
+        let client = CdpClient::connect_with_budget(&endpoint, 4, &budget)
+            .await
+            .unwrap();
+        let baseline = budget.used();
+        let mut events = client.subscribe();
+        let abandoned = client
+            .call_budgeted_with_timeout("Browser.getVersion", None, json!({}), Duration::from_millis(100))
+            .await;
+        assert!(
+            matches!(abandoned, Err(BrowserError::Timeout(_))),
+            "{abandoned:?}"
+        );
+        seen.recv().await.unwrap();
+        assert_eq!(
+            budget.used(),
+            baseline,
+            "the command's reservation ends with its transmission"
+        );
+        let _ = gate.send(());
+        // the late reply is dropped by the driver with its reservation; the event after it
+        // proves the reply was processed, and stays charged while a consumer holds it
+        let done = loop {
+            let event = events.recv().await.unwrap();
+            if event.method == "Page.frameStoppedLoading" {
+                break event;
+            }
+        };
+        assert!(done.charge.as_ref().is_some_and(|charge| charge.bytes() > 0));
+        assert!(budget.used() > baseline);
+        drop(done);
+        wait_until("the event's reservation", || budget.used() == baseline).await;
+    }
+
+    #[tokio::test]
+    async fn plain_call_refuses_a_reply_above_the_metadata_cap_but_budgeted_call_keeps_it_charged() {
+        let budget = Arc::new(ByteBudget::new(64 * 1024 * 1024));
+        let (endpoint, gate, mut seen) = peer(METADATA_REPLY_LIMIT + 4096, 2).await;
+        let client = CdpClient::connect_with_budget(&endpoint, 4, &budget)
+            .await
+            .unwrap();
+        let release = async {
+            seen.recv().await.unwrap();
+            seen.recv().await.unwrap();
+            let _ = gate.send(());
+        };
+        let (plain, charged, ()) = tokio::join!(
+            client.call("Browser.getVersion", None, json!({})),
+            client.call_budgeted("Browser.getVersion", None, json!({})),
+            release
+        );
+        match plain {
+            Err(BrowserError::Memory(refused)) => assert!(refused.exceeds_budget(), "{refused:?}"),
+            other => panic!("{other:?}"),
+        }
+        let charged = charged.unwrap();
+        assert!(
+            budget.used() >= METADATA_REPLY_LIMIT,
+            "the large reply stays charged while held"
+        );
+        drop(charged);
+    }
+
+    #[test]
+    fn decode_cost_bounds_the_decoded_tree() {
+        let text = r#"{"id":1,"result":{"a":[1,2,3],"b":"xy\"z"}}"#;
+        let cost = decode_cost(text);
+        assert!(cost.value >= text.len() + 5 * ELEMENT_BYTES, "{cost:?}");
+        assert!(cost.scratch >= 2 * 4, "{cost:?}");
+        assert_eq!(response_id(text), Some(1));
+        assert_eq!(response_id(r#"{"method":"M"}"#), None);
+    }
+
+    #[test]
+    fn command_serialization_is_admitted_before_it_grows() {
+        let budget = Arc::new(ByteBudget::new(512));
+        let big = json!({ "expression": "x".repeat(4096) });
+        match encode_command(&budget, MAX_FRAME_BYTES, 1, "Runtime.evaluate", Some("S1"), big) {
+            Err(BrowserError::Memory(refused)) => assert!(refused.exceeds_budget()),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(budget.used(), 0);
+        let small =
+            encode_command(&budget, MAX_FRAME_BYTES, 7, "Page.enable", Some("S1"), json!({})).unwrap();
+        let text: Value = serde_json::from_str(small.value()).unwrap();
+        assert_eq!(text["id"], 7);
+        assert_eq!(text["sessionId"], "S1");
+        assert!(budget.used() > 0);
+        drop(small);
+        assert_eq!(budget.used(), 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

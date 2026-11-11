@@ -418,6 +418,10 @@ fn ground_truth_matches_the_catalog_numbers() {
 
 // ---- stateful backends over HTTP ------------------------------------------------------------
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 fn cookie_jar(resp: &reqwest::Response, jar: &mut BTreeMap<String, String>) {
     for v in resp.headers().get_all(reqwest::header::SET_COOKIE) {
         let Some((kv, attrs)) = v.to_str().unwrap().split_once(';') else {
@@ -439,6 +443,10 @@ fn cookie_header(jar: &BTreeMap<String, String>) -> String {
         .join("; ")
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn g18_session_expires_and_recovers_through_the_server() {
     let gym = gym().await;
@@ -510,6 +518,10 @@ async fn g18_session_expires_and_recovers_through_the_server() {
     gym.shutdown().await;
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn g20_shared_workspace_round_trip_is_attributable_per_principal() {
     let gym = gym().await;
@@ -598,6 +610,10 @@ async fn g20_shared_workspace_round_trip_is_attributable_per_principal() {
     gym.shutdown().await;
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn g16_multipart_uploads_are_classified_by_the_server() {
     let gym = gym().await;
@@ -649,6 +665,10 @@ async fn g16_multipart_uploads_are_classified_by_the_server() {
     gym.shutdown().await;
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn g24_server_validation_and_g22_contexts_over_http() {
     let gym = gym().await;
@@ -725,6 +745,10 @@ async fn g24_server_validation_and_g22_contexts_over_http() {
 /// `POST /counter`: every applied increment is one `increment:ok` effect row, the
 /// server count is readable from the handle and from `/__gym/ledger`, reads do not count,
 /// and `/__gym/reset` zeroes it.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test]
 async fn counter_fixture_counts_every_post_in_the_ledger() {
     let gym = gym().await;

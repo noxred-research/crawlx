@@ -4,6 +4,8 @@
 
 use crate::error::FetchError;
 use async_trait::async_trait;
+use crawlx_core::hash::Digest;
+use crawlx_core::report_history::{DnsOutcomeV1, ReportDataV1};
 use hickory_resolver::config::{NameServerConfig, ResolveHosts, ResolverConfig, ResolverOpts};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError};
@@ -11,9 +13,85 @@ use hickory_resolver::proto::op::ResponseCode;
 use hickory_resolver::proto::rr::RData;
 use hickory_resolver::TokioResolver;
 use parking_lot::Mutex;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
+
+/// One resolver result and its bounded measurement, retained even on DNS failure.
+///
+/// The optional duration in the answer is cache lifetime, not a recheck schedule.
+/// No DNS report is minted for an IP literal.
+pub type DnsReportResultV1 = (
+    Result<(Vec<IpAddr>, Option<Duration>), FetchError>,
+    Option<ReportDataV1>,
+);
+
+/// Maximum DNS observations retained by one acquisition capture.
+pub const MAX_DNS_REPORTS: usize = 64;
+
+/// Privacy-safe observation of one actual DNS lookup, including failed lookups.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DnsReportObservationV1 {
+    /// Domain-separated opaque host identity; never raw host text.
+    pub host_key: Digest,
+    /// Measured DNS payload, not inferred connection success.
+    pub data: ReportDataV1,
+}
+
+/// Finite per-attempt DNS evidence captured in resolver completion order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DnsReportBatchV1 {
+    /// At most 64 observations, including failures before any response exists.
+    pub observations: Vec<DnsReportObservationV1>,
+    /// Observations lost at capacity or allocation pressure.
+    pub dropped: u64,
+    /// Loss exceeded the exact counter range; never interpreted as exact.
+    pub loss_overflow: bool,
+}
+
+tokio::task_local! {
+    static DNS_REPORT_CAPTURE: RefCell<DnsReportBatchV1>;
+}
+
+/// Capture actual native resolver observations while polling one attempt.
+///
+/// Returns evidence even when `future` returns an error. No host names, URLs or
+/// error text enter the batch. Capture is task-local, not inherited by spawned
+/// tasks; poll the acquisition future directly in this scope. Nested scopes are
+/// independent. Cancelling by dropping this entire wrapper also drops its batch;
+/// graceful callers must await it to completion before publishing cancellation.
+pub async fn capture_dns_reports<F: Future>(future: F) -> (F::Output, DnsReportBatchV1) {
+    DNS_REPORT_CAPTURE
+        .scope(RefCell::new(DnsReportBatchV1::default()), async move {
+            let output = future.await;
+            let batch = DNS_REPORT_CAPTURE.with(|capture| capture.take());
+            (output, batch)
+        })
+        .await
+}
+
+fn capture_dns_report(host: &str, data: &ReportDataV1) {
+    // An absent task-local scope disables capture without allocation.
+    let _ = DNS_REPORT_CAPTURE.try_with(|capture| {
+        let mut batch = capture.borrow_mut();
+        if batch.observations.len() == MAX_DNS_REPORTS || batch.observations.try_reserve(1).is_err() {
+            if let Some(dropped) = batch.dropped.checked_add(1) {
+                batch.dropped = dropped;
+            } else {
+                batch.loss_overflow = true;
+            }
+            return;
+        }
+        batch.observations.push(DnsReportObservationV1 {
+            host_key: Digest::of("crawlx:report:dns-host:v1", host.trim_end_matches('.').as_bytes()),
+            data: data.clone(),
+        });
+    });
+}
 
 /// Addresses checked together against the target URL's egress policy.
 ///
@@ -26,6 +104,7 @@ pub struct CheckedResolution {
     host: String,
     addresses: Vec<IpAddr>,
     valid_for: Option<Duration>,
+    dns_report: Option<ReportDataV1>,
 }
 
 impl CheckedResolution {
@@ -38,19 +117,37 @@ impl CheckedResolution {
         policy: &crawlx_policy::EgressPolicy,
         url: &url::Url,
     ) -> Result<Self, FetchError> {
-        policy.check_url(url)?;
+        Self::resolve_with_report(resolver, policy, url).await.0
+    }
+
+    /// Resolve with content-free DNS evidence, including actual resolver failures.
+    ///
+    /// The report is absent for IP literals and pre-DNS policy refusal. A TTL is
+    /// not a scheduled recheck, so `recheck_at` remains unknown. Egress denial
+    /// after a successful lookup does not turn DNS success into DNS failure.
+    pub async fn resolve_with_report(
+        resolver: &dyn Resolver,
+        policy: &crawlx_policy::EgressPolicy,
+        url: &url::Url,
+    ) -> (Result<Self, FetchError>, Option<ReportDataV1>) {
+        if let Err(error) = policy.check_url(url) {
+            return (Err(error.into()), None);
+        }
         let (host, literal) = match url.host() {
             Some(url::Host::Domain(host)) => (host.to_ascii_lowercase(), None),
             Some(url::Host::Ipv4(ip)) => (ip.to_string(), Some(IpAddr::V4(ip))),
             Some(url::Host::Ipv6(ip)) => (ip.to_string(), Some(IpAddr::V6(ip))),
             None => {
-                return Err(FetchError::InvalidUrl {
-                    url: url.to_string(),
-                    reason: "missing host",
-                });
+                return (
+                    Err(FetchError::InvalidUrl {
+                        url: url.to_string(),
+                        reason: "missing host",
+                    }),
+                    None,
+                );
             }
         };
-        Self::resolve_host(
+        Self::resolve_host_with_report(
             resolver,
             policy,
             crate::governor::Origin::from_url(url),
@@ -68,18 +165,41 @@ impl CheckedResolution {
         host: String,
         literal: Option<IpAddr>,
     ) -> Result<Self, FetchError> {
-        policy.check_host(&host)?;
-        let (mut addresses, valid_for) = match literal {
-            Some(ip) => (vec![ip], None),
-            None => resolver.resolve_with_ttl(&host).await?,
+        Self::resolve_host_with_report(resolver, policy, origin, host, literal)
+            .await
+            .0
+    }
+
+    async fn resolve_host_with_report(
+        resolver: &dyn Resolver,
+        policy: &crawlx_policy::EgressPolicy,
+        origin: crate::governor::Origin,
+        host: String,
+        literal: Option<IpAddr>,
+    ) -> (Result<Self, FetchError>, Option<ReportDataV1>) {
+        if let Err(error) = policy.check_host(&host) {
+            return (Err(error.into()), None);
+        }
+        let (resolved, report) = match literal {
+            Some(ip) => (Ok((vec![ip], None)), None),
+            None => resolver.resolve_with_report(&host).await,
+        };
+        let (mut addresses, valid_for) = match resolved {
+            Ok(answer) => answer,
+            Err(error) => return (Err(error), report),
         };
         if addresses.is_empty() {
-            return Err(FetchError::Resolve {
-                host,
-                reason: "no addresses".to_owned(),
-            });
+            return (
+                Err(FetchError::Resolve {
+                    host,
+                    reason: "no addresses".to_owned(),
+                }),
+                report,
+            );
         }
-        policy.check_all(&host, &addresses)?;
+        if let Err(error) = policy.check_all(&host, &addresses) {
+            return (Err(error.into()), report);
+        }
         // Canonical order also prevents lock-order cycles across overlapping DNS answers.
         addresses.sort_unstable_by_key(|ip| (ip.to_canonical(), *ip));
         addresses.dedup();
@@ -90,12 +210,16 @@ impl CheckedResolution {
             literal = literal.is_some(),
             "checked target resolution"
         );
-        Ok(Self {
-            origin,
-            host,
-            addresses,
-            valid_for,
-        })
+        (
+            Ok(Self {
+                origin,
+                host,
+                addresses,
+                valid_for,
+                dns_report: report.clone(),
+            }),
+            report,
+        )
     }
 
     /// Target origin bound to these addresses, not a caller-supplied Host header.
@@ -124,6 +248,12 @@ impl CheckedResolution {
     pub const fn valid_for(&self) -> Option<Duration> {
         self.valid_for
     }
+
+    /// Measured DNS evidence, absent for IP literals and unobserved lookups.
+    #[must_use]
+    pub const fn dns_report(&self) -> Option<&ReportDataV1> {
+        self.dns_report.as_ref()
+    }
 }
 
 /// Resolves a host name to all of its A and AAAA addresses.
@@ -147,6 +277,25 @@ pub trait Resolver: Send + Sync {
     /// Returns the same resolution errors as [`Self::resolve`].
     async fn resolve_with_ttl(&self, host: &str) -> Result<(Vec<IpAddr>, Option<Duration>), FetchError> {
         self.resolve(host).await.map(|addresses| (addresses, None))
+    }
+
+    /// Resolve once with measured DNS duration and finite outcome evidence.
+    ///
+    /// Custom resolvers default to generic failure rather than guessing a
+    /// subtype from error text. Override to expose typed timeout/refusal causes.
+    /// IP literals return no DNS observation. A cache TTL is not a recheck plan.
+    async fn resolve_with_report(&self, host: &str) -> DnsReportResultV1 {
+        if parse_ip_literal(host).is_some() {
+            return (self.resolve_with_ttl(host).await, None);
+        }
+        let started = tokio::time::Instant::now();
+        let result = self.resolve_with_ttl(host).await;
+        let outcome = match &result {
+            Ok((addresses, _)) if addresses.is_empty() => DnsOutcomeV1::NotFound,
+            Ok(_) => DnsOutcomeV1::Resolved,
+            Err(_) => DnsOutcomeV1::Failed,
+        };
+        finish_dns_report(host, started, outcome, result)
     }
 }
 
@@ -284,17 +433,25 @@ impl Resolver for HickoryResolver {
     }
 
     async fn resolve_with_ttl(&self, host: &str) -> Result<(Vec<IpAddr>, Option<Duration>), FetchError> {
+        self.resolve_with_report(host).await.0
+    }
+
+    async fn resolve_with_report(&self, host: &str) -> DnsReportResultV1 {
         if let Some(ip) = parse_ip_literal(host) {
-            return Ok((vec![ip], None));
+            return (Ok((vec![ip], None)), None);
         }
-        let lookup = self
-            .inner
-            .lookup_ip(host)
-            .await
-            .map_err(|e| FetchError::Resolve {
-                host: host.to_owned(),
-                reason: e.to_string(),
-            })?;
+        let started = tokio::time::Instant::now();
+        let lookup = match self.inner.lookup_ip(host).await {
+            Ok(lookup) => lookup,
+            Err(error) => {
+                let outcome = dns_error_outcome(&error);
+                let result = Err(FetchError::Resolve {
+                    host: host.to_owned(),
+                    reason: error.to_string(),
+                });
+                return finish_dns_report(host, started, outcome, result);
+            }
+        };
         let mut out: Vec<IpAddr> = Vec::new();
         for ip in lookup.iter() {
             if !out.contains(&ip) {
@@ -302,13 +459,18 @@ impl Resolver for HickoryResolver {
             }
         }
         if out.is_empty() {
-            return Err(FetchError::Resolve {
-                host: host.to_owned(),
-                reason: "no addresses".to_owned(),
-            });
+            return finish_dns_report(
+                host,
+                started,
+                DnsOutcomeV1::NotFound,
+                Err(FetchError::Resolve {
+                    host: host.to_owned(),
+                    reason: "no addresses".to_owned(),
+                }),
+            );
         }
         let valid_for = lookup.valid_until().saturating_duration_since(Instant::now());
-        Ok((out, Some(valid_for)))
+        finish_dns_report(host, started, DnsOutcomeV1::Resolved, Ok((out, Some(valid_for))))
     }
 }
 
@@ -354,6 +516,62 @@ impl Resolver for StaticResolver {
                 reason: "no such host".to_owned(),
             }),
         }
+    }
+
+    async fn resolve_with_report(&self, host: &str) -> DnsReportResultV1 {
+        if parse_ip_literal(host).is_some() {
+            return (self.resolve_with_ttl(host).await, None);
+        }
+        let started = tokio::time::Instant::now();
+        let result = self.resolve_with_ttl(host).await;
+        let outcome = if result.is_ok() {
+            DnsOutcomeV1::Resolved
+        } else {
+            DnsOutcomeV1::NotFound
+        };
+        finish_dns_report(host, started, outcome, result)
+    }
+}
+
+fn dns_error_outcome(error: &NetError) -> DnsOutcomeV1 {
+    match error {
+        NetError::Timeout => DnsOutcomeV1::Timeout,
+        NetError::Dns(DnsError::ResponseCode(ResponseCode::Refused)) => DnsOutcomeV1::Refused,
+        NetError::Dns(DnsError::ResponseCode(ResponseCode::NXDomain)) => DnsOutcomeV1::NotFound,
+        NetError::Dns(DnsError::NoRecordsFound(records)) => match records.response_code {
+            ResponseCode::NXDomain | ResponseCode::NoError => DnsOutcomeV1::NotFound,
+            ResponseCode::Refused => DnsOutcomeV1::Refused,
+            _ => DnsOutcomeV1::Failed,
+        },
+        _ => DnsOutcomeV1::Failed,
+    }
+}
+
+fn finish_dns_report(
+    host: &str,
+    started: tokio::time::Instant,
+    outcome: DnsOutcomeV1,
+    result: Result<(Vec<IpAddr>, Option<Duration>), FetchError>,
+) -> DnsReportResultV1 {
+    let duration_us = u64::try_from(started.elapsed().as_micros())
+        .ok()
+        .filter(|duration| i64::try_from(*duration).is_ok());
+    match duration_us {
+        Some(duration_us) => {
+            let report = ReportDataV1::Dns {
+                outcome,
+                duration_us,
+                recheck_at: None,
+            };
+            capture_dns_report(host, &report);
+            (result, Some(report))
+        }
+        None => (
+            Err(FetchError::OriginAdmission(
+                crawlx_core::StoreError::Serialization("dns measurement duration overflow".into()),
+            )),
+            None,
+        ),
     }
 }
 
@@ -836,5 +1054,145 @@ mod tests {
             r.resolve("[::1]").await.unwrap(),
             vec![IpAddr::V6(Ipv6Addr::LOCALHOST)]
         );
+    }
+
+    #[tokio::test]
+    async fn checked_dns_keeps_failed_observations_and_unknown_recheck() {
+        let resolver = StaticResolver::new().with("answer.test", [IpAddr::from([93, 184, 216, 34])]);
+        let policy = crawlx_policy::EgressPolicy::new(false);
+        let url = url::Url::parse("https://answer.test/private?q=not-for-report").unwrap();
+        let (checked, report) = CheckedResolution::resolve_with_report(&resolver, &policy, &url).await;
+        let checked = checked.unwrap();
+        assert_eq!(checked.dns_report(), report.as_ref());
+        assert!(matches!(
+            report,
+            Some(ReportDataV1::Dns {
+                outcome: DnsOutcomeV1::Resolved,
+                recheck_at: None,
+                ..
+            })
+        ));
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(!json.contains("not-for-report"));
+        assert!(!json.contains("answer.test"));
+
+        let missing = url::Url::parse("https://missing.test/").unwrap();
+        let (result, report) = CheckedResolution::resolve_with_report(&resolver, &policy, &missing).await;
+        assert!(matches!(result, Err(FetchError::Resolve { .. })));
+        assert!(matches!(
+            report,
+            Some(ReportDataV1::Dns {
+                outcome: DnsOutcomeV1::NotFound,
+                recheck_at: None,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn literal_and_policy_refusal_never_invent_dns_observation() {
+        let resolver = StaticResolver::new().with("private.test", [IpAddr::from([127, 0, 0, 1])]);
+        let policy = crawlx_policy::EgressPolicy::new(false);
+        let literal = url::Url::parse("https://93.184.216.34/").unwrap();
+        let (result, report) = CheckedResolution::resolve_with_report(&resolver, &policy, &literal).await;
+        assert!(result.is_ok());
+        assert!(report.is_none());
+        let private = url::Url::parse("https://private.test/").unwrap();
+        let (result, report) = CheckedResolution::resolve_with_report(&resolver, &policy, &private).await;
+        assert!(matches!(result, Err(FetchError::EgressDenied(_))));
+        assert!(matches!(
+            report,
+            Some(ReportDataV1::Dns {
+                outcome: DnsOutcomeV1::Resolved,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dns_duration_is_measured_with_monotonic_clock() {
+        struct Delayed;
+        #[async_trait]
+        impl Resolver for Delayed {
+            async fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, FetchError> {
+                sleep(Duration::from_millis(5)).await;
+                Ok(vec![IpAddr::from([93, 184, 216, 34])])
+            }
+        }
+        let (result, report) = Delayed.resolve_with_report("answer.test").await;
+        assert!(result.is_ok());
+        assert_eq!(
+            report,
+            Some(ReportDataV1::Dns {
+                outcome: DnsOutcomeV1::Resolved,
+                duration_us: 5000,
+                recheck_at: None,
+            })
+        );
+    }
+
+    #[test]
+    fn dns_error_classification_uses_typed_causes_not_error_text() {
+        assert_eq!(dns_error_outcome(&NetError::Timeout), DnsOutcomeV1::Timeout);
+        assert_eq!(
+            dns_error_outcome(&NetError::Dns(DnsError::ResponseCode(ResponseCode::Refused))),
+            DnsOutcomeV1::Refused
+        );
+        assert_eq!(
+            dns_error_outcome(&NetError::Dns(DnsError::ResponseCode(ResponseCode::NXDomain))),
+            DnsOutcomeV1::NotFound
+        );
+        assert_eq!(
+            dns_error_outcome(&NetError::Dns(DnsError::ResponseCode(ResponseCode::ServFail))),
+            DnsOutcomeV1::Failed
+        );
+    }
+
+    #[tokio::test]
+    async fn loopback_dns_reports_native_refused_and_not_found() {
+        for (code, expected) in [
+            (ResponseCode::Refused, DnsOutcomeV1::Refused),
+            (ResponseCode::NXDomain, DnsOutcomeV1::NotFound),
+        ] {
+            let dns = DnsStub::start(move |reply| {
+                reply.metadata.response_code = code;
+                reply.metadata.authoritative = true;
+            })
+            .await;
+            let mut options = loopback_options();
+            options.attempts = 1;
+            let resolver = dns.with_options(options);
+            let (result, report) = resolver.resolve_with_report("missing.test.").await;
+            assert!(matches!(result, Err(FetchError::Resolve { .. })));
+            assert!(matches!(report, Some(ReportDataV1::Dns {
+                outcome, recheck_at: None, ..
+            }) if outcome == expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn task_capture_keeps_failure_and_bounds_observations() {
+        let resolver = StaticResolver::new();
+        let (result, batch) = capture_dns_reports(async {
+            for _ in 0..66 {
+                assert!(resolver.resolve_with_report("missing.test").await.0.is_err());
+            }
+            Err::<(), _>(FetchError::AcquisitionCancelled)
+        })
+        .await;
+        assert!(matches!(result, Err(FetchError::AcquisitionCancelled)));
+        assert_eq!(batch.observations.len(), MAX_DNS_REPORTS);
+        assert_eq!(batch.dropped, 2);
+        assert!(!batch.loss_overflow);
+        assert!(batch.observations.iter().all(|observation| matches!(
+            observation.data,
+            ReportDataV1::Dns {
+                outcome: DnsOutcomeV1::NotFound,
+                ..
+            }
+        )));
+        let (_, empty) = capture_dns_reports(async {}).await;
+        assert!(empty.observations.is_empty());
+        assert_eq!(empty.dropped, 0);
     }
 }

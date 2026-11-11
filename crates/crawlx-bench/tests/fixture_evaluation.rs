@@ -17,6 +17,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn every_resource_and_redirect_stays_on_the_retained_fixture_listener() {
     let outside_hits = Arc::new(AtomicU64::new(0));
     let outside = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -145,6 +149,10 @@ async fn every_resource_and_redirect_stays_on_the_retained_fixture_listener() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn mutable_gym_display_url_cannot_mint_authority_for_another_service() {
     let outside_hits = Arc::new(AtomicU64::new(0));
     let outside = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

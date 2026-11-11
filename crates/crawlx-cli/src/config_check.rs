@@ -120,11 +120,17 @@ const PASSTHROUGH_ENV: &[&str] = &[
     "CRAWLX_SECRET_REDIS_URL",
     "CRAWLX_SECRET_REDIS_URL_FILE",
     "CRAWLX_SECRET_AUTHORITY_TTL_SECS",
+    "CRAWLX_SECRET_AUTHORITY_HARD_MAX_SECS",
+    "CRAWLX_EGRESS_MODE",
+    "CRAWLX_NETNS_HELPER",
+    "CRAWLX_NETNS_BROWSER_UID",
+    "CRAWLX_NETNS_BROWSER_GID",
     "CRAWLX_RETAINED_PROFILES_ENABLED",
     "CRAWLX_PROFILE_KEY_REF",
     "CRAWLX_PROFILE_MAX_TTL_SECONDS",
     "CRAWLX_PROFILE_EXECUTABLE_PREFERENCES",
     "CRAWLX_PROTOCOL_REGISTRY",
+    "CRAWLX_SOURCE_DISPATCH_CONFIG",
     "CRAWLX_DELIVERY_REGISTRY",
     "CRAWLX_ZDR_REDIS_URL",
     "CRAWLX_ARTICLE_LANGUAGE_BUNDLE",
@@ -442,6 +448,9 @@ pub enum EgressMode {
     Proxy,
     /// Network namespace with nftables (`deploy/k8s/nftables-netns.example`).
     Netns,
+    /// Rootless user and network namespace helper that preserves deny-all isolation.
+    #[serde(rename = "netns-rootless")]
+    NetnsRootless,
 }
 
 section!(/// `[egress]`: the deployment lists and the operator blocklist of RB-10 step 5.
@@ -678,6 +687,11 @@ pub(crate) fn validate_operator_environment(
         "CRAWLX_SECRET_REDIS_URL",
         "CRAWLX_SECRET_REDIS_URL_FILE",
         "CRAWLX_SECRET_AUTHORITY_TTL_SECS",
+        "CRAWLX_SECRET_AUTHORITY_HARD_MAX_SECS",
+        "CRAWLX_EGRESS_MODE",
+        "CRAWLX_NETNS_HELPER",
+        "CRAWLX_NETNS_BROWSER_UID",
+        "CRAWLX_NETNS_BROWSER_GID",
         "CRAWLX_ARTICLE_LANGUAGE_BUNDLE",
     ]
     .into_iter()
@@ -1283,6 +1297,21 @@ async fn validate_article_language_bundle(loaded: &Loaded, findings: &mut Vec<Fi
     }
 }
 
+fn validate_source_dispatch(loaded: &Loaded, findings: &mut Vec<Finding>) {
+    let lookup = |name: &str| loaded.passthrough.get(name).cloned();
+    if !lookup("CRAWLX_SOURCE_DISPATCH_CONFIG").is_some_and(|path| !path.is_empty()) {
+        return;
+    }
+    let mut worker = crawlx_worker::WorkerConfig::default();
+    if worker.load_source_dispatch_from_lookup(&lookup).is_err() {
+        findings.push(finding(
+            "capabilities.source_dispatch",
+            "source dispatch configuration is unavailable or invalid",
+            true,
+        ));
+    }
+}
+
 /// Findings about the deployment lists: every entry parses, every named file exists and parses.
 fn validate_egress(loaded: &Loaded, prod: bool, f: &mut Vec<Finding>) {
     let e = &loaded.config.egress;
@@ -1463,6 +1492,10 @@ fn capability_report(loaded: &Loaded) -> Value {
         },
         "protocol_registry": { "configured": has("CRAWLX_PROTOCOL_REGISTRY") },
         "delivery_registry": { "configured": has("CRAWLX_DELIVERY_REGISTRY") },
+        "source_dispatch": {
+            "configured": has("CRAWLX_SOURCE_DISPATCH_CONFIG"),
+            "path": if has("CRAWLX_SOURCE_DISPATCH_CONFIG") { "<redacted>" } else { "unset" }
+        },
         "article_language": {
             "configured": loaded.passthrough.get("CRAWLX_ARTICLE_LANGUAGE_BUNDLE").is_some_and(|path| !path.is_empty())
         }
@@ -1533,6 +1566,7 @@ async fn check(args: &ConfigCheckArgs, out: &mut dyn Write) -> anyhow::Result<Ex
     validate_artifact_custody(&loaded, &mut findings).await;
     validate_checkpoint_keys(&loaded, &mut findings).await;
     validate_article_language_bundle(&loaded, &mut findings).await;
+    validate_source_dispatch(&loaded, &mut findings);
     // the LLM provider variables are read from the process environment by `serve` and
     // `worker` themselves, so they are reported from it too (secrets redacted)
     let intel = crate::config_intel::report(&|k| std::env::var(k).ok());
@@ -1949,6 +1983,28 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("max_sessions"), "{e}");
+    }
+
+    #[test]
+    fn egress_rootless_namespace_mode_is_accepted_from_toml_and_env_only_by_exact_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write(&dir, "rootless.toml", "[egress]\nmode = \"netns-rootless\"\n");
+        let from_file = load_from(Some(&file), &[]).unwrap();
+        assert_eq!(from_file.config.egress.mode, EgressMode::NetnsRootless);
+        assert_eq!(from_file.sources["egress.mode"], Source::File);
+        let from_env = load_from(None, &vars(&[("CRAWLX_EGRESS__MODE", "netns-rootless")])).unwrap();
+        assert_eq!(from_env.config.egress.mode, EgressMode::NetnsRootless);
+        assert_eq!(from_env.sources["egress.mode"], Source::Env);
+        for rejected in ["netnsrootless", "netns_rootless", "rootless"] {
+            assert!(
+                load_from(None, &vars(&[("CRAWLX_EGRESS__MODE", rejected)])).is_err(),
+                "{rejected}"
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(EgressMode::NetnsRootless).unwrap(),
+            "netns-rootless"
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@
 //!   weaken the egress proxy, remote debugging, web security or the sandbox are refused at launch
 //!   ([`crate::options::validate_flags`]).
 
+use crate::netns::{NamespaceConfig, NamespaceLaunch};
 use crate::{egress, profile};
 use crawlx_core::browser::BrowserError;
 use crawlx_core::browser::ProfileSpec;
@@ -71,6 +72,8 @@ pub struct LaunchConfig {
     pub user_data_dir: Option<PathBuf>,
     /// Loopback egress proxy (`crawlx-fetch::EgressProxy`); `None` only in tests.
     pub egress_proxy_port: Option<u16>,
+    /// Operator-configured anonymous network namespace; `None` preserves normal launch.
+    pub namespace: Option<NamespaceConfig>,
     /// Launch profile selecting the profile-specific flags (and CDP behavior, see `profile`).
     pub launch_profile: LaunchProfile,
     /// Record `pinned = false` instead of failing when the build differs from
@@ -125,6 +128,7 @@ impl LaunchConfig {
             headless: true,
             user_data_dir: None,
             egress_proxy_port: None,
+            namespace: None,
             launch_profile: LaunchProfile::Standard,
             allow_unpinned: crate::pin::allow_unpinned_from_env(),
             unsafe_no_sandbox_for_ci: std::env::var(UNSAFE_NO_SANDBOX_ENV).is_ok_and(|v| is_truthy(&v)),
@@ -211,6 +215,9 @@ pub struct BrowserProcess {
     group_signalled: bool,
     // declared after `child`; removed after the group is killed in `Drop`
     _profile: Option<tempfile::TempDir>,
+    // Anonymous namespace supervisors share this process group; killing the group
+    // releases the namespace without privileged named-namespace cleanup.
+    namespace: Option<NamespaceLaunch>,
 }
 
 impl BrowserProcess {
@@ -218,6 +225,12 @@ impl BrowserProcess {
     #[must_use]
     pub fn pid(&self) -> Option<u32> {
         self.child.id()
+    }
+
+    /// Verified namespace identity of this owned process tree, if configured.
+    #[must_use]
+    pub fn namespace(&self) -> Option<&NamespaceLaunch> {
+        self.namespace.as_ref()
     }
 
     /// Kill the whole process group.
@@ -396,6 +409,8 @@ pub struct Spawned {
     pub ws_url: String,
     /// Profile directory Chromium runs with (the temp dir or the caller-supplied one).
     pub user_data_dir: PathBuf,
+    /// Verified namespace identity and relay endpoints, when isolation was selected.
+    pub namespace: Option<NamespaceLaunch>,
 }
 
 /// Spawn Chromium with `flags` (from [`LaunchConfig::launch_flags`]) and wait for the
@@ -423,15 +438,58 @@ pub async fn spawn(
             "isolated environment requires a fresh owned headless temporary profile".into(),
         ));
     }
+    if let Some(namespace) = &config.namespace {
+        crate::options::validate_flags(&config.extra_args)
+            .map_err(|error| BrowserError::Launch(error.to_string()))?;
+        if config.cdp_ws_url.is_some()
+            || !config.headless
+            || config.user_data_dir.is_some()
+            || config.profile.is_some()
+            || config.unsafe_no_sandbox_for_ci
+            || profile_dir.as_ref().is_none_or(|dir| dir.path() != user_data_dir)
+            || !config.executable.is_absolute()
+            || config
+                .egress_proxy_port
+                .is_none_or(|port| port == 0 || port == 53)
+        {
+            return Err(BrowserError::Launch(
+                "namespace mode requires owned sandboxed headless launch and a non-DNS loopback proxy".into(),
+            ));
+        }
+        namespace
+            .preflight()
+            .await
+            .map_err(|error| BrowserError::Launch(error.to_string()))?;
+    }
     let flags = config.launch_flags(&user_data_dir);
-    let mut cmd = Command::new(&config.executable);
-    cmd.args(&flags)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .process_group(0);
-    if config.isolated_environment {
+    let mut cmd = if let Some(namespace) = &config.namespace {
+        namespace.command(
+            &config.executable,
+            &flags,
+            &user_data_dir,
+            config
+                .egress_proxy_port
+                .ok_or_else(|| BrowserError::Launch("namespace proxy missing".into()))?,
+        )
+    } else {
+        let mut command = Command::new(&config.executable);
+        command.args(&flags);
+        command
+    };
+    cmd.stdin(if config.namespace.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(if config.namespace.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stderr(Stdio::piped())
+    .kill_on_drop(true)
+    .process_group(0);
+    if config.isolated_environment || config.namespace.is_some() {
         isolate_environment(&mut cmd, &user_data_dir);
     }
     let mut child = cmd
@@ -446,10 +504,47 @@ pub async fn spawn(
         child,
         pgid,
         group_signalled: false,
+        namespace: None,
         _profile: profile_dir,
     };
-
+    let mut helper_output = None;
     let mut lines = BufReader::new(stderr).lines();
+    if let Some(namespace) = &config.namespace {
+        let output = process
+            .child
+            .stdout
+            .take()
+            .ok_or_else(|| BrowserError::Launch("namespace evidence pipe missing".into()))?;
+        let proxy = config
+            .egress_proxy_port
+            .ok_or_else(|| BrowserError::Launch("namespace proxy missing".into()))?;
+        let attested = tokio::time::timeout(
+            config.launch_timeout,
+            crate::netns::attest_and_release(namespace, proxy, &mut process.child, output),
+        )
+        .await;
+        let result = match attested {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => {
+                // The helper's own bounded, argv-free rejection line explains why it refused.
+                let reason = helper_rejection(&mut lines).await;
+                process.kill_group();
+                return Err(BrowserError::Launch(match reason {
+                    Some(reason) => format!("{error}: {reason}"),
+                    None => error.to_string(),
+                }));
+            }
+            Err(_) => {
+                process.kill_group();
+                return Err(BrowserError::Timeout(
+                    u64::try_from(config.launch_timeout.as_millis()).unwrap_or(u64::MAX),
+                ));
+            }
+        };
+        process.namespace = Some(result.0);
+        helper_output = Some(result.1);
+    }
+
     let mut tail: Vec<String> = Vec::new();
     let found = tokio::time::timeout(config.launch_timeout, async {
         loop {
@@ -471,6 +566,34 @@ pub async fn spawn(
     .await;
     match found {
         Ok(Some(ws_url)) => {
+            let namespace = process.namespace.clone();
+            let ws_url = if let Some(namespace) = &namespace {
+                namespace
+                    .verify_process(
+                        process
+                            .pgid
+                            .ok_or_else(|| BrowserError::Launch("namespace group missing".into()))?,
+                    )
+                    .await
+                    .map_err(|error| BrowserError::Launch(error.to_string()))?;
+                namespace
+                    .verify_executable(&config.executable)
+                    .await
+                    .map_err(|error| BrowserError::Launch(error.to_string()))?;
+                namespace
+                    .relay_url(&ws_url)
+                    .map_err(|error| BrowserError::Launch(error.to_string()))?
+            } else {
+                ws_url
+            };
+            // Keep the helper output handle alive through its lifetime, while
+            // bounding the protocol to its single attestation line.
+            if let Some(mut output) = helper_output.take() {
+                tokio::spawn(async move {
+                    let mut sink = tokio::io::sink();
+                    let _ = tokio::io::copy(&mut output, &mut sink).await;
+                });
+            }
             // Keep draining so Chromium never blocks on a full stderr pipe.
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -481,6 +604,7 @@ pub async fn spawn(
                 process,
                 ws_url,
                 user_data_dir,
+                namespace,
             })
         }
         Ok(None) => {
@@ -497,6 +621,31 @@ pub async fn spawn(
             ))
         }
     }
+}
+
+/// Prefix of the namespace helper's own failure line (never carries argv, URLs or secrets).
+const HELPER_REJECTION: &str = "namespace helper rejected preflight:";
+
+/// The helper's bounded rejection reason from its stderr, if it printed one.
+async fn helper_rejection(
+    lines: &mut tokio::io::Lines<BufReader<tokio::process::ChildStderr>>,
+) -> Option<String> {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        for _ in 0..64 {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    if let Some(reason) = line.strip_prefix(HELPER_REJECTION) {
+                        return Some(reason.trim().chars().take(300).collect());
+                    }
+                }
+                Ok(None) | Err(_) => return None,
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 fn isolate_environment(command: &mut Command, profile: &Path) {
@@ -521,6 +670,7 @@ mod tests {
             headless: true,
             user_data_dir: None,
             egress_proxy_port: port,
+            namespace: None,
             launch_profile: profile,
             allow_unpinned: false,
             unsafe_no_sandbox_for_ci: false,
@@ -632,6 +782,7 @@ mod tests {
             child,
             pgid: Some(pid),
             group_signalled: false,
+            namespace: None,
             _profile: None,
         };
         process
@@ -640,5 +791,52 @@ mod tests {
             .unwrap();
         assert!(process.child.try_wait().unwrap().is_some());
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+
+    #[tokio::test]
+    async fn namespace_rejects_missing_proxy_before_spawning_executable() {
+        let mut config = cfg(LaunchProfile::Standard, None);
+        config.namespace = Some(NamespaceConfig::new("/missing/helper".into(), 1000, 1000));
+        config.executable = "/missing/browser".into();
+        let profile = tempfile::tempdir().unwrap();
+        let dir = profile.path().to_path_buf();
+        let error = spawn(&config, Some(profile), dir).await.err().unwrap();
+        assert!(error.to_string().contains("namespace mode requires"));
+    }
+
+    #[tokio::test]
+    async fn helper_rejection_line_is_extracted_and_bounded() {
+        let script = format!("echo noise >&2; echo '{HELPER_REJECTION} ValueError: rootless namespace mode refuses a root worker; use privileged mode' >&2");
+        let mut child = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+        assert_eq!(
+            helper_rejection(&mut lines).await.as_deref(),
+            Some("ValueError: rootless namespace mode refuses a root worker; use privileged mode"),
+        );
+        let mut silent = Command::new("/bin/sh")
+            .arg("-c")
+            .arg("echo unrelated >&2")
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(silent.stderr.take().unwrap()).lines();
+        assert_eq!(helper_rejection(&mut lines).await, None);
+    }
+
+    #[tokio::test]
+    async fn namespace_attach_is_rejected_before_connecting() {
+        let mut config = cfg(LaunchProfile::Standard, Some(8080));
+        config.namespace = Some(NamespaceConfig::new("/missing/helper".into(), 1000, 1000));
+        let endpoint = url::Url::parse("ws://127.0.0.1:1/devtools/browser/nope").unwrap();
+        let error = crate::ChromiumBackend::attach(&endpoint, config)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("cannot attach"));
     }
 }

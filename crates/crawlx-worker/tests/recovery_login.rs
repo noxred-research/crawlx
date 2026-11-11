@@ -4,7 +4,7 @@
 mod common;
 
 use async_trait::async_trait;
-use common::{canonical, rig_with};
+use common::{canonical, rig_with, rig_with_authorized_prefix};
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::action::BrowserAction;
@@ -326,7 +326,9 @@ async fn login_is_refused_off_origin() {
             .clock(Arc::new(crawlx_core::SystemClock))
             .build(),
     );
-    let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
+    // the signed scope bounds every navigation: the off-origin page is reachable only because
+    // the record names it, and the login still refuses to type a credential there
+    let r = rig_with_authorized_prefix(fake.clone(), SafetyProfile::ReadOnly, "https://evil.test").await;
     r.handle
         .navigate(crawlx_core::request::RequestEnvelopeV1::get(
             canonical("https://evil.test/"),

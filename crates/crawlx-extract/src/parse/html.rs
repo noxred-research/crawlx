@@ -68,6 +68,7 @@ fn unbase(s: &str) -> String {
 
 fn map_extract(e: ExtractError) -> ParseError {
     match e {
+        ExtractError::Isolated(source) => ParseError::Isolated(source),
         ExtractError::TooLarge { what, limit, actual } => ParseError::TooLarge { what, limit, actual },
         ExtractError::InvalidSelector { selector, reason } => {
             ParseError::InvalidSelector { selector, reason }

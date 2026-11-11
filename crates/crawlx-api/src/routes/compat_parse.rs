@@ -38,8 +38,11 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use base64::Engine as _;
+use bytes::Bytes;
 use crawlx_core::extraction::{ParserPipelineV1, PipelineRouteV1};
+use crawlx_core::parser_memory::{self, Budgeted, BytePermit};
 use crawlx_extract::base64_images::strip_base64_images;
+use crawlx_extract::isolated::IsolatedError;
 use crawlx_extract::parse::injection;
 use crawlx_extract::parse::ocr::PdfOcr;
 use crawlx_extract::parse::redact::redact;
@@ -48,12 +51,15 @@ use crawlx_extract::parse::{
 };
 use crawlx_extract::pipeline::{ParserPipeline, PipelineContent, PipelineError, PipelineInput};
 use crawlx_model::llm::TokenUsage;
+use crawlx_worker::isolated_parser::{self, UploadRequest};
+use crawlx_worker::CpuPool;
 use futures::StreamExt;
 use options::{parse_options, ParseRequest, PdfMode};
 use serde_json::{json, Map, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 /// Bytes of a multipart body beyond the file: boundaries, part headers and the options part.
 const MULTIPART_OVERHEAD: usize = 1024 * 1024;
@@ -65,6 +71,8 @@ const MAX_FILENAME_CHARS: usize = 255;
 const LLM_EXTRA_CREDITS: u64 = 4;
 /// Longest content (bytes) the injection scanner reads; beyond it the check is incomplete.
 const MAX_INJECTION_SCAN_BYTES: usize = 8 * 1024 * 1024;
+/// Smallest capacity reserved for an upload buffer.
+const MIN_UPLOAD_RESERVE: usize = 64 * 1024;
 
 /// OpenAPI rows of this module (`GET /v1/openapi.json`).
 pub const OPERATIONS: &[Operation] = &[
@@ -120,7 +128,8 @@ pub async fn formats(
 // ---- upload --------------------------------------------------------------------------------
 
 struct Upload {
-    bytes: Vec<u8>,
+    /// The file bytes and the reservation that covers them.
+    file: Budgeted<Bytes>,
     filename: Option<String>,
     content_type: Option<String>,
     options: Option<Value>,
@@ -193,14 +202,11 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
         }
     };
 
-    let mut upload = Upload {
-        bytes: Vec::new(),
-        filename: None,
-        content_type: None,
-        options: None,
-        extra_parts: Vec::new(),
-    };
-    let mut have_file = false;
+    let mut filename: Option<String> = None;
+    let mut content_type: Option<String> = None;
+    let mut options: Option<Value> = None;
+    let mut extra_parts: Vec<String> = Vec::new();
+    let mut file: Option<(Vec<u8>, BytePermit)> = None;
     let mut count = 0usize;
     while let Some(mut field) = mp.next_field().await.map_err(failed)? {
         count += 1;
@@ -210,18 +216,23 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
         let name = field.name().unwrap_or("").to_owned();
         match name.as_str() {
             "file" => {
-                if have_file {
+                if file.is_some() {
                     return Err(bad_multipart("the `file` part is sent twice"));
                 }
-                have_file = true;
-                upload.filename = field.file_name().and_then(clean_filename);
-                upload.content_type = field.content_type().map(str::to_owned);
+                filename = field.file_name().and_then(clean_filename);
+                content_type = field.content_type().map(str::to_owned);
+                let mut buf: Vec<u8> = Vec::new();
+                let mut permit = parser_memory::global()
+                    .try_reserve(0)
+                    .map_err(|refused| memory_refused(refused.exceeds_budget()))?;
                 while let Some(chunk) = field.chunk().await.map_err(failed)? {
-                    if upload.bytes.len().saturating_add(chunk.len()) > file_cap {
+                    if buf.len().saturating_add(chunk.len()) > file_cap {
                         return Err(too_large(file_cap));
                     }
-                    upload.bytes.extend_from_slice(&chunk);
+                    grow_upload(&mut buf, &mut permit, chunk.len(), file_cap)?;
+                    buf.extend_from_slice(&chunk);
                 }
+                file = Some((buf, permit));
             }
             "options" => {
                 let mut raw: Vec<u8> = Vec::new();
@@ -231,7 +242,7 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
                     }
                     raw.extend_from_slice(&chunk);
                 }
-                if upload.options.is_some() {
+                if options.is_some() {
                     return Err(bad_multipart("the `options` part is sent twice"));
                 }
                 let value: Value = if raw.iter().all(u8::is_ascii_whitespace) {
@@ -245,29 +256,36 @@ async fn read_upload(state: &AppState, req: Request) -> ApiResult<Upload> {
                         )])
                     })?
                 };
-                upload.options = Some(value);
+                options = Some(value);
             }
             _ => {
                 while field.chunk().await.map_err(failed)?.is_some() {}
-                upload.extra_parts.push(name);
+                extra_parts.push(name);
             }
         }
     }
-    if !have_file {
+    // `Bytes::from(Vec)` keeps the allocation, so the reservation made while reading covers it.
+    let Some((buf, permit)) = file else {
         return Err(HttpError::bad_request(vec![Detail::new(
             "/file",
             "required",
             "the multipart body needs a `file` part",
         )]));
-    }
-    if upload.bytes.is_empty() {
+    };
+    if buf.is_empty() {
         return Err(HttpError::bad_request(vec![Detail::new(
             "/file",
             "required",
             "the uploaded file is empty",
         )]));
     }
-    Ok(upload)
+    Ok(Upload {
+        file: Budgeted::new(Bytes::from(buf), permit),
+        filename,
+        content_type,
+        options,
+        extra_parts,
+    })
 }
 
 // ---- parse ---------------------------------------------------------------------------------
@@ -319,6 +337,24 @@ fn parse_error(e: ParseError, req: &ParseRequest) -> HttpError {
                 format!("`{selector}` is not a valid CSS selector: {reason}"),
             )])
         }
+        ParseError::ParseMemory(refused) => memory_refused(refused.exceeds_budget()),
+        ParseError::ResourceExhausted { detail, .. } => match detail.as_str() {
+            "size bound exceeded" | "helper terminated by resource limit" => HttpError::compat(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "payload_too_large",
+                "the document exceeds a parser resource limit",
+            ),
+            "deadline exceeded" => timed_out(),
+            _ => memory_refused(false),
+        },
+        ParseError::Isolated(source) => {
+            tracing::error!(error = %source, "the isolated parser failed on an upload");
+            HttpError::compat(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "corrupt_document",
+                "the document cannot be parsed",
+            )
+        }
         ParseError::Internal { format } => {
             tracing::error!(format, "a document parser failed on an upload");
             HttpError::compat(
@@ -348,6 +384,60 @@ fn pipeline_error(error: PipelineError, request: &ParseRequest) -> HttpError {
 
 fn timed_out() -> HttpError {
     HttpError::compat(StatusCode::REQUEST_TIMEOUT, "SCRAPE_TIMEOUT", "Scrape timed out")
+}
+
+/// `413 payload_too_large` when a reservation exceeds the whole parser memory budget (terminal),
+/// `503` with `Retry-After` when it only does not fit right now (transient).
+fn memory_refused(exceeds_budget: bool) -> HttpError {
+    if exceeds_budget {
+        HttpError::compat(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            "the document is larger than the parser memory budget",
+        )
+    } else {
+        HttpError::backend_unavailable(
+            "parser_memory_unavailable",
+            "parser memory is in use by other requests; retry shortly",
+        )
+    }
+}
+
+/// The HTTP error of a failed isolated HTML parse.
+fn isolated_error(error: IsolatedError, request: &ParseRequest) -> HttpError {
+    match error {
+        // Only here is it known whether the reservation could ever fit.
+        IsolatedError::Admission(refused) => memory_refused(refused.exceeds_budget()),
+        // Cancellation fires only when the request deadline passed.
+        IsolatedError::Cancelled => timed_out(),
+        other => parse_error(other.into_parse_error(), request),
+    }
+}
+
+/// Where the isolated upload parser runs its CPU work: one pool for the process.
+fn cpu() -> &'static CpuPool {
+    static CPU: LazyLock<CpuPool> = LazyLock::new(CpuPool::default);
+    &CPU
+}
+
+/// Grow `buf` by `extra` bytes, reserving the new capacity from the shared parser budget first.
+/// Capacity at least doubles so the number of reservations stays logarithmic.
+fn grow_upload(buf: &mut Vec<u8>, permit: &mut BytePermit, extra: usize, cap: usize) -> ApiResult<()> {
+    let needed = buf.len().saturating_add(extra);
+    if needed <= buf.capacity() {
+        return Ok(());
+    }
+    let target = needed
+        .max(buf.capacity().saturating_mul(2))
+        .max(MIN_UPLOAD_RESERVE)
+        .min(cap.max(needed));
+    permit
+        .grow_to(target)
+        .map_err(|refused| memory_refused(refused.exceeds_budget()))?;
+    buf.try_reserve_exact(target - buf.len()).map_err(|error| {
+        tracing::warn!(error = %error, bytes = target, "the upload buffer could not be allocated");
+        memory_refused(false)
+    })
 }
 
 fn parse_blocking(
@@ -512,7 +602,7 @@ pub async fn parse(
         llm(&state)?;
     }
     let limits: ParseLimits = state.settings.parse_limits;
-    let opts = ParseOptions {
+    let mut opts = ParseOptions {
         limits,
         only_main_content: request.only_main_content,
         include_tags: request.include_tags.clone(),
@@ -529,20 +619,53 @@ pub async fn parse(
         },
     };
     let filename = upload.filename.clone().unwrap_or_else(|| "upload".to_owned());
-    let (bytes, name, ctype) = (upload.bytes, upload.filename.clone(), upload.content_type.clone());
+    let (file, name, ctype) = (upload.file, upload.filename.clone(), upload.content_type.clone());
     let raw_pdf = request.parsers_disabled;
-    let blocking = tokio::task::spawn_blocking(move || {
-        parse_blocking(&bytes, name.as_deref(), ctype.as_deref(), &opts, raw_pdf)
-    });
     let deadline = tokio::time::Instant::from_std(started + request.timeout);
-    let parsed = match tokio::time::timeout_at(deadline, blocking).await {
-        Err(_) => return Err(timed_out()),
-        Ok(Err(e)) => {
-            tracing::error!(error = %e, "the parse task did not finish");
-            return Err(HttpError::internal());
+    let format = detect_format(file.value(), name.as_deref(), ctype.as_deref(), &opts.limits)
+        .map_err(|e| parse_error(e, &request))?;
+    // Cancelled when the deadline passes or the handler future is dropped; the parser then
+    // releases its work without the request waiting for it.
+    let cancel = CancellationToken::new();
+    let _stop = cancel.clone().drop_guard();
+    // The reservation of a parsed HTML document stays alive until the response is assembled.
+    let (parsed, _document_hold) = if format == ParseFormat::Html {
+        let parser = isolated_parser::shared().map_err(|error| {
+            tracing::error!(error = %error, "the isolated upload parser is unavailable");
+            HttpError::internal()
+        })?;
+        // OCR applies to PDFs and images only; a transient handle cannot cross the helper boundary.
+        opts.ocr = None;
+        opts.pdf_ocr = PdfOcr::Off;
+        let mut upload_request = UploadRequest::new(name, ctype);
+        upload_request.options = opts;
+        let run = parser.parse_upload_html(cpu(), file, upload_request, &cancel);
+        match tokio::time::timeout_at(deadline, run).await {
+            Err(_) => {
+                cancel.cancel();
+                return Err(timed_out());
+            }
+            Ok(Err(e)) => return Err(isolated_error(e, &request)),
+            Ok(Ok(upload)) => {
+                let (document, hold) = upload.document.into_parts();
+                (Parsed::Document(document), Some(hold))
+            }
         }
-        Ok(Ok(Err(e))) => return Err(pipeline_error(e, &request)),
-        Ok(Ok(Ok(p))) => p,
+    } else {
+        // The closure owns the upload and its reservation until the parse has ended, also when
+        // the request times out first.
+        let blocking = tokio::task::spawn_blocking(move || {
+            parse_blocking(file.value(), name.as_deref(), ctype.as_deref(), &opts, raw_pdf)
+        });
+        match tokio::time::timeout_at(deadline, blocking).await {
+            Err(_) => return Err(timed_out()),
+            Ok(Err(e)) => {
+                tracing::error!(error = %e, "the parse task did not finish");
+                return Err(HttpError::internal());
+            }
+            Ok(Ok(Err(e))) => return Err(pipeline_error(e, &request)),
+            Ok(Ok(Ok(p))) => (p, None),
+        }
     };
 
     let mut warnings: Vec<Warning> = request.warnings.clone();

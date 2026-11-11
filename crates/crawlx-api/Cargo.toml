@@ -48,6 +48,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 crawlx-browser = { path = "../crawlx-browser" }
+crawlx-safety = { path = "../crawlx-safety" }
 crawlx-strategies = { path = "../crawlx-strategies" }
 http-body-util.workspace = true
 sqlx.workspace = true

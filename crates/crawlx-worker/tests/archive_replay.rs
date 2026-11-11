@@ -192,7 +192,8 @@ async fn pinned_browser_renders_retained_warc_wacz_missing_assets_and_real_basel
             .iter()
             .find(|c| c.kind == "final_text")
             .unwrap()
-            .bytes,
+            .bytes
+            .as_slice(),
         b"Retained fixture Offline only"
     );
 }

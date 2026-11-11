@@ -11,10 +11,12 @@ use crawlx_core::archive::{
 };
 use crawlx_core::archive_catalog::{ArchiveExportState, ArchiveExportV1, ArchiveReadV1, ArchiveRecordV1};
 use crawlx_core::config::RetentionMode;
+use crawlx_core::custody::FrozenArchiveSource;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::CrawlRun;
 use crawlx_core::{ArtifactRef, Clock};
 use crawlx_storage::archive::{cdxj, rollover, staging::StagedFile, wacz, warc, ArchiveError, Limits};
+use crawlx_storage::custody::frozen_archive::with_terminal_grant;
 use crawlx_telemetry::redact::Redactor;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -162,10 +164,23 @@ pub(crate) async fn finalize(
         crawlx_core::WorkerId(export.id),
         export.fence,
     );
-    let work = crawlx_core::custody::with_producer(
-        producer,
-        finalize_claimed(stores, run, &export, config, Arc::clone(&clock), cancel),
-    );
+    // Packaging and renewal have large state machines; keep their shared lifetime
+    // off the caller's constrained executor stack.
+    let work = Box::pin(crawlx_core::custody::with_producer(
+        producer.clone(),
+        crate::custody_renewal::with_custody_renewal(
+            stores.pg_secret_authority.clone(),
+            producer,
+            Box::pin(finalize_claimed(
+                stores,
+                run,
+                &export,
+                config,
+                Arc::clone(&clock),
+                cancel,
+            )),
+        ),
+    ));
     // The heartbeat is polled beside the packaging, not in the body of a `select!` arm: an arm
     // that awaited the catalog would leave `work` suspended inside its open publication
     // transaction while the renewal waits for the export row that transaction locks.
@@ -621,6 +636,31 @@ async fn append_record(
     Ok(writer)
 }
 
+/// Whether the source run already ended. Its secret registration is then permanently closed, so
+/// archive output is sealed under a frozen grant instead of a live registry snapshot.
+async fn run_is_terminal(stores: &Stores, run: crawlx_core::CrawlRunId) -> Result<bool, WorkerError> {
+    Ok(stores.runs.get_metadata(run).await?.status.is_terminal())
+}
+
+/// Source proof of one committed shard, read from its actual persisted retained authority.
+async fn shard_proof(
+    stores: &Stores,
+    export: &ArchiveExportV1,
+    source_run: crawlx_core::CrawlRunId,
+    record: &ArchiveRecordV1,
+) -> Result<FrozenArchiveSource, WorkerError> {
+    let custody = stores
+        .artifacts
+        .archive_custody(
+            export.tenant,
+            source_run,
+            &record.artifact,
+            export.config.max_record_bytes.saturating_add(131_072),
+        )
+        .await?;
+    Ok(FrozenArchiveSource::new(record.artifact.clone(), custody))
+}
+
 async fn package(
     stores: &Stores,
     export: &ArchiveExportV1,
@@ -636,6 +676,8 @@ async fn package(
         .map_err(codec)?;
     let mut after = None;
     let mut included = std::collections::BTreeSet::new();
+    let terminal_run = run_is_terminal(stores, export.run).await?;
+    let mut sources: Vec<FrozenArchiveSource> = Vec::new();
     loop {
         if cancel.is_cancelled() {
             return Err(stopped());
@@ -661,12 +703,18 @@ async fn package(
                         "archive dependency closure unavailable",
                     )));
                 };
+                if terminal_run {
+                    sources.push(shard_proof(stores, export, source_run, &baseline).await?);
+                }
                 writer = append_record(stores, export, source_run, baseline, writer).await?;
                 manifest.materialized_dependencies = manifest
                     .materialized_dependencies
                     .checked_add(1)
                     .ok_or_else(|| WorkerError::Config("archive dependency count overflow".into()))?;
             }
+        }
+        if terminal_run {
+            sources.push(shard_proof(stores, export, export.run, &record).await?);
         }
         writer = append_record(stores, export, export.run, record, writer).await?;
         manifest.records = manifest
@@ -696,27 +744,40 @@ async fn package(
         .archives
         .renew(export.tenant, export.id, export.fence, clock.now())
         .await?;
-    let artifact: ArtifactRef = tokio::select! {
-        biased;
-        () = cancel.cancelled() => return Err(stopped()),
-        result = stores.artifacts.put_archive_file_with_custody(export.run, content_type, final_files.archive.path(), export.config.max_bytes, &export.custody) => result?,
-    };
-    let index = if let Some(index_file) = &final_files.index {
-        Some(
-            stores
-                .artifacts
-                .put_archive_file_with_custody(
-                    export.run,
-                    "application/cdxj",
-                    index_file.path(),
-                    export.config.max_bytes,
-                    &export.custody,
+    let terminal = terminal_run;
+    // One grant covers the package and its adjacent index: both derive from exactly these shards.
+    let (artifact, index): (ArtifactRef, Option<ArtifactRef>) = with_terminal_grant(
+        stores.custody.as_deref(),
+        terminal,
+        export,
+        &export.custody,
+        sources,
+        async {
+            let artifact: ArtifactRef = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(stopped()),
+                result = stores.artifacts.put_archive_file_with_custody(export.run, content_type, final_files.archive.path(), export.config.max_bytes, &export.custody) => result?,
+            };
+            let index = if let Some(index_file) = &final_files.index {
+                Some(
+                    stores
+                        .artifacts
+                        .put_archive_file_with_custody(
+                            export.run,
+                            "application/cdxj",
+                            index_file.path(),
+                            export.config.max_bytes,
+                            &export.custody,
+                        )
+                        .await?,
                 )
-                .await?,
-        )
-    } else {
-        None
-    };
+            } else {
+                None
+            };
+            Ok::<_, WorkerError>((artifact, index))
+        },
+    )
+    .await??;
     crawlx_storage::chaos::pause("archive.before_manifest_publish").await;
     stores
         .archives

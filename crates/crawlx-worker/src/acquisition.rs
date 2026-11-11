@@ -119,10 +119,16 @@ pub(crate) trait HopAdmission: Send + Sync {
     fn requires_checked_hops(&self) -> bool {
         false
     }
+    /// Actual selected session transport identity; invalid bindings never fall back.
+    fn identity_selection(
+        &self,
+    ) -> Result<Option<crawlx_core::identity_profile::IdentitySelectionV1>, FetchError> {
+        Ok(None)
+    }
 }
 
 /// Project URL evidence through existing userinfo, sensitive-name and literal secret rules.
-fn public_url(
+pub(crate) fn public_url(
     url: &Url,
     controls: &crawlx_core::request_controls::RequestControls,
 ) -> Result<Url, FetchError> {
@@ -208,7 +214,7 @@ pub(crate) async fn fetch_budgeted_once(
 }
 
 /// Cancel a pending governor/transport wait when its pinned parent fence or authority changes.
-async fn watch_authority(admission: &dyn HopAdmission) -> Result<(), FetchError> {
+pub(crate) async fn watch_authority(admission: &dyn HopAdmission) -> Result<(), FetchError> {
     loop {
         tokio::time::sleep(Duration::from_millis(100)).await;
         admission.check_authority().await?;
@@ -278,7 +284,7 @@ async fn fetch_checked(
                         source: Box::new(source),
                     },
                     None => source,
-                })
+                });
             }
         };
         let follow_http = crawlx_fetch::redirect::is_redirect(response.status.as_u16())
@@ -306,7 +312,7 @@ async fn fetch_checked(
                             source: Box::new(source),
                         },
                         None => source,
-                    })
+                    });
                 }
             }
         } else if let Some(policy) = policy.filter(|_| {
@@ -531,6 +537,16 @@ impl AcquisitionBudgetV1 {
         self.attempts = self.attempts.saturating_add(1);
         Ok(remaining)
     }
+    /// Reserve the one service target effect from the existing shared allowance.
+    pub(crate) fn reserve_service_request(&self) -> Result<(), FetchError> {
+        self.requests
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |left| left.checked_sub(1))
+            .map(|_| ())
+            .map_err(|_| FetchError::AcquisitionAllowance)
+    }
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
     pub(crate) fn options(&self, original: &FetchOptions, configured_cap: usize) -> FetchOptions {
         let mut options = original.clone();
         options.max_body_bytes = Some(
@@ -623,9 +639,11 @@ pub(crate) fn parser_pipeline(
     PIPELINE.as_ref()
 }
 
+#[cfg(test)]
 type ContentProjection<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
 /// Run page bytes through the shared versioned parser before any caller persists content.
+#[cfg(test)]
 fn pipeline_document(
     body: &[u8],
     base: &Url,
@@ -674,6 +692,7 @@ fn pipeline_document(
 }
 
 /// Extract with final normalized secret projection before article quality, ranges and digests.
+#[cfg(test)]
 pub(crate) fn extract_document(
     body: &[u8],
     base: &Url,
@@ -696,6 +715,7 @@ pub(crate) fn extract_document(
 }
 
 /// Project actual request and live provider secrets before canonical derived outputs.
+#[cfg(test)]
 pub(crate) fn extract_document_with_secrets(
     body: &[u8],
     base: &Url,
@@ -745,31 +765,65 @@ pub(crate) fn extract_document_with_secrets(
 pub(crate) struct HttpAcquisition {
     pub response: FetchResponse,
     pub metadata: AcquisitionResultV1,
-    pub document: Option<Box<Document>>,
+    pub document: Option<crawlx_core::parser_memory::Budgeted<Box<Document>>>,
 }
 
-/// Redact native extraction input before source ranges/digests are computed.
-/// Retained wire bytes remain separately owned by the producer.
+/// Project native content into admitted bytes before source ranges/digests are computed.
+/// The original checked acquisition Bytes retains its source reservation independently.
 pub(crate) fn extraction_body(
     body: &bytes::Bytes,
     controls: &crawlx_core::request_controls::RequestControls,
     extract: &ExtractOptions,
-) -> bytes::Bytes {
+) -> Result<crawlx_core::parser_memory::Budgeted<bytes::Bytes>, FetchError> {
+    let mut permit = crawlx_core::parser_memory::global().try_reserve(0)?;
     if extract.content.is_none() {
-        return body.clone();
+        return Ok(crawlx_core::parser_memory::Budgeted::new(body.clone(), permit));
     }
-    match crawlx_telemetry::Redactor::new().scrub_bytes(body, controls.secret_values()) {
-        std::borrow::Cow::Borrowed(_) => body.clone(),
-        std::borrow::Cow::Owned(scrubbed) => bytes::Bytes::from(scrubbed),
-    }
+    let projected = crawlx_core::secret::Redactor::new()
+        .scrub_bytes_bounded(
+            body,
+            controls.secret_values(),
+            &mut permit,
+            crawlx_fetch::codec::HARD_MAX_BODY_BYTES,
+        )
+        .map_err(|error| FetchError::AcquisitionParser(Box::new(error)))?;
+    let bytes = projected.map_or_else(|| body.clone(), bytes::Bytes::from);
+    Ok(crawlx_core::parser_memory::Budgeted::new(bytes, permit))
 }
 
+/// Attach admission to legacy external bytes before any projection or parser work.
+/// This accounts already-received source bytes, not the external provider's allocation.
+pub(crate) fn admit_external_body(body: &mut bytes::Bytes) -> Result<(), FetchError> {
+    struct AdmittedSource {
+        bytes: bytes::Bytes,
+        _permit: crawlx_core::parser_memory::BytePermit,
+    }
+    impl AsRef<[u8]> for AdmittedSource {
+        fn as_ref(&self) -> &[u8] {
+            &self.bytes
+        }
+    }
+    let permit = crawlx_core::parser_memory::global().try_reserve(body.len())?;
+    *body = bytes::Bytes::from_owner(AdmittedSource {
+        bytes: body.clone(),
+        _permit: permit,
+    });
+    Ok(())
+}
+
+/// Retain a checked acquisition's hidden byte owner while transferring into the parser.
+/// The zero-byte carrier adds no duplicate charge; the owned Bytes keeps its real permit.
+pub(crate) fn acquired_body(
+    body: &bytes::Bytes,
+) -> Result<crawlx_core::parser_memory::Budgeted<bytes::Bytes>, FetchError> {
+    let carrier = crawlx_core::parser_memory::global().try_reserve(0)?;
+    Ok(crawlx_core::parser_memory::Budgeted::new(body.clone(), carrier))
+}
+
+/// Validate one admitted producer representation through the bounded parser helper.
 #[allow(clippy::too_many_arguments)]
-/// Validate a producer's response using the extractor's existing parsed DOM exactly once.
-/// Keep the owned document heap-placed from the CPU task through acquisition and composition;
-/// returning it inline multiplies large async result temporaries on the executor's poll stack.
 pub(crate) async fn validate_body(
-    body: bytes::Bytes,
+    body: crawlx_core::parser_memory::Budgeted<bytes::Bytes>,
     base: Url,
     content_type: Option<String>,
     headers: Vec<(String, String)>,
@@ -778,9 +832,16 @@ pub(crate) async fn validate_body(
     cpu: &CpuPool,
     controls: &crawlx_core::request_controls::RequestControls,
     captcha: Option<&crawlx_core::captcha::CaptchaSecrets>,
-) -> Result<(ValidationOutcomeV1, Option<Box<Document>>), FetchError> {
+    cancel: &CancellationToken,
+) -> Result<
+    (
+        ValidationOutcomeV1,
+        Option<crawlx_core::parser_memory::Budgeted<Box<Document>>>,
+    ),
+    FetchError,
+> {
     let is_html = content_type.as_deref().is_none_or(|mime| mime.contains("html"))
-        || body.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'<');
+        || body.value().iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'<');
     extract.status = context.target_status.unwrap_or(0);
     extract.headers.clone_from(&headers);
     extract.content_type.clone_from(&content_type);
@@ -791,51 +852,66 @@ pub(crate) async fn validate_body(
             .inc_by(1, &[]);
     }
     let method_head = context.method_head;
-    let controls = controls.clone();
-    let captcha = captcha.cloned();
-    let result = cpu
-        .run(move || {
-            if is_html && !method_head {
-                let parsed = match &captcha {
-                    Some(captcha) => {
-                        extract_document_with_secrets(&body, &base, &extract, &controls, captcha)
-                    }
-                    None if extract.content.is_none() => extract_document(&body, &base, &extract, &controls),
-                    None => Err(crawlx_extract::ExtractError::InvalidContentPolicy(
-                        crawlx_core::CoreError::Invalid {
-                            field: "extract.privacy",
-                            reason: "dynamic-secret registry unavailable".into(),
-                        },
-                    )),
-                };
-                match parsed {
-                    Ok(doc) => (
-                        doc.validation
-                            .clone()
-                            .unwrap_or_else(ValidationOutcomeV1::indeterminate),
-                        Some(Box::new(doc)),
-                    ),
-                    Err(_) => {
-                        let mut outcome = ValidationOutcomeV1::indeterminate();
-                        outcome.signals.push("extraction_parse_limit".to_owned());
-                        (outcome, None)
-                    }
-                }
+    let result = if is_html && !method_head {
+        if extract.content.is_some() && captcha.is_none() {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        let maximum = crawlx_extract::isolated::MAX_SECRET_VALUES
+            .checked_mul(std::mem::size_of::<String>())
+            .and_then(|bytes| bytes.checked_add(crawlx_extract::isolated::MAX_SECRET_BYTES))
+            .ok_or(FetchError::AcquisitionAllowance)?;
+        let dynamic = captcha
+            .map(|registry| registry.literal_snapshot_admitted(maximum))
+            .transpose()
+            .map_err(|_| FetchError::AcquisitionUnavailable)?;
+        let literals = dynamic
+            .as_ref()
+            .into_iter()
+            .flat_map(|snapshot| snapshot.value().iter().map(String::as_str));
+        let secrets = crawlx_extract::isolated::IsolatedSecrets::new(controls.secret_values(), literals)
+            .map_err(|error| FetchError::AcquisitionParser(Box::new(error)))?;
+        let parser = crate::isolated_parser::shared()
+            .map_err(|error| FetchError::AcquisitionParser(Box::new(error)))?;
+        let page = Box::pin(parser.extract_page(
+            cpu,
+            body,
+            crate::isolated_parser::PageRequest {
+                base,
+                options: extract,
+                engine: crawlx_extract::isolated::Engine::Pipeline,
+                secrets,
+            },
+            cancel,
+        ))
+        .await
+        .map_err(|error| {
+            if cancel.is_cancelled() {
+                FetchError::AcquisitionCancelled
             } else {
-                (
-                    validate_acquisition(&ValidationInput {
-                        context: &context,
-                        content_type: content_type.as_deref(),
-                        headers: &headers,
-                        body: &body,
-                        document: None,
-                    }),
-                    None,
-                )
+                FetchError::AcquisitionParser(Box::new(error))
             }
+        })?;
+        let outcome = page
+            .document
+            .value()
+            .validation
+            .clone()
+            .unwrap_or_else(ValidationOutcomeV1::indeterminate);
+        (outcome, Some(page.document))
+    } else {
+        cpu.run(move || {
+            let outcome = validate_acquisition(&ValidationInput {
+                context: &context,
+                content_type: content_type.as_deref(),
+                headers: &headers,
+                body: body.value(),
+                document: None,
+            });
+            (outcome, None)
         })
         .await
-        .map_err(|_| FetchError::AcquisitionUnavailable)?;
+        .map_err(|_| FetchError::AcquisitionUnavailable)?
+    };
     if !method_head && result.0.content_accepted {
         crawlx_telemetry::Metrics::global()
             .counter("crawlx_acquisition_accepted_document_total")
@@ -863,10 +939,16 @@ pub(crate) fn http_metadata(
     requested: &Url,
     response: &FetchResponse,
     fetcher: &Fetcher,
+    identity: Option<&crawlx_core::identity_profile::IdentitySelectionV1>,
 ) -> AcquisitionResultV1 {
-    let implementation = match fetcher.config().tls_impersonation {
-        crawlx_core::tls::TlsImpersonation::Off => "crawlx-fetch/reqwest-rustls",
-        _ => "crawlx-fetch/wreq-boringssl-synthetic",
+    let identity = identity.or(fetcher.config().identity_profile.as_ref());
+    let implementation = if identity.is_some() {
+        crawlx_core::identity_profile::IdentityProfileV1::pinned_chromium().implementation
+    } else {
+        match fetcher.config().tls_impersonation {
+            crawlx_core::tls::TlsImpersonation::Off => "crawlx-fetch/reqwest-rustls",
+            _ => "crawlx-fetch/wreq-boringssl-synthetic",
+        }
     };
     let mut metadata = AcquisitionResultV1::new(
         run,
@@ -875,6 +957,20 @@ pub(crate) fn http_metadata(
         Digest::of("crawlx/canonical-url/v1", requested.as_str().as_bytes()),
         BackendCapabilitiesV1::native_http(implementation, env!("CARGO_PKG_VERSION")),
     );
+    if let Some(selection) = identity {
+        let profile = crawlx_core::identity_profile::IdentityProfileV1::pinned_chromium();
+        metadata.backend.identity_profile = Some(selection.profile_digest);
+        metadata.backend.limitations = profile
+            .limitations
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
+        metadata.session = Some(selection.session.session);
+        metadata.session_generation = Some(selection.generation);
+    }
+    metadata.wire_bytes = response.wire_bytes;
+    metadata.dns_report.clone_from(&response.dns_report);
+    metadata.connection.negotiated_protocol = response.negotiated_protocol;
     metadata.final_url = Some(response.final_url.clone());
     metadata.final_url_evidence = UrlEvidenceV1::Observed;
     metadata.target_status = Some(response.status.as_u16());
@@ -1027,7 +1123,11 @@ pub(crate) async fn fetch_native(
         if !checked_hops {
             budget.charge_bytes(response.body.len());
         }
-        let mut metadata = http_metadata(run, tenant, url, &response, fetcher);
+        let identity = admission
+            .map(|authority| authority.identity_selection())
+            .transpose()?
+            .flatten();
+        let mut metadata = http_metadata(run, tenant, url, &response, fetcher, identity.as_ref());
         metadata.meta_refresh = refresh_evidence;
         metadata.meta_refresh_policy.clone_from(&policy.meta_refresh);
         if policy.meta_refresh.is_some() {
@@ -1053,7 +1153,7 @@ pub(crate) async fn fetch_native(
         let validation = tokio::select! {
             biased;
             () = cancel.cancelled() => Err(FetchError::AcquisitionCancelled),
-            result = tokio::time::timeout_at(budget.deadline, validate_body(extraction_body(&response.body, &fetcher.config().controls, extract), response.final_url.clone(), response.content_type.clone(), crate::url_plane::header_pairs(&response.headers), facts, extract.clone(), cpu, &fetcher.config().controls, captcha)) => result.map_err(|_| FetchError::AcquisitionDeadline).and_then(|result| result),
+            result = tokio::time::timeout_at(budget.deadline, validate_body(acquired_body(&response.body)?, response.final_url.clone(), response.content_type.clone(), crate::url_plane::header_pairs(&response.headers), facts, extract.clone(), cpu, &fetcher.config().controls, captcha, cancel)) => result.map_err(|_| FetchError::AcquisitionDeadline).and_then(|result| result),
         };
         let mut validation = validation.map_err(|source| match &metadata.meta_refresh {
             Some(evidence) => FetchError::MetaRefresh {
@@ -1067,7 +1167,7 @@ pub(crate) async fn fetch_native(
         if let Some(article) = validation
             .1
             .as_mut()
-            .and_then(|document| document.article.as_mut())
+            .and_then(|document| document.value_mut().article.as_mut())
         {
             article.acquisition_request_digest = Some(metadata.request_digest);
             article.source_artifact.clone_from(&metadata.wire_body);
@@ -1139,9 +1239,38 @@ pub(crate) async fn admit_runtime(
         .acquisition
         .as_ref()
         .is_some_and(|policy| policy.backend_ids.iter().any(|id| id == "native_browser"));
-    let http = BackendCapabilitiesV1::native_http("crawlx-fetch/native", env!("CARGO_PKG_VERSION"));
+    let mut http = BackendCapabilitiesV1::native_http("crawlx-fetch/native", env!("CARGO_PKG_VERSION"));
+    if let Some(selected) = rc.crawl.fetch.identity_profile {
+        let profile = crawlx_core::identity_profile::IdentityProfileV1::pinned_chromium();
+        if profile.digest().map_err(FetchError::from)? != selected {
+            return Err(WorkerError::AcquisitionUnavailable(
+                "http identity profile not installed",
+            ));
+        }
+        http.implementation = profile.implementation.to_owned();
+        http.identity_profile = Some(selected);
+        http.limitations = profile
+            .limitations
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect();
+    }
     let mut capabilities = vec![http];
-    let mut unavailable = false;
+    let service = rc
+        .protocol_registry
+        .as_deref()
+        .map(|registry| registry.acquisition_capability())
+        .transpose()?
+        .flatten();
+    let required_service = rc
+        .crawl
+        .acquisition
+        .as_ref()
+        .is_some_and(|policy| policy.backend_ids.iter().any(|id| id == "acquisition_service"));
+    let mut unavailable = required_service && service.is_none();
+    if let Some(service) = service {
+        capabilities.push(service);
+    }
     if required_browser {
         let browser = if cfg.renderer.is_some() || operator_backend || cfg.launch.cdp_ws_url.is_some() {
             BackendCapabilitiesV1::native_browser_unavailable("operator_backend_capability_unattested")
@@ -1172,7 +1301,7 @@ pub(crate) async fn admit_runtime(
                 _ => BackendCapabilitiesV1::native_browser_unavailable("run_context_probe_failed"),
             }
         };
-        unavailable = !browser.available;
+        unavailable |= !browser.available;
         capabilities.push(browser);
     }
     let registry: Arc<dyn WorkerRegistry> = if let Some(pg) = &rc.stores.pg {
@@ -1189,7 +1318,7 @@ pub(crate) async fn admit_runtime(
         registry
             .publish_local_acquisition_capabilities(rc.worker, rc.run, &capabilities)
             .await?;
-    } else if required_browser {
+    } else if required_browser || required_service {
         // Preserve the startup browser observation for unrelated HTTP-only jobs.
         registry
             .publish_acquisition_capabilities(rc.worker, &capabilities)
@@ -1200,7 +1329,7 @@ pub(crate) async fn admit_runtime(
         .await?;
     if unavailable {
         return Err(WorkerError::AcquisitionUnavailable(
-            "required native browser unavailable",
+            "required acquisition backend unavailable",
         ));
     }
     Ok(())
@@ -1368,5 +1497,116 @@ mod tests {
             budget.reserve(&CancellationToken::new()).unwrap(),
             Duration::from_millis(29_750)
         );
+    }
+
+    #[tokio::test]
+    async fn coherent_identity_challenge_retries_and_cancel_share_one_parent_allowance() {
+        use axum::{routing::get, Router};
+        use crawlx_core::identity_profile::{IdentityProfileV1, IdentitySelectionV1};
+        use std::sync::atomic::AtomicUsize;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let third_started = Arc::new(tokio::sync::Semaphore::new(0));
+        let route_hits = Arc::clone(&hits);
+        let route_started = Arc::clone(&third_started);
+        let app = Router::new().route(
+            "/",
+            get(move |headers: http::HeaderMap| {
+                let hits = Arc::clone(&route_hits);
+                let started = Arc::clone(&route_started);
+                async move {
+                    assert_eq!(
+                        headers.get(http::header::USER_AGENT).unwrap(),
+                        crawlx_core::identity_profile::NATIVE_USER_AGENT
+                    );
+                    if hits.fetch_add(1, Ordering::AcqRel) >= 2 {
+                        started.add_permits(1);
+                        std::future::pending::<()>().await;
+                    }
+                    (
+                        [("content-type", "text/html")],
+                        "<form id=challenge-form>Verify you are human</form>",
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let profile = IdentityProfileV1::pinned_chromium();
+        let id = "00000000-0000-0000-0000-000000000001";
+        let session: crawlx_core::session_binding::SessionIdentityV1 =
+            serde_json::from_value(serde_json::json!({
+                "tenant":id,"run":id,"session":id,"principal":crawlx_core::PrincipalId::anonymous(),
+                "acquisition":Digest::of("test/acquisition",b"challenge"),
+                "backend_build":profile.backend_build_digest(),
+                "egress":Digest::of("test/egress",b"challenge"),
+                "identity_policy":profile.digest().unwrap(),"profile":null,
+            }))
+            .unwrap();
+        let selection = IdentitySelectionV1::new(session, 1).unwrap();
+        let run = selection.session.run;
+        let tenant = selection.session.tenant;
+        let mut config = crawlx_fetch::FetchConfig {
+            identity_profile: Some(selection),
+            ..crawlx_fetch::FetchConfig::default()
+        };
+        config.governor.base_delay = Duration::ZERO;
+        config.retry.max_retries = 0;
+        let fetcher = Fetcher::new(
+            config,
+            Arc::new(crawlx_policy::egress::EgressPolicy::new(true).with_seed_port(&url)),
+            Arc::new(crawlx_fetch::StaticResolver::new()),
+        )
+        .unwrap();
+        let mut policy = AcquisitionPolicyV1::default();
+        policy.max_attempts = 3;
+        policy.max_network_requests = 3;
+        policy.max_decoded_bytes = 8192;
+        policy.retry_on = vec![RetryClassV1::Challenge];
+        let mut budget = AcquisitionBudgetV1::new(&policy).unwrap();
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        let canceller = tokio::spawn(async move {
+            third_started.acquire().await.unwrap().forget();
+            stop.cancel();
+        });
+        let cpu = CpuPool::new(&crate::runtime::RuntimeConfig::default());
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            fetch_native(
+                &fetcher,
+                &url,
+                &FetchOptions::default(),
+                &policy,
+                &mut budget,
+                &cancel,
+                &ExtractOptions::default(),
+                &cpu,
+                run,
+                tenant,
+                &|_, _| {},
+                false,
+                None,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(FetchError::AcquisitionCancelled)));
+        assert_eq!(hits.load(Ordering::Acquire), 3);
+        assert_eq!(budget.usage().attempts_reserved, 3);
+        assert_eq!(budget.usage().network_requests_reserved, 3);
+        assert_eq!(
+            budget.summaries[0].category,
+            crawlx_core::acquisition::ValidationCategoryV1::Challenge
+        );
+        assert_eq!(
+            budget.summaries[1].category,
+            crawlx_core::acquisition::ValidationCategoryV1::Challenge
+        );
+        canceller.await.unwrap();
+        server.abort();
     }
 }

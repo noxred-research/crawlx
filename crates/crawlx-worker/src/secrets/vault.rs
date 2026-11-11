@@ -13,6 +13,10 @@ use std::time::Duration;
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Resolves `vault://<mount>/<path>#<key>` references from a KV v2 engine.
+#[allow(
+    clippy::disallowed_types,
+    reason = "Vault resolver owns the raw reqwest client"
+)]
 #[derive(Clone)]
 pub struct VaultResolver {
     addr: String,
@@ -65,6 +69,10 @@ impl VaultResolver {
     ///
     /// # Errors
     /// [`SecretError::Client`] when the HTTP client cannot be built.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "Vault resolver builds the raw reqwest client"
+    )]
     pub fn new(addr: impl Into<String>, token: String) -> Result<Self, SecretError> {
         let mut addr = addr.into();
         while addr.ends_with('/') {

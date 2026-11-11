@@ -6,6 +6,10 @@
 use super::{json_key, strip_scheme, SecretError};
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
+#[allow(
+    clippy::disallowed_types,
+    reason = "managed secret adapter imports the raw SDK client"
+)]
 use aws_sdk_secretsmanager::Client;
 use aws_smithy_http_client::tls;
 use crawlx_core::secret::{CredentialRef, SecretOr, SecretResolver};
@@ -24,6 +28,10 @@ const CREDENTIAL_SOURCE_VARS: [&str; 5] = [
 ];
 
 /// Resolves `cloud-sm://<secret-id>[#<json-key>]` references.
+#[allow(
+    clippy::disallowed_types,
+    reason = "managed secret adapter owns the raw SDK client"
+)]
 #[derive(Clone)]
 pub struct CloudSecretsResolver {
     client: Client,
@@ -41,6 +49,10 @@ impl fmt::Debug for CloudSecretsResolver {
 impl CloudSecretsResolver {
     /// Resolver over an already configured SDK client.
     #[must_use]
+    #[allow(
+        clippy::disallowed_types,
+        reason = "managed secret adapter accepts the raw SDK client"
+    )]
     pub fn with_client(client: Client) -> Self {
         let region = client.config().region().map(ToString::to_string);
         Self { client, region }
@@ -61,6 +73,10 @@ impl CloudSecretsResolver {
     }
 
     // Keep SDK construction state out of the unconfigured path and its callers.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "managed secret adapter constructs the raw SDK client"
+    )]
     fn from_configured_env() -> impl Future<Output = Self> + Send {
         Box::pin(async {
             let http = aws_smithy_http_client::Builder::new()
@@ -145,6 +161,10 @@ mod tests {
     use super::*;
     use aws_sdk_secretsmanager::config::{Credentials, Region};
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "test fixture builds an offline raw SDK client"
+    )]
     fn offline_client() -> Client {
         let cfg = aws_sdk_secretsmanager::Config::builder()
             .behavior_version(BehaviorVersion::latest())

@@ -528,6 +528,10 @@ fn spawn_serve(dir: &Path, port: u16, key: &str, fc_keys: FcKeys) -> tokio::proc
 }
 
 /// `GET path` with `Authorization: Bearer key`; the HTTP status.
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn get_status(client: &reqwest::Client, port: u16, path: &str, key: &str) -> u16 {
     client
         .get(format!("http://127.0.0.1:{port}{path}"))
@@ -552,6 +556,10 @@ fn free_port() -> u16 {
 /// serves the facade to that `fc-` key (and never a native `/v1` route); without either, the
 /// bootstrap key is refused at startup (docs/integrations.md, "Enable `fc-` keys").
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn serve_bootstraps_fc_keys_with_the_flag_or_the_environment() {
     let key = format!("fc-{}", "0123456789abcdef".repeat(2));
     for fc_keys in [FcKeys::Flag, FcKeys::Env] {

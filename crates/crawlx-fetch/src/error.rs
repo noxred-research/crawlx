@@ -8,6 +8,10 @@ use thiserror::Error;
 /// Source error from the selected HTTP/TLS transport.
 #[derive(Debug, Error)]
 #[non_exhaustive]
+#[allow(
+    clippy::disallowed_types,
+    reason = "transport error envelope preserves native source chains without exposing clients"
+)]
 pub enum HttpError {
     /// Default rustls-backed reqwest transport.
     #[error(transparent)]
@@ -32,6 +36,21 @@ pub enum FetchError {
     /// Parent cancelled the running acquisition.
     #[error("acquisition cancelled")]
     AcquisitionCancelled,
+    /// Caller header admission refused the response before its body was polled.
+    #[error("response skipped by extension header gate")]
+    ExtensionHeaderSkipped,
+    /// Shared byte admission refused body or decoder memory before allocation.
+    #[error("response memory admission failed: {0}")]
+    MemoryAdmission(#[from] crawlx_core::parser_memory::ByteAdmissionError),
+    /// Frozen HTTP identity profile is unavailable or cannot be applied.
+    #[error("http identity unavailable: {0}")]
+    Identity(#[from] crawlx_core::identity_profile::IdentityProfileError),
+    /// Authenticated acquisition service refused or failed without hidden fallback.
+    #[error("acquisition service failed: {0}")]
+    AcquisitionService(#[from] crate::acquisition_service::AcquisitionServiceError),
+    /// Isolated parser admission, process or protocol failed; never reclassified as valid content.
+    #[error("acquisition parser failed")]
+    AcquisitionParser(#[source] Box<dyn std::error::Error + Send + Sync>),
     /// Required registered backend or policy is unavailable.
     #[error("acquisition capability unavailable")]
     AcquisitionUnavailable,
@@ -175,6 +194,11 @@ impl FetchError {
             Self::AcquisitionAllowance => "acquisition_allowance",
             Self::AcquisitionDeadline => "acquisition_deadline",
             Self::AcquisitionCancelled => "acquisition_cancelled",
+            Self::ExtensionHeaderSkipped => "extension_header_skipped",
+            Self::MemoryAdmission(_) => "memory_admission",
+            Self::Identity(_) => "http_identity_unavailable",
+            Self::AcquisitionService(_) => "acquisition_service",
+            Self::AcquisitionParser(_) => "acquisition_parser",
             Self::AcquisitionUnavailable => "acquisition_unavailable",
             Self::MetaRefresh { .. } => "meta_refresh_failed",
             Self::MetaRefreshTarget { .. } => "meta_refresh_target",
@@ -200,6 +224,10 @@ impl FetchError {
         }
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "transport adapter maps native errors to the checked fetch error envelope"
+    )]
     pub(crate) fn from_reqwest(e: reqwest::Error) -> Self {
         if e.is_timeout() {
             Self::Timeout(e.into())
@@ -208,6 +236,10 @@ impl FetchError {
         }
     }
 
+    #[allow(
+        clippy::disallowed_types,
+        reason = "transport adapter maps native errors to the checked fetch error envelope"
+    )]
     pub(crate) fn from_wreq(e: wreq::Error) -> Self {
         if e.is_timeout() {
             Self::Timeout(e.into())

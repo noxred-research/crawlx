@@ -33,6 +33,7 @@ use crawlx_core::observation::{
     RuntimeLocator, SettleReport, TabInfo,
 };
 use crawlx_core::page_op::{PageOp, PageOpResult, SelectorState};
+use crawlx_core::parser_memory::{self, AdmittedBytes, AdmittedText};
 use crawlx_core::traffic::{TrafficEvent, TrafficOrigin};
 use crawlx_core::{
     BlockedNavigation, BrowserBackend, BrowserContext, BrowserError, CanonicalUrl, Clock, ContextConfig,
@@ -45,6 +46,29 @@ use std::fmt;
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use url::Url;
+
+/// Copy `text` into an immutable shared document, reserving its bytes from the process-wide
+/// budget before the copy is allocated.
+fn charged_text(text: &str) -> Result<AdmittedText, BrowserError> {
+    let mut permit = parser_memory::global().try_reserve(text.len())?;
+    let mut copy = String::new();
+    copy.try_reserve_exact(text.len())
+        .map_err(|e| BrowserError::Io(e.to_string()))?;
+    copy.push_str(text);
+    permit.grow_to(copy.capacity())?;
+    Ok(AdmittedText::new(copy, permit))
+}
+
+/// Copy `bytes` into immutable shared bytes, reserving them before the copy is allocated.
+fn charged_bytes(bytes: &[u8]) -> Result<AdmittedBytes, BrowserError> {
+    let mut permit = parser_memory::global().try_reserve(bytes.len())?;
+    let mut copy = Vec::new();
+    copy.try_reserve_exact(bytes.len())
+        .map_err(|e| BrowserError::Io(e.to_string()))?;
+    copy.extend_from_slice(bytes);
+    permit.grow_to(copy.capacity())?;
+    Ok(AdmittedBytes::new(copy, permit))
+}
 
 /// `2026-01-01T00:00:00Z` in Unix milliseconds.
 const DEFAULT_START_MS: i64 = 1_767_225_600_000;
@@ -1317,7 +1341,7 @@ impl Inner {
                 download: t.download,
             })
             .collect();
-        bundle.html = Some(tab.html.clone());
+        bundle.html = Some(charged_text(&tab.html)?);
         bundle.title = tab.title.clone();
         bundle.discovered_urls = discovered_urls;
 
@@ -1330,11 +1354,11 @@ impl Inner {
             });
             let blob = serde_json::to_vec(&snapshot).map_err(|e| BrowserError::Io(e.to_string()))?;
             bytes += u64::try_from(blob.len()).unwrap_or(0);
-            bundle = bundle.with_raw_artifact("dom_snapshot", blob);
+            bundle = bundle.with_raw_artifact("dom_snapshot", charged_bytes(&blob)?);
         }
         if spec.screenshot {
             bytes += u64::try_from(PLACEHOLDER_PNG.len()).unwrap_or(0);
-            bundle = bundle.with_raw_artifact("screenshot", PLACEHOLDER_PNG.to_vec());
+            bundle = bundle.with_raw_artifact("screenshot", charged_bytes(&PLACEHOLDER_PNG)?);
         }
         bundle.cost = ObservationCost {
             cdp_calls: 1
@@ -1366,10 +1390,18 @@ impl Inner {
     /// `text` matches a node whose name contains the expression. Hidden nodes are still
     /// returned (visibility is `revalidate`'s job, as in the real adapter).
     fn resolve_selector(&self, selector: &DomSelector) -> Option<RuntimeLocator> {
-        let tab = self.tab(&self.current).ok()?;
+        self.resolve_selector_all(selector, 1).into_iter().next()
+    }
+
+    /// Locators of up to `limit` nodes matching `selector`, in document order, with the
+    /// matching rules of [`Self::resolve_selector`].
+    fn resolve_selector_all(&self, selector: &DomSelector, limit: usize) -> Vec<RuntimeLocator> {
+        let Ok(tab) = self.tab(&self.current) else {
+            return Vec::new();
+        };
         let expr = selector.expr.trim();
-        if expr.is_empty() {
-            return None;
+        if expr.is_empty() || limit == 0 {
+            return Vec::new();
         }
         let attr_selector = |e: &str| -> Option<(String, String)> {
             let inner = e.strip_prefix('[')?.strip_suffix(']')?;
@@ -1415,7 +1447,8 @@ impl Inner {
         order
             .iter()
             .filter_map(|&i| tab.nodes.get(i))
-            .find(|n| matches(n))
+            .filter(|n| matches(n))
+            .take(limit)
             .map(|n| RuntimeLocator {
                 tab: tab.id.clone(),
                 frame: FrameId(MAIN_FRAME.to_owned()),
@@ -1424,6 +1457,7 @@ impl Inner {
                 ax_node_id: Some(AxNodeId(n.spec.key.clone())),
                 epoch: tab.epoch,
             })
+            .collect()
     }
 
     fn revalidate(&self, locator: &RuntimeLocator, expected: ObservationEpoch) -> Revalidation {
@@ -2436,7 +2470,7 @@ impl BrowserContext for FakeContext {
                 let inner = self.inner.lock();
                 let tab = inner.tab(&inner.current)?;
                 Ok(PageOpResult::Html {
-                    html: tab.html.clone(),
+                    html: charged_text(&tab.html)?,
                     url: tab.url.clone(),
                 })
             }
@@ -2466,6 +2500,14 @@ impl BrowserContext for FakeContext {
                     }
                     tokio::time::sleep(remaining.min(std::time::Duration::from_millis(100))).await;
                 }
+            }
+            PageOp::ResolveAll { selector, limit } => {
+                let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+                Ok(PageOpResult::Locators(
+                    self.inner
+                        .lock()
+                        .resolve_selector_all(&DomSelector::css(selector), limit),
+                ))
             }
             other => Err(BrowserError::Unsupported(format!(
                 "page operation {}",
@@ -3217,7 +3259,7 @@ mod tests {
         assert_eq!(after.html.as_deref(), Some(html));
         assert!(matches!(
             rig.ctx.page_op(PageOp::Html).await.unwrap(),
-            PageOpResult::Html { html: actual, .. } if actual == html
+            PageOpResult::Html { html: actual, .. } if actual.as_str() == html
         ));
         assert_eq!(rig.handle.navigations(), vec!["https://example.test/"]);
     }

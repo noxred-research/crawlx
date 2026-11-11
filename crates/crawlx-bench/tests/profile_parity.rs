@@ -493,6 +493,10 @@ struct Api {
     _dir: tempfile::TempDir,
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn start_api() -> Api {
     let port = {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -533,6 +537,10 @@ async fn start_api() -> Api {
 }
 
 impl Api {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "owned loopback fixture transport boundary"
+    )]
     async fn post_crawl(&self, body: &Value) -> (reqwest::StatusCode, Value) {
         let response = reqwest::Client::new()
             .post(format!("{}/v1/crawls", self.base))

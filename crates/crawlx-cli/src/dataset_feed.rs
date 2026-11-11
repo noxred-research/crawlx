@@ -284,6 +284,10 @@ fn endpoint(args: &FeedImportArgs) -> anyhow::Result<Url> {
     Ok(url)
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "authenticated dataset append takes the raw reqwest client"
+)]
 async fn append(
     http: &reqwest::Client,
     endpoint: &Url,
@@ -337,6 +341,10 @@ async fn append(
 ///
 /// # Errors
 /// Rejects invalid source/template/checkpoints, changed sources, API policy/CAS failures, and I/O errors.
+#[allow(
+    clippy::disallowed_types,
+    reason = "authenticated dataset append builds the raw reqwest client"
+)]
 pub async fn run(args: FeedImportArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     let endpoint = endpoint(&args)?;
     let http = reqwest::Client::builder()

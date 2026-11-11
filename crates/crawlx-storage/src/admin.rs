@@ -443,9 +443,12 @@ fn data_worker_row(
 fn validate_required_backends(required: &[String]) -> Result<(), StoreError> {
     if required.is_empty()
         || required.len() > 4
-        || required
-            .iter()
-            .any(|id| !matches!(id.as_str(), "native_http" | "native_browser"))
+        || required.iter().any(|id| {
+            !matches!(
+                id.as_str(),
+                "native_http" | "native_browser" | "acquisition_service"
+            )
+        })
     {
         return Err(StoreError::Serialization(
             "invalid required acquisition backend IDs".to_owned(),

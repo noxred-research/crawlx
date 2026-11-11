@@ -124,6 +124,10 @@ type OtlpLog = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
 /// An HTTP/2 server that records every gRPC request body and answers `grpc-status: 0` with an
 /// empty response message, which is what `ExportTraceServiceResponse` / `ExportMetricsServiceResponse`
 /// encode to.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn otlp_stub() -> (String, OtlpLog) {
     let log: OtlpLog = Arc::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -265,6 +269,10 @@ fn scan(source: &str, haystack: &[u8], hits: &mut Vec<String>) {
 
 /// Real cookie-based fixture authentication; G24 stays behind this gateway.
 /// Registration is not authentication and must not be used to bypass its safety gate.
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 async fn authenticated_gym(
     gym: &GymHandle,
 ) -> (
@@ -363,6 +371,10 @@ async fn gym() -> GymHandle {
     GymServer::start("127.0.0.1:0".parse().unwrap()).await.unwrap()
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback fixture transport boundary"
+)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn canary_credential_reaches_no_store_sink_export_or_log() {
     provider_debug_never_exposes_credentials();
@@ -759,7 +771,7 @@ async fn scrape_canary(fake_s3: &FakeS3, hits: &mut Vec<String>) {
                         "item": format!("safe item {CANARY_PASSWORD}")
                     });
                     axum::Json(json!({
-                        "choices": [{"message": {"content": value.to_string()}}],
+                        "choices": [{"message": {"content": value.to_string()}, "finish_reason":"stop"}],
                         "usage": {"prompt_tokens": 5, "completion_tokens": 3}
                     }))
                 }
@@ -876,6 +888,10 @@ async fn scrape_canary(fake_s3: &FakeS3, hits: &mut Vec<String>) {
             assert_eq!(summary["messages"][1]["content"], expected);
             let expected_wire = json!({
                 "model": "canary",
+                "max_tokens": crawlx_model::llm::extractor::CompletionLimits::default()
+                    .max_output_tokens()
+                    .get(),
+                "stream": false,
                 "temperature": 0,
                 "response_format": {
                     "type": "json_schema",

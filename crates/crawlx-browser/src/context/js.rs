@@ -264,6 +264,45 @@ pub const READ_STORAGE: &str = r#"(() => {
   return { origin: location.origin, local: dump(window.localStorage), session: dump(window.sessionStorage) };
 })()"#;
 
+#[doc = "Strict custody snapshot; denied reads return no storage or exception text."]
+pub const READ_PROFILE_STORAGE: &str = r#"(() => {
+  try {
+    const maxChars = 1048576;
+    const maxEntries = 4096;
+    const origin = location.origin;
+    if (typeof origin !== 'string') return { denied: true };
+    if (!origin || origin === 'null') {
+      return location.href === 'about:blank'
+        ? { origin, blank: true } : { denied: true };
+    }
+    let chars = origin.length;
+    let entries = 0;
+    if (chars > maxChars) return { denied: true };
+    const dump = (storage) => {
+      const length = storage.length;
+      if (!Number.isSafeInteger(length) || length < 0 || length > maxEntries - entries) {
+        throw new Error();
+      }
+      entries += length;
+      const out = [];
+      for (let i = 0; i < length; i++) {
+        const key = storage.key(i);
+        if (typeof key !== 'string' || key.length > maxChars - chars) throw new Error();
+        chars += key.length;
+        const value = storage.getItem(key);
+        if (typeof value !== 'string' || value.length > maxChars - chars) throw new Error();
+        chars += value.length;
+        out.push([key, value]);
+      }
+      if (storage.length !== length) throw new Error();
+      return out.sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+    };
+    return { origin, local: dump(window.localStorage), session: dump(window.sessionStorage) };
+  } catch (_) {
+    return { denied: true };
+  }
+})()"#;
+
 /// Scroll position of the page in whole CSS pixels: `{ top, height, viewport }` (offset of the
 /// viewport top, document height, viewport height). Used by the lazy-content scroll.
 pub const SCROLL_METRICS: &str = r#"(() => {

@@ -72,6 +72,8 @@ pub mod form_fill;
 pub mod forms;
 pub mod handlers;
 pub mod images;
+pub mod isolated;
+pub mod isolated_language;
 pub mod item_export;
 pub mod item_loader;
 pub mod kb;
@@ -85,6 +87,7 @@ pub mod metadata;
 pub mod page_type;
 pub mod parse;
 pub mod parse_budget;
+pub mod parser_policy;
 pub mod pipeline;
 pub mod readability;
 pub mod recipe;
@@ -92,6 +95,8 @@ pub mod regex_builtins;
 pub mod secret_validation;
 pub mod secrets;
 pub mod serialize;
+pub mod source_policy;
+pub mod source_projection;
 pub mod tables;
 pub mod technologies;
 pub mod text;
@@ -126,6 +131,9 @@ type StringProjection<'a> = dyn Fn(&str) -> Option<String> + 'a;
 /// Errors of the extractor.
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractError {
+    /// The bounded owned parser process failed without exposing source bytes.
+    #[error(transparent)]
+    Isolated(#[from] isolated::IsolatedError),
     /// The input exceeds a resource limit.
     #[error("input too large: {what} {actual} exceeds limit {limit}")]
     TooLarge {
@@ -781,6 +789,20 @@ impl Extractor {
             }
         };
 
+        // Same owned tree; finite count/work/anchor caps are explicit truncation, never refetch.
+        let (source_hops, source_hops_truncated) = source_policy::hops(
+            &doc,
+            &base,
+            source_policy::DEFAULT_MAX_HOPS,
+            source_policy::DEFAULT_MAX_HOP_OPERATIONS,
+            source_policy::DEFAULT_MAX_ANCHOR_BYTES,
+        )
+        .map_err(|_| ExtractError::TooLarge {
+            what: "source hop policy",
+            limit: source_policy::DEFAULT_MAX_HOPS,
+            actual: source_policy::DEFAULT_MAX_HOPS.saturating_add(1),
+        })?;
+        let source_hops = source_policy::project_hops(source_hops, project);
         let dedupe_commit = dedupe_ctx.and_then(dedupe::Context::into_commit);
         Ok(Document {
             title: head.title,
@@ -803,6 +825,8 @@ impl Extractor {
             discovered_endpoints: discovery.endpoints,
             discovery_unresolved: discovery.unresolved,
             discovery_unresolved_dropped: discovery.unresolved_dropped,
+            source_hops,
+            source_hops_truncated,
             article,
             comments,
             validation,

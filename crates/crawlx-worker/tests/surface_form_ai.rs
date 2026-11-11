@@ -296,7 +296,7 @@ async fn the_call_cap_stops_decisions_without_failing_them() {
 async fn chat_completions_server(reply: &Value) -> MockServer {
     let server = MockServer::start().await;
     let body = json!({
-        "choices": [{ "message": { "content": reply.to_string() } }],
+        "choices": [{ "message": { "content": reply.to_string() }, "finish_reason":"stop" }],
         "usage": { "prompt_tokens": 11, "completion_tokens": 4 },
     });
     Mock::given(method("POST"))

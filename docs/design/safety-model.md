@@ -264,9 +264,13 @@ isolation is enforced by PostgreSQL row-level security and a restricted API data
 
 ## Current limitations
 
-- Approvals: the kernel enforces the approval protocol, but its approval store is in-process. The
-  API has an approval-decision route, but a decision made through it does not yet reach the kernel's
-  store, so treat `approval_required` as `deny` in practice.
+- Approval decisions reach the worker through a durable single-use bridge. The worker verifies
+  tenant, run, session, action, epoch and live lease before consumption; stale or revoked decisions
+  remain denied. A recorded API decision alone never authorizes a different action. Every parked
+  action owns its own request, bound to the exact observation epoch it was requested at. A
+  decision that arrives after the page changed is stale: the session parks the action again at the
+  new epoch with a new request. After parking a request the session waits a few observations for
+  an immediate decision before it executes any other action.
 - The kernel does not run without an audit sink attached; the in-process worker attaches an
   in-memory log, and the durable record is the `safety_decisions` row.
 - Robots is not consulted for browser subresources and frames.
@@ -278,3 +282,33 @@ isolation is enforced by PostgreSQL row-level security and a restricted API data
   requests, and on a 10 s floor at most about six within the 60 s deadline. A durable fix
   (per-origin deferral without frontier churn) is open on
   [#35](https://github.com/noxred-research/crawlx/issues/35).
+
+## Local interactive control and namespace deployment
+
+Interactive profile control is a loopback-only authenticated capability. The API and
+worker must share the exact local registry instance; separate deployments report it
+unavailable. Requests bind tenant, run, session, generation, current lease fence and
+API principal, with exact Origin/Host checks and `X-CrawlX-Interactive: 1`. Manual
+input still uses fresh candidate observation, the safety kernel, reviewer approvals
+where required, and the action journal. Browser control ports and login values are
+never exposed. Structured profile storage uses encrypted custody and fixed retention.
+
+The screencast channel currently emits only bounded ephemeral suppression statuses.
+Unproven ordinary-page privacy or secret input suppresses before screenshot capture;
+no pixel bytes, durable frames or replay stream are claimed.
+
+`CRAWLX_EGRESS_MODE=netns` selects the operator's verified namespace helper. Fresh
+owned headless Chromium uses only isolated proxy/control relays, with capability
+clearing and process cleanup checks. Missing prerequisites fail closed. The source
+implementation and negative fixtures do not constitute privileged host/CNI deployment
+evidence; operators must supply that proof.
+
+Robots intentionally covers main-frame document navigation and redirects, not every
+subresource or embedded frame. Independent authorization, scope and address checks
+still govern mediated traffic. CONNECT cannot inspect encrypted URL paths and is
+not universal robots enforcement.
+
+Private-host permission intersects exact signed origins, prefixes and networks with
+every caller exclusion, including `private-ips`. Empty or absent signed networks
+grant no private access; a request boolean never imports broad unsigned allowances.
+Checked DNS answers and actual peers remain subject to per-hop denials.

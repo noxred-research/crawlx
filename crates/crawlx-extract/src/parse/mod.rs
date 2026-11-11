@@ -42,6 +42,7 @@ pub mod injection;
 pub mod ocr;
 pub mod pdf;
 pub mod redact;
+pub mod traversal;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -96,6 +97,17 @@ impl Default for ParseLimits {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ParseError {
+    /// The bounded owned parser process failed.
+    #[error(transparent)]
+    Isolated(#[from] crate::isolated::IsolatedError),
+    /// Parser resource admission could not safely reserve required capacity.
+    #[error("{what} resource exhausted: {detail}")]
+    ResourceExhausted {
+        /// Resource class, never source content.
+        what: &'static str,
+        /// Privacy-safe finite failure classification.
+        detail: String,
+    },
     /// The file type is not one of [`supported_formats`].
     #[error("unsupported file type: {detail}")]
     UnsupportedFormat {

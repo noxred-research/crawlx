@@ -179,6 +179,10 @@ pub struct SourceManifestV1 {
     /// Explicit native accepted-item namespaces and feeds; never inferred from source code.
     #[serde(default)]
     pub datasets: crawlx_core::dataset::DatasetConfigV1,
+    /// Exported deprecated symbol names and their canonical source names.
+    /// These declarations never load a source class or create native runtime aliases.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub aliases: BTreeMap<String, String>,
 }
 /// One exact option or inventory row, with no raw content or credentials.
 #[derive(Debug, Serialize)]
@@ -201,6 +205,13 @@ pub struct ImportDispositionV1 {
 pub struct ImportReportV1 {
     /// Report schema version.
     pub version: u16,
+    /// Exact explicitly selected source dialect.
+    pub source: SourceDialectV1,
+    /// Pinned source release, never inferred from an input filename.
+    pub source_version: &'static str,
+    /// Independently pinned source commit for the four request identity dialects.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_commit: Option<&'static str>,
     /// No source-language API or ABI compatibility is claimed.
     pub sdk_abi_compatible: bool,
     /// Every supplied option and every source inventory row.
@@ -399,6 +410,49 @@ fn literal_valid(source: SourceDialectV1, target: &str, value: &Value) -> bool {
         _ => false,
     }
 }
+fn inspect_aliases(
+    manifest: &SourceManifestV1,
+    dispositions: &mut Vec<ImportDispositionV1>,
+    valid: &mut bool,
+) -> anyhow::Result<bool> {
+    let mut queue_alias = false;
+    if manifest.aliases.len() > 32 {
+        bail!("source alias count exceeds limit");
+    }
+    for (alias, canonical) in &manifest.aliases {
+        if alias.is_empty()
+            || alias.len() > 128
+            || !alias
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            bail!("invalid source alias identifier");
+        }
+        let supported = matches!(manifest.source, SourceDialectV1::JsActor)
+            && matches!(alias.as_str(), "RequestQueueV1" | "RequestQueueV2") // wire-compat: deprecated source queue symbols
+            && canonical == "RequestQueue"; // wire-compat: canonical source queue symbol
+        let state = if supported && !queue_alias {
+            queue_alias = true;
+            "translated"
+        } else {
+            *valid = false;
+            "rejected"
+        };
+        dispositions.push(ImportDispositionV1 {
+            id: alias.clone(),
+            state,
+            target: supported.then_some("CreateCrawl.orchestration.queue"),
+            reason: if state == "translated" {
+                "deprecated queue spelling resolves once to the bounded native fenced queue; no source class or native alias is installed"
+            } else {
+                "obsolete, conflicting or executable alias cannot be imported; handlers require separately reviewed declarative native recipes"
+            },
+            requested: true,
+        });
+    }
+    Ok(queue_alias)
+}
+
 /// Inspect every option without evaluating code or returning option values.
 ///
 /// # Errors
@@ -486,13 +540,13 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             });
             continue;
         }
-        if matches!(manifest.source, SourceDialectV1::BrowserYaml) && fields.contains_key(target) {
+        if fields.contains_key(target) {
             valid = false;
             dispositions.push(ImportDispositionV1 {
                 id: key.clone(),
                 state: "rejected",
                 target: Some(target),
-                reason: "mixed source aliases require upstream precedence; only one literal seed option is supported",
+                reason: "multiple supplied options target one native field; source alias precedence must be resolved explicitly",
                 requested: true,
             });
             continue;
@@ -597,6 +651,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             requested: true,
         });
     }
+    let queue_alias = inspect_aliases(manifest, &mut dispositions, &mut valid)?;
     let seed = fields.get("seedUrl").and_then(|v| {
         v.as_str().or_else(|| {
             v.as_array()
@@ -620,6 +675,9 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
         };
         crawl.extensions = manifest.pipeline.clone();
         crawl.datasets = manifest.datasets.clone();
+        if queue_alias {
+            crawl.orchestration = Some(crawlx_core::orchestration::OrchestrationConfigV1::default());
+        }
         if manifest.pipeline.requires_document() {
             crawl.extract.content = Some(crawlx_core::extraction::ExtractionPolicyV1::default());
         }
@@ -741,6 +799,15 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
     Ok((
         ImportReportV1 {
             version: 1,
+            source: manifest.source,
+            source_version: manifest.source.version(),
+            source_commit: match manifest.source {
+                SourceDialectV1::JsActor => Some(crawlx_core::request::import::SOURCE_PINS[0].2),
+                SourceDialectV1::PyActor => Some(crawlx_core::request::import::SOURCE_PINS[1].2),
+                SourceDialectV1::PythonSpider => Some(crawlx_core::request::import::SOURCE_PINS[2].2),
+                SourceDialectV1::GoCollector => Some(crawlx_core::request::import::SOURCE_PINS[3].2),
+                _ => None,
+            },
             sdk_abi_compatible: false,
             dispositions,
             env: env_rows,
@@ -781,8 +848,13 @@ pub async fn run(args: SourceImportArgs, out: &mut dyn Write) -> anyhow::Result<
     struct Source<'a> {
         #[serde(borrow)]
         source: std::borrow::Cow<'a, str>,
+        #[serde(default, borrow)]
+        format: Option<std::borrow::Cow<'a, str>>,
     }
     let source: Source<'_> = serde_json::from_slice(&bytes).context("reading import source dialect")?;
+    if source.format.as_deref() == Some("neutral-export-v1") {
+        return crate::migration_dialects::run_manifest(&bytes, convert, out).await;
+    }
     if matches!(
         source.source.as_ref(),
         "text-precision" | "news-article" | "surface-flags"
@@ -790,7 +862,7 @@ pub async fn run(args: SourceImportArgs, out: &mut dyn Write) -> anyhow::Result<
         return crate::extraction_import::run_manifest(&bytes, convert, out).await;
     }
     let manifest: SourceManifestV1 =
-        serde_json::from_slice(&bytes).context("reading declarative import manifest")?;
+        serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("invalid declarative import manifest"))?;
     let (report, crawl) = inspect(&manifest)?;
     if convert && report.convertible {
         serde_json::to_writer_pretty(&mut *out, &crawl.context("validated import lacks native config")?)?;
@@ -1067,5 +1139,54 @@ mod tests {
                 "{id}"
             );
         }
+    }
+
+    #[test]
+    fn deprecated_queue_symbol_resolves_once_without_runtime_aliases() {
+        for alias in ["RequestQueueV1", "RequestQueueV2"] {
+            // wire-compat: deprecated source queue names
+            let manifest: SourceManifestV1 = serde_json::from_value(json!({
+                "version":1,"source":"js-actor","sourceVersion":"3.18.2",
+                "options":{"startUrls":["https://fixture.test/"]},
+                "aliases":{alias:"RequestQueue"}
+            }))
+            .unwrap(); // wire-compat: canonical source queue name
+            let (report, crawl) = inspect(&manifest).unwrap();
+            assert!(report.convertible);
+            assert!(crawl.unwrap().orchestration.is_some());
+            assert_eq!(report.source_version, "3.18.2");
+            assert_eq!(
+                report.source_commit,
+                Some(crawlx_core::request::import::SOURCE_PINS[0].2)
+            );
+            assert_eq!(
+                report.dispositions.iter().filter(|row| row.id == alias).count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_queue_aliases_and_executable_handlers_are_all_reported() {
+        let manifest: SourceManifestV1 = serde_json::from_value(json!({
+            "version":1,"source":"js-actor","sourceVersion":"3.18.2",
+            "options":{"startUrls":["https://fixture.test/"]},
+            "aliases":{"RequestQueueV1":"RequestQueue","RequestQueueV2":"RequestQueue",
+                "handlePageFunction":"private-callback-value"}
+        }))
+        .unwrap(); // wire-compat: exported deprecated symbol names
+        let (report, crawl) = inspect(&manifest).unwrap();
+        assert!(!report.convertible && crawl.is_none());
+        assert!(report
+            .dispositions
+            .iter()
+            .any(|row| row.id == "RequestQueueV2" && row.state == "rejected")); // wire-compat
+        assert!(report
+            .dispositions
+            .iter()
+            .any(|row| row.id == "handlePageFunction" && row.state == "rejected")); // wire-compat
+        assert!(!serde_json::to_string(&report)
+            .unwrap()
+            .contains("private-callback-value"));
     }
 }

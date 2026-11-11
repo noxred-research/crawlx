@@ -230,6 +230,8 @@ fn restore_article_cache(
         discovered_endpoints: Vec::new(),
         discovery_unresolved: Vec::new(),
         discovery_unresolved_dropped: 0,
+        source_hops: Vec::new(),
+        source_hops_truncated: false,
         article: Some(saved.article),
         comments: saved.comments,
         validation: None,

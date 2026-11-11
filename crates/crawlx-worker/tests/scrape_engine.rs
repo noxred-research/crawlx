@@ -415,13 +415,29 @@ impl PageRenderer for Scripted {
     }
 }
 
+/// Browser text as the render seam carries it: reserved against the shared budget first.
+fn admitted(text: &str) -> crawlx_core::parser_memory::AdmittedText {
+    let permit = crawlx_core::parser_memory::global()
+        .try_reserve(text.len())
+        .unwrap();
+    crawlx_core::parser_memory::AdmittedText::new(text.to_owned(), permit)
+}
+
+/// Browser bytes as the render seam carries them: reserved against the shared budget first.
+fn admitted_bytes(bytes: Vec<u8>) -> crawlx_core::parser_memory::AdmittedBytes {
+    let permit = crawlx_core::parser_memory::global()
+        .try_reserve(bytes.len())
+        .unwrap();
+    crawlx_core::parser_memory::AdmittedBytes::new(bytes, permit)
+}
+
 fn rendered(url: &Url, html: &str) -> Rendered {
     Rendered {
         final_url: url.clone(),
         status: 200,
         headers: vec![("content-type".to_owned(), "text/html".to_owned())],
         content_type: Some("text/html".to_owned()),
-        html: html.to_owned(),
+        html: admitted(html),
         screenshot: None,
         actions: ActionOutputs::default(),
         computed_styles: None,
@@ -2008,24 +2024,24 @@ async fn rendered_pages_store_the_dom_screenshot_and_action_results() {
         let mut r = rendered(&req.request.url.url, dom);
         r.final_url = Url::parse(&format!("{}#after", req.request.url.url)).unwrap();
         r.screenshot = Some(Shot {
-            bytes: PNG.to_vec(),
+            bytes: admitted_bytes(PNG.to_vec()),
             content_type: "image/png",
         });
         r.actions = ActionOutputs {
             screenshots: vec![Shot {
-                bytes: b"\xFF\xD8jpeg".to_vec(),
+                bytes: admitted_bytes(b"\xFF\xD8jpeg".to_vec()),
                 content_type: "image/jpeg",
             }],
             scrapes: vec![crawlx_core::scrape::ActionScrape {
                 url: req.request.url.url.to_string(),
-                html: "<p>mid</p>".to_owned(),
+                html: admitted("<p>mid</p>"),
             }],
             javascript_returns: vec![crawlx_core::scrape::JavascriptReturn {
                 kind: "string".to_owned(),
                 value: json!("Rendered"),
             }],
             pdfs: vec![Shot {
-                bytes: pdf(&["Visible safe marker"]),
+                bytes: admitted_bytes(pdf(&["Visible safe marker"])),
                 content_type: "application/pdf",
             }],
             ..ActionOutputs::default()
@@ -2067,7 +2083,7 @@ async fn rendered_pages_store_the_dom_screenshot_and_action_results() {
             .unwrap();
     assert_eq!(parsed.total_pages, 1);
     assert!(parsed.text.contains("Visible safe marker"));
-    assert_eq!(actions.scrapes[0].html, "<p>mid</p>");
+    assert_eq!(actions.scrapes[0].html.as_str(), "<p>mid</p>");
     assert_eq!(actions.javascript_returns[0].value, json!("Rendered"));
 }
 

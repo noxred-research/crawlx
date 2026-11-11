@@ -64,13 +64,13 @@ spec:
             - name: CRAWLX_ARTIFACT_KEY_FILE
               value: /run/secrets/crawlx-artifact/artifact_key
             # Dedicated volatile (no RDB/AOF, noeviction) Redis for the run-wide secret registry,
-            # not the ZDR delivery Redis. Optional CRAWLX_SECRET_AUTHORITY_TTL_SECS (default and max 86400).
+            # not the ZDR delivery Redis. Optional CRAWLX_SECRET_AUTHORITY_TTL_SECS (default 3600, max 86400).
             - name: CRAWLX_SECRET_REDIS_URL
               valueFrom: { secretKeyRef: { name: crawlx-secret-registry, key: url } }
             - name: TMPDIR
               value: /tmp/crawlx
-            # HTML parse admission budget: input bytes x 500 per parse; 4 GiB + 256 MiB
-            # article output + 1.5 GiB tmpfs/shm leaves ~6 GiB of the 12Gi limit for Chromium.
+            # Shared decoded-input/parser/output admission budget; cancellation retains live owners.
+            # Leave separate headroom for Chromium, isolated helpers, runtime and tmpfs/shm.
             - name: CRAWLX_PARSE_MEMORY_BYTES
               value: "4294967296"
           securityContext:

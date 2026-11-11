@@ -17,6 +17,10 @@ const MAX_TOKEN_BYTES: usize = 16_384;
 
 /// Task-based captcha-solving client. Debug never exposes keys, endpoints, task IDs, or tokens.
 pub struct TaskCaptchaClient {
+    #[allow(
+        clippy::disallowed_types,
+        reason = "captcha transport boundary keeps the raw client private"
+    )]
     http: reqwest::Client,
     create_url: Url,
     result_url: Url,
@@ -38,6 +42,10 @@ impl TaskCaptchaClient {
     /// # Errors
     /// Returns [`CaptchaError::Configuration`] for invalid settings or empty keys,
     /// or [`CaptchaError::Transport`] if the HTTP client cannot be initialized.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "captcha transport boundary constructs the private raw client"
+    )]
     pub fn new(config: &CaptchaConfig, key: SecretOr<String>) -> Result<Self, CaptchaError> {
         config.validate()?;
         if config.provider != CaptchaProvider::TaskApi || key.expose().trim().is_empty() {
@@ -188,6 +196,10 @@ impl TaskCaptchaClient {
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "captcha transport boundary converts raw errors into secret-free categories"
+)]
 fn transport_error(error: reqwest::Error) -> CaptchaError {
     if error.is_timeout() {
         CaptchaError::Timeout

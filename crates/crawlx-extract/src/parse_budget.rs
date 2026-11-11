@@ -29,12 +29,11 @@
 //!
 //! The limit is set by the binary when it builds its runtime
 //! (`crawlx_worker::RuntimeConfig::parse_memory_bytes`, environment `CRAWLX_PARSE_MEMORY_BYTES`)
-//! and defaults to [`DEFAULT_PARSE_MEMORY_BYTES`]: 4 GiB, i.e. eight concurrent parses of a
-//! 1 MiB document (the reference input) at the worst-case factor, or one parse of up to
-//! 8.1 MiB. An input whose charge exceeds the whole budget is always refused. Fully fallible,
-//! per-allocation charged parsing remains post-release work.
+//! and defaults to [`DEFAULT_PARSE_MEMORY_BYTES`]: 4 GiB shared with decoded acquisition
+//! inputs and transient sink buffers. An input whose charge exceeds the whole budget is
+//! always refused. This remains measured parser admission, not fallible allocation.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crawlx_core::parser_memory::{ByteAdmissionError, ByteBudget, BytePermit};
 use std::sync::{Arc, LazyLock};
 
 /// Charged heap bytes per input byte of HTML. See the module docs and the ceiling test, which
@@ -76,36 +75,34 @@ impl ParseBudgetExhausted {
 /// A nonwaiting byte budget shared by all parses of the process.
 #[derive(Debug)]
 pub struct ParseBudget {
-    limit: AtomicUsize,
-    used: AtomicUsize,
+    bytes: Arc<ByteBudget>,
 }
 
 impl ParseBudget {
     /// A budget of `limit` bytes with nothing charged.
     #[must_use]
-    pub const fn new(limit: usize) -> Self {
+    pub fn new(limit: usize) -> Self {
         Self {
-            limit: AtomicUsize::new(limit),
-            used: AtomicUsize::new(0),
+            bytes: Arc::new(ByteBudget::new(limit)),
         }
     }
 
     /// Replace the limit. Charges already held stay valid; new charges are refused until
     /// enough of them are released to fit under the new limit.
     pub fn set_limit(&self, bytes: usize) {
-        self.limit.store(bytes, Ordering::Release);
+        self.bytes.set_limit(bytes);
     }
 
     /// Configured size of the budget.
     #[must_use]
     pub fn limit(&self) -> usize {
-        self.limit.load(Ordering::Acquire)
+        self.bytes.limit()
     }
 
     /// Bytes currently charged.
     #[must_use]
     pub fn used(&self) -> usize {
-        self.used.load(Ordering::Acquire)
+        self.bytes.used()
     }
 
     /// Bytes that a charge could still take right now.
@@ -119,26 +116,16 @@ impl ParseBudget {
     /// # Errors
     /// [`ParseBudgetExhausted`] when the charge overflows or does not fit in what is left.
     pub fn try_charge_input(self: &Arc<Self>, input_len: usize) -> Result<ParseCharge, ParseBudgetExhausted> {
-        let mut charge = ParseCharge {
+        let wanted = charge_bytes(input_len).ok_or(ParseBudgetExhausted {
+            requested: usize::MAX,
+            available: self.available(),
+            limit: self.limit(),
+        })?;
+        let permit = self.bytes.try_reserve(wanted).map_err(memory_error)?;
+        Ok(ParseCharge {
             budget: Arc::clone(self),
-            bytes: 0,
-        };
-        charge.cover(input_len)?;
-        Ok(charge)
-    }
-
-    fn try_take(&self, bytes: usize) -> Result<(), ParseBudgetExhausted> {
-        let limit = self.limit();
-        self.used
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|total| *total <= limit)
-            })
-            .map(drop)
-            .map_err(|used| ParseBudgetExhausted {
-                requested: bytes,
-                available: limit.saturating_sub(used),
-                limit,
-            })
+            permit,
+        })
     }
 }
 
@@ -149,7 +136,7 @@ impl ParseBudget {
 #[must_use = "dropping the charge releases the reservation immediately"]
 pub struct ParseCharge {
     budget: Arc<ParseBudget>,
-    bytes: usize,
+    permit: BytePermit,
 }
 
 impl ParseCharge {
@@ -165,28 +152,34 @@ impl ParseCharge {
                 limit: self.budget.limit(),
             });
         };
-        if wanted > self.bytes {
-            self.budget.try_take(wanted - self.bytes)?;
-            self.bytes = wanted;
-        }
-        Ok(())
+        self.permit.grow_to(wanted).map_err(memory_error)
     }
 
     /// Bytes this guard holds.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.bytes
+        self.permit.bytes()
+    }
+
+    /// Move ownership to a document or sink carrier after parsing finishes.
+    pub fn into_permit(self) -> BytePermit {
+        self.permit
     }
 }
 
-impl Drop for ParseCharge {
-    fn drop(&mut self) {
-        self.budget.used.fetch_sub(self.bytes, Ordering::AcqRel);
+fn memory_error(error: ByteAdmissionError) -> ParseBudgetExhausted {
+    ParseBudgetExhausted {
+        requested: error.requested,
+        available: error.available,
+        limit: error.limit,
     }
 }
 
-static GLOBAL: LazyLock<Arc<ParseBudget>> =
-    LazyLock::new(|| Arc::new(ParseBudget::new(DEFAULT_PARSE_MEMORY_BYTES)));
+static GLOBAL: LazyLock<Arc<ParseBudget>> = LazyLock::new(|| {
+    Arc::new(ParseBudget {
+        bytes: Arc::clone(crawlx_core::parser_memory::global()),
+    })
+});
 
 /// The process-wide budget every production parse charges.
 #[must_use]
@@ -258,6 +251,18 @@ mod tests {
         drop(held);
         budget.set_limit(0);
         assert!(budget.try_charge_input(1).is_err());
+        assert_eq!(budget.used(), 0);
+    }
+
+    #[test]
+    fn production_dom_budget_shares_acquisition_and_sink_authority() {
+        assert!(Arc::ptr_eq(&global().bytes, crawlx_core::parser_memory::global()));
+        let budget = Arc::new(ParseBudget::new(2 * PARSE_BYTES_PER_INPUT_BYTE));
+        let charge = budget.try_charge_input(1).unwrap();
+        let sink_permit = charge.into_permit();
+        assert_eq!(budget.used(), PARSE_BYTES_PER_INPUT_BYTE);
+        assert!(budget.try_charge_input(2).is_err());
+        drop(sink_permit);
         assert_eq!(budget.used(), 0);
     }
 }

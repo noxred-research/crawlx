@@ -112,7 +112,7 @@ impl UrlPlaneRunner {
             .copied()
             .ok_or(StoreError::LeaseLost)?;
         let attempt = format!("{}:{fence}", entry.id);
-        let resource = match runtime.acquire(&route, &entry.url.url, self.run, run.tenant, &attempt,
+        let mut resource = match runtime.acquire(&route, &entry.url.url, self.run, run.tenant, &attempt,
             self.crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr, &requests, cancel).await {
             Ok(resource) => resource,
             Err(crawlx_fetch::protocol::ProtocolError::Cancelled) => {
@@ -123,6 +123,7 @@ impl UrlPlaneRunner {
             Err(error) => return self.fail(entry, "protocol_acquisition_failed", "protocol_acquisition_failed",
                 Attempt::Failed, serde_json::json!({"reason":error.to_string(),"route":route.id,"policyRevision":route.policy_revision})).await,
         };
+        crate::acquisition::admit_external_body(&mut resource.body)?;
         budget.charge_bytes(resource.decoded_bytes);
         let base = resource
             .final_url
@@ -135,7 +136,7 @@ impl UrlPlaneRunner {
             &resource.body,
             &self.fetcher.config().controls,
             &scoped_extract,
-        );
+        )?;
         let validation = crate::acquisition::validate_body(
             body,
             base.clone(),
@@ -146,13 +147,17 @@ impl UrlPlaneRunner {
             &self.cpu_pool,
             &self.fetcher.config().controls,
             self.captcha_secrets.as_ref(),
+            cancel,
         );
         let (validation, mut document) =
             tokio::time::timeout_at(budget.render_allowance(cancel).deadline, validation)
                 .await
                 .map_err(|_| WorkerError::Config("protocol parsing deadline exhausted".to_owned()))??;
         metadata.validation = validation;
-        if let Some(article) = document.as_mut().and_then(|document| document.article.as_mut()) {
+        if let Some(article) = document
+            .as_mut()
+            .and_then(|document| document.value_mut().article.as_mut())
+        {
             article.acquisition_request_digest = Some(metadata.request_digest);
         }
         budget.record(
@@ -183,6 +188,15 @@ impl UrlPlaneRunner {
             return self.fail(entry, "protocol_status_unavailable", "protocol_status_unavailable", Attempt::Failed,
                 serde_json::json!({"acquisition":metadata,"reason":"non-HTTP or supplied-content resources use the operator protocol resource command, not HTTP page storage"})).await;
         };
+        // The delegate's resource is the response of this attempt; the boundary runs before any
+        // page, item or link is derived from it.
+        if let Some(stop) = self.dispatch(
+            entry.id,
+            crawlx_core::extensions::ExtensionEventV1::Response,
+            cancel,
+        ) {
+            return self.stop_request(entry, stop).await;
+        }
         let mut record = PageRecord {
             run: self.run,
             frontier_id: entry.id,
@@ -203,7 +217,23 @@ impl UrlPlaneRunner {
         let mut links = Vec::new();
         let mut content_dedupe = None;
         let mut local_dedupe = None;
-        if let Some(mut doc) = document {
+        if document.is_some() {
+            if let Some(stop) = self.dispatch_many(
+                entry.id,
+                [
+                    crawlx_core::extensions::ExtensionEventV1::Html,
+                    crawlx_core::extensions::ExtensionEventV1::Parse,
+                ],
+                cancel,
+            ) {
+                return self.stop_request(entry, stop).await;
+            }
+        }
+        let mut document_hold = None;
+        if let Some(budgeted) = document {
+            let (document, permit) = budgeted.into_parts();
+            document_hold = Some(permit);
+            let mut doc = document;
             if self.durable_dedupe {
                 content_dedupe = super::content_dedupe_claim(
                     run.tenant,
@@ -257,6 +287,11 @@ impl UrlPlaneRunner {
                 }
                 match candidate {
                     Ok(Some(candidate)) => {
+                        if let Some(stop) =
+                            self.dispatch(entry.id, crawlx_core::extensions::ExtensionEventV1::Item, cancel)
+                        {
+                            return self.stop_request(entry, stop).await;
+                        }
                         let captcha = self.captcha_secrets.as_ref().ok_or_else(|| {
                             WorkerError::Config("protocol secret registry unavailable".to_owned())
                         })?;
@@ -335,25 +370,133 @@ impl UrlPlaneRunner {
         }
         record.metadata["protocolRoute"] =
             serde_json::json!({"id":route.id,"policyRevision":route.policy_revision,"lane":"diagnostic"});
-        self.finish_protocol_page(
-            entry,
-            discovery,
-            resource.final_url.as_ref(),
-            &links,
-            (
-                accepted,
-                RequestPublication {
-                    outbox,
-                    page: Some(record),
-                    content_dedupe,
-                    local_dedupe,
-                    ..RequestPublication::default()
-                },
-            ),
-        )
-        .await
+        let finished = self
+            .finish_protocol_page(
+                entry,
+                discovery,
+                resource.final_url.as_ref(),
+                &links,
+                (
+                    accepted,
+                    RequestPublication {
+                        outbox,
+                        page: Some(record),
+                        content_dedupe,
+                        local_dedupe,
+                        ..RequestPublication::default()
+                    },
+                ),
+            )
+            .await;
+        // Released only after the terminal commit settled every owner of the document's bytes.
+        drop(document_hold);
+        finished
     }
 
+    /// Acquire the target through the run's operator-registered acquisition service, under the
+    /// parent's lease, scope, robots and shared allowance. The service result is mapped to a
+    /// response without fabricating evidence: its metadata is kept verbatim (a missing final URL
+    /// stays missing there), and a result without a target status is refused, never defaulted.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn fetch_via_service(
+        &self,
+        entry: &FrontierEntry,
+        queued: &crawlx_core::orchestration::QueuedRequestV1,
+        service: &str,
+        policy: &crawlx_core::acquisition::AcquisitionPolicyV1,
+        budget: &mut crate::acquisition::AcquisitionBudgetV1,
+        options: &FetchOptions,
+        extract: &crawlx_extract::ExtractOptions,
+        cancel: &CancellationToken,
+        tenant: crawlx_core::TenantId,
+        binding: Option<&crawlx_core::session_binding::SessionBindingV1>,
+    ) -> Result<
+        (
+            FetchResponse,
+            crawlx_core::acquisition::AcquisitionResultV1,
+            Option<crawlx_core::parser_memory::Budgeted<Box<Document>>>,
+        ),
+        FetchError,
+    > {
+        use crawlx_fetch::acquisition_service::AcquisitionServiceScopeV1;
+        let runtime = match &self.protocol_runtime {
+            Ok(Some(runtime)) => runtime,
+            _ => return Err(FetchError::AcquisitionUnavailable),
+        };
+        let (adapter, egress, resolver, governor) = runtime
+            .acquisition_service(service)
+            .ok_or(FetchError::AcquisitionUnavailable)?;
+        let fence = self
+            .held
+            .lock()
+            .get(&entry.id)
+            .copied()
+            .ok_or(FetchError::AcquisitionCancelled)?;
+        let digest = |domain: &'static str, bytes: &[u8]| crawlx_core::hash::Digest::of(domain, bytes);
+        let policy_digest =
+            crawlx_core::hash::Digest::of_value("crawlx/acquisition-service-policy/v1", policy)
+                .map_err(|_| FetchError::AcquisitionUnavailable)?;
+        let mut scope = AcquisitionServiceScopeV1::new(
+            tenant,
+            self.run,
+            digest("crawlx/acquisition-principal/v1", queued.principal.as_bytes()),
+            format!("{}:{fence}", entry.id),
+            policy_digest,
+            digest("crawlx/canonical-url/v1", entry.url.url.as_str().as_bytes()),
+        );
+        scope.session = binding.map(|binding| binding.identity.session);
+        scope.session_generation = binding.map(|binding| binding.generation);
+        scope.external_processing_approved = runtime.external_processing_approved(tenant);
+        scope.zdr = self.crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr;
+        let admission = NativeHopAdmission::new(self, entry)?.with_session(binding.cloned());
+        let served = crate::acquisition_service::fetch_service(
+            adapter,
+            &scope,
+            &entry.url.url,
+            options,
+            policy,
+            budget,
+            egress,
+            resolver,
+            governor,
+            &self.fetcher.config().controls,
+            extract,
+            &self.cpu_pool,
+            cancel,
+            &admission,
+            self.captcha_secrets.as_ref(),
+        )
+        .await?;
+        let crate::acquisition_service::ServiceAcquisition { acquired, document } = served;
+        let status = acquired
+            .metadata
+            .target_status
+            .and_then(|status| http::StatusCode::from_u16(status).ok())
+            .ok_or(FetchError::AcquisitionUnavailable)?;
+        let response = FetchResponse {
+            final_url: acquired
+                .metadata
+                .final_url
+                .clone()
+                .unwrap_or_else(|| entry.url.url.clone()),
+            status,
+            headers: http::HeaderMap::new(),
+            body: acquired.body,
+            body_permit: Some(acquired.body_permit),
+            wire_bytes: None,
+            dns_report: None,
+            negotiated_protocol: None,
+            truncated: false,
+            redirects: Vec::new(),
+            hops: Vec::new(),
+            resolved_ip: std::net::IpAddr::from([0, 0, 0, 0]),
+            peer_observed: false,
+            content_type: acquired.metadata.content_type.clone(),
+            attempts: acquired.network_requests,
+            duration: std::time::Duration::from_millis(acquired.metadata.elapsed_ms),
+        };
+        Ok((response, acquired.metadata, document))
+    }
     async fn finish_protocol_page(
         &self,
         entry: &FrontierEntry,

@@ -10,13 +10,13 @@
 //!
 //! PostgreSQL owns tenant/run fencing, pending operations, salted commitments,
 //! ciphertext catalog identity, KMS-wrapped keys and permanent finalization.
-//! Redis alone owns raw values and the random commitment salt. Initial lifetime
-//! is bounded. New expiry extensions are unavailable: Redis cannot atomically
-//! revalidate PostgreSQL ownership or local cancellation. Only exact historical,
-//! already-applied renewal receipts can recover read-only, without extending TTL.
-//! Lost state is never reconstructed. Finalize a terminal run at its complete
-//! epoch before its original lifetime expires. The permanent seal permits retained
-//! artifact reads to outlive the volatile registry.
+//! Redis alone owns raw values and the random commitment salt. Its absolute expiry
+//! is frozen at initialization. PostgreSQL grants renewable use windows bounded by
+//! that original retention ceiling; renewal never sends a Redis TTL mutation.
+//! Every access revalidates durable ownership and the live use window. Lost or
+//! expired state is never reconstructed. Finalize a terminal run at its complete
+//! epoch before authority expiry. The permanent seal permits retained artifact
+//! reads to outlive the volatile registry.
 //!
 //! API consumers must authenticate/authorize each artifact and validate complete
 //! ciphertext/AEAD/plaintext fixity. A current snapshot or recheck does not fence
@@ -62,7 +62,10 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 pub mod bootstrap;
+pub mod frozen_archive;
+pub mod profiles;
 mod renewal;
+mod windows;
 pub use bootstrap::{
     BootstrapAuthorization, BootstrapClaim, BootstrapLease, BootstrapProducerAuthorizer,
     PgBootstrapAuthority, BOOTSTRAP_PRODUCER_TTL, MAX_BOOTSTRAP_PRODUCER_TTL,
@@ -74,8 +77,10 @@ const MAX_TOTAL_BYTES: usize = 1024 * 1024;
 const MAX_CLOCK_SKEW_MS: i64 = 1000;
 const EXPIRY_MARGIN_MS: i64 = 2000;
 const MAX_EPOCH: i64 = 9_007_199_254_740_000;
-/// Maximum initial lifetime and supported historical renewal-receipt window.
+/// Maximum renewable use window; the frozen retention ceiling is independently bounded.
 pub const MAX_AUTHORITY_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Default operator hard limit on original volatile retention.
+pub const DEFAULT_AUTHORITY_HARD_MAX: Duration = Duration::from_secs(72 * 60 * 60);
 /// Conflict detail: no live authority exists for the run (never initialized or expired).
 pub(crate) const AUTHORITY_MISSING: &str = "secret authority missing or expired";
 /// Conflict detail: Redis outcome unknown; the same operation must be recovered.
@@ -144,6 +149,7 @@ pub fn encrypted_object_key(
 
 const CUSTODY_ROW_QUERY: &str = "SELECT c.* FROM artifact_key_custody c JOIN artifacts a USING(artifact_id) \
      JOIN crawl_runs r ON r.run_id=c.run_id AND r.tenant_id=c.tenant_id \
+     JOIN run_secret_authority s ON s.tenant_id=c.tenant_id AND s.run_id=c.run_id \
      WHERE c.tenant_id=$1 AND c.run_id=$2 AND c.artifact_id=$3 \
        AND a.tenant_id=c.tenant_id AND a.run_id=c.run_id \
        AND a.content_digest=c.plaintext_digest AND a.size_bytes=c.plaintext_size \
@@ -155,7 +161,9 @@ const CUSTODY_ROW_QUERY: &str = "SELECT c.* FROM artifact_key_custody c JOIN art
        AND a.sensitivity::text=c.artifact_payload->>'sensitivity' \
        AND a.created_at=c.created_at \
        AND a.deleted_at IS NULL AND (a.expires_at IS NULL OR a.expires_at>clock_timestamp()) \
-       AND r.purge_requested_at IS NULL AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp())";
+       AND r.purge_requested_at IS NULL AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp()) \
+       AND (r.status NOT IN ('queued','running') OR (s.expires_at>clock_timestamp() \
+         AND s.pending_operation IS NULL AND s.pending_renewal_operation IS NULL))";
 
 async fn custody_row<'e, E: sqlx::Executor<'e, Database = Postgres>>(
     executor: E,
@@ -242,6 +250,7 @@ pub struct PgSecretAuthority {
     pg: Pg,
     connection: Option<redis::aio::MultiplexedConnection>,
     ttl: Duration,
+    hard_max: Duration,
 }
 
 /// Trusted service boundary implemented by the API's authenticated Principal
@@ -268,6 +277,8 @@ struct AuthorityRow {
     pending_value_commitment: Option<Vec<u8>>,
     last_value_commitment: Option<Vec<u8>>,
     expires_at: Timestamp,
+    retention_ceiling: Timestamp,
+    use_window_ms: Option<i64>,
     sealed_at: Option<Timestamp>,
 }
 
@@ -285,6 +296,9 @@ impl AuthorityRow {
             pending_value_commitment: get(row, "pending_value_commitment")?,
             last_value_commitment: get(row, "last_value_commitment")?,
             expires_at: get(row, "expires_at")?,
+            retention_ceiling: get::<Option<Timestamp>>(row, "retention_ceiling")?
+                .unwrap_or(get(row, "expires_at")?),
+            use_window_ms: get(row, "use_window_ms")?,
             sealed_at: get(row, "sealed_at")?,
         })
     }
@@ -404,7 +418,7 @@ async fn locally_live<T>(
     result
 }
 
-async fn live(tx: &mut Transaction<'_, Postgres>, lease: &CustodyLease) -> Result<(), StoreError> {
+pub(crate) async fn live(tx: &mut Transaction<'_, Postgres>, lease: &CustodyLease) -> Result<(), StoreError> {
     locally_live(lease, live_locked(tx, lease)).await
 }
 
@@ -485,7 +499,7 @@ async fn locked(
     let row = tokio::select! {
         biased;
         () = lease.cancelled() => return Err(StoreError::LeaseLost),
-        result = sqlx::query("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,GREATEST(expires_at,pending_renewal_deadline) AS expires_at,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 AND GREATEST(expires_at,pending_renewal_deadline)>clock_timestamp() AND sealed_at IS NULL FOR UPDATE")
+        result = sqlx::query("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,GREATEST(expires_at,pending_renewal_deadline) AS expires_at,retention_ceiling,use_window_ms,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 AND GREATEST(expires_at,pending_renewal_deadline)>clock_timestamp() AND sealed_at IS NULL FOR UPDATE")
             .bind(lease.tenant.0).bind(lease.run.0).fetch_optional(&mut **tx) => result.map_err(db)?,
     }.ok_or_else(|| denied(AUTHORITY_MISSING))?;
     lease.check_local_cancellation()?;
@@ -509,7 +523,7 @@ async fn read_locked(
     .await
     .map_err(db)?;
     let status = status.ok_or_else(|| denied("artifact run authority unavailable"))?;
-    let row = sqlx::query("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,GREATEST(expires_at,pending_renewal_deadline) AS expires_at,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE")
+    let row = sqlx::query("SELECT incarnation,epoch,COALESCE(pending_operation,pending_renewal_operation) AS pending_operation,last_operation,commitment,pending_commitment,pending_value_commitment,last_value_commitment,GREATEST(expires_at,pending_renewal_deadline) AS expires_at,retention_ceiling,use_window_ms,sealed_at FROM run_secret_authority WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE")
         .bind(tenant.0).bind(run.0).fetch_optional(&mut **tx).await.map_err(db)?
         .ok_or_else(|| denied("artifact secret authority missing"))?;
     Ok((AuthorityRow::parse(tenant, run, &row)?, status))
@@ -536,11 +550,28 @@ impl PgSecretAuthority {
     /// # Errors
     /// Rejects invalid TTL, inaccessible Redis or nonvolatile/replicated configuration.
     pub async fn open(pg: Pg, url: &str, ttl: Duration) -> Result<Self, StoreError> {
-        if ttl.as_millis() <= 2000 || ttl > MAX_AUTHORITY_TTL {
+        Self::open_with_policy(pg, url, ttl, DEFAULT_AUTHORITY_HARD_MAX).await
+    }
+
+    /// Open renewable use windows under an immutable original retention ceiling.
+    ///
+    /// Retention beyond 24 hours requires both explicit run retention and explicit
+    /// authorization expiry. `hard_max` always narrows those original permissions.
+    ///
+    /// # Errors
+    /// Rejects invalid windows, inaccessible Redis or nonvolatile configuration.
+    pub async fn open_with_policy(
+        pg: Pg,
+        url: &str,
+        ttl: Duration,
+        hard_max: Duration,
+    ) -> Result<Self, StoreError> {
+        if ttl.as_millis() <= 2000 || ttl > MAX_AUTHORITY_TTL || hard_max.as_millis() <= 2000 {
             return Err(denied(
-                "secret authority TTL must exceed two seconds and be at most 24 hours",
+                "secret authority use window must exceed two seconds and be at most 24 hours",
             ));
         }
+        i64::try_from(hard_max.as_millis()).map_err(|_| denied("secret authority hard maximum overflow"))?;
         let client =
             redis::Client::open(url).map_err(|_| denied("invalid secret authority Redis configuration"))?;
         let config = redis::AsyncConnectionConfig::new()
@@ -554,6 +585,7 @@ impl PgSecretAuthority {
             pg,
             connection: Some(connection),
             ttl,
+            hard_max,
         };
         authority.validate_volatile().await?;
         authority.validate_clock().await?;
@@ -568,6 +600,7 @@ impl PgSecretAuthority {
             pg,
             connection: None,
             ttl: Duration::ZERO,
+            hard_max: Duration::ZERO,
         }
     }
 
@@ -792,8 +825,10 @@ impl PgSecretAuthority {
         let incarnation = random_uuid()?;
         let ttl_ms =
             i64::try_from(self.ttl.as_millis()).map_err(|_| denied("secret authority TTL overflow"))?;
-        sqlx::query("INSERT INTO run_secret_authority(tenant_id,run_id,incarnation,epoch,pending_operation,expires_at) SELECT $1,$2,$3,0,$3,LEAST(clock_timestamp()+($4::bigint * interval '1 millisecond'),r.expires_at,r.deadline_at,a.valid_to) FROM crawl_runs r LEFT JOIN authorization_records a ON a.record_id=r.authorization_record_id WHERE r.tenant_id=$1 AND r.run_id=$2 ON CONFLICT(tenant_id,run_id) DO NOTHING")
-            .bind(lease.tenant.0).bind(lease.run.0).bind(incarnation).bind(ttl_ms).execute(&mut *tx).await.map_err(db)?;
+        let (use_deadline, retention_ceiling) = self.initial_deadlines(&mut tx, lease).await?;
+        sqlx::query("INSERT INTO run_secret_authority(tenant_id,run_id,incarnation,epoch,pending_operation,expires_at,retention_ceiling,use_window_ms) VALUES($1,$2,$3,0,$3,$4,$5,$6) ON CONFLICT(tenant_id,run_id) DO NOTHING")
+            .bind(lease.tenant.0).bind(lease.run.0).bind(incarnation).bind(use_deadline)
+            .bind(retention_ceiling).bind(ttl_ms).execute(&mut *tx).await.map_err(db)?;
         let row = locked(&mut tx, lease).await?;
         tx.commit().await.map_err(db)?;
         lease.check_local_cancellation()?;
@@ -806,7 +841,7 @@ impl PgSecretAuthority {
         // Absolute expiry cannot be extended by a delayed command. The early
         // margin covers the explicitly supported maximum clock skew.
         let deadline = row
-            .expires_at
+            .retention_ceiling
             .timestamp_millis()
             .checked_sub(EXPIRY_MARGIN_MS)
             .ok_or_else(|| denied("secret authority expiry overflow"))?;
@@ -1005,7 +1040,10 @@ impl PgSecretAuthority {
     /// Read durable wrapped-key custody, bound to the exact ciphertext catalog row.
     /// This is cryptographic key access, not plaintext disclosure approval. Callers
     /// must also authorize the user and obtain [`RunSecretAuthority::read_state`].
-    /// Only finalized runs can outlive the volatile secret authority safely.
+    /// Queued/running runs require an unexpired durable use window with no pending
+    /// registration or renewal. Terminal runs have permanently closed registration,
+    /// so they read without a live rescan, sealed or not; this makes no
+    /// transport-lifetime or live-disclosure promise.
     ///
     /// # Errors
     /// Rejects cross-tenant, deleted/expired, missing or inconsistent custody.
@@ -1211,9 +1249,11 @@ impl PgSecretAuthority {
             return Err(denied("artifact incarnation mismatch"));
         }
         let artifact_epoch: i64 = get(&artifact_row, "secret_epoch")?;
-        let state = if row.sealed_at.is_some() {
-            if artifact_epoch != row.epoch || !matches!(status.as_str(), "completed" | "failed" | "cancelled")
-            {
+        let terminal = matches!(status.as_str(), "completed" | "failed" | "cancelled");
+        // Terminal runs have permanently closed registration. An artifact validated at that
+        // closed epoch (frozen archive output or finalized ciphertext) reads without the raw registry.
+        let state = if row.sealed_at.is_some() || (terminal && artifact_epoch == row.epoch) {
+            if artifact_epoch != row.epoch || !terminal {
                 return Err(denied("artifact finalized custody mismatch"));
             }
             ArtifactReadState::Finalized(SecretEpoch::new(tenant, run, row.incarnation, row.epoch))
@@ -1388,6 +1428,15 @@ impl RunSecretAuthority for PgSecretAuthority {
         tx.commit().await.map_err(db)?;
         lease.check_local_cancellation()?;
         Ok(snapshot.snapshot)
+    }
+
+    async fn retained_snapshot(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+        expected: SecretEpoch,
+    ) -> Result<RunSecretSnapshot, StoreError> {
+        self.retained_snapshot_on(tenant, run, expected).await
     }
 
     async fn read_state(

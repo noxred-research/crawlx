@@ -13,9 +13,13 @@ use crawlx_bench::gym::manifest::FixtureManifest;
 use crawlx_bench::gym::GymServer;
 use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, worker_config};
 use crawlx_browser::launch::find_executable;
+use crawlx_browser::network_guard::GUARD_PLANE;
 use crawlx_core::config::SafetyProfile;
 use crawlx_core::counters::ActionStatus;
+use crawlx_policy::egress::DenyRule;
 use crawlx_storage::MemoryStore;
+use crawlx_telemetry::metrics::names;
+use crawlx_telemetry::Metrics;
 use crawlx_worker::replay::{ReplayMode, ReplayPlan, ReplayRunner, StepVerdict};
 use crawlx_worker::{run_local_with, DriverConfig, LocalRun, StaticAuthorizationSource, Stores};
 use std::sync::Arc;
@@ -23,6 +27,16 @@ use std::sync::Arc;
 /// Crawl `fixture` with the G1 configuration (variant `A4`, `test_environment`, 40
 /// interactions) and replay the complete path to its last succeeded action in `verify` mode.
 async fn crawl_then_replay(fixture: &str) -> Option<crawlx_worker::replay::ReplayReport> {
+    crawl_then_replay_counting_guard_denials(fixture)
+        .await
+        .map(|(out, _)| out)
+}
+
+/// [`crawl_then_replay`], also returning how many metadata-service requests the browser
+/// network guard refused while the replay itself ran (the source crawl is not counted).
+async fn crawl_then_replay_counting_guard_denials(
+    fixture: &str,
+) -> Option<(crawlx_worker::replay::ReplayReport, u64)> {
     if find_executable().is_none() {
         eprintln!("SKIP: no Chromium (set CRAWLX_CHROMIUM_PATH)");
         return None;
@@ -65,13 +79,17 @@ async fn crawl_then_replay(fixture: &str) -> Option<crawlx_worker::replay::Repla
         .expect("the crawl recorded a succeeded action");
     let plan = ReplayPlan::load(&stores, report.run_id, last.id).await.unwrap();
     let expected_steps = plan.steps.len();
+    let denials = Metrics::global().counter(names::EGRESS_DENIALS);
+    let labels = [("plane", GUARD_PLANE), ("reason", DenyRule::Metadata.as_str())];
+    let before_replay = denials.get(&labels);
     let out = ReplayRunner::run(cfg, plan, ReplayMode::Verify, None, None)
         .await
         .unwrap();
+    let guard_denials = denials.get(&labels).saturating_sub(before_replay);
     gym.shutdown().await;
     assert_eq!(out.steps.len(), expected_steps, "{:#?}", out.steps);
     assert_eq!(out.steps.last().map(|step| step.action), Some(last.id));
-    Some(out)
+    Some((out, guard_denials))
 }
 
 /// G01: forty recorded steps through submit controls inside forms replay and match. Before
@@ -89,22 +107,28 @@ async fn g01_recorded_path_replays_and_matches_on_chromium() {
         .all(|s| matches!(s.verdict, StepVerdict::Matched { .. })));
 }
 
-/// D1 embeds a link-local metadata-service image. The replay browser runs behind the run's
-/// egress proxy, which refuses that request at once; without the proxy the navigation waited
-/// on the link-local address until the 30 s timeout and no step ran.
+/// D1 embeds a link-local metadata-service image. The replay browser's network guard refuses
+/// that request before the browser dispatches it, so the replay's egress proxy never sees it;
+/// without the guard and proxy the navigation waited on the link-local address until the 30 s
+/// timeout and no step ran. The refusal is evidenced by the guard's own denial counter, and
+/// the proxy must not have dialed the metadata host.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn d1_replay_runs_behind_the_egress_policy_and_matches() {
-    let Some(out) = crawl_then_replay("d1").await else {
+    let Some((out, guard_denials)) = crawl_then_replay_counting_guard_denials("d1").await else {
         return;
     };
     assert!(out.ok, "{:#?}", out.steps);
     assert!(
-        out.egress
-            .denied_events
+        guard_denials > 0,
+        "the metadata-service beacon was refused by the replay browser's network guard"
+    );
+    assert!(
+        !out.egress
+            .dialed_hosts
             .iter()
-            .any(|e| e.host.contains("169.254.169.254")),
-        "the metadata-service beacon was refused by the replay's egress proxy: {:?}",
-        out.egress.denied_events
+            .any(|(host, _)| host.contains("169.254.169.254")),
+        "the replay's egress proxy dialed the metadata service: {:?}",
+        out.egress.dialed_hosts
     );
 }
 

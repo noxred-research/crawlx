@@ -154,6 +154,14 @@ pub struct HeadlessArgs {
     /// Start from the saved `--browser-profile` but discard what this run writes.
     #[arg(long, requires = "browser_profile", help_heading = "Headless")]
     pub browser_profile_discard: bool,
+    /// Restore exactly this saved `--browser-profile` generation; 0 starts a new profile.
+    #[arg(
+        long,
+        requires = "browser_profile",
+        value_name = "N",
+        help_heading = "Headless"
+    )]
+    pub browser_profile_generation: Option<u64>,
     /// Retired plaintext profile root. Supplying this flag returns a secure migration error.
     #[arg(long, value_name = "DIR", help_heading = "Headless")]
     pub profiles_dir: Option<PathBuf>,
@@ -215,6 +223,7 @@ impl HeadlessArgs {
                 stealth_patches,
                 browser_profile,
                 browser_profile_discard,
+                browser_profile_generation,
                 profiles_dir,
                 auto_download_chromium,
                 chromium_cache,
@@ -295,6 +304,7 @@ impl HeadlessArgs {
             crawl.dynamic.browser_profile = Some(BrowserProfile {
                 name: name.clone(),
                 save_changes: !self.browser_profile_discard,
+                generation: self.browser_profile_generation.unwrap_or(0),
             });
         }
         Ok(())
@@ -386,6 +396,7 @@ mod tests {
             stealth_patches: true,
             browser_profile: Some("main".to_owned()),
             browser_profile_discard: true,
+            browser_profile_generation: Some(2),
             profiles_dir: None,
             auto_download_chromium: true,
             chromium_cache: Some(PathBuf::from("/var/chromium")),
@@ -405,7 +416,10 @@ mod tests {
         );
         assert!(crawl.dynamic.stealth_patches);
         let profile = crawl.dynamic.browser_profile.unwrap();
-        assert_eq!((profile.name.as_str(), profile.save_changes), ("main", false));
+        assert_eq!(
+            (profile.name.as_str(), profile.save_changes, profile.generation),
+            ("main", false, 2)
+        );
         let cfg = launch(&args, &no_env).unwrap();
         assert!(cfg.auto_download_chromium);
         assert_eq!(cfg.chromium_cache, PathBuf::from("/var/chromium"));

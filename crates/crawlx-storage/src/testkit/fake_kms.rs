@@ -7,6 +7,10 @@
 //! verifying request signatures and binds only to loopback. Never route production
 //! cloud traffic here. No fixture endpoint is selected automatically.
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "owned loopback key-service fixture exposes only its private HTTP protocol boundary"
+)]
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},

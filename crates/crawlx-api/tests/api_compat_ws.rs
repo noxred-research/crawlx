@@ -548,6 +548,10 @@ async fn the_ws_sibling_paths_behave_like_the_status_paths() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn a_plain_get_still_answers_the_status_json() {
     let env = fast_env(|_| {});
     let server = serve(env.app.clone()).await;
@@ -578,6 +582,10 @@ async fn a_plain_get_still_answers_the_status_json() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::disallowed_types,
+    reason = "test client speaks HTTP to an owned local fixture server"
+)]
 async fn a_malformed_upgrade_is_a_400_and_never_a_status_body() {
     let env = fast_env(|_| {});
     let server = serve(env.app.clone()).await;

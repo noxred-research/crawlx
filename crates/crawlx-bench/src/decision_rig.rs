@@ -139,6 +139,10 @@ fn rig_error(what: &str, e: &dyn std::error::Error) -> BenchError {
 }
 
 /// Identity of the model behind `endpoint` (`/v1/decide` of a `decision-serve`).
+#[allow(
+    clippy::disallowed_types,
+    reason = "reviewed explicit model fixture health probe adapter"
+)]
 async fn served_identity(endpoint: &str) -> Result<ModelId, BenchError> {
     let mut health = url::Url::parse(endpoint)?;
     health.set_path("/health");

@@ -1,0 +1,13 @@
+{
+  "construct": "conditional-comment",
+  "body": [
+    "<html><head><!--[if lt IE 9]><link rel=\"stylesheet\" href=\"/css/ie.css\"><![endif]--><!-- plain comment <a href=\"/not-a-conditional\"></a> --></head><body></body></html>"
+  ],
+  "expected": [
+    {
+      "method": "GET",
+      "url": "https://matrix.test/css/ie.css",
+      "source": "html/conditional-comment"
+    }
+  ]
+}

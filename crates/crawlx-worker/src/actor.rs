@@ -10,6 +10,9 @@
 #[path = "actor_captcha.rs"]
 mod captcha;
 
+#[path = "actor_extensions.rs"]
+mod lifecycle;
+
 use crate::analysis::StateAnalyzer;
 use crate::checkpoint::Checkpointer;
 use crate::error::SessionError;
@@ -316,6 +319,12 @@ pub enum SessionCommand {
         /// Reply.
         reply: oneshot::Sender<Result<Digest, SessionError>>,
     },
+    /// Strict complete structured profile export for encrypted custody (never the redacted
+    /// checkpoint export).
+    ExportProfileStorage {
+        /// Reply; the bytes are zeroized on drop.
+        reply: oneshot::Sender<Result<zeroize::Zeroizing<Vec<u8>>, SessionError>>,
+    },
     /// Type a credential into `target` (recorded-flow `fill` with a placeholder): revalidated,
     /// performed as native input, settled with the session policy; not journaled, like the
     /// typing `Login` does.
@@ -410,6 +419,9 @@ impl SessionCommand {
             Self::StorageDigest { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
+            Self::ExportProfileStorage { reply } => {
+                let _ = reply.send(Err(error));
+            }
             Self::PageOp { reply, .. } | Self::DocumentResponse { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
@@ -451,6 +463,9 @@ pub struct SessionServices {
     pub pool: crate::pool::BrowserPool,
     /// Supervisor.
     pub supervisor: Supervisor,
+    /// Durable approval repository bound to the same store as the journal; consumed
+    /// approvals reach T1 only through its fenced `intend_approved`.
+    pub approvals: Arc<dyn crawlx_storage::approvals::ApprovalRepository>,
 }
 
 /// Per-session settings.
@@ -504,6 +519,9 @@ pub struct SessionConfig {
     pub origin_governor: Arc<crawlx_fetch::OriginGovernor>,
     /// Cancels pending origin admission when the run stops.
     pub origin_cancel: tokio_util::sync::CancellationToken,
+    /// Interactive-owned, per-session token that interrupts an in-flight effect or settle.
+    /// `None` (every ordinary run) keeps the graceful drain behavior. Never the run-wide token.
+    pub effect_cancel: Option<tokio_util::sync::CancellationToken>,
     /// Optional evidence of actual performed actions; absent in production.
     pub action_trace: Option<Arc<crate::action_trace::ActionTrace>>,
     /// Shared CPU pool for opt-in native settled-DOM item pipelines.
@@ -557,6 +575,7 @@ impl SessionConfig {
                 crawlx_fetch::GovernorConfig::default(),
             )),
             origin_cancel: tokio_util::sync::CancellationToken::new(),
+            effect_cancel: None,
             action_trace: None,
             extension_cpu: None,
             article_language_detector: None,
@@ -890,6 +909,15 @@ impl SessionHandle {
     /// Fails when a storage, browser or network operation it depends on fails.
     pub async fn storage_digest(&self) -> Result<Digest, SessionError> {
         self.call(|reply| SessionCommand::StorageDigest { reply }).await
+    }
+
+    /// Strict structured profile snapshot for custody. The caller must keep it zeroizing.
+    ///
+    /// # Errors
+    /// Fails closed unless the live binding, lease and browser all produce a complete export.
+    pub async fn export_profile_storage(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, SessionError> {
+        self.call(|reply| SessionCommand::ExportProfileStorage { reply })
+            .await
     }
 
     /// Type a credential into `target` as native input (see [`SessionCommand::TypeCredential`]).
@@ -1648,6 +1676,11 @@ impl SessionActor {
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
+            SessionCommand::ExportProfileStorage { reply } => {
+                let r = Self::command_future(|| self.export_profile_storage()).await;
+                let r = self.note(r).await;
+                let _ = reply.send(r);
+            }
             SessionCommand::TypeCredential { target, value, reply } => {
                 let r = Self::command_future(|| self.type_credential(target, value)).await;
                 let r = self.note(r).await;
@@ -1736,7 +1769,13 @@ impl SessionActor {
     }
 
     fn accepts_browser_commands(&self) -> Result<(), SessionError> {
-        if self.cfg.origin_cancel.is_cancelled() {
+        if self.cfg.origin_cancel.is_cancelled()
+            || self
+                .cfg
+                .effect_cancel
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+        {
             return Err(SessionError::Cancelled);
         }
         self.accepts_owned_context()
@@ -1831,50 +1870,91 @@ impl SessionActor {
                 "unsupported extension browser request".into(),
             ));
         }
+        let run = self.svc.runs.get(self.cfg.run).await?;
+        run.config.extensions.route(&request.route)?;
+        let mut lifecycle = if self.cfg.extension_cpu.is_some() && run.config.extensions.configured() {
+            Some(crate::extensions::RequestLifecycle::new(&run.config.extensions)?)
+        } else {
+            None
+        };
+        let result = self.navigate_admitted(request, &run, lifecycle.as_mut()).await;
+        if let Some(chain) = lifecycle {
+            let outcome = lifecycle::terminal_for(&result);
+            self.finish_lifecycle("navigation", chain, outcome).await;
+        }
+        result
+    }
+
+    /// Native re-admission of a replacement proposal from a reviewed extension. The proposal
+    /// is never trusted: only a canonical, credential-free, in-scope GET URL with an exact
+    /// registered handler can reach the browser, whether it stays on the origin or leaves it.
+    fn readmit_replacement(
+        &self,
+        run: &crawlx_core::repo::CrawlRun,
+        proposal: &crawlx_core::request::RequestEnvelopeV1,
+    ) -> Result<CanonicalUrl, SessionError> {
+        if proposal.method != "GET"
+            || proposal.body.is_some()
+            || proposal.header_control.is_some()
+            || proposal.session_generation.is_some()
+        {
+            return Err(SessionError::Other(
+                "unsupported extension browser request".into(),
+            ));
+        }
+        // Credentials in a URL would travel to another origin; none may cross this boundary.
+        if !proposal.url.url.username().is_empty() || proposal.url.url.password().is_some() {
+            return Err(SessionError::Other("extension browser request denied".into()));
+        }
+        let proposed = crawlx_url::Canonicalizer::canonicalize_detailed(
+            proposal.url.url.as_str(),
+            &proposal.url.url,
+            &self.cfg.canonicalize,
+        )
+        .map_err(|_| SessionError::Other("invalid extension browser URL".into()))?;
+        let scope = crawlx_policy::ScopePolicy::new(&run.config)
+            .map_err(|_| SessionError::Other("invalid extension scope policy".into()))?;
+        if proposed.action_bearing
+            || proposed.url.url != proposal.url.url
+            || !scope.decide(&proposed.url, proposal.depth).is_admitted()
+            || run.config.extensions.route(&proposal.route)? == crawlx_core::extensions::HandlerV1::Skip
+        {
+            return Err(SessionError::Other("extension browser request denied".into()));
+        }
+        Ok(proposed.url)
+    }
+
+    async fn navigate_admitted(
+        &mut self,
+        request: &crawlx_core::request::RequestEnvelopeV1,
+        run: &crawlx_core::repo::CrawlRun,
+        mut lifecycle: Option<&mut crate::extensions::RequestLifecycle>,
+    ) -> Result<NavigationResult, SessionError> {
+        use crawlx_core::extensions::{ExtensionEventV1, ExtensionReasonV1, ExtensionTerminalV1, HandlerV1};
         let url = &request.url;
         let mut route = &request.route;
         let mut replacement = None;
         let mut replacement_route = None;
-        let mut lifecycle = None;
-        let run = self.svc.runs.get(self.cfg.run).await?;
-        run.config.extensions.route(route)?;
-        if self.cfg.extension_cpu.is_some() && run.config.extensions.configured() {
-            let mut chain = crate::extensions::RequestLifecycle::new(&run.config.extensions)?;
+        if let Some(chain) = lifecycle.as_deref_mut() {
             let prepared = chain.before_acquisition(request, &self.cfg.origin_cancel)?;
-            if prepared.route == crawlx_core::extensions::HandlerV1::Skip {
+            if prepared.route == HandlerV1::Skip {
+                let _ = chain.finish(ExtensionTerminalV1::Skipped(ExtensionReasonV1::Rejected));
                 return Err(SessionError::Other("extension navigation skipped".into()));
             }
             if let Some(proposal) = prepared.replacement {
-                if proposal.method != "GET"
-                    || proposal.body.is_some()
-                    || proposal.header_control.is_some()
-                    || proposal.session_generation.is_some()
-                {
-                    return Err(SessionError::Other(
-                        "unsupported extension browser request".into(),
-                    ));
+                match self.readmit_replacement(run, &proposal) {
+                    Ok(readmitted) => {
+                        replacement = Some(readmitted);
+                        replacement_route = Some(proposal.route);
+                    }
+                    Err(error) => {
+                        // Native denial is sticky; no callback result can turn it into an allow.
+                        let _ = chain.finish(ExtensionTerminalV1::Skipped(ExtensionReasonV1::PolicyDenied));
+                        return Err(error);
+                    }
                 }
-                let proposed = crawlx_url::Canonicalizer::canonicalize_detailed(
-                    proposal.url.url.as_str(),
-                    &proposal.url.url,
-                    &self.cfg.canonicalize,
-                )
-                .map_err(|_| SessionError::Other("invalid extension browser URL".into()))?;
-                let scope = crawlx_policy::ScopePolicy::new(&run.config)
-                    .map_err(|_| SessionError::Other("invalid extension scope policy".into()))?;
-                if proposed.action_bearing
-                    || proposed.url.url != proposal.url.url
-                    || !scope.decide(&proposed.url, proposal.depth).is_admitted()
-                    || run.config.extensions.route(&proposal.route)?
-                        == crawlx_core::extensions::HandlerV1::Skip
-                {
-                    let _ = chain.finalize(true);
-                    return Err(SessionError::Other("extension browser request denied".into()));
-                }
-                replacement = Some(proposed.url);
-                replacement_route = Some(proposal.route);
             }
-            lifecycle = Some(chain);
+            self.browser_boundary(chain, ExtensionEventV1::BrowserPreNavigation)?;
         }
         if let Some(replacement_route) = replacement_route.as_ref() {
             route = replacement_route;
@@ -1891,8 +1971,12 @@ impl SessionActor {
         self.verify_pool_pin()?;
         // The checked context admitted this intent. Redirects change location, not handler identity.
         self.current_request_route = Some(route.clone());
-        if let Some(chain) = &mut lifecycle {
-            let _ = chain.finalize(false);
+        if let Some(chain) = lifecycle {
+            // The effect happened: prove the same generation, fence and cancellation authority
+            // still own this session before the boundary is recorded.
+            self.verify_current_binding().await?;
+            self.accepts_browser_commands()?;
+            self.browser_boundary(chain, ExtensionEventV1::BrowserPostNavigation)?;
         }
         self.observer.reset();
         // a settle report per navigation (`settle_timeout` flags a page that never went idle)
@@ -2111,6 +2195,13 @@ impl SessionActor {
         Ok(Digest::of("crawlx/worker/storage-state", &blob))
     }
 
+    /// Strict complete structured export for encrypted profile custody only. The bytes are
+    /// never logged or persisted here and leave the actor only inside a zeroizing buffer.
+    async fn export_profile_storage(&mut self) -> Result<zeroize::Zeroizing<Vec<u8>>, SessionError> {
+        self.accepts_browser_commands()?;
+        Ok(zeroize::Zeroizing::new(self.ctx.export_profile_storage().await?))
+    }
+
     async fn page_op(&mut self, op: PageOp) -> Result<PageOpResult, SessionError> {
         self.accepts_browser_commands()?;
         Ok(self.ctx.page_op(op).await?)
@@ -2153,17 +2244,39 @@ impl SessionActor {
                 )))
             }
         }
-        self.ctx
-            .perform(BrowserAction::Type {
-                target,
-                value,
-                clear_first: true,
-            })
-            .await?;
+        // This fill is never journaled, so a cancelled one is uncertain: the keystrokes may
+        // already be in the page. The interactive token interrupts the effect and settle, the
+        // context is marked failed (never reused or recovered) and cleanup closes it promptly.
+        let effect_cancel = self.cfg.effect_cancel.clone();
         let settle = self.cfg.settle;
-        QuiescenceWaiter::default()
-            .settle(&mut *self.ctx, &settle)
-            .await?;
+        let outcome = {
+            let work = async {
+                self.ctx
+                    .perform(BrowserAction::Type {
+                        target,
+                        value,
+                        clear_first: true,
+                    })
+                    .await?;
+                QuiescenceWaiter::default()
+                    .settle(&mut *self.ctx, &settle)
+                    .await
+                    .map(drop)
+            };
+            tokio::select! {
+                biased;
+                () = Self::effect_cancelled(effect_cancel.as_ref()) => None,
+                result = work => Some(result),
+            }
+        };
+        match outcome {
+            None => {
+                self.needs_recovery = false;
+                self.set_state(SessionState::Failed);
+                return Err(SessionError::Cancelled);
+            }
+            Some(result) => result?,
+        }
         let after = self
             .observer
             .observe_shared(&mut *self.ctx, &self.cfg.after_spec)
@@ -2290,15 +2403,29 @@ impl SessionActor {
         }
         let proposal = a.proposal();
         // Proposed under the driver's span so the row carries the run's trace id.
-        let id = match retry_of {
-            Some(id) => id,
-            None => self
-                .svc
-                .journal
-                .propose(self.cfg.run, self.cfg.session, proposal, a.verdict())
-                .instrument(parent.clone())
-                .await
-                .map_err(|e| self.halt_storage(e))?,
+        // A durably approved action keeps its original parked identity: no second proposal or
+        // approval row. The trusted actor binds it to this exact tenant/run/session/epoch.
+        let id = if let Some(authority) = a.approval_authority().copied() {
+            if authority.tenant != self.svc.tenant
+                || authority.run != self.cfg.run
+                || authority.session != self.cfg.session
+                || authority.epoch != proposal.epoch
+                || retry_of.is_some_and(|id| id != authority.action)
+            {
+                return Err(self.halt_storage(StoreError::LeaseLost));
+            }
+            authority.action
+        } else {
+            match retry_of {
+                Some(id) => id,
+                None => self
+                    .svc
+                    .journal
+                    .propose(self.cfg.run, self.cfg.session, proposal, a.verdict())
+                    .instrument(parent.clone())
+                    .await
+                    .map_err(|e| self.halt_storage(e))?,
+            }
         };
         let fidelity = proposal.action.fidelity();
         let span = under(parent, || {
@@ -2451,12 +2578,31 @@ impl SessionActor {
         self.accepts_browser_commands()?;
         // 3. T1: intent (a failure halts; nothing has touched the browser)
         let t1 = Instant::now();
-        let intended = self
-            .svc
-            .journal
-            .intend(id, self.cfg.session, cur)
-            .instrument(child::journal_intent())
-            .await;
+        let intended = if let Some(authority) = a.approval_authority() {
+            let lease = self
+                .cfg
+                .binding_owner
+                .as_ref()
+                .map(|(_, lease)| lease)
+                .or_else(|| self.cfg.local_lease_owner.as_ref().map(|(_, lease)| lease))
+                .ok_or(StoreError::LeaseLost);
+            match lease {
+                Ok(lease) if lease.fencing_token == authority.fence && cur == authority.epoch => {
+                    self.svc
+                        .approvals
+                        .intend_approved(self.svc.tenant, lease, id, cur, a.verdict())
+                        .instrument(child::journal_intent())
+                        .await
+                }
+                _ => Err(StoreError::LeaseLost),
+            }
+        } else {
+            self.svc
+                .journal
+                .intend(id, self.cfg.session, cur)
+                .instrument(child::journal_intent())
+                .await
+        };
         Metrics::global()
             .histogram(names::JOURNAL_T1_DURATION)
             .observe_duration(t1.elapsed(), &[]);
@@ -2468,6 +2614,14 @@ impl SessionActor {
             self.set_state(SessionState::Ready);
         }
         result
+    }
+
+    /// Resolves when the interactive-owned effect token is cancelled; pending when absent.
+    async fn effect_cancelled(token: Option<&tokio_util::sync::CancellationToken>) {
+        match token {
+            Some(token) => token.cancelled().await,
+            None => std::future::pending::<()>().await,
+        }
     }
 
     async fn perform_and_finish(
@@ -2514,11 +2668,23 @@ impl SessionActor {
                 self.last.as_deref(),
             );
         }
-        let performed = self
-            .ctx
-            .perform(a.browser_action().clone())
-            .instrument(child::browser_mutation())
-            .await;
+        let effect_cancel = self.cfg.effect_cancel.clone();
+        let performed = {
+            let effect = self
+                .ctx
+                .perform(a.browser_action().clone())
+                .instrument(child::browser_mutation());
+            tokio::select! {
+                biased;
+                () = Self::effect_cancelled(effect_cancel.as_ref()) => None,
+                result = effect => Some(result),
+            }
+        };
+        // Cancelled mid-dispatch: the command may already have reached the browser.
+        let Some(performed) = performed else {
+            self.finish_unknown(id, lane, "cancelled_during_effect").await;
+            return Err(SessionError::Cancelled);
+        };
         if let Err(error) = self.verify_pool_pin() {
             self.finish_unknown(id, lane, "proxy_session_pin_lost").await;
             return Err(error);
@@ -2558,10 +2724,22 @@ impl SessionActor {
         crate::chaos::hit(crate::chaos::AFTER_PERFORM_BEFORE_OUTCOME).await;
         // 5. settle
         let quiescence = child::quiescence();
-        let settle_result = QuiescenceWaiter::default()
-            .settle(&mut *self.ctx, &settle)
-            .instrument(quiescence.clone())
-            .await;
+        // An interactive-owned token interrupts settle at once. The effect was already sent,
+        // so the outcome is journaled conservatively as unknown, never as "no effect".
+        let effect_cancel = self.cfg.effect_cancel.clone();
+        let settle_result = {
+            let waiter_state = QuiescenceWaiter::default();
+            let waiter = waiter_state.settle(&mut *self.ctx, &settle);
+            tokio::select! {
+                biased;
+                () = Self::effect_cancelled(effect_cancel.as_ref()) => None,
+                result = waiter.instrument(quiescence.clone()) => Some(result),
+            }
+        };
+        let Some(settle_result) = settle_result else {
+            self.finish_unknown(id, lane, "cancelled_during_settle").await;
+            return Err(SessionError::Cancelled);
+        };
         if let Err(error) = self.verify_pool_pin() {
             self.finish_unknown(id, lane, "proxy_session_pin_lost").await;
             return Err(error);
@@ -2781,10 +2959,57 @@ impl SessionActor {
         ),
         StoreError,
     > {
+        if self.cfg.extension_cpu.is_none() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let run = self.svc.runs.get(self.cfg.run).await?;
+        let wants_article = run.config.datasets.article_store()?.is_some();
+        let wants_item = run.config.extensions.configured() && run.config.extensions.requires_document();
+        if !wants_article && !wants_item {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        // A configured pipeline sees exactly one ordered lifecycle attempt per parsed page.
+        let mut lifecycle = if run.config.extensions.configured() {
+            Some(
+                crate::extensions::RequestLifecycle::new(&run.config.extensions)
+                    .map_err(|_| StoreError::Conflict("invalid extension pipeline".into()))?,
+            )
+        } else {
+            None
+        };
+        let result = self
+            .extension_items_attempt(action, &run, lifecycle.as_mut())
+            .await;
+        if let Some(chain) = lifecycle {
+            use crawlx_core::extensions::{ExtensionReasonV1, ExtensionTerminalV1};
+            let outcome = match &result {
+                Ok(_) => ExtensionTerminalV1::Completed,
+                Err(_) if self.cfg.origin_cancel.is_cancelled() => {
+                    ExtensionTerminalV1::Skipped(ExtensionReasonV1::Cancelled)
+                }
+                Err(_) => ExtensionTerminalV1::Failed(ExtensionReasonV1::Processing),
+            };
+            self.finish_lifecycle("items", chain, outcome).await;
+        }
+        result
+    }
+
+    async fn extension_items_attempt(
+        &mut self,
+        action: ActionId,
+        run: &crawlx_core::repo::CrawlRun,
+        mut lifecycle: Option<&mut crate::extensions::RequestLifecycle>,
+    ) -> Result<
+        (
+            Vec<crawlx_core::dataset::AcceptedBatchV1>,
+            Vec<crawlx_core::dataset::DeliveryBatchV1>,
+        ),
+        StoreError,
+    > {
+        use crawlx_core::extensions::{ExtensionEventV1, HeaderFactsV1};
         let Some(cpu) = self.cfg.extension_cpu.clone() else {
             return Ok((Vec::new(), Vec::new()));
         };
-        let run = self.svc.runs.get(self.cfg.run).await?;
         let wants_article = run.config.datasets.article_store()?.is_some();
         let wants_item = run.config.extensions.configured() && run.config.extensions.requires_document();
         if !wants_article && !wants_item {
@@ -2825,6 +3050,22 @@ impl SessionActor {
         if self.ctx.current_epoch() != epoch {
             return Err(StoreError::Conflict("extension DOM epoch changed".into()));
         }
+        // Response facts are bounded metadata. A skip here stops parsing before any byte is
+        // handed to the CPU pool; the page itself was already admitted by the browser guard.
+        if let Ok(facts) = HeaderFactsV1::new(status.unwrap_or(0), content_type.as_deref(), None) {
+            if !self.item_boundary(lifecycle.as_deref_mut(), ExtensionEventV1::HeadersReceived(facts))? {
+                return Ok((Vec::new(), Vec::new()));
+            }
+        }
+        for event in [
+            ExtensionEventV1::Response,
+            ExtensionEventV1::Html,
+            ExtensionEventV1::Parse,
+        ] {
+            if !self.item_boundary(lifecycle.as_deref_mut(), event)? {
+                return Ok((Vec::new(), Vec::new()));
+            }
+        }
         let policy = run.config.acquisition.clone().unwrap_or_default();
         let extract = crawlx_extract::ExtractOptions {
             content: run.config.extract.content.clone(),
@@ -2850,52 +3091,93 @@ impl SessionActor {
         let cancel = self.cfg.origin_cancel.child_token();
         let _cancel_on_drop = cancel.clone().drop_guard();
         let captcha = self.cfg.context.captcha_secrets.clone();
-        let task = cpu.run(move || {
-            let body = bytes::Bytes::from(html);
-            let document = crate::acquisition::extract_document_with_secrets(
-                &body, &base, &extract, &controls, &captcha,
-            )
-            .map_err(|error| match error {
-                crawlx_extract::ExtractError::ParseMemory(refused) if !refused.exceeds_budget() => {
-                    StoreError::ResourceExhausted {
-                        resource: "parse_memory",
-                        requested: refused.requested,
-                        available: refused.available,
-                        source: None,
-                    }
-                }
-                crawlx_extract::ExtractError::ParseMemory(_) => {
-                    StoreError::Conflict("extension DOM exceeds the parse-memory budget".into())
-                }
-                _ => StoreError::Conflict("extension DOM parse failed".into()),
-            })?;
-            if !document.validation.as_ref().is_some_and(|v| v.content_accepted) {
-                return Err(StoreError::Conflict(
-                    "extension content validation rejected".into(),
-                ));
-            }
-            let candidate = if wants_item {
-                let article = document
-                    .article
-                    .as_ref()
-                    .ok_or_else(|| StoreError::Conflict("extension document envelope unavailable".into()))?;
-                match crate::extensions::transform_document(&pipeline, &label, article, &cancel) {
-                    Ok(item) => item,
-                    Err(crawlx_core::extensions::ExtensionError::Rejected) => None,
-                    Err(_) => return Err(StoreError::Conflict("extension item failed".into())),
-                }
-            } else {
-                None
-            };
-            Ok((Box::new(document), candidate))
-        });
-        let (document, candidate) = tokio::select! {
+        let invalid = |reason: &str| StoreError::Conflict(format!("extension parser unavailable: {reason}"));
+        // Bounded, budget-admitted snapshot held until the projection below is built.
+        let literals = captcha
+            .literal_snapshot_admitted(crate::url_plane::memory_plane::DYNAMIC_SECRET_SNAPSHOT_BYTES)
+            .map_err(|_| invalid("dynamic-secret snapshot"))?;
+        let secrets = crate::isolated_parser::IsolatedSecrets::new(
+            controls.secret_values(),
+            literals.value().iter().map(String::as_str),
+        )
+        .map_err(|_| invalid("secret projection"))?;
+        let parser = crate::isolated_parser::shared().map_err(|_| invalid("isolated parser"))?;
+        // The producer's `AdmittedText` stays the true owner of the input reservation: the
+        // `Bytes` view only borrows it through `from_owner`, so no copy and no second charge. The
+        // zero-byte permit is the carrier the parser grows for its own peak before allocating;
+        // the output permit comes back with the document and is held until acceptance finishes.
+        let carrier = crawlx_core::parser_memory::global()
+            .try_reserve(0)
+            .map_err(|_| invalid("admission"))?;
+        let input = crawlx_core::parser_memory::Budgeted::new(
+            bytes::Bytes::from_owner(lifecycle::AdmittedHtml(html)),
+            carrier,
+        );
+        let request = crate::isolated_parser::PageRequest {
+            base,
+            options: extract,
+            engine: crawlx_extract::isolated::Engine::Pipeline,
+            secrets,
+        };
+        let parse = parser.extract_page(&cpu, input, request, &cancel);
+        let page = tokio::select! {
             biased;
             () = self.cfg.origin_cancel.cancelled() => return Err(StoreError::Conflict("extension cancelled".into())),
-            result = tokio::time::timeout(Duration::from_millis(deadline_ms), task) =>
-                result.map_err(|_| StoreError::Conflict("extension deadline exceeded".into()))?
-                    .map_err(|_| StoreError::Conflict("extension CPU task failed".into()))??,
+            result = tokio::time::timeout(Duration::from_millis(deadline_ms), parse) =>
+                result.map_err(|_| StoreError::Conflict("extension deadline exceeded".into()))?,
         };
+        let page = page.map_err(|error| match error.into_extract_error() {
+            crawlx_extract::ExtractError::ParseMemory(refused) if !refused.exceeds_budget() => {
+                StoreError::ResourceExhausted {
+                    resource: "parse_memory",
+                    requested: refused.requested,
+                    available: refused.available,
+                    source: None,
+                }
+            }
+            crawlx_extract::ExtractError::ParseMemory(_) => {
+                StoreError::Conflict("extension DOM exceeds the parse-memory budget".into())
+            }
+            _ => StoreError::Conflict("extension DOM parse failed".into()),
+        })?;
+        // The output permit rides with the document until acceptance has finished.
+        let (document, _output_permit) = page.document.into_parts();
+        if !document.validation.as_ref().is_some_and(|v| v.content_accepted) {
+            return Err(StoreError::Conflict(
+                "extension content validation rejected".into(),
+            ));
+        }
+        // The document moves through the pool job and back; nothing is cloned or re-admitted.
+        let (document, mut candidate) = if wants_item {
+            let task = cpu.run(move || {
+                let candidate = match document.article.as_ref() {
+                    None => Err(StoreError::Conflict(
+                        "extension document envelope unavailable".into(),
+                    )),
+                    Some(article) => {
+                        match crate::extensions::transform_document(&pipeline, &label, article, &cancel) {
+                            Ok(item) => Ok(item),
+                            Err(crawlx_core::extensions::ExtensionError::Rejected) => Ok(None),
+                            Err(_) => Err(StoreError::Conflict("extension item failed".into())),
+                        }
+                    }
+                };
+                (document, candidate)
+            });
+            let (document, candidate) = tokio::select! {
+                biased;
+                () = self.cfg.origin_cancel.cancelled() => return Err(StoreError::Conflict("extension cancelled".into())),
+                result = tokio::time::timeout(Duration::from_millis(deadline_ms), task) =>
+                    result.map_err(|_| StoreError::Conflict("extension deadline exceeded".into()))?
+                        .map_err(|_| StoreError::Conflict("extension CPU task failed".into()))?,
+            };
+            (document, candidate?)
+        } else {
+            (document, None)
+        };
+        if candidate.is_some() && !self.item_boundary(lifecycle, ExtensionEventV1::Item)? {
+            candidate = None;
+        }
         if self.ctx.current_epoch() != epoch || self.cfg.origin_cancel.is_cancelled() {
             return Err(StoreError::Conflict("extension DOM became stale".into()));
         }
@@ -2906,7 +3188,7 @@ impl SessionActor {
         let acceptance = crate::delivery::prepare_article_acceptance(
             self.svc.artifacts.as_ref(),
             &cpu,
-            &run,
+            run,
             page,
             document,
             acquisition_accepted,
@@ -2923,7 +3205,7 @@ impl SessionActor {
             let (_, batch, feeds) = crate::extensions::store_candidate(
                 self.svc.artifacts.as_ref(),
                 &cpu,
-                &run,
+                run,
                 page,
                 &candidate,
                 "native_article_v1.unicode_rules_v1",

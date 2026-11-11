@@ -302,6 +302,9 @@ pub(super) struct Document {
     /// Opt-in native content renditions, table analysis and link/media reports.
     #[serde(skip_serializing_if = "Option::is_none")]
     outputs: Option<super::outputs::ContentOutputs>,
+    /// Generated opt-in model content, not native source evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_content: Option<super::scrape::ModelContent>,
     /// A non-fatal problem the caller should know (a format that was skipped, ...).
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,

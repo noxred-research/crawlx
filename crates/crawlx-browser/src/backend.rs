@@ -122,11 +122,18 @@ impl ChromiumBackend {
     /// leaves the browser running.
     ///
     /// # Errors
+    /// [`BrowserError::Launch`] when namespace isolation was selected (attachment
+    /// cannot establish the required owned-process and namespace identity).
     /// [`BrowserError::Transport`] if the WebSocket connection fails, and the
     /// `Browser.getVersion`, `Target.getBrowserContexts` and `Target.setDiscoverTargets` call
     /// errors ([`BrowserError::Protocol`] when `ws_url` is a page endpoint rather than the
     /// browser endpoint).
     pub async fn attach(ws_url: &url::Url, config: LaunchConfig) -> Result<Self, BrowserError> {
+        if config.namespace.is_some() {
+            return Err(BrowserError::Launch(
+                "namespace isolation cannot attach to an existing CDP endpoint".into(),
+            ));
+        }
         let client = CdpClient::connect_with_queue(ws_url.as_str(), config.cdp_queue).await?;
         let mut build_info = Self::version_info(&client, &config).await?;
         build_info.pinned = false;

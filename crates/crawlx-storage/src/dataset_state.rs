@@ -23,6 +23,8 @@ pub(crate) struct MemoryDelivery {
     pub(crate) not_before: Timestamp,
     pub(crate) erased: bool,
     pub(crate) terminal_source: bool,
+    pub(crate) source_request_id: Option<i64>,
+    pub(crate) source_action_id: Option<ActionId>,
 }
 #[derive(Clone, Copy, Default)]
 struct KvUsage {
@@ -342,6 +344,7 @@ fn prepare(
             _ => return Err(conflict("delivery source range unresolved")),
         }
         let key = (run.id, batch.feed.clone(), batch.idempotency_key.clone());
+        let source_request_id = (action.is_none() && request != 0).then_some(request);
         if let Some(id) = state.delivery_keys.get(&key).or_else(|| new_keys.get(&key)) {
             let old = state
                 .deliveries
@@ -354,7 +357,10 @@ fn prepare(
                         .map(|(_, row)| row)
                 })
                 .ok_or_else(|| StoreError::Backend("delivery identity index inconsistent".into()))?;
-            if old.receipt.batch != batch {
+            if old.receipt.batch != batch
+                || old.source_request_id != source_request_id
+                || old.source_action_id != action
+            {
                 return Err(conflict("delivery identity changed"));
             }
             continue;
@@ -373,6 +379,8 @@ fn prepare(
                 not_before: now,
                 erased: false,
                 terminal_source: request == 0 && action.is_none(),
+                source_request_id,
+                source_action_id: action,
             },
         ));
     }

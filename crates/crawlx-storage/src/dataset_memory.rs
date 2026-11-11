@@ -417,14 +417,28 @@ impl DeliveryOutboxRepo for MemoryStore {
         Ok(claims)
     }
     async fn acknowledge(&self, run: CrawlRunId, id: i64, fence: i64) -> Result<(), StoreError> {
+        let binding = {
+            let g = self.inner.lock();
+            let owner = g.runs.get(&run).ok_or_else(|| nf("crawl_run", run))?;
+            visible(owner)?;
+            (owner.tenant, owner.config.safety.authorization_record_ref)
+        };
+        self.check_head_authority(run).await?;
         {
             let mut g = self.inner.lock();
-            visible(g.runs.get(&run).ok_or_else(|| nf("crawl_run", run))?)?;
+            let owner = g.runs.get(&run).ok_or_else(|| nf("crawl_run", run))?;
+            visible(owner)?;
+            if g.pending_purges.contains_key(&run)
+                || (owner.tenant, owner.config.safety.authorization_record_ref) != binding
+                || owner.terminal_reason == Some(TerminalReason::AuthorizationRevoked)
+            {
+                return Err(StoreError::LeaseLost);
+            }
             let now = self.clock.now();
             let row = g
                 .dataset
                 .deliveries
-                .get_mut(&id)
+                .get(&id)
                 .filter(|row| {
                     row.receipt.run == run
                         && row.receipt.fence == fence
@@ -434,8 +448,37 @@ impl DeliveryOutboxRepo for MemoryStore {
                                 && row.receipt.batch.expires_at > now))
                 })
                 .ok_or(StoreError::LeaseLost)?;
+            let mut reports = self.report_history.lock();
+            let report_delta = if let Some(request) = row
+                .source_request_id
+                .filter(|_| row.receipt.state != DeliveryStateV1::Delivered)
+            {
+                let all_delivered = g
+                    .dataset
+                    .deliveries
+                    .values()
+                    .filter(|candidate| {
+                        candidate.receipt.run == run && candidate.source_request_id == Some(request)
+                    })
+                    .all(|candidate| {
+                        candidate.receipt.id == id || candidate.receipt.state == DeliveryStateV1::Delivered
+                    });
+                Some(super::report_history::prepare_delivery_ack(
+                    &reports,
+                    owner,
+                    request,
+                    all_delivered,
+                    now,
+                )?)
+            } else {
+                None
+            };
+            let row = g.dataset.deliveries.get_mut(&id).ok_or(StoreError::LeaseLost)?;
             row.receipt.state = DeliveryStateV1::Delivered;
             row.lease_expires = None;
+            if let Some(delta) = report_delta {
+                super::report_history::apply_commit(&mut reports, delta);
+            }
         }
         self.maintain(run).await
     }

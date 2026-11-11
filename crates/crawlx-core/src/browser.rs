@@ -320,6 +320,10 @@ pub enum BrowserError {
         /// Bounded reason code, see [`NavigationVerdict::RobotsBlocked`].
         reason: &'static str,
     },
+    /// Shared byte admission refused browser-owned bytes before they were allocated. Never a
+    /// target crash: the page is intact and no recovery ladder applies.
+    #[error("browser byte admission failed")]
+    Memory(#[from] crate::parser_memory::ByteAdmissionError),
 }
 
 impl BrowserError {
@@ -347,6 +351,8 @@ impl crate::error::Classify for BrowserError {
                 ErrorClass::Retryable
             }
             Self::Timeout(_) | Self::Transport(_) => ErrorClass::OutcomeUnknown,
+            Self::Memory(error) if error.exceeds_budget() => ErrorClass::Terminal,
+            Self::Memory(_) => ErrorClass::OutcomeUnknown,
             Self::Captcha(crate::captcha::CaptchaError::PolicyDenied) => ErrorClass::PolicyDenied,
             Self::Captcha(_) => ErrorClass::Terminal,
             Self::SessionExpired => ErrorClass::Terminal,
@@ -462,6 +468,15 @@ pub trait BrowserContext: Send {
     /// # Errors
     /// Returns [`BrowserError`] if cookies or storage cannot be read from the browser.
     async fn export_storage(&mut self) -> Result<Vec<u8>, BrowserError>;
+    /// Export complete bounded cookies and web storage for encrypted retained-profile custody.
+    ///
+    /// # Errors
+    /// Returns unsupported unless the backend proves complete, origin-scoped structured state.
+    async fn export_profile_storage(&mut self) -> Result<Vec<u8>, BrowserError> {
+        Err(BrowserError::Unsupported(
+            "complete profile export unavailable".into(),
+        ))
+    }
     /// Restore cookies and storage from a blob produced by [`BrowserContext::export_storage`].
     ///
     /// # Errors

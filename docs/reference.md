@@ -106,6 +106,8 @@ Native requests use `cache: {"schemaVersion": 1, "mode": "read_write", "maxAgeMs
 
 Cache identity includes the authenticated API-key principal, acquisition policy, registered HTTP implementation revision, validator, representation and request/extraction route identity. Local runs without a trusted principal cannot read another run's cache. Credential-bearing reuse requires the operator's protected `CRAWLX_REQUEST_IDENTITY_KEY` (64 hexadecimal digits): tenant-derived keyed correlation covers resolved headers and cookies, not public unkeyed credential hashes. Missing keys make credential-bearing results uncacheable; cache-only requests fail explicitly. Mutable browser profiles, unobserved browser builds and protocol delegates do not claim reusable cache capability.
 
+Acquisition-service and HTTP identity-profile selections never enter the reusable native response cache: a cache-only request that selects one fails explicitly rather than reading a warm entry. The native cache key also includes these selectors as defense in depth. No profile cache-hit behavior is measured or claimed.
+
 Missing retained content is `stored_body_unavailable` (`STORED_BODY_UNAVAILABLE` on the facade), not permission to fetch during offline replay. ZDR never creates a durable response cache. For an exact existing local artifact, use `crawlx replay-response RUN --frontier ID --tenant TENANT --identity SAVED_DIGEST --database-url URL --artifacts-dir DIRECTORY`; supply `--principal API_KEY_ID` for an API-owned source. This command reads committed retained content only and emits base64 JSON with explicit rendition/provenance. Existing `crawlx replay` remains browser-action replay.
 
 ## Scoped adaptive extraction descriptors
@@ -561,19 +563,28 @@ passive ports require explicit approval. Authenticated transfer, directory recur
 persistent sessions and real encrypted-file-transfer interoperability remain unsupported
 or unverified; no direct-network fallback is enabled.
 
-`GET /v1/crawls/{id}/reports` lists available operational projections, source facts and
-supported filters. `GET /v1/crawls/{id}/reports/{report}` returns authenticated,
-tenant-scoped retained facts as JSON or finite JSONL. `limit` is `1..64` and bounds
-source rows scanned, including nonmatches. Follow `next` even for an empty result page.
-Aggregates cover that scanned source page, not the whole run; pagination does not freeze
-concurrently changing state.
+`GET /v1/crawls/{id}/reports` lists the 21 operational reports with their source, scope,
+supported filters, `notRecorded` and `withheld` fields and, for reports with measured
+facts, a `facts` object (role `primary` or `companion`, default fact class, cursor names,
+whether `crossRun` applies; `null` otherwise). It also lists `instrumentedFacts`,
+`factCursors` and `maxFactsPerPage`. `GET /v1/crawls/{id}/reports/{report}` returns
+authenticated, tenant-scoped retained facts as JSON or finite JSONL. `limit` is `1..64` and
+bounds source rows (or, for fact-history reports, facts) scanned, including nonmatches.
+Follow `next` even for an empty result page. Aggregates cover that scanned page, not the
+whole run; pagination does not freeze concurrently changing state.
 
-Raw URLs, hosts, event payloads and exception text remain withheld. Identity filters use
-the returned digests. `notRecorded` distinguishes missing instrumentation from deliberately
-`withheld` data. DNS health/recheck history, processor identities/stage durations, typed
-alert history, wire sizes and cross-run history are not recorded by these projections.
-Unsupported filters reject rather than approximating absent facts. Reports obey ordinary
-retention and reject zero-data-retention content access.
+Raw URLs, hosts, event payloads, exception text and diagnostic text remain withheld.
+Identity filters use the returned digests. `notRecorded` distinguishes missing
+instrumentation from deliberately `withheld` data. It is the baseline of what a report
+does not record; a returned page drops a field from it only when a fact on that very page
+proves the field, and unmeasured fact fields stay `null`. Legacy runs without report facts
+have none. Unsupported filters reject rather than approximating absent facts: each report
+accepts only the filters its inventory entry lists, plus `after`, `limit` and `format`.
+Reports obey ordinary retention and reject zero-data-retention content access.
+
+The OpenAPI document mirrors this contract: one query schema per report in
+`x-report-query-schemas`, finite fact, row, page and inventory schemas, and
+`x-max-lines` of 129 for JSONL (at most 64 rows, 64 companion facts and one envelope).
 
 ## Dataset feed selection, batching and compression
 
@@ -818,3 +829,214 @@ A missing, partial, invalid or mismatched manifest causes rollback of the owned
 uncommitted directory. A complete manifest with every listed length and digest
 matching rolls forward by removing the sentinel and syncing the directory.
 An absent journal requires no writable home or new state files during startup.
+
+## Safe single-page commands and immutable configuration
+
+`crawlx scrape URL` accepts GET or HEAD. `--output-format html|markdown|json`
+(`--output` alias) selects output; `--css`, `--xpath`, `--regex` or `--extraction FILE`
+select bounded extraction. GET JSON output requires extraction before network I/O.
+HEAD returns body-free JSON metadata and refuses body extraction or non-JSON output.
+An extraction file is declarative JSON, for example:
+
+```json
+{"type":"css","expression":"h1::text"}
+```
+
+`crawlx shell URL` uses one admitted acquisition, then accepts `css EXPRESSION`,
+`xpath EXPRESSION`, `regex PATTERN`, `item INLINE_ITEM_LOADER_JSON` and `quit`.
+Robots requests are separate admission traffic; permitted redirects share the
+acquisition allowance. No REPL command adds network access, code evaluation or
+process execution. The stored page is capped at 1 MiB; each command at 64 KiB;
+session input and output at 1 MiB each; the session at 128 commands.
+
+Configuration precedence is defaults, `--tenant-config`, `--config`, `--request`,
+then explicit flags. Tenant defaults select method/output/extraction only, never
+crawl authority. Native crawl overrides are restricted to supported typed sections;
+they cannot replace the explicit URL. Unknown fields, forbidden types and unsupported
+aliases fail explicitly. Each run owns its normalized immutable configuration.
+
+## Reviewed lifecycle and rule recipes
+
+An optional versioned `extensionRecipe` contains finite `startRequests`, the reviewed
+request/parse/item pipeline, closed `actorActions` and ordered HTML/sitemap rules.
+The immutable id/revision pin covers every setting and rule position. CSS/XPath
+restrictions and bounded URL expressions select the first exact registered handler;
+global deny predicates take precedence. Nested sitemaps and language alternates
+remain proposals requiring ordinary authorization, scope, robots, checked egress
+and acquisition budgets. Actor recipes additionally require operator-registry approval
+and execute through the safety kernel and action journal.
+
+Typed lifecycle results distinguish continue, annotations, skips and failures.
+Header policies run before body consumption. Error, skipped/failed, terminal,
+checkpoint and close callbacks preserve their ordered attempt receipts and sticky
+policy denial. Accepted-item references use bounded backpressure, not a lossy
+diagnostic channel. No arbitrary callback, dynamic loader, eval or raw browser handle
+is accepted.
+
+## Operational facts, queue advice and offline migration
+
+History records typed measured processor durations, DNS outcomes, alerts, wire bytes
+and counted losses under the existing tenant/run/fence authority. Missing facts remain
+unknown; retained and withheld values remain distinct. Bounded filtered keysets are
+not silently presented as whole-run aggregates. URL link graphs use separate versioned
+policy/model pins and privacy-safe handles, never browser action-graph identities.
+Advisory queue partitions and fairness only narrow the existing governor. Adaptive
+revisits use injected time and committed representation baselines; failed index or
+delivery work cannot mark an item delivered.
+
+`source-import inspect` and `source-import convert` accept bounded declarative JSON,
+including `neutral-export-v1`. Input is limited to 1 MiB, nesting depth 20 and 1000
+seeds; the normalized output, including every configuration, recipe, cloned command and
+report row, is capped at 16 MiB and checked before anything is written, so a conversion
+never emits partial output or truncated seeds. Every setting receives an explicit disposition.
+Checkpoint exports preserve native producer epochs, keyed source identity, cursor
+transitions and transactional retry receipts. Source code, executable callbacks,
+unsafe object graphs and undocumented binary formats are not executed or guessed.
+The authenticated `POST /v1/crawls/{id}/requests/import` API accepts `format: "checkpoint_export_v1"`; the checkpoint export owns cursor transitions, so omit outer `expectedCursor` and `nextCursor`.
+Pinned differential contracts check URL, schema and item-count assertions. Independent
+source-runtime parity, licensed resources and unavailable reference services remain
+`external_required`.
+
+## Optional bounded model content
+
+`contentStrategy` selects `nativeV1` or explicit `modelV1` table/content extraction.
+Native omission does not call a provider. Model selection requires external-processing
+consent, finite output-token and response-byte caps and prompt/output privacy
+projection; ZDR refuses this strategy. `modelContent` is generated output, not native
+source evidence, and never supplies navigation or action authority. Missing, refusing,
+over-limit or unsupported providers fail explicitly rather than returning native
+success for a requested model result.
+
+## Acquisition selectors and operator services
+
+`fetch.identityProfile` selects the hexadecimal digest of the installed pinned
+Chromium-derived profile. It requires native static acquisition and rejects conflicting
+headers, user-agent, TLS overrides, preflight and acquisition-service selection.
+The profile binds its build, session generation, transport and cache identity.
+Unsupported protocol or generation transitions fail closed. This profile does not
+claim exact wire equivalence with Chromium; provenance and transitive notice hashes
+are recorded in `identity-profile-provenance.json`, with distribution approval still
+`external_required`.
+Owned wire fixtures observe ordered TLS and HTTP/2 fields. The pinned Chromium
+reference has additional post-quantum signature algorithms, extensions and compression
+behavior that this native profile does not provide. HTTP/3, rotating routes and
+exact-wire requests fail closed; no JavaScript or challenge-bypass equivalence is claimed.
+
+`fetch.acquisitionService` selects an operator-registry id, never a tenant endpoint.
+The existing registry accepts `acquisitionServices` containing `endpoint`, `audience`,
+`buildDigest`, `guardDigest`, `capabilities`, `credentialRef`, `maxConcurrency` and
+optional `caPem` and `serviceNetworks`. The registry is capped at 64 KiB and 16
+services; ids are at most 128 characters. The service backend cannot mix with other
+backends or fall back silently. Tenant approval and external-processing consent
+remain mandatory; ZDR additionally requires declared zero retention.
+This version performs one read-only target request. Redirects, subresources, custom
+headers/cookies/user-agent, validators, preflight and prebody callbacks are refused,
+not silently discarded. Target and gateway status remain separate; a missing legacy
+final URL remains unavailable. `serviceNetworks` constrains service connectivity,
+never target authorization or private-network checks. Live credentials, service
+deployment and independent guard acceptance remain external requirements.
+
+## Local interactive profile control
+
+The data-free loopback UI shell needs no bearer credential; every control command
+still requires authentication, exact Origin/Host checks and the shared local worker
+registry. The API and worker must share that registry instance; this is not remote
+browser control. Manual mode uses a fresh incognito context, skips automatic login
+and checkpoint/profile restoration, and has its own cancellation token.
+Commands re-verify the live binding generation, fence and authorization through an
+actor round trip. Inputs use fresh observation, keyed proposals, safety decisions,
+durable approval when required and the action journal. Finish exports bounded
+structured storage, commits encrypted custody, confirms actor shutdown and only
+then acknowledges the committed generation. Unproven screencast frames stay suppressed.
+
+## Retained-source reparse
+
+`crawlx reparse` operates on an approved retained source and the original tenant,
+principal and retention scope. A completed run still requires its original frozen
+secret-registry snapshot; expired or lost authority fails closed. Output records new
+parser provenance and explicit loss/truncation outcomes. It does not refetch, navigate,
+or persist replacement crawl results; its machine-readable output declares
+`networkRequests: 0` and `persisted: false`.
+
+Retained browser profiles are selected with `dynamic.browserProfile` (`name`,
+`saveChanges`, `generation`; CLI `--browser-profile`, `--browser-profile-discard`,
+`--browser-profile-generation`). Generation `0` starts a new namespace and is refused
+when one already exists; `N` restores exactly generation `N` or fails, never an empty
+fallback. With `saveChanges`, a normal session end commits generation `N + 1`.
+Retained profiles require a non-ZDR run, operator retained-profile approval,
+PostgreSQL, the run secret authority and durable artifact keys (`CRAWLX_ARTIFACT_KEY_FILE`
+or a key service; in-memory keys are refused). A profile is confined to the seed origin.
+Restored web storage is verified after the first navigation; a commit is refused when it
+was not, and a page that rewrites its storage before that check fails the session closed.
+The compatibility scrape body carries no generation and always starts a new namespace.
+
+Terminal archive exports require a frozen-epoch source proof. They seal even after the
+live secret registry is lost and do not claim a final-epoch rescan. Terminal runs without
+settled authority fail closed; there is no plaintext fallback.
+
+Authenticated API and CLI operator evidence, login-flow and archive replay saves remain in
+custody mode `ReadOnly`: `SecretFree` and retention-gated plaintext writes. They read sealed
+artifacts through the catalog. Worker producers and terminal archive exports are encrypted;
+this documented operator-input boundary introduces no API producer leases.
+
+Operational report percentiles describe only the filtered page returned by the
+query, not the whole run. A DNS observation does not imply a scheduled recheck.
+URL graph persistence requires the stable protected request-identity key; absent
+that key, graph evidence is unavailable rather than using unkeyed URL hashes.
+
+## Measured report history
+
+Workers record typed, fenced report facts under the producing request or session lease:
+DNS outcome and duration, processor stage identity, version, outcome and monotonic
+duration, measured wire bytes, allowlisted alert severity/code/context, counted
+observation loss and pipeline checkpoints. Facts carry opaque URL and host keys only; raw
+URLs, hostnames, headers, payloads and error text are never stored. Missing measurements
+stay `null` and appear under `notRecorded`; intentionally hidden fields stay `withheld`.
+Retained runs store facts until the run's fixed retention deadline; ZDR runs keep them only
+in the volatile delivery buffer and never expose them through reports or cross-run history.
+
+Reports `history`, `wire_history`, `processor_history`, `pipeline_history`,
+`host_dns_health` and `alert_log` page facts with `after`/`next`; their rows have
+`rowType` `fact` (a repository `sequence` and the typed `fact`), their `source` is
+`report_history` and their `aggregationScope` is `facts_page`. Legacy reports such as
+`frontier`, `hosts`, `processor_failures`, `error_log`, `mime_status`, `uri_log`, `events` and
+`crawl_log` keep their source rows and add a companion fact page (`facts`, at most 64
+entries; `rowType` `companion_fact` lines in JSONL) with its own `factsAfter`/`factNext`
+cursor and an optional `factKind` (default: the report's own class). `history` accepts
+`kind`; the other fact-history reports have a fixed class and reject it.
+
+Filter allowlists: `history` takes `kind`, `urlKey`, `hostKey`, `since`, `until`,
+`minDurationUs`, `maxDurationUs`, `minWireBytes`, `maxWireBytes` and `crossRun`;
+`wire_history` the same without `kind` and `crossRun`; `processor_history` and
+`host_dns_health` only `urlKey`, `hostKey`, `since`, `until`, `minDurationUs`,
+`maxDurationUs`; `pipeline_history` and `alert_log` only `urlKey`, `hostKey`, `since`,
+`until`. Companion reports add `factsAfter` and `factKind` to their source filters. Fact
+filters apply before the 64-row limit. For fact-history reports `since` and `until` are both
+inclusive; legacy page and event sources keep `until` exclusive. `crossRun=true` on
+`history` returns the caller tenant's retained timeline only. `factsPage` gives per-kind
+count, exact nearest-rank p50/p95 and checked wire sums for the returned page only. `threads`
+remains unavailable: no live thread facts are measured.
+
+Index and completion checkpoints succeed only when every delivery outbox row of the request
+is acknowledged under its fence, in the same transaction; a failed delivery never reports
+completion, and only a later genuine acknowledgement recovers it.
+
+## URL graph and advisory scheduling
+
+The URL graph is separate from browser action state and from the frontier. Edges and
+anchors use keyed per-tenant/run handles; ranks are bounded, deterministic and bound to the
+graph policy and model digests, so a policy or model change invalidates them. Graphs are
+retained-only and expire with the run.
+
+Advisory host, operator-domain and checked-address partitions add bounded per-queue quotas
+and round-robin fairness in front of the shared origin governor; they only narrow dispatch
+and never replace robots, scope, authorization or governor limits. Scheduling never changes lease
+ownership: a row of the held batch whose queue is not yet eligible stays leased to its worker,
+which waits in place (cancellable by the cancel and drain tokens, re-reading the lease, budget and
+authorization at least once per lease heartbeat period) and is never returned to `pending`; only
+lease expiry, a drain hand-back or the failure paths release it. Domain grouping uses only
+operator-supplied suffixes, never inferred public suffixes. Drain accounting records actual
+in-flight overrun, keeping unknown drop times distinct. Adaptive revisit policies derive the
+next interval from measured change, unchanged and error outcomes within finite minimum and
+maximum bounds; hard denials never schedule a revisit. Metadata inheritance copies only a
+bounded public label, never routes, headers, principals or cookies.

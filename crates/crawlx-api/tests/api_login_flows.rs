@@ -2,6 +2,10 @@
 //! Recorded-flow upload contracts exercised through the authenticated HTTP router.
 
 use axum::body::Body;
+#[allow(
+    clippy::disallowed_types,
+    reason = "test fixture builds raw HTTP messages for a local peer"
+)]
 use axum::http::{Method, Request, StatusCode};
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
 use crawlx_api::{ApiConfig, AppState, ArtifactSource, Repos, Scope, Settings};

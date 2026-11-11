@@ -122,6 +122,7 @@ pub(crate) async fn run(
 
     args.headless.apply_launch(&mut base, getenv)?;
     base.load_article_language_from_lookup(getenv).await?;
+    base.load_source_dispatch_from_lookup(getenv)?;
     base.load_delivery_from_lookup(getenv).await?;
     base.traffic_export = TrafficExportConfig::from_env(getenv).context("traffic export")?;
     base.egress.lists = Some(egress_feed.lists());
@@ -323,7 +324,7 @@ fn print_config<E>(admitted: &[(CreateCrawl, E)], out: &mut dyn Write) -> anyhow
 
 /// The worker configuration every seed of the crawl shares (launch flags and traffic export
 /// are applied by the caller).
-fn base_config(
+pub(crate) fn base_config(
     args: &CrawlArgs,
     crawl: &CreateCrawl,
     output: &Path,
@@ -504,7 +505,7 @@ async fn health_check(
     })
 }
 
-fn load_record(path: &Path) -> anyhow::Result<AuthorizationRecord> {
+pub(crate) fn load_record(path: &Path) -> anyhow::Result<AuthorizationRecord> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     serde_json::from_slice(&bytes).with_context(|| format!("parsing authorization record {}", path.display()))
 }

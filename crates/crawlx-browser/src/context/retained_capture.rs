@@ -13,6 +13,7 @@ use crawlx_core::browser_capture::{
     BrowserCaptureSink, CaptureArtifact, CaptureCompleteness, CaptureDescriptor, CaptureKind, CaptureSpec,
 };
 use crawlx_core::page_op::{PageOp, PageOpResult, ShotSpec};
+use crawlx_core::parser_memory::{global, AdmittedBytes};
 use crawlx_core::secret::Redactor;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -49,6 +50,18 @@ const SOURCE_PROBE: &str = r#"(() => {
 
 fn denied(reason: &'static str) -> BrowserError {
     BrowserError::Unsupported(reason.to_owned())
+}
+
+/// Charge an owned buffer against the shared budget before retaining it as capture evidence.
+fn charge(bytes: Vec<u8>) -> Result<AdmittedBytes, BrowserError> {
+    let permit = global().try_reserve(bytes.capacity())?;
+    Ok(AdmittedBytes::new(bytes, permit))
+}
+
+/// Reserve first, then copy a borrowed slice into a charged buffer; refusal allocates nothing.
+fn charge_copy(bytes: &[u8]) -> Result<AdmittedBytes, BrowserError> {
+    let permit = global().try_reserve(bytes.len())?;
+    Ok(AdmittedBytes::new(bytes.to_vec(), permit))
 }
 
 fn byte_limit(value: u64) -> Result<usize, BrowserError> {
@@ -361,7 +374,7 @@ impl CdpContext {
                     .ok_or_else(|| denied("MHTML capture is unavailable or exceeds byte limit"))?;
                 descriptor.content_type = "multipart/related".to_owned();
                 match snapshot.get_mut("data").map(Value::take) {
-                    Some(Value::String(body)) => body.into_bytes(),
+                    Some(Value::String(body)) => charge(body.into_bytes())?,
                     _ => return Err(denied("MHTML capture data is unavailable")),
                 }
             }
@@ -452,7 +465,7 @@ impl CdpContext {
                     completeness = CaptureCompleteness::Clipped;
                 }
                 descriptor.content_type = "text/plain; charset=utf-8".to_owned();
-                body.as_bytes().to_vec()
+                charge_copy(body.as_bytes())?
             }
             _ => return Err(denied("unsupported retained capture representation")),
         };
@@ -580,6 +593,7 @@ mod tests {
                 "requestId": id, "type": kind, "frameId": frame,
                 "request": {"url": url, "method": "GET", "headers": {}}
             }),
+            charge: None,
         };
         state.handle_event(
             &event,

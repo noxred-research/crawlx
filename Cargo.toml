@@ -189,6 +189,12 @@ incremental = false
 opt-level = 1
 debug = false
 
+[profile.dev.package.crawlx-cli]
+# The derived argument parser builds one frame per flattened argument group; unoptimized,
+# those frames exceed 1 MiB together, so tests and coverage builds that parse the full command
+# line need opt-level 1 to merge the builder temporaries.
+opt-level = 1
+
 [profile.release]
 opt-level = 3
 lto = "fat"
