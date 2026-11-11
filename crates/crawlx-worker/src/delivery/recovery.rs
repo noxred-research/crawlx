@@ -49,12 +49,17 @@ async fn recover_run(
     facts: &crawlx_core::data_capabilities::WorkerDataCapabilitiesV1,
 ) -> Result<(), crate::WorkerError> {
     stores.delivery.maintain(id).await?;
-    let run = stores.runs.get(id).await?;
+    let mut run = Box::new(stores.runs.get(id).await?);
     let required = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(&run.config)?;
     if !facts.supports(&required) {
         return Ok(());
     }
     cfg.delivery.validate(&run)?;
+    if let Some(reason) = stores.request_commits.begin_feed_finalization(id, None).await? {
+        Box::pin(super::finalize_feeds(stores, &run, reason, &cfg.cpu_pool)).await?;
+        stores.artifacts.erase_run_credentials(id).await?;
+        *run = stores.runs.get(id).await?;
+    }
     if let Some(authority) = cfg.delivery.active_authority(id) {
         cfg.delivery
             .drain_once(stores, &run, cfg.worker_id, clock.as_ref(), &authority)

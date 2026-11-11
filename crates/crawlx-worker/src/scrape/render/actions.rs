@@ -45,6 +45,7 @@ const SCRIPT_DOMAIN: &str = "crawlx/worker/scrape-script";
 pub(super) struct ActionRunner<'a> {
     driver: Driver<'a>,
     outputs: ActionOutputs,
+    recipe: Option<(&'a crawlx_core::archive_behaviors::RecipeV1, Digest)>,
     virtual_bytes_remaining: usize,
 }
 
@@ -57,6 +58,7 @@ impl<'a> ActionRunner<'a> {
                 ..ActionOutputs::default()
             },
             virtual_bytes_remaining,
+            recipe: None,
         }
     }
 
@@ -69,7 +71,32 @@ impl<'a> ActionRunner<'a> {
     /// error of the browser (an egress-denied or failed navigation the action caused).
     pub(super) async fn run(mut self, actions: &[ScrapeAction]) -> Result<ActionOutputs, RenderError> {
         for (index, action) in actions.iter().enumerate() {
-            self.step(index, action).await?;
+            // Keep the largest page-operation variant out of the ordered runner's frame.
+            Box::pin(self.step(index, action)).await?;
+        }
+        Ok(self.outputs)
+    }
+
+    /// Execute only the admitted bounded recipe, reusing the native step engine.
+    pub(super) async fn run_recipe(
+        mut self,
+        recipe: &'a crawlx_core::archive_behaviors::RecipeV1,
+        progress: &mut crate::archive_behaviors::RecipeProgress,
+    ) -> Result<ActionOutputs, RenderError> {
+        let digest = recipe
+            .digest()
+            .map_err(|_| RenderError::Unavailable("invalid approved recipe".into()))?;
+        self.recipe = Some((recipe, digest));
+        for (index, step) in recipe.steps.iter().enumerate() {
+            if self.driver.rc.cancel.is_cancelled() {
+                return Err(RenderError::Cancelled);
+            }
+            progress.start(index);
+            let result = Box::pin(self.step(index, &step.action)).await;
+            if !matches!(&result, Err(RenderError::Cancelled)) {
+                progress.finish(index, result.is_ok());
+            }
+            result?;
         }
         Ok(self.outputs)
     }
@@ -96,6 +123,7 @@ impl<'a> ActionRunner<'a> {
             ScrapeAction::Wait { .. } => Err(fail(index, action, "invalid")),
             ScrapeAction::Click { selector, all } => self.click(index, action, selector, *all).await,
             ScrapeAction::Write { text } => self.write(index, action, text).await,
+            ScrapeAction::Fill { selector, text } => self.fill(index, action, selector, text).await,
             ScrapeAction::Press { key } => self.press(index, action, key).await,
             ScrapeAction::Scroll { direction, selector } => {
                 self.scroll(index, action, *direction, selector.as_deref(), None)
@@ -301,6 +329,54 @@ impl<'a> ActionRunner<'a> {
             .drive(&bundle, BrowserAction::Keys { sequence }, facts, who)
             .await
             .map_err(|e| drive_error(index, action, e))?;
+        self.check_navigation().await
+    }
+
+    /// Resolve a target anew, then use the actor's existing typed native input operation.
+    async fn fill(
+        &self,
+        index: usize,
+        action: &ScrapeAction,
+        selector: &str,
+        text: &str,
+    ) -> Result<(), RenderError> {
+        let bundle = self.observe().await?;
+        let target = self
+            .resolve(selector, 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| fail(index, action, "selector_not_found"))?;
+        let live = match self
+            .driver
+            .handle
+            .revalidate(target.clone())
+            .await
+            .map_err(render_error)?
+        {
+            Revalidation::Actionable { live } => live,
+            _ => return Err(fail(index, action, "not_actionable")),
+        };
+        let who = self.attribution(
+            index,
+            action,
+            selector.as_bytes(),
+            InputClass::new("text", "explicit"),
+            None,
+        );
+        self.driver
+            .drive(
+                &bundle,
+                BrowserAction::Type {
+                    target,
+                    value: crawlx_core::SecretOr::secret(text.to_owned()),
+                    clear_first: true,
+                },
+                live,
+                who,
+            )
+            .await
+            .map_err(|error| drive_error(index, action, error))?;
         self.check_navigation().await
     }
 
@@ -530,9 +606,18 @@ impl<'a> ActionRunner<'a> {
         size: Option<String>,
     ) -> Attribution {
         let kind = action.name();
-        let summary = match size {
-            Some(size) => format!("scrape action {index} ({kind}, {size})"),
-            None => format!("scrape action {index} ({kind})"),
+        let summary = if let Some((recipe, digest)) = self.recipe {
+            let digest = digest.to_hex();
+            let source_index = recipe.steps.get(index).map(|step| step.source_index);
+            format!(
+                "approved recipe {} version {} digest {} phase post_navigation step {:?} ({kind})",
+                recipe.id, recipe.version, digest, source_index
+            )
+        } else {
+            match size {
+                Some(size) => format!("scrape action {index} ({kind}, {size})"),
+                None => format!("scrape action {index} ({kind})"),
+            }
         };
         Attribution {
             strategy: EXPLICIT_ACTIONS_STRATEGY,
@@ -654,7 +739,7 @@ fn typed_chord(c: char) -> KeyChord {
 
 /// `Enter`, `ArrowDown`, `a`, or a chord such as `Control+A` / `Shift+Tab`; `None` when the
 /// key (or a modifier) is unknown.
-fn parse_chord(spec: &str) -> Option<KeyChord> {
+pub(crate) fn parse_chord(spec: &str) -> Option<KeyChord> {
     let spec = spec.trim();
     // a lone `+` is the plus key, not an empty chord
     let (mods, key) = match spec.rsplit_once('+') {

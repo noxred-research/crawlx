@@ -1,7 +1,7 @@
 //! Label normalisation shared by the classifier and the grouper.
 //!
-//! Labels are lower-cased, camelCase-split, diacritic-folded (de/fr/es/tr
-//! letters) and split on non-alphanumerics. Keywords match either as a
+//! Labels are stripped of zero-width characters, lower-cased, camelCase-split,
+//! diacritic-folded (de/fr/es/tr letters) and split on non-alphanumerics. Keywords match either as a
 //! substring of the squashed form (`"emailaddress"`) or, when prefixed with
 //! `=`, as a whole token.
 
@@ -18,6 +18,10 @@ impl Norm {
         let mut cur = String::new();
         let mut prev_lower = false;
         for ch in s.chars() {
+            // Invisible format characters must not split exact-match keywords or camelCase.
+            if matches!(ch, '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}') {
+                continue;
+            }
             // camelCase boundary: `firstName` -> `first`, `name`
             if ch.is_uppercase() && prev_lower && !cur.is_empty() {
                 tokens.push(std::mem::take(&mut cur));
@@ -121,6 +125,20 @@ mod tests {
         assert!(n.has("sifre"));
         assert!(Norm::of("Straße").has("strasse"));
         assert!(Norm::of("Contraseña").has("contrasena"));
+    }
+
+    #[test]
+    fn zero_width_characters_do_not_split_tokens() {
+        for ch in ['\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{feff}'] {
+            let n = Norm::of(&format!("m{ch}sg ko{ch}nu c{ch}vv user{ch}Email"));
+            assert_eq!(n.tokens, ["msg", "konu", "cvv", "user", "email"]);
+            assert!(n.has("=msg"));
+            assert!(n.has("=konu"));
+            assert!(n.has("=cvv"));
+            assert!(!n.has("=sg"));
+            assert!(Norm::of(&ch.to_string()).is_empty());
+        }
+        assert_eq!(Norm::of("msg body").tokens, ["msg", "body"]);
     }
 
     #[test]

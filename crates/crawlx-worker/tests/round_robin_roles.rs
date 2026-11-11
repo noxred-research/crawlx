@@ -25,11 +25,13 @@ use crawlx_worker::lease_loop::run_with;
 use crawlx_worker::run::build_report;
 use crawlx_worker::{EgressConfig, RunReport, Stores, WorkerConfig};
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 const SEED_URL: &str = "https://example.test/";
+// Metrics are process-global: another run must not change this fixture's baselines.
+static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn cfg(dir: &std::path::Path) -> WorkerConfig {
     WorkerConfig {
@@ -143,6 +145,7 @@ fn status_of(rows: &[CrawlSession], id: SessionId) -> SessionStatus {
 
 #[tokio::test]
 async fn per_role_replica_reports_cross_principal_contexts_as_not_observable_never_uncovered() {
+    let _serial = SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
@@ -168,7 +171,12 @@ async fn per_role_replica_reports_cross_principal_contexts_as_not_observable_nev
     run_with(
         worker_cfg,
         stores.clone(),
-        Some(Arc::new(FakeBackend::new(mesh(3)))),
+        Some(Arc::new(
+            FakeBackend::builder()
+                .script(mesh(3))
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
         CancellationToken::new(),
     )
     .await
@@ -256,6 +264,7 @@ async fn per_role_replica_reports_cross_principal_contexts_as_not_observable_nev
 /// wait is observed for `bob`, and no role is abandoned for a fatal or recovery reason.
 #[tokio::test]
 async fn a_clean_round_robin_run_records_the_second_roles_wait_and_abandons_nobody() {
+    let _serial = SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
@@ -279,7 +288,12 @@ async fn a_clean_round_robin_run_records_the_second_roles_wait_and_abandons_nobo
     run_with(
         cfg(dir.path()),
         stores.clone(),
-        Some(Arc::new(FakeBackend::new(mesh(3)))),
+        Some(Arc::new(
+            FakeBackend::builder()
+                .script(mesh(3))
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
         CancellationToken::new(),
     )
     .await
@@ -310,6 +324,7 @@ async fn a_clean_round_robin_run_records_the_second_roles_wait_and_abandons_nobo
 
 #[tokio::test]
 async fn a_role_session_killed_mid_turn_resumes_from_its_checkpoint_in_turn_order() {
+    let _serial = SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
@@ -333,9 +348,20 @@ async fn a_role_session_killed_mid_turn_resumes_from_its_checkpoint_in_turn_orde
             idle_exit_after: None,
             ..cfg(dir.path())
         };
-        tokio::spawn(
-            async move { run_with(cfg, stores, Some(Arc::new(FakeBackend::new(script))), cancel).await },
-        )
+        tokio::spawn(async move {
+            run_with(
+                cfg,
+                stores,
+                Some(Arc::new(
+                    FakeBackend::builder()
+                        .script(script)
+                        .clock(Arc::new(crawlx_core::SystemClock))
+                        .build(),
+                )),
+                cancel,
+            )
+            .await
+        })
     };
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
@@ -400,7 +426,12 @@ async fn a_role_session_killed_mid_turn_resumes_from_its_checkpoint_in_turn_orde
     run_with(
         cfg(dir.path()),
         stores.clone(),
-        Some(Arc::new(FakeBackend::new(script))),
+        Some(Arc::new(
+            FakeBackend::builder()
+                .script(script)
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
         CancellationToken::new(),
     )
     .await

@@ -6,14 +6,16 @@
 //! technologies, raw, forms, xhr_requests, stored_response_path, knowledgebase, extra}`,
 //! `error`. crawlx adds `response.page_type`, `response.custom_fields` (the same values as
 //! `request.custom_fields`, kept for older consumers) and `response.secrets` (kind + keyed
-//! hash only, never a value).
+//! hash only, never a value). Additive `fidelity` records payload availability, representation,
+//! redaction, binary lossiness and truncation; unknown facts stay unknown. Explicit policy
+//! omissions and `-eof` exclusions are distinct from unavailable captures.
 //!
 //! Where each key comes from (`PageRecord.metadata`, written by the URL plane / browser
 //! plane):
 //!
 //! | record key | metadata |
 //! |---|---|
-//! | `request.method` | `request.method` (default `GET`) |
+//! | `request.method` | `request.method` (legacy static default `GET`; unavailable on browser documents without an observed method) |
 //! | `request.body`, `.headers`, `.raw`, `.custom_fields` | `request.{body,headers,raw,custom_fields}` (`custom_fields` falls back to the top-level `custom_fields`) |
 //! | `request.tag`, `.attribute`, `.source` | `request.{tag,attribute,source}` |
 //! | `response.headers` | `response_headers` |
@@ -25,6 +27,7 @@
 //! ([`super::PageText`]). `-eof` field exclusion is [`Record::exclude_fields`]; the names it
 //! accepts are [`field_names`].
 
+use super::stored::ExchangeFidelity;
 use super::OutputError;
 use crawlx_core::repo::PageRecord;
 use crawlx_core::Timestamp;
@@ -36,7 +39,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 /// Top-level record keys.
-const TOP_FIELDS: [&str; 4] = ["timestamp", "request", "response", "error"];
+const TOP_FIELDS: [&str; 5] = ["timestamp", "request", "response", "error", "fidelity"];
 /// Keys inside `request`.
 const REQUEST_FIELDS: [&str; 9] = [
     "method",
@@ -91,7 +94,7 @@ fn is_zero(n: &u16) -> bool {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Request {
-    /// HTTP method (`metadata.request.method`, `GET` when absent).
+    /// Recorded HTTP method; legacy static rows default to `GET`, browser documents do not.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub method: String,
     /// The page URL.
@@ -115,7 +118,7 @@ pub struct Request {
     /// Custom regex field values (the reference puts them under `request`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub custom_fields: BTreeMap<String, Vec<String>>,
-    /// Raw request text, only when the run captured it (`output.captureRaw`).
+    /// Compatibility HTTP-like request text, not necessarily wire capture; see [`Record::fidelity`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
 }
@@ -130,7 +133,7 @@ pub struct Response {
     /// Response headers (lowercase names; credentials omitted at extraction time).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
-    /// Raw body, only when requested.
+    /// Body text projection, only when requested; source facts are in [`Record::fidelity`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
     /// Bytes of the body that were read (`metadata.content_length`).
@@ -139,8 +142,8 @@ pub struct Response {
     /// Detected technologies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub technologies: Vec<Technology>,
-    /// Raw response text (status line, headers, blank line, body), only when the run
-    /// captured it (`output.captureRaw`) and the caller supplied it.
+    /// Compatibility HTTP-like response text, only when supplied by the caller.
+    /// This may be decoded, redacted or reconstructed; see [`Record::fidelity`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
     /// Static forms (`crawlx_extract::StaticForm` as JSON).
@@ -187,6 +190,9 @@ pub struct Record {
     /// Why the URL could not be fetched (a failed frontier row); absent for stored pages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Representation and omission facts, independent of compatibility payload fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fidelity: Option<ExchangeFidelity>,
 }
 
 fn string_at(meta: &Value, path: &[&str]) -> Option<String> {
@@ -245,6 +251,14 @@ impl Record {
     pub fn from_page(page: &PageRecord, body: Option<String>) -> Self {
         let meta = &page.metadata;
         let request_meta = meta.get("request");
+        let browser_document = meta
+            .pointer("/acquisition/backend/backendId")
+            .and_then(Value::as_str)
+            == Some("native_browser")
+            || meta
+                .pointer("/acquisition/representation")
+                .and_then(Value::as_str)
+                == Some("rendered_dom");
         let technologies = meta
             .get("technologies")
             .cloned()
@@ -254,10 +268,16 @@ impl Record {
         let request_fields = request_meta
             .and_then(|r| r.get("custom_fields"))
             .map_or_else(|| fields.clone(), |v| custom_fields(Some(v)));
-        Self {
+        let mut record = Self {
             timestamp: Some(page.fetched_at),
             request: Some(Request {
-                method: string_at(meta, &["request", "method"]).unwrap_or_else(|| "GET".to_owned()),
+                method: string_at(meta, &["request", "method"]).unwrap_or_else(|| {
+                    if browser_document {
+                        String::new()
+                    } else {
+                        "GET".to_owned()
+                    }
+                }),
                 endpoint: page.url.url.to_string(),
                 body: string_at(meta, &["request", "body"]),
                 headers: string_map(request_meta.and_then(|r| r.get("headers"))),
@@ -284,7 +304,10 @@ impl Record {
                 secrets: array_at(meta, "secrets"),
             }),
             error: None,
-        }
+            fidelity: None,
+        };
+        record.fidelity = Some(ExchangeFidelity::from_record(meta, &record));
+        record
     }
 
     /// The record of a URL that could not be fetched: the request, the status when one was
@@ -303,6 +326,7 @@ impl Record {
                 ..Response::default()
             }),
             error: Some(reason.to_owned()),
+            fidelity: Some(ExchangeFidelity::default()),
         }
     }
 
@@ -344,6 +368,26 @@ impl Record {
     /// dropped. Unknown names are ignored.
     pub fn exclude_fields(&mut self, names: &[String]) {
         for name in names {
+            if name != "fidelity"
+                && (TOP_FIELDS.contains(&name.as_str())
+                    || REQUEST_FIELDS.contains(&name.as_str())
+                    || RESPONSE_FIELDS.contains(&name.as_str()))
+            {
+                if let Some(fidelity) = &mut self.fidelity {
+                    match name.as_str() {
+                        "body" | "raw" => {
+                            fidelity.omit(&format!("request.{name}"));
+                            fidelity.omit(&format!("response.{name}"));
+                        }
+                        "request" | "response" => {
+                            fidelity.omit(&format!("{name}.body"));
+                            fidelity.omit(&format!("{name}.raw"));
+                            fidelity.omit(name);
+                        }
+                        other => fidelity.omit(other),
+                    }
+                }
+            }
             match name.as_str() {
                 "timestamp" => self.timestamp = None,
                 "request" => self.request = None,
@@ -358,6 +402,9 @@ impl Record {
                     }
                 }
             }
+        }
+        if names.iter().any(|name| name == "fidelity") {
+            self.fidelity = None;
         }
         if self.request.as_ref().is_some_and(|r| *r == Request::default()) {
             self.request = None;
@@ -494,6 +541,7 @@ pub(super) mod tests {
         response.stored_response_path = Some("/tmp/x.txt".to_owned());
         response.extra.insert("hook".to_owned(), json!(1));
         r.error = Some("boom".to_owned());
+        r.fidelity = Some(ExchangeFidelity::from_record(&p.metadata, &r));
         r
     }
 
@@ -728,5 +776,135 @@ pub(super) mod tests {
         ] {
             assert!(names.contains(&expected), "{expected}");
         }
+    }
+
+    #[test]
+    fn fidelity_schema_keeps_unavailable_distinct_from_known_empty() {
+        let mut p = page("https://e.com/", json!({}));
+        p.status = 0;
+        let mut record = Record::from_page(&p, Some(String::new()));
+        record
+            .response
+            .as_mut()
+            .unwrap()
+            .extra
+            .insert("caller".to_owned(), json!({"n": 7}));
+        let value = serde_json::to_value(&record).unwrap();
+        assert_eq!(
+            value["fidelity"],
+            json!({
+                "request_body": {
+                    "availability": "unavailable", "representation": "unknown",
+                    "redacted": null, "binary_lossy": null, "truncated": null
+                },
+                "request_raw": {
+                    "availability": "unavailable", "representation": "unknown",
+                    "redacted": null, "binary_lossy": null, "truncated": null
+                },
+                "response_body": {
+                    "availability": "available", "representation": "unknown",
+                    "redacted": null, "binary_lossy": null, "truncated": null
+                },
+                "response_raw": {
+                    "availability": "unavailable", "representation": "unknown",
+                    "redacted": null, "binary_lossy": null, "truncated": null
+                },
+                "omitted_fields": []
+            })
+        );
+        assert_eq!(
+            value["response"],
+            json!({"body": "", "extra": {"caller": {"n": 7}}})
+        );
+        let unavailable = Record::from_page(&p, None);
+        let value = serde_json::to_value(unavailable).unwrap();
+        assert!(value["response"].get("body").is_none());
+        assert!(value["response"].get("status_code").is_none());
+        assert_eq!(value["fidelity"]["response_body"]["availability"], "unavailable");
+        assert_eq!(
+            serde_json::from_value::<Record>(serde_json::to_value(&record).unwrap()).unwrap(),
+            record
+        );
+    }
+
+    #[test]
+    fn every_projection_preserves_all_other_compatibility_fields_including_extra() {
+        let full = full_record();
+        assert_eq!(full.response.as_ref().unwrap().extra["hook"], 1);
+        for name in field_names() {
+            let mut expected = serde_json::to_value(&full).unwrap();
+            let mut projected = full.clone();
+            projected.exclude_fields(&[name.to_owned()]);
+            let mut actual = serde_json::to_value(projected).unwrap();
+            expected.as_object_mut().unwrap().remove("fidelity");
+            actual.as_object_mut().unwrap().remove("fidelity");
+            expected.as_object_mut().unwrap().remove(name);
+            for part in ["request", "response"] {
+                if let Some(object) = expected.get_mut(part).and_then(Value::as_object_mut) {
+                    object.remove(name);
+                }
+            }
+            assert_eq!(actual, expected, "projection of {name}");
+        }
+    }
+
+    #[test]
+    fn field_projection_labels_omissions_and_can_remove_fidelity_itself() {
+        let mut record = full_record();
+        record.exclude_fields(&["raw".to_owned(), "body".to_owned(), "extra".to_owned()]);
+        let facts = record.fidelity.as_ref().unwrap();
+        assert_eq!(
+            facts.response_body.availability,
+            super::super::stored::Availability::Omitted
+        );
+        assert_eq!(
+            facts.request_raw.availability,
+            super::super::stored::Availability::Omitted
+        );
+        assert!(facts.omitted_fields.contains("extra"));
+        assert!(facts.omitted_fields.contains("response.body"));
+        record.exclude_fields(&["not_a_field".to_owned()]);
+        assert!(!record
+            .fidelity
+            .as_ref()
+            .unwrap()
+            .omitted_fields
+            .contains("not_a_field"));
+        record.exclude_fields(&["fidelity".to_owned()]);
+        assert!(serde_json::to_value(record).unwrap().get("fidelity").is_none());
+    }
+
+    #[test]
+    fn browser_documents_do_not_invent_a_get_method() {
+        for metadata in [
+            json!({"acquisition": {"backend": {"backendId": "native_browser"}}}),
+            json!({"acquisition": {"representation": "rendered_dom"}}),
+        ] {
+            let page = page("https://e.com/post-action", metadata);
+            let record = Record::from_page(&page, None);
+            let value = serde_json::to_value(&record).unwrap();
+            assert!(value["request"].get("method").is_none());
+            let exchange = super::super::stored::exchange(
+                &page.url.url,
+                record.request.as_ref(),
+                record.response.as_ref(),
+                record.fidelity.as_ref().unwrap(),
+            );
+            assert!(!exchange.contains("GET "));
+            assert!(exchange.contains("# request unavailable: method not recorded"));
+        }
+        let explicit = Record::from_page(
+            &page(
+                "https://e.com/",
+                json!({
+                    "acquisition": {"backend": {"backendId": "native_browser"}},
+                    "request": {"method": "POST"}
+                }),
+            ),
+            None,
+        );
+        assert_eq!(explicit.request.unwrap().method, "POST");
+        let legacy = Record::from_page(&page("https://e.com/", json!({})), None);
+        assert_eq!(legacy.request.unwrap().method, "GET");
     }
 }

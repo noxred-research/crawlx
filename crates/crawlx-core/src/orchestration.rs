@@ -484,6 +484,166 @@ impl RecrawlPolicyV1 {
         Ok(())
     }
 }
+/// A settled rendition proposed under a real browser session lease.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct ObservedRequestV1 {
+    /// Session authority; URL and bootstrap leases are not accepted.
+    pub lease: crate::custody::CustodyLease,
+    /// Exact settled observation identity within that session.
+    pub epoch: crate::ObservationEpoch,
+    /// Original settled capture time, bound to the immutable observation marker.
+    pub acquired_at: Timestamp,
+    /// GET proposal; storage assigns the bounded revisit generation.
+    pub envelope: RequestEnvelopeV1,
+}
+impl ObservedRequestV1 {
+    /// Construct a rendition proposal without granting append authority.
+    #[must_use]
+    pub fn new(
+        lease: crate::custody::CustodyLease,
+        epoch: crate::ObservationEpoch,
+        envelope: RequestEnvelopeV1,
+        acquired_at: Timestamp,
+    ) -> Self {
+        Self {
+            lease,
+            epoch,
+            acquired_at,
+            envelope,
+        }
+    }
+    /// Rebuild a staged observation without changing its original capture time.
+    ///
+    /// # Errors
+    /// Rejects missing or malformed acquisition-time evidence.
+    pub fn from_staged(
+        lease: crate::custody::CustodyLease,
+        epoch: crate::ObservationEpoch,
+        envelope: RequestEnvelopeV1,
+    ) -> Result<Self, StoreError> {
+        let acquired_at = envelope
+            .metadata
+            .get("observed_acquired_at")
+            .ok_or(StoreError::LeaseLost)?;
+        let acquired_at = serde_json::from_value(acquired_at.clone())
+            .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        Ok(Self::new(lease, epoch, envelope, acquired_at))
+    }
+    /// Opaque identity shared by append replay and result publication.
+    ///
+    /// # Errors
+    /// Rejects non-session authority or serialization failures.
+    pub fn batch_id(&self, principal: &str) -> Result<Digest, StoreError> {
+        let crate::custody::CustodySource::Session(session) = self.lease.source else {
+            return Err(StoreError::AccessDenied(
+                "observation requires session authority".into(),
+            ));
+        };
+        Digest::of_value(
+            "crawlx/observed-request/v1",
+            &(
+                self.lease.tenant,
+                self.lease.run,
+                principal,
+                self.envelope.url.key,
+                session,
+                self.lease.worker,
+                self.lease.fence,
+                self.epoch,
+                self.acquired_at,
+            ),
+        )
+        .map_err(|error| StoreError::Serialization(error.to_string()))
+    }
+    /// Normalize a trusted observed GET and bind its opaque marker to the session epoch.
+    ///
+    /// # Errors
+    /// Rejects malformed or body-bearing proposals and non-session authority.
+    pub fn prepare(&mut self, principal: &str) -> Result<(Digest, Digest), StoreError> {
+        self.envelope
+            .validate()
+            .map_err(|error| StoreError::Conflict(error.to_string()))?;
+        if self.envelope.method != "GET"
+            || self.envelope.body.is_some()
+            || self.envelope.header_control.is_some()
+        {
+            return Err(StoreError::AccessDenied(
+                "observation requires a body-free GET".into(),
+            ));
+        }
+        let batch = self.batch_id(principal)?;
+        let scope = Digest::of_value(
+            "crawlx/observed-scope/v1",
+            &(
+                self.lease.tenant,
+                self.lease.run,
+                principal,
+                self.envelope.url.key,
+            ),
+        )
+        .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        self.envelope.parent = None;
+        self.envelope.not_before = None;
+        self.envelope.revisit_generation = 0;
+        self.envelope.session_generation = None;
+        self.envelope.dialect = crate::request::IdentityDialectV1::NativeV1;
+        self.envelope.source_key = Some(scope);
+        self.envelope.metadata.insert(
+            "observed_acquired_at".into(),
+            serde_json::to_value(self.acquired_at)?,
+        );
+        self.envelope
+            .metadata
+            .insert("observed_epoch".into(), serde_json::to_value(batch)?);
+        let identity = self
+            .envelope
+            .identity(
+                self.lease.tenant,
+                self.lease.run,
+                principal,
+                &std::collections::BTreeMap::new(),
+                1,
+            )
+            .map_err(|error| StoreError::Conflict(error.to_string()))?;
+        Ok((batch, identity.key))
+    }
+}
+
+/// Bounded, explicit rendition admission result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+#[must_use]
+pub enum ObservedAppendV1 {
+    /// New immutable frontier row.
+    Appended {
+        /// Exact row to lease.
+        request_id: i64,
+        /// Storage-assigned rendition generation.
+        revisit_generation: u32,
+    },
+    /// Same session epoch already has a row; no new capacity was consumed.
+    Duplicate {
+        /// Existing immutable row.
+        request_id: i64,
+        /// Original storage-assigned generation.
+        revisit_generation: u32,
+    },
+    /// Stored per-role, per-URL revisit limit has been reached.
+    #[serde(rename = "revisit_cap_reached")]
+    CapReached,
+}
+
+/// Atomic observed publication outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+#[must_use]
+pub enum ObservedCommitV1 {
+    /// Session and URL fences authorized the complete result transaction.
+    Committed,
+}
+
 /// Atomic request result, including an optional owned retained page descriptor.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -507,6 +667,11 @@ pub struct RequestCommitV1 {
     /// Page projection and immutable capture committed only with a successful live fence.
     /// Artifact bytes already have approved custody; this descriptor never stages visibility.
     pub page: Option<crate::repo::PageRecord>,
+    /// Worker-approved, body-free HEAD observation, published as a fixed `head_response` event.
+    /// Storage validates its shape and queued method; this field grants no content approval authority.
+    pub head_response: Option<serde_json::Value>,
+    /// Opt-in hash-only arbitration, atomic with page, dataset and delivery publication.
+    pub content_dedupe: Option<crate::digest_registry::ContentDedupeClaimV1>,
     /// Child requests applied in this transaction.
     pub children: Option<RequestBatchV1>,
     /// Accepted items committed under the same live request fence.
@@ -515,6 +680,8 @@ pub struct RequestCommitV1 {
     pub state_deltas: Vec<crate::dataset::KvCasV1>,
     /// Immutable delivery intents; transport acknowledgement happens separately.
     pub outbox: Vec<crate::dataset::DeliveryBatchV1>,
+    /// Session and epoch checked by observed-capable stores in the result transaction.
+    pub observation: Option<(crate::custody::CustodyLease, crate::ObservationEpoch)>,
 }
 impl RequestCommitV1 {
     /// Terminal result with no page, item, state, delivery or child deltas.
@@ -537,16 +704,331 @@ impl RequestCommitV1 {
             acquisition_ref: None,
             document_ref: None,
             page: None,
+            head_response: None,
+            content_dedupe: None,
             children: None,
             accepted: Vec::new(),
             state_deltas: Vec::new(),
             outbox: Vec::new(),
+            observation: None,
         }
     }
+    /// Validate a closed, body-free acquisition observation and hash the immutable result receipt.
+    /// Storage must separately check the queued HEAD method and bind `acquisition.tenant` to the
+    /// admitted run's tenant. Workers must approve observation bytes before submitting them.
+    /// `bodyBytes` describes only the final HEAD response. Acquisition byte counters may also
+    /// include auxiliary HTTP work and are preserved unchanged.
+    ///
+    /// # Errors
+    /// Returns a conflict for incompatible results, malformed observations or observations over 64 KiB.
+    pub fn head_response_receipt(&self) -> Result<Option<Digest>, StoreError> {
+        let Some(observation) = &self.head_response else {
+            return Ok(None);
+        };
+        let bytes = serde_json::to_vec(observation)?;
+        if bytes.len() > crate::acquisition::MAX_METADATA_BYTES {
+            return Err(StoreError::Conflict(
+                "HEAD response observation exceeds 64 KiB".into(),
+            ));
+        }
+        let acquisition = observation
+            .get("acquisition")
+            .filter(|value| closed_head_acquisition(value))
+            .and_then(|value| crate::acquisition::AcquisitionResultV1::deserialize(value).ok());
+        let valid = matches!(self.status, FrontierStatus::Succeeded | FrontierStatus::Failed)
+            && self.page.is_none()
+            && self.content_dedupe.is_none()
+            && self.document_ref.is_none()
+            && self.children.is_none()
+            && self.accepted.is_empty()
+            && self.state_deltas.is_empty()
+            && self.outbox.is_empty()
+            && observation.as_object().is_some_and(|object| {
+                object.len() == 6
+                    && object.get("requestId").and_then(serde_json::Value::as_i64) == Some(self.request_id)
+                    && object.get("method").and_then(serde_json::Value::as_str) == Some("HEAD")
+                    && object.get("bodyBytes").and_then(serde_json::Value::as_u64) == Some(0)
+                    && object
+                        .get("status")
+                        .and_then(serde_json::Value::as_u64)
+                        .is_some_and(|status| {
+                            (100..=599).contains(&status)
+                                && (self.status != FrontierStatus::Succeeded
+                                    || (200..=299).contains(&status)
+                                    || status == 304)
+                                && acquisition.as_ref().is_some_and(|acquisition| {
+                                    acquisition.schema_version == 1
+                                        && acquisition.run == self.run
+                                        && acquisition.target_status.map(u64::from) == Some(status)
+                                        && acquisition.wire_body.is_none()
+                                        && acquisition.rendered_dom.is_none()
+                                        && acquisition.retained_baseline.is_none()
+                                        && acquisition.meta_refresh.is_none()
+                                        && acquisition.extraction_succeeded != Some(true)
+                                        && acquisition.representation
+                                            == crate::acquisition::RepresentationV1::WireResponse
+                                })
+                        })
+                    && object
+                        .get("response_headers")
+                        .and_then(serde_json::Value::as_object)
+                        .is_some_and(|headers| {
+                            headers.len() <= 128
+                                && headers.iter().all(|(name, value)| {
+                                    !name.is_empty()
+                                        && name.len() <= 256
+                                        && value.as_str().is_some_and(|value| value.len() <= 8192)
+                                })
+                        })
+            });
+        if !valid {
+            return Err(StoreError::Conflict("invalid HEAD response observation".into()));
+        }
+        Ok(Some(
+            Digest::of_value(
+                "crawlx/head-response-receipt/v1",
+                &(
+                    self.run,
+                    self.request_id,
+                    self.fence,
+                    self.expected_state_version,
+                    self.status,
+                    &self.reason,
+                    self.acquisition_ref,
+                    self.document_ref,
+                    bytes.as_slice(),
+                ),
+            )
+            .map_err(|error| StoreError::Serialization(error.to_string()))?,
+        ))
+    }
+}
+
+// Ordinary acquisition DTOs allow forward-compatible keys. HEAD publication does not:
+// ignoring a new body-bearing key here would persist its original, unparsed value in the event.
+fn closed_head_acquisition(value: &serde_json::Value) -> bool {
+    if !closed_head_object(
+        value,
+        &[
+            "schemaVersion",
+            "requestDigest",
+            "run",
+            "tenant",
+            "session",
+            "sessionGeneration",
+            "requestedUrl",
+            "finalUrl",
+            "finalUrlEvidence",
+            "redirects",
+            "metaRefresh",
+            "metaRefreshPolicy",
+            "metaRefreshRevision",
+            "targetStatus",
+            "gatewayStatus",
+            "contentType",
+            "contentEncoding",
+            "transportSucceeded",
+            "extractionSucceeded",
+            "representation",
+            "wireBody",
+            "retainedBaseline",
+            "renderedDom",
+            "decodedBytes",
+            "wireBytes",
+            "truncated",
+            "backend",
+            "connection",
+            "validation",
+            "attempts",
+            "attemptSummaries",
+            "networkRequests",
+            "networkRequestsObserved",
+            "allowanceUsage",
+            "elapsedMs",
+            "elapsedScope",
+            "evidenceTruncated",
+        ],
+    ) {
+        return false;
+    }
+    let nested: &[(&str, &[&str])] = &[
+        (
+            "backend",
+            &[
+                "backendId",
+                "implementation",
+                "version",
+                "buildDigest",
+                "browser",
+                "available",
+                "limitations",
+            ],
+        ),
+        (
+            "connection",
+            &[
+                "checkedOrigin",
+                "peer",
+                "peerChecked",
+                "proxyRoute",
+                "tlsVerification",
+                "certificateObserved",
+            ],
+        ),
+        (
+            "validation",
+            &[
+                "ruleSetVersion",
+                "category",
+                "signals",
+                "retryDisposition",
+                "contentAccepted",
+            ],
+        ),
+        (
+            "allowanceUsage",
+            &[
+                "attemptsReserved",
+                "networkRequestsReserved",
+                "decodedBytesReserved",
+                "decodedBytesObserved",
+                "evidenceIncomplete",
+            ],
+        ),
+        ("metaRefreshPolicy", &["schemaVersion", "maxParserBytes"]),
+    ];
+    if !nested.iter().all(|(field, fields)| {
+        value.get(*field).is_none_or(|value| {
+            // Optional evidence may explicitly be null; typed parsing still rejects null
+            // for required nested DTOs rather than replacing it with a default.
+            value.is_null() || closed_head_object(value, fields)
+        })
+    }) {
+        return false;
+    }
+    if let Some(policy) = value.get("metaRefreshPolicy").filter(|value| !value.is_null()) {
+        // This policy's general DTO has serde defaults. Publication must not fill in
+        // malformed partial evidence on the producer's behalf.
+        if policy.get("schemaVersion").is_none() || policy.get("maxParserBytes").is_none() {
+            return false;
+        }
+    }
+    if let Some(browser) = value.get("backend").and_then(|backend| backend.get("browser")) {
+        if !browser.is_null()
+            && !closed_head_object(
+                browser,
+                &[
+                    "chromium_version",
+                    "cdp_revision",
+                    "user_agent",
+                    "pinned",
+                    "launch_profile",
+                    "console_capture",
+                    "attached",
+                ],
+            )
+        {
+            return false;
+        }
+    }
+    [
+        ("redirects", &["url", "status"][..]),
+        (
+            "attemptSummaries",
+            &["ordinal", "backendId", "targetStatus", "category"][..],
+        ),
+    ]
+    .iter()
+    .all(|(field, fields)| {
+        value
+            .get(*field)
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|values| values.iter().all(|value| closed_head_object(value, fields)))
+    })
+}
+
+fn closed_head_object(value: &serde_json::Value, fields: &[&str]) -> bool {
+    value
+        .as_object()
+        .is_some_and(|object| object.keys().all(|key| fields.contains(&key.as_str())))
 }
 /// Result transaction owner; dataset/outbox composition must use this same transaction.
 #[async_trait]
-pub trait RequestCommitRepo: Send + Sync {
+pub trait RequestCommitRepo: Send + Sync + crate::digest_registry::DigestRegistryRepo {
+    /// Seal accepted-item sources and retain the first terminal reason across crashes.
+    /// `None` resumes pending work only; `Some` starts finalization. A terminal run's reason wins.
+    /// Returns `None` when no recovery is pending or finalization already completed.
+    /// # Errors
+    /// Returns scope, reason or storage failures without partially sealing sources.
+    async fn begin_feed_finalization(
+        &self,
+        run: CrawlRunId,
+        reason: Option<crate::counters::TerminalReason>,
+    ) -> Result<Option<crate::counters::TerminalReason>, StoreError>;
+    /// Stage bounded immutable terminal-feed batches using committed source ranges.
+    /// # Errors
+    /// Returns scope, source, retention, identity or storage failures without partial writes.
+    async fn stage_feed_batches(
+        &self,
+        run: CrawlRunId,
+        batches: &[crate::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError>;
+
+    /// Read an exact immutable terminal-feed manifest while its source is sealed.
+    /// Returns `None` only when no batch with this run/feed/idempotency key was staged.
+    ///
+    /// # Errors
+    /// Returns scope, finalization, source or retention failures without publishing a batch.
+    async fn staged_feed_batch(
+        &self,
+        run: CrawlRunId,
+        feed: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<crate::dataset::DeliveryBatchV1>, StoreError>;
+
+    /// Atomically publish eligible empty feed intents and seal the terminal run.
+    /// # Errors
+    /// Returns invalid status, producer, retention or storage failures without partial writes.
+    async fn finalize_run_feeds(
+        &self,
+        run: CrawlRunId,
+        status: crate::counters::RunStatus,
+        reason: crate::counters::TerminalReason,
+        empty_batches: &[crate::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError>;
+    /// Append one settled rendition under live session authority and stored revisit limits.
+    ///
+    /// # Errors
+    /// Returns lease loss, scope, quota or storage errors without frontier side effects.
+    async fn append_observed_fenced(
+        &self,
+        _request: ObservedRequestV1,
+    ) -> Result<ObservedAppendV1, StoreError> {
+        Err(StoreError::AccessDenied("observed append unsupported".into()))
+    }
+    /// Lease only an already-acquired rendition receipt under its originating session.
+    /// Worker drain does not discard this effect; this method never authorizes new dispatch.
+    ///
+    /// # Errors
+    /// Returns cancellation, stale session authority, mismatched observation or storage errors.
+    async fn lease_observed_fenced(
+        &self,
+        lease: &crate::custody::CustodyLease,
+        epoch: crate::ObservationEpoch,
+        request_id: i64,
+    ) -> Result<Option<(crate::repo::FrontierEntry, i64)>, StoreError>;
+    /// Publish a rendition under both its exact URL fence and its originating session fence.
+    ///
+    /// # Errors
+    /// Returns lease loss, scope, state, retention or storage errors without publication.
+    async fn commit_observed_fenced(
+        &self,
+        _commit: RequestCommitV1,
+        _lease: crate::custody::CustodyLease,
+        _epoch: crate::ObservationEpoch,
+    ) -> Result<ObservedCommitV1, StoreError> {
+        Err(StoreError::AccessDenied("observed commit unsupported".into()))
+    }
     /// Validate live fence and state version, then persist result, page and children atomically.
     /// # Errors
     /// Returns lease loss, state conflict, quota or storage errors without partial writes.
@@ -626,5 +1108,274 @@ impl crate::acquisition::AcquisitionAllowanceV1 {
                 .saturating_add(usage.decoded_bytes_observed),
             self.previous_usage.evidence_incomplete || usage.evidence_incomplete,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::acquisition::{
+        AcquisitionAttemptV1, AcquisitionRedirectV1, AcquisitionResultV1, BackendCapabilitiesV1,
+        UrlEvidenceV1, ValidationCategoryV1,
+    };
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn head_commit(status: u16) -> RequestCommitV1 {
+        let run = CrawlRunId(Uuid::from_u128(1));
+        let tenant = TenantId(Uuid::from_u128(2));
+        let url = url::Url::parse("https://example.com/head").unwrap();
+        let mut acquisition = AcquisitionResultV1::new(
+            run,
+            tenant,
+            url.clone(),
+            Digest::of("head-test", b"request"),
+            BackendCapabilitiesV1::native_http("crawlx-fetch", "test"),
+        );
+        acquisition.target_status = Some(status);
+        acquisition.transport_succeeded = true;
+        acquisition.final_url = Some(url.clone());
+        acquisition.final_url_evidence = UrlEvidenceV1::Observed;
+        acquisition.redirects = vec![AcquisitionRedirectV1::observed(url, Some(302))];
+        acquisition.attempts = 1;
+        acquisition.network_requests = 2;
+        acquisition.network_requests_observed = Some(2);
+        acquisition.attempt_summaries = vec![AcquisitionAttemptV1::new(
+            1,
+            "native_http",
+            Some(status),
+            ValidationCategoryV1::Valid,
+        )];
+        acquisition.validation.category = ValidationCategoryV1::Valid;
+        acquisition.validation.content_accepted = true;
+        let mut commit = RequestCommitV1::terminal(run, 7, 3, 1, FrontierStatus::Succeeded, None);
+        commit.head_response = Some(json!({
+            "requestId": 7,
+            "method": "HEAD",
+            "status": status,
+            "bodyBytes": 0,
+            "response_headers": {"content-type": "text/html"},
+            "acquisition": acquisition,
+        }));
+        commit
+    }
+
+    #[test]
+    fn real_head_acquisition_preserves_nullable_evidence_and_actual_304() {
+        for status in [200, 204, 304] {
+            let mut commit = head_commit(status);
+            let observation = commit.head_response.as_mut().unwrap();
+            for key in [
+                "metaRefresh",
+                "metaRefreshPolicy",
+                "metaRefreshRevision",
+                "retainedBaseline",
+                "elapsedScope",
+            ] {
+                observation["acquisition"][key] = serde_json::Value::Null;
+            }
+            let acquisition = AcquisitionResultV1::deserialize(&observation["acquisition"]).unwrap();
+            assert_eq!(acquisition.target_status, Some(status));
+            assert_eq!(acquisition.connection.peer_checked, None);
+            assert_eq!(acquisition.extraction_succeeded, None);
+            assert!(commit.head_response_receipt().unwrap().is_some());
+        }
+    }
+
+    #[test]
+    fn head_receipt_preserves_auxiliary_byte_accounting_and_unobserved_body_checks() {
+        let mut commit = head_commit(200);
+        let acquisition = &mut commit.head_response.as_mut().unwrap()["acquisition"];
+        acquisition["decodedBytes"] = json!(512);
+        acquisition["wireBytes"] = json!(1024);
+        acquisition["allowanceUsage"] = json!({
+            "attemptsReserved": 1,
+            "networkRequestsReserved": 2,
+            "decodedBytesReserved": 4096,
+            "decodedBytesObserved": 512,
+            "evidenceIncomplete": false,
+        });
+        acquisition["validation"]["signals"] = json!(["body_expectations_unobserved_head"]);
+        assert!(commit.head_response_receipt().unwrap().is_some());
+        commit.head_response.as_mut().unwrap()["bodyBytes"] = json!(1);
+        assert!(commit.head_response_receipt().is_err());
+    }
+
+    #[test]
+    fn head_receipt_rejects_unknown_keys_at_every_evidence_boundary() {
+        for path in [
+            "",
+            "/acquisition",
+            "/acquisition/backend",
+            "/acquisition/connection",
+            "/acquisition/validation",
+            "/acquisition/redirects/0",
+            "/acquisition/attemptSummaries/0",
+            "/acquisition/allowanceUsage",
+        ] {
+            for payload in [serde_json::Value::Null, json!("hidden response body")] {
+                let mut commit = head_commit(200);
+                commit
+                    .head_response
+                    .as_mut()
+                    .unwrap()
+                    .pointer_mut(path)
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("body".into(), payload);
+                assert!(commit.head_response_receipt().is_err(), "{path}");
+            }
+        }
+        for field in ["body", "html", "text", "document", "payload", "bodyRef"] {
+            let mut commit = head_commit(200);
+            commit.head_response.as_mut().unwrap()["acquisition"][field] = json!("hidden response body");
+            assert!(commit.head_response_receipt().is_err(), "{field}");
+        }
+    }
+
+    #[test]
+    fn head_receipt_closes_optional_browser_and_policy_evidence() {
+        let mut commit = head_commit(200);
+        commit.head_response.as_mut().unwrap()["acquisition"]["backend"]["browser"] =
+            json!(crate::observation::BrowserBuildInfo {
+                chromium_version: "test".into(),
+                cdp_revision: "test".into(),
+                user_agent: "test".into(),
+                pinned: false,
+                launch_profile: crate::config::LaunchProfile::Standard,
+                console_capture: false,
+                attached: false,
+            });
+        commit.head_response.as_mut().unwrap()["acquisition"]["metaRefreshPolicy"] =
+            json!(crate::acquisition::MetaRefreshPolicyV1::default());
+        assert!(commit.head_response_receipt().unwrap().is_some());
+        for path in ["/acquisition/backend/browser", "/acquisition/metaRefreshPolicy"] {
+            let mut changed = commit.clone();
+            changed.head_response.as_mut().unwrap().pointer_mut(path).unwrap()["body"] = json!("hidden body");
+            // The ordinary DTO may ignore unknown evidence keys. The publication boundary cannot.
+            assert!(changed.head_response_receipt().is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn head_receipt_rejects_body_artifacts_extraction_and_document_results() {
+        let artifact = crate::ArtifactRef {
+            id: crate::ArtifactId(Uuid::from_u128(9)),
+            digest: Digest::of("head-test", b"body"),
+        };
+        for field in ["wireBody", "renderedDom"] {
+            let mut commit = head_commit(200);
+            commit.head_response.as_mut().unwrap()["acquisition"][field] = json!(artifact);
+            assert!(commit.head_response_receipt().is_err(), "{field}");
+        }
+        for (field, value) in [
+            ("retainedBaseline", json!({})),
+            ("extractionSucceeded", json!(true)),
+            ("representation", json!("parsed_document")),
+            ("metaRefresh", json!({})),
+        ] {
+            let mut commit = head_commit(200);
+            commit.head_response.as_mut().unwrap()["acquisition"][field] = value;
+            assert!(commit.head_response_receipt().is_err(), "{field}");
+        }
+        let mut commit = head_commit(200);
+        commit.document_ref = Some(Digest::of("head-test", b"document"));
+        assert!(commit.head_response_receipt().is_err());
+    }
+
+    #[test]
+    fn head_receipt_rejects_foreign_run_status_mismatch_and_malformed_acquisition() {
+        for (path, value) in [
+            ("/acquisition/run", json!(CrawlRunId(Uuid::from_u128(99)))),
+            ("/acquisition/tenant", json!("not-a-tenant")),
+            ("/acquisition/targetStatus", json!(201)),
+            ("/acquisition/targetStatus", serde_json::Value::Null),
+            ("/acquisition/decodedBytes", json!("0")),
+            ("/acquisition/connection", serde_json::Value::Null),
+            ("/acquisition/schemaVersion", json!(2)),
+            ("/acquisition/metaRefreshPolicy", json!({})),
+            ("/acquisition", json!({})),
+            ("/method", json!("GET")),
+            ("/requestId", json!(8)),
+            ("/status", json!(600)),
+            ("/bodyBytes", json!("0")),
+            ("/bodyBytes", json!(1)),
+        ] {
+            let mut commit = head_commit(200);
+            let (parent, key) = path.rsplit_once('/').unwrap();
+            commit
+                .head_response
+                .as_mut()
+                .unwrap()
+                .pointer_mut(parent)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(key.into(), value);
+            assert!(commit.head_response_receipt().is_err(), "{path}");
+        }
+        let mut commit = head_commit(200);
+        commit
+            .head_response
+            .as_mut()
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("bodyBytes");
+        assert!(commit.head_response_receipt().is_err());
+    }
+
+    #[test]
+    fn head_receipt_bounds_headers_and_complete_encoded_observation() {
+        let mut too_many = serde_json::Map::new();
+        for index in 0..129 {
+            too_many.insert(format!("x-{index}"), json!("value"));
+        }
+        for headers in [
+            json!({"x": 1}),
+            json!({"": "value"}),
+            json!({ ("x".repeat(257)): "value" }),
+            json!({"x": "v".repeat(8193)}),
+            serde_json::Value::Object(too_many),
+        ] {
+            let mut commit = head_commit(200);
+            commit.head_response.as_mut().unwrap()["response_headers"] = headers;
+            assert!(commit.head_response_receipt().is_err());
+        }
+        let mut commit = head_commit(200);
+        let mut headers = serde_json::Map::new();
+        for index in 0..8 {
+            headers.insert(format!("x-{index}"), json!("v".repeat(8192)));
+        }
+        commit.head_response.as_mut().unwrap()["response_headers"] = serde_json::Value::Object(headers);
+        assert!(matches!(
+            commit.head_response_receipt(),
+            Err(StoreError::Conflict(reason)) if reason == "HEAD response observation exceeds 64 KiB"
+        ));
+    }
+
+    #[test]
+    fn head_receipt_hashes_complete_approved_observation_and_result_contract() {
+        let commit = head_commit(200);
+        let original = commit.head_response_receipt().unwrap().unwrap();
+        assert_eq!(commit.head_response_receipt().unwrap(), Some(original));
+        let mut changed = commit.clone();
+        changed.head_response.as_mut().unwrap()["acquisition"]["elapsedMs"] = json!(9);
+        assert_ne!(changed.head_response_receipt().unwrap(), Some(original));
+        let mut changed = commit.clone();
+        changed.reason = Some("metadata_only".into());
+        assert_ne!(changed.head_response_receipt().unwrap(), Some(original));
+        let mut changed = commit.clone();
+        changed.acquisition_ref = Some(Digest::of("head-test", b"acquisition"));
+        assert_ne!(changed.head_response_receipt().unwrap(), Some(original));
+        let mut changed = commit.clone();
+        changed.expected_state_version = 2;
+        assert_ne!(changed.head_response_receipt().unwrap(), Some(original));
+        let mut changed = commit;
+        changed.fence = 4;
+        assert_ne!(changed.head_response_receipt().unwrap(), Some(original));
     }
 }

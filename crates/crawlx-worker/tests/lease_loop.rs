@@ -147,7 +147,12 @@ async fn leased_hybrid_preserves_imported_handler_through_http_and_browser_redir
         .redirect_from([request.url.url.to_string()]);
     let mut script = FakeScript::new().page(page.clone());
     script.pages.insert(request.url.url.to_string(), page);
-    let backend = Arc::new(FakeBackend::new(script));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let mut config = cfg(dir.path());
     config.checkpoint_keys = Some(Arc::new(
         crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap(),
@@ -188,6 +193,346 @@ async fn leased_hybrid_preserves_imported_handler_through_http_and_browser_redir
 }
 
 #[tokio::test]
+async fn bodyless_head_preserves_get_document_and_never_enters_article_ingestion() {
+    use axum::{http::header, routing::get, Router};
+    use crawlx_core::hash::Digest;
+    use crawlx_core::orchestration::RequestBatchV1;
+    use crawlx_core::request::RequestEnvelopeV1;
+    use std::sync::Mutex;
+
+    for native_acquisition in [false, true] {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let get_observed = Arc::clone(&observed);
+        let head_observed = Arc::clone(&observed);
+        let redirect_observed = Arc::clone(&observed);
+        let scope_redirect_observed = Arc::clone(&observed);
+        let robots_redirect_observed = Arc::clone(&observed);
+        let scope_denied_observed = Arc::clone(&observed);
+        let robots_denied_observed = Arc::clone(&observed);
+        let external_observed = Arc::clone(&observed);
+        let external_redirect_observed = Arc::clone(&observed);
+        let external_denied_redirect_observed = Arc::clone(&observed);
+        let external_listener = tokio::net::TcpListener::bind("127.0.0.2:0").await.unwrap();
+        let external_port = external_listener.local_addr().unwrap().port();
+        let external_base = format!("http://{}", external_listener.local_addr().unwrap());
+        let external_app = Router::new().fallback(axum::routing::any(
+            move |method: axum::http::Method, uri: axum::http::Uri| {
+                external_observed
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} external{}", uri.path()));
+                async move {
+                    if uri.path() == "/robots.txt" {
+                        (
+                            [
+                                (header::CONTENT_TYPE, "text/plain"),
+                                (header::HeaderName::from_static("x-owned-head"), "observed"),
+                            ],
+                            "User-agent: *\nDisallow: /denied\n",
+                        )
+                    } else {
+                        (
+                            [
+                                (header::CONTENT_TYPE, "text/html"),
+                                (header::HeaderName::from_static("x-owned-head"), "observed"),
+                            ],
+                            "HEAD must not download this entity body",
+                        )
+                    }
+                }
+            },
+        ));
+        let external_server = tokio::spawn(async move {
+            axum::serve(external_listener, external_app).await.unwrap();
+        });
+        let external_leaf = format!("{external_base}/leaf");
+        let external_denied = format!("{external_base}/denied");
+        let html = concat!(
+            "<html><head><title>HEAD boundary article</title></head><body><article id=\"main\">",
+            "<h1>HEAD boundary article</h1><p>Owned research teams preserve exact source text ",
+            "while reserving bounded output capacity before serialization begins. This article ",
+            "describes a local fixture with no external acquisition dependencies.</p>",
+            "<p>Dataset acceptance must retain the GET document when a later HEAD request observes ",
+            "only response headers. Redirects must retain HEAD while checking every destination ",
+            "against scope, robots, authorization and the original finite acquisition budget.</p>",
+            "</article></body></html>",
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new()
+            .route(
+                "/article",
+                get(move || {
+                    get_observed.lock().unwrap().push("GET /article".to_owned());
+                    async move { axum::response::Html(html) }
+                })
+                .head(move || {
+                    head_observed.lock().unwrap().push("HEAD /article".to_owned());
+                    async {
+                        (
+                            [
+                                (header::CONTENT_TYPE, "text/html"),
+                                (header::CONTENT_LENGTH, "1000000"),
+                                (header::HeaderName::from_static("x-owned-head"), "observed"),
+                                (header::SET_COOKIE, "session=ownedHeadCookie"),
+                            ],
+                            "",
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/head",
+                get(move || {
+                    redirect_observed.lock().unwrap().push("HEAD /head".to_owned());
+                    async { axum::response::Redirect::temporary("/article") }
+                }),
+            )
+            .route(
+                "/external",
+                axum::routing::head(move || {
+                    external_redirect_observed
+                        .lock()
+                        .unwrap()
+                        .push("HEAD /external".to_owned());
+                    let target = external_leaf.clone();
+                    async move { axum::response::Redirect::temporary(&target) }
+                }),
+            )
+            .route(
+                "/external-denied",
+                axum::routing::head(move || {
+                    external_denied_redirect_observed
+                        .lock()
+                        .unwrap()
+                        .push("HEAD /external-denied".to_owned());
+                    let target = external_denied.clone();
+                    async move { axum::response::Redirect::temporary(&target) }
+                }),
+            )
+            .route(
+                "/robots.txt",
+                get(|| async { "User-agent: *\nDisallow: /robots-denied\n" }),
+            )
+            .route(
+                "/scope_redirect",
+                axum::routing::head(move || {
+                    scope_redirect_observed
+                        .lock()
+                        .unwrap()
+                        .push("HEAD /scope_redirect".to_owned());
+                    async { axum::response::Redirect::temporary("/scope-denied") }
+                }),
+            )
+            .route(
+                "/robots_redirect",
+                axum::routing::head(move || {
+                    robots_redirect_observed
+                        .lock()
+                        .unwrap()
+                        .push("HEAD /robots_redirect".to_owned());
+                    async { axum::response::Redirect::temporary("/robots-denied") }
+                }),
+            )
+            .route(
+                "/scope-denied",
+                axum::routing::any(move |method: axum::http::Method| {
+                    scope_denied_observed
+                        .lock()
+                        .unwrap()
+                        .push(format!("{method} /scope-denied"));
+                    async { axum::http::StatusCode::OK }
+                }),
+            )
+            .route(
+                "/robots-denied",
+                axum::routing::any(move |method: axum::http::Method| {
+                    robots_denied_observed
+                        .lock()
+                        .unwrap()
+                        .push(format!("{method} /robots-denied"));
+                    async { axum::http::StatusCode::OK }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+            .await
+            .unwrap();
+        let mut crawl = CreateCrawl::new(url::Url::parse(&format!("{base}/article")).unwrap());
+        crawl.mode = CrawlMode::Static;
+        crawl.seed = Some(7);
+        crawl.safety.allow_private_networks = true;
+        crawl.safety.respect_robots_txt = true;
+        crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
+        crawl.politeness.delay_ms = 0;
+        crawl.scope.crawl_entire_domain = true;
+        crawl.scope.allow_external_links = true;
+        crawl.scope.exclude_paths = vec!["^/scope-denied$".into()];
+        crawl.output.formats = vec![crawlx_core::config::OutputFormat::Html];
+        crawl.extract.content = Some(crawlx_core::extraction::ExtractionPolicyV1::default());
+        crawl.orchestration = Some(crawlx_core::orchestration::OrchestrationConfigV1::default());
+        crawl.acquisition = native_acquisition.then(crawlx_core::acquisition::AcquisitionPolicyV1::default);
+        if let Some(policy) = &mut crawl.acquisition {
+            policy.max_attempts = 4;
+            policy.validation.required_selectors = vec!["#main".into()];
+            policy.validation.minimum_text_bytes = 100;
+        }
+        crawl.datasets = serde_json::from_value(serde_json::json!({
+            "version":1, "articleDataset":"articles",
+            "stores":[{"name":"articles","schemaVersion":"document_v1",
+                       "maxItems":10,"maxBytes":16777216}]
+        }))
+        .unwrap();
+        let mut record = common::authorization::verified_record(&crawl, stores.tenant);
+        record.robots_override_acknowledged = true;
+        record.url_prefixes.push(external_base.clone());
+        let stores =
+            stores.with_authorization_source(Arc::new(crawlx_worker::StaticAuthorizationSource::new(record)));
+        let run = enqueue(&stores, crawl).await;
+        // A prequeued HEAD cannot suppress the depth-zero GET seed. Later HEAD
+        // responses must not replace its page or ingest an empty article.
+        let head = RequestEnvelopeV1::new(
+            common::canonical(&format!("{base}/article")),
+            "HEAD".into(),
+            1,
+            None,
+        );
+        let redirected =
+            RequestEnvelopeV1::new(common::canonical(&format!("{base}/head")), "HEAD".into(), 1, None);
+        let scope_redirect = RequestEnvelopeV1::new(
+            common::canonical(&format!("{base}/scope_redirect")),
+            "HEAD".into(),
+            1,
+            None,
+        );
+        let robots_redirect = RequestEnvelopeV1::new(
+            common::canonical(&format!("{base}/robots_redirect")),
+            "HEAD".into(),
+            1,
+            None,
+        );
+        let external = RequestEnvelopeV1::new(
+            common::canonical(&format!("{base}/external")),
+            "HEAD".into(),
+            1,
+            None,
+        );
+        let external_denied = RequestEnvelopeV1::new(
+            common::canonical(&format!("{base}/external-denied")),
+            "HEAD".into(),
+            1,
+            None,
+        );
+        let receipt = stores
+            .frontier
+            .append_batch(RequestBatchV1::new(
+                stores.tenant,
+                run,
+                "anonymous".into(),
+                Digest::of("head-worker-fixture", b"two-bodyless-requests"),
+                vec![
+                    head,
+                    redirected,
+                    external,
+                    external_denied,
+                    scope_redirect,
+                    robots_redirect,
+                ],
+            ))
+            .await
+            .unwrap();
+        let mut worker = cfg(dir.path());
+        worker.egress.extra_ports.push(external_port);
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            run_with(worker, stores.clone(), None, CancellationToken::new()),
+        )
+        .await;
+        server.abort();
+        external_server.abort();
+        result.unwrap().unwrap();
+        assert_eq!(
+            observed.lock().unwrap().as_slice(),
+            [
+                "GET /article",
+                "HEAD /article",
+                "HEAD /head",
+                "HEAD /article",
+                "HEAD /external",
+                "GET external/robots.txt",
+                "HEAD external/leaf",
+                "HEAD /external-denied",
+                "HEAD /scope_redirect",
+                "HEAD /robots_redirect"
+            ],
+            "native acquisition: {native_acquisition}",
+        );
+        for id in &receipt.inserted[..3] {
+            let request = stores.frontier.get_request(run, *id).await.unwrap();
+            assert_eq!(request.envelope.method, "HEAD");
+            assert_eq!(request.entry.status, crawlx_core::repo::FrontierStatus::Succeeded);
+        }
+        for id in &receipt.inserted[3..] {
+            assert_eq!(
+                stores.frontier.get_request(run, *id).await.unwrap().entry.status,
+                crawlx_core::repo::FrontierStatus::Failed,
+            );
+        }
+        let pages = stores.pages.list(run).await.unwrap();
+        assert_eq!(pages.len(), 1);
+        assert!(!receipt.inserted.contains(&pages[0].frontier_id));
+        assert!(pages[0].html.is_some());
+        assert_eq!(
+            pages[0].content_digest,
+            Digest::of("crawlx/page-body/v1", html.as_bytes())
+        );
+        assert_eq!(
+            stores.datasets.items(run, "articles", 0, 10).await.unwrap().len(),
+            1
+        );
+        let events = stores.events.list_after(run, 0, 1000).await.unwrap();
+        let heads: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "head_response")
+            .collect();
+        assert_eq!(heads.len(), 3);
+        for event in heads {
+            assert_eq!(event.payload["method"], "HEAD");
+            assert_eq!(event.payload["status"], 200);
+            assert_eq!(event.payload["response_headers"]["x-owned-head"], "observed");
+            assert_eq!(event.payload["bodyBytes"], 0);
+            let external = event.payload["requestId"] == receipt.inserted[2];
+            assert_eq!(
+                event.payload["acquisition"]["decodedBytes"],
+                if external {
+                    u64::try_from("User-agent: *\nDisallow: /denied\n".len()).unwrap()
+                } else {
+                    0
+                },
+            );
+            assert_eq!(
+                event.payload["acquisition"]["finalUrl"],
+                if external {
+                    format!("{external_base}/leaf")
+                } else {
+                    format!("{base}/article")
+                }
+            );
+            assert!(event.payload["acquisition"]["wireBody"].is_null());
+            assert!(event.payload["acquisition"]["extractionSucceeded"].is_null());
+            if native_acquisition {
+                assert!(event.payload["acquisition"]["validation"]["signals"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!("body_expectations_unobserved_head")));
+            }
+            assert!(!event.payload.to_string().contains("ownedHeadCookie"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn the_worker_claims_a_queued_dynamic_run_explores_it_and_finalizes() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(MemoryStore::new());
@@ -199,7 +544,12 @@ async fn the_worker_claims_a_queued_dynamic_run_explores_it_and_finalizes() {
     run_with(
         cfg(dir.path()),
         stores.clone(),
-        Some(Arc::new(FakeBackend::new(app()))),
+        Some(Arc::new(
+            FakeBackend::builder()
+                .script(app())
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
         CancellationToken::new(),
     )
     .await
@@ -271,19 +621,32 @@ async fn shutdown_drains_sessions_checkpoints_and_releases_them_for_recovery() {
             idle_exit_after: None,
             ..cfg(dir.path())
         };
-        tokio::spawn(
-            async move { run_with(cfg, stores, Some(Arc::new(FakeBackend::new(script))), cancel).await },
-        )
+        tokio::spawn(async move {
+            run_with(
+                cfg,
+                stores,
+                Some(Arc::new(
+                    FakeBackend::builder()
+                        .script(script)
+                        .clock(Arc::new(crawlx_core::SystemClock))
+                        .build(),
+                )),
+                cancel,
+            )
+            .await
+        })
     };
-    // wait until the session is running, then SIGTERM-equivalent
-    for _ in 0..200 {
-        let s = stores.runs.list_sessions(run).await.unwrap();
-        if s.iter().any(|s| s.status == SessionStatus::Running) {
+    // A claimed lease precedes actor startup. Wait for a durable action, so this
+    // fixture drains an initialized actor rather than racing its construction.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let acted = !stores.journal.list(run, None).await.unwrap().is_empty();
+        if acted {
             break;
         }
+        assert!(tokio::time::Instant::now() < deadline, "session never acted");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(10), worker)
         .await
@@ -343,7 +706,12 @@ async fn a_recovering_session_reconciles_its_unknown_actions_before_exploring() 
     run_with(
         cfg(dir.path()),
         stores.clone(),
-        Some(Arc::new(FakeBackend::new(app()))),
+        Some(Arc::new(
+            FakeBackend::builder()
+                .script(app())
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
         CancellationToken::new(),
     )
     .await
@@ -385,7 +753,12 @@ async fn referenced_authorization_without_a_source_refuses_before_requests_or_ac
         run_with(
             cfg(dir.path()),
             stores.clone(),
-            Some(Arc::new(FakeBackend::new(app()))),
+            Some(Arc::new(
+                FakeBackend::builder()
+                    .script(app())
+                    .clock(Arc::new(crawlx_core::SystemClock))
+                    .build(),
+            )),
             CancellationToken::new(),
         )
         .await

@@ -2,6 +2,7 @@
 
 use crate::auth::Principal;
 use crate::errors::{ApiResult, HttpError};
+use crate::resources::coverage_exercised;
 use crate::routes::crawls::load_run;
 use crate::state::AppState;
 use crate::store::Scope;
@@ -16,7 +17,7 @@ use crawlx_core::repo::SessionStatus;
 use crawlx_core::TrustLane;
 use crawlx_storage::CoverageRow;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::BTreeMap;
 
 #[derive(Default, Serialize)]
@@ -44,7 +45,7 @@ impl KeyCounts {
         );
         // All partitions count keys, not attempts. In particular repeated unknown attempts
         // must not subtract unrelated pending keys from the denominator.
-        let exercised = row.exercised(lane) > 0 && status != CoverageStatus::NotObservable;
+        let exercised = coverage_exercised(row, lane, status);
         if exercised {
             self.exercised += 1;
         } else if status == CoverageStatus::NotObservable {
@@ -183,6 +184,13 @@ pub async fn coverage(
                 .count(),
         })
         .collect();
+    // Fixture evidence describes the whole trusted run; do not relabel it as a role-filtered
+    // or diagnostic-lane measurement when the fixture supplied no such denominator.
+    let ground_truth = if lane == TrustLane::TrustedUi && role_filter.is_none() {
+        state.load_fixture_ground_truth(run.id).await?
+    } else {
+        None
+    };
     let mut body = json!({
         "unit": "ActionContextKey",
         "denominator": "discovered",
@@ -192,7 +200,7 @@ pub async fn coverage(
         "crossPrincipalAttribution": run.config.cross_principal_attribution,
         "roles": role_items,
         "total": total,
-        "groundTruth": Value::Null,
+        "groundTruth": ground_truth.as_ref().map(crate::resources::FixtureGroundTruth::json),
     });
     if let (Some(_), Some(obj)) = (group_by, body.as_object_mut()) {
         obj.insert("groups".to_owned(), json!(groups));
@@ -204,6 +212,40 @@ pub async fn coverage(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn run_summary_and_endpoint_exclude_trusted_actions_from_unreachable_states() {
+        let cluster = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+        let rows: Vec<_> = (0..19)
+            .map(|index| CoverageRow {
+                key: crawlx_storage::testkit::proposal("member", cluster, index).key,
+                trusted_exercised: u32::from(index < 17),
+                trusted_unreachable: u32::from(index >= 17),
+                diagnostic_exercised: 0,
+                failures: 0,
+                denied: 0,
+                unknown: 0,
+                first_seen: crawlx_core::Timestamp::default(),
+                last_exercised: None,
+            })
+            .collect();
+        let mut counts = KeyCounts::default();
+        for row in &rows {
+            counts.observe(row, TrustLane::TrustedUi, TargetIsolation::PerRoleReplica);
+        }
+        let summary = crate::resources::coverage_summary(&rows, None);
+        assert_eq!(summary["discovered"], counts.discovered);
+        assert_eq!(summary["exercisedTrusted"], counts.exercised);
+        assert_eq!(counts.discovered, 19);
+        assert_eq!(counts.exercised, 17);
+        assert_eq!(counts.diagnostic_only, 2);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.trusted_exercised + row.trusted_unreachable > 0)
+                .count(),
+            19
+        );
+    }
 
     #[test]
     fn repeated_unknown_attempts_count_one_key_and_do_not_hide_pending_work() {

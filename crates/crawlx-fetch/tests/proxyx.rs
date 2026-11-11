@@ -1,5 +1,5 @@
 //! The ProxyX pool route end to end against an in-process fake gateway: `CONNECT`-only
-//! tunnels (plain `http://` targets included), the typed username with a per-crawl sticky id,
+//! tunnels (plain `http://` targets included), the typed username with a generation-scoped sticky id,
 //! the session and exit IP read from the `CONNECT` answer, typed refusals, the egress policy
 //! over the gateway and control hosts, and bounded block-signal feedback.
 //!
@@ -11,11 +11,16 @@ mod common;
 
 use base64::Engine as _;
 use common::{allow_private_policy, fast_config, url, LOOPBACK};
+use crawlx_core::hash::Digest;
 use crawlx_core::secret::SecretOr;
-use crawlx_fetch::proxyx::{PoolCause, PoolSelector, PoolTier, ProxyxRoute, Retryability};
+use crawlx_core::session_binding::{RetirementReason, SessionBindingV1};
+use crawlx_fetch::proxyx::{
+    PoolBinding, PoolCause, PoolPinAuthority, PoolSelector, PoolTier, ProxyxError, ProxyxRoute, Retryability,
+};
 use crawlx_fetch::{FetchConfig, FetchError, FetchOptions, Fetcher, Resolver, StaticResolver};
 use crawlx_policy::egress::EgressPolicy;
 use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -41,6 +46,8 @@ enum Mode {
     Accept,
     /// `HTTP/1.1 <status> <reason>`, then close.
     Refuse(u16, &'static str),
+    /// A gateway that incorrectly replaces a still-live sticky lease.
+    Drift,
 }
 
 struct Gateway {
@@ -64,6 +71,7 @@ impl Gateway {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let mode = Arc::new(Mutex::new(Mode::Accept));
         let counter = Arc::new(AtomicU64::new(0));
+        let leases = Arc::new(Mutex::new(BTreeMap::new()));
         let task = tokio::spawn({
             let (seen, mode) = (Arc::clone(&seen), Arc::clone(&mode));
             async move {
@@ -76,6 +84,7 @@ impl Gateway {
                         routes.clone(),
                         Arc::clone(&seen),
                         Arc::clone(&mode),
+                        Arc::clone(&leases),
                         counter.fetch_add(1, Ordering::Relaxed),
                     ));
                 }
@@ -107,6 +116,7 @@ async fn serve(
     routes: Vec<(String, SocketAddr)>,
     seen: Arc<Mutex<Vec<Seen>>>,
     mode: Arc<Mutex<Mode>>,
+    leases: Arc<Mutex<BTreeMap<String, u64>>>,
     n: u64,
 ) {
     let mut head = Vec::new();
@@ -169,6 +179,11 @@ async fn serve(
             .await;
         return;
     };
+    let n = if matches!(current, Mode::Drift) {
+        n.saturating_add(1)
+    } else {
+        *leases.lock().entry(username.to_owned()).or_insert(n)
+    };
     let reply = format!(
         "HTTP/1.1 200 Connection established\r\nX-ProxyX-Pool-Session: {:032x}\r\nX-ProxyX-Exit-IP: 203.0.113.{}\r\n\r\n",
         0xabc0_0000_u128 + u128::from(n),
@@ -186,6 +201,36 @@ fn resolver() -> Arc<StaticResolver> {
     Arc::new(r)
 }
 
+fn session(route: &ProxyxRoute, name: &str) -> SessionBindingV1 {
+    let digest = Digest::of("proxy-fixture", b"identity");
+    let id = Digest::of("proxy-fixture-session", name.as_bytes()).to_hex();
+    let id = format!(
+        "{}-{}-{}-{}-{}",
+        &id[..8],
+        &id[8..12],
+        &id[12..16],
+        &id[16..20],
+        &id[20..32]
+    );
+    let identity = serde_json::from_value(serde_json::json!({
+        "tenant": "00000000-0000-0000-0000-000000000001",
+        "run": "00000000-0000-0000-0000-000000000002",
+        "principal": "reader",
+        "session": id,
+        "acquisition": digest,
+        "backend_build": digest,
+        "egress": route.egress_digest(PoolTier::Basic),
+        "identity_policy": digest,
+        "profile": null,
+    }))
+    .unwrap();
+    SessionBindingV1::new(
+        identity,
+        7,
+        chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
+    )
+}
+
 struct Rig {
     origin: MockServer,
     gateway: Gateway,
@@ -194,7 +239,11 @@ struct Rig {
 impl Rig {
     async fn start() -> Self {
         let origin = MockServer::start().await;
-        let gateway = Gateway::start(vec![("pub.test".to_owned(), *origin.address())]).await;
+        let gateway = Gateway::start(vec![
+            ("pub.test".to_owned(), *origin.address()),
+            ("other.test".to_owned(), *origin.address()),
+        ])
+        .await;
         Self { origin, gateway }
     }
 
@@ -221,14 +270,18 @@ impl Rig {
         let binding = route
             .bind(
                 PoolTier::Basic,
-                crawl,
+                &session(route, crawl),
                 Some((self.policy(), Arc::clone(&resolver))),
             )
             .unwrap();
+        self.fetcher_with_binding(binding, retries)
+    }
+
+    fn fetcher_with_binding(&self, binding: Arc<PoolBinding>, retries: u32) -> Fetcher {
         let mut cfg: FetchConfig = fast_config();
         cfg.retry.max_retries = retries;
         cfg.pool = Some(binding);
-        Fetcher::new(cfg, self.policy(), resolver).unwrap()
+        Fetcher::new(cfg, self.policy(), resolver()).unwrap()
     }
 
     async fn ok(&self, p: &'static str) {
@@ -266,7 +319,16 @@ async fn a_plain_http_target_is_tunneled_with_the_typed_username_and_the_org_key
     );
     assert_eq!(
         seen[0].username,
-        "px-kind-rotating-cc-fr-sid-cx_b_0190a1b2_c3d4_7e5f_8a9b_0c1d2e3f4a5b"
+        format!(
+            "px-kind-rotating-cc-fr-sid-{}",
+            route
+                .selector()
+                .sticky_id(
+                    PoolTier::Basic,
+                    &session(&route, "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b")
+                )
+                .unwrap()
+        )
     );
     assert_eq!(seen[0].password, KEY);
 
@@ -283,7 +345,7 @@ async fn a_plain_http_target_is_tunneled_with_the_typed_username_and_the_org_key
 }
 
 #[tokio::test]
-async fn one_crawl_keeps_one_identity_and_two_crawls_get_two() {
+async fn one_generation_keeps_one_identity_and_two_session_slots_get_two() {
     let rig = Rig::start().await;
     rig.ok("/a").await;
     rig.ok("/b").await;
@@ -297,7 +359,7 @@ async fn one_crawl_keeps_one_identity_and_two_crawls_get_two() {
     }
     let usernames: Vec<_> = rig.gateway.seen().into_iter().map(|s| s.username).collect();
     assert!(
-        usernames.iter().all(|u| u.starts_with("px-sid-cx_b_crawl_")),
+        usernames.iter().all(|u| u.starts_with("px-sid-cx_b_")),
         "{usernames:?}"
     );
     let distinct: std::collections::BTreeSet<_> = usernames.iter().collect();
@@ -308,22 +370,18 @@ async fn one_crawl_keeps_one_identity_and_two_crawls_get_two() {
 }
 
 #[tokio::test]
-async fn rot_each_opens_a_tunnel_and_an_identity_per_request() {
+async fn per_connection_rotation_is_refused_before_any_network_effect() {
     let rig = Rig::start().await;
-    rig.ok("/a").await;
     let route = rig.route("cc=de,rot=each", None);
-    let f = rig.fetcher(&route, "crawl-each", 0);
-    let mut sessions = Vec::new();
-    for _ in 0..3 {
-        let u = rig.url("/a");
-        f.fetch(&u, &FetchOptions::default()).await.unwrap();
-        sessions.push(f.pool_tunnel(&u).unwrap().session);
-    }
-    let seen = rig.gateway.seen();
-    assert_eq!(seen.len(), 3);
-    assert!(seen.iter().all(|s| s.username == "px-cc-de-rot-each"), "{seen:?}");
-    let distinct: std::collections::BTreeSet<_> = sessions.iter().collect();
-    assert_eq!(distinct.len(), 3);
+    assert!(matches!(
+        route.bind(PoolTier::Basic, &session(&route, "each"), None),
+        Err(ProxyxError::Selector {
+            field: "rotation",
+            ..
+        })
+    ));
+    assert!(rig.gateway.seen().is_empty());
+    assert!(rig.origin.received_requests().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -377,8 +435,13 @@ async fn gateway_refusals_become_typed_errors_with_retry_guidance() {
                 cause: got,
                 status: s,
             } => {
-                assert_eq!((got, s), (Some(cause), status), "{reason}");
-                assert_eq!(cause.retryability(), retryability);
+                let expected = if retryability == Retryability::Terminal {
+                    cause
+                } else {
+                    PoolCause::SessionPinLost
+                };
+                assert_eq!((got, s), (Some(expected), status), "{reason}");
+                assert_eq!(expected.retryability(), Retryability::Terminal);
             }
             other => panic!("{reason}: {other}"),
         }
@@ -394,7 +457,7 @@ async fn gateway_refusals_become_typed_errors_with_retry_guidance() {
         matches!(
             error,
             FetchError::PoolRefused {
-                cause: None,
+                cause: Some(PoolCause::SessionPinLost),
                 status: 502
             }
         ),
@@ -443,7 +506,7 @@ async fn the_gateway_host_stays_under_the_egress_policy() {
     r.set("pub.test", ["93.184.216.34".parse().unwrap()]);
     let resolver: Arc<dyn Resolver> = Arc::new(r);
     let policy = Arc::new(EgressPolicy::new(false));
-    let binding = route.bind(PoolTier::Basic, "x", None).unwrap();
+    let binding = route.bind(PoolTier::Basic, &session(&route, "x"), None).unwrap();
     let mut cfg = fast_config();
     cfg.retry.max_retries = 0;
     cfg.pool = Some(binding);
@@ -466,7 +529,7 @@ async fn the_target_is_still_checked_before_the_gateway_is_asked() {
     let mut policy = EgressPolicy::new(false);
     policy.extra_allow.push("127.0.0.1/32".parse().unwrap());
     let resolver: Arc<dyn Resolver> = resolver();
-    let binding = route.bind(PoolTier::Basic, "x", None).unwrap();
+    let binding = route.bind(PoolTier::Basic, &session(&route, "x"), None).unwrap();
     let mut cfg = fast_config();
     cfg.retry.max_retries = 0;
     cfg.pool = Some(binding);
@@ -487,7 +550,7 @@ async fn the_target_is_still_checked_before_the_gateway_is_asked() {
 async fn debug_output_and_errors_never_carry_the_key() {
     let rig = Rig::start().await;
     let route = rig.route("kind=rotating", None);
-    let binding = route.bind(PoolTier::Basic, "x", None).unwrap();
+    let binding = route.bind(PoolTier::Basic, &session(&route, "x"), None).unwrap();
     let mut cfg = fast_config();
     cfg.pool = Some(Arc::clone(&binding));
     let rendered = format!("{route:?} {binding:?} {:?} {cfg:?}", binding.upstream());
@@ -560,6 +623,214 @@ async fn an_origins_own_502_is_the_origins_answer() {
         .unwrap();
     assert_eq!(resp.status.as_u16(), 502);
     assert_eq!(&resp.body[..], b"origin says no");
+}
+
+#[tokio::test]
+async fn observed_exit_drift_is_terminal_before_target_request_bytes() {
+    let rig = Rig::start().await;
+    rig.ok("/first").await;
+    rig.ok("/forbidden").await;
+    let route = rig.route("", None);
+    let binding = route
+        .bind(PoolTier::Basic, &session(&route, "drift"), None)
+        .unwrap();
+    let fetcher = rig.fetcher_with_binding(Arc::clone(&binding), 3);
+    fetcher
+        .fetch_once(&rig.url("/first"), &FetchOptions::default())
+        .await
+        .unwrap();
+    rig.gateway.set_mode(Mode::Drift);
+    let error = fetcher
+        .fetch(&rig.url("/forbidden"), &FetchOptions::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            FetchError::PoolRefused {
+                cause: Some(PoolCause::SessionPinLost),
+                ..
+            }
+        ),
+        "{error}"
+    );
+    assert!(matches!(
+        binding.validate_session(&session(&route, "drift")),
+        Err(ProxyxError::PinLost)
+    ));
+    assert_eq!(rig.gateway.seen().len(), 2, "pin failure must never retry");
+    let requests = rig.origin.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.path(), "/first");
+}
+
+#[tokio::test]
+async fn outage_never_rebinds_same_generation_but_explicit_replacement_can_recover() {
+    let rig = Rig::start().await;
+    rig.ok("/ok").await;
+    let route = rig.route("", None);
+    let mut old = session(&route, "outage");
+    old.identity.principal = crawlx_core::PrincipalId::anonymous();
+    let binding = route.bind(PoolTier::Basic, &old, None).unwrap();
+    let fetcher = rig.fetcher_with_binding(Arc::clone(&binding), 3);
+    fetcher
+        .fetch_once(&rig.url("/ok"), &FetchOptions::default())
+        .await
+        .unwrap();
+    rig.gateway.set_mode(Mode::Refuse(502, "provider_unavailable"));
+    let error = fetcher
+        .fetch(&rig.url("/ok"), &FetchOptions::default())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            FetchError::PoolRefused {
+                cause: Some(PoolCause::SessionPinLost),
+                ..
+            }
+        ),
+        "{error}"
+    );
+    rig.gateway.set_mode(Mode::Accept);
+    assert!(fetcher
+        .fetch(&rig.url("/ok"), &FetchOptions::default())
+        .await
+        .is_err());
+    assert_eq!(rig.gateway.seen().len(), 2);
+    let mut retired = old;
+    retired.begin_drain(RetirementReason::Unhealthy).unwrap();
+    retired.finish_cleanup(true).unwrap();
+    let replacement = retired
+        .replace(retired.identity.clone(), true, retired.expires_at)
+        .unwrap();
+    let next = route.bind(PoolTier::Basic, &replacement, None).unwrap();
+    assert_ne!(binding.sid(), next.sid());
+    rig.fetcher_with_binding(next, 0)
+        .fetch_once(&rig.url("/ok"), &FetchOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(rig.origin.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn shared_http_and_browser_upstream_keep_one_generation_and_pin() {
+    let rig = Rig::start().await;
+    rig.ok("/http").await;
+    rig.ok("/browser").await;
+    let route = rig.route("", None);
+    let session = session(&route, "shared");
+    let binding = route.bind(PoolTier::Basic, &session, None).unwrap();
+    let http = rig.fetcher_with_binding(Arc::clone(&binding), 0);
+    // The browser loopback adapter receives this same upstream, not a newly bound route.
+    let browser_proxy = crawlx_fetch::EgressProxy::serve_with(
+        rig.policy(),
+        resolver(),
+        crawlx_fetch::EgressOptions::new().with_upstream(binding.upstream().clone()),
+    )
+    .await
+    .unwrap();
+    let mut config = fast_config();
+    config.proxy = Some(format!("http://{}", browser_proxy.addr()).parse().unwrap());
+    let browser_adapter = Fetcher::new(config, rig.policy(), resolver()).unwrap();
+    http.fetch_once(&rig.url("/http"), &FetchOptions::default())
+        .await
+        .unwrap();
+    browser_adapter
+        .fetch_once(&rig.url("/browser"), &FetchOptions::default())
+        .await
+        .unwrap();
+    assert!(binding.validate_session(&session).is_ok());
+    let seen = rig.gateway.seen();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].username, seen[1].username);
+    assert_eq!(binding.log().tunnels().len(), 2);
+    browser_proxy.shutdown().await;
+}
+
+struct UnavailablePinAuthority;
+
+#[async_trait::async_trait]
+impl PoolPinAuthority for UnavailablePinAuthority {
+    async fn verify_or_bind(&self, _pin: Digest) -> Result<(), ProxyxError> {
+        Err(ProxyxError::PinAuthority(Arc::new(
+            crawlx_core::StoreError::Unavailable("private authority diagnostic".into()),
+        )))
+    }
+}
+
+#[tokio::test]
+async fn durable_pin_authority_error_reaches_http_caller_with_source_before_target_effect() {
+    let rig = Rig::start().await;
+    rig.ok("/forbidden").await;
+    let route = rig.route("", None);
+    let session = session(&route, "authority-failed");
+    let binding = route.bind(PoolTier::Basic, &session, None).unwrap();
+    binding
+        .set_pin_authority(Arc::new(UnavailablePinAuthority))
+        .unwrap();
+    let fetcher = rig.fetcher_with_binding(Arc::clone(&binding), 5);
+    let error = fetcher
+        .fetch(&rig.url("/forbidden"), &FetchOptions::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, FetchError::Pool(ProxyxError::PinAuthority(_))));
+    let source = std::error::Error::source(&error).unwrap();
+    assert!(source.source().is_some());
+    assert!(!error.to_string().contains("private authority diagnostic"));
+    assert!(matches!(
+        binding.validate_session(&session),
+        Err(ProxyxError::PinAuthority(_))
+    ));
+    assert_eq!(rig.gateway.seen().len(), 1);
+    assert!(rig.origin.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cross_origin_redirect_strips_target_secrets_but_keeps_approved_proxy_identity() {
+    let rig = Rig::start().await;
+    rig.ok("/destination").await;
+    let destination = format!("http://other.test:{}/destination", rig.origin.address().port());
+    Mock::given(method("GET"))
+        .and(path("/start"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", destination))
+        .mount(&rig.origin)
+        .await;
+    let route = rig.route("", None);
+    let binding = route
+        .bind(PoolTier::Basic, &session(&route, "redirect"), None)
+        .unwrap();
+    let mut config = fast_config();
+    config.pool = Some(binding);
+    let resolver = resolver();
+    resolver.set("other.test", [LOOPBACK]);
+    let fetcher = Fetcher::new(config, rig.policy(), resolver).unwrap();
+    let mut options = FetchOptions::default();
+    options.headers.insert(
+        http::header::AUTHORIZATION,
+        "Bearer target-secret".parse().unwrap(),
+    );
+    options
+        .headers
+        .insert(http::header::COOKIE, "session=target-secret".parse().unwrap());
+    options.headers.insert(
+        http::header::PROXY_AUTHORIZATION,
+        "Basic unapproved-override".parse().unwrap(),
+    );
+    fetcher.fetch(&rig.url("/start"), &options).await.unwrap();
+    let requests = rig.origin.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let redirected = requests
+        .iter()
+        .find(|request| request.url.path() == "/destination")
+        .unwrap();
+    for name in ["authorization", "cookie", "proxy-authorization"] {
+        assert!(redirected.headers.get(name).is_none(), "{name}");
+    }
+    let seen = rig.gateway.seen();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].username, seen[1].username);
+    assert!(seen.iter().all(|connect| connect.password == KEY));
 }
 
 mod signals {
@@ -831,7 +1102,7 @@ mod signals {
         let binding = denied_control
             .bind(
                 PoolTier::Basic,
-                "x",
+                &session(&denied_control, "x"),
                 Some((Arc::clone(&policy), Arc::clone(&resolver))),
             )
             .unwrap();

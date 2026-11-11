@@ -1,12 +1,10 @@
 //! CDXJ 0.1.0 searchable URL keys, bounded external sorting and actual member-range validation.
 
-use super::{validate_path, warc::RecordSummary, ArchiveError, Limits};
+use super::{staging::StagedFile, validate_path, warc::RecordSummary, ArchiveError, Limits};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
-use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use tempfile::TempDir;
 
 /// The required CDXJ JSON object. Resource records use status `-`, never synthetic HTTP 200.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -100,10 +98,9 @@ impl Entry {
 
 /// Bounded external sort. Only a fixed-size run and one line per spill file remain in memory.
 pub struct Sorter {
-    dir: TempDir,
     rows: Vec<String>,
     bytes: usize,
-    runs: usize,
+    runs: Vec<StagedFile>,
 }
 impl Sorter {
     /// Create private staging after the caller's retention gate.
@@ -112,10 +109,9 @@ impl Sorter {
     /// Returns an I/O error when temporary storage is unavailable.
     pub fn new() -> Result<Self, ArchiveError> {
         Ok(Self {
-            dir: tempfile::tempdir()?,
             rows: Vec::new(),
             bytes: 0,
-            runs: 0,
+            runs: Vec::new(),
         })
     }
     /// Add a bounded line; spill at 1 MiB.
@@ -140,16 +136,18 @@ impl Sorter {
         if self.rows.is_empty() {
             return Ok(());
         }
-        if self.runs >= 1024 {
+        if self.runs.len() >= 1024 {
             return Err(ArchiveError::Limit("CDXJ sort runs"));
         }
         self.rows.sort_unstable();
-        let mut file = BufWriter::new(File::create(self.dir.path().join(self.runs.to_string()))?);
+        let mut staged = StagedFile::new()?;
+        let mut file = BufWriter::new(staged.file_mut());
         for row in self.rows.drain(..) {
             file.write_all(row.as_bytes())?;
         }
         file.flush()?;
-        self.runs += 1;
+        drop(file);
+        self.runs.push(staged);
         self.bytes = 0;
         Ok(())
     }
@@ -159,8 +157,10 @@ impl Sorter {
     /// Returns I/O errors from spill or output storage.
     pub fn finish(mut self, output: &mut impl Write) -> Result<(), ArchiveError> {
         self.spill()?;
-        let mut readers = (0..self.runs)
-            .map(|i| File::open(self.dir.path().join(i.to_string())).map(BufReader::new))
+        let mut readers = self
+            .runs
+            .into_iter()
+            .map(|staged| staged.reader().map(BufReader::new))
             .collect::<Result<Vec<_>, _>>()?;
         let mut heap: BinaryHeap<Reverse<(String, usize)>> = BinaryHeap::new();
         for (index, reader) in readers.iter_mut().enumerate() {
@@ -177,6 +177,33 @@ impl Sorter {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use std::os::unix::fs::MetadataExt as _;
+
+    #[test]
+    fn anonymous_spill_runs_merge_exact_sorted_bytes() {
+        let mut sorter = Sorter::new().unwrap();
+        let mut expected = Vec::new();
+        for index in (0..1500).rev() {
+            let row = format!("{index:04} {}\n", "retained".repeat(128));
+            expected.push(row.clone());
+            sorter.push(row).unwrap();
+        }
+        assert!(!sorter.runs.is_empty());
+        assert!(sorter
+            .runs
+            .iter()
+            .all(|run| run.file().metadata().unwrap().nlink() == 0));
+        expected.sort_unstable();
+        let mut output = Vec::new();
+        sorter.finish(&mut output).unwrap();
+        assert_eq!(output, expected.concat().as_bytes());
     }
 }
 

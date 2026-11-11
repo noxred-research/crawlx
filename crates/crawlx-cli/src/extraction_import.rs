@@ -85,6 +85,10 @@ mod tests {
         let request: crawlx_core::CreateCrawl = serde_json::from_slice(&out).unwrap();
         assert_eq!(request.seed_url.as_str(), "https://fixture.test/article");
         assert_eq!(
+            request.scope.strategy,
+            crawlx_core::config::CrawlStrategy::BreadthFirst
+        );
+        assert_eq!(
             request.extract.content.unwrap().fallback,
             crawlx_core::extraction::ContentFallbackV1::None
         );

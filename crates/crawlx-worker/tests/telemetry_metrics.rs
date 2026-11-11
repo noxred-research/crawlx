@@ -105,7 +105,12 @@ async fn explore(script: FakeScript) -> crawlx_worker::RunReport {
 /// [`explore`] with the request adjusted by `mutate`.
 async fn explore_with(script: FakeScript, mutate: impl FnOnce(&mut CreateCrawl)) -> crawlx_worker::RunReport {
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(script));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store, dir.path()).await.unwrap();
     let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
@@ -356,7 +361,12 @@ async fn a_detached_target_counts_as_not_actionable() {
 async fn a_crash_after_intent_counts_an_unknown_outcome_until_reconciled() {
     let _serial = SERIAL.lock().await;
     let script = two_page_site().crash_on(crawlx_browser::fake::action_key(ActionKind::Click, "about"));
-    let fake = Arc::new(FakeBackend::new(script));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
     let (bundle, cluster) = observe_cluster(&r).await;
     let (p, c) = r.proposal(&bundle, "About", cluster);
@@ -390,7 +400,12 @@ async fn a_crash_after_intent_counts_an_unknown_outcome_until_reconciled() {
 #[tokio::test]
 async fn a_t1_failure_counts_a_journal_halt() {
     let _serial = SERIAL.lock().await;
-    let fake = Arc::new(FakeBackend::new(two_page_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(two_page_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake, true, SafetyProfile::ReadOnly).await;
     let flaky = r.flaky.clone().unwrap();
     let (bundle, cluster) = observe_cluster(&r).await;

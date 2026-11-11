@@ -2,11 +2,15 @@
 
 use crate::util::{ts, ts_opt};
 use chrono::Duration as ChronoDuration;
-use crawlx_core::config::{QueryPolicy, RetentionMode};
+use crawlx_core::config::{QueryPolicy, RetentionMode, TargetIsolation};
 use crawlx_core::counters::{Counters, PlaneCounters};
-use crawlx_core::repo::{CrawlRun, CrawlSession, LedgerRow, LedgerSummary, RunMetadata};
-use serde::Serialize;
+use crawlx_core::identity::CoverageStatus;
+use crawlx_core::repo::{CrawlRun, CrawlSession, RunMetadata};
+use crawlx_core::{CrawlRunId, StoreError, TrustLane};
+use crawlx_storage::CoverageRow;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 
 /// `warnings[]` entry.
 #[derive(Clone, PartialEq, Eq, Serialize, Debug)]
@@ -76,15 +80,131 @@ pub fn counters_json(c: &PlaneCounters) -> Value {
     })
 }
 
-/// `coverage` summary of the run resource.
+/// Independently observed fixture evidence, never inferred from discovered crawler keys.
+///
+/// The manifest selects actionable, supported controls for the run's launch profile.
+/// Exercise labels must come from the fixture's own server-side evidence for this run.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct FixtureGroundTruth {
+    fixture: String,
+    keys: BTreeSet<String>,
+    exercised: BTreeSet<String>,
+}
+
+#[derive(Deserialize)]
+struct FixtureTruthManifest {
+    id: String,
+    #[serde(default)]
+    controls: Vec<FixtureTruthControl>,
+}
+
+#[derive(Deserialize)]
+struct FixtureTruthControl {
+    id: String,
+    #[serde(default)]
+    expected: Option<String>,
+    #[serde(default)]
+    mechanism: Option<String>,
+    #[serde(default)]
+    stealth_only: bool,
+}
+
+impl FixtureGroundTruth {
+    /// Read fixture-manifest JSON and attach independently recorded trusted exercise labels.
+    ///
+    /// Duplicate labels count once; labels outside the eligible manifest set never count.
+    /// Empty ground truth has recall `1.0`, matching the benchmark's empty-set convention.
+    ///
+    /// # Errors
+    /// Returns a JSON error if required manifest fields are missing or have invalid types.
+    pub fn from_manifest(
+        manifest: &str,
+        stealth: bool,
+        exercised: impl IntoIterator<Item = String>,
+    ) -> Result<Self, serde_json::Error> {
+        let manifest: FixtureTruthManifest = serde_json::from_str(manifest)?;
+        let keys = manifest
+            .controls
+            .into_iter()
+            .filter(|control| {
+                control
+                    .expected
+                    .as_deref()
+                    .is_none_or(|value| value == "actionable")
+            })
+            .filter(|control| control.mechanism.as_deref() != Some("unsupported"))
+            .filter(|control| stealth || !control.stealth_only)
+            .map(|control| control.id)
+            .collect();
+        Ok(Self {
+            fixture: manifest.id,
+            keys,
+            exercised: exercised.into_iter().collect(),
+        })
+    }
+
+    /// Recall over the fixture's eligible manifest keys, not the discovered-key denominator.
+    #[must_use]
+    pub fn recall(&self) -> f64 {
+        if self.keys.is_empty() {
+            1.0
+        } else {
+            self.keys.intersection(&self.exercised).count() as f64 / self.keys.len() as f64
+        }
+    }
+
+    pub(crate) fn json(&self) -> Value {
+        json!({
+            "fixture": self.fixture,
+            "keys": self.keys.len(),
+            "recall": self.recall(),
+        })
+    }
+}
+
+/// Trusted fixture-harness input configured by the server, not through crawl request JSON.
+///
+/// Implementations must bind observations to the requested run and its tenant-owned fixture.
+/// Return `None` for ordinary runs. The API checks run ownership before reading this source.
+#[async_trait::async_trait]
+pub trait FixtureGroundTruthSource: Send + Sync {
+    /// Load the manifest and independent trusted exercise evidence for one run.
+    ///
+    /// # Errors
+    /// Returns a storage error when fixture evidence cannot be read.
+    async fn ground_truth(&self, run: CrawlRunId) -> Result<Option<FixtureGroundTruth>, StoreError>;
+}
+
+pub(crate) fn coverage_exercised(row: &CoverageRow, lane: TrustLane, status: CoverageStatus) -> bool {
+    row.exercised(lane) > 0 && status != CoverageStatus::NotObservable
+}
+
+/// `coverage` summary from the same reachability-filtered rows as the coverage endpoint.
 #[must_use]
-pub fn coverage_summary(rows: &[LedgerRow]) -> Value {
-    let trusted = rows.iter().filter(|r| r.trusted_exercised > 0).count();
+pub fn coverage_summary(rows: &[CoverageRow], ground_truth: Option<&FixtureGroundTruth>) -> Value {
+    // Successful trusted evidence takes precedence over isolation in CoverageStatus.
+    // Shared therefore gives the same trusted count without reading operational config.
+    let trusted = rows
+        .iter()
+        .filter(|row| {
+            coverage_exercised(
+                row,
+                TrustLane::TrustedUi,
+                CoverageStatus::classify(
+                    &row.key,
+                    TargetIsolation::Shared,
+                    row.trusted_exercised,
+                    row.exercised(TrustLane::Diagnostic),
+                ),
+            )
+        })
+        .count();
     json!({
         "unit": "ActionContextKey",
         "discovered": rows.len(),
         "exercisedTrusted": trusted,
-        "groundTruthRecall": Value::Null,
+        "groundTruthRecall": ground_truth.map(FixtureGroundTruth::recall),
     })
 }
 
@@ -140,17 +260,10 @@ pub(crate) fn status_expires_at(run: &RunMetadata) -> crawlx_core::Timestamp {
 pub fn run_json(
     run: &CrawlRun,
     sessions: &[CrawlSession],
-    ledger: &[LedgerRow],
+    coverage: Value,
     dead_deliveries: Option<u64>,
     warnings: &[Warning],
 ) -> Value {
-    let mut coverage = LedgerSummary::default();
-    for row in ledger {
-        coverage.discovered = coverage.discovered.saturating_add(1);
-        if row.trusted_exercised > 0 {
-            coverage.exercised_trusted = coverage.exercised_trusted.saturating_add(1);
-        }
-    }
     run_metadata_json(
         &RunMetadata::from(run),
         sessions,
@@ -165,7 +278,7 @@ pub fn run_json(
 pub fn run_metadata_json(
     run: &RunMetadata,
     sessions: &[CrawlSession],
-    coverage: LedgerSummary,
+    coverage: Value,
     dead_deliveries: Option<u64>,
     warnings: &[Warning],
 ) -> Value {
@@ -187,12 +300,7 @@ pub fn run_metadata_json(
         "expiresAt": ts_opt(metadata_expires_at(run)),
         "counters": counters_json(&run.counters),
         "sessions": sessions.iter().map(session_json).collect::<Vec<_>>(),
-        "coverage": {
-            "unit": "ActionContextKey",
-            "discovered": coverage.discovered,
-            "exercisedTrusted": coverage.exercised_trusted,
-            "groundTruthRecall": Value::Null,
-        },
+        "coverage": coverage,
         "versions": {
             "policy": run.policy_version,
             "identity": "V1",
@@ -211,4 +319,27 @@ pub fn run_metadata_json(
         obj.insert("webhook".to_owned(), json!({ "deadDeliveries": n }));
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    #[test]
+    fn empty_fixture_truth_has_the_benchmark_empty_set_recall() {
+        let truth =
+            FixtureGroundTruth::from_manifest(r#"{"id":"empty"}"#, false, ["stray".to_owned()]).unwrap();
+        assert_eq!(
+            truth.json(),
+            json!({"fixture": "empty", "keys": 0, "recall": 1.0})
+        );
+    }
+
+    #[test]
+    fn malformed_fixture_input_is_not_treated_as_missing_truth() {
+        assert!(
+            FixtureGroundTruth::from_manifest(r#"{"controls":[]}"#, false, Vec::<String>::new(),).is_err()
+        );
+    }
 }

@@ -8,6 +8,8 @@
 //! not part of this check. Unknown keys fail the check. Secret-file keys name files; deployment
 //! proxy URLs may carry credentials and are fully redacted from serialized and debug output.
 
+pub use crate::resolver_https_config::ResolverHttpsSettings;
+
 use anyhow::{anyhow, bail, Context as _};
 use clap::{Args, Subcommand, ValueEnum};
 use crawlx_api::config::OPERATOR_KEYS_FILE_ENV;
@@ -389,6 +391,8 @@ Fetch {
     enhanced_proxy_url: Option<ProxyUrl> = None,
     /// ProxyX pool gateway as the upstream of the basic and/or enhanced tier (`[fetch.proxyx]`).
     proxyx: crate::proxyx_config::Proxyx = crate::proxyx_config::Proxyx::default(),
+    /// Operator-only checked encrypted DNS endpoint, pins and bounded lookup budgets.
+    resolver_https: Option<ResolverHttpsSettings> = None,
 });
 
 impl Fetch {
@@ -675,7 +679,10 @@ pub(crate) fn validate_operator_environment(
         "CRAWLX_SECRET_REDIS_URL_FILE",
         "CRAWLX_SECRET_AUTHORITY_TTL_SECS",
         "CRAWLX_ARTICLE_LANGUAGE_BUNDLE",
-    ] {
+    ]
+    .into_iter()
+    .chain(crate::resolver_https_config::ENV.iter().copied())
+    {
         if getenv(name).is_some_and(|value| value.into_string().is_err()) {
             bail!("operator capability settings must be valid Unicode");
         }
@@ -993,6 +1000,9 @@ pub fn validate(loaded: &Loaded) -> (Vec<Finding>, Vec<SecretStatus>) {
         c.fetch.enhanced_proxy_url.is_some(),
     ) {
         f.push(finding(key, message, true));
+    }
+    if let Err(error) = crate::resolver_https_config::check(loaded) {
+        f.push(finding("fetch.resolver_https", format!("{error:#}"), true));
     }
     for (i, p) in c.browser.launch_profile_allowed.iter().enumerate() {
         if !matches!(p.as_str(), "standard" | "stealth") {

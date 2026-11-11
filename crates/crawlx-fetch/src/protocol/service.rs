@@ -190,6 +190,12 @@ impl std::fmt::Debug for ServiceAdapter {
     }
 }
 impl ServiceAdapter {
+    /// Borrow the validated operator capability contract without exposing endpoints or secrets.
+    #[must_use]
+    pub fn capabilities(&self) -> &DelegateCapabilitiesV1 {
+        &self.registration.capabilities
+    }
+
     /// Construct after operator registration and credential resolution.
     ///
     /// # Errors
@@ -246,6 +252,13 @@ impl ServiceAdapter {
             })
             || registration.service_networks.len() > 32
             || registration.sftp_host_keys.len() > 64
+            || registration.sftp_host_keys.iter().any(|(host, key)| {
+                host.is_empty()
+                    || host.len() > 253
+                    || key.is_empty()
+                    || key.len() > 256
+                    || key.bytes().any(|byte| byte.is_ascii_control())
+            })
             || registration.whois_registries.len() > 32
             || registration.policy_digests.is_empty()
             || registration.policy_digests.len() > 64
@@ -373,6 +386,7 @@ impl ServiceAdapter {
     ///
     /// # Errors
     /// Refuses replay, wrong scope/schema/audience, unknown peers, wrong keys and response/elapsed bounds. Never falls back.
+    /// Lease expiry returns [`ProtocolError::Deadline`] while waiting for headers or body bytes.
     #[allow(clippy::too_many_arguments)]
     pub async fn acquire(
         &self,
@@ -417,6 +431,17 @@ impl ServiceAdapter {
         } else {
             credential_refs
         };
+        // Queueing and DNS consume the same lease as remote work; never renew authority at send time.
+        let started_unix_ms = u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| ProtocolError::Refused("clock"))?
+                .as_millis(),
+        )
+        .map_err(|_| ProtocolError::Limit)?;
+        let deadline_unix_ms = started_unix_ms
+            .checked_add(u64::from(route.max_elapsed_ms))
+            .ok_or(ProtocolError::Limit)?;
         let attempt_key = format!("{}:{}:{}", scope.tenant, scope.run, scope.attempt);
         {
             let mut consumed = self.consumed_attempts.lock();
@@ -521,7 +546,6 @@ impl ServiceAdapter {
                 .no_brotli()
                 .no_deflate()
                 .connect_timeout(Duration::from_secs(30))
-                .timeout(Duration::from_millis(u64::from(route.max_elapsed_ms)))
                 .resolve_to_addrs(service_host, &sockets);
             if let Some(pem) = &self.registration.ca_pem {
                 if pem.len() > 16384 {
@@ -532,16 +556,6 @@ impl ServiceAdapter {
                 );
             }
             let client = builder.build().map_err(ProtocolError::Service)?;
-            let now = u64::try_from(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|_| ProtocolError::Refused("clock"))?
-                    .as_millis(),
-            )
-            .map_err(|_| ProtocolError::Limit)?;
-            let deadline_unix_ms = now
-                .checked_add(u64::from(route.max_elapsed_ms))
-                .ok_or(ProtocolError::Limit)?;
             let mut request = Request {
                 schema_version: 1,
                 audience: &self.registration.audience,
@@ -580,6 +594,16 @@ impl ServiceAdapter {
                 .acquire(&Origin::new(&request.origin))
                 .await
                 .map_err(|_| ProtocolError::Refused("origin admission unavailable"))?;
+            let now = u64::try_from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| ProtocolError::Refused("clock"))?
+                    .as_millis(),
+            )
+            .map_err(|_| ProtocolError::Limit)?;
+            if now >= deadline_unix_ms {
+                return Err(ProtocolError::Deadline);
+            }
             let mut response = client
                 .post(endpoint.clone())
                 .bearer_auth(self.credential.expose())
@@ -697,6 +721,34 @@ impl ServiceAdapter {
                 "service response scope, schema or evidence",
             ));
         }
+        let target_port = target
+            .port_or_known_default()
+            .or_else(|| match target.scheme() {
+                "sftp" => Some(22),
+                "whois" => Some(43),
+                _ => None,
+            })
+            .ok_or(ProtocolError::Refused("target port"))?;
+        let control = result
+            .peers
+            .iter()
+            .find(|peer| {
+                !peer.ftp_data
+                    && Some(peer.host.as_str()) == target.host_str()
+                    && peer.port == target_port
+                    && target_addresses.contains(&peer.ip)
+            })
+            .ok_or(ProtocolError::Refused("missing target control peer"))?;
+        if target.scheme() == "ftp" && !result.peers.iter().any(|peer| peer.ftp_data) {
+            return Err(ProtocolError::Refused("missing FTP data peer"));
+        }
+        if matches!(target.scheme(), "ftp" | "sftp")
+            && result.final_url.as_ref().is_some_and(|url| {
+                crawlx_core::protocol::protocol_origin(url) != crawlx_core::protocol::protocol_origin(target)
+            })
+        {
+            return Err(ProtocolError::Refused("protocol origin changed"));
+        }
         for hop in &result.redirects {
             if !matches!(hop.url.scheme(), "http" | "https") {
                 return Err(ProtocolError::Refused("redirect scheme"));
@@ -705,10 +757,11 @@ impl ServiceAdapter {
                 .check_url(&hop.url)
                 .map_err(|_| ProtocolError::Refused("redirect authorization"))?;
             if hop.status.is_some_and(|status| !(300..=399).contains(&status))
-                || !result
-                    .peers
-                    .iter()
-                    .any(|peer| Some(peer.host.as_str()) == hop.url.host_str())
+                || !result.peers.iter().any(|peer| {
+                    !peer.ftp_data
+                        && Some(peer.host.as_str()) == hop.url.host_str()
+                        && Some(peer.port) == hop.url.port_or_known_default()
+                })
             {
                 return Err(ProtocolError::Refused("redirect evidence"));
             }
@@ -740,11 +793,18 @@ impl ServiceAdapter {
                     .check_request(final_url)
                     .map_err(|_| ProtocolError::Refused("final URL authorization"))?;
             }
-            if !result
-                .peers
-                .iter()
-                .any(|peer| Some(peer.host.as_str()) == final_url.host_str())
-            {
+            let final_port = final_url
+                .port_or_known_default()
+                .or_else(|| match final_url.scheme() {
+                    "sftp" => Some(22),
+                    "whois" => Some(43),
+                    _ => None,
+                });
+            if !result.peers.iter().any(|peer| {
+                !peer.ftp_data
+                    && Some(peer.host.as_str()) == final_url.host_str()
+                    && Some(peer.port) == final_port
+            }) {
                 return Err(ProtocolError::Refused("final URL lacks peer evidence"));
             }
         }
@@ -766,7 +826,11 @@ impl ServiceAdapter {
                 .and_then(|()| policy.check_ip(peer.ip))
                 .and_then(|()| policy.check_port(peer.port))
                 .map_err(|_| ProtocolError::Refused("service target peer policy"))?;
-            if peer.ftp_data && (target.scheme() != "ftp" || !target_addresses.contains(&peer.ip)) {
+            if peer.ftp_data
+                && (target.scheme() != "ftp"
+                    || peer.ip != control.ip
+                    || Some(peer.host.as_str()) != target.host_str())
+            {
                 return Err(ProtocolError::Refused("FTP passive bounce"));
             }
             let resolved;

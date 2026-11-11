@@ -88,6 +88,8 @@ pub struct PressureSnapshotV1 {
     pub rss_bytes: Option<u64>,
     /// Measured finite deployment/container budget, absent when unbounded or unknown.
     pub memory_limit_bytes: Option<u64>,
+    /// Observed async timer wakeup delay, capped at 60000 ms; absent on older recordings.
+    pub event_loop_lag_ms: Option<u32>,
     /// Actual blocking closures holding CPU permits.
     pub cpu_active: u32,
     /// Actual closures waiting for CPU permits.
@@ -127,6 +129,7 @@ impl PressureSnapshotV1 {
         .flatten()
         .all(|n| n <= 1000)
             && self.store_latency_ms.is_none_or(|n| n <= 60_000)
+            && self.event_loop_lag_ms.is_none_or(|n| n <= 60_000)
     }
 }
 /// Stable reason code for a recorded decision.
@@ -254,6 +257,7 @@ impl AdmissionControllerV1 {
                 .is_some_and(|n| n >= self.policy.queue_high_permille)
             || pressure.cpu_waiting > 0
             || pressure.store_latency_ms.is_some_and(|n| n >= 1000)
+            || pressure.event_loop_lag_ms.is_some_and(|n| n >= 100)
             || pressure.browser_quarantined.is_some_and(|n| n > 0)
             || pressure.browser_available == Some(0);
         let reason = if emergency {
@@ -415,6 +419,37 @@ mod tests {
         assert_eq!(decision.reason, AdmissionReasonV1::MissingMetrics);
         decision.ceiling = 2;
         assert!(controller().replay(&decision).is_err());
+    }
+
+    #[test]
+    fn async_lag_shrinks_within_one_tick_and_replays_without_host_sampling() {
+        let mut live = controller();
+        let mut replay = controller();
+        let mut pressure = healthy();
+        pressure.event_loop_lag_ms = Some(100);
+        let decision = live.sample(pressure).unwrap();
+        assert_eq!(decision.ceiling, 4);
+        assert_eq!(decision.reason, AdmissionReasonV1::Pressure);
+        replay.replay(&decision).unwrap();
+        assert_eq!(replay.available(0), 4);
+        for _ in 0..4 {
+            assert_eq!(live.sample(healthy()).unwrap().ceiling, 4);
+        }
+        assert_eq!(live.sample(healthy()).unwrap().ceiling, 5);
+    }
+
+    #[test]
+    fn async_lag_bounds_and_legacy_unknown_are_explicit() {
+        let mut live = controller();
+        let mut pressure = healthy();
+        pressure.event_loop_lag_ms = Some(60_001);
+        assert!(live.sample(pressure).is_err());
+        let legacy: PressureSnapshotV1 = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.event_loop_lag_ms, None);
+        assert_eq!(
+            live.sample(legacy).unwrap().reason,
+            AdmissionReasonV1::MissingMetrics
+        );
     }
 
     #[test]

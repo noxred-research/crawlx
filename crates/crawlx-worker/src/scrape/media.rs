@@ -366,9 +366,19 @@ impl ScrapeEngine {
             max_body_bytes: Some(self.media_max_bytes),
             ..self.http_options()
         };
-        let fetched = timeout_at(deadline, self.fetch_auxiliary(url, &options, acq, observe))
-            .await
-            .map_err(|_| Refusal::Other("not downloaded within the page timeout".to_owned()))?;
+        let fetched = timeout_at(
+            deadline,
+            self.fetch_auxiliary_checked(
+                url,
+                &options,
+                acq,
+                observe,
+                crawlx_policy::robots::HopKind::Media,
+                false,
+            ),
+        )
+        .await
+        .map_err(|_| Refusal::Other("not downloaded within the page timeout".to_owned()))?;
         let resp = fetched.map_err(|e| Refusal::Other(format!("download failed: {e}")))?;
         if !resp.status.is_success() {
             return Err(Refusal::Other(format!("HTTP {}", resp.status.as_u16())));

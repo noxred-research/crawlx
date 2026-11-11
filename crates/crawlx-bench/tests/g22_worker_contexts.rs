@@ -8,7 +8,7 @@ use crawlx_bench::gym::GymServer;
 use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, worker_config};
 use crawlx_browser::launch::find_executable;
 use crawlx_core::config::{CrawlMode, DestructiveActions, Role, SafetyProfile, StrategyName};
-use crawlx_core::counters::ActionStatus;
+use crawlx_core::counters::{ActionStatus, TerminalReason};
 use crawlx_core::hash::Digest;
 use crawlx_core::safety::RiskClass;
 use crawlx_core::secret::{CredentialRef, SecretOr, SecretResolver};
@@ -185,6 +185,15 @@ async fn g22_worker_covers_contexts_consumes_approvals_and_replay_halts_at_destr
     let report = run_local_with(local.with_stores(stores.clone())).await.unwrap();
     assert_eq!(report.sessions.len(), 6, "{report:?}");
     assert!(report.status.is_terminal(), "{report:?}");
+    assert!(
+        matches!(
+            report.terminal_reason,
+            Some(TerminalReason::LimitReached | TerminalReason::FrontierExhausted)
+        ),
+        "context recall requires complete role turns, not a clock cut: {:?}; sessions: {:?}",
+        report.terminal_reason,
+        report.sessions
+    );
 
     // Backend effects are independent of the click beacon and worker claims.
     let effects: Vec<_> = gym

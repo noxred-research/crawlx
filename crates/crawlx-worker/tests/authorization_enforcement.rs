@@ -527,7 +527,12 @@ async fn revoking_the_record_mid_run_stops_a_dynamic_run_within_one_recheck_inte
         authorization_recheck: Duration::from_millis(100),
         ..config(dir.path(), &[])
     };
-    let backend = Arc::new(FakeBackend::new(three_pages()));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(three_pages())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let report = run_local_with(
         LocalRun::new(crawl, cfg)
             .with_stores(stores.clone())
@@ -925,9 +930,12 @@ async fn queued_hybrid_role_fence_loss_and_worker_drain_do_not_finish_the_held_r
     let mut cfg = worker_cfg(dir.path());
     cfg.egress.extra_ports = vec![s.port];
     cfg.egress.extra_allow = vec!["127.0.0.0/8".parse().unwrap()];
-    let backend = Arc::new(FakeBackend::new(
-        FakeScript::new().page(FakePage::new(&format!("{}/", s.base))),
-    ));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(FakeScript::new().page(FakePage::new(&format!("{}/", s.base))))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let drain = CancellationToken::new();
     let worker = tokio::spawn(run_with(cfg, stores.clone(), Some(backend), drain.clone()));
     tokio::time::timeout(Duration::from_secs(10), started.notified())
@@ -1041,7 +1049,12 @@ async fn the_lease_loop_refuses_a_run_whose_stored_record_is_revoked_expired_or_
             .unwrap()
             .with_authorization_source(Arc::new(source));
         let run = enqueue(&stores, dynamic_crawl(&rec)).await;
-        let backend = Arc::new(FakeBackend::new(endless_page()));
+        let backend = Arc::new(
+            FakeBackend::builder()
+                .script(endless_page())
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        );
         run_with(
             worker_cfg(dir.path()),
             stores.clone(),
@@ -1181,7 +1194,12 @@ async fn revoking_the_stored_record_stops_a_leased_run_within_one_recheck_interv
         ..worker_cfg(dir.path())
     };
     // 90 click keys: far more than the run does before the 30 ms recheck finds the revocation
-    let backend = Arc::new(FakeBackend::new(mesh(10)));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(mesh(10))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let worker = {
         let stores = stores.clone();
         tokio::spawn(async move { run_with(cfg, stores, Some(backend), CancellationToken::new()).await })
@@ -1256,7 +1274,12 @@ async fn a_record_revoked_between_two_sessions_keeps_the_second_one_from_startin
     let run = enqueue(&stores, crawl).await;
     *source.run.lock().unwrap() = Some(run);
     // a finite page: alice's session completes on its own
-    let backend = Arc::new(FakeBackend::new(three_pages()));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(three_pages())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     run_with(
         worker_cfg(dir.path()),
         stores.clone(),
@@ -1306,7 +1329,12 @@ async fn the_records_permitted_risk_classes_narrow_the_kernel_of_the_run() {
             let dir = tempfile::tempdir().unwrap();
             let report = run_local_with(
                 LocalRun::new(crawl, config(dir.path(), &[]))
-                    .with_backend(Arc::new(FakeBackend::new(script)))
+                    .with_backend(Arc::new(
+                        FakeBackend::builder()
+                            .script(script)
+                            .clock(Arc::new(crawlx_core::SystemClock))
+                            .build(),
+                    ))
                     .with_authorization(rec),
             )
             .await

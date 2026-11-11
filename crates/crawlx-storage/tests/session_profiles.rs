@@ -4,7 +4,9 @@
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus};
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ActionJournal, EventRepo, Reconciliation, RunRepo, SessionStatus};
-use crawlx_core::session_binding::SessionIdentityV1;
+use crawlx_core::session_binding::{
+    BindingState, RetirementReason, SessionBindingError, SessionBindingV1, SessionIdentityV1, SessionLimits,
+};
 use crawlx_core::{TenantId, WorkerId};
 use crawlx_storage::leases::{LeaseRepo, SessionLease};
 use crawlx_storage::profiles::{BrowserProfileRepo, ProfileCipher, ProfileFiles, ProfileScopeV1};
@@ -757,4 +759,396 @@ async fn expired_prior_owner_unresolved_write_blocks_profile_acquire_until_recon
 #[tokio::test]
 async fn expired_prior_owner_unresolved_write_blocks_profile_import_until_reconciled() {
     unresolved_prior_owner_blocks_handover(true).await;
+}
+
+fn binding_limits(max_usage: u64, max_health_errors: u16) -> SessionLimits {
+    let mut limits = SessionLimits::default();
+    limits.max_usage = max_usage;
+    limits.max_health_errors = max_health_errors;
+    limits
+}
+
+async fn anonymous_binding_fixture(
+    rotations: u32,
+    login: bool,
+) -> Option<(Pg, Pg, TenantId, SessionLease, SessionBindingV1)> {
+    let (pg, peer, tenant, _, _) = fixture().await?;
+    let mut config = create_crawl("https://example.test/", &["anonymous"], 1);
+    if login {
+        config.roles[0].login_plan = Some("builtin:form".into());
+    }
+    let mut orchestration = crawlx_core::orchestration::OrchestrationConfigV1::default();
+    orchestration.attempts.max_session_rotations = rotations;
+    config.orchestration = Some(orchestration);
+    let run = crawl_run(tenant, config);
+    pg.create(&run, None).await.unwrap();
+    let mut roles = sessions(run.id, 1, 1);
+    roles[0].role = crawlx_core::PrincipalId::anonymous();
+    pg.create_sessions(&roles).await.unwrap();
+    pg.set_status(run.id, RunStatus::Running, None).await.unwrap();
+    let lease = pg
+        .claim_session(run.id, WorkerId::new(), true)
+        .await
+        .unwrap()
+        .unwrap();
+    let digest = Digest::of("fixture", b"binding-lifecycle");
+    let identity = SessionIdentityV1::new(tenant, &lease.session, digest, digest, digest, digest, None);
+    let binding = pg
+        .bind_session(
+            &lease,
+            identity,
+            pg.now().await.unwrap() + chrono::Duration::minutes(1),
+        )
+        .await
+        .unwrap();
+    Some((pg, peer, tenant, lease, binding))
+}
+
+#[tokio::test]
+async fn binding_health_success_and_failed_cleanup_keep_monotone_fenced_metadata() {
+    let Some((pg, peer, tenant, lease, mut binding)) = anonymous_binding_fixture(1, false).await else {
+        return;
+    };
+    let now = pg.now().await.unwrap();
+    let limits = binding_limits(10, 2);
+    for (healthy, health) in [(false, 1), (true, 0), (false, 1)] {
+        let version = binding.state_version;
+        binding.record_use(healthy, now, limits).unwrap();
+        pg.update_session_binding(&lease, version, &binding)
+            .await
+            .unwrap();
+        assert_eq!(binding.health_errors, health);
+    }
+    let mut invalid = binding.clone();
+    invalid.state_version += 1;
+    invalid.usage = 0;
+    assert!(peer
+        .update_session_binding(&lease, binding.state_version, &invalid)
+        .await
+        .is_err());
+    let mut invalid = binding.clone();
+    invalid.state_version += 1;
+    invalid.schema_version = 2;
+    assert!(peer
+        .update_session_binding(&lease, binding.state_version, &invalid)
+        .await
+        .is_err());
+    assert_eq!(pg.load_session_binding(&lease, tenant).await.unwrap(), binding);
+    let version = binding.state_version;
+    binding.record_use(false, now, limits).unwrap();
+    assert_eq!(binding.state, BindingState::Draining);
+    assert_eq!(binding.retirement, Some(RetirementReason::Unhealthy));
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    assert!(matches!(
+        peer.verify_session_binding(&lease, &binding).await,
+        Err(
+            crawlx_storage::session_binding::SessionBindingVerificationError::Binding(
+                SessionBindingError::Draining {
+                    reason: RetirementReason::Unhealthy
+                }
+            )
+        ),
+    ));
+    // The final reserved use may report its outcome after entering drain.
+    let version = binding.state_version;
+    binding.state_version += 1;
+    binding.health_errors -= 1;
+    peer.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    let mut invalid = binding.clone();
+    invalid.state_version += 1;
+    invalid.usage += 1;
+    assert!(pg
+        .update_session_binding(&lease, binding.state_version, &invalid)
+        .await
+        .is_err());
+    let version = binding.state_version;
+    binding.finish_cleanup(false).unwrap();
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    assert_eq!(peer.load_session_binding(&lease, tenant).await.unwrap(), binding);
+    assert_eq!(binding.state, BindingState::Quarantined);
+    assert!(peer
+        .replace_retired_session_binding(&lease, &binding, binding.identity.clone(), binding.expires_at,)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn explicit_binding_replacement_requires_reconciled_write_exact_owner_and_live_fence() {
+    let Some((pg, peer, tenant, lease, mut binding)) = anonymous_binding_fixture(1, false).await else {
+        return;
+    };
+    let original = binding.clone();
+    let proposed = proposal("anonymous", crawlx_core::StateClusterId::new(), 1);
+    let action = pg
+        .propose(lease.session.run, lease.session.id, &proposed, &allow_verdict())
+        .await
+        .unwrap();
+    pg.intend(action, lease.session.id, proposed.epoch).await.unwrap();
+    let now = pg.now().await.unwrap();
+    let version = binding.state_version;
+    binding.record_use(true, now, binding_limits(1, 5)).unwrap();
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    assert!(
+        peer.replace_retired_session_binding(&lease, &binding, binding.identity.clone(), binding.expires_at,)
+            .await
+            .is_err(),
+        "draining is not confirmed cleanup"
+    );
+    let version = binding.state_version;
+    binding.finish_cleanup(true).unwrap();
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    assert_eq!(peer.load_session_binding(&lease, tenant).await.unwrap(), binding);
+    assert!(peer.replace_retired_session_binding(
+        &lease, &original, binding.identity.clone(), binding.expires_at,
+    ).await.is_err(), "stale state version cannot replace");
+    let mut stale = lease.clone();
+    stale.fencing_token -= 1;
+    assert!(pg.load_session_binding(&stale, tenant).await.is_err());
+    assert!(
+        pg.replace_retired_session_binding(&stale, &binding, binding.identity.clone(), binding.expires_at,)
+            .await
+            .is_err(),
+        "stale lease cannot replace"
+    );
+    assert!(
+        peer.replace_retired_session_binding(
+            &lease,
+            &binding,
+            binding.identity.clone(),
+            binding.expires_at + chrono::Duration::seconds(1),
+        )
+        .await
+        .is_err(),
+        "replacement cannot extend expiry"
+    );
+    for status in [ActionStatus::Intended, ActionStatus::Unknown] {
+        if status == ActionStatus::Unknown {
+            assert_eq!(
+                pg.mark_unknown(now + chrono::Duration::days(1)).await.unwrap(),
+                vec![action]
+            );
+        }
+        assert_eq!(ActionJournal::get(&pg, action).await.unwrap().status, status);
+        assert!(
+            peer.replace_retired_session_binding(
+                &lease,
+                &binding,
+                binding.identity.clone(),
+                binding.expires_at,
+            )
+            .await
+            .is_err(),
+            "unresolved {status:?} write blocks generation reset"
+        );
+        assert_eq!(pg.load_session_binding(&lease, tenant).await.unwrap(), binding);
+    }
+    pg.reconcile(
+        action,
+        Reconciliation {
+            resolution: ReconcileResolution::NotApplied,
+            evidence: serde_json::json!({"probe": "write absent"}),
+            reconciled_at: pg.now().await.unwrap(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut wrong_tenant = binding.identity.clone();
+    wrong_tenant.tenant = TenantId::new();
+    let mut wrong_run = binding.identity.clone();
+    wrong_run.run = crawlx_core::CrawlRunId::new();
+    let mut wrong_session = binding.identity.clone();
+    wrong_session.session = crawlx_core::SessionId::new();
+    let mut wrong_principal = binding.identity.clone();
+    wrong_principal.principal = crawlx_core::PrincipalId("reader".into());
+    for identity in [wrong_tenant, wrong_run, wrong_session, wrong_principal] {
+        assert!(peer
+            .replace_retired_session_binding(&lease, &binding, identity, binding.expires_at)
+            .await
+            .is_err());
+    }
+    assert!(
+        peer.replace_retired_session_binding(
+            &lease,
+            &binding,
+            binding.identity.clone(),
+            binding.expires_at + chrono::Duration::seconds(1),
+        )
+        .await
+        .is_err(),
+        "reconciled replacement cannot extend expiry"
+    );
+    let mut next = peer
+        .replace_retired_session_binding(&lease, &binding, binding.identity.clone(), binding.expires_at)
+        .await
+        .unwrap();
+    assert_eq!(next.generation, binding.generation + 1);
+    assert_eq!(next.identity, binding.identity);
+    assert_eq!(next.usage, 0);
+    assert_eq!(next.health_errors, 0);
+    assert_eq!(next.expires_at, original.expires_at);
+    assert_eq!(next.lifetime_expires_at, original.lifetime_expires_at);
+    peer.verify_session_binding(&lease, &next).await.unwrap();
+    assert!(pg.verify_session_binding(&lease, &binding).await.is_err());
+    assert!(
+        pg.replace_retired_session_binding(&lease, &binding, binding.identity.clone(), binding.expires_at,)
+            .await
+            .is_err(),
+        "replacement compare-and-swap cannot replay"
+    );
+    let version = next.state_version;
+    next.record_use(true, now, binding_limits(1, 5)).unwrap();
+    pg.update_session_binding(&lease, version, &next).await.unwrap();
+    let version = next.state_version;
+    next.finish_cleanup(true).unwrap();
+    pg.update_session_binding(&lease, version, &next).await.unwrap();
+    assert!(
+        pg.replace_retired_session_binding(&lease, &next, next.identity.clone(), next.expires_at,)
+            .await
+            .is_err(),
+        "finite admitted rotation budget cannot reset"
+    );
+}
+
+#[tokio::test]
+async fn implicit_rotation_permission_and_configured_login_never_reset_retired_generation() {
+    for (rotations, login) in [(0, false), (1, true)] {
+        let Some((pg, peer, tenant, lease, mut binding)) = anonymous_binding_fixture(rotations, login).await
+        else {
+            return;
+        };
+        let now = pg.now().await.unwrap();
+        let version = binding.state_version;
+        binding.record_use(false, now, binding_limits(5, 1)).unwrap();
+        pg.update_session_binding(&lease, version, &binding)
+            .await
+            .unwrap();
+        let version = binding.state_version;
+        binding.finish_cleanup(true).unwrap();
+        pg.update_session_binding(&lease, version, &binding)
+            .await
+            .unwrap();
+        assert!(peer
+            .replace_retired_session_binding(&lease, &binding, binding.identity.clone(), binding.expires_at,)
+            .await
+            .is_err());
+        assert_eq!(pg.load_session_binding(&lease, tenant).await.unwrap(), binding);
+    }
+}
+
+#[tokio::test]
+async fn observed_egress_pin_survives_peer_restart_without_mutating_binding_revision() {
+    let Some((pg, peer, tenant, lease, mut binding)) = anonymous_binding_fixture(1, false).await else {
+        return;
+    };
+    let pin = Digest::of("fixture", b"observed-target");
+    let drift = Digest::of("fixture", b"changed-target");
+    pg.check_session_egress_pin(&lease, tenant, binding.generation, pin)
+        .await
+        .unwrap();
+    peer.check_session_egress_pin(&lease, tenant, binding.generation, pin)
+        .await
+        .unwrap();
+    assert!(peer
+        .check_session_egress_pin(&lease, tenant, binding.generation, drift)
+        .await
+        .is_err());
+    assert!(peer
+        .check_session_egress_pin(&lease, tenant, binding.generation + 1, pin)
+        .await
+        .is_err());
+    assert!(peer
+        .check_session_egress_pin(&lease, TenantId::new(), binding.generation, pin)
+        .await
+        .is_err());
+    let mut stale = lease.clone();
+    stale.fencing_token -= 1;
+    assert!(peer
+        .check_session_egress_pin(&stale, tenant, binding.generation, pin)
+        .await
+        .is_err());
+    assert_eq!(pg.load_session_binding(&lease, tenant).await.unwrap(), binding);
+    let now = pg.now().await.unwrap();
+    let version = binding.state_version;
+    binding.record_use(true, now, binding_limits(1, 5)).unwrap();
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    let version = binding.state_version;
+    binding.finish_cleanup(true).unwrap();
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    let next = pg
+        .replace_retired_session_binding(&lease, &binding, binding.identity.clone(), binding.expires_at)
+        .await
+        .unwrap();
+    peer.check_session_egress_pin(&lease, tenant, next.generation, drift)
+        .await
+        .unwrap();
+    assert!(peer
+        .check_session_egress_pin(&lease, tenant, binding.generation, pin)
+        .await
+        .is_err());
+    assert_eq!(pg.load_session_binding(&lease, tenant).await.unwrap(), next);
+}
+
+#[tokio::test]
+async fn explicit_anonymous_rotation_never_erases_an_existing_encrypted_profile() {
+    let Some((pg, peer, tenant, lease, mut binding)) = anonymous_binding_fixture(1, false).await else {
+        return;
+    };
+    let now = pg.now().await.unwrap();
+    let cipher = ProfileCipher::new(&[5; 32]).unwrap();
+    let profile_scope = scope(tenant, &lease);
+    let bytes = cipher
+        .seal(
+            &profile_scope,
+            1,
+            now + chrono::Duration::minutes(1),
+            ProfileFiles::new(
+                BTreeMap::from([("Default/Cookies".into(), b"strict-profile-secret".to_vec())]),
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    BrowserProfileRepo::new(&pg, &cipher)
+        .import(
+            &lease,
+            &profile_scope,
+            &bytes,
+            Digest::of("crawlx/profile-bundle/v1", &bytes),
+            0,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+    let original_profile = stored_profile(&pg).await;
+    let version = binding.state_version;
+    binding.record_use(true, now, binding_limits(1, 5)).unwrap();
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    let version = binding.state_version;
+    binding.finish_cleanup(true).unwrap();
+    pg.update_session_binding(&lease, version, &binding)
+        .await
+        .unwrap();
+    assert!(peer
+        .replace_retired_session_binding(&lease, &binding, binding.identity.clone(), binding.expires_at,)
+        .await
+        .is_err());
+    assert_eq!(stored_profile(&pg).await, original_profile);
+    assert_eq!(pg.load_session_binding(&lease, tenant).await.unwrap(), binding);
 }

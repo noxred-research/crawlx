@@ -166,6 +166,40 @@ Thresholds are the planning defaults; each is a named constant in `release_gate.
 | `restore_drill` | completed at most `RESTORE_DRILL_MAX_AGE_DAYS` = 90 days before the evaluation date and not in the future | `restore-drill.json` |
 | `runbook_catalog` | every `crawlx_*` metric in an alert expression exists in the telemetry catalog (histogram series included), every `runbook` annotation points at an existing anchor of `docs/ops/runbooks.md`, and every alert has its alert card heading | repository files, catalog |
 
+## CI evidence transfer
+
+The `release-checklist` job of `ci.yml` runs on manual dispatch and the weekly schedule.
+Dispatch evaluations block on failed or unmeasured items; weekly evaluations publish the same
+results without treating a report as release approval. `v*` release tags run the separate
+`release-checklist.yml` workflow, which blocks the same way. It has no producer jobs and no
+caches (a tag trigger makes cached steps a cache-poisoning surface), so it never finds
+same-run evidence and every producer-supplied item stays unmeasured until supplied.
+
+The job waits for its producers and downloads this run's `release-evidence-*` artifacts.
+`ci/release-evidence.py` copies the available G1 report to `bench/out/g1-report.json`,
+mutation outcomes to `bench/out/mutants-safety/outcomes.json`, and unit/browser flake histories
+to separate `bench/out/flake-history-*.json` files. It records producer results, source hashes
+and missing-input reasons in `bench/out/release-evidence.json` and `.md`, uploaded beside the
+checklist.
+
+Missing evidence stays blocking:
+
+- G1 signing runs only on scheduled/default-branch dispatch events. Signing credentials are
+  not exposed to release-tag jobs, so a tag without an approved G1 artifact remains unmeasured.
+- Direct test-job success is not a recorded suite result with test counts and skip detection.
+  The full fixture/profile/seed matrix and recorded safety, correctness and migration suites
+  must still be supplied.
+- Raw mutation outcomes are usable evidence; raw unit/browser flake histories are not a merged,
+  complete 30-day execution window. No passing flake report is synthesized.
+- Shared-runner samples cannot replace reference-runner performance measurements. No connected
+  producer supplies previous-release paired comparisons, the staging soak, a completed restore
+  drill, severity-classified security findings or release model calibration.
+- The previous-release pin baseline must come from an actual release, not a copy of the current
+  pin. A candidate-browser canary report does not establish the complete Chromium upgrade suite.
+
+The generated transfer report lists the exact missing producer for every expected evidence
+path. It creates no suite results, passing metrics or waivers.
+
 ## Waivers
 
 A waiver turns a `fail` or `unmeasured` row into `waived`. Only performance rows are waivable;

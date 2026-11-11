@@ -167,7 +167,12 @@ async fn observed_form_rig(channel: &str, sink_channel: &str, live_destination: 
         .test_sinks
         .insert(sink_channel.into(), FORM_DESTINATION.into());
     crawl.safety.authorization_record_ref = Some(record.id);
-    let fake = Arc::new(crawlx_browser::FakeBackend::new(script));
+    let fake = Arc::new(
+        crawlx_browser::FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     common::rig_core_authorized(stores, dir, fake.clone(), fake, crawl, record, None).await
 }
 

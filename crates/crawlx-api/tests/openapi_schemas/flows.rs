@@ -170,6 +170,7 @@ async fn worker_flows(c: &Covered, doc: &Value) {
     let r = api
         .post("/scrape", "/scrape", &json!({ "url": site("/") }), 200)
         .await;
+    assert!(r.body["data"].get("outputs").is_none());
     let scrape_id = r.body["data"]["metadata"]["scrapeId"]
         .as_str()
         .unwrap()
@@ -187,6 +188,13 @@ async fn worker_flows(c: &Covered, doc: &Value) {
                 { "type": "highlights", "query": "the answer" },
             ],
             "onlyMainContent": false,
+            "outputs": {
+                "rawHtml": true, "cleanedHtml": true, "tables": true,
+                "fit": {"strategy": "pruning", "thresholdPermille": 0},
+                "citations": "selected", "linkMedia": {"maxPreviews": 0}
+            },
+            "decode": {},
+            "markup": {"comments": true, "cdata": true},
         }),
         200,
     )
@@ -1105,4 +1113,69 @@ async fn native_word_chunks_reach_actual_facade_response_and_canonical_source() 
         .iter()
         .all(|range| text.get(range.start..range.end).is_some()));
     assert_eq!(meta["article"]["chunks"].get("strings"), None);
+}
+
+#[tokio::test]
+async fn native_source_memo_reset_response_matches_schema() {
+    use crawlx_core::repo::RunRepo;
+    let env = common::env();
+    let config = crawlx_core::CreateCrawl::new("https://fixture.example.test/".parse().unwrap());
+    let run = crawlx_storage::testkit::crawl_run(env.tenant, config);
+    RunRepo::create(env.store.as_ref(), &run, None).await.unwrap();
+    let path = format!("/v1/crawls/{}/source-memo", run.id);
+    let response = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(path)
+                .header("authorization", format!("Bearer {}", env.key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let bytes = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, json!({"reset": true, "frontierUnchanged": true}));
+    Covered::default().check(
+        &doc(),
+        "delete",
+        "/v1/crawls/{id}/source-memo",
+        StatusCode::OK,
+        &body,
+    );
+}
+
+#[tokio::test]
+async fn native_extraction_values_fail_before_crawl_admission() {
+    let env = common::env();
+    for (extract, path) in [
+        (json!({"outputs":{"targetElements":["["]}}), "/extract/outputs"),
+        (json!({"outputs":{"citations":"fit"}}), "/extract/outputs"),
+        (json!({"outputs":{"unknown":true}}), "/extract/outputs"),
+        (json!({"decode":{"declaredCharset":7}}), "/extract/decode"),
+        (json!({"markup":{"comments":"collect"}}), "/extract/markup"),
+    ] {
+        let (status, _, body) = env
+            .post(
+                "/v1/crawls",
+                &json!({
+                    "seedUrl":"https://fixture.example.test/article", "extract":extract,
+                }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["error"]["details"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|detail| detail["path"] == path),
+            "{body}"
+        );
+    }
 }

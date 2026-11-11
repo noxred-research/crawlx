@@ -466,6 +466,12 @@ pub trait ApiStore: Send + Sync {
 /// Object bytes and rows for the artifacts endpoint and page content.
 #[async_trait]
 pub trait ArtifactSource: Send + Sync {
+    /// Borrow the existing typed sink for authorized imports; no parallel artifact store.
+    /// Read-only adapters explicitly lack this capability.
+    fn artifact_store(&self) -> Option<&dyn crawlx_core::repo::ArtifactStore> {
+        None
+    }
+
     /// Artifact row for `id`; `None` when it does not exist.
     ///
     /// # Errors
@@ -495,6 +501,23 @@ pub trait ArtifactSource: Send + Sync {
     ) -> StoreResult<futures::stream::BoxStream<'static, StoreResult<bytes::Bytes>>> {
         let _ = (artifact, max_bytes);
         Err(StoreError::Unavailable("content streaming unavailable".into()))
+    }
+    /// Stream an authorized archive with explicit inherited classification and deadline.
+    ///
+    /// # Errors
+    /// Unsupported adapters refuse Sensitive bytes rather than falling back to Content.
+    async fn stream_archive(
+        &self,
+        artifact: &ArtifactRef,
+        max_bytes: u64,
+        custody: &crawlx_core::archive_catalog::ArchiveCustodyV1,
+    ) -> StoreResult<futures::stream::BoxStream<'static, StoreResult<bytes::Bytes>>> {
+        if custody.sensitivity != crawlx_core::repo::Sensitivity::Content {
+            return Err(StoreError::RetentionDenied(
+                "sensitive archive streaming unavailable".into(),
+            ));
+        }
+        self.stream(artifact, max_bytes).await
     }
     /// Erase one content artifact use after catalog visibility is revoked.
     ///

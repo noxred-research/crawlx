@@ -54,7 +54,62 @@ struct FailingPageCommits {
 }
 
 #[async_trait]
+impl crawlx_core::digest_registry::DigestRegistryRepo for FailingPageCommits {
+    async fn digest_outcome(
+        &self,
+        run: crawlx_core::CrawlRunId,
+        frontier_id: i64,
+    ) -> Result<Option<crawlx_core::digest_registry::DigestOutcomeV1>, StoreError> {
+        crawlx_core::digest_registry::DigestRegistryRepo::digest_outcome(
+            self.inner.as_ref(),
+            run,
+            frontier_id,
+        )
+        .await
+    }
+}
+
+#[async_trait]
 impl RequestCommitRepo for FailingPageCommits {
+    async fn begin_feed_finalization(
+        &self,
+        run: crawlx_core::CrawlRunId,
+        reason: Option<crawlx_core::counters::TerminalReason>,
+    ) -> Result<Option<crawlx_core::counters::TerminalReason>, StoreError> {
+        self.inner.begin_feed_finalization(run, reason).await
+    }
+    async fn stage_feed_batches(
+        &self,
+        run: crawlx_core::CrawlRunId,
+        batches: &[crawlx_core::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError> {
+        self.inner.stage_feed_batches(run, batches).await
+    }
+    async fn staged_feed_batch(
+        &self,
+        run: crawlx_core::CrawlRunId,
+        feed: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<crawlx_core::dataset::DeliveryBatchV1>, StoreError> {
+        self.inner.staged_feed_batch(run, feed, idempotency_key).await
+    }
+    async fn finalize_run_feeds(
+        &self,
+        run: crawlx_core::CrawlRunId,
+        status: crawlx_core::counters::RunStatus,
+        reason: crawlx_core::counters::TerminalReason,
+        batches: &[crawlx_core::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError> {
+        self.inner.finalize_run_feeds(run, status, reason, batches).await
+    }
+    async fn lease_observed_fenced(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+        epoch: crawlx_core::ObservationEpoch,
+        request_id: i64,
+    ) -> Result<Option<(crawlx_core::repo::FrontierEntry, i64)>, StoreError> {
+        self.inner.lease_observed_fenced(lease, epoch, request_id).await
+    }
     async fn commit_fenced(&self, commit: RequestCommitV1) -> Result<(), StoreError> {
         if commit
             .page

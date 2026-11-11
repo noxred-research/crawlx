@@ -5,6 +5,9 @@ use crate::dataset::{apply_prepared, bounds, prepare_memory};
 use crawlx_core::dataset::*;
 use crawlx_core::repo::Sensitivity;
 
+#[path = "dataset_memo_memory.rs"]
+mod memo;
+
 fn unavailable() -> StoreError {
     StoreError::RetentionDenied("dataset content_expired".into())
 }
@@ -234,14 +237,34 @@ impl DeliveryOutboxRepo for MemoryStore {
                     .runs
                     .get(&row.receipt.run)
                     .ok_or_else(|| nf("crawl_run", row.receipt.run))?;
-                if visible(run).is_ok() && after.is_none_or(|after| row.receipt.run > after) {
+                if visible(run).is_ok()
+                    && after.is_none_or(|after| row.receipt.run > after)
+                    && (!row.terminal_source
+                        || g.dataset.feed_finalized.contains_key(&run.id)
+                        || row.receipt.batch.expires_at <= now
+                        || matches!(
+                            row.receipt.state,
+                            DeliveryStateV1::Delivered | DeliveryStateV1::ContentExpired
+                        ))
+                {
                     runs.insert(row.receipt.run);
                 }
+            }
+        }
+        for run in g.runs.values() {
+            if !g.dataset.feed_finalized.contains_key(&run.id)
+                && (g.dataset.feed_finalizing.contains(&run.id)
+                    || (run.status.is_terminal() && !run.config.datasets.feeds.is_empty()))
+                && visible(run).is_ok()
+                && after.is_none_or(|after| run.id > after)
+            {
+                runs.insert(run.id);
             }
         }
         Ok(runs.into_iter().take(usize::from(limit)).collect())
     }
     async fn maintain(&self, run: CrawlRunId) -> Result<(), StoreError> {
+        let retired = self.retire_expired_feed_finalization_owned(run)?;
         let (tenant, pages) = {
             let mut g = self.inner.lock();
             let owner = g.runs.get(&run).ok_or_else(|| nf("crawl_run", run))?;
@@ -300,7 +323,11 @@ impl DeliveryOutboxRepo for MemoryStore {
                 row.erased = true;
             }
         }
-        Ok(())
+        if retired {
+            Err(StoreError::RetentionDenied("feed content_expired".into()))
+        } else {
+            Ok(())
+        }
     }
     async fn expire(&self, run: CrawlRunId, id: i64, fence: i64) -> Result<(), StoreError> {
         {
@@ -341,6 +368,7 @@ impl DeliveryOutboxRepo for MemoryStore {
         self.maintain(run).await?;
         let mut g = self.inner.lock();
         visible(g.runs.get(&run).ok_or_else(|| nf("crawl_run", run))?)?;
+        let terminal = g.dataset.feed_finalized.contains_key(&run);
         let now = self.clock.now();
         let expires = now
             .checked_add_signed(ChronoDuration::seconds(i64::from(lease_seconds)))
@@ -352,6 +380,9 @@ impl DeliveryOutboxRepo for MemoryStore {
             .values_mut()
             .filter(|row| row.receipt.run == run)
         {
+            if row.terminal_source && !terminal {
+                continue;
+            }
             if matches!(
                 row.receipt.state,
                 DeliveryStateV1::Delivered | DeliveryStateV1::ContentExpired
@@ -520,6 +551,17 @@ impl MemoryStore {
         for batch in accepted {
             for item in &batch.items {
                 live_content(self, tenant, run, &item.content, item.size_bytes, item.expires_at).await?;
+                for fragment in &item.feed_fragments {
+                    live_content(
+                        self,
+                        tenant,
+                        run,
+                        &fragment.content,
+                        fragment.size_bytes,
+                        Some(fragment.expires_at),
+                    )
+                    .await?;
+                }
             }
         }
         for delta in deltas {

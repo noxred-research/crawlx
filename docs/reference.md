@@ -3,13 +3,32 @@
 Detailed behavior of options that the [README](../README.md) only summarizes. Run
 `crawlx <command> --help` for the authoritative flag list of the build you have.
 
-Contents: [bounded source discovery](#bounded-source-discovery) ·
+Contents: [crawl order](#crawl-order) · [bounded source discovery](#bounded-source-discovery) ·
 [response cache and development replay](#native-response-cache-and-development-replay) ·
 [adaptive extraction descriptors](#scoped-adaptive-extraction-descriptors) ·
 [MCP server](#mcp-server) · [compatibility clients](#compatibility-clients) ·
 [compatibility flags](#compatibility-crawl-flags) · [JavaScript endpoint mining](#javascript-endpoint-mining) ·
 [wordlists](#wordlists-and-stored-fields) · [captcha solving](#captcha-solving) ·
 [proxy tiers and the ProxyX pool gateway](#deployment-proxy-tiers-and-the-proxyx-pool-gateway)
+
+## Crawl order
+
+Breadth-first (BFS) is the native default on every crawl entry path. It selects
+shallower URLs first, with discovery order breaking ties. Depth-first (DFS)
+selects the deepest pending URL first, with the most recently discovered URL
+breaking ties. `priority` instead ranks URLs by depth and their attack-surface
+score. An explicit request priority takes precedence over these orderings.
+
+Select an order with native API JSON `{"scope":{"strategy":"depth_first"}}`,
+`crawlx crawl URL --strategy dfs` (or `depth-first`), or a JSON `--config` /
+`--request` file containing the same `scope.strategy` field. TOML configuration
+uses `[crawl.scope]` with `strategy = "depth_first"`; YAML flag configuration
+uses `strategy: dfs`. BFS accepts `bfs`, `breadth_first` and `breadth-first`;
+DFS accepts `dfs`, `depth_first` and `depth-first`. Serialized requests retain
+the canonical `breadth_first`, `depth_first` or `priority` value.
+
+The explicit, opt-in `--compat-defaults` preset uses depth-first rather than
+the native breadth-first default. An explicit strategy overrides that preset.
 
 ## Bounded source discovery
 
@@ -42,15 +61,26 @@ Native JSON requests can opt into source discovery without changing ordinary cra
 
 `feeds` parses declared RSS 2.0, RDF/RSS 1.0, Atom and JSON Feed 1.0/1.1 sources. Parsing is offline; links and publisher/date/title hints are not authorization or verified article facts. DTDs, external entities, excessive nesting and oversized sources are refused. Conventional paths are requested only when explicitly listed. Empty `sources` keeps legacy HTML/sitemap behavior; non-legacy sources require `discovery`.
 
+Streamed XML feed evidence uses bounded `reverse_batch_chain_v1` artifacts. Source-authored hints receive generic and run-scoped secret redaction before the worker attaches each generated `previous` artifact reference. The complete envelope still passes canonical secret approval and run-scoped checks; generated digests remain intact without exempting source-authored hexadecimal values.
+
 Sitemap candidates, including namespace-checked hreflang variants, pass normal scope and robots admission. Discovery-enabled exploration acquires bounded sitemaps before focused HTML fallback. `probe` records actual selected article length/quality and insufficiency reasons. Category/domain heuristics never expand scope. Source requests and cursor advances commit together under the parent lease; a changed source representation cannot silently continue an old cursor.
 
 `readMoreHops` and `mediaProbes` are opt-in worker acquisitions. Read-more follows explicit article intents, records separate original/final URLs and child artifacts, and stops on cycles or its hop allowance. Media probes inspect at most `mediaHeaderBytes` (at most 65536) and refuse dimensions above `maxMediaPixels`; they never decode a full image. Sitemap traversal, redirects, read-more and media work share the primary page's `acquisition.maxAttempts`, `maxNetworkRequests`, byte allowance and deadline. Configure sufficient shared allowance when enabling several auxiliary stages; a stage does not receive fresh retries.
+
+The scrape `audio` and `video` formats download referenced media under auxiliary-resource admission, not frontier page-extension selection. Authorization origins and prefixes, explicit host/path/URL denials, robots rules and egress checks still apply to every download and redirect.
 
 Choose teaser links with `extract.content.selectors.readMore`, for example `[{"kind":"xpath","expression":"//a[@class='teaser']/@href"}]`; these selectors only produce parser references. The worker's independent `readMoreHops` policy controls acquisition. ZDR source discovery also requires the protected worker request-identity key; missing key is `CapabilityUnavailable`, never a public-seed-derived correlation fallback. ZDR source cursor receipts use the shared volatile retention boundary.
 
 External providers have no built-in endpoint or fallback. Add `scope.discovery.connectors` with explicit `provider` (`news_search`, `trends_search`, `web_archive_index`), authorized `endpoint`, and CDX `archiveBase` when needed. Enable the corresponding source (`news_search`, `trends_search`, `archive`). News accepts RSS/Atom and recorded `garturlres` results; trends accepts daily-trends JSON or RSS; archive accepts a CDX JSON table. Archive provenance keeps original URL, replay URL, capture time and optional recorded original status separate from the provider's HTTP status. Missing providers return `ProviderUnavailable`.
 
 Cache-only/development replay never requests robots, sitemap, provider, conventional, media or read-more resources. Missing retained responses return `cache_miss`; explicit external-provider requests fail as `ProviderForbiddenInReplay`. Reprocessed artifacts record current robots as unobserved, not approved. These are source/runtime contracts, not a claim of upstream service availability or live-provider certification.
+
+`scope.discovery.articleMemo` defaults to `{"enabled":false,"maxEntries":20000}`. Enable it to suppress already-seen article candidates only after current scope, robots and authorization admission. The ledger keeps opaque hashes scoped to tenant, run, source, role/request credentials and effective policy. Capacity applies across all scopes in the run, with a hard ceiling of 100000 entries and deterministic oldest-record eviction. Entries are recorded only after successful frontier append. A crash between append and memo recording can repeat a proposal; the frontier's existing identity still prevents duplicate accepted requests.
+
+`scope.discovery.categoryCache` defaults to `{"enabled":true,"ttlSeconds":86400}`. Its key also pins the source representation. Worker-clock expiry is exclusive: an entry is unavailable at its exact deadline. TTL can be 1–604800 seconds and cannot extend source/artifact retention. Setting `enabled:false` bypasses both cache reads and writes. Category URLs pass existing privacy/artifact gates and remain proposals, never cached permission. ZDR stores all seen/category hashes and references only in volatile custody; a durable run-only generation fences reset without retaining content-derived metadata.
+
+Authenticated `DELETE /v1/crawls/{id}/source-memo` requires `crawls:write` and ownership of the run. It clears all seen/category scopes and returns `{"reset":true,"frontierUnchanged":true}` with `Cache-Control: private, no-store`. Reset permits fresh memo admission but does not erase queued/completed frontier requests, rewind source cursors or change request identities. The settings importer maps `memorize_articles`/`memoize_articles`, `max_file_memo`/`MAX_FILE_MEMO`, and `disable_category_cache`; it explicitly refuses legacy `use_cached_categories` and imperative `clean_memo_cache`. Conversion never performs a reset.
+
 
 ### List discovery, URL substring filters and the language hint
 
@@ -106,6 +136,11 @@ Both live on the native extraction policy (`extract.content`) and are omitted by
 `blocks: true` removes a block (a paragraph, quote, list item, heading or table) from every output when its normalized text was already admitted, in document order, so the first occurrence is the one kept; blocks shorter than `minBlockChars` normalized characters are never compared. With `blocks: false` a repeated block is retained. `content: true` is a quality stage that runs after every other gate: the SHA-256 of the normalized title and body is admitted into the cache scope, and a later document with the same hash is rejected from ingestion with the quality reason `duplicate_main`. Its acquisition, text and origin stay recorded, `duplicateSameOrigin` states whether the first sighting had the identical origin, and `http`/`https` and `www` variants are never merged. A document rejected for any other reason is not admitted.
 
 Comparison across documents needs a `DedupeHandle` on `ExtractOptions` (library use): a shared `DedupeCache` plus a `DedupeScope` of tenant, run/source namespace and role label. Entries are partitioned by that scope, the extractor id, the policy digest and the normalization version, hold 32-byte hashes and counts only (never paragraph text), are bounded (1 to 262,144 entries, least-recently-admitted eviction by a logical counter, no clock, no global state), and are admitted in call order: concurrent callers that need a reproducible result call in their ordered-commit sequence. Re-extracting the same page in one scope is a repeat; give a retry its own namespace. Without a handle only repeats inside one document are removed and no content duplicates are reported.
+
+Content dedupe never bypasses URL admission. A sibling of a non-root seed needs `scope.crawlEntireDomain` or matching `scope.includePaths` before its acquisition can be retained and marked `duplicate_main`. An extraction-excluded seed also suppresses automatic sitemap and robots-path discovery; it must not trigger those requests before its refusal.
+
+Leased runs use `ContentDedupeClaimV1` in the request result transaction, not a local-cache checkpoint as shared authority. Both normalized title/body SHA-256 and the report's distinct main digest are required. The hash-only registry partitions claims by tenant, run, role/session representation, extractor, policy and normalization; the first successful commit owns the canonical frontier ID and storage record time. Later commits persist `duplicate_main` receipts and reject accepted-item, state-delta and outbox publication atomically while keeping acquisition and immutable rendition evidence. Failed transactions consume no claim. `DigestRegistryRepo::digest_outcome` reads the exact frontier receipt, including after a worker restart. Registry rows contain no text, URLs, role labels or artifact references, are permitted in ZDR, and are erased with the owning run. Pure parse quality remains separate from the final ingestion rejection; no rejected article artifact is fabricated from an earlier accepted serialization.
+
 
 `excludedUrls` (`substrings`, case-insensitive; `patterns`, regular expressions with the path-filter size and nesting limits; at most 256 rules of 512 bytes each per list) is compiled by `crawlx_url::UrlExclusionFilter` and evaluated by `crawlx_url::PreFetchGate::decide` (in front of the scope filter) before any request, robots lookup or DNS resolution: a match yields `PreFetchDecision::UrlExcluded` with the reason code `url_excluded` and the matching rule, and the URL costs zero target requests. This reason is separate from path-scope reasons and from the content-quality reason `author_excluded`, which applies only after a page was acquired and rejects its ingestion while the acquisition and its content evidence stay recorded.
 
@@ -333,3 +368,453 @@ How a crawl uses the pool:
   posted by a background task that honors `Retry-After` on `429`, retries `5xx` a few times and
   counts the rest as failed. It never blocks a fetch. `crawlx.proxyx.block_signals{outcome}` counts
   `sent`, `ignored`, `dropped` and `failed`. The browser plane reports no signals.
+
+## Fixture ground truth and coverage counts
+
+The run resource's `coverageSummary` and `/coverage` use the same action-context coverage
+definition. Trusted exercise counts include distinct discovered keys, not raw execution rows.
+Repeated exercises and exercises without a discovered key cannot inflate that count.
+
+`groundTruth` is `null` on ordinary runs: runtime coverage never infers fixture completeness.
+Fixture hosts can register a trusted `resources::FixtureGroundTruthSource` with
+`AppStateBuilder::fixture_ground_truth`. The source is server-side, keyed by run id; it is
+not an HTTP request field. Run ownership is checked before looking up fixture evidence.
+
+`FixtureGroundTruth::from_manifest` accepts fixture-manifest JSON, the run's stealth profile,
+and independently recorded trusted exercise labels. It filters non-actionable, unsupported
+and profile-ineligible controls, deduplicates labels and intersects them with eligible controls.
+The API computes `{fixture, keys, recall}` from that evidence; an empty truth set has recall
+`1.0`. Fixture evidence is separate from the crawler's own coverage ledger.
+
+## Streaming generic item export
+
+By default, `crawlx dataset-export` reads UTF-8 JSONL objects from standard input and writes one
+stream to standard output. `--format` accepts `json`, `jsonl` (the default), `csv`
+or `xml`. JSON uses one array, CSV writes one header, and XML uses one versioned
+`items` root. The exporter holds one bounded input row, not the complete dataset.
+`--max-row-bytes` defaults to 1 MiB and cannot exceed 16 MiB.
+
+CSV freezes the first object's sorted fields unless `--csv-fields` declares an
+ordered projection. Missing cells are empty; undeclared fields fail when columns
+were inferred. Spreadsheet formula prefixes are escaped. XML rejects invalid
+control characters and escapes text. Executable object formats are not accepted.
+An error can leave partial output; publish a redirected file only after successful
+completion. Redirecting content to a file is an operator retention choice, not a
+zero-retention guarantee. Article-oriented `extract` formats remain separate.
+
+Paired `--run ID --dataset NAME` selects authenticated committed-item export
+instead of stdin. `--page-size` bounds keyset metadata pages to 1–1000 records.
+Only `json_object_v1` and `document_item_v1` stores use the generic serializers.
+Artifact reads bind the selected run and committed artifact identifier, enforce
+content limits and reject redirects, including object-store redirects. Use the
+article export path for article schemas. Export a terminal run for a fixed item
+set; keyset iteration of a running run can include later commits.
+
+## Offline archive QA difference evidence
+
+`crawlx archive qa INPUT --tenant TENANT --out NEW_DIRECTORY --baseline PRIOR_DIRECTORY
+--diff-images` retains optional screenshot difference PNGs alongside ordinary replay
+captures. The retained report's `differences` map binds page ordinal and screenshot phase
+to normal sensitive artifact references. Images inherit tenant, run, expiry and erasure
+controls; JSON output never embeds image bytes. Zero-data-retention refuses the operation
+before reading the archive or baseline.
+
+Black pixels mean equal decoded samples. Color channels show absolute differences,
+including alpha changes; magenta marks pixels outside one image's dimensions. Missing or
+truncated pairs produce no difference image and never become successful comparisons.
+The existing measured-distance thresholds and QA exit codes remain unchanged: `0` means
+all requested comparisons passed, `1` means a measured mismatch, and `2` means missing
+baseline evidence. Each difference PNG is limited to 16 MiB, with 64 MiB total and
+16,777,216 pixels per canvas.
+
+The isolated replay listener supports authenticated single HTTP byte ranges on retained
+successful resources. Closed, open-ended and suffix ranges return exact `206` bodies and
+stored-byte digests; unsatisfiable ranges return `416`. Multiple or malformed ranges are
+ignored, and `HEAD` never sends body bytes. Since URL mapping changes representation
+bytes, origin validators cannot satisfy `If-Range`; those requests receive full content.
+No request can use range selection to fetch a missing live resource.
+
+## Worker parser and extraction controls
+
+Static page bodies, settled browser DOMs and retained-body replay use the shared versioned
+parser pipeline. Page metadata records the parser record version and digest under
+`parserPipeline`. Upload parsing uses the same pipeline with document routing for HTML.
+
+Native `fetch.preflight` selects a bounded HEAD preflight through the checked fetcher;
+`fetch.declaration` supplies MIME, charset and HTTP-status declarations, and
+`fetch.oversize` selects `truncate` or `refuse`. Requests, redirects and preflights consume
+the parent acquisition allowance when an acquisition policy is active.
+
+`extract.content.excludedUrls` applies substring and regex exclusions before robots,
+DNS or target requests. Denials use `url_excluded`, independently of post-acquisition
+author-quality rejection. Content dedupe uses a bounded hash cache partitioned by tenant,
+run and request representation. `endpointDiscovery` retains bounded unresolved expression
+kinds and spans, not script source.
+
+Local cache checks do not mutate committed state. A staged hash admission is recorded only
+after successful page publication; failed commits cannot poison retries. Local resume
+checkpoints preserve bounded hash-only scope, recency and eviction state under the existing
+retention policy. Durable workers isolate block dedupe to each document and use the
+transactional digest registry for cross-document decisions, so process-local cache order
+cannot change the main hash or suppress an otherwise eligible candidate.
+
+`extract.outputs`, `extract.decode` and `extract.markup` select the extractor's content
+variants, byte-decoding diagnostics and retained comments or CDATA. Scrape requests expose
+the same selectors as `outputs`, `decode` and `markup`; selected results appear in the
+response's `outputs` object. These are content-bearing results and follow the existing
+retention and secret-redaction rules. Preview intents do not grant network authority:
+the worker rechecks URL scope, robots and checked acquisition on every followed hop.
+
+## Archive rollover and metadata-only requests
+
+`output.archive.rolloverBytes` and `crawlx archive export --rollover-bytes` set an
+optional hard encoded-byte limit for each WARC file inside WACZ. The limit must be
+positive and no larger than `maxBytes`. A compressed record never splits between
+files; an oversized individual record fails before package publication. CDXJ rows
+name each actual file and file-relative range. The total archive bound still includes
+all files, indexes, package metadata and ZIP overhead. Omitting rollover preserves
+the original single-file layout and serialized configuration. Rollover with plain
+WARC output is refused, not ignored.
+
+Native request append and neutral request import accept anonymous, bodyless `HEAD`
+requests on the static and hybrid HTTP queue. Checked redirects preserve `HEAD`.
+The worker records a body-free `head_response` receipt instead of a page or item.
+Metadata-only completion does not populate the GET-resume cache or claim a retained
+response body. Volatile events retain their existing expiry; hydration does not renew
+that lifetime or substitute durable content hashes for volatile references.
+
+## Bounded browser evidence
+
+`capture.browser` is opt-in and requires a browser-enabled crawl. Its `xhr` selector accepts
+`urlPatterns` (`*` wildcard), `maxRecords` (1–5,000), and `maxBytes` (1–8,388,608).
+The response projection preserves status, redacted headers, issuing page, capture order,
+body artifact references and body-state reasons. It does not imply body retention:
+`capture.responseBodies` and the response sink still decide which bodies may be stored.
+
+`diagnostics` uses the same record and byte bounds for network and console metadata.
+Unavailable console capture is distinct from an available but empty console. The stealth
+profile never enables forbidden runtime domains to obtain console messages. Console
+messages retain at most 4,096 UTF-8 bytes each. Projections report dropped records rather
+than implying complete capture.
+Byte budgets count serialized records and console strings, excluding fixed projection and
+event envelopes; diagnostic network records and console messages share one byte budget.
+
+`mhtml` and `pdf` retain generated browser representations through the policy sink.
+MHTML is not original HTTP evidence; its completeness remains unknown even when the
+browser reports no missing resources. Encoded image geometry comes from the actual
+image. Full-page clipping remains explicit. `phaseResources` retains separate initial
+and final rendered text and screenshots around session exploration, with observation
+and epoch provenance. Evidence appears in `browser.evidence` events; bounded metadata
+projections appear in `browser.projection` events.
+
+`downloads` accepts at most 32 explicit `{url, maxBytes, timeoutMs}` requests.
+URLs must be HTTP(S), without credentials or fragments; byte limits are 1–16,777,216,
+and deadlines are 1–120,000 ms. Downloads use bounded in-memory response interception,
+not caller-selected host paths. Filename traversal, oversize responses, policy refusal
+and cancellation fail closed. Native browser downloads remain denied.
+The retained final URL must match an explicit download entry; redirects do not widen
+that allowlist.
+
+Durable browser evidence is refused under zero-data retention. Encoded captures require
+source privacy approval before capture and typed artifact approval before persistence.
+Secret-bearing or uninspectable sources cannot silently become approved binary evidence.
+
+CDP cannot recover the initial service-worker script request that precedes worker-target
+attachment. Projections report `unavailableBeforeTargetAttachment`; selecting the proxy
+preserves its wire observation. Worker-origin attribution and stream frames still come
+from native CDP supplements, explicitly labelled separately from proxy observations.
+Browser robots checks cover visited main-frame documents, not embedded frames or
+subresources. Independent checked egress still governs those network requests.
+
+
+## Safe dataset imports and resumable feed sources
+
+`crawlx dataset-import inspect FILE` reports the bounded JSON export's provenance,
+possible omissions and explicit backend or destructive-policy conflicts without
+contacting a service. `dataset-import apply FILE` requires an API key, `--run`,
+`--request-id`, `--fence` and `--state-version` for an existing admitted, leased
+request. The authenticated API checks run ownership and current authorization,
+then commits dataset/KV references under that live fence. Imports do not create a
+second storage authority, load an exported filesystem layout, purge shared work or
+deserialize executable object graphs. Arbitrary JSON objects use the declared
+`json_object_v1` schema, not an extractor-specific article schema.
+
+`crawlx feed-import FILE --format csv|xml --run ID --source ID --cursor-file FILE`
+streams URL proposals into an existing open producer. CSV uses the `url` column
+unless `--url-field` selects another; XML uses `item` rows unless `--item-element`
+selects another, with optional `--namespace`. `--batch-size` is bounded to 1–128
+and cannot exceed the run's queue limit. The server advances the pinned loader
+cursor with each frontier batch; the local checkpoint is replaced only after
+acknowledgment. Retrying a lost acknowledgment uses the same batch receipt.
+Changed source representations or template policies cannot silently resume the
+old cursor. Every proposed URL still needs normal worker scope, authorization,
+robots and checked-egress admission before acquisition.
+
+## Protocol capability reporting and archive operations reports
+
+`crawlx protocol --probe` reports bounded local operator registrations without opening
+target or service sockets. `networkProbed` and `liveAttested` remain false: a configured
+capability is not proof of service health. With no registry, the delegate list is empty.
+The opt-in `native_ftp` registration supports anonymous passive file reads with checked
+control and data peers, finite reply/body/deadline bounds and cancellation. Target and
+passive ports require explicit approval. Authenticated transfer, directory recursion,
+persistent sessions and real encrypted-file-transfer interoperability remain unsupported
+or unverified; no direct-network fallback is enabled.
+
+`GET /v1/crawls/{id}/reports` lists available operational projections, source facts and
+supported filters. `GET /v1/crawls/{id}/reports/{report}` returns authenticated,
+tenant-scoped retained facts as JSON or finite JSONL. `limit` is `1..64` and bounds
+source rows scanned, including nonmatches. Follow `next` even for an empty result page.
+Aggregates cover that scanned source page, not the whole run; pagination does not freeze
+concurrently changing state.
+
+Raw URLs, hosts, event payloads and exception text remain withheld. Identity filters use
+the returned digests. `notRecorded` distinguishes missing instrumentation from deliberately
+`withheld` data. DNS health/recheck history, processor identities/stage durations, typed
+alert history, wire sizes and cross-run history are not recorded by these projections.
+Unsupported filters reject rather than approximating absent facts. Reports obey ordinary
+retention and reject zero-data-retention content access.
+
+## Dataset feed selection, batching and compression
+
+Each declared feed binds an approved destination identifier, source dataset and
+versioned serializer. `itemFilter.all` is an ordered conjunction of at most 16
+value predicates: `{"kind":"present","field":"title"}` or
+`{"kind":"equals","field":"keep","value":true}`. Equality values are bounded JSON
+scalars, not executable expressions. Generic items expose their approved top-level
+fields; article filters expose `title`, `text` and `comments`.
+
+`parameters.csvColumns` declares at most 64 unique CSV columns in wire order.
+`parameters.jsonIndent` selects JSON indentation from zero through eight spaces.
+Parameters used with a different serializer fail admission.
+`batching:"per_request"` preserves immediate bounded delivery by default.
+`batching:"terminal"` combines committed records into bounded immutable batches at
+run finalization. `maxBatchItems` is always a cap, never an implicit delay.
+Finalization seals dataset acceptance before scanning stable ordinals. Before writing
+another artifact, a retry looks up the exact run, feed and idempotency key and reuses
+the complete staged manifest, including its original `ArtifactId` and expiry. Changed
+bytes or source ranges fail; expired, revoked or missing source custody never renews
+the manifest or silently allocates a replacement.
+Imported `json_object_v1` datasets use terminal JSON, JSONL, CSV or XML feeds.
+
+`emptyPolicy:"skip"` is the default. `emptyPolicy:"emit"` emits a valid empty
+serialized document at finalization if that destination selected no items. Its
+manifest explicitly has an empty source kind; it does not invent accepted ordinals.
+The final status and terminal delivery intents share the storage transaction.
+TEI refuses `emit` because its schema requires a real document; use `skip` instead.
+
+`compression` accepts `none` (default), `gzip`, `bzip2` or `xz`. Fixed compiled
+codecs run on the shared bounded CPU pool after plaintext privacy approval.
+Compressed output and codec state have independent hard bounds; manifests name
+the actual compressed artifact and byte length. Terminal batching compresses the
+completed batch once. Custom executable postprocessors are not accepted.
+Zero-retention feeds retain their original volatile deadline and never acquire a
+durable spool merely because a codec or destination was selected.
+Structured search, stream and queue sinks refuse pre-compressed feeds during
+admission with `feed_compression_unsupported_for_sink`, before any request.
+Transport-level `Content-Encoding` is separate from feed compression.
+
+## Approved declarative browser recipes
+
+`crawlx flow-import inspect FLOW --id ID --version N` reports one disposition per
+recorded source step without executing the source. `convert` emits a candidate only
+when every required step maps exactly. Supported inputs are initial navigation, an
+exact desktop initial viewport, targeted change and a single primary click.
+Scripts, custom drivers or arguments, pre-page-script initialization and unsupported
+viewport changes fail explicitly; conversion never grants tenant approval.
+
+An operator registers bounded native recipes through `CRAWLX_RECIPE_REGISTRY` and
+`CRAWLX_RECIPE_APPROVAL_KEY_REF`. Sign the registry with
+`crawlx flow-import sign-registry REGISTRY --key-ref env://KEY_NAME`.
+Local `env://` and `file://` key references require 32–4096 key bytes.
+HMAC-SHA256 verifies the canonical registry payload in constant time, binding the
+recipe pins, tenant approvals, approval ID and operator legal-review attestation.
+No recipe code is downloaded or evaluated.
+
+Scrape requests select an approved immutable reference with
+`archiveBehavior: {id, version, digest, phase: "post_navigation"}`.
+Admission verifies tenant, digest and timing before browser allocation. Execution
+uses ordinary native actions, fresh locators, safety checks and the intent journal;
+the first required failure or cancellation stops the recipe. Literal input values
+do not enter recipe event summaries. Zero-data-retention refuses recipe execution
+and content-bearing provenance.
+
+Limits are 1 MiB per registry, 32 registrations, 256 approved tenants per
+registration, 64 KiB per recipe and 50 native steps. Generic recipe support is not
+evidence of site-specific behavior equivalence or a legal approval decision.
+
+## Exported exchange fidelity
+
+JSONL records include additive `fidelity` facts for request/response bodies and raw
+representations. Availability is `available`, `unavailable` or `omitted`; omitted fields
+remain distinct from evidence the capture backend could not provide. Representation,
+redaction, binary UTF-8 loss and truncation come from producer facts. Unknown facts stay
+unknown, including legacy rows without those facts.
+
+Stored exchange files label reconstructed sections and unavailable payloads explicitly.
+They are diagnostic representations, not original wire evidence. Missing HTTP status
+does not become a successful response. Stored filenames use exclusive creation and
+numbering, so repeated or concurrent exports cannot overwrite existing exchanges.
+The ordinary field selector can remove `fidelity` as well as existing record fields.
+
+## Operator-selected encrypted DNS
+
+Worker and local crawl deployment configuration can select an HTTPS DNS endpoint:
+
+```toml
+[fetch.resolver_https]
+endpoint = "https://resolver.example/dns-query"
+bootstrap_pins = ["203.0.113.53"]
+deadline_ms = 5000
+max_response_bytes = 16384
+max_records = 128
+max_cname_depth = 8
+```
+
+The endpoint and pins above illustrate configuration shape; operators must supply
+their own approved endpoint and actual bootstrap addresses. Environment equivalents
+use `CRAWLX_FETCH__RESOLVER_HTTPS__` followed by the uppercase field name; pin lists
+use TOML array syntax. `config check` validates the same settings. Incomplete or
+invalid settings fail rather than falling back to unchecked resolution.
+
+The provider connection uses approved bootstrap pins, checked address policy, TLS,
+actual peer validation, redirect refusal and finite response/deadline limits.
+Returned addresses still pass the ordinary per-run checked-resolution boundary.
+Tenant request metadata cannot choose a DNS endpoint or weaken egress policy.
+Plain HTTP is reserved for explicitly authorized owned-loopback fixtures.
+Endpoint userinfo, query strings and fragments are forbidden; provider transport errors
+remove URLs before entering diagnostics.
+
+## Dynamic page records
+
+Dynamic-only runs publish page records from settled browser observations, not from a
+second HTTP fetch of the observed page. The observation epoch must still match when
+the actor reads response metadata; intervening navigation refuses that publication.
+Browser-discovered navigation URLs remain browser work rather than static fetch proposals.
+
+Each publication claims only its observed frontier row with a fenced lease. Competing
+publishers cannot claim the same row, and unrelated pending rows are not leased or charged.
+Rendered HTML uses the shared parser, scoped dedupe and content-retention sinks. XHR
+relations and discovered endpoint outcomes attach to the resulting page record.
+The receipt-only claim verifies its originating live session fence, observation epoch
+and immutable capture-time marker; it never permits another target dispatch. An
+observation captured before the exploration deadline, including validated completed-login
+credit, may finish publication after that deadline or during graceful worker drain.
+New dispatch and observations captured after the deadline remain forbidden. A dedicated
+local hard-stop token, durable cancellation, purge, stale fence or expired source custody
+still refuses publication; graceful drain is not treated as hard cancellation.
+
+
+Same-URL DOM changes append new observed renditions instead of rewriting terminal records.
+The first rendition remains canonical for each role. Committed renditions appear in
+frontier order, including content revealed by later actions. `dynamic.maxPageRevisits`
+defaults to 8 and accepts 0–128 additional renditions per URL and role. Zero keeps only
+the initial rendition. Storage enforces the cap across sessions and reports
+`revisit_cap_reached` rather than silently dropping later observations.
+
+## Strict sessions, resource retirement and admission
+
+Native session identity binds tenant, run, principal, acquisition policy, actual browser
+build, egress, profile and generation beneath the existing scheduler fence. A missing,
+expired, unhealthy or colliding binding never falls back to another cookie jar.
+`orchestration.attempts.maxSessionRotations` explicitly permits a finite number of
+anonymous health/usage replacements; its default is zero. Replacement requires confirmed
+cleanup, reconciled writes, unchanged identity and the original expiry ceiling.
+Authenticated sessions and retained profiles never rotate implicitly.
+
+`BrowserPool` retires processes after 1,000 context admissions, one hour of age or five
+minutes idle by default. `PoolRetirement` configures finite operator bounds before the
+pool is shared. Retirement stops new contexts but drains live actors first. Confirmed
+owned-process death returns capacity. Inaccessible attached resources stay charged;
+the pool never kills an unrelated attached browser to manufacture free capacity.
+
+The Rust `NamedHttpSessions` API explicitly registers names under an existing granted
+binding. Each name owns a lazy HTTP client, connection pool and bounded cookie jar.
+Names, principals, generations and fences must match exactly. URL requests with a strict
+generation use the explicitly registered `default` session and retain ordinary scope,
+robots, authorization, effect, redirect and byte admission. Local static runs use the
+same real coordinator lease as leased workers. Usage is reserved before transport and
+survives cancellation; 401/403 affect health, while 429 remains governor feedback.
+Learned cookies enter the existing run secret registry before content publication.
+Cookie bytes remain volatile: a lost used jar cannot restart as an empty successful
+session, and no implicit registration restores or extends its lifetime.
+
+Strict ProxyX routes share one observed pin across HTTP and browser transports for the
+same generation. A route-keyed commitment to the observed session and exit is stored
+under the existing PostgreSQL session fence; a changed pin fails before tunnel delivery.
+Changing the configured tier requires an explicit new approved session slot; anonymous
+health replacement preserves the existing route identity.
+Portable schema migration `0047` is also supplied for SQLite and MariaDB.
+Checked resolved addresses additionally share a process-wide physical-target connection
+cap across host aliases, ports and proxies. Origin pacing and deployment-origin admission
+remain independent hard limits; physical grouping cannot grant additional traffic.
+
+Adaptive runtime admission records CPU, memory, async timer lag, queue, spool, browser
+and store observations. Missing sensors stay unknown. A measured timer lag of at least
+100 ms narrows adaptive dispatch on the next sample without cancelling an active mutation.
+Growth still requires five healthy ticks and never exceeds the existing hard ceiling.
+`runtime.task` events report bounded elapsed time and observed process RSS before/after
+each admitted URL task. These are process observations, not per-request allocation claims.
+
+Run teardown invokes the traffic exporter's bounded shutdown directly. Its configured
+drain deadline includes queued batches, stalled requests and retries; an unbounded flush
+cannot precede that deadline.
+
+## Sensitive archive evidence custody
+
+Archives containing approved retained screenshot evidence remain sensitive. Package,
+shard, adjacent-index, manifest and record content requires `artifacts:read_sensitive`;
+ordinary crawl-read permission does not grant screenshot access. Progress metadata
+remains redacted.
+
+Source descriptors bind artifact ownership, digest, class, media type and deadline.
+Archive custody narrows to the earliest approved source deadline and never lengthens
+sensitive retention. Commit, publication and later content reads recheck live source
+authority. Source expiry, revocation or changed authority fails closed, including after
+publication. Ordinary content-only archives retain their existing access contract.
+This narrow producer-approved screenshot path does not authorize arbitrary binary
+capture, profile storage or general binary archive import/replay.
+
+## Browser popup accounting
+
+`dynamic.maxTabs` bounds admitted tabs. The target graph also permits at most one
+unaccepted pending popup while the actor performs journaled admission or eviction.
+Further targets are rejected and sent for closure instead of accumulating in that graph.
+Chromium creates a popup before reporting its target event, so this is an admitted-tab
+plus one-quarantine accounting bound, not a claim that the browser can prevent every
+transient target allocation before notification.
+
+## Committed archival payload deduplication
+
+`output.archive.dedupe` accepts `none` (default), `collection` or `tenant`. Collection
+mode reuses committed earlier payloads within the same export; tenant mode can also
+use an eligible published export. The default is omitted from serialized configuration
+and preserves existing specification hashes.
+
+Deduplication preserves every chronological capture and its record identity. A
+revisit must resolve to a committed payload with matching principal, request/policy,
+representation, redaction, MIME and retention context. Failed uploads, expired sources,
+foreign tenants and sensitive source packages never become ordinary content baselines.
+Indexed lookup is bounded and deterministic. Source erasure or authority changes
+invalidate dependent content; omission and incomplete-capture reporting stay explicit.
+
+## Anonymous staging and recoverable WARC bundle publication
+
+Archive members, index spill runs, pages, capture facts, import rewrites and package
+scratch data use held anonymous file descriptors. Process death releases those
+sources without leaving named plaintext scratch files. Unsupported filesystem
+capabilities fail closed; untrusted imports gain no filesystem or magic-link authority.
+
+WACZ remains one atomically published file. Multi-file WARC output uses a new
+directory with an exclusive `.incomplete` sentinel. Each file is created without
+overwrite and synced; the fixity manifest is written last. The sentinel is removed
+only after successful completion and directory sync. Readers, import and
+`crawlx archive verify` refuse a sentinel-bearing or incomplete native bundle.
+
+A private per-user state journal, mode `0600`, records publication ownership; it is
+not stored in the output directory. Startup recovery and `admin sweep-retention`
+act only on proven owned crash leftovers, never active or foreign publications.
+A missing, partial, invalid or mismatched manifest causes rollback of the owned
+uncommitted directory. A complete manifest with every listed length and digest
+matching rolls forward by removing the sentinel and syncing the directory.
+An absent journal requires no writable home or new state files during startup.

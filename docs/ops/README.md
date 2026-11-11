@@ -10,6 +10,7 @@ production qualification is in progress; see the [README](../../README.md#releas
 | [`runbooks.md`](runbooks.md) | Numbered runbooks RB-01 to RB-12 (stuck crawl, unknown-outcome reconciliation, browser crash loop, lease storm, model provider failure, object-store outage, database failover, retention and ZDR cleanup, webhook backlog, hot target, emergency stop, SEV-1 containment), one card per alert rule, the `crawlx admin` command table, the independent safety auditor, backup, restore and rollback |
 | [`release-gates.md`](release-gates.md) | The release-gate checklist computed by CI from evidence files (`release-gate check`), its items, thresholds, evidence layout and waivers |
 | [`flaky-tests.md`](flaky-tests.md) | Flake handling: one classifying rerun, quarantine to the nightly suite after 3 events in 14 days, the 30-day flake rate and the `flake-report` tool |
+| [`object-storage.md`](object-storage.md) | Filesystem and S3-compatible store profiles, credentials, admission and deployment checks |
 | This file | Provisioning, validation and rotation of the optional operator capabilities (request-identity key, protocol and delivery registries, language bundle) |
 
 ## Where the pieces are
@@ -442,3 +443,33 @@ A missing runtime, mismatched resource digest, invalid graph, or unavailable com
 feature fails preflight rather than advertising language detection. Its report records
 capability enablement, not article text. Requests naming a different language-bundle
 digest remain unavailable; migration-0034 admission requires a matching live worker.
+
+## Optional independent archive reader
+
+The `archive_interoperability` storage integration target uses an explicitly supplied
+local Python interpreter through `CRAWLX_ARCHIVE_READER_PYTHON`. Its environment must
+already contain the approved independent archive reader package. The test installs
+nothing and makes no network requests. Without the interpreter setting it reports a
+skip, not interoperability evidence.
+
+Run `cargo test -p crawlx-storage --test archive_interoperability` with that setting
+and the approved local package path. The fixture checks WARC record types, payloads
+and digests independently, then checks WACZ ZIP64 metadata, resource fixity, CDXJ
+ordering and exact gzip-member ranges. This bounded fixture does not establish
+general renderer compatibility, large-collection performance or release acceptance.
+
+## Dataset delivery and source-memory operations
+
+Feed destinations remain operator-registered IDs; imports and page content cannot
+choose paths, endpoints or credentials. Keep `CRAWLX_DELIVERY_REGISTRY` identical
+across workers that advertise the same destination capabilities. Standard feeds
+may use immutable local/S3 objects; stdout can duplicate after a send/receipt crash.
+Compression never changes the destination's zero-retention allowance.
+
+For long imports, retain the `feed-import --cursor-file` checkpoint with the exact
+source representation and template. A changed representation needs an explicitly
+new source identity rather than an edited cursor. `DELETE
+/v1/crawls/{id}/source-memo` requires `crawls:write` and resets only source memo
+and category-cache state; it does not purge frontier work or loader progress.
+See [the reference](../reference.md#dataset-feed-selection-batching-and-compression)
+for feed filters, terminal batching, empty-feed policy and codec bounds.

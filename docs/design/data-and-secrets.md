@@ -38,9 +38,10 @@ objects, then leaf tables in batches, then writes an audit row. Orphan objects (
 referenced because a transaction failed) are collected after a grace period you choose
 (`--orphan-grace-s`). Authorization records are retained 1,096 days.
 
-**The sweeper is a command you schedule.** `crawlx admin sweep-retention` performs one pass;
-nothing in the worker or API runs it on a timer. Run it from cron or a Kubernetes CronJob. The
-volatile ZDR delivery buffer is also swept on each webhook tick and by `crawlx admin sweep-delivery`
+**Schedule the sweeper.** `crawlx admin sweep-retention` performs one pass; add `--every 5m`
+for the built-in, cancellable loop ([operations](../ops/README.md#scheduled-retention-sweeper)).
+The worker and API do not start it automatically. A scheduled one-shot job is also supported.
+The volatile ZDR delivery buffer is also swept on each webhook tick and by `crawlx admin sweep-delivery`
 (a systemd timer is in `deploy/systemd`). Metrics: `crawlx.retention.overdue_artifacts{kind}`,
 `crawlx.retention.sweep.failures`, `crawlx.zdr.violations`.
 

@@ -17,7 +17,8 @@
 //! full channel drops the flow and counts it.
 
 use crate::error::FetchError;
-use crate::resolver::{parse_ip_literal, Resolver};
+use crate::governor::{GlobalOriginCap, Origin, PhysicalPermit};
+use crate::resolver::{parse_ip_literal, CheckedResolution, Resolver};
 use crate::upstream::{BoxIo, UpstreamProxy};
 use bytes::Bytes;
 use crawlx_core::request_controls::RequestControls;
@@ -60,6 +61,37 @@ const MAX_LOGGED_DENIALS: usize = 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 type ProxyBody = BoxBody<Bytes, hyper::Error>;
+
+/// Retain physical capacity through response completion, error or early drop,
+/// independently of whether flow capture is enabled.
+struct AdmittedBody {
+    inner: ProxyBody,
+    physical: Option<PhysicalPermit>,
+}
+
+impl Body for AdmittedBody {
+    type Data = Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let polled = Pin::new(&mut self.inner).poll_frame(cx);
+        if matches!(polled, Poll::Ready(None | Some(Err(_)))) {
+            self.physical = None;
+        }
+        polled
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
 
 /// One refused request.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,6 +137,7 @@ struct Shared {
     /// The operator's proxy every admitted request is chained to (`fetch.proxy`).
     upstream: Option<UpstreamProxy>,
     cancel: CancellationToken,
+    physical_cap: Option<Arc<GlobalOriginCap>>,
 }
 
 /// Protocol of a request as hyper reports its version.
@@ -315,7 +348,12 @@ impl Shared {
 
     /// Host check, resolve, check every address. Returns the checked addresses; nothing is
     /// recorded as dialed (the upstream proxy's own host goes through here too).
-    async fn vet(&self, method: &str, host: &str, port: u16) -> Result<Vec<SocketAddr>, Reject> {
+    async fn vet(
+        &self,
+        method: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<(Vec<SocketAddr>, CheckedResolution), Reject> {
         if self.policy.fixture_scope.is_some() {
             if let Err(denied) = self.policy.check_port(port) {
                 self.record_denial(method, host, port, parse_ip_literal(host), denied.rule.as_str());
@@ -324,51 +362,68 @@ impl Shared {
                 });
             }
         }
-        if let Err(d) = self.policy.check_host(host) {
-            let ip = parse_ip_literal(host);
-            self.record_denial(method, host, port, ip, d.rule.as_str());
-            return Err(Reject::Denied {
-                rule: d.rule.as_str().to_owned(),
-            });
-        }
-        let addrs = self
-            .resolver
-            .resolve(host)
-            .await
-            .map_err(|e| Reject::Unresolvable(e.to_string()))?;
-        if addrs.is_empty() {
-            return Err(Reject::Unresolvable("no addresses".to_owned()));
-        }
-        if let Err(d) = self.policy.check_all(host, &addrs) {
-            let offending = addrs
-                .iter()
-                .copied()
-                .find(|ip| self.policy.check_ip(*ip).is_err());
-            self.record_denial(method, host, port, offending, d.rule.as_str());
-            return Err(Reject::Denied {
-                rule: d.rule.as_str().to_owned(),
-            });
-        }
-        Ok(addrs.into_iter().map(|ip| SocketAddr::new(ip, port)).collect())
+        let target = CheckedResolution::resolve_host(
+            self.resolver.as_ref(),
+            &self.policy,
+            Origin::new(&format!("https://{host}:{port}")),
+            host.to_owned(),
+            parse_ip_literal(host),
+        )
+        .await
+        .map_err(|error| match error {
+            FetchError::EgressDenied(denied) => {
+                let ip = denied.subject.parse().ok();
+                self.record_denial(method, host, port, ip, denied.rule.as_str());
+                Reject::Denied {
+                    rule: denied.rule.as_str().to_owned(),
+                }
+            }
+            other => Reject::Unresolvable(other.to_string()),
+        })?;
+        let addrs = target
+            .addresses()
+            .iter()
+            .map(|ip| SocketAddr::new(*ip, port))
+            .collect();
+        Ok((addrs, target))
     }
 
     /// [`Self::vet`] a target and record it as dialed.
-    async fn authorize(&self, method: &str, host: &str, port: u16) -> Result<Vec<SocketAddr>, Reject> {
-        let addrs = self.vet(method, host, port).await?;
+    async fn authorize(
+        &self,
+        method: &str,
+        host: &str,
+        port: u16,
+    ) -> Result<(Vec<SocketAddr>, Option<PhysicalPermit>), Reject> {
+        let (addrs, target) = self.vet(method, host, port).await?;
+        let physical = match &self.physical_cap {
+            Some(cap) => {
+                tokio::select! {
+                    () = self.cancel.cancelled() => {
+                        return Err(Reject::Unresolvable("proxy stopped during target admission".to_owned()));
+                    }
+                    permit = cap.acquire_physical(&target) => Some(permit),
+                }
+            }
+            None => None,
+        };
         self.dialed.lock().insert((host.to_owned(), port));
-        Ok(addrs)
+        Ok((addrs, physical))
     }
 
     /// The checked addresses of the upstream proxy `up` (its host is held to the egress
     /// policy like any target).
     async fn vet_upstream(&self, method: &str, up: &UpstreamProxy) -> Result<Vec<SocketAddr>, Refusal> {
-        self.vet(method, up.host(), up.port()).await.map_err(|r| {
-            tracing::warn!(
-                proxy = up.host(),
-                "the upstream proxy host is refused by the egress policy"
-            );
-            Box::new(reject_response(&r))
-        })
+        self.vet(method, up.host(), up.port())
+            .await
+            .map(|(addrs, _)| addrs)
+            .map_err(|r| {
+                tracing::warn!(
+                    proxy = up.host(),
+                    "the upstream proxy host is refused by the egress policy"
+                );
+                Box::new(reject_response(&r))
+            })
     }
 
     /// A byte pipe to the admitted target `host:port`: direct to one of its pinned `addrs`, or
@@ -557,7 +612,7 @@ async fn handle_connect(
     };
     let host = strip_brackets(authority.host()).to_ascii_lowercase();
     let port = authority.port_u16().unwrap_or(443);
-    let addrs = match shared.authorize("CONNECT", &host, port).await {
+    let (addrs, physical) = match shared.authorize("CONNECT", &host, port).await {
         Ok(a) => a,
         Err(r) => return reject_response(&r),
     };
@@ -581,6 +636,7 @@ async fn handle_connect(
     let upgrade = hyper::upgrade::on(req);
     let shared = Arc::clone(shared);
     tokio::spawn(async move {
+        let _physical = physical;
         let mut stats = TunnelStats::default();
         match upgrade.await {
             Ok(up) => {
@@ -683,7 +739,7 @@ async fn handle_forward(
             });
         }
     }
-    let addrs = match shared.authorize(&method_name, &host, port).await {
+    let (addrs, physical) = match shared.authorize(&method_name, &host, port).await {
         Ok(a) => a,
         Err(r) => return reject_response(&r),
     };
@@ -766,6 +822,7 @@ async fn handle_forward(
             strip_hop_by_hop(&mut p.headers);
             // only this proxy may say it failed: never pass the marker on from an origin
             p.headers.remove(PROXY_ERROR_HEADER);
+            let b = AdmittedBody { inner: b, physical }.boxed();
             Response::from_parts(p, b)
         }
         Err(e) => {
@@ -778,18 +835,46 @@ async fn handle_forward(
 }
 
 /// Optional parts of an [`EgressProxy`]: flow capture, request controls and an upstream proxy.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 #[must_use]
 pub struct EgressOptions {
     capture: Option<mpsc::Sender<ProxyFlow>>,
     controls: RequestControls,
     upstream: Option<UpstreamProxy>,
+    physical_cap: Option<Arc<GlobalOriginCap>>,
+}
+
+impl Default for EgressOptions {
+    fn default() -> Self {
+        Self {
+            capture: None,
+            controls: RequestControls::default(),
+            upstream: None,
+            physical_cap: Some(Arc::new(GlobalOriginCap::default())),
+        }
+    }
 }
 
 impl EgressOptions {
     /// No capture, no request controls, no upstream proxy.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Share physical-target capacity with HTTP and every browser proxy in the process.
+    pub fn with_global_cap(mut self, cap: Arc<GlobalOriginCap>) -> Self {
+        self.physical_cap = Some(cap);
+        self
+    }
+
+    /// HTTP-owned adapters already retain their caller's checked physical permit.
+    pub(crate) fn http_adapter() -> Self {
+        Self {
+            capture: None,
+            controls: RequestControls::default(),
+            upstream: None,
+            physical_cap: None,
+        }
     }
 
     /// Report every flow on `capture` (see [`EgressProxy::serve_with_capture`]).
@@ -919,6 +1004,7 @@ impl EgressProxy {
             capture,
             controls,
             upstream,
+            physical_cap,
         } = options;
         let addr = listener.local_addr()?;
         let cancel = CancellationToken::new();
@@ -934,6 +1020,7 @@ impl EgressProxy {
             }),
             controls,
             upstream,
+            physical_cap,
             cancel: cancel.clone(),
         });
         let task = tokio::spawn(accept_loop(listener, Arc::clone(&shared)));

@@ -163,6 +163,13 @@ impl FrontierRepo for Pg {
     ) -> Result<Vec<crawlx_core::orchestration::RequestMetadataV1>, StoreError> {
         self.request_metadata_page(run, after, limit).await
     }
+    async fn request_methods(
+        &self,
+        run: CrawlRunId,
+        ids: &[i64],
+    ) -> Result<std::collections::BTreeMap<i64, String>, StoreError> {
+        self.request_methods_bulk(run, ids).await
+    }
     async fn retry_fenced(
         &self,
         id: i64,
@@ -360,6 +367,9 @@ impl FrontierRepo for Pg {
     ) -> Result<Vec<(FrontierEntry, i64)>, StoreError> {
         let _timer = self.query_timer("frontier.lease_batch");
         let admitted = <Self as crawlx_core::repo::RunRepo>::get(self, run).await?;
+        if admitted.config.mode == crawlx_core::CrawlMode::Dynamic {
+            return Ok(Vec::new());
+        }
         let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(&admitted.config)?;
         let strategy = admitted.config.scope.strategy;
         let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
@@ -384,7 +394,8 @@ impl FrontierRepo for Pg {
             }
         };
         let sql = "WITH picked AS ( \
-               SELECT frontier_id FROM url_frontier WHERE run_id = $1 AND status = 'pending' AND next_attempt_at <= now() \
+               SELECT frontier_id FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status = 'pending' AND next_attempt_at <= now() \
+               AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic' \
                AND (cardinality($5::text[])=0 AND NOT $6::boolean OR EXISTS (SELECT 1 FROM workers w \
                  WHERE w.worker_id=$2 AND NOT w.draining AND w.last_heartbeat_at<=clock_timestamp() \
                    AND w.last_heartbeat_at>=clock_timestamp()-interval '90 seconds' \
@@ -431,6 +442,80 @@ impl FrontierRepo for Pg {
             })
         });
         Ok(out.into_iter().map(|(e, _, _, t)| (e, t)).collect())
+    }
+
+    async fn lease_one_fenced(
+        &self,
+        run: CrawlRunId,
+        worker: WorkerId,
+        id: i64,
+    ) -> Result<Option<(FrontierEntry, i64)>, StoreError> {
+        let _timer = self.query_timer("frontier.lease_one");
+        let admitted = <Self as crawlx_core::repo::RunRepo>::get(self, run).await?;
+        if admitted.config.mode == crawlx_core::CrawlMode::Dynamic {
+            return Ok(None);
+        }
+        if admitted
+            .config
+            .orchestration
+            .as_ref()
+            .is_some_and(|cfg| cfg.queue.batch_size == 0)
+        {
+            return Ok(None);
+        }
+        let data = crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(&admitted.config)?;
+        let data_required = !data.destinations.is_empty() || data.language_bundle.is_some();
+        let required = if let Some(policy) = admitted.config.acquisition {
+            policy
+                .validate()
+                .map_err(|error| StoreError::Conflict(error.to_string()))?;
+            policy.backend_ids
+        } else {
+            Vec::new()
+        };
+        // PostgreSQL UPDATE rechecks a contended row; FOR SHARE holds the run lifecycle stable.
+        let row = sqlx::query(
+            "UPDATE url_frontier f SET status='leased',lease_owner=$2, \
+               lease_expires_at=now()+make_interval(secs=>$4), \
+               fencing_token=nextval('lease_fence_seq'),attempts=attempts+1 \
+             WHERE f.run_id=$1 AND f.frontier_id=$3 AND f.via<>'interaction' AND f.status='pending' \
+               AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic' \
+               AND f.next_attempt_at<=now() AND f.attempts<32767 \
+               AND EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=$1 AND r.tenant_id=$7 \
+                 AND r.status IN ('queued','running') \
+                 AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
+                 AND COALESCE(r.deadline_at,COALESCE(r.started_at,r.created_at)+make_interval(secs=>$8))>now() \
+                 FOR SHARE) \
+               AND (cardinality($5::text[])=0 AND NOT $6::boolean OR EXISTS(SELECT 1 FROM workers w \
+                 WHERE w.worker_id=$2 AND NOT w.draining AND w.last_heartbeat_at<=clock_timestamp() \
+                   AND w.last_heartbeat_at>=clock_timestamp()-interval '90 seconds' \
+                   AND (w.capacity->'acceptsQueued'='true'::jsonb OR w.capacity->>'localRun'=$1::text) \
+                   AND NOT EXISTS(SELECT 1 FROM unnest($5::text[]) required(backend_id) \
+                     WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(w.capacity->'acquisition','[]'::jsonb)) fact \
+                       WHERE fact->>'backendId'=required.backend_id AND fact->'available'='true'::jsonb)))) \
+               AND crawlx_worker_data_eligible($2,(SELECT data_requirements FROM crawl_runs WHERE run_id=$1)) \
+             RETURNING f.frontier_id,f.run_id,f.query_schema,f.depth,f.status, \
+               COALESCE(f.denial_reason,f.error_code) AS denial_reason, \
+               f.attempts,f.parent_id,f.priority,f.fencing_token",
+        )
+        .bind(run.0)
+        .bind(worker.0)
+        .bind(id)
+        .bind(secs(self.cfg.url_batch_ttl))
+        .bind(required)
+        .bind(data_required)
+        .bind(admitted.tenant.0)
+        .bind(f64::from(admitted.config.limits.duration_seconds))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+        match row {
+            Some(row) => Ok(Some((
+                entry_from_row(self, &row).await?,
+                get::<i64>(&row, "fencing_token")?,
+            ))),
+            None => Ok(None),
+        }
     }
 
     async fn complete(
@@ -505,7 +590,7 @@ impl FrontierRepo for Pg {
     async fn pending_count(&self, run: CrawlRunId) -> Result<u64, StoreError> {
         let _timer = self.query_timer("frontier.pending_count");
         let n: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM url_frontier WHERE run_id = $1 AND status = 'pending'")
+            sqlx::query_scalar("SELECT count(*) FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status = 'pending' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'")
                 .bind(run.0)
                 .fetch_one(&self.pool)
                 .await
@@ -516,7 +601,7 @@ impl FrontierRepo for Pg {
     async fn open_count(&self, run: CrawlRunId) -> Result<u64, StoreError> {
         let _timer = self.query_timer("frontier.open_count");
         let n: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM url_frontier WHERE run_id = $1 AND status IN ('pending', 'leased')",
+            "SELECT count(*) FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND status IN ('pending', 'leased') AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'",
         )
         .bind(run.0)
         .fetch_one(&self.pool)
@@ -541,7 +626,7 @@ impl FrontierRepo for Pg {
                  AND starts_with(COALESCE(denial_reason, error_code), $2)) AS succeeded_duplicate, \
                count(*) FILTER (WHERE status = 'policy_blocked' \
                  AND starts_with(COALESCE(denial_reason, error_code), $2)) AS policy_blocked_duplicate \
-             FROM url_frontier WHERE run_id = $1",
+             FROM url_frontier WHERE run_id = $1 AND via <> 'interaction' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic'",
         )
         .bind(run.0)
         .bind(DEDUPE_REASON_PREFIX)

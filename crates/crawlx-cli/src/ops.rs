@@ -151,6 +151,9 @@ pub struct ServeArgs {
     /// same); an `fc-` key never opens a native `/v1` route.
     #[arg(long)]
     pub compat_keys: bool,
+    /// Compatibility defaults: strict or native_defaults; an explicit flag wins over the environment.
+    #[arg(long, env = "CRAWLX_COMPAT_MODE", value_parser = parse_compat_mode)]
+    pub compat_mode: Option<crawlx_api::CompatMode>,
     /// Requests per minute per key.
     #[arg(long)]
     pub rate_limit_per_minute: Option<u32>,
@@ -294,6 +297,11 @@ pub(crate) async fn worker(
         egress: crawlx_worker::EgressConfig {
             lists: Some(egress_feed.lists()),
             proxy_routes,
+            resolver_https: crate::resolver_https_config::from_env(
+                getenv,
+                egress_feed.lists(),
+                CancellationToken::new(),
+            )?,
             ..crawlx_worker::EgressConfig::default()
         },
         ..WorkerConfig::default()
@@ -345,6 +353,7 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
         artifacts_dir: args.artifacts_dir,
         artifact_spool: crate::config_check::artifact_spool_from_env(&|name| std::env::var(name).ok())?,
         metrics_bind: args.metrics_bind,
+        compat_mode_override: args.compat_mode,
         ..ApiConfig::default()
     };
     for spec in &args.api_keys {
@@ -376,6 +385,33 @@ pub(crate) async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
     egress_feed.stop().await;
     served.map_err(|e| anyhow!("api failed: {e}"))?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn parse_compat_mode(value: &str) -> Result<crawlx_api::CompatMode, String> {
+    crawlx_api::CompatMode::parse(value).ok_or_else(|| "expected strict or native_defaults".to_owned())
+}
+
+#[cfg(test)]
+mod compat_mode_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use clap::Parser;
+
+    #[test]
+    fn serve_accepts_both_modes_and_rejects_unknown_modes() {
+        for (value, mode) in [
+            ("strict", crawlx_api::CompatMode::Strict),
+            ("native_defaults", crawlx_api::CompatMode::NativeDefaults),
+            ("native-defaults", crawlx_api::CompatMode::NativeDefaults),
+        ] {
+            let cli = crate::Cli::try_parse_from(["crawlx", "serve", "--compat-mode", value]).unwrap();
+            let crate::Command::Serve(args) = cli.command else {
+                panic!("expected serve");
+            };
+            assert_eq!(args.compat_mode, Some(mode));
+        }
+        assert!(crate::Cli::try_parse_from(["crawlx", "serve", "--compat-mode", "unknown"]).is_err());
+    }
 }
 
 /// Where `crawlx export` reads pages from.

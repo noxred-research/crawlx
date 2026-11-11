@@ -10,7 +10,7 @@ use crawlx_core::seed::CrawlSeed;
 use crawlx_core::{ArtifactRef, CrawlRunId, TenantId};
 use crawlx_storage::artifacts::{BoundedArtifactError, FsArtifactStore};
 use crawlx_storage::memory::MemoryStore;
-use crawlx_worker::archive_replay::{ReplayArchive, ReplayReport};
+use crawlx_worker::archive_replay::{ReplayArchive, ReplayCapture, ReplayReport};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{Read as _, Write};
@@ -68,6 +68,9 @@ pub struct QaArgs {
     /// Maximum normalized Unicode Levenshtein distance, 0..1.
     #[arg(long, default_value_t = 0.0)]
     pub max_text_distance: f64,
+    /// Retain bounded screenshot difference PNGs as sensitive expiring artifacts.
+    #[arg(long)]
+    pub diff_images: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -84,6 +87,8 @@ struct Bundle {
 struct StoredReport {
     report: ReplayReport,
     captures: BTreeMap<String, ArtifactRef>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    differences: BTreeMap<String, ArtifactRef>,
 }
 
 fn key(page: usize, kind: &str) -> String {
@@ -170,7 +175,11 @@ async fn render(args: &ReplayArgs) -> anyhow::Result<ReplayReport> {
     Ok(result?)
 }
 
-async fn save(args: &ReplayArgs, report: ReplayReport) -> anyhow::Result<Bundle> {
+async fn save(
+    args: &ReplayArgs,
+    report: ReplayReport,
+    differences: Vec<crawlx_worker::archive_qa::QaDiff>,
+) -> anyhow::Result<Bundle> {
     // Reserve exactly one new directory. Cleanup owns only this newly created path.
     tokio::fs::create_dir(&args.out)
         .await
@@ -185,14 +194,51 @@ async fn save(args: &ReplayArgs, report: ReplayReport) -> anyhow::Result<Bundle>
             return Err(error.into());
         }
     }
-    let result = save_inner(args, report).await;
+    let result = save_inner(args, report, differences).await;
     if result.is_err() {
         let _ = tokio::fs::remove_dir_all(&args.out).await;
     }
     result
 }
 
-async fn save_inner(args: &ReplayArgs, report: ReplayReport) -> anyhow::Result<Bundle> {
+async fn save_capture(
+    store: &FsArtifactStore,
+    run: CrawlRunId,
+    capture: &ReplayCapture,
+    now: chrono::DateTime<chrono::Utc>,
+    retention_days: u8,
+) -> anyhow::Result<(ArtifactRef, Option<chrono::DateTime<chrono::Utc>>)> {
+    // Input text passed the archive privacy gate. Runtime text was redacted
+    // before reaching this queue; screenshots contain no inherited live jar.
+    let class = if capture.media_type == "image/png" {
+        Sensitivity::Sensitive
+    } else {
+        Sensitivity::Content
+    };
+    let expiry = crawlx_storage::retention::artifact_expiry(
+        class,
+        &capture.media_type,
+        RetentionMode::Standard,
+        u32::from(retention_days),
+        now,
+    );
+    let redactor = crawlx_core::secret::Redactor::new();
+    let approved = if capture.media_type == "image/png" {
+        redactor.verify_binary(&capture.bytes)?
+    } else {
+        redactor.redact_artifact(&capture.bytes)?
+    };
+    let reference = ArtifactSink::over(store)
+        .put(run, class, &capture.media_type, &approved)
+        .await?;
+    Ok((reference, expiry))
+}
+
+async fn save_inner(
+    args: &ReplayArgs,
+    report: ReplayReport,
+    differences: Vec<crawlx_worker::archive_qa::QaDiff>,
+) -> anyhow::Result<Bundle> {
     let now = chrono::Utc::now();
     let mut expires_at = now
         .checked_add_signed(chrono::Duration::days(i64::from(args.retention_days)))
@@ -235,33 +281,27 @@ async fn save_inner(args: &ReplayArgs, report: ReplayReport) -> anyhow::Result<B
     let mut captures = BTreeMap::new();
     for page in &report.pages {
         for capture in &page.captures {
-            // Input text passed the archive privacy gate. Runtime text was redacted
-            // before reaching this queue; screenshots contain no inherited live jar.
-            let class = if capture.media_type == "image/png" {
-                Sensitivity::Sensitive
-            } else {
-                Sensitivity::Content
-            };
-            if let Some(expiry) = crawlx_storage::retention::artifact_expiry(
-                class,
-                &capture.media_type,
-                RetentionMode::Standard,
-                u32::from(args.retention_days),
-                now,
-            ) {
+            let (reference, expiry) = save_capture(&store, run.id, capture, now, args.retention_days).await?;
+            if let Some(expiry) = expiry {
                 expires_at = expires_at.min(expiry);
             }
-            let redactor = crawlx_core::secret::Redactor::new();
-            let approved = if capture.media_type == "image/png" {
-                redactor.verify_binary(&capture.bytes)?
-            } else {
-                redactor.redact_artifact(&capture.bytes)?
-            };
-            let reference = sink.put(run.id, class, &capture.media_type, &approved).await?;
             captures.insert(key(page.ordinal, &capture.kind), reference);
         }
     }
-    let stored = StoredReport { report, captures };
+    let mut stored_differences = BTreeMap::new();
+    for difference in differences {
+        let (reference, expiry) =
+            save_capture(&store, run.id, &difference.capture, now, args.retention_days).await?;
+        if let Some(expiry) = expiry {
+            expires_at = expires_at.min(expiry);
+        }
+        stored_differences.insert(key(difference.page, &difference.phase), reference);
+    }
+    let stored = StoredReport {
+        report,
+        captures,
+        differences: stored_differences,
+    };
     let bytes = serde_json::to_vec(&stored)?;
     if bytes.len() > 16 * 1024 * 1024 {
         bail!("replay manifest exceeds 16 MiB bound");
@@ -331,7 +371,10 @@ async fn load(path: &Path, tenant: TenantId) -> anyhow::Result<Option<ReplayRepo
     };
     let mut stored: StoredReport =
         serde_json::from_slice(&bytes).map_err(|_| anyhow!("baseline replay manifest schema invalid"))?;
-    if stored.report.pages.len() > 32 || stored.report.resources.len() > 10_000 || stored.captures.len() > 160
+    if stored.report.pages.len() > 32
+        || stored.report.resources.len() > 10_000
+        || stored.captures.len() > 160
+        || stored.differences.len() > 96
     {
         bail!("baseline replay count bound failed");
     }
@@ -385,7 +428,7 @@ pub async fn replay(args: ReplayArgs, out: &mut dyn Write) -> anyhow::Result<Exi
         .filter(|r| r.status == 404 && r.recorded_status.is_none())
         .count();
     let denied = report.denied_requests;
-    let bundle = save(&args, report).await?;
+    let bundle = save(&args, report, Vec::new()).await?;
     serde_json::to_writer_pretty(
         &mut *out,
         &serde_json::json!({"schemaVersion":1,"operation":"archive_replay",
@@ -417,12 +460,21 @@ pub async fn qa(args: QaArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
     let actual = render(&args.replay).await?;
     let max_pixel = args.max_pixel_distance;
     let max_text = args.max_text_distance;
-    let (actual, compared) = tokio::task::spawn_blocking(move || {
+    let with_differences = args.diff_images;
+    let (actual, compared, differences) = tokio::task::spawn_blocking(move || {
         let compared = crawlx_worker::archive_qa::compare(&actual, baseline.as_ref(), max_pixel, max_text)?;
-        Ok::<_, crawlx_worker::archive_replay::ReplayError>((actual, compared))
+        let differences = if with_differences {
+            match baseline.as_ref() {
+                Some(baseline) => crawlx_worker::archive_qa::diff_images(&actual, baseline)?,
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        Ok::<_, crawlx_worker::archive_replay::ReplayError>((actual, compared, differences))
     })
     .await??;
-    let _bundle = save(&args.replay, actual).await?;
+    let _bundle = save(&args.replay, actual, differences).await?;
     serde_json::to_writer_pretty(&mut *out, &compared)?;
     writeln!(out)?;
     Ok(if compared.failed > 0 {

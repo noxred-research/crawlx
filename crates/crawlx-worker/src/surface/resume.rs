@@ -7,6 +7,7 @@
 //! depth). A later run seeded with it ([`crate::UrlPlaneRunner::seed_resume`]) never
 //! refetches a visited URL and starts its frontier from `pending`.
 
+use crawlx_core::extraction::{DedupeSnapshotError, DedupeSnapshotV1};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -26,6 +27,12 @@ pub enum ResumeError {
         /// Version found in the document.
         found: u32,
     },
+    /// Hash-only continuation state failed its version, bounds or scope checks.
+    #[error("resume dedupe state is invalid: {0}")]
+    Dedupe(#[from] DedupeSnapshotError),
+    /// The authoritative current run could not be read for its tenant binding.
+    #[error("resume run lookup failed: {0}")]
+    Store(#[from] crawlx_core::StoreError),
 }
 
 /// A URL admitted but not yet fetched when the run stopped.
@@ -59,6 +66,10 @@ pub struct ResumeState {
     pub visited: Vec<String>,
     /// Admitted URLs the stopped run did not fetch, ordered by `(depth, url)`.
     pub pending: Vec<ResumeEntry>,
+    /// Hash-only extraction admission state, under this checkpoint's custody and expiry.
+    /// Absent in older checkpoints, which retain their URL-only continuation behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedupe: Option<DedupeSnapshotV1>,
 }
 
 impl ResumeState {
@@ -80,6 +91,7 @@ impl ResumeState {
             version: RESUME_VERSION,
             visited: visited.into_iter().collect(),
             pending,
+            dedupe: None,
         }
     }
 
@@ -103,13 +115,19 @@ impl ResumeState {
     ///
     /// # Errors
     /// [`ResumeError::Json`] for malformed input, [`ResumeError::Version`] when the
-    /// document's `version` is not [`RESUME_VERSION`].
+    /// document's `version` is not [`RESUME_VERSION`], or [`ResumeError::Dedupe`] for
+    /// an unsupported or inconsistent hash-only snapshot.
     pub fn from_json(json: &str) -> Result<Self, ResumeError> {
         let raw: Self = serde_json::from_str(json)?;
         if raw.version != RESUME_VERSION {
             return Err(ResumeError::Version { found: raw.version });
         }
-        Ok(Self::new(raw.visited, raw.pending))
+        if let Some(snapshot) = &raw.dedupe {
+            snapshot.validate()?;
+        }
+        let mut state = Self::new(raw.visited, raw.pending);
+        state.dedupe = raw.dedupe;
+        Ok(state)
     }
 }
 
@@ -157,6 +175,37 @@ mod tests {
         .unwrap();
         assert_eq!(edited.visited, ["a", "b"]);
         assert_eq!(edited.pending[0], ResumeEntry::new("p", 1));
+        assert!(edited.dedupe.is_none());
         assert!(ResumeState::from_json("not json").is_err());
+    }
+
+    #[test]
+    fn json_preserves_hash_snapshot_and_refuses_corruption_without_empty_fallback() {
+        use crawlx_core::extraction::{DedupeCache, DedupeKindV1, DedupeScopeV1, DEDUPE_NORMALIZATION_V1};
+        use crawlx_core::hash::Digest;
+        let mut cache = DedupeCache::new(2).unwrap();
+        let key = DedupeScopeV1::new("tenant", "run", "anonymous").unwrap().key(
+            "extractor",
+            Digest([0; 32]),
+            DEDUPE_NORMALIZATION_V1,
+        );
+        let _ = cache.admit(&key, DedupeKindV1::Content, [1; 32], Digest([0; 32]));
+        let mut state = ResumeState::new(["done".to_owned()], [ResumeEntry::new("pending", 1)]);
+        state.dedupe = Some(cache.snapshot("tenant", "run"));
+        let json = state.to_json().unwrap();
+        let decoded = ResumeState::from_json(&json).unwrap();
+        assert_eq!(decoded, state);
+        assert_eq!(decoded.to_json().unwrap(), json);
+        for (field, value, expected) in [
+            ("version", 2, DedupeSnapshotError::Version { found: 2 }),
+            ("capacity", 0, DedupeSnapshotError::Bounds),
+            ("tick", 0, DedupeSnapshotError::Inconsistent),
+        ] {
+            let mut bad: serde_json::Value = serde_json::from_str(&json).unwrap();
+            bad["dedupe"][field] = value.into();
+            assert!(
+                matches!(ResumeState::from_json(&bad.to_string()), Err(ResumeError::Dedupe(error)) if error == expected)
+            );
+        }
     }
 }

@@ -493,6 +493,7 @@ async fn freshness_actor(
     let session = CrawlSession {
         id: SessionId::new(),
         run: run.id,
+        kind: crawlx_core::repo::SessionKind::Browser,
         role: PrincipalId("anonymous".into()),
         run_index: 1,
         schedule_slot: 0,

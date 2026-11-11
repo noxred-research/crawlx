@@ -134,7 +134,7 @@ pub enum FieldExtractionV1 {
     /// Nested object built from the field's own `fields`; carries no value of its own.
     Group,
 }
-/// Number of output values, checked before any joining transform.
+/// Number of values after input processors, checked before output processors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -196,6 +196,58 @@ pub enum FieldTransformV1 {
         count: usize,
     },
 }
+
+/// Value-free processor identity; parameters can contain private text and are never evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FieldProcessorKindV1 {
+    /// Strip edge whitespace.
+    Trim,
+    /// Collapse whitespace.
+    NormalizeWhitespace,
+    /// Resolve a URL without acquisition.
+    ResolveUrl,
+    /// Parse a date.
+    IsoDate,
+    /// Parse a number.
+    Number,
+    /// Join values.
+    Join,
+    /// Remove duplicate values.
+    Dedupe,
+    /// Clean text.
+    Clean,
+    /// Apply a compiled regular expression.
+    Regex,
+    /// Apply a registered pattern.
+    Builtin,
+    /// Parse JSON.
+    JsonParse,
+    /// Limit value count.
+    Limit,
+}
+
+impl FieldTransformV1 {
+    /// Return a value-free identity suitable for retained provenance.
+    #[must_use]
+    pub const fn processor_kind(&self) -> FieldProcessorKindV1 {
+        match self {
+            Self::Trim => FieldProcessorKindV1::Trim,
+            Self::NormalizeWhitespace => FieldProcessorKindV1::NormalizeWhitespace,
+            Self::ResolveUrl => FieldProcessorKindV1::ResolveUrl,
+            Self::IsoDate => FieldProcessorKindV1::IsoDate,
+            Self::Number => FieldProcessorKindV1::Number,
+            Self::Join { .. } => FieldProcessorKindV1::Join,
+            Self::Dedupe => FieldProcessorKindV1::Dedupe,
+            Self::Clean => FieldProcessorKindV1::Clean,
+            Self::Regex { .. } => FieldProcessorKindV1::Regex,
+            Self::Builtin { .. } => FieldProcessorKindV1::Builtin,
+            Self::JsonParse => FieldProcessorKindV1::JsonParse,
+            Self::Limit { .. } => FieldProcessorKindV1::Limit,
+        }
+    }
+}
 /// One field compiled before evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -209,7 +261,11 @@ pub struct ItemFieldV1 {
     pub extraction: FieldExtractionV1,
     /// Selection cardinality.
     pub cardinality: FieldCardinalityV1,
-    /// Applied in listed order.
+    /// Ordered input processors on extracted values, before defaults and cardinality checks.
+    /// Empty source values skip processors; processor rejection never falls back to a default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_processors: Vec<FieldTransformV1>,
+    /// Ordered output processors after cardinality checks; preserved as `transforms` on the wire.
     #[serde(default)]
     pub transforms: Vec<FieldTransformV1>,
     /// Missing value fails field quality.
@@ -304,9 +360,10 @@ fn validate_fields(fields: &[ItemFieldV1], depth: usize, total: &mut usize) -> R
             || f.selectors.is_empty()
             || f.selectors.len() > 16
             || f.transforms.len() > 16
+            || f.input_processors.len() > 16
             || f.selectors.iter().any(selector_invalid)
             || matches!(&f.extraction, FieldExtractionV1::Attribute { name } if name.is_empty() || name.len()>128)
-            || f.transforms.iter().any(|t| match t {
+            || f.input_processors.iter().chain(&f.transforms).any(|t| match t {
                 FieldTransformV1::Join { separator } => separator.len() > 1024,
                 FieldTransformV1::Regex { pattern, .. } => pattern.is_empty() || pattern.len() > 512,
                 FieldTransformV1::Builtin { name, .. } => name.is_empty() || name.len() > 64,
@@ -314,7 +371,8 @@ fn validate_fields(fields: &[ItemFieldV1], depth: usize, total: &mut usize) -> R
                 _ => false,
             })
             || group != !f.fields.is_empty()
-            || ((group || matches!(&f.extraction, FieldExtractionV1::Attributes)) && !f.transforms.is_empty())
+            || ((group || matches!(&f.extraction, FieldExtractionV1::Attributes))
+                && (!f.transforms.is_empty() || !f.input_processors.is_empty()))
             || (!f.fields.is_empty() && depth >= MAX_FIELD_DEPTH)
             || f.fields.len() > 64
             || match &f.source {
@@ -381,6 +439,166 @@ pub enum FieldQualityV1 {
     /// Final privacy projection removed data or rejected its post-projection type.
     Redacted,
 }
+
+/// Structural source identity, never a selector expression, node identifier or content digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FieldSourceKindV1 {
+    /// Evaluate from the document or current group element.
+    Context,
+    /// Evaluate from a following sibling.
+    NextSibling,
+    /// Evaluate from a preceding sibling.
+    PreviousSibling,
+}
+
+impl FieldSourceKindV1 {
+    /// Strip selector parameters from a recipe's source.
+    #[must_use]
+    pub const fn from_source(source: Option<&FieldSourceV1>) -> Self {
+        match source {
+            None | Some(FieldSourceV1::Context) => Self::Context,
+            Some(FieldSourceV1::NextSibling { .. }) => Self::NextSibling,
+            Some(FieldSourceV1::PreviousSibling { .. }) => Self::PreviousSibling,
+        }
+    }
+}
+
+/// One selector's pre-union match count, in recipe order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct FieldSelectionV1 {
+    /// Zero-based selector index, never its expression.
+    pub index: usize,
+    /// Node matches or one scalar result; zero when no source context exists.
+    pub matches: usize,
+}
+
+impl FieldSelectionV1 {
+    /// Construct structural selection evidence.
+    #[must_use]
+    pub const fn new(index: usize, matches: usize) -> Self {
+        Self { index, matches }
+    }
+}
+
+/// One executed processor; no input/output values or processor parameters are retained.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct FieldProcessorOutcomeV1 {
+    /// Zero-based index within its input or output processor list.
+    pub index: usize,
+    /// Parameter-free operation identity.
+    pub kind: FieldProcessorKindV1,
+    /// Value count before execution.
+    pub input_values: usize,
+    /// Value count after successful execution; absent when partial work was rejected.
+    pub output_values: Option<usize>,
+}
+
+impl FieldProcessorOutcomeV1 {
+    /// Construct evidence for one executed processor.
+    #[must_use]
+    pub const fn new(
+        index: usize,
+        kind: FieldProcessorKindV1,
+        input_values: usize,
+        output_values: Option<usize>,
+    ) -> Self {
+        Self {
+            index,
+            kind,
+            input_values,
+            output_values,
+        }
+    }
+}
+
+/// Bounded, value-free evidence in execution order: selection, input processors, output processors.
+/// Defaults and privacy changes remain explicit in the containing field's quality and redacted flag.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct FieldProvenanceV1 {
+    /// Exactly one.
+    pub version: u16,
+    /// Structural source relationship.
+    pub source: FieldSourceKindV1,
+    /// At most sixteen selector outcomes, including zero matches.
+    pub selections: Vec<FieldSelectionV1>,
+    /// Extracted value count after node union and projection, before processing.
+    pub selected_values: usize,
+    /// Executed prefix of at most sixteen input processors.
+    pub input_processors: Vec<FieldProcessorOutcomeV1>,
+    /// Executed prefix of at most sixteen output processors.
+    pub output_processors: Vec<FieldProcessorOutcomeV1>,
+}
+
+impl FieldProvenanceV1 {
+    /// Construct empty evidence for a recipe's source relationship.
+    #[must_use]
+    pub fn new(source: FieldSourceKindV1) -> Self {
+        Self {
+            version: 1,
+            source,
+            selections: Vec::new(),
+            selected_values: 0,
+            input_processors: Vec::new(),
+            output_processors: Vec::new(),
+        }
+    }
+
+    /// Validate bounds and value-free identities against the original recipe before retention.
+    ///
+    /// # Errors
+    /// Rejects unsupported versions, excessive counts or evidence inconsistent with the recipe.
+    pub fn validate(&self, rule: &ItemFieldV1) -> Result<(), CoreError> {
+        if self.version != 1
+            || self.source != FieldSourceKindV1::from_source(rule.source.as_ref())
+            || self.selected_values > MAX_SELECTED
+            || (self.selected_values == 0 && !self.input_processors.is_empty())
+            || self.selected_values
+                > self
+                    .selections
+                    .iter()
+                    .fold(0usize, |count, entry| count.saturating_add(entry.matches))
+            || self.selections.len() != rule.selectors.len()
+            || self.selections.len() > 16
+            || self
+                .selections
+                .iter()
+                .enumerate()
+                .any(|(index, selection)| selection.index != index || selection.matches > MAX_SELECTED)
+        {
+            return Err(invalid("item field provenance invalid"));
+        }
+        let mut previous_values = Some(self.selected_values);
+        for (evidence, processors) in [
+            (&self.input_processors, &rule.input_processors),
+            (&self.output_processors, &rule.transforms),
+        ] {
+            if evidence.len() > processors.len() || evidence.len() > 16 {
+                return Err(invalid("item processor provenance limit invalid"));
+            }
+            for (index, (entry, processor)) in evidence.iter().zip(processors).enumerate() {
+                if entry.index != index
+                    || entry.kind != processor.processor_kind()
+                    || entry.input_values > MAX_SELECTED
+                    || entry.output_values.is_some_and(|count| count > MAX_SELECTED)
+                    || (entry.output_values.is_none() && index + 1 != evidence.len())
+                    || previous_values != Some(entry.input_values)
+                {
+                    return Err(invalid("item processor provenance invalid"));
+                }
+                previous_values = entry.output_values;
+            }
+        }
+        Ok(())
+    }
+}
 /// One field's retained quality and value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -398,6 +616,9 @@ pub struct FieldOutcomeV1 {
     /// Nested group fields: one ordered outcome list per base element, empty for plain fields.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<Vec<FieldOutcomeV1>>,
+    /// Value-free ordered evidence; absent on legacy or manually constructed outcomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<FieldProvenanceV1>,
 }
 /// Complete typed item result, independent of network or persistence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,6 +644,7 @@ impl FieldOutcomeV1 {
             value,
             redacted: false,
             groups: Vec::new(),
+            provenance: None,
         }
     }
 }

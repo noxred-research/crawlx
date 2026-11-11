@@ -287,8 +287,10 @@ pub async fn process_document(
 ///
 /// # Errors
 /// Returns serialization, retention, schema, expiry or artifact backend failures.
+#[allow(clippy::too_many_arguments)]
 pub async fn store_candidate(
     artifacts: &dyn crawlx_core::repo::ArtifactStore,
+    cpu: &crate::runtime::CpuPool,
     run: &crawlx_core::repo::CrawlRun,
     page: i64,
     candidate: &Value,
@@ -366,8 +368,8 @@ pub async fn store_candidate(
     );
     item.expires_at = Some(expires);
     let outbox =
-        crate::delivery::prepare_item_feeds(artifacts, run, page, dataset, &artifact, approved.as_ref())
-            .await?;
+        crate::delivery::prepare_item_feeds(artifacts, cpu, run, page, dataset, &artifact, approved).await?;
+    let outbox = crate::delivery::take_feed_fragments(run, &mut item, outbox);
     Ok((
         artifact,
         Some(AcceptedBatchV1::new(dataset.clone(), vec![item])),

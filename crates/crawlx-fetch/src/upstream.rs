@@ -325,23 +325,49 @@ impl UpstreamProxy {
     ) -> Result<BoxIo, String> {
         match self.scheme {
             UpstreamScheme::Http | UpstreamScheme::Https => {
-                let mut io = self.dial_proxy(proxy_addrs).await?;
-                let answer = tokio::time::timeout(
+                if let Some(log) = &self.pool {
+                    if let Err(error) = log.ensure_pin() {
+                        log.lose_pin(host, port);
+                        return Err(error.to_string());
+                    }
+                }
+                let mut io = match self.dial_proxy(proxy_addrs).await {
+                    Ok(io) => io,
+                    Err(error) => {
+                        if let Some(log) = &self.pool {
+                            log.lose_pin(host, port);
+                        }
+                        return Err(error);
+                    }
+                };
+                let answer = match tokio::time::timeout(
                     HANDSHAKE_TIMEOUT,
                     http_connect(&mut io, host, port, self.authorization()),
                 )
                 .await
-                .map_err(|_| "upstream proxy CONNECT timed out".to_owned())?;
+                {
+                    Ok(answer) => answer,
+                    Err(_) => {
+                        if let Some(log) = &self.pool {
+                            log.lose_pin(host, port);
+                        }
+                        return Err("upstream proxy CONNECT timed out".to_owned());
+                    }
+                };
                 match (answer, &self.pool) {
                     (Ok(answer), log) => {
                         if let Some(log) = log {
-                            log.opened(host, port, answer.session.as_deref(), answer.exit_ip.as_deref());
+                            log.opened(host, port, answer.session.as_deref(), answer.exit_ip.as_deref())
+                                .await
+                                .map_err(|error| error.to_string())?;
                         }
                         Ok(io)
                     }
                     (Err(error), Some(log)) => {
                         if let ConnectError::Refused { status, reason } = &error {
                             log.refused(host, port, *status, reason);
+                        } else {
+                            log.lose_pin(host, port);
                         }
                         Err(error.message(true))
                     }

@@ -3,25 +3,30 @@
 //! (`capture.backend = "proxy"`), asserting the rows of the capture contract that do not
 //! need a specific protocol origin: raw stream order, lane exclusion of non-page origins,
 //! `late` attribution to the previous action's epoch and the proxy's `protocols_disabled`.
-//! Skipped without a Chromium executable.
+//! Skipped unless `CRAWLX_CHROMIUM_PATH` is explicitly set.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use async_trait::async_trait;
 use crawlx_bench::gym::manifest::FixtureManifest;
 use crawlx_bench::gym::{GymHandle, GymServer};
 use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, worker_config};
-use crawlx_browser::launch::find_executable;
+use crawlx_browser::ChromiumBackend;
+use crawlx_core::browser::{BrowserBackend, BrowserContext, BrowserError, ContextConfig};
 use crawlx_core::config::{CaptureBackend, CrawlMode, SafetyProfile};
 use crawlx_core::ids::{ActionId, NetworkEpochId};
+use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::traffic::{Protocol, TrafficEvent, TrafficOrigin, TrustLane, UnattributedReason};
 use crawlx_core::ActionProposal;
 use crawlx_storage::MemoryStore;
 use crawlx_strategies::{DecisionContext, Strategy, StrategyError};
+use crawlx_telemetry::metrics::names;
+use crawlx_telemetry::Metrics;
 use crawlx_worker::{build_strategies, run_local_with, DriverConfig, LocalRun, RunReport, Stores};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Semaphore, SemaphorePermit};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{OnceCell, Semaphore, SemaphorePermit};
 
 /// Idle time between actions for the `late` fixture: longer than the fixture's 2 s timer,
 /// so timer- and push-driven requests start after the previous epoch settled and before
@@ -46,8 +51,8 @@ impl Strategy for Pacer {
     }
 }
 
-/// Chromium instances running at once (see `tests/browser.rs`).
-static BROWSER_SLOTS: Semaphore = Semaphore::const_new(2);
+/// Serialize browser runs because the unmatched-flow test measures process-global counters.
+static BROWSER_SLOTS: Semaphore = Semaphore::const_new(1);
 
 async fn browser_slot() -> SemaphorePermit<'static> {
     BROWSER_SLOTS
@@ -57,8 +62,8 @@ async fn browser_slot() -> SemaphorePermit<'static> {
 }
 
 fn have_chromium() -> bool {
-    if find_executable().is_none() {
-        eprintln!("SKIP: no Chromium executable found (set CRAWLX_CHROMIUM_PATH)");
+    if std::env::var_os("CRAWLX_CHROMIUM_PATH").is_none() {
+        eprintln!("SKIP: CRAWLX_CHROMIUM_PATH is unset");
         return false;
     }
     true
@@ -66,6 +71,54 @@ fn have_chromium() -> bool {
 
 async fn gym() -> GymHandle {
     GymServer::start("127.0.0.1:0".parse().unwrap()).await.unwrap()
+}
+
+/// A real Chromium backend that completes one wire request before creating any context.
+/// No CDP target can observe this URL, and no capture epoch can predate its request.
+struct BootstrapProxyBackend {
+    inner: ChromiumBackend,
+    bootstrap_url: url::Url,
+    injected: OnceCell<()>,
+}
+
+#[async_trait]
+impl BrowserBackend for BootstrapProxyBackend {
+    async fn new_context(&self, config: ContextConfig) -> Result<Box<dyn BrowserContext>, BrowserError> {
+        self.injected
+            .get_or_init(|| async {
+                let port = config
+                    .egress_proxy_port
+                    .expect("the worker supplies its egress proxy");
+                let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+                // Absolute-form HTTP goes through the run's real, policy-checked EgressProxy.
+                let request = format!(
+                    "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                    self.bootstrap_url,
+                    &self.bootstrap_url[url::Position::BeforeHost..url::Position::AfterPort],
+                );
+                socket.write_all(request.as_bytes()).await.unwrap();
+                let mut response = Vec::new();
+                socket.read_to_end(&mut response).await.unwrap();
+                assert!(
+                    response.starts_with(b"HTTP/1.1 404 "),
+                    "the controlled missing path must reach the gym origin: {response:?}"
+                );
+            })
+            .await;
+        self.inner.new_context(config).await
+    }
+
+    fn build_info(&self) -> &BrowserBuildInfo {
+        self.inner.build_info()
+    }
+
+    async fn shutdown(&self) {
+        self.inner.shutdown().await;
+    }
+
+    async fn shutdown_confirmed(&self) -> Result<(), BrowserError> {
+        self.inner.shutdown_confirmed().await
+    }
 }
 
 /// What one worker crawl left behind.
@@ -264,7 +317,7 @@ fn polls(c: &Crawled) -> usize {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn g28_cdp_backend_keeps_the_raw_stream_and_excludes_background_origins_from_trusted_lane() {
+async fn browser_g28_cdp_backend_keeps_the_raw_stream_and_excludes_background_origins_from_trusted_lane() {
     if !have_chromium() {
         return;
     }
@@ -284,7 +337,7 @@ async fn g28_cdp_backend_keeps_the_raw_stream_and_excludes_background_origins_fr
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn g28_proxy_backend_records_page_flows_with_quic_disabled() {
+async fn browser_g28_proxy_backend_records_page_flows_with_quic_disabled() {
     if !have_chromium() {
         return;
     }
@@ -365,7 +418,7 @@ async fn g28_proxy_backend_records_page_flows_with_quic_disabled() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn g28_cdp_and_proxy_derive_the_same_controlled_background_operations() {
+async fn browser_g28_cdp_and_proxy_derive_the_same_controlled_background_operations() {
     if !have_chromium() {
         return;
     }
@@ -394,6 +447,8 @@ async fn g28_cdp_and_proxy_derive_the_same_controlled_background_operations() {
     }
     // Chromium can attach the worker target after the initial script request started.
     // The proxy must retain that bootstrap wire request; CDP cannot reconstruct it.
+    // This initial worker bootstrap remains a proxy-only source-completeness boundary,
+    // not evidence that CDP captured the worker's complete request stream.
     assert!(
         proxy.traffic.iter().any(|(_, event)| {
             capture_source(event) == Some("proxy")
@@ -460,7 +515,7 @@ fn assert_late_events_point_at_an_earlier_epoch(c: &Crawled) -> usize {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn async_late_cdp_backend_tags_delayed_requests_late_under_the_causing_epoch() {
+async fn browser_async_late_cdp_backend_tags_delayed_requests_late_under_the_causing_epoch() {
     if !have_chromium() {
         return;
     }
@@ -472,7 +527,7 @@ async fn async_late_cdp_backend_tags_delayed_requests_late_under_the_causing_epo
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn async_late_proxy_backend_tags_flows_after_settle_late_under_the_previous_epoch() {
+async fn browser_async_late_proxy_backend_tags_flows_after_settle_late_under_the_previous_epoch() {
     if !have_chromium() {
         return;
     }
@@ -491,4 +546,91 @@ async fn async_late_proxy_backend_tags_flows_after_settle_late_under_the_previou
         .count();
     assert!(raw_late > 0, "no late raw proxy flow: {stats:?}");
     assert!(stats.late >= u64::try_from(raw_late).unwrap(), "{stats:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_proxy_unmatched_flow_metric_matches_the_worker_run_report() {
+    if !have_chromium() {
+        return;
+    }
+    let _slot = browser_slot().await;
+    let gym = gym().await;
+    let manifest = FixtureManifest::embedded("g28").unwrap();
+    let mut req = crawl_request(&manifest, &gym.base_url, 28, SafetyProfile::TestEnvironment).unwrap();
+    req.mode = CrawlMode::Dynamic;
+    req.limits.interactions = 6;
+    req.capture.backend = CaptureBackend::Proxy;
+    let bootstrap_url = req.seed_url.join("unmatched-proxy-flow").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = worker_config(&manifest, dir.path()).unwrap();
+    cfg.gates = crawlx_worker::Gates::from_status(crawlx_core::gates::GateStatus::ALL);
+    cfg.egress.resolver = Some(Arc::new(
+        crawlx_fetch::StaticResolver::new().with("localhost", [std::net::Ipv4Addr::LOCALHOST.into()]),
+    ));
+    // An injected backend bypasses the pool's launch flags, so retain its QUIC restriction.
+    let mut launch = cfg.launch.clone();
+    launch.extra_args.push("--disable-quic".to_owned());
+    let backend = Arc::new(BootstrapProxyBackend {
+        inner: ChromiumBackend::launch(launch).await.unwrap(),
+        bootstrap_url: bootstrap_url.clone(),
+        injected: OnceCell::new(),
+    });
+    let memory = Arc::new(MemoryStore::new());
+    let stores = Stores::over_memory(Arc::clone(&memory), dir.path())
+        .await
+        .unwrap();
+    let mut local = authorize_fixture(
+        LocalRun::new(req.clone(), cfg)
+            .with_stores(stores)
+            .with_backend(backend),
+    );
+    let mut tracker = req.seed_url.clone();
+    tracker.set_host(Some("localhost")).unwrap();
+    local
+        .authorization
+        .as_mut()
+        .expect("the fixture has a verified authorization record")
+        .origins
+        .push(tracker.origin().ascii_serialization());
+    let counter = Metrics::global().counter(names::TRAFFIC_UNMATCHED_PROXY_FLOWS);
+    let before = counter.get(&[]);
+    let report = run_local_with(local).await.unwrap();
+    let delta = counter.get(&[]).checked_sub(before).unwrap();
+    assert!(report.status.is_terminal(), "{:?}", report.status);
+    assert!(!report.states.is_empty(), "the same run must execute Chromium");
+    assert!(
+        !report.actions.is_empty(),
+        "the same run must execute browser actions"
+    );
+    assert_eq!(report.capture.backend, CaptureBackend::Proxy);
+    assert_eq!(report.capture.protocols_disabled, vec![Protocol::H3]);
+    let stats = report.capture.proxy.expect("proxy capture statistics");
+    assert!(stats.unmatched > 0, "{stats:?}");
+    assert_eq!(delta, stats.unmatched, "{stats:?}");
+    let traffic = memory.traffic_of_run(report.run_id);
+    let bootstrap: Vec<_> = traffic
+        .iter()
+        .filter(|(_, event)| event.url == bootstrap_url.as_str())
+        .collect();
+    assert_eq!(bootstrap.len(), 1, "{bootstrap:?}");
+    let (_, event) = bootstrap[0];
+    assert_eq!(capture_source(event), Some("proxy"));
+    assert_eq!(event.method, "GET");
+    assert_eq!(event.status, Some(404));
+    assert_eq!(event.epoch_id, None);
+    assert_eq!(
+        event.unattributed_reason,
+        Some(UnattributedReason::UnmatchedProxyFlow),
+        "{event:?}"
+    );
+    assert!(!event.late, "{event:?}");
+    assert!(
+        traffic.iter().any(|(_, event)| {
+            capture_source(event) == Some("cdp_supplement")
+                && event.url == req.seed_url.as_str()
+                && event.status == Some(200)
+        }),
+        "the same worker run must retain a real Chromium navigation"
+    );
+    gym.shutdown().await;
 }

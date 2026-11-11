@@ -36,7 +36,12 @@ async fn typed(form_fill: Option<FormFill>) -> BTreeMap<String, String> {
         crawl.extract.form_fill = f;
     }
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(script()));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
         .await
         .unwrap();

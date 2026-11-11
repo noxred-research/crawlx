@@ -50,6 +50,18 @@ fn source_discovery() -> Value {
         "properties":{
             "version":{"type":"integer","const":1,"default":1},
             "mode":{"type":"string","enum":["explore","probe"],"default":"explore"},
+            "articleMemo":{"type":"object","additionalProperties":false,
+                "description":"Explicit bounded repeat suppression after current admission; hashes never grant authority.",
+                "properties":{
+                    "enabled":{"type":"boolean","default":false},
+                    "maxEntries":{"type":"integer","minimum":1,"maximum":100000,"default":20000}
+                }},
+            "categoryCache":{"type":"object","additionalProperties":false,
+                "description":"Representation and role-scoped proposals expire by worker clock; current admission remains authoritative.",
+                "properties":{
+                    "enabled":{"type":"boolean","default":true},
+                    "ttlSeconds":{"type":"integer","minimum":1,"maximum":604800,"default":86400}
+                }},
             "maxSourceDocuments":{"type":"integer","minimum":1,"maximum":64,"default":16},
             "maxFeedBytes":{"type":"integer","minimum":1,"maximum":8388608,"default":2097152},
             "maxEntries":{"type":"integer","minimum":1,"maximum":10000,"default":1000},
@@ -84,10 +96,21 @@ fn archive_config() -> Value {
         "version":{"type":"integer","const":1,"default":1},
         "format":{"type":"string","enum":["warc","wacz"],"default":"wacz"},
         "capture":{"type":"string","enum":["available","require_complete"],"default":"available"},
-        "maxBytes":{"type":"integer","minimum":1,"maximum":1073741824,"default":1073741824},
+        "dedupe":{"type":"string","enum":["none","collection","tenant"],"default":"none",
+            "description":"Optional revisit deduplication: none disables matching and is omitted when serialized; collection reuses committed compatible sources within this export; tenant also permits complete native bodies from opted-in published sources with local package closure. Retained DOM and text reuse stays within the same run."},
+        "maxBytes":{"type":"integer","minimum":1,"maximum":1073741824,"default":1073741824,
+            "description":"Total encoded-byte ceiling; must be at least maxRecordBytes. Lowering this below the default 16 MiB record ceiling requires an explicit smaller maxRecordBytes."},
+        "rolloverBytes":{"type":"integer","minimum":1,"maximum":1073741824,
+            "description":"Hard encoded-byte cap per WARC member; no larger than maxBytes. Only WACZ exports support rollover."},
         "maxRecordBytes":{"type":"integer","minimum":1,"maximum":16777216,"default":16777216},
         "maxRecords":{"type":"integer","minimum":1,"maximum":10000,"default":10000}
-    }})
+    },
+    "allOf":[
+        {"if":{"required":["rolloverBytes"]},
+            "then":{"properties":{"format":{"const":"wacz"}}}},
+        {"if":{"not":{"required":["maxRecordBytes"]}},
+            "then":{"properties":{"maxBytes":{"minimum":16777216}}}}
+    ]})
 }
 
 fn archive_artifact() -> Value {
@@ -115,14 +138,41 @@ fn archive_facts() -> Value {
     }})
 }
 
+fn archive_custody() -> Value {
+    json!({"type":"object","additionalProperties":false,"required":["sensitivity","expiresAt"],
+        "description":"Inherited source classification and earliest deadline; packaging cannot weaken either. Sensitive archive content requires artifacts:read_sensitive; progress metadata is redacted for other callers.",
+        "properties":{
+            "sensitivity":{"type":"string","enum":["content","sensitive"]},
+            "expiresAt":{"type":["string","null"],"format":"date-time"}
+        },
+        "allOf":[{"if":{"properties":{"sensitivity":{"const":"sensitive"}}},
+            "then":{"properties":{"expiresAt":{"type":"string","format":"date-time"}}}}]
+    })
+}
+
+fn archive_payload_key() -> Value {
+    json!({"type":"object","additionalProperties":false,
+        "required":["principal","variant","representation","redactionRevision","mime"],
+        "description":"Exact approved reuse domain, not authorization to access source bytes.",
+        "properties":{
+            "principal":{"type":"string"},"variant":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+            "representation":{"type":"string","enum":["wire_http","normalized_http","rendered_dom","screenshot","extracted_text","protocol_resource"]},
+            "redactionRevision":{"type":"string"},"mime":{"type":"string"}
+        }
+    })
+}
+
 fn archive_manifest() -> Value {
     json!({"type":"object","additionalProperties":false,
-    "required":["schemaVersion","tenant","run","created","complete","records","omissions"],
+    "required":["schemaVersion","tenant","run","created","complete","records","omissions","custody"],
     "properties":{
         "schemaVersion":{"type":"integer","const":1},"tenant":{"type":"string","format":"uuid"},
         "run":{"type":"string","format":"uuid"},"created":{"type":"string","format":"date-time"},
         "complete":{"type":"boolean","const":false,"description":"Current retained-resource producers cannot establish complete original-wire capture."},
         "records":{"type":"integer","minimum":0,"maximum":10000},
+        "custody":archive_custody(),
+        "materializedDependencies":{"type":"integer","minimum":1,
+            "description":"Standalone committed source records embedded to close cross-export revisit dependencies; omitted when zero."},
         "omissions":{"type":"array","items":{"type":"object","additionalProperties":false,
             "required":["sourceEvent","reason"],"properties":{"sourceEvent":{"type":"string"},"reason":{"type":"string"}}}}
     }})
@@ -131,13 +181,14 @@ fn archive_manifest() -> Value {
 fn archive_export() -> Value {
     json!({"type":"object","additionalProperties":false,
     "required":["id","tenant","run","config","state","createdAt","expiresAt","fence","leaseUntil",
-        "records","bytes","artifact","index","manifest","terminalReason","failure"],
+        "records","bytes","artifact","index","manifest","terminalReason","failure","custody"],
     "properties":{
         "id":{"type":"string","format":"uuid"},"tenant":{"type":"string","format":"uuid"},
         "run":{"type":"string","format":"uuid"},"config":archive_config(),
         "state":{"type":"string","enum":["recording","published","failed","deleted"],
             "description":"Deleted exports return 404 rather than exposing this catalog payload."},
         "createdAt":{"type":"string","format":"date-time"},"expiresAt":{"type":["string","null"],"format":"date-time"},
+        "custody":archive_custody(),
         "fence":{"type":"integer","minimum":0},"leaseUntil":{"type":"string","format":"date-time"},
         "records":{"type":"integer","minimum":0,"maximum":10000},"bytes":{"type":"integer","minimum":0,"maximum":1073741824},
         "artifact":{"anyOf":[archive_artifact(),{"type":"null"}],"description":"Final object, available only after publication."},
@@ -152,14 +203,19 @@ fn archive_export() -> Value {
 
 fn archive_record() -> Value {
     json!({"type":"object","additionalProperties":false,
-    "required":["export","ordinal","recordId","artifact","offset","length","payloadDigest","target","facts","mime","dependency"],
+    "required":["export","ordinal","recordId","artifact","offset","length","payloadDigest","target","facts","mime","dependency","custody"],
     "properties":{
         "export":{"type":"string","format":"uuid"},"ordinal":{"type":"integer","minimum":0,"maximum":9223372036854775807i64},
         "recordId":{"type":"string"},"artifact":archive_artifact(),"offset":{"type":"integer","minimum":0},
+        "sourceArtifact":archive_artifact(),
+        "custody":archive_custody(),
+        "payloadKey":archive_payload_key(),
         "length":{"type":"integer","minimum":1},"payloadDigest":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
         "target":{"type":"string","format":"uri"},"facts":archive_facts(),"mime":{"type":"string"},
         "dependency":{"anyOf":[archive_dependency(),{"type":"null"}]}
-    }})
+    },
+    "allOf":[{"if":{"properties":{"custody":{"properties":{"sensitivity":{"const":"sensitive"}}}}},
+        "then":{"required":["sourceArtifact"]}}]})
 }
 
 fn archive_response(operation: &mut Value, schema: Value, description: &str) {
@@ -167,6 +223,77 @@ fn archive_response(operation: &mut Value, schema: Value, description: &str) {
         "content":{"application/json":{"schema":schema}}});
     operation["responses"]["410"]["description"] =
         json!("Source retention expired; no content-bearing archive metadata is returned.");
+}
+
+fn browser_capture() -> Value {
+    let records = json!({"type":"integer","minimum":1,"maximum":5000});
+    let bytes = json!({"type":"integer","minimum":1,"maximum":8388608});
+    json!({
+        "type":"object", "additionalProperties":false,
+        "description":"Opt-in browser evidence. Static mode cannot enable browser capture. MHTML, PDF, phase resources and downloads require retained content, not zero data retention.",
+        "properties":{
+            "xhr":{"anyOf":[{"type":"null"}, {
+                "type":"object","additionalProperties":false,
+                "required":["urlPatterns","maxRecords","maxBytes"],
+                "properties":{
+                    "urlPatterns":{"type":"array","minItems":1,"maxItems":128,
+                        "items":{"type":"string","minLength":1,"maxLength":8192,
+                            "description":"URL pattern with * as the only wildcard."}},
+                    "maxRecords":records,"maxBytes":bytes
+                }
+            }]},
+            "diagnostics":{"anyOf":[{"type":"null"}, {
+                "type":"object","additionalProperties":false,"required":["maxRecords","maxBytes"],
+                "properties":{"maxRecords":records,"maxBytes":bytes}
+            }]},
+            "mhtml":{"type":"boolean","default":false},
+            "pdf":{"type":"boolean","default":false},
+            "phaseResources":{"type":"boolean","default":false},
+            "downloads":{"type":"array","maxItems":32,"default":[],"items":{
+                "type":"object","additionalProperties":false,"required":["url","maxBytes","timeoutMs"],
+                "properties":{
+                    "url":{"type":"string","format":"uri","pattern":"^https?://",
+                        "description":"HTTP(S) URL without credentials or fragments; runtime egress and navigation policy still applies."},
+                    "maxBytes":{"type":"integer","minimum":1,"maximum":16777216},
+                    "timeoutMs":{"type":"integer","minimum":1,"maximum":120000}
+                }
+            }}
+        }
+    })
+}
+
+fn fetch_controls() -> Value {
+    let mime = json!({
+        "type":"string","minLength":3,"maxLength":100,
+        "pattern":"^[-A-Za-z0-9!#$&^_.+]+/[-A-Za-z0-9!#$&^_.+]+$"
+    });
+    let statuses = json!({
+        "type":"array","items":{"type":"integer","minimum":100,"maximum":599},"default":[]
+    });
+    json!({
+        "type":"object",
+        "properties":{
+            "preflight":{"anyOf":[{"type":"null"},{
+                "type":"object","additionalProperties":false,
+                "properties":{
+                    "maxContentLength":{"type":["integer","null"],"minimum":1,"maximum":67108864},
+                    "contentTypes":{"type":"array","maxItems":16,"items":mime,"default":[]}
+                }
+            }]},
+            "declaration":{"anyOf":[{"type":"null"},{
+                "type":"object","additionalProperties":false,
+                "properties":{
+                    "contentType":{"anyOf":[{"type":"null"},mime]},
+                    "charset":{"type":["string","null"],"minLength":1,"maxLength":128,
+                        "pattern":"^[ -~]*[!-~][ -~]*$"},
+                    "statuses":{"type":"object","additionalProperties":false,
+                        "description":"Disjoint allow and deny sets. Conflicts fail runtime admission.",
+                        "properties":{"allow":statuses,"deny":statuses}}
+                }
+            }]},
+            "oversize":{"type":["string","null"],"enum":[null,"truncate","refuse"]}
+        }
+    })
 }
 
 fn create(schemas: &mut Schemas) -> Value {
@@ -188,9 +315,37 @@ fn create(schemas: &mut Schemas) -> Value {
     ] {
         properties.insert(name.into(), json!({"type":"object"}));
     }
+    properties.insert("fetch".into(), fetch_controls());
+    properties.insert("dynamic".into(), json!({
+        "type":"object",
+        "properties":{"maxPageRevisits":{
+            "type":"integer","minimum":0,"maximum":128,"default":8,
+            "description":"Additional observed renditions retained per canonical URL, keyed by observation epoch and explicit revisit generation. The first rendition remains canonical. Zero keeps only the first and marks later observations revisit_cap_reached; omission preserves existing specification hashes."
+        }}
+    }));
+    properties.insert(
+        "datasets".into(),
+        json!({
+            "type":"object",
+            "properties":{"feeds":{"type":"array","maxItems":64,"items":super::datasets::feed_declaration()}}
+        }),
+    );
+    properties.insert(
+        "capture".into(),
+        json!({
+            "type":"object",
+            "properties":{"browser":browser_capture()}
+        }),
+    );
     properties.insert("scope".into(), json!({
         "type":"object",
         "properties":{
+            "strategy":{
+                "type":"string",
+                "enum":["breadth_first","depth_first","priority","bfs","breadth-first","dfs","depth-first"],
+                "default":"breadth_first",
+                "description":"URL frontier ordering: breadth_first visits shallowest URLs first (the default), depth_first visits the deepest, most recently discovered URL first, and priority uses surface scores. bfs and breadth-first are aliases for breadth_first; dfs and depth-first are aliases for depth_first. Stored configurations use canonical names."
+            },
             "discovery":{"anyOf":[source_discovery(),{"type":"null"}],"default":null},
             "sources":{"type":"array","items":{"type":"string","enum":[
                 "html","feeds","sitemap","categories","conventional","news_search","trends_search","archive"
@@ -236,14 +391,28 @@ fn create(schemas: &mut Schemas) -> Value {
         }
     }));
     properties.insert("orchestration".into(), json!({"type":["object", "null"], "description":"Bounded queue, producer and recrawl policy; validated during admission."}));
-    properties.insert("scrape".into(), json!({"type":["object", "null"]}));
+    properties.insert(
+        "scrape".into(),
+        json!({
+            "type":["object", "null"],
+            "properties":{"options":native_scrape_options()}
+        }),
+    );
     let content = schemas.req.subschema_for::<ContentPolicy>();
+    let outputs = schemas
+        .req
+        .subschema_for::<super::outputs::ContentOutputOptions>();
+    let decode = schemas.req.subschema_for::<super::outputs::DecodeOptions>();
+    let markup = schemas.req.subschema_for::<super::outputs::MarkupRetention>();
     properties.insert(
         "extract".into(),
         json!({
             "type":"object", "additionalProperties":false,
             "properties":{
                 "content":{"anyOf":[content, {"type":"null"}]},
+                "outputs":{"anyOf":[outputs, {"type":"null"}]},
+                "decode":{"anyOf":[decode, {"type":"null"}]},
+                "markup":{"anyOf":[markup, {"type":"null"}]},
                 "customFields":{"type":"array", "items":{"type":"object"}},
                 "detectSecrets":{"type":"boolean", "default":false},
                 "forms":{"type":"boolean", "default":true},
@@ -257,6 +426,70 @@ fn create(schemas: &mut Schemas) -> Value {
         }),
     );
     json!({"type":"object", "additionalProperties":false, "required":["seedUrl"], "properties":properties})
+}
+
+fn native_scrape_options() -> Value {
+    json!({
+        "type":"object",
+        "properties":{
+            "archiveBehavior":{"anyOf":[{"type":"null"},{
+                "type":"object","additionalProperties":false,"required":["id","version","digest","phase"],
+                "description":"Exact immutable operator registration, executed after checked initial navigation. Requires a browser; never accepts recipe contents or executable sources.",
+                "properties":{
+                    "id":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_.-]+$"},
+                    "version":{"type":"integer","minimum":1,"maximum":4294967295u64},
+                    "digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                    "phase":{"type":"string","const":"post_navigation"}
+                }
+            }]},
+            "actions":{"type":"array","maxItems":50,"items":{
+                "type":"object","required":["type"],"properties":{"type":{"type":"string"}},
+                "allOf":[{"if":{"properties":{"type":{"const":"fill"}}},
+                    "then":{"required":["selector","text"],"properties":{
+                        "selector":{"type":"string"},"text":{"type":"string"}
+                    }}}]
+            }}
+        },
+        "allOf":[{
+            "if":{"required":["archiveBehavior"],"properties":{"archiveBehavior":{"type":"object"}}},
+            "then":{"properties":{
+                "actions":{"maxItems":0},"mobile":{"const":false},
+                "location":{"type":"null"},"waitForMs":{"const":0}
+            }}
+        }]
+    })
+}
+
+fn dataset_import() -> Value {
+    let identifier = json!({"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_.-]+$"});
+    let backend =
+        json!({"type":"string","enum":["memory","filesystem","postgre_sql","sqlite","maria_db","redis"]});
+    json!({
+        "type":"object","additionalProperties":false,
+        "required":["version","source","policy","dataset","schemaVersion","batch","items"],
+        "description":"Strict JSON export, at most 1 MiB total and 64 KiB canonical JSON per item. Source provenance never selects storage authority. Duplicate item keys fail admission.",
+        "properties":{
+            "version":{"type":"integer","const":1},
+            "source":{"type":"object","additionalProperties":false,
+                "required":["backend","version","experimental","dedupe"],
+                "properties":{"backend":backend,"version":identifier,
+                    "experimental":{"type":"boolean"},"dedupe":{"type":"string","enum":["exact","approximate"]}},
+                "allOf":[{"if":{"properties":{"backend":{"enum":["sqlite","maria_db","redis"]}}},
+                    "then":{"properties":{"experimental":{"const":true}}}}]},
+            "policy":{"type":"object","additionalProperties":false,
+                "required":["purgeOnStart","sharedFilesystemQueue","authoritativeBackend"],
+                "description":"Unsupported policies are reported, never silently applied.",
+                "properties":{"purgeOnStart":{"type":"boolean"},"sharedFilesystemQueue":{"type":"boolean"},
+                    "authoritativeBackend":backend}},
+            "dataset":identifier,
+            "schemaVersion":{"type":"string","const":"json_object_v1"},
+            "batch":identifier,
+            "items":{"type":"array","minItems":1,"maxItems":1000,"items":{
+                "type":"object","additionalProperties":false,"required":["key","value"],
+                "properties":{"key":identifier,"value":{"type":"object"}}
+            }}
+        }
+    })
 }
 
 fn request_body(operation: &mut Value, schema: Value, description: &str) {
@@ -288,6 +521,61 @@ fn cursor() -> Value {
 
 pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
     match id {
+        "listOperationalReports" | "searchOperationalReport" => {
+            super::reports::apply(schemas, operation, id);
+        }
+        "importDataset" => {
+            request_body(operation, dataset_import(),
+                "Import bounded safe JSON into a running admitted crawl under an existing live request fence.");
+            if let Some(parameters) = operation["parameters"].as_array_mut() {
+                for name in ["requestId", "fence"] {
+                    parameters.push(json!({"name":name,"in":"query","required":true,
+                        "schema":{"type":"integer","minimum":1,"maximum":9223372036854775807i64}}));
+                }
+                parameters.push(json!({"name":"stateVersion","in":"query","required":true,
+                    "schema":{"type":"integer","minimum":1,"maximum":18446744073709551615u64}}));
+            }
+            operation["responses"]["200"] = json!({
+                "description":"Typed artifacts accepted through the existing live request fence; no frontier coverage claim is made.",
+                "content":{"application/json":{"schema":{
+                    "type":"object","additionalProperties":false,"required":["data"],
+                    "properties":{"data":{"type":"object","additionalProperties":false,
+                        "required":["requestId","itemCount","completeCoverage","possibleOmissions"],
+                        "properties":{"requestId":{"type":"integer","minimum":1},
+                            "itemCount":{"type":"integer","minimum":1,"maximum":1000},
+                            "completeCoverage":{"type":"boolean","const":false},
+                            "possibleOmissions":{"type":"boolean"}}}}
+                }}}
+            });
+            operation["responses"]["422"] = json!({
+                "description":"Export policy is incompatible with native authority; no import was committed.",
+                "content":{"application/json":{"schema":{
+                    "type":"object","additionalProperties":false,"required":["data"],
+                    "properties":{"data":{"type":"object","additionalProperties":false,
+                        "required":["sourceBackend","sourceVersion","experimental","possibleOmissions","completeCoverage","itemCount","incompatibilities"],
+                        "properties":{
+                            "sourceBackend":{"type":"string","enum":["memory","filesystem","postgre_sql","sqlite","maria_db","redis"]},
+                            "sourceVersion":{"type":"string"},
+                            "experimental":{"type":"boolean"},"possibleOmissions":{"type":"boolean"},
+                            "completeCoverage":{"type":"boolean","const":false},
+                            "itemCount":{"type":"integer","minimum":1,"maximum":1000},
+                            "incompatibilities":{"type":"array","minItems":1,"maxItems":3,
+                                "items":{"type":"string","enum":["destructive_purge_on_start","shared_filesystem_queue","alternate_authority"]}}
+                        }}}
+                }}}
+            });
+        }
+        "resetSourceMemo" => {
+            operation["responses"]["200"] = json!({
+                "description":"Article-seen and category scopes reset for this tenant-owned run. Frontier identities and queued work remain unchanged.",
+                "headers":{"Cache-Control":{"schema":{"type":"string","const":"private, no-store"}}},
+                "content":{"application/json":{"schema":{
+                    "type":"object","additionalProperties":false,"required":["reset","frontierUnchanged"],
+                    "properties":{"reset":{"type":"boolean","const":true},
+                        "frontierUnchanged":{"type":"boolean","const":true}}
+                }}}
+            });
+        }
         "listArchives" => archive_response(operation, json!({"type":"object","required":["archives"],
             "properties":{"archives":{"type":"array","maxItems":100,"items":archive_export()}}}),
             "Retained same-tenant export progress; expired/deleted exports are excluded."),
@@ -333,7 +621,7 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                     "type":"object","additionalProperties":false,"required":["url"],
                     "properties":{
                         "url":{"type":"string","format":"uri"},
-                        "method":{"type":"string","const":"GET","default":"GET"},
+                        "method":{"type":"string","enum":["GET","HEAD"],"default":"GET"},
                         "route":{"type":"string","maxLength":128,"default":"default"},
                         "metadata":{"type":"object","maxProperties":64},
                         "depth":{"type":"integer","minimum":0,"maximum":65535},

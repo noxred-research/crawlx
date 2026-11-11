@@ -28,6 +28,26 @@ pub enum ArchiveCapture {
     RequireComplete,
 }
 
+/// Explicit payload reuse scope. Chronological capture records are never removed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ArchiveDedupe {
+    /// Keep independent payloads; the default preserves existing behavior.
+    #[default]
+    None,
+    /// Reuse committed compatible native bodies or run-bound retained DOM/text renditions in this export.
+    Collection,
+    /// Also reuse compatible complete native bodies from published tenant-opted-in sources, with local package closure.
+    Tenant,
+}
+
+impl ArchiveDedupe {
+    fn is_none(&self) -> bool {
+        *self == Self::None
+    }
+}
+
 /// Bounded archive configuration for retained-resource export and live finalization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
@@ -39,8 +59,14 @@ pub struct ArchiveConfigV1 {
     pub format: ArchiveFormat,
     /// Completeness requirement.
     pub capture: ArchiveCapture,
+    /// Opt-in reuse of approved native bodies and same-run retained DOM/text renditions.
+    #[serde(skip_serializing_if = "ArchiveDedupe::is_none")]
+    pub dedupe: ArchiveDedupe,
     /// Maximum total encoded export bytes.
     pub max_bytes: u64,
+    /// Optional hard encoded size cap per WARC file; supported only for WACZ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollover_bytes: Option<u64>,
     /// Maximum retained UTF-8 representation size. Does not authorize raw binary capture.
     pub max_record_bytes: u64,
     /// Maximum number of retained records.
@@ -53,7 +79,9 @@ impl Default for ArchiveConfigV1 {
             version: 1,
             format: ArchiveFormat::Wacz,
             capture: ArchiveCapture::Available,
+            dedupe: ArchiveDedupe::None,
             max_bytes: 1_073_741_824,
+            rollover_bytes: None,
             max_record_bytes: 16_777_216,
             max_records: 10_000,
         }
@@ -74,6 +102,14 @@ impl ArchiveConfigV1 {
         }
         if self.max_bytes < self.max_record_bytes || self.max_bytes > 1_073_741_824 {
             return Err("archive total bound must contain one record and not exceed 1 GiB");
+        }
+        if let Some(bytes) = self.rollover_bytes {
+            if bytes == 0 || bytes > self.max_bytes {
+                return Err("archive rollover bound must be positive and not exceed total bytes");
+            }
+            if self.format != ArchiveFormat::Wacz {
+                return Err("archive rollover requires WACZ format");
+            }
         }
         if self.max_records == 0 || self.max_records > 10_000 {
             return Err("archive record count must be between 1 and 10000");
@@ -102,7 +138,7 @@ pub enum ArchiveRepresentation {
 }
 
 /// Truthful capture provenance attached to an archived resource.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[non_exhaustive]
 pub struct ArchiveCaptureFactsV1 {
@@ -187,6 +223,12 @@ pub struct ArchiveManifestV1 {
     pub complete: bool,
     /// Number of committed resource records, excluding warcinfo/metadata.
     pub records: u64,
+    /// Byte classification and source deadline inherited by the package and adjacent index.
+    #[serde(default)]
+    pub custody: crate::archive_catalog::ArchiveCustodyV1,
+    /// Standalone source records embedded to close cross-export revisit dependencies.
+    #[serde(default, skip_serializing_if = "zero")]
+    pub materialized_dependencies: u64,
     /// Explicit absent representations and privacy exclusions.
     pub omissions: Vec<ArchiveOmissionV1>,
 }
@@ -202,6 +244,8 @@ impl ArchiveManifestV1 {
             created,
             complete: false,
             records: 0,
+            custody: crate::archive_catalog::ArchiveCustodyV1::default(),
+            materialized_dependencies: 0,
             omissions: vec![
                 ArchiveOmissionV1::new(
                     "run",
@@ -211,5 +255,40 @@ impl ArchiveManifestV1 {
                 ArchiveOmissionV1::new("run", "credentials_cookies_and_storage_excluded"),
             ],
         }
+    }
+}
+
+fn zero(value: &u64) -> bool {
+    *value == 0
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    #[test]
+    fn rollover_is_opt_in_and_does_not_change_default_serialized_spec() {
+        let mut config = ArchiveConfigV1::default();
+        let previous = serde_json::json!({
+            "version": 1, "format": "wacz", "capture": "available",
+            "maxBytes": 1_073_741_824_u64, "maxRecordBytes": 16_777_216,
+            "maxRecords": 10_000
+        });
+        assert_eq!(serde_json::to_value(&config).unwrap(), previous);
+        assert_eq!(
+            serde_json::from_value::<ArchiveConfigV1>(previous).unwrap(),
+            config
+        );
+        config.rollover_bytes = Some(1);
+        assert!(config.validate().is_ok());
+        assert_eq!(serde_json::to_value(&config).unwrap()["rolloverBytes"], 1);
+        config.format = ArchiveFormat::Warc;
+        assert_eq!(config.validate(), Err("archive rollover requires WACZ format"));
+        config.format = ArchiveFormat::Wacz;
+        config.rollover_bytes = Some(0);
+        assert!(config.validate().is_err());
+        config.rollover_bytes = Some(config.max_bytes + 1);
+        assert!(config.validate().is_err());
     }
 }

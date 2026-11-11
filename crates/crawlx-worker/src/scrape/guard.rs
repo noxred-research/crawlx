@@ -160,6 +160,24 @@ fn redact_block_content(v: &mut Value, text: &mut impl FnMut(&str) -> String) {
     }
 }
 
+/// Redact content-bearing strings in shared outputs, including retained comments and previews.
+pub(crate) fn redact_output(value: &mut Value, options: &RedactOptions) {
+    match value {
+        Value::String(text) => *text = redact(text, options).text,
+        Value::Array(values) => {
+            for value in values {
+                redact_output(value, options);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                redact_output(value, options);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The warning that says which requested entities were not redacted.
 pub(crate) fn unsupported_warning(unsupported: &BTreeSet<&'static str>) -> Option<String> {
     (!unsupported.is_empty()).then(|| {

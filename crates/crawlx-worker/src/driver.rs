@@ -1,7 +1,10 @@
 //! The exploration driver: one per session. Observe, discover
 //! candidates, resolve identities, fingerprint, freeze a `DecisionContext`, run the strategies
 //! under deadlines, arbitrate, adjudicate with the safety kernel, execute through the actor,
-//! ingest the outcome. `observe_only` runs never execute.
+//! ingest the outcome. URL navigation queues use `scope.strategy`; interaction strategies
+//! still arbitrate non-navigation actions. `observe_only` runs never execute actions.
+//! Recovery repairs both journal-derived interaction counters and committed browser URL counters
+//! before the session resumes; a dynamic-only run has no HTTP runner to repair its URL projection.
 
 use crate::actor::{under, ActionOutcome, DropReason, SessionHandle, SessionState};
 use crate::analysis::StateAnalyzer;
@@ -15,7 +18,8 @@ use crate::routes::RouteLearner;
 use crate::run::RunContext;
 use async_trait::async_trait;
 use crawlx_core::config::{
-    CrawlMode, DestructiveActions, Dynamic, PageLoadStrategy, StrategyArmSelection, StrategyName,
+    CrawlMode, CrawlStrategy, DestructiveActions, Dynamic, PageLoadStrategy, StrategyArmSelection,
+    StrategyName,
 };
 use crawlx_core::counters::{ActionStatus, ReconcileResolution, RunStatus, TerminalReason};
 use crawlx_core::dom_ops::CssFilter;
@@ -374,10 +378,9 @@ pub fn select_strategy_arms(
 
 /// Strategy name of [`DiscoveredUrls`].
 pub const DISCOVERED_URLS_STRATEGY: &str = "discovered_urls";
-/// Proposals [`DiscoveredUrls`] makes per round.
-pub const DISCOVERED_URLS_PER_ROUND: usize = 5;
-/// Depth recorded on `url_frontier` for a URL the browser plane discovered (one hop from the
-/// page the session showed).
+/// Proposals [`DiscoveredUrls`] makes per round: one URL preserves global traversal order.
+pub const DISCOVERED_URLS_PER_ROUND: usize = 1;
+/// Fallback child depth when the browser has not recorded the parent URL's depth yet.
 pub const DISCOVERED_URL_DEPTH: u16 = 1;
 
 /// Record a document the browser guard or discovery pre-flight refused.
@@ -493,39 +496,82 @@ const SINK_REQUIRED_RULE: &str = "sink.required_unverified";
 
 /// URLs the page hooks discovered, shared between the driver that fills it
 /// after each observation and the [`DiscoveredUrls`] strategy that proposes them.
-type DiscoveredSet = Arc<Mutex<BTreeMap<String, url::Url>>>;
+type DiscoveredSet = Arc<Mutex<Vec<RequestEnvelopeV1>>>;
 
-/// Proposes `Navigate` to in-scope URLs the page hooks reported (`pushState`, `fetch`,
-/// `WebSocket`, `window.open`, ...), the browser-plane twin of [`UrlPlane`] for destinations
-/// that have no link element. Not a pure function of the round: its input is the driver's
-/// discovery set (filled from `ObservationBundle::discovered_urls`, scope-checked and
-/// logout-filtered), ordered by URL so a run replays identically. Keys use the URL's digest
-/// as the element identity.
+fn request_order(
+    strategy: CrawlStrategy,
+    request: &RequestEnvelopeV1,
+    index: usize,
+) -> (std::cmp::Reverse<i32>, (i64, i64, i64)) {
+    (
+        std::cmp::Reverse(request.priority),
+        crawlx_core::priority::strategy_order(
+            strategy,
+            request.depth,
+            if strategy == CrawlStrategy::Priority {
+                crawlx_core::priority::priority_depth(
+                    &request.url.url,
+                    u32::from(request.depth),
+                    request.method == "GET",
+                )
+            } else {
+                0
+            },
+            i64::try_from(index).unwrap_or(i64::MAX),
+        ),
+    )
+}
+
+fn next_request(
+    queue: &mut VecDeque<RequestEnvelopeV1>,
+    strategy: CrawlStrategy,
+) -> Option<RequestEnvelopeV1> {
+    let index = queue
+        .iter()
+        .enumerate()
+        .min_by_key(|(index, request)| request_order(strategy, request, *index))
+        .map(|(index, _)| index)?;
+    queue.remove(index)
+}
+
+/// Proposes `Navigate` only to opt-in page-hook destinations (`pushState`, `fetch`,
+/// `WebSocket`, `window.open`, ...), including URLs with no link element.
+/// The driver scope-checks and logout-filters this shared discovery set before proposals
+/// use the crawl's URL strategy. Rendered controls remain trusted interaction candidates;
+/// recording their page output never creates another navigation proposal.
 pub struct DiscoveredUrls {
     pending: DiscoveredSet,
+    strategy: CrawlStrategy,
 }
 
 #[async_trait]
 impl Strategy for DiscoveredUrls {
     async fn propose(&self, ctx: &DecisionContext<'_>) -> Result<Vec<ActionProposal>, StrategyError> {
-        let pending = self.pending.lock().clone();
-        let mut out = Vec::new();
-        for (text, url) in pending {
-            if ctx.frontier.url_visited(&text) {
-                continue;
-            }
-            let key = ActionContextKey {
-                principal: ctx.principal.clone(),
-                route_template: ctx.route().clone(),
-                element: discovered_url_element(&text),
-                action_kind: ActionKind::Navigate,
-                input_class: InputClass::none(),
-                resource_context: ResourceContext::None,
-                state_cluster: ctx.cluster,
-            };
-            if !ctx.frontier.is_proposable(&key) {
-                continue;
-            }
+        let pending = self.pending.lock();
+        let mut out = Vec::with_capacity(DISCOVERED_URLS_PER_ROUND);
+        let next = pending
+            .iter()
+            .enumerate()
+            .filter_map(|(index, request)| {
+                let text = request.url.url.as_str();
+                if ctx.frontier.url_visited(text) {
+                    return None;
+                }
+                let key = ActionContextKey {
+                    principal: ctx.principal.clone(),
+                    route_template: ctx.route().clone(),
+                    element: discovered_url_element(text),
+                    action_kind: ActionKind::Navigate,
+                    input_class: InputClass::none(),
+                    resource_context: ResourceContext::None,
+                    state_cluster: ctx.cluster,
+                };
+                ctx.frontier.is_proposable(&key).then_some((index, request, key))
+            })
+            .min_by_key(|(index, request, _)| request_order(self.strategy, request, *index));
+        if let Some((_, request, key)) = next {
+            let text = request.url.url.as_str();
+            let url = request.url.url.clone();
             out.push(ActionProposal {
                 key,
                 action: BrowserAction::Navigate { url },
@@ -535,16 +581,13 @@ impl Strategy for DiscoveredUrls {
                 confidence: 0.5,
                 expected: ExpectedEffect {
                     reveals: Vec::new(),
-                    navigates_to: Some(text.clone()),
+                    navigates_to: Some(text.to_owned()),
                     mutates_state: false,
                 },
                 hinted_risk: None,
                 model_decision: None,
                 summary: format!("navigate discovered {text}"),
             });
-            if out.len() >= DISCOVERED_URLS_PER_ROUND {
-                break;
-            }
         }
         Ok(out)
     }
@@ -613,6 +656,10 @@ pub struct ExplorationDriver {
     /// Canonical keys of discovered URLs already recorded (frontier + proposals), so a URL
     /// the hooks report on every page is handled once per session.
     discovered_seen: BTreeSet<Digest>,
+    /// Latest settled epoch published for each admitted request; new epochs append renditions.
+    browser_observed: BTreeMap<(Digest, String), crawlx_core::ObservationEpoch>,
+    /// Admitted browser URL depths, shared by rendered-link proposals and their page output.
+    browser_depths: BTreeMap<Digest, u16>,
     /// Splits of the run's cluster index this session has already re-keyed its ledger for.
     splits_seen: usize,
     /// Identities the last trusted activation revealed that are still to be exercised
@@ -681,11 +728,12 @@ impl ExplorationDriver {
                 Some(guard) => scope.with_record_scope(guard.scope()),
                 None => scope,
             });
-        let discovered: DiscoveredSet = Arc::new(Mutex::new(BTreeMap::new()));
+        let discovered: DiscoveredSet = Arc::new(Mutex::new(Vec::new()));
 
         if rc.crawl.dynamic.page_hooks {
             strategies.push(Arc::new(DiscoveredUrls {
                 pending: Arc::clone(&discovered),
+                strategy: rc.crawl.scope.strategy,
             }));
         }
         Self {
@@ -716,6 +764,8 @@ impl ExplorationDriver {
             authenticated: false,
             discovered,
             discovered_seen: BTreeSet::new(),
+            browser_observed: BTreeMap::new(),
+            browser_depths: BTreeMap::new(),
             splits_seen: 0,
             home_tab: None,
             explored_tabs: BTreeSet::new(),
@@ -794,6 +844,9 @@ impl ExplorationDriver {
         } else {
             self.run_explore(start).await
         };
+        if result.is_ok() && self.rc.crawl.capture.browser.enabled() {
+            Box::pin(self.capture_final_evidence()).await?;
+        }
         self.persist_graph().await;
         if let Err(e) = self
             .rc
@@ -804,6 +857,18 @@ impl ExplorationDriver {
             tracing::warn!(error = %e, "counters not persisted");
         }
         result
+    }
+
+    async fn capture_final_evidence(&self) -> Result<(), WorkerError> {
+        let bundle = self.handle.observe(spec::after_action()).await?;
+        crate::browser_projection::observe(&self.handle, &self.rc, &bundle).await?;
+        crate::browser_evidence::observe(
+            &self.handle,
+            &self.rc,
+            &bundle,
+            crate::browser_evidence::EvidencePhase::Final,
+        )
+        .await
     }
 
     fn end(&self, terminal: TerminalReason) -> DriverEnd {
@@ -963,7 +1028,7 @@ impl ExplorationDriver {
             if self.rc.cancel.is_cancelled() {
                 return Ok(Some(TerminalReason::Cancelled));
             }
-            let run = self.rc.stores.runs.get(self.rc.run).await?;
+            let run = self.rc.stores.runs.get_metadata(self.rc.run).await?;
             // Runbook RB-11 (docs/ops/runbooks.md): `scheduler.admission = frozen` halts every actor at its next boundary
             let frozen = self.rc.stores.leases.admission().await? == crawlx_storage::AdmissionMode::Frozen;
             match run.status {
@@ -1017,6 +1082,20 @@ impl ExplorationDriver {
             match self.handle.observe(spec::after_action()).await {
                 Ok(b) => {
                     self.collect_xhr().await;
+                    if self.states == 0 && self.rc.crawl.capture.browser.durable() {
+                        Box::pin(crate::browser_evidence::observe(
+                            &self.handle,
+                            &self.rc,
+                            &b,
+                            crate::browser_evidence::EvidencePhase::Initial,
+                        ))
+                        .await?;
+                    }
+                    if self.rc.crawl.capture.browser.xhr.is_some()
+                        || self.rc.crawl.capture.browser.diagnostics.is_some()
+                    {
+                        Box::pin(crate::browser_projection::observe(&self.handle, &self.rc, &b)).await?;
+                    }
                     return Ok(b);
                 }
                 Err(e) if e.is_target_crash() => {
@@ -1090,88 +1169,120 @@ impl ExplorationDriver {
         safety_context(&self.rc, &self.session)
     }
 
+    /// Reuse the settled observation; never navigate or execute to produce page output.
+    async fn record_browser_page(
+        &mut self,
+        bundle: &ObservationBundle,
+        request: &RequestEnvelopeV1,
+    ) -> Result<Vec<url::Url>, WorkerError> {
+        let Some(plane) = self.rc.browser_pages.clone() else {
+            return Ok(Vec::new());
+        };
+        let key = (request.url.key, request.route.clone());
+        if self.browser_observed.get(&key) == Some(&bundle.epoch) {
+            return Ok(Vec::new());
+        }
+        let response = self.handle.document_response(bundle.epoch).await?;
+        let urls =
+            Box::pin(plane.record_browser_observation(&self.rc, &self.session, request, bundle, response))
+                .await?;
+        self.browser_observed.insert(key, bundle.epoch);
+        self.browser_depths.insert(bundle.url.key, request.depth);
+        Ok(urls)
+    }
+
     /// Fold the page-hooks discoveries of `bundle` in: each URL is
     /// canonicalized, checked against the crawl scope and, while the session is
     /// authenticated, against the logout paths. In `hybrid` mode every outcome is recorded on
-    /// `url_frontier` (depth [`DISCOVERED_URL_DEPTH`], denials as `policy_blocked`) and
+    /// `url_frontier` (at the parent page's depth plus one, denials as `policy_blocked`) and
     /// counted on the URL plane; admitted URLs also become navigation proposals through
     /// [`DiscoveredUrls`] in both `hybrid` and `dynamic` mode.
     async fn ingest_discovered(&mut self, bundle: &ObservationBundle) {
         if !self.rc.crawl.dynamic.page_hooks || bundle.discovered_urls.is_empty() {
             return;
         }
+        let depth = self
+            .browser_depths
+            .get(&bundle.url.key)
+            .copied()
+            .map_or(DISCOVERED_URL_DEPTH, |depth| depth.saturating_add(1));
+        for (url, source) in &bundle.discovered_urls {
+            self.ingest_browser_url(bundle, url.as_str(), source.as_str(), depth)
+                .await;
+        }
+    }
+
+    async fn ingest_browser_url(&mut self, bundle: &ObservationBundle, raw: &str, source: &str, depth: u16) {
         let record = self.rc.crawl.mode == CrawlMode::Hybrid;
-        for (raw, source) in &bundle.discovered_urls {
-            let Ok(joined) = bundle.url.url.join(raw) else {
-                continue;
-            };
-            if !matches!(joined.scheme(), "http" | "https") {
-                continue;
+        let Ok(joined) = bundle.url.url.join(raw) else {
+            return;
+        };
+        if !matches!(joined.scheme(), "http" | "https") {
+            return;
+        }
+        let Ok(canon) = crawlx_url::Canonicalizer::canonicalize_url(&joined, &self.rc.canon) else {
+            return;
+        };
+        if !self.discovered_seen.insert(canon.key) {
+            return;
+        }
+        let denial: Option<(FrontierStatus, String)> = if canon
+            .params
+            .iter()
+            .any(|param| param.class == crawlx_core::ParamClass::ActionBearing)
+        {
+            Some((FrontierStatus::PolicyBlocked, "action_bearing_query".to_owned()))
+        } else if self.authenticated && is_logout_path(canon.url.path()) {
+            Some((FrontierStatus::PolicyBlocked, "logout_path".to_owned()))
+        } else {
+            match self.scope.as_ref().map(|s| s.decide(&canon, depth)) {
+                Some(ScopeVerdict::Denied(reason)) => {
+                    Some((FrontierStatus::PolicyBlocked, reason.as_str().to_owned()))
+                }
+                _ => None,
             }
-            let Ok(canon) = crawlx_url::Canonicalizer::canonicalize_url(&joined, &self.rc.canon) else {
-                continue;
-            };
-            if !self.discovered_seen.insert(canon.key) {
-                continue;
+        };
+        if denial.is_none() {
+            // robots.txt applies to the browser plane exactly as to the URL plane
+            if let Some(why) = self.robots_refusal(&canon).await {
+                record_robots_blocked(&self.rc, Some(self.session.id), &canon, depth, why).await;
+                return;
             }
-            let denial: Option<(FrontierStatus, String)> = if canon
-                .params
-                .iter()
-                .any(|param| param.class == crawlx_core::ParamClass::ActionBearing)
+        }
+        tracing::debug!(source, denied = denial.is_some(), "page hook discovered a url");
+        if record {
+            match self
+                .rc
+                .stores
+                .frontier
+                .discover(self.rc.run, &canon, depth, None, denial.clone())
+                .await
             {
-                Some((FrontierStatus::PolicyBlocked, "action_bearing_query".to_owned()))
-            } else if self.authenticated && is_logout_path(canon.url.path()) {
-                Some((FrontierStatus::PolicyBlocked, "logout_path".to_owned()))
-            } else {
-                match self
-                    .scope
-                    .as_ref()
-                    .map(|s| s.decide(&canon, DISCOVERED_URL_DEPTH))
-                {
-                    Some(ScopeVerdict::Denied(reason)) => {
-                        Some((FrontierStatus::PolicyBlocked, reason.as_str().to_owned()))
-                    }
-                    _ => None,
-                }
-            };
-            if denial.is_none() {
-                // robots.txt applies to the browser plane exactly as to the URL plane
-                if let Some(why) = self.robots_refusal(&canon).await {
-                    record_robots_blocked(&self.rc, Some(self.session.id), &canon, DISCOVERED_URL_DEPTH, why)
-                        .await;
-                    continue;
-                }
+                Ok((outcome, _)) => self.rc.counters.discovery(Plane::Urls, outcome),
+                Err(e) => tracing::warn!(error = %e, "discovered url not recorded on the frontier"),
             }
-            tracing::debug!(source, denied = denial.is_some(), "page hook discovered a url");
-            if record {
-                match self
-                    .rc
-                    .stores
-                    .frontier
-                    .discover(self.rc.run, &canon, DISCOVERED_URL_DEPTH, None, denial.clone())
-                    .await
-                {
-                    Ok((outcome, _)) => self.rc.counters.discovery(Plane::Urls, outcome),
-                    Err(e) => tracing::warn!(error = %e, "discovered url not recorded on the frontier"),
-                }
-            }
-            if denial.is_none() {
-                self.learn_route(canon.url.path()).await;
-                self.discovered
-                    .lock()
-                    .insert(canon.url.to_string(), canon.url.clone());
-            }
+        }
+        if denial.is_none() {
+            self.browser_depths.entry(canon.key).or_insert(depth);
+            self.learn_route(canon.url.path()).await;
+            self.discovered
+                .lock()
+                .push(RequestEnvelopeV1::get(canon, depth, None));
         }
     }
 
     // ---- observe-only -------------------------------------------------------------------
 
-    /// Navigate and observe, never act: a breadth-first walk over in-scope links.
+    /// Navigate and observe, never act: walk in-scope links in the configured URL order.
     async fn run_observe_only(&mut self, start: Vec<RequestEnvelopeV1>) -> Result<DriverEnd, WorkerError> {
         let mut queue: VecDeque<RequestEnvelopeV1> = start.into();
         let mut visited: BTreeMap<Digest, BTreeSet<String>> = BTreeMap::new();
         let mut first = true;
-        while let Some(request) = queue.pop_front() {
+        while let Some(request) = if first {
+            queue.pop_front()
+        } else {
+            next_request(&mut queue, self.rc.crawl.scope.strategy)
+        } {
             let url = &request.url;
             let depth = request.depth;
             if !visited.entry(url.key).or_default().insert(request.route.clone()) {
@@ -1206,12 +1317,26 @@ impl ExplorationDriver {
             let bundle = self.observe().await?;
             let state = self.persist_observation(&bundle).await?;
             let _ = state;
+            self.browser_depths.insert(bundle.url.key, depth);
             self.ingest_discovered(&bundle).await;
-            for cand in CandidateDiscovery::discover(&bundle, &DiscoveryConfig::default()) {
-                let Some(href) = cand.descriptor.href.as_deref() else {
-                    continue;
-                };
-                let Ok(joined) = bundle.url.url.join(href) else {
+            let rendered = self.record_browser_page(&bundle, &request).await?;
+            let destinations = rendered
+                .into_iter()
+                .map(|url| url.to_string())
+                .chain(
+                    CandidateDiscovery::discover(&bundle, &DiscoveryConfig::default())
+                        .into_iter()
+                        .filter_map(|candidate| candidate.descriptor.href),
+                )
+                .chain(
+                    bundle
+                        .discovered_urls
+                        .iter()
+                        .filter(|_| self.rc.crawl.dynamic.page_hooks)
+                        .map(|(url, _)| url.clone()),
+                );
+            for href in destinations {
+                let Ok(joined) = bundle.url.url.join(&href) else {
                     continue;
                 };
                 if !matches!(joined.scheme(), "http" | "https") {
@@ -1437,7 +1562,11 @@ impl ExplorationDriver {
                 None => {
                     let b = self.observe().await?;
                     let st = self.persist_observation(&b).await?;
+                    self.browser_depths
+                        .entry(b.url.key)
+                        .or_insert(current_request.depth);
                     self.ingest_discovered(&b).await;
+                    self.record_browser_page(&b, &current_request).await?;
                     self.prepare(b, st.id, st.cluster).await
                 }
             };
@@ -1594,6 +1723,16 @@ impl ExplorationDriver {
                             .get(&p.key.id())
                             .is_none_or(|until| *until < index)
                     });
+                    // The arbiter may choose interactions, but cannot reorder queued URLs.
+                    let ordered_navigation = proposals
+                        .iter()
+                        .position(|proposal| proposal.strategy == DISCOVERED_URLS_STRATEGY)
+                        .map(|index| proposals.swap_remove(index));
+                    if let Some(proposal) = ordered_navigation {
+                        proposals
+                            .retain(|proposal| !matches!(proposal.action, BrowserAction::Navigate { .. }));
+                        proposals.push(proposal);
+                    }
                     // reveal follow-through: controls the previous trusted
                     // activation revealed (a menu's items, a dialog's buttons, a tree's leaves) are
                     // exercised before any other action can hide them again, which would cost a
@@ -1783,6 +1922,18 @@ impl ExplorationDriver {
             .await;
             match result {
                 Ok(outcome) => {
+                    // T2 already committed. Count its outcome before page publication can fail
+                    // (including a document-response read after the execution deadline).
+                    self.rc.counters.attempt(
+                        Plane::Interactions,
+                        if outcome.dropped.is_some() {
+                            Attempt::Abandoned
+                        } else if outcome.status == ActionStatus::Succeeded {
+                            Attempt::Succeeded
+                        } else {
+                            Attempt::Failed
+                        },
+                    );
                     halts = 0;
                     storage_halt = None;
                     if outcome.dropped.is_some() {
@@ -1793,7 +1944,6 @@ impl ExplorationDriver {
                                 drops = self.consecutive_drops,
                                 "nothing on the page is actionable; ending the session"
                             );
-                            self.rc.counters.attempt(Plane::Interactions, Attempt::Abandoned);
                             return Ok(self.end(TerminalReason::FrontierExhausted));
                         }
                     } else {
@@ -1805,6 +1955,26 @@ impl ExplorationDriver {
                         } else {
                             chain += 1;
                         }
+                    }
+                    if let Some(bundle) = outcome.after.as_ref().filter(|_| self.rc.browser_pages.is_some()) {
+                        let mut request = current_request.clone();
+                        request.depth = current_request.depth.saturating_add(1);
+                        request.url = match &proposal.action {
+                            BrowserAction::Navigate { url } => {
+                                crawlx_url::Canonicalizer::canonicalize_url(url, &self.rc.canon)
+                                    .unwrap_or_else(|_| bundle.url.clone())
+                            }
+                            _ if bundle.url.url == current.bundle.url.url => current_request.url.clone(),
+                            _ => bundle.url.clone(),
+                        };
+                        request.depth = self
+                            .browser_depths
+                            .get(&request.url.key)
+                            .copied()
+                            .unwrap_or(request.depth);
+                        self.collect_xhr().await;
+                        self.record_browser_page(bundle, &request).await?;
+                        current_request = request;
                     }
                     after = self
                         .after_execute(&proposal, &expected, &current, before, outcome)
@@ -1885,13 +2055,13 @@ impl ExplorationDriver {
         }
     }
 
-    /// Navigate to the next uncovered start page; false when none is left.
+    /// Navigate to the next uncovered start page in URL strategy order; `None` when none is left.
     async fn next_start(
         &mut self,
         starts: &mut VecDeque<RequestEnvelopeV1>,
         visited: &mut BTreeSet<(Digest, String)>,
     ) -> Result<Option<RequestEnvelopeV1>, WorkerError> {
-        while let Some(request) = starts.pop_front() {
+        while let Some(request) = next_request(starts, self.rc.crawl.scope.strategy) {
             let url = &request.url;
             if !visited.insert((url.key, request.route.clone())) {
                 continue;
@@ -2173,7 +2343,6 @@ impl ExplorationDriver {
         // rounds to itself
         self.follow_through.remove(&proposal.key.element);
         if let Some(reason) = outcome.dropped {
-            self.rc.counters.attempt(Plane::Interactions, Attempt::Abandoned);
             tracing::debug!(action = %outcome.action_id, reason = reason.as_str(), "action dropped; replanning");
             self.note_drop(proposal.key.id(), reason, outcome.live);
             return None;
@@ -2188,14 +2357,6 @@ impl ExplorationDriver {
             }
         }
         let succeeded = outcome.status == ActionStatus::Succeeded;
-        self.rc.counters.attempt(
-            Plane::Interactions,
-            if succeeded {
-                Attempt::Succeeded
-            } else {
-                Attempt::Failed
-            },
-        );
         let lane = outcome
             .receipt
             .as_ref()
@@ -3048,7 +3209,6 @@ mod strategy_arm_tests {
                         ),
                 )
                 .page(FakePage::new("https://example.test/next").title("Next"));
-            let backend = Arc::new(FakeBackend::new(script));
             let config = WorkerConfig {
                 artifacts_dir: dir.path().to_path_buf(),
                 egress: EgressConfig {
@@ -3058,6 +3218,12 @@ mod strategy_arm_tests {
                 gates: Gates::from_status(GateStatus::ALL),
                 ..WorkerConfig::default()
             };
+            let backend = Arc::new(
+                FakeBackend::builder()
+                    .script(script)
+                    .clock(Arc::new(crawlx_core::SystemClock))
+                    .build(),
+            );
             let report = run_local_with(
                 LocalRun::new(crawl, config)
                     .with_stores(stores)
@@ -3150,5 +3316,47 @@ mod tab_policy_tests {
             &canon
         ));
         assert!(!popup_in_scope("about:blank", &origin, None, &canon));
+    }
+}
+
+#[cfg(test)]
+mod browser_queue_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn pending_hybrid_starts_use_depth_then_discovery_order_after_explicit_priority() {
+        for (strategy, expected) in [
+            (
+                CrawlStrategy::BreadthFirst,
+                ["/priority", "/shallow", "/middle", "/deep", "/later"],
+            ),
+            (
+                CrawlStrategy::DepthFirst,
+                ["/priority", "/later", "/deep", "/middle", "/shallow"],
+            ),
+        ] {
+            let mut queue = VecDeque::new();
+            for (path, depth, priority) in [
+                ("/shallow", 1, 0),
+                ("/deep", 3, 0),
+                ("/middle", 2, 0),
+                ("/later", 3, 0),
+                ("/priority", 2, 1),
+            ] {
+                let url = url::Url::parse(&format!("https://fixture.test{path}")).unwrap();
+                let canonical =
+                    crawlx_url::Canonicalizer::canonicalize_url(&url, &Default::default()).unwrap();
+                let mut request = RequestEnvelopeV1::get(canonical, depth, None);
+                request.priority = priority;
+                queue.push_back(request);
+            }
+            let mut actual = Vec::new();
+            while let Some(request) = next_request(&mut queue, strategy) {
+                actual.push(request.url.url.path().to_owned());
+            }
+            assert_eq!(actual, expected, "{strategy:?}");
+        }
     }
 }

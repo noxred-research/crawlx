@@ -33,6 +33,8 @@ pub struct Stores {
     pub datasets: Arc<dyn DatasetRepo>,
     /// Versioned run-local state.
     pub kv: Arc<dyn KvRepo>,
+    /// Tenant-scoped bounded source memo and retention-aware category cache.
+    pub source_memo: Arc<dyn crawlx_core::dataset::memo::SourceMemoRepo>,
     /// Fenced durable delivery receipts.
     pub delivery: Arc<dyn DeliveryOutboxRepo>,
     /// Principal-scoped structural selector descriptors.
@@ -110,10 +112,19 @@ impl Stores {
         &self,
         run: crawlx_core::CrawlRunId,
         reason: crawlx_core::counters::TerminalReason,
+        cpu: &crate::runtime::CpuPool,
     ) -> Result<(), crawlx_core::StoreError> {
-        self.runs
-            .set_status(run, crate::run::status_for(reason), Some(reason))
-            .await?;
+        let Some(reason) = self
+            .request_commits
+            .begin_feed_finalization(run, Some(reason))
+            .await?
+        else {
+            self.artifacts.erase_run_credentials(run).await?;
+            return Ok(());
+        };
+        self.delivery.maintain(run).await?;
+        let owner = Box::new(self.runs.get(run).await?);
+        Box::pin(crate::delivery::finalize_feeds(self, &owner, reason, cpu)).await?;
         self.artifacts.erase_run_credentials(run).await?;
         Ok(())
     }
@@ -189,6 +200,7 @@ impl Stores {
             request_commits: store.clone(),
             datasets: store.clone(),
             kv: store.clone(),
+            source_memo: store.clone(),
             delivery: store.clone(),
             adaptive_selectors: store.clone(),
             archives: store.clone(),
@@ -318,6 +330,7 @@ impl Stores {
             request_commits: Arc::new(pg.clone()),
             datasets: Arc::new(pg.clone()),
             kv: Arc::new(pg.clone()),
+            source_memo: Arc::new(pg.clone()),
             delivery: Arc::new(pg.clone()),
             adaptive_selectors: Arc::new(pg.clone()),
             archives: Arc::new(pg.clone()),

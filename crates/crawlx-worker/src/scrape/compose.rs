@@ -8,9 +8,9 @@ use crate::scrape::{FailReason, ScrapeFailure};
 use bytes::Bytes;
 use crawlx_core::scrape::{AttributeResult, FormatSpec, ParserSpec, PdfMode, PdfPageMarkdown, ScrapeOptions};
 use crawlx_core::{hash::Digest, StoreError};
-use crawlx_extract::parse::ocr::{Ocr, OcrError, PdfOcr};
-use crawlx_extract::parse::pdf::{extract_pdf, PdfOptions};
-use crawlx_extract::parse::ParseLimits;
+use crawlx_extract::parse::ocr::{Ocr, PdfOcr};
+use crawlx_extract::parse::{ParseLimits, ParseOptions};
+use crawlx_extract::pipeline::{ParserPipeline, PipelineContent, PipelineInput};
 use crawlx_extract::ExtractOptions;
 use crawlx_extract::{base64_images, compat_meta, endpoints};
 use std::borrow::Cow;
@@ -127,6 +127,10 @@ pub(crate) struct Composed {
     pub pages: Option<Vec<PdfPageMarkdown>>,
     /// `blocks` parser option: typed layout blocks per page.
     pub blocks: Option<serde_json::Value>,
+    /// Shared extraction outputs, kept on the scrape content retention path.
+    pub outputs: Option<serde_json::Value>,
+    /// Parser-produced preview requests, never acquisition authority.
+    pub previews: Vec<crawlx_core::extraction::PreviewIntentV1>,
     /// Trusted native envelope, boxed to keep nested async scrape frames bounded.
     article: Option<Box<crawlx_core::extraction::DocumentEnvelopeV1>>,
     /// Approved native schema, populated only by joint source verification on the CPU pool.
@@ -312,16 +316,16 @@ fn image(input: &ComposeInput) -> Result<Composed, ComposeError> {
             ..Composed::default()
         });
     };
-    let page = ocr.recognize_bytes(&input.body).map_err(|e| match e {
-        OcrError::Image(reason) => ComposeError::Unsupported(format!("the image cannot be read: {reason}")),
-        other => ComposeError::Extract(format!("OCR failed: {other}")),
-    })?;
+    let parsed = parse_document(
+        input,
+        &ParseOptions {
+            ocr: Some(Arc::clone(ocr)),
+            ..ParseOptions::default()
+        },
+    )?;
     Ok(Composed {
-        warning: page
-            .paragraphs
-            .is_empty()
-            .then(|| "OCR found no text in the image".to_owned()),
-        markdown: Some(page.text()),
+        warning: (!parsed.warnings.is_empty()).then(|| parsed.warnings.join("; ")),
+        markdown: Some(parsed.markdown),
         ..Composed::default()
     })
 }
@@ -435,6 +439,9 @@ fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
     // Only the compiled pipeline can populate this key. A page meta tag must
     // never masquerade as an accepted native item when no article was parsed.
     meta.remove("extensionItem");
+    if !doc.custom_fields.is_empty() {
+        meta.insert("customFields".into(), serde_json::json!(doc.custom_fields));
+    }
     if let Some(item) = &doc.item {
         meta.insert(
             "item".into(),
@@ -464,12 +471,21 @@ fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
             ));
         }
         if input.extensions.configured() {
-            match crate::extensions::transform_document(
-                &input.extensions,
-                &input.route_label,
-                article,
-                &input.cancel,
-            ) {
+            let transformed = if doc
+                .item
+                .as_ref()
+                .is_some_and(|item| !item.valid || item.schema_valid == Some(false))
+            {
+                Err(crawlx_core::extensions::ExtensionError::Rejected)
+            } else {
+                crate::extensions::transform_document(
+                    &input.extensions,
+                    &input.route_label,
+                    article,
+                    &input.cancel,
+                )
+            };
+            match transformed {
                 Ok(Some(item)) => {
                     meta.insert("extensionItem".into(), item);
                 }
@@ -486,12 +502,37 @@ fn html(input: &mut ComposeInput) -> Result<Composed, ComposeError> {
             "extension document envelope unavailable".into(),
         ));
     }
+    let previews = doc
+        .outputs
+        .as_ref()
+        .and_then(|outputs| outputs.link_media.as_ref())
+        .map(|report| report.previews.clone())
+        .unwrap_or_default();
+    if doc.outputs.is_none() && (doc.decode.is_some() || doc.markup.is_some()) {
+        doc.outputs = Some(crawlx_extract::content_outputs::ContentOutputs::default());
+    }
+    let mut outputs = doc
+        .outputs
+        .take()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|error| ComposeError::Extract(error.to_string()))?;
+    for (key, value) in [
+        ("decode", doc.decode.take().map(serde_json::to_value).transpose()),
+        ("markup", doc.markup.take().map(serde_json::to_value).transpose()),
+    ] {
+        if let Some(value) = value.map_err(|error| ComposeError::Extract(error.to_string()))? {
+            outputs.get_or_insert_with(|| serde_json::json!({}))[key] = value;
+        }
+    }
     let html = document_skeleton(
         &strip(doc.html, options.remove_base64_images),
         doc.language.as_deref(),
     );
     Ok(Composed {
         meta,
+        outputs,
+        previews,
         links: doc.links.iter().map(|l| l.url.clone()).collect(),
         title: doc.title,
         markdown: Some(strip(doc.markdown, options.remove_base64_images)),
@@ -532,21 +573,21 @@ fn pdf(input: &ComposeInput) -> Result<Composed, ComposeError> {
         max_pages: MAX_PDF_PAGES,
         ..ParseLimits::default()
     };
-    let options = PdfOptions {
-        max_pages,
-        page_markers,
-        layout: want_blocks,
+    let options = ParseOptions {
+        pdf_max_pages: max_pages,
+        pdf_page_markers: page_markers,
+        pdf_layout: want_blocks,
         ocr: input.ocr.clone(),
-        ocr_mode: match mode {
+        pdf_ocr: match mode {
             PdfMode::Fast => PdfOcr::Off,
             PdfMode::Auto => PdfOcr::Auto,
             PdfMode::Ocr => PdfOcr::Always,
         },
         limits,
-        ..PdfOptions::default()
+        ..ParseOptions::default()
     };
-    let text = extract_pdf(&input.body, &options).map_err(|e| ComposeError::Unsupported(e.to_string()))?;
-    let mut warnings = text.warnings.clone();
+    let text = parse_document(input, &options)?;
+    let mut warnings = text.warnings;
     match (&input.ocr, mode) {
         (None, PdfMode::Ocr) => {
             warnings.push(format!("{OCR_UNAVAILABLE}; mode `ocr` extracted the text layer"))
@@ -559,24 +600,12 @@ fn pdf(input: &ComposeInput) -> Result<Composed, ComposeError> {
         }
         _ => {}
     }
-    let mut meta = BTreeMap::new();
-    for (key, value) in [
-        ("title", &text.metadata.title),
-        ("author", &text.metadata.author),
-        ("subject", &text.metadata.subject),
-        ("keywords", &text.metadata.keywords),
-        ("creator", &text.metadata.creator),
-        ("producer", &text.metadata.producer),
-    ] {
-        if let Some(v) = value {
-            meta.insert(key.to_owned(), serde_json::json!(v));
-        }
-    }
+    let meta = text.metadata;
     let pages = want_pages.then(|| {
         text.pages
             .iter()
             .map(|p| PdfPageMarkdown {
-                page_number: p.number,
+                page_number: p.page_number,
                 markdown: p.markdown.clone(),
             })
             .collect()
@@ -591,13 +620,76 @@ fn pdf(input: &ComposeInput) -> Result<Composed, ComposeError> {
         pages,
         blocks,
         links: text.links.iter().filter_map(|l| Url::parse(l).ok()).collect(),
-        title: text.metadata.title.clone(),
-        num_pages: Some(text.num_pages),
-        total_pages: Some(text.total_pages),
+        title: text.title,
+        num_pages: text.num_pages,
+        total_pages: text.total_pages,
         markdown: Some(text.markdown),
         meta,
         ..Composed::default()
     })
+}
+
+/// Run a non-page parser under the shared pipeline and the request's privacy projection.
+/// OCR-enabled callers explicitly route raster formats; parser findings stay on the returned document.
+fn parse_document(
+    input: &ComposeInput,
+    options: &ParseOptions,
+) -> Result<Box<crawlx_extract::parse::ParsedDocument>, ComposeError> {
+    let redactor = crawlx_core::secret::Redactor::new();
+    let failed = std::cell::Cell::new(false);
+    let project = |text: &str| {
+        let scrubbed = redactor.scrub_bytes(text.as_bytes(), input.controls.secret_values());
+        let scrubbed = String::from_utf8_lossy(scrubbed.as_ref());
+        let mut projected = match &input.captcha_secrets {
+            Some(registry) => match registry.redact_if_present(&scrubbed) {
+                Ok(text) => text,
+                Err(_) => {
+                    failed.set(true);
+                    Cow::Owned(String::new())
+                }
+            },
+            None => Cow::Borrowed(scrubbed.as_ref()),
+        };
+        if let Some(policy) = &input.extract.content_redaction {
+            projected = Cow::Owned(crawlx_extract::parse::redact::redact(&projected, policy).text);
+        }
+        (projected.as_ref() != text).then(|| projected.into_owned())
+    };
+    let mut spec = crawlx_core::extraction::ParserPipelineV1::default();
+    if options.ocr.is_some() {
+        for format in ["png", "jpeg", "gif", "webp", "bmp", "tiff"] {
+            spec.routes.insert(
+                format.to_owned(),
+                crawlx_core::extraction::PipelineRouteV1::Document,
+            );
+        }
+    }
+    let pipeline = ParserPipeline::new(spec).map_err(|e| ComposeError::Extract(e.to_string()))?;
+    let mut source = PipelineInput::new(&input.body)
+        .with_filename(input.base.path())
+        .with_page_url(&input.base)
+        .with_document_options(options)
+        .with_projection(&project);
+    if let Some(content_type) = &input.content_type {
+        source = source.with_content_type(content_type);
+    }
+    let output = pipeline
+        .run(source)
+        .map_err(|e| ComposeError::Unsupported(e.to_string()))?;
+    if failed.get() {
+        return Err(ComposeError::Extract(
+            "dynamic-secret registry unavailable".into(),
+        ));
+    }
+    match output.content {
+        PipelineContent::Document(mut document) => {
+            document.warnings = output.warnings;
+            Ok(document)
+        }
+        _ => Err(ComposeError::Unsupported(
+            "document parser route unavailable".into(),
+        )),
+    }
 }
 
 #[cfg(test)]

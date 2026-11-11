@@ -103,6 +103,12 @@ pub enum PageOp {
     Screenshot(ShotSpec),
     /// Print the page to PDF.
     PrintToPdf(PdfSpec),
+    /// Capture bounded evidence through the configured policy sink.
+    Capture(crate::browser_capture::CaptureSpec),
+    /// Download an explicitly authorized attachment without exposing a host path.
+    Download(crate::browser_download::DownloadSpec),
+    /// Project bounded captured responses and diagnostic messages without draining raw traffic.
+    CaptureProjection,
     /// Wait until the first CSS match satisfies `state`, at most `timeout_ms`.
     ///
     /// See [`SelectorState`] for the narrow visibility contract. Invalid CSS returns
@@ -141,6 +147,9 @@ impl PageOp {
             Self::Html => "html",
             Self::Screenshot(_) => "screenshot",
             Self::PrintToPdf(_) => "print_to_pdf",
+            Self::Capture(_) => "capture",
+            Self::Download(_) => "download",
+            Self::CaptureProjection => "capture_projection",
             Self::WaitForSelector { .. } => "wait_for_selector",
             Self::ResolveAll { .. } => "resolve_all",
         }
@@ -152,6 +161,10 @@ impl PageOp {
 pub enum PageOpResult {
     /// The operation has no result.
     Done,
+    /// Policy-owned retained browser evidence, never raw bytes or a host path.
+    Capture(crate::browser_capture::CaptureArtifact),
+    /// Bounded metadata with explicit unavailable and dropped-record states.
+    Projection(crate::browser_projection::BrowserProjection),
     /// A JSON value (`EvaluateScript`).
     Json(serde_json::Value),
     /// The serialized DOM and the document URL (`Html`).

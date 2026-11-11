@@ -1,6 +1,7 @@
 //! Bounded metadata-only transaction patches for MemoryStore. No whole-state clones.
 
 use super::*;
+use crawlx_core::dataset::FeedFinalizationOutcomeV1;
 use crawlx_core::ActionId;
 use std::collections::BTreeMap;
 
@@ -21,6 +22,7 @@ pub(crate) struct MemoryDelivery {
     pub(crate) lease_expires: Option<Timestamp>,
     pub(crate) not_before: Timestamp,
     pub(crate) erased: bool,
+    pub(crate) terminal_source: bool,
 }
 #[derive(Clone, Copy, Default)]
 struct KvUsage {
@@ -34,13 +36,39 @@ pub(crate) struct DatasetState {
     pub(crate) items: BTreeMap<Namespace, MemoryDataset>,
     pub(crate) kv: BTreeMap<KvKey, KvValueV1>,
     pub(crate) deliveries: BTreeMap<i64, MemoryDelivery>,
+    pub(crate) memo: BTreeMap<CrawlRunId, super::memo::MemoState>,
     kv_usage: BTreeMap<Namespace, KvUsage>,
     pub(crate) dropped_kv: std::collections::BTreeSet<Namespace>,
+    pub(crate) feed_finalizing: std::collections::BTreeSet<CrawlRunId>,
+    pub(crate) feed_finalized: BTreeMap<CrawlRunId, FeedFinalizationOutcomeV1>,
+    pub(crate) feed_reasons: BTreeMap<CrawlRunId, crawlx_core::counters::TerminalReason>,
     delivery_keys: BTreeMap<(CrawlRunId, String, String), i64>,
     next_delivery: i64,
 }
 impl DatasetState {
+    pub(crate) fn delivery(
+        &self,
+        run: CrawlRunId,
+        feed: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<&MemoryDelivery>, StoreError> {
+        let Some(id) = self
+            .delivery_keys
+            .get(&(run, feed.to_owned(), idempotency_key.to_owned()))
+        else {
+            return Ok(None);
+        };
+        self.deliveries
+            .get(id)
+            .map(Some)
+            .ok_or_else(|| StoreError::Backend("delivery identity index inconsistent".into()))
+    }
+
     pub(crate) fn purge_run(&mut self, run: CrawlRunId) {
+        self.memo.remove(&run);
+        self.feed_finalizing.remove(&run);
+        self.feed_finalized.remove(&run);
+        self.feed_reasons.remove(&run);
         self.items.retain(|(owner, _), _| *owner != run);
         self.kv.retain(|(owner, _, _), _| *owner != run);
         self.kv_usage.retain(|(owner, _), _| *owner != run);
@@ -136,6 +164,9 @@ fn prepare(
 ) -> Result<PreparedDatasetDelta, StoreError> {
     let config = &run.config.datasets;
     config.validate()?;
+    if !accepted.is_empty() && (state.feed_finalizing.contains(&run.id) || run.status.is_terminal()) {
+        return Err(conflict("feed source is sealed for finalization"));
+    }
     let zdr = run.config.retention.mode == RetentionMode::Zdr;
     let count = accepted.iter().try_fold(0usize, |count, batch| {
         count
@@ -177,6 +208,7 @@ fn prepare(
             });
         for item in &batch.items {
             item_valid(item, zdr, now)?;
+            fragments_valid(item, config, &batch.dataset)?;
             if item.schema_version != declaration.schema_version {
                 return Err(conflict("dataset schema mismatch"));
             }
@@ -203,7 +235,7 @@ fn prepare(
             let ordinal = dataset.next_ordinal;
             let bytes = dataset
                 .bytes
-                .checked_add(item.size_bytes)
+                .checked_add(item_bytes(item)?)
                 .ok_or_else(|| conflict("dataset byte counter overflow"))?;
             if ordinal > declaration.max_items || bytes > declaration.max_bytes {
                 return Err(conflict("dataset quota exhausted"));
@@ -296,16 +328,18 @@ fn prepare(
             batch.range = DeliveryRangeV1::Committed { first, last };
         }
         delivery_valid(&batch, config, zdr, now)?;
-        let (first, last) = match batch.range {
-            DeliveryRangeV1::Committed { first, last } => (first, last),
-            _ => return Err(conflict("delivery source range unresolved")),
-        };
-        for ordinal in first..=last {
-            let row = lookup(state, &patch, &namespace, ordinal)
-                .ok_or_else(|| conflict("delivery references uncommitted items"))?;
-            if row.item.expires_at.is_some_and(|end| end <= now) {
-                return Err(expired());
+        match batch.range {
+            DeliveryRangeV1::Empty if request == 0 && action.is_none() => {}
+            DeliveryRangeV1::Committed { first, last } => {
+                for ordinal in first..=last {
+                    let row = lookup(state, &patch, &namespace, ordinal)
+                        .ok_or_else(|| conflict("delivery references uncommitted items"))?;
+                    if row.item.expires_at.is_some_and(|end| end <= now) {
+                        return Err(expired());
+                    }
+                }
             }
+            _ => return Err(conflict("delivery source range unresolved")),
         }
         let key = (run.id, batch.feed.clone(), batch.idempotency_key.clone());
         if let Some(id) = state.delivery_keys.get(&key).or_else(|| new_keys.get(&key)) {
@@ -338,6 +372,7 @@ fn prepare(
                 lease_expires: None,
                 not_before: now,
                 erased: false,
+                terminal_source: request == 0 && action.is_none(),
             },
         ));
     }

@@ -45,7 +45,9 @@ async fn run_from_row(pg: &Pg, r: &PgRow) -> Result<CrawlRun, StoreError> {
         } else {
             let config = get::<serde_json::Value>(r, "config")?;
             // Decode on an independent stack rather than the nested metadata future's stack.
-            tokio::task::spawn_blocking(move || from_json(config))
+            // Keep its large result boxed across the task handoff: constructing an inline
+            // CreateCrawl task also consumes the already-deep caller's stack before spawning.
+            *tokio::task::spawn_blocking(move || from_json::<Box<crawlx_core::config::CreateCrawl>>(config))
                 .await
                 .map_err(|error| StoreError::Backend(format!("run config decode task failed: {error}")))??
         },
@@ -128,9 +130,9 @@ async fn insert_run(
     sqlx::query(
         "INSERT INTO crawl_runs (run_id, tenant_id, status, terminal_reason, mode, seed, safety_profile, authorization_record_id, \
            policy_version, identity_version, state_algo_version, query_classifier_version, config, config_digest, counters, \
-           retention_mode, retention_days, expires_at, created_at, started_at, finished_at, trace_id, run_kind, replay_of, replay_spec, data_requirements) \
+           retention_mode, retention_days, expires_at, created_at, started_at, finished_at, trace_id, run_kind, replay_of, replay_spec, data_requirements, feed_required) \
          VALUES ($1, $2, $3::text::run_status, $4::text::terminal_reason, $5::text::crawl_mode, $6, $7::text::safety_profile, $8, \
-           $9, $10, $11, $12, $13, $14, $15, $16::text::retention_mode, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)",
+           $9, $10, $11, $12, $13, $14, $15, $16::text::retention_mode, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)",
     )
     .bind(run.id.0)
     .bind(run.tenant.0)
@@ -162,6 +164,7 @@ async fn insert_run(
         spec.clone()
     }))
     .bind(to_json(&crawlx_core::data_capabilities::WorkerDataRequirementsV1::from_config(cfg)?)?)
+    .bind(!cfg.datasets.feeds.is_empty())
     .execute(tx)
     .await
     .map_err(db)?;
@@ -172,8 +175,8 @@ async fn insert_sessions(tx: &mut sqlx::PgConnection, sessions: &[CrawlSession])
     for s in sessions {
         // Launch profile and console capture follow the run's dynamic.launchProfile.
         let inserted = sqlx::query(
-            "INSERT INTO crawl_sessions (session_id, run_id, role, run_index, schedule_slot, status, action_seq, launch_profile, console_capture) \
-             SELECT $1::uuid, r.run_id, $3::text, $4::int, $5::int, $6::text, $7::bigint, \
+            "INSERT INTO crawl_sessions (session_id, run_id, role, run_index, schedule_slot, status, action_seq, session_kind, launch_profile, console_capture) \
+             SELECT $1::uuid, r.run_id, $3::text, $4::int, $5::int, $6::text, $7::bigint, $8::text, \
                     COALESCE(r.config->'dynamic'->>'launchProfile', 'standard'), \
                     COALESCE(r.config->'dynamic'->>'launchProfile', 'standard') <> 'stealth' \
              FROM crawl_runs r WHERE r.run_id = $2",
@@ -185,6 +188,7 @@ async fn insert_sessions(tx: &mut sqlx::PgConnection, sessions: &[CrawlSession])
         .bind(conv::<u32, i32>(s.schedule_slot, "schedule_slot")?)
         .bind(s.status.as_str())
         .bind(conv::<u64, i64>(s.action_seq, "action_seq")?)
+        .bind(s.kind.as_str())
         .execute(&mut *tx)
         .await
         .map_err(db)?;

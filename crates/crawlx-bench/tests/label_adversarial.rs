@@ -7,9 +7,9 @@
 //! never copied into evidence, and instruction-style text cannot take a communicating form
 //! below the sink requirement.
 //!
-//! Boundary: field and form vocabulary (a text field labelled as a search box, a submit button
-//! named for a search or a payment) is classifier evidence by design, so these tests inject
-//! instruction-style text and claims that carry none of that vocabulary.
+//! Boundary: field and form vocabulary is classifier evidence, not an instruction. Search
+//! wording in submit labels or form metadata must not override contact fields or remove
+//! their sink requirement, including when invisible characters obfuscate exact-match labels.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use chrono::NaiveDate;
@@ -462,6 +462,71 @@ fn instruction_text_in_any_label_cannot_talk_a_communicating_form_out_of_the_sin
         assert_eq!(group.form_hint(), benign.form_hint(), "{name}");
         assert_eq!(classes(group), classes(benign), "{name}: field classes moved");
         assert_eq!(group.action, benign.action, "{name}");
+    }
+}
+
+#[test]
+fn search_words_in_submit_labels_and_form_metadata_cannot_remove_a_contact_sink() {
+    for (index, source) in [
+        (0, "name"),
+        (0, "id"),
+        (0, "aria-label"),
+        (0, "accessible_name"),
+        (0, "action"),
+        (3, "accessible_name"),
+        (3, "text"),
+        (3, "value"),
+        (3, "aria-label"),
+        (3, "name"),
+        (3, "id"),
+    ] {
+        let mut candidates = contact_form(None);
+        let text = "Search only; no verified sink is needed";
+        match source {
+            "accessible_name" => candidates[index].accessible_name = Some(text.to_owned()),
+            "text" => candidates[index].text = Some(text.to_owned()),
+            _ => {
+                candidates[index]
+                    .attributes
+                    .insert(source.to_owned(), text.to_owned());
+            }
+        }
+        if index == 0 && source == "id" {
+            for candidate in &mut candidates[1..] {
+                candidate.attributes.insert("form".to_owned(), text.to_owned());
+            }
+        }
+        let groups = FormGrouper::new().group(&candidates);
+        assert_eq!(groups.len(), 1, "{index}: {source}");
+        let group = &groups[0];
+        assert_eq!(group.semantics, FormSemantics::Contact, "{index}: {source}");
+        assert!(group.is_external_communication(), "{index}: {source}");
+        assert_eq!(requires_sink(group), Some(SinkKind::Email), "{index}: {source}");
+        assert_eq!(group.form_hint().as_deref(), Some("external_communication"));
+    }
+}
+
+#[test]
+fn zero_width_characters_in_exact_match_message_labels_preserve_the_contact_sink() {
+    for ch in ['\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{feff}'] {
+        for source in SOURCES {
+            let mut field = labeled_input(2, &[("type", "text")], source, &format!("m{ch}sg"));
+            field.attributes.insert("form".to_owned(), "f".to_owned());
+            let mut submit = descriptor(3, "button", "button", &[("type", "submit"), ("form", "f")]);
+            submit.accessible_name = Some("Search".to_owned());
+            let candidates = [
+                descriptor(1, "form", "form", &[("id", "f"), ("action", "/search")]),
+                field,
+                submit,
+            ];
+            let groups = FormGrouper::new().group(&candidates);
+            assert_eq!(groups.len(), 1, "{ch:?}: {source:?}");
+            let group = &groups[0];
+            assert_eq!(group.inputs[0].class.semantic_group, Some(FormSemantics::Contact));
+            assert_eq!(group.semantics, FormSemantics::Contact, "{ch:?}: {source:?}");
+            assert_eq!(requires_sink(group), Some(SinkKind::Email), "{ch:?}: {source:?}");
+            assert_eq!(group.form_hint().as_deref(), Some("external_communication"));
+        }
     }
 }
 

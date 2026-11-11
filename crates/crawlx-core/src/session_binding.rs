@@ -184,6 +184,18 @@ pub enum SessionBindingError {
     /// The binding's absolute admitted ceiling elapsed; no new use is permitted.
     #[error("session binding expired")]
     Expired,
+    /// No new effects may enter while the owned generation drains.
+    #[error("session binding draining: {reason:?}")]
+    Draining {
+        /// Cause retained until confirmed cleanup.
+        reason: RetirementReason,
+    },
+    /// Cleanup completed and this generation cannot admit further effects.
+    #[error("session binding retired: {reason:?}")]
+    Retired {
+        /// Original retirement cause.
+        reason: Option<RetirementReason>,
+    },
     /// Another existing session lease owns this binding.
     #[error("session lease fence lost")]
     LeaseLost,
@@ -214,7 +226,8 @@ impl SessionBindingV1 {
     /// Check strict identity, fence and finite policy before admitting a use.
     ///
     /// # Errors
-    /// Returns unavailable for any mismatch/expiry/retirement, or lease loss for a stale fence.
+    /// Returns typed drain, retirement or expiry, unavailable for identity/policy mismatch,
+    /// or lease loss for a stale fence.
     pub fn eligible(
         &self,
         identity: &SessionIdentityV1,
@@ -227,11 +240,35 @@ impl SessionBindingV1 {
         }
         if self.schema_version != 1
             || self.identity != *identity
+            || self.generation == 0
+            || self.state_version == 0
+            || limits.max_usage == 0
+            || limits.max_health_errors == 0
             || self
                 .lifetime_expires_at
                 .is_some_and(|ceiling| self.expires_at > ceiling)
-            || self.state != BindingState::Leased
-            || self.retirement.is_some()
+        {
+            return Err(SessionBindingError::Unavailable);
+        }
+        match self.state {
+            BindingState::Draining => {
+                return Err(self
+                    .retirement
+                    .map_or(SessionBindingError::Unavailable, |reason| {
+                        SessionBindingError::Draining { reason }
+                    }));
+            }
+            BindingState::Retired => {
+                return Err(SessionBindingError::Retired {
+                    reason: self.retirement,
+                });
+            }
+            BindingState::Leased => {}
+            BindingState::Available | BindingState::Quarantined => {
+                return Err(SessionBindingError::Unavailable);
+            }
+        }
+        if self.retirement.is_some()
             || self.usage >= limits.max_usage
             || self.health_errors >= limits.max_health_errors
         {
@@ -260,14 +297,16 @@ impl SessionBindingV1 {
         limits: SessionLimits,
     ) -> Result<(), SessionBindingError> {
         self.eligible(&self.identity, self.lease_fence, now, limits)?;
-        self.usage = self
+        let usage = self
             .usage
             .checked_add(1)
             .ok_or(SessionBindingError::Unavailable)?;
-        self.state_version = self
+        let version = self
             .state_version
             .checked_add(1)
             .ok_or(SessionBindingError::Unavailable)?;
+        self.usage = usage;
+        self.state_version = version;
         self.health_errors = if healthy {
             self.health_errors.saturating_sub(1)
         } else {
@@ -284,10 +323,54 @@ impl SessionBindingV1 {
         Ok(())
     }
 
-    /// Replace only a retired, reconciled generation, never an uncertain in-flight write.
+    /// Stop admitting effects before closing the owned context.
     ///
     /// # Errors
-    /// Returns generation conflict unless the old generation is retired and ownership is unchanged.
+    /// Returns generation conflict unless this generation is leased or already draining.
+    pub fn begin_drain(&mut self, reason: RetirementReason) -> Result<(), SessionBindingError> {
+        if self.state == BindingState::Draining && self.retirement.is_some() {
+            return Ok(());
+        }
+        if self.state != BindingState::Leased {
+            return Err(SessionBindingError::GenerationConflict);
+        }
+        let version = self
+            .state_version
+            .checked_add(1)
+            .ok_or(SessionBindingError::GenerationConflict)?;
+        self.state = BindingState::Draining;
+        self.retirement = Some(reason);
+        self.state_version = version;
+        Ok(())
+    }
+
+    /// Record proven resource death or retain uncertain cleanup in quarantine.
+    ///
+    /// # Errors
+    /// Returns generation conflict unless the generation is draining.
+    pub fn finish_cleanup(&mut self, confirmed: bool) -> Result<(), SessionBindingError> {
+        if self.state != BindingState::Draining || self.retirement.is_none() {
+            return Err(SessionBindingError::GenerationConflict);
+        }
+        let version = self
+            .state_version
+            .checked_add(1)
+            .ok_or(SessionBindingError::GenerationConflict)?;
+        self.state = if confirmed {
+            BindingState::Retired
+        } else {
+            BindingState::Quarantined
+        };
+        self.state_version = version;
+        Ok(())
+    }
+
+    /// Replace only a retired, reconciled anonymous health/usage generation.
+    /// Acquisition identity and both lifetime ceilings remain unchanged.
+    ///
+    /// # Errors
+    /// Returns generation conflict for incomplete cleanup/reconciliation, authentication,
+    /// changed ownership/acquisition identity, or expiry extension.
     pub fn replace(
         &self,
         identity: SessionIdentityV1,
@@ -296,14 +379,24 @@ impl SessionBindingV1 {
     ) -> Result<Self, SessionBindingError> {
         if !journal_reconciled
             || self.state != BindingState::Retired
-            || identity.tenant != self.identity.tenant
-            || identity.run != self.identity.run
-            || identity.principal != self.identity.principal
-            || identity.session != self.identity.session
+            || self.schema_version != 1
+            || self.generation == 0
+            || self.state_version == 0
+            || self.identity.principal != PrincipalId::anonymous()
+            || self.identity.profile.is_some()
+            || !matches!(
+                self.retirement,
+                Some(RetirementReason::UsageLimit | RetirementReason::Unhealthy)
+            )
+            || identity != self.identity
+            || expires_at > self.expires_at
+            || self
+                .lifetime_expires_at
+                .is_some_and(|ceiling| self.expires_at > ceiling)
         {
             return Err(SessionBindingError::GenerationConflict);
         }
-        let mut next = Self::new(identity, self.lease_fence, expires_at.min(self.expires_at));
+        let mut next = Self::new(identity, self.lease_fence, expires_at);
         next.lifetime_expires_at = self.lifetime_expires_at;
         next.generation = self
             .generation
@@ -328,7 +421,7 @@ mod tests {
             SessionIdentityV1 {
                 tenant: TenantId::new(),
                 run: CrawlRunId::new(),
-                principal: PrincipalId("reader".into()),
+                principal: PrincipalId::anonymous(),
                 session: SessionId::new(),
                 acquisition: digest,
                 backend_build: digest,
@@ -375,10 +468,12 @@ mod tests {
             binding.eligible(&wrong, 7, now, SessionLimits::default()),
             Err(SessionBindingError::Unavailable),
         );
-        binding.state = BindingState::Draining;
+        binding.begin_drain(RetirementReason::UsageLimit).unwrap();
         assert_eq!(
             binding.eligible(&binding.identity, 7, now, SessionLimits::default()),
-            Err(SessionBindingError::Unavailable),
+            Err(SessionBindingError::Draining {
+                reason: RetirementReason::UsageLimit
+            }),
         );
     }
 
@@ -400,7 +495,7 @@ mod tests {
         assert!(binding
             .replace(binding.identity.clone(), true, binding.expires_at)
             .is_err());
-        binding.state = BindingState::Retired;
+        binding.finish_cleanup(true).unwrap();
         assert!(binding
             .replace(binding.identity.clone(), false, binding.expires_at)
             .is_err());
@@ -411,5 +506,124 @@ mod tests {
                 .generation,
             2
         );
+    }
+
+    #[test]
+    fn successful_use_reduces_health_without_changing_identity_or_expiry() {
+        let mut binding = binding();
+        let original = binding.clone();
+        let now = binding.expires_at - chrono::Duration::seconds(1);
+        binding.record_use(false, now, SessionLimits::default()).unwrap();
+        assert_eq!(binding.health_errors, 1);
+        binding.record_use(true, now, SessionLimits::default()).unwrap();
+        assert_eq!(binding.health_errors, 0);
+        assert_eq!(binding.usage, 2);
+        assert_eq!(binding.state, BindingState::Leased);
+        assert_eq!(binding.identity, original.identity);
+        assert_eq!(binding.expires_at, original.expires_at);
+        assert_eq!(binding.lifetime_expires_at, original.lifetime_expires_at);
+    }
+
+    #[test]
+    fn failed_cleanup_keeps_health_generation_quarantined() {
+        let mut binding = binding();
+        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let limits = SessionLimits {
+            max_usage: 1,
+            max_health_errors: 5,
+        };
+        binding.record_use(true, now, limits).unwrap();
+        let reason = binding.retirement;
+        binding.finish_cleanup(false).unwrap();
+        assert_eq!(binding.state, BindingState::Quarantined);
+        assert_eq!(binding.retirement, reason);
+        assert!(binding.finish_cleanup(true).is_err());
+        assert!(binding
+            .replace(binding.identity.clone(), true, binding.expires_at)
+            .is_err());
+    }
+
+    #[test]
+    fn replacement_refuses_owner_policy_and_expiry_changes() {
+        let mut binding = binding();
+        let now = binding.expires_at - chrono::Duration::seconds(1);
+        let limits = SessionLimits {
+            max_usage: 1,
+            max_health_errors: 5,
+        };
+        binding.record_use(true, now, limits).unwrap();
+        binding.finish_cleanup(true).unwrap();
+        for identity in [
+            SessionIdentityV1 {
+                tenant: TenantId::new(),
+                ..binding.identity.clone()
+            },
+            SessionIdentityV1 {
+                run: CrawlRunId::new(),
+                ..binding.identity.clone()
+            },
+            SessionIdentityV1 {
+                principal: PrincipalId("reader".into()),
+                ..binding.identity.clone()
+            },
+            SessionIdentityV1 {
+                session: SessionId::new(),
+                ..binding.identity.clone()
+            },
+            SessionIdentityV1 {
+                egress: Digest::of("fixture", b"changed"),
+                ..binding.identity.clone()
+            },
+            SessionIdentityV1 {
+                profile: Some(Digest::of("fixture", b"jar")),
+                ..binding.identity.clone()
+            },
+        ] {
+            assert_eq!(
+                binding.replace(identity, true, binding.expires_at),
+                Err(SessionBindingError::GenerationConflict),
+            );
+        }
+        assert_eq!(
+            binding.replace(
+                binding.identity.clone(),
+                true,
+                binding.expires_at + chrono::Duration::seconds(1),
+            ),
+            Err(SessionBindingError::GenerationConflict),
+        );
+        assert_eq!(
+            binding.eligible(&binding.identity, 7, now, limits),
+            Err(SessionBindingError::Retired {
+                reason: binding.retirement
+            }),
+        );
+        let mut authenticated = binding.clone();
+        authenticated.identity.principal = PrincipalId("reader".into());
+        assert!(authenticated
+            .replace(authenticated.identity.clone(), true, authenticated.expires_at)
+            .is_err());
+        let next = binding
+            .replace(binding.identity.clone(), true, binding.expires_at)
+            .unwrap();
+        assert_eq!(next.usage, 0);
+        assert_eq!(next.health_errors, 0);
+        assert_eq!(next.generation, binding.generation + 1);
+        assert_eq!(next.state_version, binding.state_version + 1);
+        assert_eq!(next.expires_at, binding.expires_at);
+        assert_eq!(next.lifetime_expires_at, binding.lifetime_expires_at);
+    }
+
+    #[test]
+    fn counter_overflow_does_not_partially_charge_generation() {
+        let mut binding = binding();
+        binding.state_version = u64::MAX;
+        let original = binding.clone();
+        let now = binding.expires_at - chrono::Duration::seconds(1);
+        assert_eq!(
+            binding.record_use(true, now, SessionLimits::default()),
+            Err(SessionBindingError::Unavailable),
+        );
+        assert_eq!(binding, original);
     }
 }

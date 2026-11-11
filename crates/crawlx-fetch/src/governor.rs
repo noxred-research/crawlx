@@ -13,6 +13,10 @@
 //! Abandoned browser preparation does not advance local spacing clocks.
 //! Deployment admission still timestamps reservation: its asynchronous interface
 //! cannot commit actual dispatch after final browser gates without another await.
+//! Checked HTTP attempts and browser proxy connections also share a process-wide
+//! physical-IP cap through the same [`GlobalOriginCap`]. Host aliases, ports and
+//! proxy routes never partition this cap. Every checked candidate IP is charged;
+//! origin capacity and deployment-origin admission remain independent hard bounds.
 //!
 //! The buckets are exact sliding windows over reserved start times: the
 //! `n`-th start is never earlier than the `(n - limit)`-th start plus the
@@ -20,6 +24,7 @@
 //! starts. Reservations are taken in call order under one lock, so
 //! concurrent callers never share a slot and never reorder.
 
+use crate::resolver::CheckedResolution;
 use crawlx_core::config::Politeness;
 use crawlx_core::origin::{OriginAdmission, OriginPermit};
 use crawlx_core::runtime_admission::PacingDialectV1;
@@ -32,6 +37,7 @@ use rand::RngExt as _;
 use rand_chacha::ChaCha8Rng;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -307,6 +313,7 @@ pub struct GlobalOriginCap {
     origins: Mutex<BTreeMap<Origin, Arc<SharedOrigin>>>,
     admission: Option<Arc<dyn OriginAdmission>>,
     local: Option<Arc<GlobalOriginCap>>,
+    physical: Mutex<BTreeMap<IpAddr, Arc<Semaphore>>>,
 }
 
 #[derive(Debug)]
@@ -347,6 +354,7 @@ impl GlobalOriginCap {
             origins: Mutex::new(BTreeMap::new()),
             admission: None,
             local: None,
+            physical: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -404,6 +412,41 @@ impl GlobalOriginCap {
                 cooldown: Mutex::new(Cooldown::default()),
             })
         }))
+    }
+
+    /// Reserve every possible checked target IP, independently of aliases, ports or proxy routes.
+    ///
+    /// Origin admission remains separate and authoritative. A connection charges
+    /// every address it may dial because the connector can fall back between them.
+    /// Dropping a partial acquisition releases its slots. No run-global slot is
+    /// held while waiting. All IPs use canonical order to prevent lock cycles.
+    pub async fn acquire_physical(&self, target: &CheckedResolution) -> PhysicalPermit {
+        let mut authority = self;
+        while let Some(local) = &authority.local {
+            authority = local;
+        }
+        let mut slots = Vec::with_capacity(target.addresses().len());
+        let mut previous = None;
+        for ip in target.addresses() {
+            let ip = ip.to_canonical();
+            if previous == Some(ip) {
+                continue;
+            }
+            previous = Some(ip);
+            let semaphore = {
+                let mut physical = authority.physical.lock();
+                Arc::clone(
+                    physical
+                        .entry(ip)
+                        .or_insert_with(|| Arc::new(Semaphore::new(authority.limit))),
+                )
+            };
+            match semaphore.acquire_owned().await {
+                Ok(slot) => slots.push(slot),
+                Err(_) => std::future::pending::<()>().await,
+            }
+        }
+        PhysicalPermit { _slots: slots }
     }
 
     async fn acquire_slot(&self, origin: &Origin) -> OwnedSemaphorePermit {
@@ -553,6 +596,14 @@ impl Default for GlobalOriginCap {
     }
 }
 
+/// Shared physical-target capacity, held through the connection or response body.
+#[derive(Debug)]
+#[must_use]
+#[non_exhaustive]
+pub struct PhysicalPermit {
+    _slots: Vec<OwnedSemaphorePermit>,
+}
+
 /// Holding a `Permit` means one in-flight slot of the origin, one of the global
 /// concurrency cap and one of the process-wide per-origin cap are taken, and the
 /// spacing and rate-bucket waits have elapsed. Dropping it frees all three slots.
@@ -565,6 +616,7 @@ pub struct Permit {
     _origin_cap: OwnedSemaphorePermit,
     _deployment: Option<Box<dyn OriginPermit>>,
     browser_dispatch: Option<BrowserDispatch>,
+    _physical: Option<PhysicalPermit>,
 }
 
 #[derive(Debug)]
@@ -728,7 +780,19 @@ impl OriginGovernor {
     /// # Errors
     /// Returns a storage error when deployment admission is unavailable.
     pub async fn acquire(&self, origin: &Origin) -> Result<Permit, StoreError> {
-        self.acquire_spaced(origin, Duration::ZERO).await
+        self.acquire_spaced(origin, Duration::ZERO, None).await
+    }
+
+    /// Admit HTTP using checked target addresses, retaining all origin limits.
+    ///
+    /// # Errors
+    /// Returns a conflict for mismatched evidence or an unavailable admission store.
+    pub async fn acquire_resolved(
+        &self,
+        origin: &Origin,
+        target: &CheckedResolution,
+    ) -> Result<Permit, StoreError> {
+        self.acquire_spaced(origin, Duration::ZERO, Some(target)).await
     }
 
     /// Prepare a browser effect with at least 500 ms of process-local spacing.
@@ -741,16 +805,31 @@ impl OriginGovernor {
     /// # Errors
     /// Returns a storage error when deployment admission is unavailable.
     pub async fn acquire_browser(&self, origin: &Origin) -> Result<Permit, StoreError> {
-        self.acquire_spaced(origin, Duration::from_millis(500)).await
+        self.acquire_spaced(origin, Duration::from_millis(500), None)
+            .await
     }
 
-    async fn acquire_spaced(&self, origin: &Origin, minimum: Duration) -> Result<Permit, StoreError> {
+    async fn acquire_spaced(
+        &self,
+        origin: &Origin,
+        minimum: Duration,
+        target: Option<&CheckedResolution>,
+    ) -> Result<Permit, StoreError> {
+        if target.is_some_and(|target| target.origin() != origin) {
+            return Err(StoreError::Conflict(
+                "physical target evidence does not match origin".into(),
+            ));
+        }
         let waited_from = Instant::now();
         let state = self.state(origin);
         let slot = Arc::clone(&state.sem).acquire_owned().await.ok();
         // Do not spend run-global slots while this origin is saturated locally
         // or in another worker. Unrelated origins must remain able to progress.
         let (origin_cap, mut deployment) = self.origin_cap.reserve(origin).await?;
+        let physical = match target {
+            Some(target) => Some(self.origin_cap.acquire_physical(target).await),
+            None => None,
+        };
         let start = {
             let now = Instant::now();
             // Held across the bucket reservations so a second same-origin caller sees the
@@ -799,6 +878,7 @@ impl OriginGovernor {
             _origin_cap: origin_cap,
             _deployment: deployment,
             browser_dispatch,
+            _physical: physical,
         })
     }
 
@@ -848,6 +928,12 @@ impl OriginGovernor {
                         .max(floor)
                         .max(current)
                         .max(retry_after.unwrap_or_default());
+                    tracing::debug!(
+                        jitter_factor = jitter,
+                        delay_millis = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        rng_stream = "fetch/governor-jitter",
+                        "seeded origin backoff decision"
+                    );
                     self.origin_cap.note_cooldown(origin, delay, false);
                     delay
                 };
@@ -981,6 +1067,105 @@ mod tests {
         GovernorConfig {
             base_delay: Duration::from_millis(250),
             ..GovernorConfig::default()
+        }
+    }
+
+    async fn checked(host: &str, addresses: &[IpAddr]) -> CheckedResolution {
+        let resolver = crate::resolver::StaticResolver::new().with(host, addresses.iter().copied());
+        CheckedResolution::resolve(
+            &resolver,
+            &crawlx_policy::EgressPolicy::new(false),
+            &url::Url::parse(&format!("https://{host}/")).unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn physical_alias_waiters_preserve_unrelated_run_capacity() {
+        let cap = Arc::new(GlobalOriginCap::new(1));
+        let config = GovernorConfig {
+            base_delay: Duration::ZERO,
+            max_concurrency: 1,
+            ..cfg()
+        };
+        let first = OriginGovernor::with_global_cap(config.clone(), Arc::clone(&cap));
+        let second = OriginGovernor::with_global_cap(config, cap);
+        let ip = IpAddr::from([93, 184, 216, 34]);
+        let a = checked("first.test", &[ip]).await;
+        let b = checked("alias.test", &[ip]).await;
+        let other = checked("other.test", &[IpAddr::from([1, 1, 1, 1])]).await;
+        let held = first.acquire_resolved(a.origin(), &a).await.unwrap();
+        let waiting = second.acquire_resolved(b.origin(), &b);
+        tokio::pin!(waiting);
+        assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+        let before = Instant::now();
+        drop(second.acquire_resolved(other.origin(), &other).await.unwrap());
+        assert_eq!(before.elapsed(), Duration::ZERO);
+        drop(held);
+        drop(waiting.await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn physical_evidence_never_replaces_origin_capacity_or_identity() {
+        let cap = Arc::new(GlobalOriginCap::new(1));
+        let g = OriginGovernor::with_global_cap(
+            GovernorConfig {
+                base_delay: Duration::ZERO,
+                max_in_flight_per_origin: 2,
+                ..cfg()
+            },
+            cap,
+        );
+        let first = checked("same.test", &[IpAddr::from([93, 184, 216, 34])]).await;
+        let rebound = checked("same.test", &[IpAddr::from([1, 1, 1, 1])]).await;
+        let held = g.acquire_resolved(first.origin(), &first).await.unwrap();
+        {
+            let waiting = g.acquire_resolved(rebound.origin(), &rebound);
+            tokio::pin!(waiting);
+            assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+        }
+        let wrong = origin("https://forged.test");
+        assert!(matches!(
+            g.acquire_resolved(&wrong, &first).await,
+            Err(StoreError::Conflict(_))
+        ));
+        drop(held);
+        drop(g.acquire_resolved(rebound.origin(), &rebound).await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_partial_physical_admission_releases_sorted_deduplicated_ips() {
+        let cap = GlobalOriginCap::new(1);
+        let low = IpAddr::from([1, 1, 1, 1]);
+        let high = IpAddr::from([93, 184, 216, 34]);
+        let occupied = checked("occupied.test", &[high]).await;
+        let both = checked("multi.test", &[high, low, low]).await;
+        assert_eq!(both.addresses(), &[low, high]);
+        let held = cap.acquire_physical(&occupied).await;
+        {
+            let waiting = cap.acquire_physical(&both);
+            tokio::pin!(waiting);
+            assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+        }
+        let independent = checked("independent.test", &[low]).await;
+        let before = Instant::now();
+        drop(cap.acquire_physical(&independent).await);
+        assert_eq!(before.elapsed(), Duration::ZERO);
+        drop(held);
+        drop(cap.acquire_physical(&both).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn backoff_jitter_replays_from_seed_without_lowering_origin_floor() {
+        let first = OriginGovernor::new(cfg());
+        let second = OriginGovernor::new(cfg());
+        let o = origin("https://seeded.test");
+        for status in [429, 503, 200, 429, 503] {
+            first.on_response(&o, status, None);
+            second.on_response(&o, status, None);
+            assert_eq!(first.current_delay(&o), second.current_delay(&o));
+            assert!(first.current_delay(&o) >= cfg().base_delay);
         }
     }
 

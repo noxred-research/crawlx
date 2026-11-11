@@ -384,6 +384,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         &self,
         attached: &StoreCustody,
         run_row: &RunMetadata,
+        class: Sensitivity,
         content_type: &str,
         file: &Path,
         max_bytes: u64,
@@ -462,7 +463,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             size_bytes: size,
             digest,
             content_type: content_type.into(),
-            sensitivity: Sensitivity::Content,
+            sensitivity: class,
             created_at: now,
             expires_at,
         };
@@ -505,6 +506,12 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         let mut stale = 0usize;
         let mut unknown = 0usize;
         loop {
+            if row.expires_at.is_some_and(|expiry| expiry <= self.clock.now()) {
+                self.reject_staged(attached, row, unknown > 0).await?;
+                return Err(StoreError::RetentionDenied(
+                    "archive source expired before publication".into(),
+                ));
+            }
             match attached
                 .custody
                 .publish(lease, version, row, identity, envelope)

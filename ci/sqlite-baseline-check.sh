@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# SQLite baseline parity helper. Applies crates/crawlx-storage/migrations/sqlite/0046_baseline.sql
-# to a fresh database with the sqlite3 CLI (foreign keys on) and checks that
-#   * the file applies without error,
+# SQLite schema parity helper. Applies the level-0046 baseline and every later SQLite
+# migration to a fresh database with foreign keys enabled, then checks that
+#   * every migration applies without error,
+#   * PostgreSQL, SQLite and MariaDB declare the same migration versions from 0047,
 #   * every PostgreSQL base table exists (and no unlisted table does), all of them STRICT,
-#   * every `CREATE TABLE` of the PostgreSQL migrations is in the expected list, so a new
-#     PostgreSQL table fails this check until the SQLite baseline (or a later SQLite migration
-#     list entry) covers it,
 #   * PRAGMA integrity_check is `ok` and PRAGMA foreign_key_check is empty,
 #   * the seed rows and the status-machine trigger behave as the storage layer expects.
 #
@@ -22,19 +20,18 @@ PG_MIGRATIONS=crates/crawlx-storage/migrations
 command -v sqlite3 >/dev/null || { echo "sqlite-baseline-check: sqlite3 not found" >&2; exit 2; }
 [ -f "$BASELINE" ] || { echo "sqlite-baseline-check: $BASELINE not found" >&2; exit 2; }
 
-# The 64 base tables of the PostgreSQL schema at level 46 (traffic_events_default is a partition
-# child of traffic_events, not a base table).
-PG_TABLES="action_contexts actions adaptive_selectors api_keys approvals archive_dependencies
-archive_exports archive_history archive_records artifact_key_custody artifacts audit_events
-authorization_records browser_profiles checkpoints cluster_settings crawl_events crawl_runs
-crawl_sessions dataset_delivery_outbox dataset_items dataset_kv dataset_kv_drops datasets elements
-enablement_edges frontier_batch_receipts frontier_loader_cursors frontier_producers
-idempotency_keys identity_aliases intel_jobs intel_snapshots intel_threads intel_trace
-model_decisions monitor_baselines monitor_check_pages monitor_checks monitors network_epochs
-origin_admission origin_leases page_captures pages run_artifact_exposures run_bootstrap_producers
-run_custody_producers run_secret_authority run_secret_authority_renewals safety_decisions
-session_bindings state_cluster_membership state_clusters states tenant_settings tenants
-traffic_events transitions url_frontier usage_ledger webhook_deliveries workers workflow_runs"
+# Derive the authoritative base-table set; partition children are not base tables.
+PG_TABLES=$(awk '
+  toupper($1) == "CREATE" && toupper($2) == "TABLE" {
+    if (toupper($0) ~ / PARTITION OF /) next
+    name = toupper($3) == "IF" ? $6 : $3
+    sub(/\(.*/, "", name)
+    gsub(/"/, "", name)
+    sub(/^public\./, "", name)
+    print name
+  }
+' "$PG_MIGRATIONS"/*.sql | sort -u)
+[ -n "$PG_TABLES" ] || { echo "sqlite-baseline-check: no PostgreSQL tables found" >&2; exit 1; }
 # Tables that exist only on SQLite (sequence rows and the audit chain head).
 SQLITE_TABLES="audit_chain_head crawlx_sequences"
 
@@ -45,26 +42,45 @@ expected_pg=$(printf '%s\n' $PG_TABLES | sort)
 expected_all=$(printf '%s\n' $PG_TABLES $SQLITE_TABLES | sort)
 
 pg_count=$(printf '%s\n' "$expected_pg" | wc -l)
-if [ "$pg_count" -ne 64 ]; then
-  note "expected list has $pg_count PostgreSQL tables, want 64"
-fi
 
-# Every table the PostgreSQL migrations create (minus the partition child) must be listed.
-if [ -d "$PG_MIGRATIONS" ]; then
-  from_migrations=$(grep -hoE '^CREATE TABLE [a-z_]+' "$PG_MIGRATIONS"/*.sql | awk '{print $3}' \
-    | grep -vx traffic_events_default | sort -u)
-  missing=$(comm -13 <(printf '%s\n' "$expected_pg") <(printf '%s\n' "$from_migrations"))
-  stale=$(comm -23 <(printf '%s\n' "$expected_pg") <(printf '%s\n' "$from_migrations"))
-  [ -z "$missing" ] || note "PostgreSQL tables missing from the expected list: $(echo $missing)"
-  [ -z "$stale" ] || note "expected list names tables no PostgreSQL migration creates: $(echo $stale)"
-fi
+# Strict names and unique versions also reject duplicate or unrecognized migrations.
+migration_versions() {
+  local directory=$1 file base version previous=-1
+  for file in "$directory"/*.sql; do
+    base=${file##*/}
+    if ! [[ $base =~ ^([0-9]{4})_[a-z0-9_]+\.sql$ ]]; then
+      echo "sqlite-baseline-check: invalid migration filename in $directory" >&2
+      return 1
+    fi
+    version=$((10#${BASH_REMATCH[1]}))
+    if [ "$version" -le "$previous" ]; then
+      echo "sqlite-baseline-check: duplicate or unordered migration version in $directory" >&2
+      return 1
+    fi
+    previous=$version
+    if [ "$version" -ge 47 ]; then printf '%04d\n' "$version"; fi
+  done
+}
+pg_versions=$(migration_versions "$PG_MIGRATIONS")
+for engine in sqlite mariadb; do
+  engine_versions=$(migration_versions "$PG_MIGRATIONS/$engine")
+  [ "$pg_versions" = "$engine_versions" ] || note "$engine migration versions differ from PostgreSQL from 0047"
+done
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 db="$work/baseline.db"
 
-if ! { echo 'PRAGMA foreign_keys = ON;'; cat "$BASELINE"; } | sqlite3 -bail "$db"; then
-  echo "sqlite-baseline-check: $BASELINE failed to apply" >&2
+if ! {
+  echo 'PRAGMA foreign_keys = ON;'
+  cat "$BASELINE"
+  for migration in "$PG_MIGRATIONS/sqlite"/*.sql; do
+    name=${migration##*/}
+    version=${name%%_*}
+    if [ "$((10#$version))" -ge 47 ]; then cat "$migration"; fi
+  done
+} | sqlite3 -bail "$db"; then
+  echo "sqlite-baseline-check: baseline or later migration failed to apply" >&2
   exit 1
 fi
 

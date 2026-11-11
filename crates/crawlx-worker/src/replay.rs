@@ -11,6 +11,8 @@
 //! write their evidence to a separate run; the recorded run is never modified.
 //! Recorded login actions are restored once through the governed login runner before this
 //! path starts; they are not rebuilt as exploration actions from their selector-based keys.
+//! The replay's memory store retains its live authorization source and admitted body binding for
+//! uncached HEAD disclosure checks, independently of the replay session's lifetime.
 //!
 //! * `verify`: after each step the new state's fingerprint is compared with the recorded
 //!   after-state (`crawlx_state::score` against the recorded signature, ≥ θ_review).
@@ -24,9 +26,9 @@
 //! goes to the destination `drag_destination` picks, and an upload attaches the fixture of its
 //! partition. Keys that name no page element resolve against what the replay observed: a tab
 //! action finds its tab by the URL hash the key carries, a reset `Navigate` goes to the first
-//! URL observed for the route the key names, and a `Navigate` to a URL the page hooks reported
-//! goes to the URL whose digest the key carries. Only keys whose parameters the journal does
-//! not hold (a model-chosen option or chord) stop the replay with
+//! URL observed for the route the key names, and discovered-URL navigation resolves against
+//! rendered links and enabled page hooks observed during this replay. Only keys whose parameters
+//! the journal does not hold (a model-chosen option or chord) stop the replay with
 //! [`StepVerdict::NotReproducible`]. Every action settles under the policy the recorded run's
 //! driver used (`dynamic.pageLoadStrategy`, `timeStableMs`, `interactionSettleMs`).
 
@@ -62,6 +64,8 @@ use crawlx_storage::MemoryStore;
 use crawlx_strategies::{rebuild_action, route_element, target_facts};
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 /// `--mode`.
@@ -319,19 +323,19 @@ struct Seen {
     /// First URL (fragment stripped) observed for each route template: what the recorded run's
     /// frontier kept as the target of a reset `Navigate`.
     routes: BTreeMap<RouteTemplate, url::Url>,
-    /// URLs the page hooks reported, canonicalized, by their `discovered_url_element`.
+    /// Rendered and page-hook URLs, canonicalized, by their `discovered_url_element`.
     discovered: BTreeMap<ElementIdentityHash, url::Url>,
 }
 
 impl Seen {
     /// Fold one observation in, the way the recorded driver folded it into its frontier and
     /// its set of discovered URLs.
-    fn note(
+    async fn note(
         &mut self,
-        bundle: &ObservationBundle,
-        canon: &crawlx_url::CanonicalizeOptions,
-        page_hooks: bool,
-    ) {
+        bundle: &Arc<ObservationBundle>,
+        candidates: &[Candidate],
+        rc: &RunContext,
+    ) -> Result<(), WorkerError> {
         self.routes
             .entry(bundle.route.template.clone())
             .or_insert_with(|| {
@@ -339,21 +343,44 @@ impl Seen {
                 first.set_fragment(None);
                 first
             });
-        if !page_hooks {
-            return;
-        }
-        for (raw, _) in &bundle.discovered_urls {
+        let rendered = if bundle.html.as_deref().is_some_and(|html| !html.is_empty()) {
+            let bundle = Arc::clone(bundle);
+            rc.cpu_pool
+                .run(move || {
+                    crawlx_extract::LinkExtractor::links(
+                        bundle.html.as_deref().unwrap_or_default(),
+                        &bundle.url.url,
+                    )
+                })
+                .await
+                .map_err(WorkerError::BrowserExtractionTask)??
+        } else {
+            Vec::new()
+        };
+        let destinations = candidates
+            .iter()
+            .filter_map(|candidate| candidate.descriptor.href.as_deref())
+            .chain(rendered.iter().map(|link| link.url.as_str()))
+            .chain(
+                bundle
+                    .discovered_urls
+                    .iter()
+                    .filter(|_| rc.crawl.dynamic.page_hooks)
+                    .map(|(raw, _)| raw.as_str()),
+            );
+        for raw in destinations {
             let Ok(joined) = bundle.url.url.join(raw) else {
                 continue;
             };
             if !matches!(joined.scheme(), "http" | "https") {
                 continue;
             }
-            if let Ok(canonical) = crawlx_url::Canonicalizer::canonicalize_url(&joined, canon) {
+            if let Ok(canonical) = crawlx_url::Canonicalizer::canonicalize_url(&joined, &rc.canon) {
                 self.discovered
                     .insert(discovered_url_element(canonical.url.as_str()), canonical.url);
             }
         }
+        Ok(())
     }
 }
 
@@ -481,6 +508,16 @@ pub(crate) fn finish_replay<T>(
     Ok(value)
 }
 
+/// Keep the acquisition future's constructor temporary out of the replay startup poll frame.
+/// Boxing at the await site would still reserve that temporary on the browser-launch stack.
+fn acquire_replay_session<'a>(
+    rc: &'a RunContext,
+    lease: &'a crawlx_storage::SessionLease,
+    config: &'a mut crate::actor::SessionConfig,
+) -> Pin<Box<impl Future<Output = Result<crate::pool::PooledContext, WorkerError>> + Send + 'a>> {
+    Box::pin(rc.acquire_bound_session(lease, config))
+}
+
 impl ReplayRunner {
     /// Execute `plan` in `mode` through a fresh session against the live target.
     ///
@@ -556,6 +593,9 @@ impl ReplayRunner {
         } else {
             None
         };
+        if let (Some(memory), Some(guard)) = (&stores.memory, &authorization) {
+            memory.set_run_head_response_authorizer(run.id, guard.head_response_authorizer()?);
+        }
         let mut session = RunPlanner::sessions(run.id, &run.config)
             .into_iter()
             .find(|s| s.role == plan.session.role)
@@ -592,7 +632,7 @@ impl ReplayRunner {
                 run.id,
                 authorization.as_ref().map(|guard| guard.record()),
                 resolver,
-                EgressOptions::new(),
+                EgressOptions::new().with_global_cap(Arc::clone(&cfg.origin_cap)),
             )
             .await?;
         // Everything the replay session retains (context pump, actor, analysis) publishes under
@@ -625,7 +665,7 @@ impl ReplayRunner {
                     scfg.epoch_policy = EpochPolicy::strict();
                 }
                 let login = rc.prepare_session_login(&session, &mut scfg).await?;
-                let pooled = rc.acquire_bound_session(&lease, &mut scfg).await?;
+                let pooled = acquire_replay_session(&rc, &lease, &mut scfg).await?;
                 let login_bounds = crate::run::LoginBounds::from(&scfg);
                 if let Some(recorded) = &plan.session.browser {
                     if recorded.chromium_version != pooled.build.chromium_version
@@ -815,7 +855,6 @@ impl ReplayRunner {
                 let before = analyzer.analyze(&bundle).await;
                 analyzer.record_metrics(&before, &principal.0);
                 rc.stores.states.put_state(&before.state).await?;
-                seen.note(&bundle, &rc.canon, rc.crawl.dynamic.page_hooks);
                 let resolver = IdentityResolver::with_destination(bundle.url.url.clone(), rc.canon.clone())
                     .with_identity_version(
                         plan.run.config.crawl.identity.version,
@@ -827,6 +866,7 @@ impl ReplayRunner {
                 let identity_index = InMemoryIdentityIndex::new();
                 let weights = MatchWeights::default();
                 let candidates = CandidateDiscovery::discover(&bundle, &DiscoveryConfig::default());
+                seen.note(&bundle, &candidates, rc).await?;
                 let found = candidates.iter().position(|c| {
                     resolver
                         .resolve(&c.descriptor, &identity_index, &weights)

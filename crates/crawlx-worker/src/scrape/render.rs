@@ -37,6 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
+pub(crate) use actions::parse_chord as recipe_key_supported;
 pub use actions::{EXPLICIT_ACTIONS_STRATEGY, MAX_CLICK_TARGETS, WAIT_SELECTOR_MS};
 
 /// Role of the `crawl_sessions` row a render journals under.
@@ -374,6 +375,38 @@ impl BrowserRenderer {
         allowance: Option<&RenderAllowance>,
         parent_cancel: tokio_util::sync::CancellationToken,
     ) -> Result<Rendered, RenderError> {
+        req.options.validate().map_err(RenderError::Unavailable)?;
+        if req.options.archive_behavior.is_some()
+            && self.rc.crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr
+        {
+            return Err(RenderError::Unavailable(
+                "approved recipe provenance is unavailable under zero-data retention".into(),
+            ));
+        }
+        let recipe = match (&req.options.archive_behavior, &self.rc.archive_behavior) {
+            (None, _) => None,
+            (Some(reference), Some(recipe)) => {
+                let actual = crawlx_core::archive_behaviors::RecipeReferenceV1::for_recipe(recipe)
+                    .map_err(|_| RenderError::Unavailable("invalid approved recipe".into()))?;
+                if reference != &actual
+                    || recipe
+                        .entry_url
+                        .as_ref()
+                        .is_some_and(|url| url != &req.request.url.url)
+                {
+                    return Err(RenderError::Unavailable(
+                        "approved recipe pin or initial URL mismatch".into(),
+                    ));
+                }
+                Some(recipe.as_ref())
+            }
+            (Some(_), None) => {
+                return Err(RenderError::Unavailable(
+                    "recipe was not admitted by operator registry".into(),
+                ))
+            }
+        };
+        let mut recipe_progress = crate::archive_behaviors::RecipeProgress::default();
         if self.rc.egress_port.is_none() && !self.unproxied {
             return Err(RenderError::Unavailable(
                 "the run has no egress proxy, so a browser page would load unchecked".to_owned(),
@@ -395,7 +428,9 @@ impl BrowserRenderer {
         let mut heartbeat = scheduler.keep_alive(lease.clone(), HEARTBEAT_INTERVAL, heartbeat_cancel.clone());
         let mut actor: Option<SessionHandle> = None;
         let outcome = {
-            let work = self.render_in(req, &lease, &mut actor, allowance);
+            // The action dispatcher contains large native page-operation futures.
+            let work =
+                Box::pin(self.render_in(req, &lease, &mut actor, allowance, recipe, &mut recipe_progress));
             tokio::select! {
                 biased;
                 () = self.rc.cancel.cancelled() => Err(RenderError::Cancelled),
@@ -406,12 +441,25 @@ impl BrowserRenderer {
                 }
             }
         };
+        let provenance = if let Some(recipe) = recipe {
+            recipe_progress
+                .record(
+                    &self.rc,
+                    lease.session.id,
+                    recipe,
+                    matches!(&outcome, Err(RenderError::Cancelled)),
+                )
+                .await
+        } else {
+            Ok(())
+        };
         let cleanup = self.close(&lease, actor, &outcome).await;
         heartbeat_cancel.cancel();
         if !heartbeat.is_finished() {
             let _ = heartbeat.await;
         }
         cleanup?;
+        provenance?;
         outcome
     }
 }
@@ -429,6 +477,7 @@ impl BrowserRenderer {
             let session = CrawlSession {
                 id,
                 run: self.rc.run,
+                kind: crawlx_core::repo::SessionKind::Browser,
                 role: PrincipalId(SESSION_ROLE.to_owned()),
                 run_index,
                 schedule_slot: SLOT_BASE + slot,
@@ -490,7 +539,7 @@ impl BrowserRenderer {
         if url.origin() == self.rc.crawl.seed_url.origin() {
             return Ok(Arc::clone(&self.rc.kernel));
         }
-        let mut crawl = self.rc.crawl.clone();
+        let mut crawl = self.rc.crawl.as_ref().clone();
         crawl.seed_url = url.clone();
         build_kernel(
             &crawl,
@@ -509,6 +558,8 @@ impl BrowserRenderer {
         lease: &SessionLease,
         actor: &mut Option<SessionHandle>,
         allowance: Option<&RenderAllowance>,
+        recipe: Option<&crawlx_core::archive_behaviors::RecipeV1>,
+        recipe_progress: &mut crate::archive_behaviors::RecipeProgress,
     ) -> Result<Rendered, RenderError> {
         let session = &lease.session;
         let options = req.options;
@@ -525,7 +576,7 @@ impl BrowserRenderer {
         // Each enhanced attempt owns a distinct checked proxy/context. Never mutate the
         // shared basic proxy while other batch/crawl pages are still using it.
         let _enhanced_proxy = if options.proxy == crawlx_core::scrape::ProxyMode::Enhanced {
-            let mut crawl = rc.crawl.clone();
+            let mut crawl = rc.crawl.as_ref().clone();
             let job = crawl.scrape.get_or_insert_with(|| {
                 crawlx_core::scrape::ScrapeJob::new(crawlx_core::scrape::JobKind::Scrape, options.clone())
             });
@@ -541,7 +592,9 @@ impl BrowserRenderer {
                     rc.run,
                     rc.authorization.as_ref().map(|guard| guard.record()),
                     resolver,
-                    crawlx_fetch::EgressOptions::new().with_controls(rc.controls.clone()),
+                    crawlx_fetch::EgressOptions::new()
+                        .with_controls(rc.controls.clone())
+                        .with_global_cap(Arc::clone(rc.origin_governor.global_cap())),
                 )
                 .await
                 .map_err(|e| RenderError::Unavailable(e.to_string()))?;
@@ -600,6 +653,17 @@ impl BrowserRenderer {
                 .await
                 .map_err(render_error)?;
         }
+        if let Some(viewport) = recipe.and_then(|recipe| recipe.initial_viewport) {
+            recipe_progress.emulation_started = true;
+            handle
+                .page_op(PageOp::Emulate(crawlx_core::page_op::Emulation {
+                    viewport: Some((viewport.width, viewport.height)),
+                    ..crawlx_core::page_op::Emulation::default()
+                }))
+                .await
+                .map_err(render_error)?;
+            recipe_progress.emulation_completed = true;
+        }
         if options.block_ads {
             handle
                 .page_op(PageOp::BlockUrls(crawlx_extract::blocklist::patterns_for(
@@ -609,7 +673,9 @@ impl BrowserRenderer {
                 .map_err(render_error)?;
         }
 
+        recipe_progress.navigation_started = true;
         let nav = handle.navigate(req.request.clone()).await.map_err(render_error)?;
+        recipe_progress.navigation_completed = true;
         let document = document_response(handle, &nav).await?;
         if let (Some(status), Ok(final_url)) = (document.status, Url::parse(&nav.final_url)) {
             let mut headers = http::HeaderMap::new();
@@ -642,12 +708,15 @@ impl BrowserRenderer {
             analyzer: analyzer.as_ref(),
             settle: base,
         };
-        let actions = ActionRunner::new(
+        let runner = ActionRunner::new(
             driver,
             allowance.map_or(1_048_576, |budget| budget.max_decoded_bytes),
-        )
-        .run(&options.actions)
-        .await?;
+        );
+        let actions = if let Some(recipe) = recipe {
+            Box::pin(runner.run_recipe(recipe, recipe_progress)).await?
+        } else {
+            runner.run(&options.actions).await?
+        };
         // read before the DOM is serialized: both describe the page after the actions
         let computed_styles = if options.wants("branding") {
             computed_styles(handle).await

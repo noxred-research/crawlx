@@ -15,20 +15,23 @@
 //! ([`AuthorizationGuard::scope`]); only revocation, expiry and removal change while the run
 //! lives.
 //!
-//! A run whose request names a record but which has neither a stored record (PostgreSQL) nor an
-//! injected [`AuthorizationSource`] has no guard and keeps the pre-record behaviour. That is only
-//! reachable in in-memory tests; every shipped path (the worker over PostgreSQL, `crawlx crawl
-//! --authorization-record`) supplies one.
+//! A referenced record without a stored, injected or supplied-file [`AuthorizationSource`] is
+//! refused. Memory HEAD response disclosure retains the exact source used at admission and the
+//! original body binding independently of the guard, so it survives run completion without
+//! retaining the event repository. Every disclosure re-reads authority without using the
+//! `recheck_interval` cache; missing records, failed reads, changed bodies and lost admission
+//! verification deny access.
 
 use crate::error::WorkerError;
 use async_trait::async_trait;
+use crawlx_core::hash::Digest;
 use crawlx_core::repo::EventRepo;
 use crawlx_core::time::Timestamp;
-use crawlx_core::{AuthorizationRecordId, Clock, CrawlRunId};
+use crawlx_core::{AuthorizationRecordId, Clock, CrawlRunId, StoreError, TenantId};
 use crawlx_policy::{AuthorizationRecord, AuthzFailure, RecordScope};
 use crawlx_safety::RecordNarrowing;
 use crawlx_scheduler::HEARTBEAT_INTERVAL;
-use crawlx_storage::Pg;
+use crawlx_storage::{memory::HeadResponseAuthorizer, Pg};
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
@@ -235,6 +238,66 @@ pub struct AuthorizationGuard {
     cancel_run: OnceLock<CancellationToken>,
 }
 
+/// Store-owned disclosure requirements, without the guard's event repository or cached state.
+struct LocalHeadResponseAuthorizer {
+    run: CrawlRunId,
+    tenant: TenantId,
+    record: AuthorizationRecordId,
+    body_digest: Digest,
+    require_verified: bool,
+    source: Arc<dyn AuthorizationSource>,
+    clock: Arc<dyn Clock>,
+}
+
+#[async_trait]
+impl HeadResponseAuthorizer for LocalHeadResponseAuthorizer {
+    async fn authorize(
+        &self,
+        run: CrawlRunId,
+        tenant: TenantId,
+        record: AuthorizationRecordId,
+        _now: Timestamp,
+    ) -> Result<(), StoreError> {
+        if run != self.run || tenant != self.tenant || record != self.record {
+            return Err(StoreError::AccessDenied(
+                "HEAD response authorization binding does not match the admitted run".to_owned(),
+            ));
+        }
+        let fresh = self
+            .source
+            .fetch(record)
+            .await
+            .map_err(|error| match error {
+                WorkerError::Store(error) => error,
+                error => StoreError::Database {
+                    source: Box::new(error),
+                    retryable: false,
+                },
+            })?
+            .ok_or_else(|| {
+                StoreError::AccessDenied("HEAD response authorization record is missing".to_owned())
+            })?;
+        if fresh.id != record
+            || fresh.tenant != tenant
+            || fresh.check_active(self.clock.now()).is_err()
+            || (self.require_verified && fresh.verified_at.is_none())
+        {
+            return Err(StoreError::AccessDenied(
+                "HEAD response authorization is no longer active for the admitted tenant".to_owned(),
+            ));
+        }
+        let digest = fresh
+            .body_digest()
+            .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        if digest != self.body_digest {
+            return Err(StoreError::AccessDenied(
+                "HEAD response authorization body changed since admission".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl AuthorizationGuard {
     /// Admit `run` under the record `given`, or under the stored record `referenced` when the
     /// caller has none in hand. The record is read through `source` (so a revocation that already
@@ -345,6 +408,19 @@ impl AuthorizationGuard {
     #[must_use]
     pub const fn record(&self) -> &AuthorizationRecord {
         &self.record
+    }
+
+    /// Retain only live authority and immutable admission requirements for memory HEAD access.
+    pub(crate) fn head_response_authorizer(&self) -> Result<Arc<dyn HeadResponseAuthorizer>, WorkerError> {
+        Ok(Arc::new(LocalHeadResponseAuthorizer {
+            run: self.run,
+            tenant: self.record.tenant,
+            record: self.record.id,
+            body_digest: self.record.body_digest()?,
+            require_verified: self.record.verified_at.is_some(),
+            source: Arc::clone(&self.source),
+            clock: Arc::clone(&self.clock),
+        }))
     }
 
     /// Require the admitted record to belong to the run's tenant.
@@ -634,6 +710,50 @@ mod tests {
             guard.check_execution_stop().await,
             Err(WorkerError::Authorization(_)),
         ));
+    }
+
+    #[tokio::test]
+    async fn head_disclosure_rechecks_expiry_after_the_authorization_read() {
+        struct ExpiringRead {
+            record: AuthorizationRecord,
+            clock: Arc<crawlx_core::time::ManualClock>,
+        }
+        #[async_trait]
+        impl AuthorizationSource for ExpiringRead {
+            async fn fetch(
+                &self,
+                id: AuthorizationRecordId,
+            ) -> Result<Option<AuthorizationRecord>, WorkerError> {
+                assert_eq!(id, self.record.id);
+                self.clock.advance_ms(1_000);
+                Ok(Some(self.record.clone()))
+            }
+        }
+        let now: Timestamp = "2030-01-01T00:00:00Z".parse().unwrap();
+        let clock = Arc::new(crawlx_core::time::ManualClock::new(now));
+        let mut record = crawlx_policy::testkit::sample_record(TenantId::new(), now, &["https://site.test"]);
+        record.valid_from = now - Span::seconds(1);
+        record.valid_to = now + Span::seconds(1);
+        let run = CrawlRunId::new();
+        let source = Arc::new(ExpiringRead {
+            record: record.clone(),
+            clock: clock.clone(),
+        });
+        let authorizer = LocalHeadResponseAuthorizer {
+            run,
+            tenant: record.tenant,
+            record: record.id,
+            body_digest: record.body_digest().unwrap(),
+            require_verified: false,
+            source,
+            clock: clock.clone(),
+        };
+        assert!(record.check_active(now).is_ok());
+        assert!(matches!(
+            authorizer.authorize(run, record.tenant, record.id, now).await,
+            Err(StoreError::AccessDenied(_))
+        ));
+        assert_eq!(clock.now(), record.valid_to);
     }
 
     struct FailingRead {

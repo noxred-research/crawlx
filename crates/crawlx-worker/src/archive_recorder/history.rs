@@ -30,6 +30,12 @@ pub(crate) struct ArchiveBaseline {
 
 impl ArchiveBaseline {
     pub(crate) fn matches_response(&self, headers: &http::HeaderMap) -> bool {
+        if [http::header::ETAG, http::header::LAST_MODIFIED]
+            .iter()
+            .any(|name| headers.get_all(name).iter().count() > 1)
+        {
+            return false;
+        }
         let get = |name| headers.get(name).and_then(|value| value.to_str().ok());
         if get(http::header::ETAG).is_some_and(|etag| self.validators.etag.as_deref() != Some(etag))
             || (self.validators.etag.is_none()
@@ -38,11 +44,23 @@ impl ArchiveBaseline {
         {
             return false;
         }
-        get(http::header::VARY).is_none_or(|value| vary_names(value).is_some_and(|names| names == self.vary))
+        let mut vary = Vec::new();
+        for value in headers.get_all(http::header::VARY) {
+            let Some(names) = value.to_str().ok().and_then(vary_names) else {
+                return false;
+            };
+            if vary.len().saturating_add(names.len()) > 16 {
+                return false;
+            }
+            vary.extend(names);
+        }
+        vary.sort_unstable();
+        vary.dedup();
+        !headers.contains_key(http::header::VARY) || vary == self.vary
     }
 }
 
-fn vary_names(value: &str) -> Option<Vec<String>> {
+pub(super) fn vary_names(value: &str) -> Option<Vec<String>> {
     if value.len() > 2048 {
         return None;
     }
@@ -65,7 +83,11 @@ fn vary_names(value: &str) -> Option<Vec<String>> {
     Some(names)
 }
 
-fn key(run: &CrawlRun, request: &QueuedRequestV1, target: &str) -> Result<ArchiveHistoryKeyV1, WorkerError> {
+pub(super) fn key(
+    run: &CrawlRun,
+    request: &QueuedRequestV1,
+    target: &str,
+) -> Result<ArchiveHistoryKeyV1, WorkerError> {
     // Include the entire immutable fetch dialect and scheduler identity, rather than guessing
     // which headers a server varied on. Authentication/session contexts are run-bound.
     let private_context = request.principal != "anonymous"
@@ -100,6 +122,8 @@ pub(super) fn captured_history(
     if request.envelope.method != "GET"
         || request.envelope.body.is_some()
         || !(200..300).contains(&page.status)
+        || page.status == 206
+        || record.dependency.is_some()
         || record.facts.body_state != "complete"
         || record.facts.representation != ArchiveRepresentation::ProtocolResource
         || record.facts.capture_source != "retained_native_decoded_response_body"
@@ -119,6 +143,16 @@ pub(super) fn captured_history(
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .and_then(|(_, value)| value.as_str())
     };
+    // A complete partial response still cannot stand in for the whole representation.
+    if headers
+        .keys()
+        .any(|name| name.eq_ignore_ascii_case("content-range"))
+        || headers
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("vary") && !value.is_string())
+    {
+        return Ok(None);
+    }
     let vary = match header("vary") {
         None => Vec::new(),
         Some(value) => match vary_names(value) {
@@ -182,7 +216,12 @@ pub(crate) async fn conditional_baseline(
         return Ok(None);
     };
     let source = match archives.get(run.tenant, history.source.export, now).await? {
-        ArchiveReadV1::Available(source) if source.state == ArchiveExportState::Published => source,
+        ArchiveReadV1::Available(source)
+            if source.state == ArchiveExportState::Published
+                && source.custody.sensitivity == crawlx_core::repo::Sensitivity::Content =>
+        {
+            source
+        }
         _ => return Ok(None),
     };
     let mut rows = archives

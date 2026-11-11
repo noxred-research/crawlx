@@ -9,6 +9,39 @@ use crawlx_core::TenantId;
 use sqlx::{Postgres, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
+// A ZDR receipt marks only the committed transaction. Its content hash and observation
+// share one volatile blob in the original run-sideband page; replay never renews its TTL.
+const ZDR_HEAD_RECEIPT_MARKER: [u8; 32] = [0; 32];
+
+async fn check_head_response_receipt(
+    pg: &Pg,
+    conn: &mut sqlx::PgConnection,
+    commit: &RequestCommitV1,
+    tenant: TenantId,
+    zdr: bool,
+    stored: &[u8],
+    receipt: Option<Digest>,
+) -> Result<(), StoreError> {
+    let matches = if zdr {
+        if stored != ZDR_HEAD_RECEIPT_MARKER.as_slice() {
+            return Err(StoreError::RetentionDenied(
+                "invalid volatile HEAD response receipt marker".into(),
+            ));
+        }
+        let ((live, _), _) =
+            crate::repos::event::read_head_response(pg, conn, tenant, commit.run, commit.request_id).await?;
+        receipt == Some(live)
+    } else {
+        crate::repos::event::check_head_authority(conn, commit.run, tenant).await?;
+        receipt.is_some_and(|receipt| receipt.0.as_slice() == stored)
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(StoreError::Conflict("HEAD response receipt changed".into()))
+    }
+}
+
 pub(super) async fn lock_run(
     _pg: &Pg,
     tx: &mut Transaction<'_, Postgres>,
@@ -25,6 +58,8 @@ pub(super) async fn append(
     batch: &RequestBatchV1,
     cfg: &OrchestrationConfigV1,
     completing: bool,
+    observed_timing: Option<(crawlx_core::Timestamp, crawlx_core::Timestamp)>,
+    duration_seconds: u32,
 ) -> Result<RequestBatchReceiptV1, StoreError> {
     batch.validate()?;
     let digest = Digest::of_value("crawlx/request-batch/v1", batch)
@@ -70,8 +105,11 @@ pub(super) async fn append(
         }
         return from_json(get(&row, "receipt")?);
     }
-    let admits = sqlx::query_scalar::<_,bool>("SELECT status IN ('queued','running','paused') AND (deadline_at IS NULL OR deadline_at>now()) FROM crawl_runs WHERE run_id=$1")
-        .bind(batch.run.0).fetch_one(&mut **tx).await.map_err(db)?;
+    // A queued run may not have deadline_at yet; dispatch still uses its original ceiling.
+    let admits = sqlx::query_scalar::<_,bool>("SELECT status IN ('queued','running','paused') AND cancel_requested_at IS NULL AND purge_requested_at IS NULL AND COALESCE($2,deadline_at,COALESCE(started_at,created_at)+make_interval(secs=>$4))>COALESCE($3,clock_timestamp()) AND ($3::timestamptz IS NULL OR $3<=clock_timestamp()) FROM crawl_runs WHERE run_id=$1")
+        .bind(batch.run.0).bind(observed_timing.map(|(_, deadline)| deadline))
+        .bind(observed_timing.map(|(acquired_at, _)| acquired_at)).bind(f64::from(duration_seconds))
+        .fetch_one(&mut **tx).await.map_err(db)?;
     if !admits {
         return Err(StoreError::AccessDenied("run no longer admits requests".into()));
     }
@@ -105,7 +143,7 @@ pub(super) async fn append(
     if get::<i64>(&producer, "epoch")?
         != i64::try_from(batch.producer_epoch)
             .map_err(|_| StoreError::Conflict("producer epoch overflow".into()))?
-        || (get::<bool>(&producer, "sealed")? && batch.parent_fence.is_none())
+        || (get::<bool>(&producer, "sealed")? && batch.parent_fence.is_none() && observed_timing.is_none())
     {
         return Err(StoreError::Conflict("producer epoch closed or stale".into()));
     }
@@ -153,6 +191,11 @@ pub(super) async fn append(
     let mut staged = Vec::with_capacity(batch.requests.len());
     let mut reserved = 0_i64;
     for envelope in &batch.requests {
+        if observed_timing.is_none() && envelope.metadata.contains_key("observed_epoch") {
+            return Err(StoreError::AccessDenied(
+                "observation requires session transaction".into(),
+            ));
+        }
         if envelope.revisit_generation != 0 && !completing {
             return Err(StoreError::AccessDenied(
                 "revisit requires recrawl transaction".into(),
@@ -211,7 +254,8 @@ pub(super) async fn append(
         } else {
             envelope.url.origin.clone()
         };
-        let id: i64 = sqlx::query_scalar("INSERT INTO url_frontier(run_id,canonical_key,canonical_url,origin,query_schema,depth,priority,via,parent_id,principal,route_id,revisit_generation,request_envelope,envelope_bytes,next_attempt_at,status,denial_reason,finished_at,strategy_score) VALUES($1,$2,$3,$4,$5,$6,$7,'link',$8,$9,$10,$11,$12,$13,COALESCE($14,now()),$15,$16,CASE WHEN $15<>'pending' THEN now() END,$17) RETURNING frontier_id")
+        // The reserved source survives volatile envelope expiry and every status transition.
+        let id: i64 = sqlx::query_scalar("INSERT INTO url_frontier(run_id,canonical_key,canonical_url,origin,query_schema,depth,priority,via,parent_id,principal,route_id,revisit_generation,request_envelope,envelope_bytes,next_attempt_at,status,denial_reason,finished_at,strategy_score) VALUES($1,$2,$3,$4,$5,$6,$7,$18,$8,$9,$10,$11,$12,$13,COALESCE($14,now()),$15,$16,CASE WHEN $15<>'pending' THEN now() END,$17) RETURNING frontier_id")
             .bind(batch.run.0).bind(identity.key.0.as_slice()).bind((!zdr).then(|| envelope.url.url.as_str()))
             .bind(origin).bind(schema).bind(conv::<u16,i16>(envelope.depth,"depth")?)
             .bind(f32::from(i16::try_from(envelope.priority).map_err(|_|StoreError::Conflict("request priority overflow".into()))?))
@@ -222,6 +266,7 @@ pub(super) async fn append(
             .bind(conv::<u32, i32>(crawlx_core::priority::priority_depth(
                 &envelope.url.url, u32::from(envelope.depth), envelope.method == "GET",
             ), "strategy score")?)
+            .bind(if observed_timing.is_some() { "interaction" } else { "link" })
             .fetch_one(&mut **tx).await.map_err(db)?;
         if zdr {
             pg.ephemeral_put(
@@ -298,14 +343,19 @@ impl Pg {
         &self,
         batch: RequestBatchV1,
     ) -> Result<RequestBatchReceiptV1, StoreError> {
-        let cfg = self
-            .get(batch.run)
-            .await?
-            .config
-            .orchestration
-            .unwrap_or_default();
+        let run = self.get(batch.run).await?;
+        let cfg = run.config.orchestration.clone().unwrap_or_default();
         let mut tx = self.pool.begin().await.map_err(db)?;
-        let receipt = append(self, &mut tx, &batch, &cfg, false).await?;
+        let receipt = append(
+            self,
+            &mut tx,
+            &batch,
+            &cfg,
+            false,
+            None,
+            run.config.limits.duration_seconds,
+        )
+        .await?;
         tx.commit().await.map_err(db)?;
         Ok(receipt)
     }
@@ -331,6 +381,60 @@ impl Pg {
                 ))
             })
             .collect()
+    }
+    pub(super) async fn request_methods_bulk(
+        &self,
+        run: CrawlRunId,
+        ids: &[i64],
+    ) -> Result<BTreeMap<i64, String>, StoreError> {
+        if ids.len() > 1000 {
+            return Err(StoreError::Conflict("invalid request method batch limit".into()));
+        }
+        if ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let rows = sqlx::query(
+            "SELECT f.frontier_id,f.request_envelope,f.envelope_bytes,r.tenant_id,r.retention_mode='zdr' AS zdr \
+             FROM url_frontier f JOIN crawl_runs r ON r.run_id=f.run_id \
+             WHERE f.run_id=$1 AND f.frontier_id=ANY($2)",
+        ).bind(run.0).bind(ids).fetch_all(&self.pool).await.map_err(db)?;
+        let found = rows
+            .iter()
+            .map(|row| get::<i64>(row, "frontier_id"))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if let Some(id) = ids.iter().find(|id| !found.contains(*id)) {
+            return Err(not_found("frontier row", id));
+        }
+        let mut methods = BTreeMap::new();
+        for row in rows {
+            let id: i64 = get(&row, "frontier_id")?;
+            let tenant = TenantId(get(&row, "tenant_id")?);
+            if crate::tenant::current().is_some_and(|current| current != tenant) {
+                return Err(StoreError::AccessDenied("request method tenant mismatch".into()));
+            }
+            let stored: Option<serde_json::Value> = get(&row, "request_envelope")?;
+            let bytes: i64 = get(&row, "envelope_bytes")?;
+            let method = if get::<bool>(&row, "zdr")? && bytes > 0 {
+                let envelope: RequestEnvelopeV1 = self
+                    .ephemeral_get(tenant, run, operational_page(id)?, "request_envelope")
+                    .await?;
+                envelope.method
+            } else if let Some(value) = stored {
+                value
+                    .get("method")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| StoreError::Serialization("missing queued request method".into()))?
+                    .to_owned()
+            } else if bytes == 0 {
+                "GET".to_owned()
+            } else {
+                return Err(StoreError::Serialization(
+                    "missing queued request envelope".into(),
+                ));
+            };
+            methods.insert(id, method);
+        }
+        Ok(methods)
     }
     pub(super) async fn request_retry(
         &self,
@@ -640,7 +744,7 @@ impl Pg {
         tx.commit().await.map_err(db)
     }
     pub(super) async fn request_activity(&self, run: CrawlRunId) -> Result<FrontierActivityV1, StoreError> {
-        let row=sqlx::query("SELECT EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND status='pending' AND next_attempt_at<=now()) AS ready, EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND status='pending') AS pending, EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND status='leased') AS leased, (SELECT sealed FROM frontier_producers WHERE run_id=$1) AS sealed")
+        let row=sqlx::query("SELECT EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND via<>'interaction' AND status='pending' AND next_attempt_at<=now() AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic') AS ready, EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND via<>'interaction' AND status='pending' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic') AS pending, EXISTS(SELECT 1 FROM url_frontier WHERE run_id=$1 AND via<>'interaction' AND status='leased' AND (SELECT mode FROM crawl_runs WHERE run_id=$1)<>'dynamic') AS leased, (SELECT sealed FROM frontier_producers WHERE run_id=$1) AS sealed")
             .bind(run.0).fetch_one(&self.pool).await.map_err(db)?;
         if get::<bool>(&row, "ready")? {
             return Ok(FrontierActivityV1::Ready);
@@ -698,9 +802,256 @@ impl Pg {
     }
 }
 
+// PostgreSQL locking assumption: FOR SHARE OF s prevents session reassignment while the
+// owning run is already locked; clock_timestamp() must still recheck expiry before commit.
+async fn observed_session_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    lease: &crawlx_core::custody::CustodyLease,
+) -> Result<String, StoreError> {
+    use crawlx_core::custody::CustodySource;
+    lease.check_local_cancellation()?;
+    let CustodySource::Session(session) = lease.source else {
+        return Err(StoreError::LeaseLost);
+    };
+    if crate::tenant::current().is_some_and(|tenant| tenant != lease.tenant) {
+        return Err(StoreError::LeaseLost);
+    }
+    let role = sqlx::query_scalar(
+        "SELECT s.role FROM crawl_sessions s JOIN crawl_runs r ON r.run_id=s.run_id \
+         WHERE s.session_id=$1 AND s.run_id=$2 AND r.tenant_id=$3 AND s.lease_owner=$4 \
+         AND s.fencing_token=$5 AND s.lease_expires_at>clock_timestamp() \
+         AND s.status IN ('running','recovering') AND r.status IN ('queued','running','paused') \
+         AND r.cancel_requested_at IS NULL AND r.purge_requested_at IS NULL \
+         AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp()) FOR SHARE OF s",
+    )
+    .bind(session.0)
+    .bind(lease.run.0)
+    .bind(lease.tenant.0)
+    .bind(lease.worker.0)
+    .bind(lease.fence)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db)?
+    .ok_or(StoreError::LeaseLost)?;
+    Ok(role)
+}
+
+impl Pg {
+    async fn append_observation(
+        &self,
+        mut request: ObservedRequestV1,
+    ) -> Result<ObservedAppendV1, StoreError> {
+        let run = self.get(request.lease.run).await?;
+        let (deadline, _) = crate::session_binding::budget_clock_deadline(self, &run, None).await?;
+        if request.acquired_at < run.started_at.unwrap_or(run.created_at) || request.acquired_at >= deadline {
+            return Err(StoreError::AccessDenied(
+                "observation acquired outside exploration deadline".into(),
+            ));
+        }
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let (tenant, _) = lock_run(self, &mut tx, request.lease.run).await?;
+        if tenant != request.lease.tenant {
+            return Err(StoreError::LeaseLost);
+        }
+        let principal = observed_session_tx(&mut tx, &request.lease).await?;
+        let (batch_id, key) = request.prepare(&principal)?;
+        // Existing opaque batch receipts retain row IDs even when envelope content is volatile.
+        let prior: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT receipt FROM frontier_batch_receipts WHERE run_id=$1 AND batch_id=$2")
+                .bind(run.id.0)
+                .bind(batch_id.0.as_slice())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?;
+        if let Some(prior) = prior {
+            let id = prior
+                .get("inserted")
+                .and_then(|value| value.get(0))
+                .and_then(serde_json::Value::as_i64)
+                .ok_or(StoreError::LeaseLost)?;
+            let generation: i32 = sqlx::query_scalar("SELECT revisit_generation FROM url_frontier WHERE run_id=$1 AND frontier_id=$2 AND canonical_key=$3")
+                .bind(run.id.0).bind(id).bind(key.0.as_slice()).fetch_one(&mut *tx).await.map_err(db)?;
+            return Ok(ObservedAppendV1::Duplicate {
+                request_id: id,
+                revisit_generation: conv(generation, "revisit generation")?,
+            });
+        }
+        let latest: Option<i32> = sqlx::query_scalar(
+            "SELECT max(revisit_generation) FROM url_frontier WHERE run_id=$1 AND canonical_key=$2",
+        )
+        .bind(run.id.0)
+        .bind(key.0.as_slice())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        let generation = match latest {
+            Some(value) if value >= i32::from(run.config.dynamic.max_page_revisits.min(128)) => {
+                return Ok(ObservedAppendV1::CapReached)
+            }
+            Some(value) => value
+                .checked_add(1)
+                .ok_or_else(|| StoreError::Conflict("revisit generation overflow".into()))?,
+            None => 0,
+        };
+        request.envelope.revisit_generation = conv(generation, "revisit generation")?;
+        let mut batch = RequestBatchV1::new(tenant, run.id, principal, batch_id, vec![request.envelope]);
+        let epoch: Option<i64> = sqlx::query_scalar("SELECT epoch FROM frontier_producers WHERE run_id=$1")
+            .bind(run.id.0)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?;
+        batch.producer_epoch = conv(epoch.unwrap_or(1), "producer epoch")?;
+        let cfg = run.config.orchestration.unwrap_or_default();
+        let receipt = append(
+            self,
+            &mut tx,
+            &batch,
+            &cfg,
+            true,
+            Some((request.acquired_at, deadline)),
+            run.config.limits.duration_seconds,
+        )
+        .await?;
+        let id = *receipt.inserted.first().ok_or(StoreError::LeaseLost)?;
+        observed_session_tx(&mut tx, &request.lease).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(ObservedAppendV1::Appended {
+            request_id: id,
+            revisit_generation: conv(generation, "revisit generation")?,
+        })
+    }
+}
+
 #[async_trait]
 impl RequestCommitRepo for Pg {
+    async fn append_observed_fenced(
+        &self,
+        request: ObservedRequestV1,
+    ) -> Result<ObservedAppendV1, StoreError> {
+        self.append_observation(request).await
+    }
+    async fn lease_observed_fenced(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+        epoch: crawlx_core::ObservationEpoch,
+        request_id: i64,
+    ) -> Result<Option<(FrontierEntry, i64)>, StoreError> {
+        lease.check_local_cancellation()?;
+        let queued = self.request_get(lease.run, request_id).await?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let (tenant, _) = lock_run(self, &mut tx, lease.run).await?;
+        if tenant != lease.tenant {
+            return Err(StoreError::LeaseLost);
+        }
+        let principal = observed_session_tx(&mut tx, lease).await?;
+        let proposal = ObservedRequestV1::from_staged(lease.clone(), epoch, queued.envelope.clone())?;
+        let batch = proposal.batch_id(&principal)?;
+        let receipt: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT receipt FROM frontier_batch_receipts WHERE run_id=$1 AND batch_id=$2")
+                .bind(lease.run.0)
+                .bind(batch.0.as_slice())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?;
+        if queued.principal != principal
+            || queued.envelope.metadata.get("observed_epoch") != Some(&serde_json::to_value(batch)?)
+            || receipt.as_ref().and_then(|receipt| receipt.get("inserted"))
+                != Some(&serde_json::json!([request_id]))
+        {
+            return Err(StoreError::LeaseLost);
+        }
+        // This exact immutable observation already happened. No worker admission or
+        // drain gate may turn its receipt into a fresh target dispatch.
+        let row = sqlx::query(
+            "UPDATE url_frontier SET status='leased',lease_owner=$3, \
+             lease_expires_at=clock_timestamp()+make_interval(secs=>$4), \
+             fencing_token=nextval('lease_fence_seq'),attempts=attempts+1 \
+             WHERE run_id=$1 AND frontier_id=$2 AND principal=$5 AND canonical_key=$6 \
+             AND via='interaction' AND status='pending' AND next_attempt_at<=clock_timestamp() AND attempts<32767 \
+             RETURNING attempts,fencing_token",
+        )
+        .bind(lease.run.0)
+        .bind(request_id)
+        .bind(lease.worker.0)
+        .bind(crate::leases::secs(self.cfg.url_batch_ttl))
+        .bind(principal)
+        .bind(queued.identity.key.0.as_slice())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+        observed_session_tx(&mut tx, lease).await?;
+        tx.commit().await.map_err(db)?;
+        row.map(|row| {
+            let mut entry = queued.entry;
+            entry.status = FrontierStatus::Leased;
+            entry.attempts = conv(get::<i16>(&row, "attempts")?, "attempts")?;
+            Ok((entry, get(&row, "fencing_token")?))
+        })
+        .transpose()
+    }
+    async fn commit_observed_fenced(
+        &self,
+        mut commit: RequestCommitV1,
+        lease: crawlx_core::custody::CustodyLease,
+        epoch: crawlx_core::ObservationEpoch,
+    ) -> Result<ObservedCommitV1, StoreError> {
+        commit.observation = Some((lease, epoch));
+        self.commit_fenced(commit).await?;
+        Ok(ObservedCommitV1::Committed)
+    }
+    async fn begin_feed_finalization(
+        &self,
+        run: CrawlRunId,
+        reason: Option<crawlx_core::counters::TerminalReason>,
+    ) -> Result<Option<crawlx_core::counters::TerminalReason>, StoreError> {
+        self.begin_feed_finalization_owned(run, reason).await
+    }
+    async fn stage_feed_batches(
+        &self,
+        run: CrawlRunId,
+        batches: &[crawlx_core::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError> {
+        self.stage_feed_batches_owned(run, batches).await
+    }
+    async fn staged_feed_batch(
+        &self,
+        run: CrawlRunId,
+        feed: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<crawlx_core::dataset::DeliveryBatchV1>, StoreError> {
+        self.staged_feed_batch_owned(run, feed, idempotency_key).await
+    }
+    async fn finalize_run_feeds(
+        &self,
+        run: CrawlRunId,
+        status: crawlx_core::counters::RunStatus,
+        reason: crawlx_core::counters::TerminalReason,
+        batches: &[crawlx_core::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError> {
+        self.finalize_run_feeds_owned(run, status, reason, batches).await
+    }
     async fn commit_fenced(&self, commit: RequestCommitV1) -> Result<(), StoreError> {
+        if commit.head_response.is_none() {
+            return self.commit_request_owned(commit).await;
+        }
+        let pg = self.clone();
+        let tenant = crate::tenant::current();
+        // Dropping this JoinHandle detaches the owner instead of dropping its SQL
+        // transaction while the delivery backend may still run spawn_blocking work.
+        // The run/fence checks remain inside the owner, before any volatile write.
+        tokio::spawn(async move {
+            match tenant {
+                Some(tenant) => crate::tenant::scope(tenant, pg.commit_request_owned(commit)).await,
+                None => pg.commit_request_owned(commit).await,
+            }
+        })
+        .await
+        .map_err(|error| StoreError::Backend(format!("HEAD response commit task failed: {error}")))?
+    }
+}
+
+impl Pg {
+    async fn commit_request_owned(&self, mut commit: RequestCommitV1) -> Result<(), StoreError> {
         if matches!(commit.status, FrontierStatus::Pending | FrontierStatus::Leased)
             || commit.reason.as_deref().is_some_and(|reason| {
                 reason.len() > 128
@@ -711,24 +1062,176 @@ impl RequestCommitRepo for Pg {
         {
             return Err(StoreError::Conflict("invalid request disposition".into()));
         }
+        // Retained replay uses the durable digest; ZDR replay also requires live custody.
+        let head_receipt = commit.head_response_receipt()?;
+        if head_receipt.is_some() {
+            let mut conn = self.pool.acquire().await.map_err(db)?;
+            let prior = sqlx::query(
+                "SELECT r.tenant_id,r.retention_mode='zdr' AS zdr,f.head_response_receipt FROM url_frontier f JOIN crawl_runs r ON r.run_id=f.run_id AND r.tenant_id=f.tenant_id WHERE f.run_id=$1 AND f.frontier_id=$2",
+            )
+            .bind(commit.run.0)
+            .bind(commit.request_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(db)?
+            .ok_or(StoreError::LeaseLost)?;
+            let tenant = TenantId(get(&prior, "tenant_id")?);
+            let acquisition_tenant = <TenantId as serde::Deserialize>::deserialize(
+                &commit.head_response.as_ref().ok_or(StoreError::LeaseLost)?["acquisition"]["tenant"],
+            )?;
+            if acquisition_tenant != tenant {
+                return Err(StoreError::AccessDenied("HEAD response tenant mismatch".into()));
+            }
+            if crate::tenant::current().is_some_and(|current| current != tenant) {
+                return Err(StoreError::AccessDenied("request result tenant mismatch".into()));
+            }
+            if let Some(stored) = get::<Option<Vec<u8>>>(&prior, "head_response_receipt")? {
+                return check_head_response_receipt(
+                    self,
+                    &mut conn,
+                    &commit,
+                    tenant,
+                    get(&prior, "zdr")?,
+                    &stored,
+                    head_receipt,
+                )
+                .await;
+            }
+        }
         let run = self.get(commit.run).await?;
         if crate::tenant::current().is_some_and(|tenant| tenant != run.tenant) {
             return Err(StoreError::AccessDenied("request result tenant mismatch".into()));
         }
         let cfg = run.config.orchestration.clone().unwrap_or_default();
-        let current = if commit.page.is_some()
-            || (cfg.recrawl.is_some() && commit.status == FrontierStatus::Succeeded)
+        // Observed rows must never be completed through the generic path, including body-free failures.
+        // Fetching the immutable envelope also proves volatile custody before result publication.
+        let current = Some(self.request_get(commit.run, commit.request_id).await?);
+        if head_receipt.is_some()
+            && current
+                .as_ref()
+                .is_none_or(|request| request.envelope.method != "HEAD")
         {
-            Some(self.request_get(commit.run, commit.request_id).await?.envelope)
-        } else {
-            None
-        };
+            return Err(StoreError::Conflict(
+                "HEAD response queued method mismatch".into(),
+            ));
+        }
+        if let Some(payload) = &commit.head_response {
+            let queued = current.as_ref().ok_or(StoreError::LeaseLost)?;
+            let acquisition = &payload["acquisition"];
+            // URL evidence may redact path/query secrets; exact authority comes from the queue key.
+            let requested_url = <url::Url as serde::Deserialize>::deserialize(&acquisition["requestedUrl"])?;
+            if !matches!(requested_url.scheme(), "http" | "https")
+                || requested_url.origin() != queued.envelope.url.url.origin()
+                || <Digest as serde::Deserialize>::deserialize(&acquisition["requestDigest"])?
+                    != queued.identity.key
+            {
+                return Err(StoreError::Conflict(
+                    "HEAD response request identity mismatch".into(),
+                ));
+            }
+        }
         let mut tx = self.pool.begin().await.map_err(db)?;
-        lock_run(self, &mut tx, commit.run).await?;
-        let live=sqlx::query_scalar::<_,i64>("SELECT state_version FROM url_frontier WHERE frontier_id=$1 AND run_id=$2 AND status='leased' AND fencing_token=$3 AND lease_expires_at>clock_timestamp() FOR UPDATE")
-            .bind(commit.request_id).bind(commit.run.0).bind(commit.fence).fetch_optional(&mut *tx).await.map_err(db)?.ok_or(StoreError::LeaseLost)?;
+        let (tenant, zdr) = lock_run(self, &mut tx, commit.run).await?;
+        if crate::tenant::current().is_some_and(|current| current != tenant) {
+            return Err(StoreError::AccessDenied("request result tenant mismatch".into()));
+        }
+        if let Some(payload) = &commit.head_response {
+            if <TenantId as serde::Deserialize>::deserialize(&payload["acquisition"]["tenant"])? != tenant {
+                return Err(StoreError::AccessDenied("HEAD response tenant mismatch".into()));
+            }
+        }
+        let result = sqlx::query("SELECT state_version,head_response_receipt,route_id,principal,lease_owner,via,status::text AS status,fencing_token,lease_expires_at>clock_timestamp() AS live_lease FROM url_frontier WHERE frontier_id=$1 AND run_id=$2 FOR UPDATE")
+            .bind(commit.request_id).bind(commit.run.0)
+            .fetch_optional(&mut *tx).await.map_err(db)?.ok_or(StoreError::LeaseLost)?;
+        if let Some(stored) = get::<Option<Vec<u8>>>(&result, "head_response_receipt")? {
+            // Replay never republishes the event or renews the original volatile page.
+            return check_head_response_receipt(self, &mut tx, &commit, tenant, zdr, &stored, head_receipt)
+                .await;
+        }
+        if get::<String>(&result, "status")? != "leased"
+            || get::<Option<i64>>(&result, "fencing_token")? != Some(commit.fence)
+            || get::<Option<bool>>(&result, "live_lease")? != Some(true)
+        {
+            return Err(StoreError::LeaseLost);
+        }
+        let live = get::<i64>(&result, "state_version")?;
         if u64::try_from(live).ok() != Some(commit.expected_state_version) {
             return Err(StoreError::Conflict("request state version changed".into()));
+        }
+        let observed_principal = if let Some((lease, epoch)) = &commit.observation {
+            let principal = observed_session_tx(&mut tx, lease).await?;
+            let queued = current.as_ref().ok_or(StoreError::LeaseLost)?;
+            let proposal = ObservedRequestV1::from_staged(lease.clone(), *epoch, queued.envelope.clone())?;
+            let batch = proposal.batch_id(&principal)?;
+            let receipt: Option<serde_json::Value> = sqlx::query_scalar(
+                "SELECT receipt FROM frontier_batch_receipts WHERE run_id=$1 AND batch_id=$2",
+            )
+            .bind(commit.run.0)
+            .bind(batch.0.as_slice())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?;
+            if lease.run != commit.run
+                || lease.tenant != tenant
+                || get::<String>(&result, "via")? != "interaction"
+                || get::<String>(&result, "principal")? != principal
+                || get::<Option<uuid::Uuid>>(&result, "lease_owner")? != Some(lease.worker.0)
+                || queued.envelope.metadata.get("observed_epoch") != Some(&serde_json::to_value(batch)?)
+                || receipt.as_ref().and_then(|receipt| receipt.get("inserted"))
+                    != Some(&serde_json::json!([commit.request_id]))
+                || commit.head_response.is_some()
+            {
+                return Err(StoreError::LeaseLost);
+            }
+            Some(principal)
+        } else {
+            if get::<String>(&result, "via")? == "interaction"
+                || current
+                    .as_ref()
+                    .is_some_and(|queued| queued.envelope.metadata.contains_key("observed_epoch"))
+            {
+                return Err(StoreError::LeaseLost);
+            }
+            None
+        };
+        if head_receipt.is_some() {
+            let active: bool = sqlx::query_scalar(
+                "SELECT status NOT IN ('completed','failed','cancelled') FROM crawl_runs WHERE run_id=$1",
+            )
+            .bind(commit.run.0)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+            if !active {
+                return Err(StoreError::AccessDenied("HEAD response run is terminal".into()));
+            }
+            let authority = sqlx::query("SELECT a.revoked_at,a.valid_from,a.valid_to,a.body_digest,r.authorization_body_digest FROM crawl_runs r JOIN authorization_records a ON a.record_id=r.authorization_record_id AND a.tenant_id=r.tenant_id WHERE r.run_id=$1 FOR SHARE OF a")
+                .bind(commit.run.0).fetch_optional(&mut *tx).await.map_err(db)?;
+            let now = chrono::Utc::now();
+            let allowed = match authority {
+                Some(row) => {
+                    get::<Option<crawlx_core::Timestamp>>(&row, "revoked_at")?.is_none()
+                        && get::<crawlx_core::Timestamp>(&row, "valid_from")? <= now
+                        && get::<crawlx_core::Timestamp>(&row, "valid_to")? > now
+                        && get::<Option<Vec<u8>>>(&row, "authorization_body_digest")?.is_none_or(|bound| {
+                            get::<Vec<u8>>(&row, "body_digest").is_ok_and(|digest| bound == digest)
+                        })
+                }
+                None => run.config.safety.authorization_record_ref.is_none(),
+            };
+            if !allowed {
+                return Err(StoreError::AccessDenied(
+                    "HEAD response authorization is not live".into(),
+                ));
+            }
+            if run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
+                && run.config.retention.days != 0
+                && run.created_at + chrono::Duration::days(i64::from(run.config.retention.days)) <= now
+            {
+                return Err(StoreError::RetentionDenied(
+                    "committed HEAD source expired".into(),
+                ));
+            }
         }
         if let Some(page) = &commit.page {
             if page.run != commit.run
@@ -739,12 +1242,23 @@ impl RequestCommitRepo for Pg {
             }
             if current
                 .as_ref()
-                .is_none_or(|request| request.url.key != page.url.key)
+                .is_none_or(|request| request.envelope.url.key != page.url.key)
             {
                 return Err(StoreError::Conflict("result page url mismatch".into()));
             }
         }
-        let mut children = commit.children;
+        if commit.content_dedupe.is_some() {
+            crate::digest_registry::check_source(&run, chrono::Utc::now())?;
+        }
+        crate::digest_registry::validate_commit(&commit, tenant)?;
+        let digest_outcome = if let Some(claim) = &commit.content_dedupe {
+            let outcome = crate::digest_registry::claim_pg(&mut tx, claim, commit.request_id).await?;
+            crate::digest_registry::apply_outcome(&mut commit, &outcome);
+            Some(outcome)
+        } else {
+            None
+        };
+        let mut children = commit.children.take();
         if let Some(batch) = &children {
             if batch.run != commit.run
                 || batch.parent_fence != Some((commit.request_id, commit.fence))
@@ -756,7 +1270,10 @@ impl RequestCommitRepo for Pg {
                 return Err(StoreError::Conflict("result child authority mismatch".into()));
             }
         }
-        if let (Some(policy), Some(current)) = (&cfg.recrawl, current) {
+        if let (Some(policy), Some(current)) = (
+            &cfg.recrawl,
+            current.filter(|_| commit.status == FrontierStatus::Succeeded && observed_principal.is_none()),
+        ) {
             let authority = sqlx::query("SELECT a.record_id,a.revoked_at,a.valid_from,a.valid_to,a.body_digest,r.authorization_body_digest FROM crawl_runs r JOIN authorization_records a ON a.record_id=r.authorization_record_id AND a.tenant_id=r.tenant_id WHERE r.run_id=$1 FOR SHARE OF a")
                 .bind(commit.run.0).fetch_optional(&mut *tx).await.map_err(db)?;
             let now = chrono::Utc::now();
@@ -774,7 +1291,7 @@ impl RequestCommitRepo for Pg {
             let deadline = run.started_at.unwrap_or(run.created_at)
                 + chrono::Duration::seconds(i64::from(run.config.limits.duration_seconds));
             if allowed {
-                if let Some(next) = policy.next_visit(&current, commit.request_id, now, deadline)? {
+                if let Some(next) = policy.next_visit(&current.envelope, commit.request_id, now, deadline)? {
                     let principal: String =
                         sqlx::query_scalar("SELECT principal FROM url_frontier WHERE frontier_id=$1")
                             .bind(commit.request_id)
@@ -797,7 +1314,16 @@ impl RequestCommitRepo for Pg {
             }
         }
         if let Some(batch) = &children {
-            append(self, &mut tx, batch, &cfg, true).await?;
+            append(
+                self,
+                &mut tx,
+                batch,
+                &cfg,
+                true,
+                None,
+                run.config.limits.duration_seconds,
+            )
+            .await?;
         }
         crate::dataset::apply_pg(
             self,
@@ -810,7 +1336,20 @@ impl RequestCommitRepo for Pg {
         )
         .await?;
         if let Some(page) = commit.page {
-            self.put_page_tx(&page, &mut tx).await?;
+            // Duplicate results retain their own immutable capture, never replace another page.
+            if !digest_outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.is_duplicate())
+                || observed_principal.is_some()
+            {
+                self.put_page_projection_tx(
+                    &page,
+                    &mut tx,
+                    observed_principal.as_deref().unwrap_or("anonymous"),
+                    observed_principal.is_some(),
+                )
+                .await?;
+            }
             if run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr {
                 sqlx::query(
                     "INSERT INTO page_captures (tenant_id,run_id,frontier_id,fence,state_version,payload) \
@@ -830,14 +1369,263 @@ impl RequestCommitRepo for Pg {
                 .map_err(db)?;
             }
         }
+        if let Some(payload) = commit.head_response {
+            #[cfg(all(test, target_os = "linux"))]
+            tests::before_head_publish(&mut tx, commit.run).await;
+            crate::repos::event::append_head_response(
+                self,
+                &mut tx,
+                commit.run,
+                head_receipt.ok_or_else(|| StoreError::Conflict("missing HEAD response receipt".into()))?,
+                payload,
+            )
+            .await?;
+        }
+        if let Some(receipt) = head_receipt {
+            sqlx::query("UPDATE url_frontier SET head_response_receipt=$2 WHERE frontier_id=$1")
+                .bind(commit.request_id)
+                .bind(if zdr {
+                    ZDR_HEAD_RECEIPT_MARKER.as_slice()
+                } else {
+                    receipt.0.as_slice()
+                })
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        if let Some(outcome) = &digest_outcome {
+            sqlx::query(
+                "UPDATE url_frontier SET content_dedupe_outcome=$3 WHERE run_id=$1 AND frontier_id=$2",
+            )
+            .bind(commit.run.0)
+            .bind(commit.request_id)
+            .bind(serde_json::to_value(outcome)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
         let completed=sqlx::query("UPDATE url_frontier SET status=$2,error_code=$3,finished_at=now(),lease_owner=NULL,lease_expires_at=NULL,state_version=state_version+1,acquisition_ref=$4,document_ref=$5 WHERE frontier_id=$1 AND status='leased' AND fencing_token=$6 AND lease_expires_at>clock_timestamp()")
-            .bind(commit.request_id).bind(commit.status.as_str()).bind(commit.reason).bind(commit.acquisition_ref.map(|digest|digest.0.to_vec())).bind(commit.document_ref.map(|digest|digest.0.to_vec())).bind(commit.fence).execute(&mut *tx).await.map_err(db)?;
+            .bind(commit.request_id).bind(commit.status.as_str()).bind(commit.reason).bind(commit.acquisition_ref.filter(|_| !zdr || head_receipt.is_none()).map(|digest|digest.0.to_vec())).bind(commit.document_ref.map(|digest|digest.0.to_vec())).bind(commit.fence).execute(&mut *tx).await.map_err(db)?;
         if completed.rows_affected() != 1 {
             return Err(StoreError::LeaseLost);
+        }
+        if let Some((lease, _)) = &commit.observation {
+            observed_session_tx(&mut tx, lease).await?;
         }
         crate::chaos::pause("request.before_result_commit").await;
         tx.commit().await.map_err(db)?;
         crate::chaos::pause("request.after_result_commit").await;
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::artifacts::FsArtifactStore;
+    use crate::retention::RetentionSweeper;
+    use crate::testkit::{canonical_url, crawl_run, create_crawl};
+    use crate::{DeliveryBuffer, PgConfig};
+    use crawlx_core::repo::FrontierRepo;
+    use crawlx_core::{SystemClock, WorkerId};
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::{Arc, LazyLock};
+    use tokio::sync::oneshot;
+
+    struct HeadPause {
+        ready: oneshot::Sender<i32>,
+        release: oneshot::Receiver<()>,
+    }
+
+    static HEAD_PAUSES: LazyLock<parking_lot::Mutex<BTreeMap<CrawlRunId, HeadPause>>> =
+        LazyLock::new(|| parking_lot::Mutex::new(BTreeMap::new()));
+
+    pub(super) async fn before_head_publish(conn: &mut sqlx::PgConnection, run: CrawlRunId) {
+        let pause = HEAD_PAUSES.lock().remove(&run);
+        if let Some(pause) = pause {
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(conn)
+                .await
+                .unwrap();
+            pause.ready.send(pid).unwrap();
+            pause.release.await.unwrap();
+        }
+    }
+
+    async fn wait_for_erasure_blocker(pg: &Pg, owner: i32) {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let blocked: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity a \
+                     WHERE a.datname=current_database() AND $1=ANY(pg_blocking_pids(a.pid)))",
+                )
+                .bind(owner)
+                .fetch_one(&pg.pool)
+                .await
+                .unwrap();
+                if blocked {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("erasure must wait for the owned HEAD transaction");
+    }
+
+    async fn wait_for_filesystem_writer(inode: u64) {
+        let inode = format!(":{inode}");
+        let pid = std::process::id().to_string();
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let locks = tokio::fs::read_to_string("/proc/locks").await.unwrap();
+                if locks.lines().any(|line| {
+                    line.contains("->")
+                        && line.split_whitespace().any(|part| part == "FLOCK")
+                        && line.split_whitespace().any(|part| part == pid)
+                        && line.split_whitespace().any(|part| part.ends_with(&inode))
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the actual filesystem writer must block on the held OS lock");
+    }
+
+    #[tokio::test]
+    async fn cancelled_head_commit_keeps_transaction_until_filesystem_publication_before_erasure() {
+        let Ok(url) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
+            return;
+        };
+        let root = tempfile::tempdir().unwrap();
+        let clock = Arc::new(SystemClock);
+        let buffer = Arc::new(
+            DeliveryBuffer::open_fs(root.path(), clock.clone(), Default::default())
+                .await
+                .unwrap(),
+        );
+        let pg = Pg::connect(
+            &url,
+            PgConfig {
+                max_connections: 4,
+                schema: Some(format!("head_cancel_{}", CrawlRunId::new().0.simple())),
+                ..PgConfig::default()
+            },
+        )
+        .await
+        .unwrap()
+        .with_delivery_buffer(buffer.clone());
+        pg.migrate().await.unwrap();
+        let tenant = TenantId::new();
+        pg.ensure_tenant(tenant, "head-cancellation").await.unwrap();
+        let mut config = create_crawl("https://example.test/", &[], 1);
+        config.retention.mode = crawlx_core::config::RetentionMode::Zdr;
+        config.retention.days = 0;
+        config.orchestration = Some(OrchestrationConfigV1::default());
+        let run = crawl_run(tenant, config);
+        pg.create(&run, None).await.unwrap();
+        let mut envelope = RequestEnvelopeV1::get(canonical_url("https://example.test/head"), 0, None);
+        envelope.method = "HEAD".into();
+        let ids = pg
+            .append_batch(RequestBatchV1::new(
+                tenant,
+                run.id,
+                "anonymous".into(),
+                Digest::of("test/head-cancellation", b"batch"),
+                vec![envelope],
+            ))
+            .await
+            .unwrap()
+            .inserted;
+        let leased = pg.lease_batch_fenced(run.id, WorkerId::new(), 1).await.unwrap();
+        let queued = pg.get_request(run.id, ids[0]).await.unwrap();
+        let mut acquisition = crawlx_core::acquisition::AcquisitionResultV1::new(
+            run.id,
+            tenant,
+            queued.envelope.url.url.clone(),
+            queued.identity.key,
+            crawlx_core::acquisition::BackendCapabilitiesV1::native_http("crawlx-fetch", "test"),
+        );
+        acquisition.target_status = Some(200);
+        acquisition.transport_succeeded = true;
+        let mut commit =
+            RequestCommitV1::terminal(run.id, ids[0], leased[0].1, 1, FrontierStatus::Succeeded, None);
+        commit.head_response = Some(serde_json::json!({
+            "requestId": ids[0],
+            "method": "HEAD",
+            "status": 200,
+            "bodyBytes": 0,
+            "response_headers": {"content-type": "text/html"},
+            "acquisition": acquisition
+        }));
+        let (ready, staged) = oneshot::channel();
+        let (release, proceed) = oneshot::channel();
+        HEAD_PAUSES.lock().insert(
+            run.id,
+            HeadPause {
+                ready,
+                release: proceed,
+            },
+        );
+        let caller = {
+            let pg = pg.clone();
+            let commit = commit.clone();
+            tokio::spawn(async move { pg.commit_fenced(commit).await })
+        };
+        let owner = tokio::time::timeout(std::time::Duration::from_secs(30), staged)
+            .await
+            .unwrap()
+            .unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join("zdr/.lock"))
+            .unwrap();
+        let inode = lock.metadata().unwrap().ino();
+        lock.lock().unwrap();
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        let store = Arc::new(
+            FsArtifactStore::open(root.path().join("objects"), Arc::new(pg.clone()), clock)
+                .await
+                .unwrap()
+                .with_zdr_buffer(buffer.clone()),
+        );
+        let erasing = {
+            let sweeper = RetentionSweeper::new(pg.clone()).with_artifacts(store);
+            tokio::spawn(async move { sweeper.purge_run_objects(run.id).await })
+        };
+        wait_for_erasure_blocker(&pg, owner).await;
+        release.send(()).unwrap();
+        wait_for_filesystem_writer(inode).await;
+        wait_for_erasure_blocker(&pg, owner).await;
+        assert!(!erasing.is_finished());
+        lock.unlock().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(30), erasing)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(buffer.is_empty().await.unwrap());
+        let events: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM crawl_events WHERE run_id=$1 AND type='head_response'")
+                .bind(run.id.0)
+                .fetch_one(&pg.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            events, 1,
+            "the detached owner must finish its real publication before erasure"
+        );
+        assert!(matches!(
+            pg.commit_fenced(commit).await,
+            Err(StoreError::RetentionDenied(_))
+        ));
+        assert!(buffer.is_empty().await.unwrap());
+        pg.drop_schema().await.unwrap();
     }
 }

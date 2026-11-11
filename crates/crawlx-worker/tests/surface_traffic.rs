@@ -159,6 +159,68 @@ async fn a_cancelled_run_still_flushes_what_it_recorded() {
 }
 
 #[tokio::test]
+async fn cancelling_a_run_bounds_a_stalled_collectors_final_drain() {
+    let next_page = Arc::new(Notify::new());
+    let signal = Arc::clone(&next_page);
+    let site = Site::start(move |_| {
+        Router::new()
+            .route("/", get(|| async { page("Home", r#"<a href="/wait">wait</a>"#) }))
+            .route(
+                "/wait",
+                get(move || {
+                    let signal = Arc::clone(&signal);
+                    async move {
+                        signal.notify_one();
+                        std::future::pending::<axum::response::Response>().await
+                    }
+                }),
+            )
+    })
+    .await;
+    let collecting = Arc::new(Notify::new());
+    let signal = Arc::clone(&collecting);
+    let collector = Site::start(move |_| {
+        Router::new().route(
+            "/ingest",
+            axum::routing::post(move || {
+                let signal = Arc::clone(&signal);
+                async move {
+                    signal.notify_one();
+                    std::future::pending::<axum::response::Response>().await
+                }
+            }),
+        )
+    })
+    .await;
+    let mut export =
+        TrafficExportConfig::new(url::Url::parse(&format!("{}/ingest", collector.base)).unwrap());
+    export.batch_size = 1;
+    export.retry_delays = vec![Duration::from_secs(60)];
+    export.drain_timeout = Duration::from_millis(50);
+    let cancel = CancellationToken::new();
+    let stop = cancel.clone();
+    let cancellation = tokio::spawn(async move {
+        tokio::join!(next_page.notified(), collecting.notified());
+        stop.cancel();
+    });
+    let crawl = crawl_with(
+        &site.base,
+        |_| {},
+        move |worker| worker.traffic_export = Some(export),
+        |run| run.with_cancel(cancel),
+    );
+    let run = tokio::time::timeout(Duration::from_secs(10), crawl)
+        .await
+        .expect("collector cannot extend the configured final drain into its HTTP/retry timeout");
+    cancellation.await.unwrap();
+    assert_eq!(run.report.status, crawlx_core::counters::RunStatus::Cancelled);
+    assert!(
+        collector.count("/ingest") >= 1,
+        "the test must stall a real export request"
+    );
+}
+
+#[tokio::test]
 async fn configured_header_values_are_redacted_in_metadata_raw_text_and_exchanges() {
     const SECRET: &str = "tok-very-secret-123";
     let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));

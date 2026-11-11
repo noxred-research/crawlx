@@ -6,6 +6,10 @@
 
 #[test]
 fn compile_fail_cases() {
+    // The runner already applied its stack limit to this test thread. Do not pass
+    // that runtime-only limit to the compiler processes the fixture starts below.
+    // This integration target contains only this test, so no sibling reads it.
+    std::env::remove_var("RUST_MIN_STACK");
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/compile_fail/*.rs");
 }

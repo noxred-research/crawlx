@@ -365,7 +365,7 @@ async fn sender_follows_the_outbox_across_runs_and_survives_a_purged_run() {
     let rep = r.sender.tick().await.unwrap();
     assert_eq!((rep.enqueued, rep.delivered), (1, 1));
     // a purged run no longer breaks the tick
-    r.env.store.purge_run(a);
+    r.env.store.purge_run(a).await.unwrap();
     r.env.store.append(b, "paused", json!({})).await.unwrap();
     let rep = r.sender.tick().await.unwrap();
     assert_eq!(rep.delivered, 1);

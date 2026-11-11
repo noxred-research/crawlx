@@ -15,11 +15,14 @@ mod actions;
 mod captcha;
 mod capture;
 mod dom_ops;
+mod download;
 pub(crate) mod guard;
 mod js;
 mod nav;
 mod observe;
 mod page_ops;
+mod projection;
+mod retained_capture;
 mod selector;
 pub mod state;
 mod storage;
@@ -67,6 +70,7 @@ pub(crate) struct Ctl {
     /// default context of an attached browser is never disposed.
     pub owns_context: bool,
     pub notify: watch::Sender<u64>,
+    downloads: Mutex<std::collections::BTreeMap<String, download::Intercept>>,
 }
 
 /// Add `delta` live sessions to `crawlx.browser.sessions` and
@@ -117,6 +121,7 @@ pub struct CdpContext {
     adopted_tab: Option<String>,
     /// Pinned virtual-row collection identity; cleanup survives cancellation of its waiter.
     pub(super) virtual_rows: Option<(String, ObservationEpoch, crawlx_core::dom_ops::VirtualRowsSpec)>,
+    projection: projection::ProjectionBuffer,
 }
 
 impl CdpContext {
@@ -127,6 +132,11 @@ impl CdpContext {
         shared: Arc<BackendShared>,
         config: ContextConfig,
     ) -> Result<Self, BrowserError> {
+        config
+            .browser_evidence
+            .validate()
+            .map_err(|reason| BrowserError::Unsupported(reason.to_owned()))?;
+        let projection = projection::ProjectionBuffer::new(&config.browser_evidence);
         let client = shared.client.clone();
         let behavior = ProfileBehavior::of(config.launch_profile, config.console_capture);
         if config.response_bodies != crawlx_core::config::ResponseBodies::MetadataOnly
@@ -196,6 +206,7 @@ impl CdpContext {
             behavior,
             browser_context_id: browser_context_id.clone(),
             notify,
+            downloads: Mutex::new(std::collections::BTreeMap::new()),
         });
         let state = Arc::new(Mutex::new(
             State::new(
@@ -205,6 +216,7 @@ impl CdpContext {
             )
             .with_controls(ctl.config.request_controls.clone()),
         ));
+        state.lock().capture_sources = ctl.config.browser_capture_sink.is_some();
         state.lock().capture_full = ctl.config.response_bodies == crawlx_core::config::ResponseBodies::Full;
         state.lock().capture_text =
             ctl.config.response_bodies == crawlx_core::config::ResponseBodies::TextCapped;
@@ -231,6 +243,7 @@ impl CdpContext {
             last_settle: None,
             adopted_tab: None,
             virtual_rows: None,
+            projection,
         };
         // cookies first: no request of the first tab may go out without them
         let opened = match this.seed_request_cookies().await {
@@ -1121,6 +1134,9 @@ async fn pump(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, mut rx: broadcast::Receiv
             break;
         }
         if ev.method == "Fetch.requestPaused" {
+            if download::intercept(&ctl, Arc::clone(&ev)) {
+                continue;
+            }
             // only a context with a guard enables `Fetch`; the broadcast also carries the
             // events of other contexts, which their own pumps answer. Answered off the pump: the
             // guard may need the network (a `robots.txt` fetch) and the pump must keep folding
@@ -1163,7 +1179,10 @@ async fn pump(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, mut rx: broadcast::Receiv
                                     .client
                                     .call("Target.closeTarget", None, json!({ "targetId": target_id }))
                                     .await;
-                                state.lock().remove_tab(&target_id);
+                                // Target.targetDestroyed owns cleanup. Its download/close
+                                // events may still be queued when this setup command fails;
+                                // removing the graph node here would erase owning-target
+                                // evidence before the diagnostic CloseTab can journal it.
                             }
                         }
                         ctl.notify.send_modify(|v| *v = v.wrapping_add(1));
@@ -1304,7 +1323,7 @@ impl BrowserContext for CdpContext {
     }
 
     fn drain_traffic(&mut self) -> Vec<TrafficEvent> {
-        let traffic = {
+        let traffic: Vec<TrafficEvent> = {
             let mut state = self.state.lock();
             let first_pending = state.pending_bodies.first().copied();
             let ready = state
@@ -1314,7 +1333,9 @@ impl BrowserContext for CdpContext {
                 .count();
             state.traffic.drain(..ready).collect()
         };
-        self.mask_captcha(traffic).unwrap_or_default()
+        let traffic = self.mask_captcha(traffic).unwrap_or_default();
+        self.projection.append(&traffic);
+        traffic
     }
 
     fn drain_xhr(&mut self) -> Vec<crawlx_core::dom_ops::XhrRecord> {

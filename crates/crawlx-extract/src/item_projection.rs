@@ -78,6 +78,12 @@ fn project_field(
     if field.name != rule.name {
         return Err(SelectorError::Schema("item projection field identity mismatch"));
     }
+    if let Some(provenance) = &field.provenance {
+        provenance.validate(rule)?;
+        let bytes = bounded_json_len(provenance, MAX_OPERATIONS)
+            .map_err(|_| SelectorError::Budget("projected provenance bytes"))?;
+        budget.charge(bytes)?;
+    }
     let original_quality = field.quality;
     let approved_name = project_string(&field.name, project, budget)?;
     let name_changed = approved_name.as_ref() != Some(&field.name);
@@ -248,8 +254,11 @@ fn valid_selected_type(value: &Value, rule: &ItemFieldV1) -> bool {
         FieldExtractionV1::Attributes | FieldExtractionV1::Group => Kind::Object,
         _ => Kind::Any,
     };
-    let mut joined = false;
-    for transform in &rule.transforms {
+    let joined = rule
+        .transforms
+        .iter()
+        .any(|entry| matches!(entry, FieldTransformV1::Join { .. }));
+    for transform in rule.input_processors.iter().chain(&rule.transforms) {
         match transform {
             FieldTransformV1::Number => kind = Kind::Number,
             FieldTransformV1::IsoDate => kind = Kind::Date,
@@ -257,7 +266,6 @@ fn valid_selected_type(value: &Value, rule: &ItemFieldV1) -> bool {
             FieldTransformV1::JsonParse => kind = Kind::Json,
             FieldTransformV1::Join { .. } => {
                 kind = Kind::String;
-                joined = true;
             }
             FieldTransformV1::Trim
             | FieldTransformV1::NormalizeWhitespace

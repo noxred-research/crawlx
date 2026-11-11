@@ -146,7 +146,12 @@ async fn mutation_rig_with_checkpoint_outage(fail_artifacts: bool) -> (Rig, Arc<
     });
     stores.artifacts = failing.clone();
     stores.checkpoints = failing.clone();
-    let fake = Arc::new(FakeBackend::new(mutation_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(mutation_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let RigCore {
         stores,
         backend,
@@ -343,7 +348,12 @@ async fn kernel_confirm_denial_drops_the_action() {
 
 #[tokio::test]
 async fn t1_failure_halts_mutation_then_recovers_when_storage_is_back() {
-    let fake = Arc::new(FakeBackend::new(two_page_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(two_page_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake, true, SafetyProfile::ReadOnly).await;
     let flaky = r.flaky.clone().unwrap();
     let (bundle, cluster) = observe_cluster(&r).await;
@@ -377,7 +387,12 @@ async fn t1_failure_halts_mutation_then_recovers_when_storage_is_back() {
 
 #[tokio::test]
 async fn t2_failure_is_retried_three_times_then_halts_with_the_action_intended() {
-    let fake = Arc::new(FakeBackend::new(two_page_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(two_page_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake, true, SafetyProfile::ReadOnly).await;
     let flaky = r.flaky.clone().unwrap();
     let (bundle, cluster) = observe_cluster(&r).await;
@@ -408,7 +423,12 @@ fn crashing_site() -> FakeScript {
 #[tokio::test]
 async fn crash_after_intent_becomes_unknown_and_reconcile_not_applied_makes_it_eligible_again() {
     for coarsened in [false, true] {
-        let fake = Arc::new(FakeBackend::new(crashing_site()));
+        let fake = Arc::new(
+            FakeBackend::builder()
+                .script(crashing_site())
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        );
         let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
         let (bundle, cluster) = observe_cluster(&r).await;
         // the proposal declares the navigation it expects: its absence is strong negative evidence
@@ -470,7 +490,12 @@ async fn crash_after_intent_becomes_unknown_and_reconcile_not_applied_makes_it_e
 #[tokio::test]
 async fn crash_after_intent_with_a_visible_effect_reconciles_as_applied_and_stays_ineligible() {
     // the click navigated before the browser died: the session is no longer in the before-cluster
-    let fake = Arc::new(FakeBackend::new(crashing_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(crashing_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
     let (bundle, cluster) = observe_cluster(&r).await;
     let (mut p, c) = r.proposal(&bundle, "About", cluster);

@@ -245,6 +245,59 @@ fn request_of(args: &[&str]) -> CreateCrawl {
 }
 
 #[test]
+fn crawl_order_defaults_to_breadth_first_without_flags() {
+    assert_eq!(request_of(&[]).scope.strategy, CrawlStrategy::BreadthFirst);
+}
+
+#[test]
+fn crawl_order_aliases_select_the_same_strategy() {
+    for (aliases, expected) in [
+        (
+            ["bfs", "breadth_first", "breadth-first"],
+            CrawlStrategy::BreadthFirst,
+        ),
+        (["dfs", "depth_first", "depth-first"], CrawlStrategy::DepthFirst),
+    ] {
+        for alias in aliases {
+            assert_eq!(
+                request_of(&["--strategy", alias]).scope.strategy,
+                expected,
+                "{alias}"
+            );
+        }
+    }
+}
+
+#[test]
+fn crawl_order_defaults_to_breadth_first_in_config_files() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, body) in [
+        ("crawl.json", r#"{"limits":{"urls":8}}"#),
+        ("crawl.toml", "[crawl.limits]\nurls = 8\n"),
+        ("crawl.yaml", "limit-urls: 8\n"),
+    ] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        assert_eq!(
+            request_of(&["--config", path.to_str().unwrap()]).scope.strategy,
+            CrawlStrategy::BreadthFirst,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn crawl_order_defaults_to_breadth_first_in_request_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("request.json");
+    std::fs::write(&path, r#"{"seedUrl":"https://example.test/","scope":{}}"#).unwrap();
+    assert_eq!(
+        request_of(&["--request", path.to_str().unwrap()]).scope.strategy,
+        CrawlStrategy::BreadthFirst
+    );
+}
+
+#[test]
 fn compat_similarity_enables_and_backend_are_independent_in_every_order() {
     use crawlx_core::config::SimilarityMode;
     use crawlx_url::content_similarity::{Config, Index};
@@ -448,7 +501,7 @@ fn compat_similarity_config_and_request_precedence_preserves_explicit_false() {
         assert!(crawlx_cli::Cli::try_parse_from(crawlx_cli::normalize_args(argv)).is_err());
     }
     let mut args = parse_crawl(&["-pcs"]);
-    args.content_similar = Some(crawlx_cli::crawl::SimilarityArg::Tfidf);
+    args.url.content_similar = Some(crawlx_cli::crawl::SimilarityArg::Tfidf);
     assert!(crawlx_cli::crawl::build_request(&args)
         .unwrap_err()
         .to_string()
@@ -591,7 +644,7 @@ fn compat_mode_scope_and_delay_conflicts_fail_in_both_orders() {
         .to_string()
         .contains("mutually exclusive"));
     let mut flags = parse_crawl(&["-ns"]);
-    flags.field_scope = parse_crawl(&["-fs", "none"]).field_scope;
+    flags.url.field_scope = parse_crawl(&["-fs", "none"]).url.field_scope;
     assert!(crawlx_cli::crawl::build_request(&flags)
         .unwrap_err()
         .to_string()

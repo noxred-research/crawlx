@@ -277,6 +277,10 @@ pub struct Scraped {
     pub accepted: Vec<crawlx_core::dataset::AcceptedBatchV1>,
     /// Immutable feed intents committed beside those accepted refs.
     pub outbox: Vec<crawlx_core::dataset::DeliveryBatchV1>,
+    /// Hash-only claim arbitrated with the fenced request publication, never page metadata.
+    pub(crate) content_dedupe: Option<crawlx_core::digest_registry::ContentDedupeClaimV1>,
+    /// Local cache update consumed only after the page transaction succeeds.
+    pub(crate) local_dedupe: Option<crawlx_extract::DedupeCommit>,
 }
 
 /// What the engine concluded for one frontier row.
@@ -300,6 +304,15 @@ pub struct ScrapeEngine {
     deps: UrlPlaneDeps,
     fetcher: Arc<Fetcher>,
     extract: ExtractOptions,
+    robots: crate::robots_gate::RobotsGate,
+    scope: Result<crawlx_policy::ScopePolicy, crawlx_policy::PolicyError>,
+    authorization: Option<Arc<crate::authorization::AuthorizationGuard>>,
+    fetch_options: FetchOptions,
+    configuration_error: Option<String>,
+    url_exclusion: crawlx_url::UrlExclusionFilter,
+    content_dedupe: Option<Arc<std::sync::Mutex<crawlx_core::extraction::DedupeCache>>>,
+    extraction_context: Option<Digest>,
+    durable_dedupe: bool,
     acquisition: Option<crawlx_core::acquisition::AcquisitionPolicyV1>,
     extensions: crawlx_core::extensions::ExtensionPipelineV1,
     captcha_secrets: Option<crawlx_core::captcha::CaptchaSecrets>,
@@ -319,6 +332,61 @@ pub struct ScrapeEngine {
     branding_llm: Option<Arc<dyn LlmExtractor>>,
     /// Largest media file the `audio` / `video` formats download (see [`media`]).
     media_max_bytes: usize,
+}
+
+/// Scope-only admission used while loading robots under an auxiliary resource's allowance.
+struct AuxiliaryAdmission<'a>(&'a ScrapeEngine);
+
+#[async_trait::async_trait]
+impl crate::acquisition::HopAdmission for AuxiliaryAdmission<'_> {
+    async fn admit(
+        &self,
+        url: &Url,
+        _options: &FetchOptions,
+        _budget: &mut crate::acquisition::AcquisitionBudgetV1,
+        _cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<(), FetchError> {
+        self.0.auxiliary_scope(url).await
+    }
+
+    async fn check_scope(&self, url: &Url) -> Result<(), FetchError> {
+        self.check_authority().await?;
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || self.0.url_exclusion.check(url).is_some()
+            || !self
+                .0
+                .scope
+                .as_ref()
+                .map_err(|_| FetchError::AcquisitionUnavailable)?
+                .decide_protocol_resource(url)
+                .is_admitted()
+        {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        Ok(())
+    }
+
+    async fn check_authority(&self) -> Result<(), FetchError> {
+        if let Some(guard) = &self.0.authorization {
+            guard
+                .check_execution_stop()
+                .await
+                .map_err(|_| FetchError::AcquisitionCancelled)?;
+        }
+        let run = self
+            .0
+            .deps
+            .runs
+            .get(self.0.run)
+            .await
+            .map_err(FetchError::OriginAdmission)?;
+        if run.status == crawlx_core::counters::RunStatus::Cancelled {
+            return Err(FetchError::AcquisitionCancelled);
+        }
+        Ok(())
+    }
 }
 
 /// A fetched or rendered page, before composition.
@@ -384,7 +452,7 @@ impl ScrapeEngine {
     ) -> Option<Self> {
         let job = crawl.scrape.as_ref().filter(|j| j.kind != JobKind::Map)?;
         let options = &job.options;
-        let extract = ExtractOptions {
+        let mut extract = ExtractOptions {
             only_main_content: options.only_main_content,
             include_tags: options.include_tags.clone(),
             exclude_tags: options.exclude_tags.clone(),
@@ -405,6 +473,81 @@ impl ScrapeEngine {
             },
             ..ExtractOptions::default()
         };
+        let fetch_options = crate::acquisition::fetch_options(&crawl.fetch);
+        let mut url_exclusion = crawlx_url::UrlExclusionFilter::default();
+        let mut content_dedupe = None;
+        let mut extraction_context = None;
+        let configuration_error = (|| {
+            fetch_options
+                .declaration
+                .validate()
+                .map_err(|error| error.to_string())?;
+            url_exclusion = extract
+                .content
+                .as_ref()
+                .and_then(|policy| policy.excluded_urls.as_ref())
+                .map(crawlx_url::UrlExclusionFilter::from_policy)
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default();
+            extract.custom_fields =
+                crawlx_extract::custom_fields::CustomField::compile_all(&crawl.extract.custom_fields)
+                    .map_err(|e| format!("extract.customFields: {e}"))?;
+            let selected = crawlx_core::config::Extract {
+                outputs: options
+                    .outputs
+                    .as_ref()
+                    .or(crawl.extract.outputs.as_ref())
+                    .cloned(),
+                decode: options.decode.as_ref().or(crawl.extract.decode.as_ref()).cloned(),
+                markup: options.markup.as_ref().or(crawl.extract.markup.as_ref()).cloned(),
+                ..crawlx_core::config::Extract::default()
+            };
+            crate::acquisition::configure_extract(&mut extract, &selected)
+                .map_err(|error| error.to_string())?;
+            if extract.decode.is_none() {
+                extract.decode = fetch_options
+                    .declaration
+                    .charset
+                    .as_deref()
+                    .map(crawlx_extract::decode::DecodeOptions::with_charset);
+            }
+            if extract
+                .content
+                .as_ref()
+                .is_some_and(|policy| policy.dedupe.is_some())
+            {
+                content_dedupe = Some(Arc::new(std::sync::Mutex::new(
+                    crawlx_core::extraction::DedupeCache::new(65_536).map_err(|error| error.to_string())?,
+                )));
+            }
+            if selected.outputs.is_some()
+                || selected.decode.is_some()
+                || selected.markup.is_some()
+                || !crawl.extract.custom_fields.is_empty()
+                || crawl.fetch.declaration.is_some()
+                || crawl.fetch.preflight.is_some()
+                || crawl.fetch.oversize.is_some()
+            {
+                extraction_context = Some(
+                    Digest::of_value(
+                        "crawlx/scrape-extraction-options/v1",
+                        &(
+                            &crawl.extract.custom_fields,
+                            &selected.outputs,
+                            &extract.decode,
+                            &selected.markup,
+                            &crawl.fetch.declaration,
+                            &crawl.fetch.preflight,
+                            &crawl.fetch.oversize,
+                        ),
+                    )
+                    .map_err(|error| error.to_string())?,
+                );
+            }
+            Ok::<(), String>(())
+        })()
+        .err();
         Some(Self {
             run,
             kind: job.kind,
@@ -413,6 +556,19 @@ impl ScrapeEngine {
             options: Arc::new(options.clone()),
             zdr: crawl.retention.mode == RetentionMode::Zdr,
             deps: deps.clone(),
+            robots: crate::robots_gate::RobotsGate::for_crawl(
+                crawl,
+                Arc::clone(&fetcher),
+                Arc::clone(&deps.clock),
+            ),
+            scope: crawlx_policy::ScopePolicy::new(crawl),
+            authorization: None,
+            fetch_options,
+            configuration_error,
+            url_exclusion,
+            content_dedupe,
+            extraction_context,
+            durable_dedupe: false,
             fetcher,
             extract,
             acquisition: crawl.acquisition.clone().or_else(|| {
@@ -437,6 +593,78 @@ impl ScrapeEngine {
             branding_llm: None,
             media_max_bytes: DEFAULT_MEDIA_MAX_BYTES,
         })
+    }
+
+    /// Reuse the run's robots cache for every auxiliary acquisition.
+    #[must_use]
+    pub(crate) fn with_robots_gate(mut self, robots: crate::robots_gate::RobotsGate) -> Self {
+        self.robots = robots;
+        self
+    }
+
+    /// Bind auxiliary scope and live authorization to the same record as the parent run.
+    #[must_use]
+    pub(crate) fn with_authorization(
+        mut self,
+        guard: Option<Arc<crate::authorization::AuthorizationGuard>>,
+    ) -> Self {
+        if let Some(guard) = guard {
+            self.scope = self.scope.map(|scope| scope.with_record_scope(guard.scope()));
+            self.authorization = Some(guard);
+        }
+        self
+    }
+
+    /// Bind one request representation to the shared tenant/run content cache.
+    fn scoped_extract(
+        &self,
+        tenant: TenantId,
+        request: Option<&crawlx_core::request::RequestEnvelopeV1>,
+    ) -> Result<ExtractOptions, ScrapeFailure> {
+        let mut options = self.extract.clone();
+        if options
+            .content
+            .as_ref()
+            .is_some_and(|policy| policy.dedupe.is_some())
+        {
+            let fail = |error: String| ScrapeFailure::new(FailReason::ExtractFailed, error);
+            let representation = Digest::of_value(
+                "crawlx/extraction-representation/v1",
+                &request.map(|request| (&request.header_control, request.session_generation)),
+            )
+            .map_err(|error| fail(error.to_string()))?;
+            let namespace = if self.durable_dedupe {
+                let request = request.ok_or_else(|| fail("dedupe request identity unavailable".into()))?;
+                let document = Digest::of_value(
+                    "crawlx/extraction-document/v1",
+                    &(request.url.key, request.revisit_generation),
+                )
+                .map_err(|error| fail(error.to_string()))?;
+                format!("{}:{}", self.run, document.to_hex())
+            } else {
+                self.run.to_string()
+            };
+            let scope = crawlx_core::extraction::DedupeScopeV1::new(
+                &tenant.to_string(),
+                &namespace,
+                &representation.to_hex(),
+            )
+            .map_err(|error| fail(error.to_string()))?;
+            let cache = if self.durable_dedupe {
+                Arc::new(std::sync::Mutex::new(
+                    crawlx_core::extraction::DedupeCache::new(65_536)
+                        .map_err(|error| fail(error.to_string()))?,
+                ))
+            } else {
+                Arc::clone(
+                    self.content_dedupe
+                        .as_ref()
+                        .ok_or_else(|| fail("content dedupe cache unavailable".into()))?,
+                )
+            };
+            options.dedupe_cache = Some(crawlx_extract::DedupeHandle::new(scope, cache));
+        }
+        Ok(options)
     }
 
     /// Inject one immutable worker-local language capability into the existing extraction step.
@@ -566,10 +794,7 @@ impl ScrapeEngine {
         let cancel = cancel.child_token();
         let _cancel_on_drop = cancel.clone().drop_guard();
         let budget = Duration::from_millis(u64::from(self.options.timeout_ms));
-        // The producer owns the HTTP/browser/parser branch state. Heap-isolate it once
-        // per scrape so URL/lease orchestration does not inline that state in every
-        // parent future and overflow an ordinary executor stack while polling.
-        let producer = Box::pin(self.produce(entry, cpu, observe, &cancel, initial_budget, admission));
+        let producer = self.produce(entry, cpu, observe, &cancel, initial_budget, admission);
         let outcome = match tokio::time::timeout(budget, producer).await {
             Ok(outcome) => outcome?,
             Err(_) => Outcome::Failed(ScrapeFailure::new(
@@ -590,12 +815,27 @@ impl ScrapeEngine {
         if let Some(t) = *self.tenant.lock() {
             return Ok(t);
         }
-        let tenant = self.deps.runs.get(self.run).await?.tenant;
+        let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
         *self.tenant.lock() = Some(tenant);
         Ok(tenant)
     }
 
-    async fn produce(
+    #[allow(clippy::too_many_arguments)]
+    fn produce<'a>(
+        &'a self,
+        entry: &'a FrontierEntry,
+        cpu: &'a CpuPool,
+        observe: &'a FetchObserver<'a>,
+        cancel: &'a tokio_util::sync::CancellationToken,
+        initial_budget: Option<crate::acquisition::AcquisitionBudgetV1>,
+        admission: Option<&'a dyn crate::acquisition::HopAdmission>,
+    ) -> impl Future<Output = Result<Outcome, WorkerError>> + 'a {
+        // Construct and heap-place the producer outside the caller's poll frame.
+        // Boxing at the await site retains a full temporary alongside URL orchestration.
+        Box::pin(self.produce_inner(entry, cpu, observe, cancel, initial_budget, admission))
+    }
+
+    async fn produce_inner(
         &self,
         entry: &FrontierEntry,
         cpu: &CpuPool,
@@ -604,6 +844,17 @@ impl ScrapeEngine {
         initial_budget: Option<crate::acquisition::AcquisitionBudgetV1>,
         admission: Option<&dyn crate::acquisition::HopAdmission>,
     ) -> Result<Outcome, WorkerError> {
+        if let Some(error) = &self.configuration_error {
+            return Ok(Outcome::Failed(ScrapeFailure::new(
+                FailReason::ExtractFailed,
+                error,
+            )));
+        }
+        if self.url_exclusion.check(&entry.url.url).is_some() {
+            return Ok(Outcome::Failed(fetch_failure(
+                &FetchError::AcquisitionUnavailable,
+            )));
+        }
         let tenant = self.tenant().await?;
         let controls = &self.fetcher.config().controls;
         let has_credentials = !controls.headers().is_empty() || !controls.cookies().is_empty();
@@ -624,6 +875,7 @@ impl ScrapeEngine {
         }
         if self.extensions.configured()
             || self.fetcher.config().tls_impersonation != crawlx_core::tls::TlsImpersonation::Off
+            || self.extraction_context.is_some()
         {
             let route = if self.extensions.configured() {
                 self.deps
@@ -635,9 +887,13 @@ impl ScrapeEngine {
             } else {
                 "default".into()
             };
-            let encoded =
-                serde_json::to_vec(&(&self.extensions, route, self.fetcher.config().tls_impersonation))
-                    .map_err(|e| WorkerError::Other(e.to_string()))?;
+            let encoded = serde_json::to_vec(&(
+                &self.extensions,
+                route,
+                self.fetcher.config().tls_impersonation,
+                self.extraction_context,
+            ))
+            .map_err(|e| WorkerError::Other(e.to_string()))?;
             scoped_options.to_mut().cache_execution_context =
                 Some(Digest::of("crawlx/cache-extraction-context/v1", &encoded));
         }
@@ -771,6 +1027,10 @@ impl ScrapeEngine {
         }
 
         let request = self.deps.frontier.get_request(self.run, entry.id).await?.envelope;
+        let scoped_extract = match self.scoped_extract(tenant, Some(&request)) {
+            Ok(options) => options,
+            Err(failure) => return Ok(Outcome::Failed(failure)),
+        };
         let mut acq = match self
             .acquire(
                 &request,
@@ -788,7 +1048,11 @@ impl ScrapeEngine {
             Ok(a) => a,
             Err(f) => return Ok(Outcome::Failed(f)),
         };
-        if acq.status == 429 && self.fetcher.governor().defers_source_throttle() {
+        if acq.status == 429
+            && self.fetcher.governor().defers_source_throttle()
+            && self.fetch_options.declaration.statuses.verdict(acq.status)
+                != crawlx_fetch::StatusVerdict::Allow
+        {
             return Ok(Outcome::Failed(
                 ScrapeFailure::new(
                     FailReason::RateLimited,
@@ -827,39 +1091,55 @@ impl ScrapeEngine {
                 ),
             )));
         }
-        let (article_accepted, article_outbox, article_cache) = if let Some(document) = acq.document.take() {
-            let run = self.deps.runs.get(self.run).await?;
-            let accepted = acq.metadata.validation.content_accepted;
-            let (document, items, outbox) = crate::delivery::prepare_article_acceptance(
-                self.deps.artifacts.as_ref(),
-                cpu,
-                &run,
-                entry.id,
-                document,
-                accepted,
-            )
-            .await?;
-            // Raw-only and other uncomposed consumers have no native source/envelope
-            // pair to attach to scrape metadata. Do not publish an orphan cache reference.
-            let (document, cache) =
-                if !skip_compose && cache::writes(opts) && self.cache_reusable && !self.zdr {
-                    crate::delivery::store_article_cache(
-                        self.deps.artifacts.as_ref(),
-                        cpu,
-                        &run,
-                        entry.id,
-                        document,
-                        accepted,
-                    )
-                    .await?
+        let mut content_dedupe = None;
+        let mut local_dedupe = None;
+        let (article_accepted, article_outbox, article_cache) =
+            if let Some(mut document) = acq.document.take() {
+                let run = self.deps.runs.get(self.run).await?;
+                let accepted = acq.metadata.validation.content_accepted;
+                if accepted && self.durable_dedupe {
+                    content_dedupe = crate::url_plane::content_dedupe_claim(
+                        tenant,
+                        self.run,
+                        scoped_extract.dedupe_cache.as_ref(),
+                        &document,
+                    )?;
+                }
+                if accepted && !self.durable_dedupe {
+                    local_dedupe = document.dedupe_commit.take();
                 } else {
-                    (document, None)
-                };
-            acq.document = Some(document);
-            (items, outbox, cache)
-        } else {
-            (Vec::new(), Vec::new(), None)
-        };
+                    let _ = document.dedupe_commit.take();
+                }
+                let (document, items, outbox) = crate::delivery::prepare_article_acceptance(
+                    self.deps.artifacts.as_ref(),
+                    cpu,
+                    &run,
+                    entry.id,
+                    document,
+                    accepted,
+                )
+                .await?;
+                // Raw-only and other uncomposed consumers have no native source/envelope
+                // pair to attach to scrape metadata. Do not publish an orphan cache reference.
+                let (document, cache) =
+                    if !skip_compose && cache::writes(opts) && self.cache_reusable && !self.zdr {
+                        crate::delivery::store_article_cache(
+                            self.deps.artifacts.as_ref(),
+                            cpu,
+                            &run,
+                            entry.id,
+                            document,
+                            accepted,
+                        )
+                        .await?
+                    } else {
+                        (document, None)
+                    };
+                acq.document = Some(document);
+                (items, outbox, cache)
+            } else {
+                (Vec::new(), Vec::new(), None)
+            };
         let mut composed = if skip_compose {
             Composed::default()
         } else {
@@ -871,7 +1151,7 @@ impl ScrapeEngine {
                 headers: acq.headers.clone(),
                 content_type: acq.content_type.clone(),
                 options: Arc::clone(&self.options),
-                extract: self.extract.clone(),
+                extract: scoped_extract,
                 ocr: self.ocr.clone(),
                 document: acq.document.take(),
                 controls: self.fetcher.config().controls.clone(),
@@ -901,6 +1181,51 @@ impl ScrapeEngine {
         if !skip_compose {
             acq.metadata.extraction_succeeded = Some(true);
         }
+        if !composed.previews.is_empty() {
+            let mut previews = Vec::with_capacity(composed.previews.len());
+            for intent in std::mem::take(&mut composed.previews) {
+                let options = FetchOptions {
+                    max_body_bytes: Some(usize::try_from(intent.max_head_bytes).unwrap_or(usize::MAX)),
+                    ..self.http_options()
+                };
+                let fetched = self
+                    .fetch_auxiliary_checked(
+                        &intent.url,
+                        &options,
+                        &mut acq,
+                        observe,
+                        crawlx_policy::robots::HopKind::Page,
+                        true,
+                    )
+                    .await;
+                let report = match fetched {
+                    Ok(response) if response.status.is_success() => {
+                        let body = Bytes::from(self.redact(&String::from_utf8_lossy(&response.body)));
+                        let truncated = response.truncated;
+                        let projected = cpu
+                            .run(move || {
+                                let mut head = crawlx_extract::link_media::project_head(&intent, &body)?;
+                                head.truncated |= truncated;
+                                Ok::<_, crawlx_extract::ExtractError>(head)
+                            })
+                            .await
+                            .map_err(|error| WorkerError::Other(error.to_string()))?;
+                        match projected {
+                            Ok(head) => serde_json::json!({"status":"fulfilled","head":head}),
+                            Err(_) => serde_json::json!({"status":"unavailable","reason":"head_projection"}),
+                        }
+                    }
+                    Ok(_) => serde_json::json!({"status":"unavailable","reason":"target_status"}),
+                    Err(error) => serde_json::json!({"status":"unavailable","reason":error.code()}),
+                };
+                previews.push(report);
+            }
+            composed.outputs.get_or_insert_with(|| serde_json::json!({}))["previews"] =
+                serde_json::Value::Array(previews);
+        }
+        if let Some(outputs) = &mut composed.outputs {
+            self.redact_value(outputs);
+        }
 
         // Credential echoes must be removed before any cleanup or model format sees them,
         // including text extracted from PDFs rather than directly from the response body.
@@ -917,9 +1242,12 @@ impl ScrapeEngine {
             status,
             options_digest,
         );
+        doc.outputs = composed.outputs.take();
         doc.proxy_used = acq.proxy_used;
         doc.content_type.clone_from(&acq.content_type);
-        if status >= 400 {
+        if status >= 400
+            && self.fetch_options.declaration.statuses.verdict(status) != crawlx_fetch::StatusVerdict::Allow
+        {
             doc.error = Some(
                 http::StatusCode::from_u16(status)
                     .ok()
@@ -1011,6 +1339,17 @@ impl ScrapeEngine {
             composed.html = out.content.html;
             doc.pages = out.content.pages;
             doc.blocks = out.content.blocks;
+            if let Some(mut outputs) = doc.outputs.take() {
+                let policy = redact_opts.clone();
+                doc.outputs = Some(
+                    cpu.run(move || {
+                        guard::redact_output(&mut outputs, &policy);
+                        outputs
+                    })
+                    .await
+                    .map_err(|error| WorkerError::Other(error.to_string()))?,
+                );
+            }
             if let Some(raw) = out.content.raw {
                 acq.body = raw;
             }
@@ -1091,13 +1430,15 @@ impl ScrapeEngine {
             .await?;
         scraped.accepted = article_accepted;
         scraped.outbox = article_outbox;
+        scraped.content_dedupe = content_dedupe;
+        scraped.local_dedupe = local_dedupe;
         Ok(Outcome::Page(Box::new(scraped)))
     }
 
     /// Request options of the HTTP leg: `location` becomes an `Accept-Language` header unless
     /// the run's configured request headers (`headers`) already set one, which then wins.
     fn http_options(&self) -> FetchOptions {
-        let mut opts = FetchOptions::default();
+        let mut opts = self.fetch_options.clone();
         let configured = self
             .fetcher
             .config()
@@ -1161,7 +1502,7 @@ impl ScrapeEngine {
     #[allow(clippy::too_many_arguments)]
     async fn acquire_delegate(
         &self,
-        url: &Url,
+        request: &crawlx_core::request::RequestEnvelopeV1,
         route: &crawlx_core::protocol::ProtocolRouteV1,
         entry_id: i64,
         cpu: &CpuPool,
@@ -1169,6 +1510,7 @@ impl ScrapeEngine {
         cancel: &tokio_util::sync::CancellationToken,
         budget: Option<crate::acquisition::AcquisitionBudgetV1>,
     ) -> Result<Acquired, ScrapeFailure> {
+        let url = &request.url.url;
         let runtime = self
             .protocol_runtime
             .as_ref()
@@ -1224,18 +1566,16 @@ impl ScrapeEngine {
         let mut metadata = crate::protocol::resource_metadata(&resource, &route, url, self.run, tenant);
         let context = crate::acquisition::context(policy, resource.target_status, false);
         let base = resource.final_url.clone().unwrap_or_else(|| url.clone());
-        let body = crate::acquisition::extraction_body(
-            &resource.body,
-            &self.fetcher.config().controls,
-            &self.extract,
-        );
+        let extract = self.scoped_extract(tenant, Some(request))?;
+        let body =
+            crate::acquisition::extraction_body(&resource.body, &self.fetcher.config().controls, &extract);
         let validation = crate::acquisition::validate_body(
             body,
             base.clone(),
             resource.media_type.clone(),
             Vec::new(),
             context,
-            self.extract.clone(),
+            extract,
             cpu,
             &self.fetcher.config().controls,
             self.captcha_secrets.as_ref(),
@@ -1282,6 +1622,8 @@ impl ScrapeEngine {
     pub(crate) fn with_protocol_services(mut self, rc: &crate::run::RunContext) -> Self {
         self.request_identity_key = rc.request_identity_key.clone();
         self.captcha_secrets = Some(rc.captcha_secrets.clone());
+        self.content_dedupe = Some(Arc::clone(&rc.extract_dedupe));
+        self.durable_dedupe = rc.durable_dedupe;
         self.protocol_runtime = rc
             .protocol_registry
             .as_ref()
@@ -1321,8 +1663,10 @@ impl ScrapeEngine {
             use crawlx_core::protocol::ProtocolBackendV1;
             match route.backend {
                 ProtocolBackendV1::Delegate => {
-                    return Box::pin(self.acquire_delegate(url, route, entry_id, cpu, tenant, cancel, budget))
-                        .await
+                    return Box::pin(
+                        self.acquire_delegate(request, route, entry_id, cpu, tenant, cancel, budget),
+                    )
+                    .await
                 }
                 ProtocolBackendV1::Http | ProtocolBackendV1::Browser => {
                     let mut policy = self.acquisition.clone().unwrap_or_default();
@@ -1392,6 +1736,7 @@ impl ScrapeEngine {
         tenant: TenantId,
     ) -> Result<Acquired, ScrapeFailure> {
         let url = &request.url.url;
+        let extract = self.scoped_extract(tenant, Some(request))?;
         use crawlx_core::scrape::ProxyMode;
         let legacy_started = tokio::time::Instant::now();
         let mut proxy_used = if self.options.proxy == ProxyMode::Enhanced {
@@ -1443,12 +1788,12 @@ impl ScrapeEngine {
             let body = Bytes::from(rendered.html);
             let policy = crawlx_core::acquisition::AcquisitionPolicyV1::default();
             let (validation, document) = crate::acquisition::validate_body(
-                crate::acquisition::extraction_body(&body, &self.fetcher.config().controls, &self.extract),
+                crate::acquisition::extraction_body(&body, &self.fetcher.config().controls, &extract),
                 rendered.final_url.clone(),
                 rendered.content_type.clone(),
                 rendered.headers.clone(),
                 crate::acquisition::context(&policy, metadata.target_status, metadata.truncated),
-                self.extract.clone(),
+                extract,
                 cpu,
                 &self.fetcher.config().controls,
                 self.captcha_secrets.as_ref(),
@@ -1519,16 +1864,12 @@ impl ScrapeEngine {
                 crate::acquisition::http_metadata(self.run, tenant, url, &resp, effective_fetcher);
             let policy = crawlx_core::acquisition::AcquisitionPolicyV1::default();
             let (validation, document) = crate::acquisition::validate_body(
-                crate::acquisition::extraction_body(
-                    &resp.body,
-                    &self.fetcher.config().controls,
-                    &self.extract,
-                ),
+                crate::acquisition::extraction_body(&resp.body, &self.fetcher.config().controls, &extract),
                 resp.final_url.clone(),
                 resp.content_type.clone(),
                 header_pairs(&resp.headers),
                 crate::acquisition::context(&policy, Some(resp.status.as_u16()), resp.truncated),
-                self.extract.clone(),
+                extract,
                 cpu,
                 &self.fetcher.config().controls,
                 self.captcha_secrets.as_ref(),
@@ -1661,6 +2002,7 @@ impl ScrapeEngine {
         admission: Option<&dyn crate::acquisition::HopAdmission>,
     ) -> Result<Acquired, ScrapeFailure> {
         let url = &request.url.url;
+        let extract = self.scoped_extract(tenant, Some(request))?;
         use crate::acquisition::fetch_native;
         use crawlx_core::acquisition::{RetryClassV1, ValidationCategoryV1};
         use crawlx_core::scrape::ProxyMode;
@@ -1692,7 +2034,7 @@ impl ScrapeEngine {
                     &policy,
                     &mut budget,
                     cancel,
-                    &self.extract,
+                    &extract,
                     cpu,
                     self.run,
                     tenant,
@@ -1782,16 +2124,12 @@ impl ScrapeEngine {
                 let body = Bytes::from(rendered.html);
                 budget.charge_bytes(body.len());
                 let (validation, document) = crate::acquisition::validate_body(
-                    crate::acquisition::extraction_body(
-                        &body,
-                        &self.fetcher.config().controls,
-                        &self.extract,
-                    ),
+                    crate::acquisition::extraction_body(&body, &self.fetcher.config().controls, &extract),
                     rendered.final_url.clone(),
                     rendered.content_type.clone(),
                     rendered.headers.clone(),
                     crate::acquisition::context(&policy, metadata.target_status, metadata.truncated),
-                    self.extract.clone(),
+                    extract.clone(),
                     cpu,
                     &self.fetcher.config().controls,
                     self.captcha_secrets.as_ref(),
@@ -1866,7 +2204,7 @@ impl ScrapeEngine {
         }
     }
 
-    /// Auxiliary requests share the same attempt, request, byte and monotonic deadline limits.
+    /// Existing stylesheet and visibility requests retain their own admission policy.
     async fn fetch_auxiliary(
         &self,
         url: &Url,
@@ -1874,44 +2212,145 @@ impl ScrapeEngine {
         acq: &mut Acquired,
         observe: &FetchObserver<'_>,
     ) -> Result<FetchResponse, FetchError> {
-        let Some((budget, cancel)) = &mut acq.budget else {
-            let fetched = self.fetcher.fetch(url, original).await;
-            observe(url, &fetched);
-            return fetched;
-        };
-        let remaining = budget.reserve(cancel)?;
-        let options = budget.options(original, self.fetcher.config().max_body_bytes);
-        let fetched = tokio::select! {
-            biased;
-            () = cancel.cancelled() => Err(FetchError::AcquisitionCancelled),
-            result = tokio::time::timeout(remaining, self.fetcher.fetch_once(url, &options)) => result.unwrap_or(Err(FetchError::AcquisitionDeadline)),
+        let fetched = if let Some((budget, cancel)) = &mut acq.budget {
+            crate::acquisition::fetch_budgeted_once(
+                &self.fetcher,
+                url,
+                original,
+                budget,
+                cancel,
+                &AuxiliaryAdmission(self),
+            )
+            .await
+        } else {
+            self.fetcher.fetch(url, original).await
         };
         observe(url, &fetched);
-        if let Ok(response) = &fetched {
-            budget.charge_bytes(response.body.len());
-            let category = if response.status.is_client_error() || response.status.is_server_error() {
-                crawlx_core::acquisition::ValidationCategoryV1::TargetError
-            } else {
-                crawlx_core::acquisition::ValidationCategoryV1::Indeterminate
-            };
-            budget.record("native_http", Some(response.status.as_u16()), category);
-        } else {
-            if let Err(error) = &fetched {
-                budget.on_fetch_failure(
-                    error,
-                    options
-                        .max_body_bytes
-                        .unwrap_or(self.fetcher.config().max_body_bytes),
-                );
-            }
-            budget.record(
-                "native_http",
-                None,
-                crawlx_core::acquisition::ValidationCategoryV1::TransportError,
-            );
+        if let Some((budget, _)) = &acq.budget {
+            budget.stamp(&mut acq.metadata);
         }
-        budget.stamp(&mut acq.metadata);
         fetched
+    }
+
+    /// Auxiliary resources retain authorization and explicit denials, not frontier file selection.
+    async fn auxiliary_scope(&self, url: &Url) -> Result<(), FetchError> {
+        use crate::acquisition::HopAdmission as _;
+        AuxiliaryAdmission(self).check_authority().await?;
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || self.url_exclusion.check(url).is_some()
+            || !self
+                .scope
+                .as_ref()
+                .map_err(|_| FetchError::AcquisitionUnavailable)?
+                .decide_protocol_resource(url)
+                .is_admitted()
+        {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        Ok(())
+    }
+
+    /// Heap-place the full guarded acquisition before its caller constructs a poll frame.
+    #[allow(clippy::too_many_arguments)]
+    fn fetch_auxiliary_checked<'a>(
+        &'a self,
+        url: &'a Url,
+        original: &'a FetchOptions,
+        acq: &'a mut Acquired,
+        observe: &'a FetchObserver<'a>,
+        kind: crawlx_policy::robots::HopKind,
+        preview: bool,
+    ) -> impl Future<Output = Result<FetchResponse, FetchError>> + 'a {
+        Box::pin(self.fetch_auxiliary_checked_inner(url, original, acq, observe, kind, preview))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn fetch_auxiliary_checked_inner(
+        &self,
+        url: &Url,
+        original: &FetchOptions,
+        acq: &mut Acquired,
+        observe: &FetchObserver<'_>,
+        kind: crawlx_policy::robots::HopKind,
+        preview: bool,
+    ) -> Result<FetchResponse, FetchError> {
+        use crate::robots_gate::RobotsDecision;
+        use crawlx_policy::robots::HopKind;
+        let mut current = url.clone();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut redirects = Vec::new();
+        let mut options = original.clone();
+        options.follow_redirects = false;
+        let max_hops = original
+            .max_redirects
+            .unwrap_or(self.fetcher.config().max_redirects)
+            .min(20);
+        for hop in 0..=max_hops {
+            current.set_fragment(None);
+            if !seen.insert(current.as_str().to_owned()) {
+                return Err(FetchError::TooManyRedirects { limit: max_hops });
+            }
+            self.auxiliary_scope(&current).await?;
+            if preview {
+                crawlx_core::extraction::check_preview_target(&current)
+                    .map_err(|_| FetchError::AcquisitionUnavailable)?;
+            }
+            let hop_kind = if hop == 0 { kind } else { HopKind::Redirect };
+            let fetched = if let Some((budget, cancel)) = &mut acq.budget {
+                let decision = self
+                    .robots
+                    .decide_hop_with_budget(
+                        hop_kind,
+                        &current,
+                        &options,
+                        budget,
+                        cancel,
+                        &AuxiliaryAdmission(self),
+                    )
+                    .await?;
+                if decision != RobotsDecision::Allowed {
+                    return Err(FetchError::AcquisitionUnavailable);
+                }
+                crate::acquisition::fetch_budgeted_once(
+                    &self.fetcher,
+                    &current,
+                    &options,
+                    budget,
+                    cancel,
+                    &AuxiliaryAdmission(self),
+                )
+                .await
+            } else {
+                if self.robots.decide_hop(hop_kind, &current).await != RobotsDecision::Allowed {
+                    return Err(FetchError::AcquisitionUnavailable);
+                }
+                self.fetcher.fetch_once(&current, &options).await
+            };
+            observe(&current, &fetched);
+            if let Some((budget, _)) = &acq.budget {
+                budget.stamp(&mut acq.metadata);
+            }
+            let mut response = fetched?;
+            if !crawlx_fetch::redirect::is_redirect(response.status.as_u16())
+                || !original.follow_redirects
+                || !self.fetcher.config().follow_redirects
+            {
+                response.redirects = redirects;
+                return Ok(response);
+            }
+            let next = crawlx_fetch::redirect::location(&current, &response.headers)?;
+            if current.origin() != next.origin() {
+                options.suppress_credentials = true;
+                crawlx_fetch::redirect::strip_credentials(&mut options.headers);
+            }
+            options.validators = None;
+            options.suppress_validators = true;
+            redirects.push(current.to_string());
+            current = next;
+        }
+        Err(FetchError::TooManyRedirects { limit: max_hops })
     }
 
     /// The `branding` format: up to [`BRANDING_STYLESHEETS`] linked stylesheets read through
@@ -1942,7 +2381,7 @@ impl ScrapeEngine {
             }
             let opts = FetchOptions {
                 max_body_bytes: Some(remaining),
-                ..FetchOptions::default()
+                ..self.http_options()
             };
             match self.fetch_auxiliary(&sheet, &opts, acq, observe).await {
                 Ok(r) if r.status.is_success() => {
@@ -2003,14 +2442,34 @@ impl ScrapeEngine {
     /// `fetched_at`, `cacheState: hit` and `cachedAt`.
     async fn serve_cached(
         &self,
-        stored: PageRecord,
+        mut stored: PageRecord,
         entry: &FrontierEntry,
         cpu: &CpuPool,
     ) -> Result<Option<Scraped>, WorkerError> {
+        // Cached envelopes do not retain block hashes. Reparse the acquired source when
+        // local cross-document block pruning is requested instead of silently skipping it.
+        if !self.durable_dedupe
+            && self
+                .extract
+                .content
+                .as_ref()
+                .and_then(|policy| policy.dedupe)
+                .is_some_and(|policy| policy.blocks)
+        {
+            return Ok(None);
+        }
         let run = self.deps.runs.get(self.run).await?;
         let mut accepted = Vec::new();
         let mut outbox = Vec::new();
+        let mut content_dedupe = None;
+        let mut local_dedupe = None;
         if run.config.datasets.article_store()?.is_some()
+            || self
+                .extract
+                .content
+                .as_ref()
+                .and_then(|policy| policy.dedupe)
+                .is_some_and(|policy| policy.content)
             || (!self.options.wants("rawBase64")
                 && self
                     .extract
@@ -2043,7 +2502,7 @@ impl ScrapeEngine {
                     crawlx_core::StoreError::AccessDenied("article cache tenant mismatch".into()).into(),
                 );
             }
-            let (document, deadline, source_id) = match crate::delivery::load_article_cache(
+            let (mut document, deadline, source_id) = match crate::delivery::load_article_cache(
                 self.deps.artifacts.as_ref(),
                 cpu,
                 &source,
@@ -2062,13 +2521,50 @@ impl ScrapeEngine {
             if doc.meta.get("article") != serde_json::to_value(document.article.as_ref()).ok().as_ref() {
                 return Ok(None);
             }
+            let request = self.deps.frontier.get_request(self.run, entry.id).await?.envelope;
+            let scoped_extract = self
+                .scoped_extract(run.tenant, Some(&request))
+                .map_err(|failure| WorkerError::Config(failure.message))?;
+            if self.durable_dedupe {
+                content_dedupe = crate::url_plane::content_dedupe_claim(
+                    run.tenant,
+                    self.run,
+                    scoped_extract.dedupe_cache.as_ref(),
+                    &document,
+                )?;
+            } else if let (Some(handle), Some(policy)) = (
+                scoped_extract.dedupe_cache.as_ref(),
+                scoped_extract.content.as_ref(),
+            ) {
+                let handle = handle.clone();
+                let policy = policy.clone();
+                document = cpu
+                    .run(move || {
+                        handle.stage_cached_content(&mut document, &policy)?;
+                        Ok::<_, crawlx_extract::ExtractError>(document)
+                    })
+                    .await
+                    .map_err(|error| WorkerError::Other(error.to_string()))?
+                    .map_err(WorkerError::Extraction)?;
+                local_dedupe = document.dedupe_commit.take();
+            }
+            let article_accepted = document.article.as_ref().is_some_and(|article| {
+                article.quality.status == crawlx_core::extraction::QualityStatusV1::Accepted
+            });
+            if !article_accepted {
+                stored.metadata[ScrapeDocument::METADATA_KEY]["meta"]["article"] =
+                    serde_json::to_value(&document.article)
+                        .map_err(|error| WorkerError::Other(error.to_string()))?;
+                stored.metadata[ScrapeDocument::METADATA_KEY]["notCacheable"] = serde_json::json!(true);
+                local_dedupe = None;
+            }
             let (_, items, deliveries) = crate::delivery::prepare_article_acceptance_retained(
                 self.deps.artifacts.as_ref(),
                 cpu,
                 &run,
                 entry.id,
                 Box::new(document),
-                true,
+                article_accepted,
                 Some(deadline),
                 &source_id,
             )
@@ -2106,6 +2602,8 @@ impl ScrapeEngine {
             final_url,
             accepted,
             outbox,
+            content_dedupe,
+            local_dedupe,
         }))
     }
 

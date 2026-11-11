@@ -409,7 +409,7 @@ impl Rig {
     }
 }
 
-/// The part of the run id every sticky identity of a run shares: `cx_<tier>_<32 hex>`.
+/// The sticky identity carries its tier and all 64 digest hex digits when the username budget fits.
 fn sid_of(username: &str) -> &str {
     username.rsplit_once("-sid-").map_or("", |(_, sid)| sid)
 }
@@ -434,7 +434,7 @@ async fn the_basic_tier_tunnels_through_the_pool_with_a_sticky_identity_and_reco
     let first = &seen[0].username;
     assert!(seen.iter().all(|c| &c.username == first), "{seen:?}");
     assert!(first.starts_with("px-kind-rotating-cc-fr-sid-cx_b_"), "{first}");
-    assert_eq!(sid_of(first).len(), "cx_b_".len() + 32);
+    assert_eq!(sid_of(first).len(), "cx_b_".len() + 64);
 
     // the origin was reached through CONNECT tunnels, never with proxy credentials
     assert_eq!(rig.origin.count("/page"), 1);

@@ -305,6 +305,75 @@ pub struct DelegateCapabilitiesV1 {
     pub build_digest: String,
 }
 
+/// Bounded local registration report, not a remote health or conformance attestation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ProtocolCapabilityReportV1 {
+    /// Report contract version.
+    pub schema_version: u8,
+    /// An explicit operator registry was loaded.
+    pub registry_present: bool,
+    /// Always false for the offline registration probe.
+    pub network_probed: bool,
+    /// Configured capabilities only; absent registry means an empty list.
+    pub delegates: Vec<ProtocolCapabilityEntryV1>,
+}
+impl ProtocolCapabilityReportV1 {
+    /// Construct a local-only report without implying remote verification.
+    #[must_use]
+    pub fn configured(registry_present: bool, delegates: Vec<ProtocolCapabilityEntryV1>) -> Self {
+        Self {
+            schema_version: 1,
+            registry_present,
+            network_probed: false,
+            delegates,
+        }
+    }
+}
+
+/// Local configuration evidence for one explicitly enabled protocol implementation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ProtocolCapabilityEntryV1 {
+    /// Operator registry identifier.
+    pub id: String,
+    /// Registered scheme set.
+    pub schemes: BTreeSet<String>,
+    /// Registered capabilities, not a self-advertised remote response.
+    pub capabilities: BTreeSet<String>,
+    /// Configured maximum returned bytes.
+    pub max_bytes: u32,
+    /// Configured immutable service build, absent for native versioned implementations.
+    pub build_digest: Option<String>,
+    /// True only for a locally configured approved registration.
+    pub operator_configured: bool,
+    /// Always false: this probe opens no target or service sockets.
+    pub live_attested: bool,
+}
+impl ProtocolCapabilityEntryV1 {
+    /// Describe a validated local registration without implying live attestation.
+    #[must_use]
+    pub fn configured(
+        id: String,
+        schemes: BTreeSet<String>,
+        capabilities: BTreeSet<String>,
+        max_bytes: u32,
+        build_digest: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            schemes,
+            capabilities,
+            max_bytes,
+            build_digest,
+            operator_configured: true,
+            live_attested: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

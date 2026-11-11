@@ -43,6 +43,7 @@ use crawlx_core::{
     BrowserBackend, CanonicalUrl, Clock, ContextConfig, CrawlRunId, CreateCrawl, SystemClock, WorkerId,
 };
 use crawlx_extract::secret_validation::SecretValidators;
+use crawlx_fetch::proxyx::PoolBinding;
 use crawlx_fetch::{
     DeniedEvent, EgressOptions, EgressProxyHandle, FetchConfig, Fetcher, GovernorConfig, Resolver,
 };
@@ -59,18 +60,21 @@ use crawlx_url::{CanonicalizeOptions, Canonicalizer};
 use futures::stream::{FuturesUnordered, StreamExt as _};
 use parking_lot::Mutex;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
+
+const MAX_SESSION_POOL_BINDINGS: usize = 1024;
 
 /// Everything one run needs, shared by its sessions and its URL plane.
 #[derive(Clone)]
 pub struct RunContext {
     /// Run.
     pub run: CrawlRunId,
-    /// Crawl.
-    pub crawl: CreateCrawl,
+    /// Heap-owned crawl configuration, keeping context returns and task frames bounded.
+    pub crawl: Box<CreateCrawl>,
     /// Seed.
     pub seed: CrawlSeed,
     /// Stores.
@@ -106,12 +110,18 @@ pub struct RunContext {
     pub routes: RouteLearner,
     /// Cancel.
     pub cancel: CancellationToken,
+    /// Caller hard stop, independent of graceful drain and execution cancellation.
+    pub(crate) hard_cancel: CancellationToken,
     /// Loopback egress proxy port for the browser plane.
     pub egress_port: Option<u16>,
     /// Deployment egress configuration for isolated enhanced scrape contexts.
     pub egress: crate::config::EgressConfig,
+    session_pool_bindings: Arc<Mutex<BTreeMap<crawlx_core::SessionId, Arc<PoolBinding>>>>,
+    session_flow_capture: Option<tokio::sync::mpsc::Sender<crawlx_core::traffic::ProxyFlow>>,
     /// Worker-approved isolated acquisition services, never tenant-provided endpoints.
     pub protocol_registry: Option<Arc<crate::protocol::ProtocolRegistry>>,
+    /// Immutable tenant-approved recipe resolved at admission, outside tenant control.
+    pub archive_behavior: Option<Arc<crawlx_core::archive_behaviors::RecipeV1>>,
     /// Protected operator root for tenant-keyed request/cache correlation.
     pub request_identity_key: Option<crawlx_core::secret::SecretOr<[u8; 32]>>,
     /// Model clients (System 1, planner) shared by the sessions of the run.
@@ -126,6 +136,12 @@ pub struct RunContext {
     pub capture: Option<Arc<ProxyCapture>>,
     /// The worker's CPU pool, for the URL plane's extraction step.
     pub cpu_pool: crate::runtime::CpuPool,
+    /// Dynamic-only output lane. Publishes settled observations, never HTTP primary acquisition.
+    pub(crate) browser_pages: Option<Arc<UrlPlaneRunner>>,
+    /// Tenant/run-owned cache shared by static and browser extraction scopes.
+    pub(crate) extract_dedupe: Arc<std::sync::Mutex<crawlx_core::extraction::DedupeCache>>,
+    /// Durable execution uses the fenced digest registry; local memory runs commit cache tokens.
+    pub(crate) durable_dedupe: bool,
     /// Trusted worker-local article language capability, shared without body/model copies.
     pub article_language_detector: Option<crawlx_core::article_language::ArticleLanguageHandle>,
     /// `fetch.extraHeaders`, `fetch.cookies`, `fetch.userAgent` and `fetch.skipTlsVerification`
@@ -283,8 +299,10 @@ pub struct RunReport {
     pub actions: Vec<ActionRecord>,
     /// Persisted enablement edges (`enablement_edges`) the run learned.
     pub edges: Vec<crawlx_core::repo::EdgeRecord>,
-    /// Sessions.
+    /// Browser execution sessions, including sessions that never launched a browser.
     pub sessions: Vec<CrawlSession>,
+    /// HTTP-only coordinators; their scheduler leases and custody remain persisted.
+    pub http_coordinators: Vec<CrawlSession>,
     /// Coverage ledger rows (`action_contexts`).
     pub ledger: Vec<LedgerRow>,
     /// Coverage claim over `ledger`, classified under the run's `targetIsolation`
@@ -709,7 +727,7 @@ pub fn build_fetcher_with_capture(
     let resolver = cfg.egress.resolver_for(crawl)?;
     let policy = Arc::new(cfg.egress.policy_for_run(crawl, record));
     let route = cfg.egress.route_for(crawl)?;
-    let pool = route.bind(run, Some((Arc::clone(&policy), Arc::clone(&resolver))))?;
+    let pool = route.bind_run(run, Some((Arc::clone(&policy), Arc::clone(&resolver))))?;
     let fetch_cfg = FetchConfig {
         contact: cfg.egress.contact.clone(),
         governor: GovernorConfig::from_politeness(&crawl.politeness, seed),
@@ -733,7 +751,7 @@ pub fn build_fetcher_with_capture(
         match cfg.egress.enhanced_route() {
             Some(TierRoute::Url(proxy)) => fetcher = fetcher.with_enhanced_proxy(proxy)?,
             Some(enhanced @ TierRoute::Pool(..)) => {
-                if let Some(binding) = enhanced.bind(run, Some((policy, Arc::clone(&resolver))))? {
+                if let Some(binding) = enhanced.bind_run(run, Some((policy, Arc::clone(&resolver))))? {
                     fetcher = fetcher.with_enhanced_pool(binding)?;
                 }
             }
@@ -750,40 +768,44 @@ impl RunContext {
     /// runs under `test_environment` or `authorized_security_test`; the pool then attaches
     /// every "process" to that one browser (`max_browsers = 1`). `incognito = false` needs
     /// attach mode: only an attached browser has a human's default context to reuse.
+    /// Construction keeps its state on the heap instead of expanding every caller's future.
     ///
     /// # Errors
     /// [`WorkerError::PolicyDenied`] for attach mode under `read_only`,
     /// [`WorkerError::Config`] for missing model-authority gates or `incognito = false`
     /// without attach mode, and storage, browser or network failures of the wiring.
     #[allow(clippy::too_many_arguments)]
-    pub async fn build(
-        run: &CrawlRun,
-        cfg: &WorkerConfig,
+    #[must_use = "the context is not built unless the future is polled"]
+    pub fn build<'a>(
+        run: &'a CrawlRun,
+        cfg: &'a WorkerConfig,
         stores: Stores,
         backend: Option<Arc<dyn BrowserBackend>>,
         secrets: Option<Arc<dyn SecretResolver>>,
         cancel: CancellationToken,
-        proxy: Option<&EgressProxyHandle>,
+        proxy: Option<&'a EgressProxyHandle>,
         authorization: Option<Arc<AuthorizationGuard>>,
-    ) -> Result<Self, WorkerError> {
-        check_role_credentials(&run.config, authorization.as_deref())?;
-        cfg.check_gates(&run.config)?;
-        cfg.check_article_language(&run.config)?;
-        let secrets = default_secrets(secrets).await;
-        let controls =
-            resolve_controls(&run.config, run.id, secrets.as_ref(), stores.events.as_ref()).await?;
-        Self::build_with_controls(
-            run,
-            cfg,
-            stores,
-            backend,
-            secrets,
-            cancel,
-            proxy,
-            controls,
-            authorization,
-        )
-        .await
+    ) -> impl Future<Output = Result<Self, WorkerError>> + Send + 'a {
+        Box::pin(async move {
+            check_role_credentials(&run.config, authorization.as_deref())?;
+            cfg.check_gates(&run.config)?;
+            cfg.check_article_language(&run.config)?;
+            let secrets = default_secrets(secrets).await;
+            let controls =
+                resolve_controls(&run.config, run.id, secrets.as_ref(), stores.events.as_ref()).await?;
+            Self::build_with_controls(
+                run,
+                cfg,
+                stores,
+                backend,
+                secrets,
+                cancel,
+                proxy,
+                controls,
+                authorization,
+            )
+            .await
+        })
     }
 
     /// [`Self::build`] with the request controls already resolved ([`resolve_controls`]): a
@@ -793,17 +815,18 @@ impl RunContext {
     /// # Errors
     /// The errors of [`Self::build`] except the secret resolution.
     #[allow(clippy::too_many_arguments)]
-    pub async fn build_with_controls(
-        run: &CrawlRun,
-        cfg: &WorkerConfig,
+    #[must_use = "the context is not built unless the future is polled"]
+    pub fn build_with_controls<'a>(
+        run: &'a CrawlRun,
+        cfg: &'a WorkerConfig,
         stores: Stores,
         backend: Option<Arc<dyn BrowserBackend>>,
         secrets: Arc<dyn SecretResolver>,
         cancel: CancellationToken,
-        proxy: Option<&EgressProxyHandle>,
+        proxy: Option<&'a EgressProxyHandle>,
         controls: RequestControls,
         authorization: Option<Arc<AuthorizationGuard>>,
-    ) -> Result<Self, WorkerError> {
+    ) -> impl Future<Output = Result<Self, WorkerError>> + Send + 'a {
         Self::build_with_fixture_evaluation(
             run,
             cfg,
@@ -816,7 +839,6 @@ impl RunContext {
             authorization,
             None,
         )
-        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -860,6 +882,7 @@ impl RunContext {
         evaluation: Option<&crate::fixture_evaluation::BoundFixtureEvaluation>,
     ) -> Result<Self, WorkerError> {
         cfg.check_article_language(&run.config)?;
+        let archive_behavior = Box::pin(cfg.resolve_archive_behaviors(&run.config, run.tenant)).await?;
         let checkpoint_keys = cfg
             .checkpoint_keys
             .as_ref()
@@ -969,7 +992,7 @@ impl RunContext {
         cfg.delivery.register_authority(run.id, &delivery_authority);
         let robots = RobotsGate::for_crawl(
             &crate::url_plane::effective_crawl(crawl.clone()),
-            robots_fetcher,
+            Arc::clone(&robots_fetcher),
             Arc::clone(&clock),
         );
         let kernel = Arc::new(build_kernel(&crawl, Arc::clone(&clock), record)?);
@@ -1006,6 +1029,22 @@ impl RunContext {
                     "browser attach requires test_environment or authorized_security_test".to_owned(),
                 ));
             }
+            let guard = authorization.as_ref().ok_or_else(|| {
+                WorkerError::PolicyDenied("browser attach requires active authorization".to_owned())
+            })?;
+            guard.check_now().await?;
+            stores
+                .events
+                .append(
+                    run.id,
+                    "browser.attach.admitted",
+                    serde_json::json!({
+                        "authorizationRecordId": guard.record_id(),
+                        "safetyProfile": crawl.safety.profile,
+                        "defaultContext": !cfg.incognito,
+                    }),
+                )
+                .await?;
             launch.cdp_ws_url = Some(ws.clone());
             pool_cfg.max_browsers = 1;
         } else if !cfg.incognito {
@@ -1073,13 +1112,13 @@ impl RunContext {
                 crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr,
             )?;
         }
-        Ok(Self {
+        let mut context = Self {
             run: run.id,
             seed: run.seed,
             canon,
             routes,
             budget: Arc::new(Mutex::new(Budget::new(&crawl.limits, started))),
-            crawl,
+            crawl: Box::new(crawl),
             stores,
             clock,
             pool,
@@ -1094,15 +1133,24 @@ impl RunContext {
             captcha_secrets,
             worker: cfg.worker_id,
             cancel,
+            hard_cancel: CancellationToken::new(),
             egress_port: proxy.map(EgressProxyHandle::port),
             egress: cfg.egress.clone(),
+            session_pool_bindings: Arc::new(Mutex::new(BTreeMap::new())),
+            session_flow_capture: None,
             protocol_registry,
+            archive_behavior,
             models,
             gates: cfg.gates.clone(),
             incognito: cfg.incognito,
             retained_profiles: cfg.retained_profiles.clone(),
             capture: None,
             cpu_pool: cfg.cpu_pool.clone(),
+            browser_pages: None,
+            extract_dedupe: Arc::new(std::sync::Mutex::new(crawlx_core::extraction::DedupeCache::new(
+                65_536,
+            )?)),
+            durable_dedupe: true,
             article_language_detector: cfg.article_language_detector.clone(),
             controls,
             traffic_export,
@@ -1117,7 +1165,43 @@ impl RunContext {
             delivery_authority,
             browser_robots,
             authorization,
-        })
+        };
+        context.install_browser_pages(robots_fetcher)?;
+        Ok(context)
+    }
+
+    // Keep URL-plane construction temporaries out of the context builder's poll frame.
+    fn install_browser_pages(&mut self, fetcher: Arc<Fetcher>) -> Result<(), WorkerError> {
+        if self.crawl.mode == CrawlMode::Dynamic && self.crawl.dynamic.enabled && self.crawl.scrape.is_none()
+        {
+            let plane = UrlPlaneRunner::new(
+                self.run,
+                self.crawl.as_ref().clone(),
+                self.worker,
+                UrlPlaneDeps {
+                    runs: Arc::clone(&self.stores.runs),
+                    frontier: Arc::clone(&self.stores.frontier),
+                    request_commits: Arc::clone(&self.stores.request_commits),
+                    source_memo: Arc::clone(&self.stores.source_memo),
+                    leases: Arc::clone(&self.stores.leases),
+                    pages: Arc::clone(&self.stores.pages),
+                    events: Arc::clone(&self.stores.events),
+                    artifacts: Arc::clone(&self.stores.artifacts),
+                    archives: Arc::clone(&self.stores.archives),
+                    clock: Arc::clone(&self.clock),
+                },
+                fetcher,
+                self.counters.clone(),
+                self.canon.clone(),
+            )?
+            .with_cpu_pool(self.cpu_pool.clone())
+            .with_route_learner(self.routes.clone())
+            .with_surface_services(self)
+            .with_authorization(self.authorization.clone());
+            // No seed/run call: browser sessions alone acquire documents and choose actions.
+            self.browser_pages = Some(Arc::new(plane));
+        }
+        Ok(())
     }
 
     /// Record `traffic_events` from the proxy source instead of CDP (`capture.backend =
@@ -1173,12 +1257,12 @@ impl RunContext {
         self
     }
 
-    /// Deliver what the traffic exporter still holds and stop it, and close the browsers that
-    /// run in a named persistent profile cleanly so the profile is flushed to disk. Called once
-    /// when the run ends, on every path (completion, error, cancellation).
+    /// Drain the traffic exporter within its configured deadline, then close browsers with
+    /// named persistent profiles cleanly so their state is flushed to disk. Called once when
+    /// the run ends, on every path (completion, error, cancellation).
     pub async fn finish_traffic(&self) {
         if let Some(exporter) = &self.traffic_export {
-            exporter.flush().await;
+            // Shutdown already flushes; a separate flush would escape its drain deadline.
             exporter.shutdown().await;
         }
         // a named profile is only saved by a browser that exits cleanly
@@ -1232,6 +1316,97 @@ impl RunContext {
             pool: self.pool.clone(),
             supervisor: self.supervisor.clone(),
         }
+    }
+
+    /// Share one measured pool pin across browser and HTTP transports of a generation.
+    ///
+    /// # Errors
+    /// Rejects mismatched identity, inactive bindings, lost pins and excessive session demand.
+    pub(crate) fn session_pool_binding(
+        &self,
+        binding: &crawlx_core::session_binding::SessionBindingV1,
+        lease: &SessionLease,
+    ) -> Result<Option<Arc<PoolBinding>>, WorkerError> {
+        if binding.identity.tenant != self.stores.tenant
+            || binding.identity.run != self.run
+            || binding.identity.session != lease.session.id
+            || binding.identity.run != lease.session.run
+            || binding.identity.principal != lease.session.role
+            || binding.lease_fence != lease.fencing_token
+        {
+            return Err(SessionError::Binding(
+                crawlx_core::session_binding::SessionBindingError::Unavailable,
+            )
+            .into());
+        }
+        binding
+            .eligible(
+                &binding.identity,
+                lease.fencing_token,
+                self.clock.now(),
+                crawlx_core::session_binding::SessionLimits::default(),
+            )
+            .map_err(SessionError::from)?;
+        let route = self.egress.bound_route(&self.crawl, binding)?;
+        if route.pool().is_none() {
+            return Ok(None);
+        }
+        let mut pools = self.session_pool_bindings.lock();
+        if let Some(pool) = pools.get(&binding.identity.session) {
+            pool.validate_session(binding)
+                .map_err(crawlx_fetch::FetchError::from)?;
+            return Ok(Some(Arc::clone(pool)));
+        }
+        if pools.len() >= MAX_SESSION_POOL_BINDINGS {
+            return Err(WorkerError::Config("session proxy capacity exhausted".into()));
+        }
+        let resolver = self.egress.resolver_for(&self.crawl)?;
+        let policy = Arc::new(self.egress.policy_for_run(
+            &self.crawl,
+            self.authorization.as_ref().map(|guard| guard.record()),
+        ));
+        let pool = route
+            .bind(binding, Some((policy, resolver)))?
+            .ok_or_else(|| WorkerError::Config("session proxy binding unavailable".into()))?;
+        if let Some(pg) = &self.stores.pg {
+            pool.set_pin_authority(crate::session_pool_pins::authority(
+                pg.clone(),
+                lease.clone(),
+                binding.identity.tenant,
+                binding.generation,
+            ))
+            .map_err(crawlx_fetch::FetchError::from)?;
+        }
+        pools.insert(binding.identity.session, Arc::clone(&pool));
+        Ok(Some(pool))
+    }
+
+    /// Release only the exact old generation after confirmed actor and profile cleanup.
+    ///
+    /// # Errors
+    /// Refuses to discard a different generation's pin.
+    pub(crate) fn release_session_pool_binding(
+        &self,
+        binding: &crawlx_core::session_binding::SessionBindingV1,
+    ) -> Result<(), WorkerError> {
+        let mut pools = self.session_pool_bindings.lock();
+        if let Some(pool) = pools.get(&binding.identity.session) {
+            if pool.session_identity() != Some((&binding.identity, binding.generation)) {
+                return Err(WorkerError::Config("session proxy generation conflict".into()));
+            }
+            pools.remove(&binding.identity.session);
+        }
+        Ok(())
+    }
+
+    /// Retain the existing bounded proxy-capture lane for generation-owned proxies.
+    #[must_use]
+    pub(crate) fn with_session_flow_capture(
+        mut self,
+        capture: Option<tokio::sync::mpsc::Sender<crawlx_core::traffic::ProxyFlow>>,
+    ) -> Self {
+        self.session_flow_capture = capture;
+        self
     }
 
     /// Acquire one strict role-pinned identity under the scheduler's existing lease.
@@ -1289,11 +1464,10 @@ impl RunContext {
             .map_err(|error| WorkerError::Config(error.to_string()))?,
             Digest::of_value("crawlx/session-backend-build/v1", &pooled.build)
                 .map_err(|error| WorkerError::Config(error.to_string()))?,
-            Digest::keyed(
-                &self.seed.derive("session-egress", &[]),
-                "crawlx/session-egress/v1",
-                self.egress.route_for(&self.crawl)?.identity().as_bytes(),
-            ),
+            match cfg.context.session_binding.as_ref() {
+                Some(binding) => self.egress.bound_route(&self.crawl, binding)?.egress_digest(),
+                None => self.egress.route_for(&self.crawl)?.egress_digest(),
+            },
             metadata.config_digest,
             self.crawl
                 .dynamic
@@ -1356,9 +1530,84 @@ impl RunContext {
             binding
         } else {
             cfg.local_lease_owner = Some((Arc::clone(&self.stores.leases), lease.clone()));
-            SessionBindingV1::new(identity, lease.fencing_token, expiry)
+            match cfg.context.session_binding.as_ref() {
+                Some(binding)
+                    if binding.identity == identity && binding.lease_fence == lease.fencing_token =>
+                {
+                    binding.clone()
+                }
+                Some(_) => {
+                    let (context, _, capacity) = pooled.into_parts();
+                    let closed =
+                        tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
+                    capacity.release(matches!(closed, Ok(Ok(())))).await?;
+                    return Err(WorkerError::Config("session proxy generation conflict".into()));
+                }
+                None => SessionBindingV1::new(identity, lease.fencing_token, expiry),
+            }
         };
-        cfg.context.session_binding = Some(binding);
+        if cfg
+            .context
+            .session_binding
+            .as_ref()
+            .is_some_and(|expected| expected.checkpoint_identity() != binding.checkpoint_identity())
+        {
+            let (context, _, capacity) = pooled.into_parts();
+            let closed = tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
+            capacity.release(matches!(closed, Ok(Ok(())))).await?;
+            return Err(WorkerError::Config("session proxy generation conflict".into()));
+        }
+        cfg.context.session_binding = Some(binding.clone());
+        let pool = match self.session_pool_binding(&binding, lease) {
+            Ok(pool) => pool,
+            Err(error) => {
+                let (context, _, capacity) = pooled.into_parts();
+                let closed = tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
+                capacity.release(matches!(closed, Ok(Ok(())))).await?;
+                return Err(error);
+            }
+        };
+        cfg.pool_pin = pool.clone();
+        let pooled = if pool.is_some() {
+            let expected_build = pooled.build.clone();
+            let (context, _, capacity) = pooled.into_parts();
+            let closed = tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
+            capacity.release(matches!(closed, Ok(Ok(())))).await?;
+            let mut options = EgressOptions::new()
+                .with_controls(self.controls.clone())
+                .with_global_cap(Arc::clone(self.origin_governor.global_cap()));
+            if let Some(capture) = &self.session_flow_capture {
+                options = options.with_capture(capture.clone());
+            }
+            let proxy = self
+                .egress
+                .serve_bound_proxy(
+                    &self.crawl,
+                    &binding,
+                    self.authorization.as_ref().map(|guard| guard.record()),
+                    self.egress.resolver_for(&self.crawl)?,
+                    options,
+                    pool,
+                )
+                .await?;
+            cfg.context.egress_proxy_port = Some(proxy.port());
+            let pooled = self
+                .pool
+                .acquire(cfg.context.clone(), retained || cfg.exclusive_browser)
+                .await?;
+            if pooled.build != expected_build {
+                let (context, _, capacity) = pooled.into_parts();
+                let closed = tokio::time::timeout(std::time::Duration::from_secs(5), context.close()).await;
+                capacity.release(matches!(closed, Ok(Ok(())))).await?;
+                proxy.shutdown().await;
+                return Err(WorkerError::Config(
+                    "session browser build changed during proxy binding".into(),
+                ));
+            }
+            pooled.with_session_proxy(proxy)
+        } else {
+            pooled
+        };
         Ok(match profile {
             Some(profile) => pooled.with_profile(profile),
             None => pooled,
@@ -1384,6 +1633,10 @@ impl RunContext {
         c.incognito = self.incognito;
         c.request_controls = self.controls.clone();
         c.response_bodies = self.crawl.capture.response_bodies;
+        c.browser_evidence = self.crawl.capture.browser.clone();
+        if c.browser_evidence.durable() {
+            c.browser_capture_sink = Some(crate::browser_evidence::sink(self));
+        }
         if c.response_bodies != crawlx_core::config::ResponseBodies::MetadataOnly {
             c.response_body_sink = Some(Arc::new(crate::capture::RetainedBodySink::new(
                 self.run,
@@ -1598,9 +1851,14 @@ pub async fn run_session(
     driver: DriverConfig,
     strategies: Option<Vec<Arc<dyn crawlx_strategies::Strategy>>>,
 ) -> SessionEnd {
-    // Every artifact the session (and the tasks it spawns) retains is published under this
-    // session lease's fence.
-    let producer = rc.stores.session_producer(rc.run, &lease);
+    // Aborting this session invalidates inherited publication authority. A local
+    // caller hard stop also cancels this child, but graceful drain does not.
+    let publication_cancel = rc.hard_cancel.child_token();
+    let _cancel_publication_on_drop = publication_cancel.clone().drop_guard();
+    let producer = rc
+        .stores
+        .session_producer(rc.run, &lease)
+        .with_cancellation(publication_cancel);
     crawlx_core::custody::with_producer(
         producer,
         Box::pin(run_session_scoped(
@@ -1719,9 +1977,77 @@ async fn session_body(
     rc: &Arc<RunContext>,
     session: &CrawlSession,
     lease: &SessionLease,
+    start_requests: Vec<crawlx_core::request::RequestEnvelopeV1>,
+    driver_cfg: DriverConfig,
+    strategies: Option<Vec<Arc<dyn crawlx_strategies::Strategy>>>,
+) -> Result<SessionEnd, WorkerError> {
+    let rotations = rc
+        .crawl
+        .orchestration
+        .as_ref()
+        .map_or(0, |policy| policy.attempts.max_session_rotations);
+    let mut retired = None;
+    if rotations == 0
+        || session.role != crawlx_core::PrincipalId::anonymous()
+        || rc.crawl.dynamic.browser_profile.is_some()
+        || rc.crawl.roles.iter().any(|role| {
+            role.name == session.role.0 && (role.credential_ref.is_some() || role.login_plan.is_some())
+        })
+    {
+        return Box::pin(session_generation_body(
+            rc,
+            session,
+            lease,
+            start_requests,
+            driver_cfg,
+            strategies,
+            None,
+            &mut retired,
+        ))
+        .await;
+    }
+    // Preserve bounded producer inputs only when explicit rotation policy can need them again.
+    let starts = start_requests;
+    let mut next = None;
+    loop {
+        retired = None;
+        let result = Box::pin(session_generation_body(
+            rc,
+            session,
+            lease,
+            starts.clone(),
+            driver_cfg.clone(),
+            strategies.clone(),
+            next.take(),
+            &mut retired,
+        ))
+        .await;
+        if !result
+            .as_ref()
+            .is_err_and(crate::session_lifecycle::is_binding_retirement)
+        {
+            return result;
+        }
+        let Some(previous) = retired.take() else {
+            return result;
+        };
+        if previous.generation > u64::from(rotations) || rc.cancel.is_cancelled() {
+            return result;
+        }
+        next = Some(crate::session_lifecycle::replace_retired_generation(rc, lease, &previous).await?);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn session_generation_body(
+    rc: &Arc<RunContext>,
+    session: &CrawlSession,
+    lease: &SessionLease,
     mut start_requests: Vec<crawlx_core::request::RequestEnvelopeV1>,
     driver_cfg: DriverConfig,
     strategies: Option<Vec<Arc<dyn crawlx_strategies::Strategy>>>,
+    replacement: Option<crawlx_core::session_binding::SessionBindingV1>,
+    retired: &mut Option<crawlx_core::session_binding::SessionBindingV1>,
 ) -> Result<SessionEnd, WorkerError> {
     // a session never starts under a record that is revoked or expired
     if let Some(guard) = &rc.authorization {
@@ -1743,6 +2069,7 @@ async fn session_body(
         });
     }
     let mut cfg = rc.session_config(session);
+    cfg.context.session_binding = replacement;
     let login = rc.prepare_session_login(session, &mut cfg).await?;
     let pooled = rc.acquire_bound_session(lease, &mut cfg).await?;
     let login_bounds = LoginBounds::from(&cfg);
@@ -1881,7 +2208,11 @@ async fn session_body(
         crate::actor::ShutdownReason::Completed
     };
     let shutdown = handle.shutdown(reason).await.map_err(WorkerError::from);
-    let end = crate::replay::finish_replay(outcome, shutdown, Ok(()))?;
+    *retired = handle.retired_binding();
+    let pool_cleanup = retired
+        .as_ref()
+        .map_or(Ok(()), |binding| rc.release_session_pool_binding(binding));
+    let end = crate::replay::finish_replay(outcome, shutdown, pool_cleanup)?;
     Ok(SessionEnd {
         terminal: end,
         error: None,
@@ -1898,14 +2229,34 @@ pub async fn run_local(crawl: CreateCrawl, cfg: WorkerConfig) -> Result<RunRepor
 
 /// [`run_local`] with injectable backend, stores, secrets, cancellation and strategies.
 ///
+/// The owned run executes in a scoped task so its orchestration poll frames do not stack on
+/// the caller's. Dropping the returned future aborts that task; tenant and producer custody
+/// follow the run into the task.
+///
 /// # Errors
 /// Fails when a storage, browser or network operation it depends on fails.
 #[must_use = "the run does not execute unless the future is polled"]
 pub fn run_local_with(local: LocalRun) -> impl Future<Output = Result<RunReport, WorkerError>> {
-    // One allocation per run prevents the full orchestration state machine from being
-    // embedded in every caller's async frame. Nested scrape/dispatch frames otherwise
-    // overflow ordinary executor stacks before bounded acquisition can start.
-    Box::pin(run_local_inner(local))
+    Box::pin(async move {
+        let tenant = crawlx_storage::tenant::current();
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(crawlx_core::custody::inherit(
+            async move {
+                let work = Box::pin(run_local_inner(local));
+                match tenant {
+                    Some(tenant) => crawlx_storage::tenant::scope(tenant, work).await,
+                    None => work.await,
+                }
+            }
+            .in_current_span(),
+        ));
+        match tasks.join_next().await {
+            Some(Ok(result)) => result,
+            Some(Err(error)) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+            Some(Err(error)) => Err(WorkerError::Other(format!("run task failed: {error}"))),
+            None => Err(WorkerError::Other("run task returned no outcome".into())),
+        }
+    })
 }
 
 async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
@@ -2013,10 +2364,14 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     // already unusable ends the run before anything is requested
     let authz = match local_authorization(&run, authorization, &stores, &cfg, &clock).await {
         Ok(guard) => guard,
-        Err(WorkerError::Authorization(stop)) => return finish_refused(&stores, run.id, &stop).await,
+        Err(WorkerError::Authorization(stop)) => {
+            return finish_refused(&stores, run.id, &stop, &cfg.cpu_pool).await
+        }
         Err(e) => {
             if fixture_evaluation.is_some() {
-                stores.finish_run(run.id, TerminalReason::FatalError).await?;
+                stores
+                    .finish_run(run.id, TerminalReason::FatalError, &cfg.cpu_pool)
+                    .await?;
             }
             return Err(e);
         }
@@ -2032,7 +2387,9 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     let fixture_evaluation = match binding {
         Ok(evaluation) => evaluation,
         Err(error) => {
-            stores.finish_run(run.id, TerminalReason::FatalError).await?;
+            stores
+                .finish_run(run.id, TerminalReason::FatalError, &cfg.cpu_pool)
+                .await?;
             return Err(error);
         }
     };
@@ -2113,8 +2470,10 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
         Arc::clone(&origin_governor),
     )?;
     let proxy = if dynamic || crate::scrape::needs_browser_renderer(&crawl, &cfg) {
-        let mut options = EgressOptions::new().with_controls(controls.clone());
-        if let Some(tx) = flow_tx {
+        let mut options = EgressOptions::new()
+            .with_controls(controls.clone())
+            .with_global_cap(Arc::clone(&cfg.origin_cap));
+        if let Some(tx) = flow_tx.clone() {
             options = options.with_capture(tx);
         }
         Some(
@@ -2151,8 +2510,10 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
         fixture_evaluation.as_ref(),
     )
     .await?
-    .with_clusters(RunClusters::seeded(run.seed, salt));
+    .with_clusters(RunClusters::seeded(run.seed, salt))
+    .with_session_flow_capture(flow_tx.clone());
     rc.origin_governor = origin_governor;
+    rc.hard_cancel = hard_cancel.clone();
     if let Some(approvals) = approvals {
         let kernel = Arc::try_unwrap(rc.kernel).map_err(|_| {
             WorkerError::Config("approval store must be installed before sharing the kernel".to_owned())
@@ -2174,6 +2535,13 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             )
             .await;
     }
+    rc.durable_dedupe = stores.pg.is_some();
+    let durable_dedupe = rc.durable_dedupe;
+    if let Some(plane) = &mut rc.browser_pages {
+        Arc::get_mut(plane)
+            .ok_or_else(|| WorkerError::Config("browser page output shared before local admission".into()))?
+            .rebind_browser_fetcher(Arc::clone(&fetcher), durable_dedupe);
+    }
     let rc = Arc::new(rc);
     crate::acquisition::admit_runtime(&rc, &cfg, operator_backend, true).await?;
 
@@ -2192,10 +2560,12 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     active.add(1.0, &[]);
     let result: Result<(), WorkerError> = async {
         if crawl.mode != CrawlMode::Dynamic {
+            let http_fetcher = (crawl.mode == CrawlMode::Static).then(|| Arc::clone(&fetcher));
             let deps = UrlPlaneDeps {
                 runs: Arc::clone(&stores.runs),
                 frontier: Arc::clone(&stores.frontier),
                 request_commits: Arc::clone(&stores.request_commits),
+                source_memo: Arc::clone(&stores.source_memo),
                 leases: Arc::clone(&stores.leases),
                 pages: Arc::clone(&stores.pages),
                 events: Arc::clone(&stores.events),
@@ -2216,7 +2586,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             let task_cancel = run_cancel.clone();
             let tenant = crawlx_storage::tenant::current();
             let work = Box::pin(async move {
-                let plane = build_local_url_plane(
+                let mut plane = build_local_url_plane(
                     crawl,
                     &task_cfg,
                     &task_rc,
@@ -2224,12 +2594,24 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
                     deps,
                     task_drain.as_ref().map(|(drain, hard)| (drain, hard)),
                     resume.as_ref(),
-                )?;
+                )
+                .await?;
                 // Seal finite input before draining; child discovery retains
                 // its parent-fenced append authority after that seal.
                 plane.seed_if_empty().await?;
-                let outcome = Box::pin(plane.run(&task_cancel)).await?;
-                Ok::<_, WorkerError>((outcome, plane))
+                let outcome = if let Some(fetcher) = http_fetcher {
+                    crate::session_lifecycle::run_local_http_plane(
+                        &task_rc,
+                        &mut plane,
+                        &fetcher,
+                        &task_cancel,
+                    )
+                    .await?
+                } else {
+                    Box::pin(plane.run(&task_cancel)).await?
+                };
+                let resume_state = plane.resume_state().await?;
+                Ok::<_, WorkerError>((outcome, resume_state))
             });
             plane_tasks.spawn(crawlx_core::custody::inherit(
                 async move {
@@ -2240,12 +2622,12 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
                 }
                 .in_current_span(),
             ));
-            let (outcome, plane) = plane_tasks
+            let (outcome, resume_state) = plane_tasks
                 .join_next()
                 .await
                 .ok_or_else(|| WorkerError::Other("URL plane task returned no outcome".into()))?
                 .map_err(|error| WorkerError::Other(format!("URL plane task failed: {error}")))??;
-            url_resume = Some(plane.resume_state()).filter(|s| !s.is_finished());
+            url_resume = Some(resume_state).filter(|s| !s.is_finished());
             reasons.push(outcome.terminal);
             dynamic_requests = outcome.dynamic_requests;
         }
@@ -2308,7 +2690,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             }
         }
     }
-    stores.finish_run(run.id, reason).await?;
+    stores.finish_run(run.id, reason, &rc.cpu_pool).await?;
     let mut report = build_report(&stores, run.id).await?;
     report.browser_launches = rc.pool.launches();
     report.resume = url_resume;
@@ -2364,7 +2746,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     Ok(report)
 }
 
-fn build_local_url_plane(
+async fn build_local_url_plane(
     crawl: CreateCrawl,
     cfg: &WorkerConfig,
     rc: &Arc<RunContext>,
@@ -2372,7 +2754,7 @@ fn build_local_url_plane(
     deps: UrlPlaneDeps,
     drain: Option<(&CancellationToken, &CancellationToken)>,
     resume: Option<&ResumeState>,
-) -> Result<Arc<UrlPlaneRunner>, WorkerError> {
+) -> Result<UrlPlaneRunner, WorkerError> {
     let mut plane = UrlPlaneRunner::new(
         rc.run,
         crawl,
@@ -2391,9 +2773,9 @@ fn build_local_url_plane(
         plane = plane.with_graceful_drain(drain.clone(), Some(hard_cancel.clone()));
     }
     if let Some(state) = resume {
-        plane.seed_resume(state);
+        plane.seed_resume(state).await?;
     }
-    Ok(Arc::new(plane))
+    Ok(plane)
 }
 
 /// Enforce the common account-reference policy before resolving any role credentials.
@@ -2422,6 +2804,8 @@ pub(crate) fn check_role_credentials(
 /// source ([`LocalRun::with_authorization_source`]) or, for in-memory stores, the supplied record
 /// itself (so its window and target are enforced, not its revocation). A referenced record
 /// without a record in hand or a source is refused before any browser or request is started.
+/// Memory stores retain this exact source and admission binding for uncached HEAD disclosure,
+/// including after the run finishes.
 pub(crate) async fn local_authorization(
     run: &CrawlRun,
     record: Option<crawlx_policy::AuthorizationRecord>,
@@ -2457,6 +2841,9 @@ pub(crate) async fn local_authorization(
     .await?;
     guard.check_tenant(run.tenant)?;
     check_role_credentials(&run.config, Some(&guard))?;
+    if let Some(memory) = stores.memory.as_ref().filter(|_| referenced.is_some()) {
+        memory.set_run_head_response_authorizer(run.id, guard.head_response_authorizer()?);
+    }
     Ok(Some(guard))
 }
 
@@ -2466,9 +2853,10 @@ async fn finish_refused(
     stores: &Stores,
     run: CrawlRunId,
     stop: &AuthorizationStop,
+    cpu: &crate::runtime::CpuPool,
 ) -> Result<RunReport, WorkerError> {
     let reason = TerminalReason::AuthorizationRevoked;
-    stores.finish_run(run, reason).await?;
+    stores.finish_run(run, reason, cpu).await?;
     let report = build_report(stores, run).await?;
     let _ = stores
         .events
@@ -2683,6 +3071,12 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
     let coverage = crawlx_strategies::InMemoryLedger::from_rows(ledger.iter().cloned())
         .with_isolation(row.config.target_isolation)
         .coverage(None);
+    let (http_coordinators, sessions): (Vec<_>, Vec<_>) = stores
+        .runs
+        .list_sessions(run)
+        .await?
+        .into_iter()
+        .partition(|session| session.kind == crawlx_core::repo::SessionKind::HttpCoordinator);
     Ok(RunReport {
         run_id: run,
         status: row.status,
@@ -2691,7 +3085,8 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         states: stores.states.list_states(run).await?,
         actions: stores.journal.list(run, None).await?,
         edges: stores.edges.list(run).await?,
-        sessions: stores.runs.list_sessions(run).await?,
+        sessions,
+        http_coordinators,
         ledger,
         coverage,
         pages,

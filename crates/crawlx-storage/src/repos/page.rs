@@ -85,6 +85,18 @@ impl Pg {
         page: &PageRecord,
         connection: &mut sqlx::PgConnection,
     ) -> Result<(), StoreError> {
+        self.put_page_projection_tx(page, connection, "anonymous", false)
+            .await
+    }
+
+    /// Preserve the first observed projection while retaining later captures separately.
+    pub(super) async fn put_page_projection_tx(
+        &self,
+        page: &PageRecord,
+        connection: &mut sqlx::PgConnection,
+        role: &str,
+        first_canonical: bool,
+    ) -> Result<(), StoreError> {
         let (tenant, zdr) = Self::privacy_scope_tx(connection, page.run).await?;
         if zdr {
             self.ephemeral_put(tenant, page.run, page.frontier_id, "page_record", page)
@@ -133,15 +145,15 @@ impl Pg {
         };
         sqlx::query(
             "INSERT INTO pages (page_id, run_id, frontier_id, plane, url_hash, canonical_url, http_status, content_type, content_digest, \
-               markdown_artifact_id, html_artifact_id, metadata, links, fetched_at, expires_at, lane, title, url_meta, markdown_digest, html_digest) \
+               markdown_artifact_id, html_artifact_id, metadata, links, fetched_at, expires_at, lane, title, url_meta, markdown_digest, html_digest, role) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, \
-               (SELECT expires_at FROM crawl_runs WHERE run_id = $2), $15, $16, $17, $18, $19) \
+               (SELECT expires_at FROM crawl_runs WHERE run_id = $2), $15, $16, $17, $18, $19, $20) \
              ON CONFLICT (run_id, role, url_hash) DO UPDATE SET frontier_id = EXCLUDED.frontier_id, plane = EXCLUDED.plane, \
                canonical_url = EXCLUDED.canonical_url, \
                http_status = EXCLUDED.http_status, content_type = EXCLUDED.content_type, content_digest = EXCLUDED.content_digest, \
                markdown_artifact_id = EXCLUDED.markdown_artifact_id, html_artifact_id = EXCLUDED.html_artifact_id, metadata = EXCLUDED.metadata, \
                links = EXCLUDED.links, fetched_at = EXCLUDED.fetched_at, lane = EXCLUDED.lane, title = EXCLUDED.title, \
-               url_meta = EXCLUDED.url_meta, markdown_digest = EXCLUDED.markdown_digest, html_digest = EXCLUDED.html_digest",
+               url_meta = EXCLUDED.url_meta, markdown_digest = EXCLUDED.markdown_digest, html_digest = EXCLUDED.html_digest WHERE NOT $21",
         )
         .bind(uuid::Uuid::now_v7())
         .bind(page.run.0)
@@ -162,6 +174,8 @@ impl Pg {
         .bind(url_meta)
         .bind(page.markdown.as_ref().filter(|_| !zdr).map(|a| a.digest.0.to_vec()))
         .bind(page.html.as_ref().filter(|_| !zdr).map(|a| a.digest.0.to_vec()))
+        .bind(role)
+        .bind(first_canonical)
         .execute(connection)
         .await
         .map_err(db)?;
@@ -227,38 +241,97 @@ impl PageRepo for Pg {
 
     async fn list(&self, run: CrawlRunId) -> Result<Vec<PageRecord>, StoreError> {
         let _timer = self.query_timer("page.list");
-        let rows = sqlx::query(
-            "SELECT run_id, frontier_id, url_meta, http_status, content_type, content_digest, title, markdown_artifact_id, markdown_digest, \
-               html_artifact_id, html_digest, metadata, links, fetched_at, lane FROM pages WHERE run_id = $1 ORDER BY fetched_at, page_id",
+        let (tenant, zdr) = self.privacy_scope(run).await?;
+        if crate::tenant::current().is_some_and(|scope| scope != tenant) {
+            return Err(StoreError::AccessDenied("page capture tenant mismatch".into()));
+        }
+        let dynamic: bool = sqlx::query_scalar("SELECT mode='dynamic' FROM crawl_runs WHERE run_id=$1")
+            .bind(run.0)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db)?;
+        let observed: std::collections::BTreeSet<i64> = sqlx::query_scalar(
+            "SELECT frontier_id FROM url_frontier WHERE run_id=$1 AND via='interaction' ORDER BY frontier_id",
         )
         .bind(run.0)
         .fetch_all(&self.pool)
         .await
+        .map_err(db)?
+        .into_iter()
+        .collect();
+        // Ordinary URL pages retain their canonical projection. Observations expose their
+        // immutable renditions instead, including in runs that also perform URL work.
+        let rows = sqlx::query(
+            "SELECT p.run_id,p.frontier_id,p.url_meta,p.http_status,p.content_type,p.content_digest,p.title, \
+               p.markdown_artifact_id,p.markdown_digest,p.html_artifact_id,p.html_digest,p.metadata,p.links,p.fetched_at,p.lane \
+             FROM pages p WHERE p.run_id=$1 AND NOT $2 \
+               AND NOT EXISTS(SELECT 1 FROM url_frontier f WHERE f.frontier_id=p.frontier_id AND f.run_id=$1 AND f.via='interaction') \
+             ORDER BY p.fetched_at,p.page_id",
+        )
+        .bind(run.0)
+        .bind(dynamic)
+        .fetch_all(&self.pool)
+        .await
         .map_err(db)?;
-        let (tenant, zdr) = self.privacy_scope(run).await?;
+        let mut pages = Vec::new();
         if !zdr {
-            return rows.iter().map(page_from_row).collect();
-        }
-        let buffer = self.delivery.as_ref().ok_or_else(|| {
-            StoreError::RetentionDenied("required ephemeral zdr buffer is unavailable".to_owned())
-        })?;
-        let mut pages = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let frontier_id = get::<Option<i64>>(row, "frontier_id")?
-                .ok_or_else(|| StoreError::Serialization("zdr page without frontier id".to_owned()))?;
-            // Acknowledgement, TTL expiry and eviction remove delivered content. Never rebuild
-            // a partial document from the durable metadata row.
-            if let Some(entry) = buffer.get(tenant, run, frontier_id).await? {
-                if let Some(blob) = entry.blobs.get("page_record") {
-                    let page: PageRecord = serde_json::from_slice(&blob.bytes)
-                        .map_err(|error| StoreError::Serialization(error.to_string()))?;
-                    if page.run != run || page.frontier_id != frontier_id {
-                        return Err(StoreError::Serialization("zdr page scope mismatch".to_owned()));
+            for row in &rows {
+                pages.push(page_from_row(row)?);
+            }
+            if dynamic || !observed.is_empty() {
+                let mut after = 0;
+                loop {
+                    let batch = self.committed_page_keyset(run, after, 64).await?;
+                    let Some(last) = batch.last() else {
+                        break;
+                    };
+                    after = last.frontier_id;
+                    for mut page in batch {
+                        if dynamic || observed.contains(&page.frontier_id) {
+                            page.mark_late_xhr_unattributed();
+                            pages.push(page);
+                        }
                     }
-                    pages.push(page);
+                }
+            }
+        } else {
+            let mut ids = std::collections::BTreeSet::new();
+            for row in &rows {
+                ids.insert(
+                    get::<Option<i64>>(row, "frontier_id")?.ok_or_else(|| {
+                        StoreError::Serialization("zdr page without frontier id".to_owned())
+                    })?,
+                );
+            }
+            let observed_ids: Vec<i64> = sqlx::query_scalar(
+                "SELECT frontier_id FROM url_frontier WHERE run_id=$1 AND status='succeeded' AND ($2 OR via='interaction') ORDER BY frontier_id",
+            )
+            .bind(run.0)
+            .bind(dynamic)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+            ids.extend(observed_ids);
+            let buffer = self.delivery.as_ref().ok_or_else(|| {
+                StoreError::RetentionDenied("required ephemeral zdr buffer is unavailable".to_owned())
+            })?;
+            for id in ids {
+                // Never reconstruct acknowledged, expired or evicted content from durable rows.
+                if let Some(entry) = buffer.get(tenant, run, id).await? {
+                    if let Some(blob) = entry.blobs.get("page_record") {
+                        let mut page: PageRecord = serde_json::from_slice(&blob.bytes)?;
+                        if page.run != run || page.frontier_id != id {
+                            return Err(StoreError::Serialization("zdr page scope mismatch".into()));
+                        }
+                        if dynamic || observed.contains(&id) {
+                            page.mark_late_xhr_unattributed();
+                        }
+                        pages.push(page);
+                    }
                 }
             }
         }
+        pages.sort_by_key(|page| (page.fetched_at, page.frontier_id));
         Ok(pages)
     }
 

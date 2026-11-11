@@ -22,8 +22,8 @@ pub use pipeline::{
 mod dedupe;
 pub use dedupe::{
     ContentDigestsV1, DedupeAdmissionV1, DedupeCache, DedupeKeyV1, DedupeKindV1, DedupePolicyV1,
-    DedupeReportV1, DedupeScopeV1, DEDUPE_DIGEST_DOMAIN_V1, DEDUPE_NORMALIZATION_V1,
-    MAX_DEDUPE_CACHE_ENTRIES,
+    DedupeReportV1, DedupeScopeV1, DedupeSnapshotError, DedupeSnapshotV1, DEDUPE_DIGEST_DOMAIN_V1,
+    DEDUPE_NORMALIZATION_V1, DEDUPE_SNAPSHOT_VERSION, MAX_DEDUPE_CACHE_ENTRIES,
 };
 mod url_exclusion;
 pub use url_exclusion::{UrlExclusionPolicyV1, MAX_URL_EXCLUSION_RULES, MAX_URL_EXCLUSION_RULE_BYTES};

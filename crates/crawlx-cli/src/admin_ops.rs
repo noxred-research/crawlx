@@ -670,6 +670,8 @@ async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::
     if a.every.is_some() && a.mode == SweepMode::Zdr {
         bail!("--every cannot be combined with --mode zdr: a forced ZDR sweep is a one-time, confirmed operation");
     }
+    let recovery = tokio::task::spawn_blocking(crawlx_storage::archive::publication::recover_owned).await??;
+    crate::report_archive_recovery(recovery);
     let (pg, op) = a.common.ops().await?;
     let clock = Arc::new(SystemClock);
     let runs: Arc<dyn crawlx_core::repo::RunRepo> = Arc::new(pg.clone());
@@ -692,6 +694,11 @@ async fn sweep_retention(a: SweepRetentionArgs, out: &mut dyn Write) -> anyhow::
         let cancel = CancellationToken::new();
         let signals = cancel_on_shutdown_signal(&cancel);
         let code = scheduled_sweep(every, a.passes, &cancel, out, || async {
+            let recovery = tokio::task::spawn_blocking(crawlx_storage::archive::publication::recover_owned)
+                .await
+                .map_err(|error| crawlx_core::StoreError::Unavailable(error.to_string()))?
+                .map_err(|error| crawlx_core::StoreError::Unavailable(error.to_string()))?;
+            crate::report_archive_recovery(recovery);
             let now = pg.db_now().await?;
             sweeper.sweep(now).await
         })

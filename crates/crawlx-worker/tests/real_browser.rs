@@ -102,17 +102,27 @@ async fn chromium_popup_policy_waits_evicts_and_journals_download_and_external_c
     let port = listener.local_addr().unwrap().port();
     let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let external_port = external_listener.local_addr().unwrap().port();
-    // Prime one existing popup, then open the four-window fixture. Two in-scope
-    // newcomers alone cannot cause eviction with maxTabs=3 (home occupies one slot).
+    // Exercise journaled rejections before filling the bounded tab pool. Opening all five
+    // popups at once would correctly reject targets beyond the one quarantine slot.
     let html = format!(
         r#"<!doctype html><title>Popup policy</title>
         <button onclick="this.remove();
-          window.open('/old');
-          window.open('/keep');
-          const blank = window.open('about:blank');
-          setTimeout(() => blank.location.href = '/new', 500);
-          window.open('http://127.0.0.1:{external_port}/external');
-          window.open('/download');">Open windows</button>"#
+          const external = window.open('http://127.0.0.1:{external_port}/external');
+          const download = window.open('/download');
+          const wait = setInterval(() => {{
+            if (!external.closed || !download.closed) return;
+            clearInterval(wait);
+            const next = document.createElement('button');
+            next.textContent = 'Open bounded popups';
+            next.onclick = () => {{
+              next.remove();
+              window.open('/old');
+              window.open('/keep');
+              const blank = window.open('about:blank');
+              setTimeout(() => blank.location.href = '/new', 500);
+            }};
+            document.body.appendChild(next);
+          }}, 10);">Open rejected windows</button>"#
     );
     let app = axum::Router::new()
         .route(
@@ -176,6 +186,8 @@ async fn chromium_popup_policy_waits_evicts_and_journals_download_and_external_c
         artifacts_dir: dir.path().to_path_buf(),
         egress: EgressConfig {
             extra_allow: vec!["127.0.0.1/32".parse().unwrap()],
+            // The separate fixture origin needs explicit non-default-port admission.
+            extra_ports: vec![external_port],
             resolver: Some(Arc::new(StaticResolver::new())),
             ..EgressConfig::default()
         },
@@ -185,11 +197,24 @@ async fn chromium_popup_policy_waits_evicts_and_journals_download_and_external_c
     cfg.launch.executable = exe;
     cfg.launch.allow_unpinned = true;
     cfg.launch.unsafe_no_sandbox_for_ci = std::env::var("USER").is_ok_and(|u| u == "root");
-    let report = run_local_with(LocalRun::new(crawl, cfg).with_stores(stores))
-        .await
-        .unwrap();
+    let mut authorization = common::authorization::verified_record(&crawl, stores.tenant);
+    authorization.url_prefixes = vec![base.clone(), format!("http://127.0.0.1:{external_port}")];
+    let report = run_local_with(
+        LocalRun::new(crawl, cfg)
+            .with_stores(stores.clone())
+            .with_authorization(authorization),
+    )
+    .await
+    .unwrap();
     server.abort();
     external.abort();
+    assert_eq!(
+        report.status,
+        crawlx_core::counters::RunStatus::Completed,
+        "{:?}; egress={:?}",
+        stores.events.list_after(report.run_id, 0, 1_000).await.unwrap(),
+        report.egress
+    );
     let policy: Vec<_> = report
         .actions
         .iter()
@@ -203,7 +228,12 @@ async fn chromium_popup_policy_waits_evicts_and_journals_download_and_external_c
                     && a.key.element == crawlx_worker::driver::tab_element(url)
                     && a.status == crawlx_core::counters::ActionStatus::Succeeded
             })
-            .unwrap_or_else(|| panic!("missing {kind:?} {url}: {policy:?}"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing {kind:?} {url}: {policy:?}; terminal={:?}; actions={:?}",
+                    report.terminal_reason, report.actions
+                )
+            })
     };
     let evicted = position(crawlx_core::ActionKind::CloseTab, &format!("{base}/old"));
     let admitted = position(crawlx_core::ActionKind::SwitchTab, &format!("{base}/new"));

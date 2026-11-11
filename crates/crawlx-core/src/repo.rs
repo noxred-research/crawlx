@@ -127,13 +127,16 @@ impl From<&CrawlRun> for RunMetadata {
     }
 }
 
-/// A role/run session slot.
+/// A leased browser execution slot or HTTP coordinator.
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct CrawlSession {
     /// Session identifier.
     pub id: SessionId,
     /// Run this session belongs to.
     pub run: CrawlRunId,
+    /// Execution responsibility, independent of whether a browser has launched.
+    #[serde(default)]
+    pub kind: SessionKind,
     /// Principal (role) the session acts as.
     pub role: PrincipalId,
     /// 1-based repetition of the role within the run; `(run, role, run_index)` is unique.
@@ -146,6 +149,29 @@ pub struct CrawlSession {
     pub browser: Option<BrowserBuildInfo>,
     /// Number of actions proposed so far in this session; the last assigned `ActionRecord::seq`.
     pub action_seq: u64,
+}
+
+/// Execution responsibility of a [`CrawlSession`].
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SessionKind {
+    /// Browser actor execution, including sessions cancelled before browser launch.
+    #[default]
+    Browser,
+    /// HTTP-only coordinator owning a real scheduler lease and session binding.
+    HttpCoordinator,
+}
+
+impl SessionKind {
+    /// Stable storage label, identical to the serde representation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Browser => "browser",
+            Self::HttpCoordinator => "http_coordinator",
+        }
+    }
 }
 
 /// Lifecycle status of a [`CrawlSession`].
@@ -225,7 +251,7 @@ impl FrontierStatus {
     }
 }
 
-/// A URL-plane frontier row.
+/// A URL-work frontier row or a fenced session-observation custody record.
 #[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
 pub struct FrontierEntry {
     /// Frontier row identifier, unique across runs and increasing in discovery order.
@@ -252,7 +278,7 @@ pub struct FrontierEntry {
 /// `dedupe:content_similar`).
 pub const DEDUPE_REASON_PREFIX: &str = "dedupe:";
 
-/// The frontier rows of one run counted by status: the values the URL-plane counters are
+/// The URL-work rows of one run counted by status: the values the URL-plane counters are
 /// re-derived from when a worker takes a run over (the stored counters are a snapshot,
 /// the rows are the source). Of the discoveries, only those that left a row are here: a link to
 /// a URL the run already knew leaves none, so `deduplicated` is not derivable and a recovered
@@ -393,6 +419,16 @@ pub struct PageRecord {
 pub const NOT_CACHEABLE_PATH: [&str; 2] = [crate::scrape::ScrapeDocument::METADATA_KEY, "notCacheable"];
 
 impl PageRecord {
+    /// Mark a read projection whose immutable epoch has no attributable late-XHR receipt.
+    /// Initial capture-time `xhr_requests` remain unchanged; URL-wide late aggregates must
+    /// not be merged into this rendition or written back as a replacement capture.
+    pub fn mark_late_xhr_unattributed(&mut self) {
+        if !self.metadata.is_object() {
+            self.metadata = serde_json::json!({"capture_metadata": std::mem::take(&mut self.metadata)});
+        }
+        self.metadata["late_xhr_attribution"] =
+            serde_json::Value::String("late_xhr_not_epoch_attributed".into());
+    }
     /// Does the page's metadata flag it as not cacheable ([`NOT_CACHEABLE_PATH`])?
     #[must_use]
     pub fn is_not_cacheable(&self) -> bool {
@@ -752,6 +788,16 @@ pub trait FrontierRepo: Send + Sync {
         run: CrawlRunId,
         id: i64,
     ) -> Result<crate::orchestration::QueuedRequestV1, StoreError>;
+    /// Resolve exact queued methods for at most 1000 request ids in their owning run.
+    /// Only true legacy rows imply GET; lost volatile envelopes remain typed errors.
+    ///
+    /// # Errors
+    /// Returns invalid bounds, missing or foreign ids, malformed envelopes, or volatile custody loss.
+    async fn request_methods(
+        &self,
+        run: CrawlRunId,
+        ids: &[i64],
+    ) -> Result<std::collections::BTreeMap<i64, String>, StoreError>;
     /// Close authenticated input using the current producer epoch.
     async fn seal(&self, run: CrawlRunId, expected_epoch: u64) -> Result<(), StoreError>;
     /// Report producer, cooldown and live-work state without loading the queue.
@@ -772,7 +818,9 @@ pub trait FrontierRepo: Send + Sync {
         from: Option<i64>,
         denial: Option<(FrontierStatus, String)>,
     ) -> Result<(DiscoveryOutcome, Option<i64>), StoreError>;
-    /// Lease up to `limit` pending rows of `run` to `worker`, highest priority first, incrementing their `attempts`.
+    /// Lease up to `limit` pending URL-work rows of `run`, highest priority first, incrementing their `attempts`.
+    /// Session-observation custody rows are never URL work, including after hand-back or expiry.
+    /// Dynamic runs never grant ordinary URL-work leases, even for legacy rows without source proof.
     /// The lease ends when it expires and the reaper returns the row to `pending`, or when the
     /// holder finishes it; a holder that stays alive renews it (`LeaseRepo::heartbeat_frontier`).
     async fn lease_batch(
@@ -797,6 +845,21 @@ pub trait FrontierRepo: Send + Sync {
         worker: WorkerId,
         limit: u32,
     ) -> Result<Vec<(FrontierEntry, i64)>, StoreError>;
+    /// Lease only `id` in `run`, with the same fencing, attempt charge and TTL as batch leasing.
+    /// Returns `None` unless the row is pending URL work, eligible and belongs to a live run.
+    /// Never leases or changes another row, even when the requested row is unavailable.
+    ///
+    /// # Errors
+    /// Returns backend errors, or [`StoreError::Unavailable`] if exact-row leasing is unsupported.
+    async fn lease_one_fenced(
+        &self,
+        run: CrawlRunId,
+        worker: WorkerId,
+        id: i64,
+    ) -> Result<Option<(FrontierEntry, i64)>, StoreError> {
+        let _ = (run, worker, id);
+        Err(StoreError::Unavailable("exact frontier lease unavailable".into()))
+    }
     /// Finish a leased row with a final `status`; `reason` is stored as the denial reason or error code.
     async fn complete(
         &self,
@@ -866,17 +929,19 @@ pub trait FrontierRepo: Send + Sync {
         fence: i64,
         usage: &crate::acquisition::AcquisitionUsageV1,
     ) -> Result<(), StoreError>;
-    /// Number of rows of `run` still pending.
+    /// Number of URL-work rows of `run` still pending; excludes session-observation custody records.
     async fn pending_count(&self, run: CrawlRunId) -> Result<u64, StoreError>;
-    /// Number of rows of `run` that are not finished: pending (retries waiting out their backoff
+    /// Number of URL-work rows of `run` that are not finished: pending (retries waiting out their backoff
     /// included) or leased to a worker, alive or dead. A run's frontier is exhausted only when
     /// this is `0`; a row leased by a worker that died stays counted until its lease expires and
     /// the reaper returns it to `pending`.
     async fn open_count(&self, run: CrawlRunId) -> Result<u64, StoreError>;
     /// The rows of `run` counted by status ([`FrontierStateCounts`]); a worker that takes a run
     /// over re-derives the URL-plane counters from it instead of trusting the stored snapshot.
+    /// Session-observation custody rows are excluded, regardless of their lifecycle status.
+    /// Dynamic runs have no URL-work rows, including when historical observation provenance has expired.
     async fn state_counts(&self, run: CrawlRunId) -> Result<FrontierStateCounts, StoreError>;
-    /// All frontier rows of `run` in discovery order.
+    /// All frontier rows of `run` in discovery order, including session-observation custody records.
     async fn list(&self, run: CrawlRunId) -> Result<Vec<FrontierEntry>, StoreError>;
 }
 
@@ -910,7 +975,11 @@ pub trait PageRepo: Send + Sync {
     /// Insert or replace the latest page for the same run and URL.
     /// This projection write never creates committed capture evidence; use `RequestCommitRepo`.
     async fn put(&self, page: &PageRecord) -> Result<(), StoreError>;
-    /// All pages of `run`.
+    /// Pages of `run`; dynamic runs expose all immutable committed renditions in frontier-ID order.
+    /// URL lookup projections keep the first observed rendition for each role.
+    ///
+    /// # Errors
+    /// Returns scope, retention or storage errors when committed custody cannot be proved.
     async fn list(&self, run: CrawlRunId) -> Result<Vec<PageRecord>, StoreError>;
     /// At most 64 immutable committed captures, ordered by frontier ID, strictly after `after`.
     /// Every retained successful generation qualifies, independent of the latest URL projection.
@@ -1257,6 +1326,72 @@ pub trait ArtifactStore: Send + Sync {
     }
     /// Fetch the bytes of an artifact.
     async fn get(&self, artifact: &ArtifactRef) -> Result<Vec<u8>, StoreError>;
+    /// Describe retained Content or Sensitive authority without reading body bytes.
+    ///
+    /// # Errors
+    /// Refuses unsupported, foreign, expired, corrupt or oversized source references.
+    async fn archive_custody(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+        artifact: &ArtifactRef,
+        max_bytes: u64,
+    ) -> Result<crate::archive_catalog::ArchiveCustodyV1, StoreError> {
+        let _ = (tenant, run, artifact, max_bytes);
+        Err(StoreError::RetentionDenied("archive custody unavailable".into()))
+    }
+    /// Read approved Sensitive evidence under its exact retained byte authority.
+    ///
+    /// # Errors
+    /// Refuses classification, ownership, expiry, fixity or byte-bound mismatches.
+    async fn read_archive_sensitive(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+        artifact: &ArtifactRef,
+        custody: &crate::archive_catalog::ArchiveCustodyV1,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, StoreError> {
+        let _ = (tenant, run, artifact, custody, max_bytes);
+        Err(StoreError::RetentionDenied(
+            "sensitive archive read unavailable".into(),
+        ))
+    }
+    /// Stream an archive file while retaining its explicit source classification and deadline.
+    ///
+    /// # Errors
+    /// Unsupported stores must refuse rather than discard byte authority.
+    async fn put_archive_file_with_custody(
+        &self,
+        run: CrawlRunId,
+        content_type: &str,
+        file: &std::path::Path,
+        max_bytes: u64,
+        custody: &crate::archive_catalog::ArchiveCustodyV1,
+    ) -> Result<ArtifactRef, StoreError> {
+        let _ = (run, content_type, file, max_bytes, custody);
+        Err(StoreError::RetentionDenied(
+            "typed archive sink unavailable".into(),
+        ))
+    }
+    /// Copy one retained shard under exact classification and source deadline.
+    ///
+    /// # Errors
+    /// Refuses mismatched, expired, oversized or corrupt shard authority.
+    async fn copy_archive_with_custody(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+        artifact: &ArtifactRef,
+        custody: &crate::archive_catalog::ArchiveCustodyV1,
+        file: &std::path::Path,
+        max_bytes: u64,
+    ) -> Result<u64, StoreError> {
+        let _ = (tenant, run, artifact, custody, file, max_bytes);
+        Err(StoreError::RetentionDenied(
+            "typed archive copy unavailable".into(),
+        ))
+    }
     /// Stream a bounded approved archive file through the same retention-aware object sink.
     /// Implementations must not collect file contents or permit ZDR durable writes.
     ///

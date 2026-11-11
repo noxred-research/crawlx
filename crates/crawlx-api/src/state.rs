@@ -102,8 +102,12 @@ pub struct Repos {
     pub frontier: Arc<dyn FrontierRepo>,
     /// Run-scoped accepted-item keyset reads.
     pub datasets: Arc<dyn crawlx_core::dataset::DatasetRepo>,
+    /// Existing request result transaction authority, shared with the frontier store.
+    pub request_commits: Arc<dyn crawlx_core::orchestration::RequestCommitRepo>,
     /// Typed versioned KV, under the request's existing tenant scope.
     pub kv: Arc<dyn crawlx_core::dataset::KvRepo>,
+    /// Tenant-scoped seen ledger and category metadata reset authority.
+    pub source_memo: Arc<dyn crawlx_core::dataset::memo::SourceMemoRepo>,
     /// Scoped structural descriptors with fixed run retention and shared volatile ZDR delivery.
     pub adaptive_selectors: Arc<dyn crawlx_core::cache::AdaptiveSelectorRepo>,
     /// Tenant-scoped archive progress, committed records and final manifests.
@@ -176,7 +180,9 @@ impl Repos {
             events: store.clone(),
             journal: store.clone(),
             datasets: store.clone(),
+            request_commits: store.clone(),
             kv: store.clone(),
+            source_memo: store.clone(),
             adaptive_selectors: store.clone(),
             archives: store.clone(),
             worker_registry: store.clone(),
@@ -201,7 +207,9 @@ impl Repos {
             journal: pg_arc.clone(),
             frontier: pg_arc.clone(),
             datasets: pg_arc.clone(),
+            request_commits: pg_arc.clone(),
             kv: pg_arc.clone(),
+            source_memo: pg_arc.clone(),
             adaptive_selectors: pg_arc.clone(),
             archives: pg_arc.clone(),
             worker_registry: pg_arc.clone(),
@@ -231,14 +239,18 @@ impl Eraser for MemoryEraser {
         )
         .await?;
         let mut n = self.artifacts.purge_run(run).await?;
+        n += self.store.purge_run(run).await?;
         n += self.api.purge_run(run);
-        n += self.store.purge_run(run);
         Ok(n)
     }
 }
 
 #[async_trait]
 impl<B: crawlx_storage::ArtifactBlobs> ArtifactSource for ObjectArtifactStore<B> {
+    fn artifact_store(&self) -> Option<&dyn crawlx_core::repo::ArtifactStore> {
+        Some(self)
+    }
+
     async fn row(&self, id: ArtifactId) -> StoreResult<Option<ArtifactRow>> {
         ObjectArtifactStore::row(self, id).await
     }
@@ -255,6 +267,15 @@ impl<B: crawlx_storage::ArtifactBlobs> ArtifactSource for ObjectArtifactStore<B>
         max_bytes: u64,
     ) -> StoreResult<futures::stream::BoxStream<'static, StoreResult<bytes::Bytes>>> {
         self.stream_content(artifact, max_bytes).await
+    }
+    async fn stream_archive(
+        &self,
+        artifact: &ArtifactRef,
+        max_bytes: u64,
+        custody: &crawlx_core::archive_catalog::ArchiveCustodyV1,
+    ) -> StoreResult<futures::stream::BoxStream<'static, StoreResult<bytes::Bytes>>> {
+        self.stream_archive_with_custody(artifact, max_bytes, custody)
+            .await
     }
     async fn erase_artifact(&self, artifact: &ArtifactRef) -> StoreResult<()> {
         ObjectArtifactStore::erase_artifact(self, artifact)
@@ -315,6 +336,8 @@ pub struct Shared {
     pub settings: Settings,
     /// Time source for rate limiting, retention and written timestamps.
     pub clock: Arc<dyn Clock>,
+    /// Independent fixture evidence supplied by a trusted benchmark harness; absent in production.
+    pub fixture_ground_truth: Option<Arc<dyn crate::resources::FixtureGroundTruthSource>>,
     /// Cancelled when the server shuts down; open SSE streams end on it.
     pub shutdown: CancellationToken,
     /// Browser build replays are admitted against (the pinned build).
@@ -372,6 +395,7 @@ pub struct AppStateBuilder {
     config: ApiConfig,
     settings: Settings,
     clock: Arc<dyn Clock>,
+    fixture_ground_truth: Option<Arc<dyn crate::resources::FixtureGroundTruthSource>>,
     shutdown: CancellationToken,
     build: DeploymentBuild,
     zdr: Option<Arc<DeliveryBuffer>>,
@@ -397,6 +421,19 @@ impl AppStateBuilder {
     #[must_use]
     pub fn clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
+        self
+    }
+
+    /// Attach a trusted fixture-manifest and exercise-evidence source.
+    ///
+    /// Ordinary runs, and deployments without a source, return `null` ground truth.
+    /// This is server-side harness input, never a crawl request field or a client-supplied score.
+    #[must_use]
+    pub fn fixture_ground_truth(
+        mut self,
+        source: Arc<dyn crate::resources::FixtureGroundTruthSource>,
+    ) -> Self {
+        self.fixture_ground_truth = Some(source);
         self
     }
 
@@ -509,6 +546,7 @@ impl AppStateBuilder {
             config: self.config,
             settings: self.settings,
             clock: self.clock,
+            fixture_ground_truth: self.fixture_ground_truth,
             shutdown: self.shutdown,
             build: self.build,
             zdr,
@@ -541,6 +579,7 @@ impl AppState {
             config,
             settings: Settings::default(),
             clock: Arc::new(SystemClock),
+            fixture_ground_truth: None,
             shutdown: CancellationToken::new(),
             build: DeploymentBuild::resolve(),
             zdr: None,
@@ -559,6 +598,16 @@ impl AppState {
     #[must_use]
     pub fn new(repos: Repos, policy: AdmissionPolicy, config: ApiConfig) -> Self {
         Self::builder(repos, policy, config).build()
+    }
+
+    pub(crate) async fn load_fixture_ground_truth(
+        &self,
+        run: CrawlRunId,
+    ) -> StoreResult<Option<crate::resources::FixtureGroundTruth>> {
+        match &self.fixture_ground_truth {
+            Some(source) => source.ground_truth(run).await,
+            None => Ok(None),
+        }
     }
 
     /// Drop cached API-key lookups.

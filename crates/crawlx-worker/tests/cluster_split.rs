@@ -258,7 +258,12 @@ async fn a_contradicting_cluster_is_split_persisted_and_rekeyed_in_memory() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store, dir.path()).await.unwrap();
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_core(stores, dir, fake.clone(), fake, SafetyProfile::ReadOnly).await;
     split_scenario(&r).await;
 }
@@ -289,7 +294,12 @@ async fn a_contradicting_cluster_is_split_persisted_and_rekeyed_in_postgres() {
     let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
     stores.checkpoint_keys =
         Arc::new(crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap());
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_core(stores, dir, fake.clone(), fake, SafetyProfile::ReadOnly).await;
     split_scenario(&r).await;
 }

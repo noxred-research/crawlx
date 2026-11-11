@@ -8,6 +8,7 @@ use crawlx_core::browser::ProfileSpec;
 use crawlx_core::observation::BrowserBuildInfo;
 use crawlx_core::{BrowserBackend, BrowserContext, BrowserError, ContextConfig, LaunchProfile};
 use parking_lot::Mutex;
+use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -38,6 +39,28 @@ impl Default for PoolConfig {
     }
 }
 
+/// Finite process retirement bounds. Retirement drains live actors before owned shutdown.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct PoolRetirement {
+    /// Maximum context creations admitted to one process, including failed creations.
+    pub max_contexts: u64,
+    /// Maximum process lifetime before it stops accepting contexts.
+    pub max_age: std::time::Duration,
+    /// Maximum idle time after the last context closes.
+    pub max_idle: std::time::Duration,
+}
+
+impl Default for PoolRetirement {
+    fn default() -> Self {
+        Self {
+            max_contexts: 1_000,
+            max_age: std::time::Duration::from_secs(3_600),
+            max_idle: std::time::Duration::from_secs(300),
+        }
+    }
+}
+
 /// Launch settings are process-wide, so processes are keyed by them. A named persistent
 /// profile (`dynamic.browserProfile`) is one: its user-data directory belongs to one browser.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -57,6 +80,10 @@ struct Slot {
     /// Unconfirmed resource cleanup remains charged against bounded pool capacity.
     quarantined: Vec<OwnedSemaphorePermit>,
     draining: bool,
+    capacity: usize,
+    admitted: u64,
+    started_at: tokio::time::Instant,
+    last_used_at: tokio::time::Instant,
 }
 
 type Picked = (u64, Arc<dyn BrowserBackend>, Arc<Semaphore>, bool);
@@ -106,6 +133,7 @@ impl Launcher for FixedLauncher {
 struct Inner {
     launcher: Box<dyn Launcher>,
     cfg: PoolConfig,
+    retirement: PoolRetirement,
     slots: Mutex<Vec<Slot>>,
     active_sessions: Mutex<std::collections::BTreeMap<crawlx_core::SessionId, u64>>,
     next_id: Mutex<u64>,
@@ -150,6 +178,11 @@ impl PooledContext {
         self.lease.profile = Some(profile);
         self
     }
+
+    pub(crate) fn with_session_proxy(mut self, proxy: crawlx_fetch::EgressProxyHandle) -> Self {
+        self.lease.proxy = Some(proxy);
+        self
+    }
 }
 
 /// Keeps one context slot reserved.
@@ -160,6 +193,7 @@ pub struct Lease {
     exclusive: bool,
     permit: Option<OwnedSemaphorePermit>,
     profile: Option<crate::profile_lifecycle::ProfileRun>,
+    proxy: Option<crawlx_fetch::EgressProxyHandle>,
 }
 
 impl Lease {
@@ -174,7 +208,8 @@ impl Lease {
             let Some(slot) = slots.iter_mut().find(|slot| slot.id == self.slot) else {
                 return Ok(());
             };
-            if self.exclusive && self.pool.launcher.owns_backends() {
+            let final_context = slot.contexts.available_permits().saturating_add(1) == slot.capacity;
+            if self.pool.launcher.owns_backends() && (self.exclusive || (slot.draining && final_context)) {
                 slot.draining = true;
                 Some(Arc::clone(&slot.backend))
             } else {
@@ -198,12 +233,24 @@ impl Lease {
             if self.exclusive {
                 self.pool.slots.lock().retain(|slot| slot.id != self.slot);
             }
+            if let Some(slot) = self
+                .pool
+                .slots
+                .lock()
+                .iter_mut()
+                .find(|slot| slot.id == self.slot)
+            {
+                slot.last_used_at = tokio::time::Instant::now();
+            }
             self.permit.take();
             self.pool.active_sessions.lock().remove(&self.session);
         } else {
             return Err(crate::error::SessionError::Other(
                 "session_unavailable: browser resource quarantined".into(),
             ));
+        }
+        if let Some(proxy) = self.proxy.take() {
+            proxy.shutdown().await;
         }
         // Failed cleanup reaches Drop and keeps its permit in bounded quarantine.
         Ok(())
@@ -274,10 +321,15 @@ impl BrowserPool {
     }
 
     fn build(launcher: Box<dyn Launcher>, cfg: PoolConfig) -> Self {
+        let cfg = PoolConfig {
+            max_browsers: cfg.max_browsers.max(1),
+            contexts_per_browser: cfg.contexts_per_browser.max(1),
+        };
         Self {
             inner: Arc::new(Inner {
                 launcher,
                 cfg,
+                retirement: PoolRetirement::default(),
                 slots: Mutex::new(Vec::new()),
                 active_sessions: Mutex::new(std::collections::BTreeMap::new()),
                 next_id: Mutex::new(0),
@@ -288,6 +340,24 @@ impl BrowserPool {
             }),
             wrap: None,
         }
+    }
+
+    /// Narrow finite process retirement bounds before sharing or acquiring from this pool.
+    ///
+    /// # Errors
+    /// Rejects zero bounds or a pool already cloned or used.
+    #[must_use = "the retirement policy is applied to the returned pool"]
+    pub fn with_retirement(mut self, retirement: PoolRetirement) -> Result<Self, BrowserError> {
+        if retirement.max_contexts == 0 || retirement.max_age.is_zero() || retirement.max_idle.is_zero() {
+            return Err(BrowserError::Unsupported(
+                "invalid browser retirement bounds".into(),
+            ));
+        }
+        let inner = Arc::get_mut(&mut self.inner)
+            .filter(|inner| inner.slots.lock().is_empty())
+            .ok_or_else(|| BrowserError::Unsupported("browser retirement policy already in use".into()))?;
+        inner.retirement = retirement;
+        Ok(self)
     }
 
     /// Decorate every context this pool (and its clones) hands out from now on.
@@ -353,7 +423,11 @@ impl BrowserPool {
                 .unconfirmed_launches
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
-        let unlaunched = self.inner.cfg.max_browsers.max(1).saturating_sub(charged);
+        let unlaunched = if !self.inner.launcher.owns_backends() && slots.iter().any(|slot| slot.draining) {
+            0
+        } else {
+            self.inner.cfg.max_browsers.saturating_sub(charged)
+        };
         free.saturating_add(unlaunched.saturating_mul(self.inner.cfg.contexts_per_browser.max(1)))
     }
 
@@ -378,7 +452,18 @@ impl BrowserPool {
     ///
     /// # Errors
     /// Fails when a storage, browser or network operation it depends on fails.
-    pub async fn acquire(
+    #[must_use = "the context is not acquired unless the future is polled"]
+    pub fn acquire(
+        &self,
+        config: ContextConfig,
+        exclusive: bool,
+    ) -> impl Future<Output = Result<PooledContext, BrowserError>> + Send + '_ {
+        // Callers can try several binding/profile generations. Keep each acquisition's
+        // construction temporary out of their poll frames, even for unused branches.
+        Box::pin(self.acquire_inner(config, exclusive))
+    }
+
+    async fn acquire_inner(
         &self,
         config: ContextConfig,
         exclusive: bool,
@@ -399,11 +484,7 @@ impl BrowserPool {
             egress_port: config.egress_proxy_port,
             persistent: config.browser_profile.clone(),
         };
-        let (slot_id, backend, sem, is_exclusive) = self.pick(&key, exclusive).await?;
-        let permit = Arc::clone(&sem)
-            .acquire_owned()
-            .await
-            .map_err(|_| BrowserError::Launch("browser slot closed".to_owned()))?;
+        let (slot_id, backend, permit, is_exclusive) = self.reserve_context(&key, exclusive).await?;
         {
             let mut sessions = self.inner.active_sessions.lock();
             if sessions.contains_key(&config.session_id) {
@@ -425,6 +506,7 @@ impl BrowserPool {
             exclusive: is_exclusive,
             permit: Some(permit),
             profile: None,
+            proxy: None,
         };
         let created = match tokio::time::timeout(
             std::time::Duration::from_secs(30),
@@ -485,14 +567,60 @@ impl BrowserPool {
         }
     }
 
-    async fn pick(&self, key: &Key, exclusive: bool) -> Result<Picked, BrowserError> {
+    async fn reserve_context(
+        &self,
+        key: &Key,
+        exclusive: bool,
+    ) -> Result<(u64, Arc<dyn BrowserBackend>, OwnedSemaphorePermit, bool), BrowserError> {
+        Ok(loop {
+            let (slot_id, backend, sem, is_exclusive) = self.pick(key, exclusive).await?;
+            let permit = sem
+                .acquire_owned()
+                .await
+                .map_err(|_| BrowserError::Launch("browser slot closed".to_owned()))?;
+            let mut slots = self.inner.slots.lock();
+            let Some(slot) = slots.iter_mut().find(|slot| slot.id == slot_id) else {
+                continue;
+            };
+            // Selection and permit acquisition may race another retirement.
+            if slot.draining {
+                continue;
+            }
+            slot.admitted = slot.admitted.saturating_add(1);
+            if slot.admitted >= self.inner.retirement.max_contexts {
+                slot.draining = true;
+            }
+            break (slot_id, backend, permit, is_exclusive);
+        })
+    }
+
+    async fn retire_expired(&self) {
+        {
+            let now = tokio::time::Instant::now();
+            let mut slots = self.inner.slots.lock();
+            for slot in slots.iter_mut() {
+                if now.duration_since(slot.started_at) >= self.inner.retirement.max_age
+                    || (slot.contexts.available_permits() == slot.capacity
+                        && now.duration_since(slot.last_used_at) >= self.inner.retirement.max_idle)
+                {
+                    slot.draining = true;
+                }
+            }
+        }
         if self.inner.launcher.owns_backends() {
             let draining: Vec<_> = self
                 .inner
                 .slots
                 .lock()
                 .iter()
-                .filter(|slot| slot.draining && slot.exclusive)
+                .filter(|slot| {
+                    slot.draining
+                        && slot
+                            .contexts
+                            .available_permits()
+                            .saturating_add(slot.quarantined.len())
+                            == slot.capacity
+                })
                 .map(|slot| (slot.id, Arc::clone(&slot.backend)))
                 .collect();
             for (id, backend) in draining {
@@ -502,6 +630,10 @@ impl BrowserPool {
                 }
             }
         }
+    }
+
+    async fn pick(&self, key: &Key, exclusive: bool) -> Result<Picked, BrowserError> {
+        self.retire_expired().await;
         let find = |slots: &[Slot]| -> Option<Picked> {
             slots
                 .iter()
@@ -527,6 +659,11 @@ impl BrowserPool {
             if found.2.available_permits() > 0 {
                 return Ok(found.clone());
             }
+        }
+        if !self.inner.launcher.owns_backends() && self.inner.slots.lock().iter().any(|slot| slot.draining) {
+            return Err(BrowserError::Unsupported(
+                "session_unavailable: attached browser retired".into(),
+            ));
         }
         if count.saturating_add(
             self.inner
@@ -577,6 +714,14 @@ impl BrowserPool {
             contexts: Arc::clone(&contexts),
             quarantined: Vec::new(),
             draining: false,
+            capacity: if exclusive {
+                1
+            } else {
+                self.inner.cfg.contexts_per_browser
+            },
+            admitted: 0,
+            started_at: tokio::time::Instant::now(),
+            last_used_at: tokio::time::Instant::now(),
         });
         self.inner
             .unconfirmed_launches
@@ -608,6 +753,127 @@ mod tests {
         let (context, _, lease) = pooled.into_parts();
         context.close().await.unwrap();
         lease.release(true).await.unwrap();
+    }
+
+    struct RetiringBackend {
+        backend: Arc<FakeBackend>,
+        stopped: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl BrowserBackend for RetiringBackend {
+        async fn new_context(&self, config: ContextConfig) -> Result<Box<dyn BrowserContext>, BrowserError> {
+            assert!(!self.stopped.load(std::sync::atomic::Ordering::SeqCst));
+            self.backend.new_context(config).await
+        }
+
+        fn build_info(&self) -> &BrowserBuildInfo {
+            self.backend.build_info()
+        }
+
+        async fn shutdown_confirmed(&self) -> Result<(), BrowserError> {
+            assert_eq!(
+                self.backend.open_contexts(),
+                0,
+                "retirement must drain active actors first"
+            );
+            self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct RetiringLauncher(Arc<Mutex<Vec<Arc<RetiringBackend>>>>);
+
+    #[async_trait]
+    impl Launcher for RetiringLauncher {
+        async fn launch(&self, _: &Key) -> Result<Arc<dyn BrowserBackend>, BrowserError> {
+            let backend = Arc::new(RetiringBackend {
+                backend: fake(),
+                stopped: std::sync::atomic::AtomicBool::new(false),
+            });
+            self.0.lock().push(Arc::clone(&backend));
+            Ok(backend)
+        }
+
+        fn owns_backends(&self) -> bool {
+            true
+        }
+    }
+
+    fn retiring_pool(policy: PoolRetirement) -> (BrowserPool, Arc<Mutex<Vec<Arc<RetiringBackend>>>>) {
+        let launched = Arc::new(Mutex::new(Vec::new()));
+        let pool = BrowserPool::build(
+            Box::new(RetiringLauncher(Arc::clone(&launched))),
+            PoolConfig {
+                max_browsers: 1,
+                contexts_per_browser: 2,
+            },
+        )
+        .with_retirement(policy)
+        .unwrap();
+        (pool, launched)
+    }
+
+    #[tokio::test]
+    async fn context_count_retirement_drains_all_actors_before_replacement() {
+        let (pool, launched) = retiring_pool(PoolRetirement {
+            max_contexts: 2,
+            ..PoolRetirement::default()
+        });
+        let first = pool.acquire(cfg(), false).await.unwrap();
+        let second = pool.acquire(cfg(), false).await.unwrap();
+        assert!(pool.acquire(cfg(), false).await.is_err());
+        assert!(!launched.lock()[0]
+            .stopped
+            .load(std::sync::atomic::Ordering::SeqCst));
+        close(first).await;
+        assert_eq!(pool.browsers(), 1);
+        close(second).await;
+        assert_eq!(pool.browsers(), 0);
+        assert!(launched.lock()[0]
+            .stopped
+            .load(std::sync::atomic::Ordering::SeqCst));
+        close(pool.acquire(cfg(), false).await.unwrap()).await;
+        assert_eq!(launched.lock().len(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn inactivity_and_age_retirement_do_not_interrupt_live_contexts() {
+        let (pool, launched) = retiring_pool(PoolRetirement {
+            max_idle: Duration::from_secs(5),
+            max_age: Duration::from_secs(10),
+            ..PoolRetirement::default()
+        });
+        close(pool.acquire(cfg(), false).await.unwrap()).await;
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let active = pool.acquire(cfg(), false).await.unwrap();
+        assert_eq!(launched.lock().len(), 2, "idle process must be replaced");
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(pool.acquire(cfg(), false).await.is_err());
+        assert!(!launched.lock()[1]
+            .stopped
+            .load(std::sync::atomic::Ordering::SeqCst));
+        close(active).await;
+        assert!(launched.lock()[1]
+            .stopped
+            .load(std::sync::atomic::Ordering::SeqCst));
+        close(pool.acquire(cfg(), false).await.unwrap()).await;
+        assert_eq!(launched.lock().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn attached_retirement_preserves_resource_charge_and_never_kills_the_backend() {
+        let pool = BrowserPool::with_backend(fake())
+            .with_retirement(PoolRetirement {
+                max_contexts: 1,
+                ..PoolRetirement::default()
+            })
+            .unwrap();
+        let context = pool.acquire(cfg(), false).await.unwrap();
+        close(context).await;
+        assert_eq!(pool.admission_available_contexts(), 0);
+        assert!(pool.acquire(cfg(), false).await.is_err());
+        assert_eq!(pool.launches(), 1);
     }
 
     #[tokio::test]

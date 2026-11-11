@@ -242,6 +242,26 @@ async fn create_returns_202_location_and_queued_zero_counters() {
 }
 
 #[tokio::test]
+async fn native_create_omitted_strategy_persists_breadth_first() {
+    let e = env();
+    for body in [
+        json!({"seedUrl": "https://app.example.test/"}),
+        json!({"seedUrl": "https://app.example.test/", "scope": {}}),
+    ] {
+        let id = e.create_run(&body).await;
+        let run = e.store.get(id.parse().unwrap()).await.unwrap();
+        assert_eq!(
+            run.config.scope.strategy,
+            crawlx_core::config::CrawlStrategy::BreadthFirst
+        );
+        assert_eq!(
+            serde_json::to_value(&run.config).unwrap()["scope"]["strategy"],
+            "breadth_first"
+        );
+    }
+}
+
+#[tokio::test]
 async fn clamps_are_reported_as_warnings() {
     let mut settings = Settings::default();
     settings.tenant_limits.max_urls = 50;
@@ -624,6 +644,152 @@ async fn erasure_removes_every_row_of_a_terminal_run() {
     assert!(audit
         .iter()
         .any(|a| a.event == "run.erase_requested" && a.run == Some(run_id)));
+}
+
+#[tokio::test]
+async fn erasure_failure_keeps_owner_metadata_and_retry_erases_volatile_bytes() {
+    let e = env();
+    let id = e.create_run(&simple_body()).await;
+    let run: CrawlRunId = id.parse().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let buffer = Arc::new(
+        crawlx_storage::DeliveryBuffer::open_fs(
+            root.path(),
+            Arc::new(SystemClock),
+            crawlx_storage::BufferLimits::default(),
+        )
+        .await
+        .unwrap(),
+    );
+    e.store.set_dataset_delivery(buffer.clone());
+    buffer
+        .insert(
+            e.tenant,
+            run,
+            -700,
+            "_owned_erasure",
+            "text/plain",
+            b"owned transient erasure state",
+        )
+        .await
+        .unwrap();
+    e.post_empty(&format!("/v1/crawls/{id}:cancel")).await;
+
+    // An actual volatile-backend outage must leave a retryable run and never acknowledge erasure.
+    let delivery = root.path().join("zdr");
+    let unavailable = root.path().join("unavailable-zdr");
+    std::fs::rename(&delivery, &unavailable).unwrap();
+    std::fs::write(&delivery, b"owned fixture blocks directory access").unwrap();
+    let (status, _, body) = e.delete(&format!("/v1/crawls/{id}")).await;
+    assert_ne!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, _, body) = e.get(&format!("/v1/crawls/{id}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "cancelled");
+
+    std::fs::remove_file(&delivery).unwrap();
+    std::fs::rename(&unavailable, &delivery).unwrap();
+    let (status, _, body) = e.delete(&format!("/v1/crawls/{id}")).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["status"], "erased");
+    assert!(buffer.is_empty().await.unwrap());
+    assert_eq!(e.get(&format!("/v1/crawls/{id}")).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn completed_head_content_refuses_public_authorization_revocation() {
+    use crawlx_api::ApiStore;
+    use crawlx_core::acquisition::{AcquisitionResultV1, BackendCapabilitiesV1};
+    use crawlx_core::hash::Digest;
+    use crawlx_core::orchestration::{RequestBatchV1, RequestCommitRepo, RequestCommitV1};
+    use crawlx_core::repo::{FrontierRepo, FrontierStatus};
+    use crawlx_core::request::RequestEnvelopeV1;
+    use crawlx_core::{Clock, StoreError, WorkerId};
+    use crawlx_storage::testkit::{canonical_url, crawl_run, create_crawl};
+
+    let e = env();
+    let now = SystemClock.now();
+    let record = crawlx_policy::testkit::sample_record(e.tenant, now, &["https://app.example.test"]);
+    e.api
+        .authorization_create(e.tenant, uuid::Uuid::nil(), &record, &json!({}), now)
+        .await
+        .unwrap();
+    let mut config = create_crawl("https://app.example.test/", &[], 1);
+    config.safety.authorization_record_ref = Some(record.id);
+    config.retention.mode = crawlx_core::config::RetentionMode::Zdr;
+    config.retention.days = 0;
+    let run = crawl_run(e.tenant, config);
+    e.store.create(&run, None).await.unwrap();
+    e.api
+        .authorization_bind_run(run.id, record.body_digest().unwrap())
+        .await
+        .unwrap();
+    let request = RequestEnvelopeV1::new(canonical_url("https://app.example.test/"), "HEAD".into(), 0, None);
+    e.store
+        .append_batch(RequestBatchV1::new(
+            e.tenant,
+            run.id,
+            "anonymous".into(),
+            Digest::of("test/completed-head", b"one"),
+            vec![request],
+        ))
+        .await
+        .unwrap();
+    let (entry, fence) = e
+        .store
+        .lease_batch_fenced(run.id, WorkerId::new(), 1)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let queued = e.store.get_request(run.id, entry.id).await.unwrap();
+    let mut acquisition = AcquisitionResultV1::new(
+        run.id,
+        e.tenant,
+        queued.envelope.url.url.clone(),
+        queued.identity.key,
+        BackendCapabilitiesV1::native_http("crawlx-fetch", "test"),
+    );
+    acquisition.target_status = Some(200);
+    acquisition.transport_succeeded = true;
+    let mut commit = RequestCommitV1::terminal(run.id, entry.id, fence, 1, FrontierStatus::Succeeded, None);
+    commit.head_response = Some(json!({
+        "requestId":entry.id,"method":"HEAD","status":200,"bodyBytes":0,
+        "response_headers":{"x-owned":"head-authorization-canary"},"acquisition":acquisition
+    }));
+    e.store.commit_fenced(commit.clone()).await.unwrap();
+    e.store
+        .set_status(
+            run.id,
+            RunStatus::Completed,
+            Some(TerminalReason::FrontierExhausted),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        e.store.list_after(run.id, 0, 10).await.unwrap()[0].payload["response_headers"]["x-owned"],
+        "head-authorization-canary"
+    );
+    let metadata = e.store.list_metadata_after(run.id, 0, 10).await.unwrap();
+    let (status, _, body) = e
+        .post(
+            &format!("/v1/authorizations/{}/revoke", record.id),
+            &json!({"reason":"completed engagement"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(e.store.get(run.id).await.unwrap().status, RunStatus::Completed);
+    assert!(matches!(
+        e.store.list_after(run.id, 0, 10).await,
+        Err(StoreError::AccessDenied(_))
+    ));
+    assert!(matches!(
+        e.store.commit_fenced(commit).await,
+        Err(StoreError::AccessDenied(_))
+    ));
+    assert_eq!(
+        e.store.list_metadata_after(run.id, 0, 10).await.unwrap(),
+        metadata
+    );
 }
 
 #[tokio::test]

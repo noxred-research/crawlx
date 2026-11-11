@@ -13,6 +13,118 @@ use hickory_resolver::TokioResolver;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, Instant};
+
+/// Addresses checked together against the target URL's egress policy.
+///
+/// Only checked resolution can construct this evidence. Request headers and
+/// proxy addresses cannot select the physical-target capacity key.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct CheckedResolution {
+    origin: crate::governor::Origin,
+    host: String,
+    addresses: Vec<IpAddr>,
+    valid_for: Option<Duration>,
+}
+
+impl CheckedResolution {
+    /// Resolve a target and check its URL, name and every returned address.
+    ///
+    /// # Errors
+    /// Returns URL, resolution or egress errors before minting admission evidence.
+    pub async fn resolve(
+        resolver: &dyn Resolver,
+        policy: &crawlx_policy::EgressPolicy,
+        url: &url::Url,
+    ) -> Result<Self, FetchError> {
+        policy.check_url(url)?;
+        let (host, literal) = match url.host() {
+            Some(url::Host::Domain(host)) => (host.to_ascii_lowercase(), None),
+            Some(url::Host::Ipv4(ip)) => (ip.to_string(), Some(IpAddr::V4(ip))),
+            Some(url::Host::Ipv6(ip)) => (ip.to_string(), Some(IpAddr::V6(ip))),
+            None => {
+                return Err(FetchError::InvalidUrl {
+                    url: url.to_string(),
+                    reason: "missing host",
+                });
+            }
+        };
+        Self::resolve_host(
+            resolver,
+            policy,
+            crate::governor::Origin::from_url(url),
+            host,
+            literal,
+        )
+        .await
+    }
+
+    /// Check a proxy request authority without treating its Host header as evidence.
+    pub(crate) async fn resolve_host(
+        resolver: &dyn Resolver,
+        policy: &crawlx_policy::EgressPolicy,
+        origin: crate::governor::Origin,
+        host: String,
+        literal: Option<IpAddr>,
+    ) -> Result<Self, FetchError> {
+        policy.check_host(&host)?;
+        let (mut addresses, valid_for) = match literal {
+            Some(ip) => (vec![ip], None),
+            None => resolver.resolve_with_ttl(&host).await?,
+        };
+        if addresses.is_empty() {
+            return Err(FetchError::Resolve {
+                host,
+                reason: "no addresses".to_owned(),
+            });
+        }
+        policy.check_all(&host, &addresses)?;
+        // Canonical order also prevents lock-order cycles across overlapping DNS answers.
+        addresses.sort_unstable_by_key(|ip| (ip.to_canonical(), *ip));
+        addresses.dedup();
+        tracing::debug!(
+            address_count = addresses.len(),
+            dns_ttl_known = valid_for.is_some(),
+            dns_ttl_millis = valid_for.map(|ttl| u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX)),
+            literal = literal.is_some(),
+            "checked target resolution"
+        );
+        Ok(Self {
+            origin,
+            host,
+            addresses,
+            valid_for,
+        })
+    }
+
+    /// Target origin bound to these addresses, not a caller-supplied Host header.
+    #[must_use]
+    pub fn origin(&self) -> &crate::governor::Origin {
+        &self.origin
+    }
+
+    /// Checked target host, without brackets around IP literals.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Sorted, deduplicated addresses; every address passed egress policy.
+    #[must_use]
+    pub fn addresses(&self) -> &[IpAddr] {
+        &self.addresses
+    }
+
+    /// Remaining resolver cache lifetime at resolution, or unknown for literals/custom resolvers.
+    ///
+    /// Zero means the answer cannot be reused as a DNS cache entry. It does not
+    /// invalidate the current checked, pinned connection attempt.
+    #[must_use]
+    pub const fn valid_for(&self) -> Option<Duration> {
+        self.valid_for
+    }
+}
 
 /// Resolves a host name to all of its A and AAAA addresses.
 ///
@@ -25,6 +137,17 @@ pub trait Resolver: Send + Sync {
     /// # Errors
     /// [`FetchError::Resolve`] when the name does not resolve or yields no address.
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, FetchError>;
+
+    /// Resolve addresses and report their remaining cache lifetime when known.
+    ///
+    /// The default preserves custom resolvers without inventing a TTL or adding
+    /// a second cache. Production DNS uses the resolver's actual expiry.
+    ///
+    /// # Errors
+    /// Returns the same resolution errors as [`Self::resolve`].
+    async fn resolve_with_ttl(&self, host: &str) -> Result<(Vec<IpAddr>, Option<Duration>), FetchError> {
+        self.resolve(host).await.map(|addresses| (addresses, None))
+    }
 }
 
 /// Parse `host` as an IP literal, accepting the bracketed IPv6 form.
@@ -157,8 +280,12 @@ impl std::fmt::Debug for HickoryResolver {
 #[async_trait]
 impl Resolver for HickoryResolver {
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>, FetchError> {
+        self.resolve_with_ttl(host).await.map(|(addresses, _)| addresses)
+    }
+
+    async fn resolve_with_ttl(&self, host: &str) -> Result<(Vec<IpAddr>, Option<Duration>), FetchError> {
         if let Some(ip) = parse_ip_literal(host) {
-            return Ok(vec![ip]);
+            return Ok((vec![ip], None));
         }
         let lookup = self
             .inner
@@ -180,7 +307,8 @@ impl Resolver for HickoryResolver {
                 reason: "no addresses".to_owned(),
             });
         }
-        Ok(out)
+        let valid_for = lookup.valid_until().saturating_duration_since(Instant::now());
+        Ok((out, Some(valid_for)))
     }
 }
 
@@ -346,10 +474,15 @@ mod tests {
             opts.ip_strategy = LookupIpStrategy::Ipv4Only;
             opts.use_hosts_file = ResolveHosts::Never;
             let resolver = dns.with_options(opts);
-            assert_eq!(
-                resolver.resolve("ttl.test.").await.unwrap(),
-                [IpAddr::from([192, 0, 2, 1])]
-            );
+            let (addresses, valid_for) = resolver.resolve_with_ttl("ttl.test.").await.unwrap();
+            assert_eq!(addresses, [IpAddr::from([192, 0, 2, 1])]);
+            let valid_for = valid_for.unwrap();
+            if ttl == 0 {
+                assert_eq!(valid_for, Duration::ZERO);
+            } else {
+                assert!(valid_for > Duration::ZERO);
+                assert!(valid_for <= Duration::from_secs(u64::from(ttl)));
+            }
             let expected = if ttl == 0 { 2 } else { 1 };
             assert_eq!(
                 resolver.resolve("ttl.test.").await.unwrap(),
@@ -357,6 +490,30 @@ mod tests {
             );
             assert_eq!(queries.load(Ordering::SeqCst), usize::from(expected));
         }
+    }
+
+    #[tokio::test]
+    async fn checked_resolution_rejects_mixed_and_rebound_private_answers() {
+        let public = IpAddr::from([93, 184, 216, 34]);
+        let private = IpAddr::from([127, 0, 0, 1]);
+        let resolver = StaticResolver::new().with("target.test", [public]);
+        let policy = crawlx_policy::EgressPolicy::new(false);
+        let url = url::Url::parse("https://target.test/").unwrap();
+        let checked = CheckedResolution::resolve(&resolver, &policy, &url)
+            .await
+            .unwrap();
+        assert_eq!(checked.addresses(), &[public]);
+        assert_eq!(checked.valid_for(), None);
+        resolver.set("target.test", [public, private]);
+        assert!(matches!(
+            CheckedResolution::resolve(&resolver, &policy, &url).await,
+            Err(FetchError::EgressDenied(_))
+        ));
+        resolver.set("target.test", [private]);
+        assert!(matches!(
+            CheckedResolution::resolve(&resolver, &policy, &url).await,
+            Err(FetchError::EgressDenied(_))
+        ));
     }
 
     fn loopback_options() -> ResolverOpts {

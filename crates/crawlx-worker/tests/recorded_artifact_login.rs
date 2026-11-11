@@ -73,6 +73,12 @@ async fn fixture_with_browser(
 ) -> Option<Fixture> {
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(TestClock(Mutex::new(SystemClock.now())));
+    // Only fake-browser fixtures advance the expiry clock; Chromium uses real capture time.
+    let run_clock: Arc<dyn Clock> = if browser.is_some() {
+        Arc::new(SystemClock)
+    } else {
+        clock.clone()
+    };
     let (mut stores, index): (Stores, Arc<dyn ArtifactIndex>) = if postgres {
         let Ok(database) = std::env::var("CRAWLX_TEST_DATABASE_URL") else {
             eprintln!("skipped: CRAWLX_TEST_DATABASE_URL is not set");
@@ -90,7 +96,7 @@ async fn fixture_with_browser(
         pg.migrate().await.unwrap();
         let tenant = TenantId::new();
         pg.ensure_tenant(tenant, "recorded-login").await.unwrap();
-        let artifacts = FsArtifactStore::open(dir.path(), Arc::new(pg.clone()), clock.clone())
+        let artifacts = FsArtifactStore::open(dir.path(), Arc::new(pg.clone()), run_clock.clone())
             .await
             .unwrap()
             .with_index(Arc::new(pg.clone()));
@@ -99,10 +105,10 @@ async fn fixture_with_browser(
             Arc::new(pg),
         )
     } else {
-        let memory = Arc::new(MemoryStore::new());
+        let memory = Arc::new(MemoryStore::with_clock(run_clock.clone()));
         let mut stores = Stores::over_memory(memory.clone(), dir.path()).await.unwrap();
         stores.artifacts = Arc::new(
-            FsArtifactStore::open(dir.path(), memory.clone(), clock.clone())
+            FsArtifactStore::open(dir.path(), memory.clone(), run_clock.clone())
                 .await
                 .unwrap()
                 .with_index(memory.clone()),
@@ -124,7 +130,7 @@ async fn fixture_with_browser(
         replica_base_url: None,
     }];
     crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
-    let record = common::authorization::verified_record(&crawl, stores.tenant);
+    let record = common::authorization::verified_record_with_clock(&crawl, stores.tenant, run_clock.as_ref());
     if let Some(pg) = &stores.pg {
         common::authorization::register_verified(pg, &record).await;
     }
@@ -140,8 +146,8 @@ async fn fixture_with_browser(
         config: crawl,
         policy_version: 1,
         counters: PlaneCounters::default(),
-        created_at: clock.now(),
-        started_at: Some(clock.now()),
+        created_at: run_clock.now(),
+        started_at: Some(run_clock.now()),
         finished_at: None,
         trace_id: None,
     };
@@ -162,46 +168,51 @@ async fn fixture_with_browser(
         },
         ..WorkerConfig::default()
     };
-    let guard = common::authorization::admit(&stores, &run, &cfg).await;
-    let backend = Arc::new(FakeBackend::new(
-        FakeScript::new()
-            .page(
-                FakePage::new("https://example.test/")
-                    .node(
-                        FakeAxSpec::textbox("username", "Username")
-                            .attr("autocomplete", "username")
-                            .attr("crawlx:form", "login"),
+    let guard = common::authorization::admit_with_clock(&stores, &run, &cfg, run_clock.clone()).await;
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(
+                FakeScript::new()
+                    .page(
+                        FakePage::new("https://example.test/")
+                            .node(
+                                FakeAxSpec::textbox("username", "Username")
+                                    .attr("autocomplete", "username")
+                                    .attr("crawlx:form", "login"),
+                            )
+                            .node(
+                                FakeAxSpec::textbox("password", "Password")
+                                    .attr("type", "password")
+                                    .attr("autocomplete", "current-password")
+                                    .attr("crawlx:form", "login"),
+                            )
+                            .node(
+                                FakeAxSpec::button("submit", "Sign in")
+                                    .attr("type", "submit")
+                                    .attr("crawlx:form", "login"),
+                            )
+                            .on_click(
+                                "submit",
+                                vec![
+                                    FakeEffect::SetStorage(BTreeMap::from([("sid".into(), "yes".into())])),
+                                    FakeEffect::Navigate("https://example.test/home".into()),
+                                ],
+                            ),
                     )
-                    .node(
-                        FakeAxSpec::textbox("password", "Password")
-                            .attr("type", "password")
-                            .attr("autocomplete", "current-password")
-                            .attr("crawlx:form", "login"),
-                    )
-                    .node(
-                        FakeAxSpec::button("submit", "Sign in")
-                            .attr("type", "submit")
-                            .attr("crawlx:form", "login"),
-                    )
-                    .on_click(
-                        "submit",
-                        vec![
-                            FakeEffect::SetStorage(BTreeMap::from([("sid".into(), "yes".into())])),
-                            FakeEffect::Navigate("https://example.test/home".into()),
-                        ],
+                    .page(
+                        FakePage::new("https://example.test/home")
+                            .node(FakeAxSpec::link("reports", "Reports", "/reports")),
                     ),
             )
-            .page(
-                FakePage::new("https://example.test/home")
-                    .node(FakeAxSpec::link("reports", "Reports", "/reports")),
-            ),
-    ));
+            .clock(run_clock.clone())
+            .build(),
+    );
     let secrets = Arc::new(CountedSecrets::default());
     let browser = browser.map_or_else(
         || backend.clone() as Arc<dyn BrowserBackend>,
         |(_, backend)| backend,
     );
-    let rc = RunContext::build(
+    let mut rc = RunContext::build(
         &run,
         &cfg,
         stores,
@@ -213,6 +224,7 @@ async fn fixture_with_browser(
     )
     .await
     .unwrap();
+    common::set_fixture_clock(&mut rc, run_clock, run.started_at.unwrap_or(run.created_at));
     Some(Fixture {
         rc,
         session: sessions[0].clone(),
@@ -230,7 +242,7 @@ async fn fixture_with_browser(
 async fn bind_target(f: &mut Fixture, spec: String) {
     let mut target = f.rc.stores.runs.get(f.rc.run).await.unwrap();
     target.id = CrawlRunId::new();
-    target.created_at = f.clock.now();
+    target.created_at = f.rc.clock.now();
     target.started_at = Some(target.created_at);
     target.config.roles[0].login_plan = Some(spec);
     target.config_digest = target.config.digest().unwrap();
@@ -251,7 +263,8 @@ async fn bind_target(f: &mut Fixture, spec: String) {
         },
         ..WorkerConfig::default()
     };
-    let guard = common::authorization::admit(&f.rc.stores, &target, &cfg).await;
+    let clock = f.rc.clock.clone();
+    let guard = common::authorization::admit_with_clock(&f.rc.stores, &target, &cfg, clock.clone()).await;
     f.rc = RunContext::build(
         &target,
         &cfg,
@@ -264,6 +277,7 @@ async fn bind_target(f: &mut Fixture, spec: String) {
     )
     .await
     .unwrap();
+    common::set_fixture_clock(&mut f.rc, clock, target.started_at.unwrap_or(target.created_at));
     f.session = sessions[0].clone();
 }
 

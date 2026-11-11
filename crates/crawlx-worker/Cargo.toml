@@ -39,6 +39,7 @@ aws-smithy-http-client.workspace = true
 base32.workspace = true
 base64.workspace = true
 bytes.workspace = true
+bzip2 = "0.6"
 chrono.workspace = true
 flate2.workspace = true
 futures.workspace = true
@@ -46,6 +47,7 @@ http.workspace = true
 hmac.workspace = true
 ipnet.workspace = true
 image.workspace = true
+lzma-rust2 = { version = "=0.25.0", default-features = false, features = ["std", "encoder", "xz"] }
 parking_lot.workspace = true
 rand.workspace = true
 regex.workspace = true

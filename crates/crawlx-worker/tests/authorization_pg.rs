@@ -179,7 +179,12 @@ async fn missing_checkpoint_custody_refuses_an_authorized_dynamic_run_before_bro
     assert!(cfg.checkpoint_keys.is_none());
     let authorization = authorization_fixture::admit(&rig.stores, &run, &cfg).await;
     rig.stores.checkpoint_keys = Arc::new(UnavailableCheckpointKeys);
-    let backend = Arc::new(FakeBackend::new(mesh(3)));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(mesh(3))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
 
     let result = RunContext::build(
         &run,
@@ -212,7 +217,12 @@ async fn a_run_whose_stored_record_was_revoked_before_the_lease_is_refused() {
     let Some(rig) = Rig::new().await else { return };
     let run = rig.enqueue().await;
     rig.revoke("1 second").await;
-    let backend = Arc::new(FakeBackend::new(mesh(3)));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(mesh(3))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     run_with(
         rig.cfg(Duration::from_secs(60)),
         rig.stores.clone(),
@@ -252,7 +262,12 @@ async fn revoking_the_stored_record_with_an_update_stops_a_run_mid_flight() {
     let interval = Duration::from_millis(50);
     let cfg = rig.cfg(interval);
     // 90 click keys: far more than the run does before the recheck finds the revocation
-    let backend = Arc::new(FakeBackend::new(mesh(10)));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(mesh(10))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let worker = {
         let stores = rig.stores.clone();
         tokio::spawn(async move { run_with(cfg, stores, Some(backend), CancellationToken::new()).await })

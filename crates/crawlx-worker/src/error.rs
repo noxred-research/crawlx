@@ -26,11 +26,22 @@ pub enum SessionError {
     /// Binding eligibility failed without granting replacement authority.
     #[error(transparent)]
     Binding(#[from] crawlx_core::session_binding::SessionBindingError),
+    /// The generation's approved proxy identity was lost; automatic rotation is forbidden.
+    #[error(transparent)]
+    ProxyPin(#[from] crawlx_fetch::proxyx::ProxyxError),
     /// The command is not accepted in the current lifecycle state.
     #[error("session is {state}; command not accepted")]
     NotReady {
         /// Lifecycle state the session is in.
         state: &'static str,
+    },
+    /// Response metadata no longer belongs to the caller's immutable DOM observation.
+    #[error("browser document observation epoch changed")]
+    ObservationEpochChanged {
+        /// Epoch of the captured DOM.
+        expected: crawlx_core::ObservationEpoch,
+        /// Epoch currently owned by the actor.
+        current: crawlx_core::ObservationEpoch,
     },
     /// The browser died after the journal recorded intent; the action is `unknown`.
     #[error("browser crashed during action {0}")]
@@ -104,6 +115,7 @@ impl Classify for SessionError {
             | Self::Cancelled
             | Self::ExecutionDeadlineReached
             | Self::Binding(_)
+            | Self::ProxyPin(_)
             | Self::RecoveryExhausted(_)
             | Self::LoginFailed(_)
             | Self::Other(_) => ErrorClass::Terminal,
@@ -111,7 +123,7 @@ impl Classify for SessionError {
             // the browser died after intent: the action is `unknown` until reconciled
             Self::CrashedDuringAction(_) => ErrorClass::OutcomeUnknown,
             Self::HaltedStorage(e) | Self::Store(e) => e.class(),
-            Self::NotReconcilable(_) => ErrorClass::Stale,
+            Self::NotReconcilable(_) | Self::ObservationEpochChanged { .. } => ErrorClass::Stale,
             Self::CheckpointCrypto(_)
             | Self::CheckpointEncoding(_)
             | Self::CheckpointVersion
@@ -162,6 +174,9 @@ pub enum WorkerError {
     /// The bounded operator bundle-loading task failed.
     #[error("article language loader task failed")]
     ArticleLanguageTask(#[source] tokio::task::JoinError),
+    /// The bounded settled-browser extraction task failed.
+    #[error("browser extraction task failed")]
+    BrowserExtractionTask(#[source] tokio::task::JoinError),
     /// Native PDF structural sanitization failed before binary artifact approval.
     #[error("pdf sanitization failed")]
     PdfSanitization(#[source] crawlx_extract::parse::ParseError),
@@ -195,6 +210,12 @@ pub enum WorkerError {
     /// Explicit discovery provider, source protocol or resource-limit refusal.
     #[error(transparent)]
     Discovery(#[from] crawlx_core::discovery::DiscoveryErrorV1),
+    /// Strict named HTTP session registration or transport refusal.
+    #[error(transparent)]
+    HttpSession(#[from] crate::http_sessions::HttpSessionError),
+    /// URL-plane checkpoint continuation failed version, bounds or tenant validation.
+    #[error("resume state: {0}")]
+    Resume(#[from] crate::surface::resume::ResumeError),
     #[error("invalid configuration: {0}")]
     /// Config.
     Config(String),
@@ -253,6 +274,7 @@ impl Classify for WorkerError {
             | Self::AcquisitionUnavailable(_)
             | Self::ArticleLanguage(_)
             | Self::ArticleLanguageTask(_)
+            | Self::BrowserExtractionTask(_)
             | Self::SessionHeartbeatTask(_)
             | Self::PdfSanitization(_)
             | Self::RawCaptureTask(_)
@@ -303,6 +325,12 @@ impl Classify for WorkerError {
             Self::Io(e) => e.class(),
             Self::Archive(crawlx_storage::archive::ArchiveError::Io(error)) => error.class(),
             Self::Archive(_) | Self::ArchiveTask(_) => ErrorClass::Terminal,
+            Self::HttpSession(crate::http_sessions::HttpSessionError::Fetch(
+                FetchError::OriginAdmission(error),
+            )) => error.class(),
+            Self::HttpSession(crate::http_sessions::HttpSessionError::Busy) => ErrorClass::Retryable,
+            Self::Resume(crate::surface::resume::ResumeError::Store(error)) => error.class(),
+            Self::HttpSession(_) | Self::Resume(_) => ErrorClass::Terminal,
             Self::Config(_) | Self::Url(_) | Self::Telemetry(_) | Self::Other(_) | Self::Discovery(_) => {
                 ErrorClass::Terminal
             }
@@ -381,6 +409,16 @@ mod tests {
                 SessionError::Binding(crawlx_core::session_binding::SessionBindingError::Expired),
                 ErrorClass::Terminal,
             ),
+            (
+                SessionError::ProxyPin(crawlx_fetch::proxyx::ProxyxError::PinLost),
+                ErrorClass::Terminal,
+            ),
+            (
+                SessionError::ProxyPin(crawlx_fetch::proxyx::ProxyxError::PinAuthority(
+                    std::sync::Arc::new(StoreError::Unavailable("pin authority".into())),
+                )),
+                ErrorClass::Terminal,
+            ),
             (SessionError::NotReady { state: "paused" }, ErrorClass::Retryable),
             (SessionError::CrashedDuringAction(id), ErrorClass::OutcomeUnknown),
             (
@@ -446,6 +484,12 @@ mod tests {
             (
                 WorkerError::Discovery(crawlx_core::discovery::DiscoveryErrorV1::ProviderUnavailable(
                     crawlx_core::discovery::DiscoveryProviderV1::NewsSearch,
+                )),
+                ErrorClass::Terminal,
+            ),
+            (
+                WorkerError::Resume(crate::surface::resume::ResumeError::Dedupe(
+                    crawlx_core::extraction::DedupeSnapshotError::Binding,
                 )),
                 ErrorClass::Terminal,
             ),

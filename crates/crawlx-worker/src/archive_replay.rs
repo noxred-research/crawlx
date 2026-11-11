@@ -34,7 +34,7 @@ use url::Url;
 use zeroize::Zeroize as _;
 
 /// The mapper/security policy revision, included in every baseline.
-pub const REPLAY_POLICY: &str = "crawlx-native-offline-replay/v1";
+pub const REPLAY_POLICY: &str = "crawlx-native-offline-replay/v2";
 /// Maximum combined encoded primary/dependency input bytes for this local renderer.
 pub const MAX_ENCODED_BYTES: u64 = 64 * 1024 * 1024;
 const MEMORY_BYTES: usize = 64 * 1024 * 1024;
@@ -81,6 +81,9 @@ pub enum ReplayError {
     /// Secret request controls could not be installed.
     #[error("offline replay request controls failed")]
     Controls(#[from] crawlx_core::CoreError),
+    /// Bounded difference-image encoding failed.
+    #[error("offline QA image encoding failed")]
+    Image(#[source] image::ImageError),
 }
 
 /// Recorded, distinct QA resource. Bytes stay in memory until the caller's content sink.
@@ -639,6 +642,121 @@ async fn serve(
     while connections.join_next().await.is_some() {}
 }
 
+enum ReplayRange {
+    Full,
+    Partial(std::ops::Range<usize>),
+    Unsatisfiable,
+}
+
+fn replay_range(request: &str, length: usize) -> ReplayRange {
+    let mut selected = None;
+    for line in request.split("\r\n").skip(1).take_while(|line| !line.is_empty()) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        // No origin validator survives replay transformation. If-Range cannot match.
+        if name.eq_ignore_ascii_case("if-range") {
+            return ReplayRange::Full;
+        }
+        if name.eq_ignore_ascii_case("range") {
+            if selected.is_some() {
+                return ReplayRange::Full;
+            }
+            selected = Some(value.trim());
+        }
+    }
+    let Some((unit, specification)) = selected.and_then(|value| value.split_once('=')) else {
+        return ReplayRange::Full;
+    };
+    if !unit.eq_ignore_ascii_case("bytes") || specification.contains(',') {
+        // RFC 9110 permits ignoring unsupported range units and multiple ranges.
+        return ReplayRange::Full;
+    }
+    let Some((start, end)) = specification.split_once('-') else {
+        return ReplayRange::Full;
+    };
+    let number = |text: &str| {
+        if !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()) {
+            text.parse::<usize>().ok()
+        } else {
+            None
+        }
+    };
+    if start.is_empty() {
+        let Some(suffix) = number(end) else {
+            return ReplayRange::Full;
+        };
+        if length == 0 || suffix == 0 {
+            return ReplayRange::Unsatisfiable;
+        }
+        return ReplayRange::Partial(length.saturating_sub(suffix)..length);
+    }
+    let Some(start) = number(start) else {
+        return ReplayRange::Full;
+    };
+    let end = if end.is_empty() {
+        length
+    } else {
+        let Some(end) = number(end) else {
+            return ReplayRange::Full;
+        };
+        if end < start {
+            return ReplayRange::Full;
+        }
+        end.saturating_add(1).min(length)
+    };
+    if start >= length {
+        ReplayRange::Unsatisfiable
+    } else {
+        ReplayRange::Partial(start..end)
+    }
+}
+
+struct RangeResponse<'a> {
+    status: u16,
+    body: &'a [u8],
+    content_range: String,
+    digest: std::borrow::Cow<'a, str>,
+}
+
+fn range_response<'a>(
+    request: &str,
+    method: &str,
+    status: u16,
+    body: &'a [u8],
+    entity_digest: &'a str,
+) -> RangeResponse<'a> {
+    let mut response = RangeResponse {
+        status,
+        body,
+        content_range: String::new(),
+        digest: std::borrow::Cow::Borrowed(entity_digest),
+    };
+    if method == "GET" && status == 200 {
+        match replay_range(request, body.len()) {
+            ReplayRange::Full => {}
+            ReplayRange::Partial(range) => {
+                response.status = 206;
+                response.content_range = format!(
+                    "Content-Range: bytes {}-{}/{}\r\n",
+                    range.start,
+                    range.end - 1,
+                    body.len()
+                );
+                response.body = &body[range];
+                response.digest = std::borrow::Cow::Owned(digest(response.body));
+            }
+            ReplayRange::Unsatisfiable => {
+                response.status = 416;
+                response.content_range = format!("Content-Range: bytes */{}\r\n", body.len());
+                response.digest = std::borrow::Cow::Borrowed(EMPTY_DIGEST.as_str());
+                response.body = &[];
+            }
+        }
+    }
+    response
+}
+
 async fn respond(
     mut socket: TcpStream,
     assets: &ServedAssets,
@@ -702,6 +820,12 @@ async fn respond(
             ),
         }
     };
+    let RangeResponse {
+        status,
+        body,
+        content_range,
+        digest: selected_digest,
+    } = range_response(text, method, status, body, entity_digest);
     {
         let approved_path = redacted_resource_path(path);
         let mut ledger = resources.lock();
@@ -719,7 +843,7 @@ async fn respond(
         let served_digest = if method == "HEAD" {
             EMPTY_DIGEST.as_str()
         } else {
-            entity_digest
+            selected_digest.as_ref()
         };
         ledger.events.push(ReplayResource {
             path: approved_path,
@@ -735,7 +859,7 @@ async fn respond(
     };
     // No archived Set-Cookie, Location, Refresh, CSP, auth or content-disposition survives.
     // Sandbox denies forms, popups and downloads; workers cannot spawn network clients.
-    let headers = format!("HTTP/1.1 {status} Replay\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; worker-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; sandbox allow-scripts allow-same-origin\r\n\r\n", body.len());
+    let headers = format!("HTTP/1.1 {status} Replay\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n{content_range}Accept-Ranges: bytes\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'self'; worker-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; sandbox allow-scripts allow-same-origin\r\n\r\n", body.len());
     socket.write_all(headers.as_bytes()).await?;
     if method != "HEAD" {
         socket.write_all(body).await?;
@@ -1135,6 +1259,90 @@ pub async fn replay(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn replay_ranges_bound_closed_open_suffix_and_invalid_requests() {
+        let request = |value| format!("GET / HTTP/1.1\r\nRange: {value}\r\n\r\n");
+        for (value, expected) in [
+            ("bytes=0-0", 0..1),
+            ("bytes=2-99", 2..10),
+            ("bytes=2-", 2..10),
+            ("bytes=-3", 7..10),
+            ("bytes=-99", 0..10),
+        ] {
+            assert!(matches!(replay_range(&request(value), 10),
+                ReplayRange::Partial(actual) if actual == expected));
+        }
+        for value in ["bytes=10-", "bytes=-0"] {
+            assert!(matches!(
+                replay_range(&request(value), 10),
+                ReplayRange::Unsatisfiable
+            ));
+        }
+        for value in [
+            "bytes=9-2",
+            "bytes=0-1,4-5",
+            "unknown=1-2",
+            "bytes=+0-2",
+            "bytes=0-x",
+        ] {
+            assert!(matches!(replay_range(&request(value), 10), ReplayRange::Full));
+        }
+        assert!(matches!(
+            replay_range(&request("bytes=0-"), 0),
+            ReplayRange::Unsatisfiable
+        ));
+        assert!(matches!(
+            replay_range(
+                "GET / HTTP/1.1\r\nRange: bytes=0-1\r\nIf-Range: \"old\"\r\n\r\n",
+                10
+            ),
+            ReplayRange::Full
+        ));
+        assert!(matches!(
+            replay_range(
+                "GET / HTTP/1.1\r\nRange: bytes=0-1\r\nRange: bytes=2-3\r\n\r\n",
+                10
+            ),
+            ReplayRange::Full
+        ));
+    }
+
+    #[tokio::test]
+    async fn authenticated_replay_serves_exact_ranges_and_records_selected_fixity() {
+        let mut server = Server::start(&archive()).await.unwrap();
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, server.scope.origin().port().unwrap()));
+        let request = |method: &str, range: &str| {
+            zeroize::Zeroizing::new(format!(
+                "{method} /r/0/ HTTP/1.1\r\nHost: {address}\r\n{ACCESS_HEADER}: {}\r\nRange: {range}\r\n\r\n",
+                server.access.value.expose()
+            ))
+        };
+        let response = exchange(address, &request("GET", "bytes=0-8")).await;
+        let split = response
+            .windows(4)
+            .position(|bytes| bytes == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        assert!(response.starts_with(b"HTTP/1.1 206"));
+        assert_eq!(&response[split..], b"<!doctype");
+        let header = std::str::from_utf8(&response[..split]).unwrap();
+        assert!(header.contains("Content-Range: bytes 0-8/"));
+        assert!(header.contains("Content-Length: 9\r\n"));
+        let event = server.resources.lock().events[0].clone();
+        assert_eq!(event.digest, digest(b"<!doctype"));
+        assert_eq!(event.recorded_status, None);
+        assert_eq!(event.status, 206);
+
+        let response = exchange(address, &request("GET", "bytes=99999-")).await;
+        assert!(response.starts_with(b"HTTP/1.1 416"));
+        assert!(response.ends_with(b"\r\n\r\n"));
+        assert_eq!(server.resources.lock().events[1].digest, *EMPTY_DIGEST);
+        let response = exchange(address, &request("HEAD", "bytes=0-8")).await;
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert!(response.ends_with(b"\r\n\r\n"));
+        server.stop().await.unwrap();
+    }
 
     #[test]
     fn url_filter_precedes_seeded_sampling_and_is_order_independent() {

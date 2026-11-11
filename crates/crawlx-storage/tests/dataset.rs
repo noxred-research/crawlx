@@ -175,6 +175,31 @@ where
             .state_version,
         1
     );
+    // Fail after accepted rows, state CAS and the first outbox row have been staged.
+    let mut late = commit(&run, leased[1].0.id, leased[1].1, &content, "late_rollback");
+    late.state_deltas[0].expected_version = 1;
+    late.outbox[1].feed = "undeclared".into();
+    assert!(matches!(
+        repo.commit_fenced(late).await,
+        Err(StoreError::Conflict(_))
+    ));
+    assert_eq!(repo.items(run.id, "items", 0, 100).await.unwrap().len(), 1);
+    assert_eq!(
+        repo.value(run.id, "state", "checkpoint")
+            .await
+            .unwrap()
+            .unwrap()
+            .version,
+        1,
+        "late outbox failure must roll back an otherwise valid CAS"
+    );
+    assert_eq!(
+        repo.get_request(run.id, leased[1].0.id)
+            .await
+            .unwrap()
+            .state_version,
+        1
+    );
     assert!(matches!(
         repo.compare_and_set(run.id, delta(&content, "state", 0)).await,
         Err(StoreError::Conflict(_))
@@ -356,6 +381,23 @@ async fn postgres_transactional_append_cas_fencing_retry_isolation_and_physical_
             "canary leaked into {table}"
         );
     }
+    let durable_payload: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM dataset_items WHERE run_id=$1 AND (payload IS NOT NULL OR volatile_page IS NULL)
+            UNION ALL
+            SELECT 1 FROM dataset_kv WHERE run_id=$1 AND (payload IS NOT NULL OR volatile_page IS NULL)
+            UNION ALL
+            SELECT 1 FROM dataset_delivery_outbox WHERE run_id=$1 AND (payload IS NOT NULL OR volatile_page IS NULL)
+        )",
+    )
+    .bind(pending.run.id.0)
+    .fetch_one(pg.pool())
+    .await
+    .unwrap();
+    assert!(
+        !durable_payload,
+        "ZDR item/KV/outbox metadata must remain volatile, not merely omit the byte canary"
+    );
     sqlx::query("UPDATE dataset_delivery_outbox SET not_before=now() WHERE run_id=$1 AND delivery_id=$2")
         .bind(pending.run.id.0)
         .bind(pending.receipt.id)
@@ -636,3 +678,9 @@ async fn memory_recovery_keysets_reach_runs_beyond_unavailable_first_page() {
         .unwrap()
         .is_empty());
 }
+
+#[path = "dataset/acceptance.rs"]
+mod acceptance;
+
+#[path = "dataset/digest_registry.rs"]
+mod digest_registry;

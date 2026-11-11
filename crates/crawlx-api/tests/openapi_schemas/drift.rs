@@ -255,7 +255,7 @@ struct Case {
     examples: Vec<Example>,
     /// Schema paths the parser reads without type-checking them.
     silent: &'static [&'static str],
-    /// `(alias pointer, pointer the parser blames)`.
+    /// `(alias pointer subtree, pointer the parser blames)`.
     aliases: &'static [(&'static str, &'static str)],
     /// Subtrees another case checks (the shared `ScrapeOptions`).
     skip: &'static [&'static str],
@@ -479,7 +479,12 @@ async fn run_case(rigs: &Rigs, doc: &Value, case: &Case) {
             let blamed = case
                 .aliases
                 .iter()
-                .find(|(from, _)| *from == n.pointer)
+                .find(|(from, _)| {
+                    *from == n.pointer
+                        || n.pointer
+                            .strip_prefix(*from)
+                            .is_some_and(|suffix| suffix.starts_with('/'))
+                })
                 .map_or(n.pointer.as_str(), |(_, to)| *to);
             if !reported_at(&r.details, blamed) {
                 unread.push(format!("{} (as {bad}: {} {:?})", n.pointer, r.status, r.details));
@@ -565,6 +570,21 @@ fn scrape_options_examples() -> Vec<Value> {
         json!({ "formats": [{ "type": "rawBase64" }], "lockdown": true, "zeroDataRetention": true }),
         json!({ "proxy": "auto", "redactPII": { "mode": "aggressive", "replaceStyle": "mask" } }),
         json!({ "redactPII": { "mode": "fast", "replaceStyle": "remove" } }),
+        json!({
+            "outputs": {
+                "targetElements": ["main"], "discoveryScope": "selected",
+                "rawHtml": true, "cleanedHtml": true, "tables": true,
+                "fit": {"strategy": "pruning", "thresholdPermille": 0, "minWords": 0, "maxOperations": 100000},
+                "citations": "fit", "linkMedia": {"maxPreviews": 0, "minPreviewScore": 600}
+            },
+            "decode": {"declaredCharset": "utf-8"},
+            "markup": {"comments": true, "cdata": true}
+        }),
+        json!({"outputs": {
+            "discoveryScope": "whole_page", "citations": "cleaned",
+            "fit": {"strategy": "bm25", "query": "local article", "k1Milli": 1200,
+                "bMilli": 750, "thresholdMilli": 250, "minWords": 0, "maxOperations": 100000}
+        }}),
     ]
 }
 
@@ -604,6 +624,11 @@ fn scrape_case() -> Case {
         .collect();
     let mut c = case("compatScrape", Target::Scrape, examples);
     c.silent = SCRAPE_SILENT;
+    c.aliases = &[
+        ("/outputs", "/outputs"),
+        ("/decode", "/decode"),
+        ("/markup", "/markup"),
+    ];
     c.reports_unknown = true;
     c
 }
@@ -629,6 +654,11 @@ fn batch_case() -> Case {
         .collect();
     let mut c = case("compatBatchScrape", Target::Batch, examples);
     c.reports_unknown = true;
+    c.aliases = &[
+        ("/outputs", "/outputs"),
+        ("/decode", "/decode"),
+        ("/markup", "/markup"),
+    ];
     c.silent = &[
         "/extract/schema",
         "/extract/prompt",
@@ -703,6 +733,9 @@ fn crawl_case() -> Case {
     c.aliases = &[
         ("/maxDepth", "/maxDiscoveryDepth"),
         ("/allowBackwardLinks", "/crawlEntireDomain"),
+        ("/scrapeOptions/outputs", "/scrapeOptions/outputs"),
+        ("/scrapeOptions/decode", "/scrapeOptions/decode"),
+        ("/scrapeOptions/markup", "/scrapeOptions/markup"),
     ];
     c
 }
@@ -1277,5 +1310,662 @@ fn native_content_policy_schema_matches_parser_and_extraction_behavior() {
                 .any(|detail| detail.path.starts_with("/contentPolicy")),
             "{details:?}"
         );
+    }
+}
+
+#[test]
+fn native_output_schema_matches_option_validation_and_run_mapping() {
+    let document = doc();
+    let schema = case_schema(&document, "compatScrape");
+    let validate = validator(&document, &schema);
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, native_schema) = request_schema(operation).unwrap();
+    let native_validate = validator(&document, &native_schema);
+    for options in [
+        json!({}),
+        json!({"outputs": {}}),
+        json!({"outputs": {"rawHtml": true, "tables": true, "citations": "selected"}}),
+        json!({"decode": {}, "markup": {"comments": true, "cdata": false}}),
+        json!({"outputs": {
+            "targetElements": ["main"], "discoveryScope": "selected",
+            "fit": {"strategy": "pruning", "thresholdPermille": 0}, "citations": "fit"
+        }}),
+    ] {
+        let request = with(json!({"url": "https://fixture.example.test/article"}), &options);
+        assert!(errors_of(&validate, &request).is_empty(), "{request}");
+        let native_request = json!({"seedUrl": "https://fixture.example.test/article", "extract": options});
+        assert!(
+            errors_of(&native_validate, &native_request).is_empty(),
+            "{native_request}"
+        );
+        let native: crawlx_core::CreateCrawl = serde_json::from_value(native_request).unwrap();
+        assert_eq!(native.extract.outputs.as_ref(), options.get("outputs"));
+        assert_eq!(native.extract.decode.as_ref(), options.get("decode"));
+        assert_eq!(native.extract.markup.as_ref(), options.get("markup"));
+        let parsed =
+            crawlx_api::scrape_service::parse_scrape_options_in(request.as_object().unwrap(), "", &["url"])
+                .unwrap();
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        let mut crawl =
+            crawlx_core::CreateCrawl::new("https://fixture.example.test/article".parse().unwrap());
+        parsed
+            .apply(&mut crawl, crawlx_core::scrape::JobKind::Scrape)
+            .unwrap();
+        assert_eq!(crawl.extract.outputs.as_ref(), options.get("outputs"));
+        assert_eq!(crawl.extract.decode.as_ref(), options.get("decode"));
+        assert_eq!(crawl.extract.markup.as_ref(), options.get("markup"));
+    }
+    for options in [
+        json!({"outputs": {"unknown": true}}),
+        json!({"outputs": {"rawHtml": "yes"}}),
+        json!({"outputs": {"fit": {"strategy": "unknown"}}}),
+        json!({"outputs": {"fit": {"strategy": "pruning", "thresholdPermille": 1001}}}),
+        json!({"outputs": {"linkMedia": {"maxPreviews": 33}}}),
+        json!({"decode": {"declaredCharset": 7}}),
+        json!({"markup": {"comments": "collect"}}),
+    ] {
+        let request = with(json!({"url": "https://fixture.example.test/article"}), &options);
+        assert!(!errors_of(&validate, &request).is_empty(), "{request}");
+        assert!(
+            crawlx_api::scrape_service::parse_scrape_options_in(request.as_object().unwrap(), "", &["url"],)
+                .is_err(),
+            "{request}"
+        );
+    }
+    for outputs in [json!({"targetElements": ["["]}), json!({"citations": "fit"})] {
+        let request = json!({"outputs": outputs});
+        let details =
+            crawlx_api::scrape_service::parse_scrape_options(request.as_object().unwrap(), "").unwrap_err();
+        assert!(
+            details.iter().any(|detail| detail.path == "/outputs"),
+            "{details:?}"
+        );
+    }
+}
+
+#[test]
+fn archive_rollover_schema_matches_native_config_bounds_and_format() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["output"]["properties"]["archive"].clone();
+    assert!(schema.is_object(), "archive configuration schema is missing");
+    let validate = validator(&document, &schema);
+    for value in [
+        json!({"format": "wacz", "rolloverBytes": 4096, "maxBytes": 8192, "maxRecordBytes": 4096}),
+        json!({"rolloverBytes": 1}),
+    ] {
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let config: crawlx_core::archive::ArchiveConfigV1 = serde_json::from_value(value).unwrap();
+        config.validate().unwrap();
+    }
+    for value in [
+        json!({"format": "warc", "rolloverBytes": 4096}),
+        json!({"rolloverBytes": 0}),
+        json!({"rolloverBytes": 1073741825u64}),
+        json!({"maxBytes": 8192}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        let config: crawlx_core::archive::ArchiveConfigV1 = serde_json::from_value(value).unwrap();
+        assert!(config.validate().is_err());
+    }
+    let config: crawlx_core::archive::ArchiveConfigV1 =
+        serde_json::from_value(json!({"rolloverBytes": 4096, "maxBytes": 2048, "maxRecordBytes": 1024}))
+            .unwrap();
+    assert!(
+        config.max_record_bytes <= config.max_bytes,
+        "isolate rollover from record budget refusal"
+    );
+    assert!(
+        config.validate().is_err(),
+        "cross-field rollover budget must fail at admission"
+    );
+    let config: crawlx_core::archive::ArchiveConfigV1 =
+        serde_json::from_value(json!({"maxBytes": 2048, "maxRecordBytes": 4096})).unwrap();
+    assert!(
+        config.validate().is_err(),
+        "one record must fit inside the total archive budget"
+    );
+}
+
+#[test]
+fn browser_capture_schema_matches_native_evidence_bounds() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["capture"]["properties"]["browser"].clone();
+    assert!(schema.is_object(), "browser evidence schema is missing");
+    let validate = validator(&document, &schema);
+    for value in [
+        json!({}),
+        json!({
+            "xhr": {"urlPatterns": ["https://fixture.example.test/api/*"], "maxRecords": 32, "maxBytes": 4096},
+            "diagnostics": {"maxRecords": 64, "maxBytes": 8192},
+            "mhtml": true, "pdf": true, "phaseResources": true,
+            "downloads": [{"url": "https://fixture.example.test/report.pdf", "maxBytes": 1048576, "timeoutMs": 30000}]
+        }),
+    ] {
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let config: crawlx_core::browser_capture::BrowserEvidenceConfig =
+            serde_json::from_value(value).unwrap();
+        config.validate().unwrap();
+    }
+    for value in [
+        json!({"xhr": {"urlPatterns": [], "maxRecords": 1, "maxBytes": 1}}),
+        json!({"xhr": {"urlPatterns": ["*"], "maxRecords": 5001, "maxBytes": 1}}),
+        json!({"diagnostics": {"maxRecords": 1, "maxBytes": 8388609}}),
+        json!({"downloads": [{"url": "https://fixture.example.test/a", "maxBytes": 0, "timeoutMs": 1}]}),
+        json!({"downloads": [{"url": "https://fixture.example.test/a", "maxBytes": 1, "timeoutMs": 120001}]}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        let config: crawlx_core::browser_capture::BrowserEvidenceConfig =
+            serde_json::from_value(value).unwrap();
+        assert!(config.validate().is_err());
+    }
+    for value in [
+        json!({"filePath": "/untrusted"}),
+        json!({"xhr": {"urlPatterns": ["*"]}}),
+        json!({"pdf": "yes"}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        assert!(
+            serde_json::from_value::<crawlx_core::browser_capture::BrowserEvidenceConfig>(value).is_err()
+        );
+    }
+}
+
+#[test]
+fn native_fetch_control_schema_matches_typed_control_validation() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["fetch"].clone();
+    let validate = validator(&document, &schema);
+    for value in [
+        json!({}),
+        json!({"preflight": {}, "declaration": {}, "oversize": "truncate"}),
+        json!({
+            "preflight": {"maxContentLength": 4096, "contentTypes": ["text/html"]},
+            "declaration": {"contentType": "text/html", "charset": "utf-8",
+                "statuses": {"allow": [404], "deny": [500]}},
+            "oversize": "refuse"
+        }),
+    ] {
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let fetch: crawlx_core::config::Fetch = serde_json::from_value(value).unwrap();
+        if let Some(preflight) = fetch.preflight {
+            preflight.validate().unwrap();
+        }
+        if let Some(declaration) = fetch.declaration {
+            declaration.validate().unwrap();
+        }
+    }
+    for value in [
+        json!({"preflight": {"maxContentLength": 0}}),
+        json!({"preflight": {"contentTypes": ["text/html; charset=utf-8"]}}),
+        json!({"declaration": {"charset": " "}}),
+        json!({"declaration": {"statuses": {"allow": [600]}}}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        let fetch: crawlx_core::config::Fetch = serde_json::from_value(value).unwrap();
+        assert!(
+            fetch.preflight.is_some_and(|control| control.validate().is_err())
+                || fetch
+                    .declaration
+                    .is_some_and(|control| control.validate().is_err())
+        );
+    }
+    for value in [
+        json!({"oversize": "ignore"}),
+        json!({"preflight": {"unknown": true}}),
+        json!({"declaration": {"statuses": {"allow": "all"}}}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        assert!(serde_json::from_value::<crawlx_core::config::Fetch>(value).is_err());
+    }
+    let conflicting: crawlx_core::acquisition::ResponseDeclaration =
+        serde_json::from_value(json!({"statuses": {"allow": [404], "deny": [404]}})).unwrap();
+    assert!(
+        conflicting.validate().is_err(),
+        "status conflicts must fail runtime admission"
+    );
+}
+
+#[test]
+fn archive_dedupe_schema_matches_native_modes_and_omission() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["output"]["properties"]["archive"].clone();
+    let validate = validator(&document, &schema);
+    for mode in ["none", "collection", "tenant"] {
+        let value = json!({"dedupe": mode});
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let config: crawlx_core::archive::ArchiveConfigV1 = serde_json::from_value(value).unwrap();
+        config.validate().unwrap();
+        let expected: crawlx_core::archive::ArchiveDedupe = serde_json::from_value(json!(mode)).unwrap();
+        assert_eq!(config.dedupe, expected);
+        let serialized = serde_json::to_value(config).unwrap();
+        if mode == "none" {
+            assert!(serialized.get("dedupe").is_none());
+            assert_eq!(
+                serialized,
+                serde_json::to_value(crawlx_core::archive::ArchiveConfigV1::default()).unwrap()
+            );
+        } else {
+            assert_eq!(serialized["dedupe"], mode);
+        }
+        let restored: crawlx_core::archive::ArchiveConfigV1 = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored.dedupe, expected);
+    }
+    let config: crawlx_core::archive::ArchiveConfigV1 = serde_json::from_value(json!({})).unwrap();
+    assert!(serde_json::to_value(config).unwrap().get("dedupe").is_none());
+    for value in [
+        json!({"dedupe": "global"}),
+        json!({"dedupe": true}),
+        json!({"dedupe": null}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        assert!(serde_json::from_value::<crawlx_core::archive::ArchiveConfigV1>(value).is_err());
+    }
+}
+
+#[test]
+fn source_memo_policy_schema_matches_native_bounds_and_defaults() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["scope"]["properties"]["discovery"].clone();
+    let validate = validator(&document, &schema);
+    for value in [
+        json!({}),
+        json!({"articleMemo": {"enabled": true, "maxEntries": 100000},
+            "categoryCache": {"enabled": false, "ttlSeconds": 604800}}),
+    ] {
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let policy: crawlx_core::discovery::SourceDiscoveryPolicyV1 = serde_json::from_value(value).unwrap();
+        policy.validate().unwrap();
+    }
+    let defaults: crawlx_core::discovery::SourceDiscoveryPolicyV1 =
+        serde_json::from_value(json!({})).unwrap();
+    assert!(!defaults.article_memo.enabled);
+    assert_eq!(defaults.article_memo.max_entries, 20000);
+    assert!(defaults.category_cache.enabled);
+    assert_eq!(defaults.category_cache.ttl_seconds, 86400);
+    for value in [
+        json!({"articleMemo": {"maxEntries": 0}}),
+        json!({"articleMemo": {"maxEntries": 100001}}),
+        json!({"categoryCache": {"ttlSeconds": 0}}),
+        json!({"categoryCache": {"ttlSeconds": 604801}}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        let policy: crawlx_core::discovery::SourceDiscoveryPolicyV1 = serde_json::from_value(value).unwrap();
+        assert!(policy.validate().is_err());
+    }
+    for value in [
+        json!({"articleMemo": {"enabled": "yes"}}),
+        json!({"categoryCache": {"unknown": true}}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        assert!(serde_json::from_value::<crawlx_core::discovery::SourceDiscoveryPolicyV1>(value).is_err());
+    }
+}
+
+#[test]
+fn native_dataset_import_schema_matches_strict_parser_and_inspection_report() {
+    use crawlx_core::dataset::import::DatasetImportV1;
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "importDataset");
+    let (_, schema) = request_schema(operation).unwrap();
+    let validate = validator(&document, &schema);
+    let export = json!({
+        "version": 1,
+        "source": {"backend": "filesystem", "version": "1.0", "experimental": false, "dedupe": "exact"},
+        "policy": {"purgeOnStart": false, "sharedFilesystemQueue": false, "authoritativeBackend": "postgre_sql"},
+        "dataset": "records", "schemaVersion": "json_object_v1", "batch": "batch-1",
+        "items": [{"key": "one", "value": {"text": "local imported record"}}]
+    });
+    for (backend, experimental, dedupe) in [
+        ("memory", false, "exact"),
+        ("filesystem", false, "exact"),
+        ("postgre_sql", false, "exact"),
+        ("sqlite", true, "approximate"),
+        ("maria_db", true, "exact"),
+        ("redis", true, "approximate"),
+    ] {
+        let mut value = export.clone();
+        value["source"] =
+            json!({"backend":backend,"version":"1.0","experimental":experimental,"dedupe":dedupe});
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let report = DatasetImportV1::parse(&serde_json::to_vec(&value).unwrap())
+            .unwrap()
+            .inspect();
+        assert!(!report.complete_coverage);
+        assert_eq!(report.possible_omissions, dedupe == "approximate");
+    }
+    for (pointer, bad) in [
+        ("/version", json!(2)),
+        ("/schemaVersion", json!("unknown")),
+        ("/items", json!([])),
+        ("/items/0/value", json!("not an object")),
+        ("/items/0/key", json!("invalid/key")),
+        ("/source/backend", json!("unknown")),
+    ] {
+        let mut value = export.clone();
+        *value.pointer_mut(pointer).unwrap() = bad;
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        assert!(DatasetImportV1::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+    let mut incompatible = export;
+    incompatible["policy"]["purgeOnStart"] = json!(true);
+    let report = DatasetImportV1::parse(&serde_json::to_vec(&incompatible).unwrap())
+        .unwrap()
+        .inspect();
+    let response = json!({"data":report});
+    let schema = response_schema(operation, "422").unwrap();
+    assert!(
+        errors_of(&validator(&document, &schema), &response).is_empty(),
+        "{response}"
+    );
+    let parameters = operation["parameters"].as_array().unwrap();
+    for name in ["requestId", "fence", "stateVersion"] {
+        let parameter = parameters
+            .iter()
+            .find(|parameter| parameter["name"] == name)
+            .unwrap();
+        assert_eq!(parameter["in"], "query");
+        assert_eq!(parameter["required"], true);
+        assert_eq!(parameter["schema"]["minimum"], 1);
+    }
+}
+
+#[test]
+fn native_archive_behavior_and_fill_schema_match_typed_options_without_facade_aliases() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["scrape"]["properties"]["options"].clone();
+    let validate = validator(&document, &schema);
+    let reference =
+        json!({"id":"local.recipe-1","version":1,"digest":"0".repeat(64),"phase":"post_navigation"});
+    let options = json!({"archiveBehavior":reference});
+    assert!(errors_of(&validate, &options).is_empty());
+    let native: crawlx_core::scrape::ScrapeOptions = serde_json::from_value(options).unwrap();
+    native.validate().unwrap();
+    assert!(native.needs_browser());
+    for (field, value) in [
+        ("id", json!("bad/id")),
+        ("version", json!(0)),
+        ("digest", json!("invalid")),
+        ("phase", json!("before_page_scripts")),
+        ("unknown", json!(true)),
+    ] {
+        let mut bad = reference.clone();
+        bad[field] = value;
+        assert!(
+            !errors_of(&validate, &json!({"archiveBehavior":bad})).is_empty(),
+            "{bad}"
+        );
+        let accepted = serde_json::from_value::<crawlx_core::archive_behaviors::RecipeReferenceV1>(bad)
+            .is_ok_and(|reference| reference.validate().is_ok());
+        assert!(!accepted);
+    }
+    for overrides in [
+        json!({"actions":[{"type":"fill","selector":"#entry","text":"local text"}]}),
+        json!({"mobile":true}),
+        json!({"location":{"country":"US","languages":[]}}),
+        json!({"waitForMs":1}),
+    ] {
+        let mut options = overrides;
+        options["archiveBehavior"] = reference.clone();
+        assert!(!errors_of(&validate, &options).is_empty(), "{options}");
+        let native: crawlx_core::scrape::ScrapeOptions = serde_json::from_value(options).unwrap();
+        assert!(native.validate().is_err());
+    }
+    let fill = json!({"actions":[{"type":"fill","selector":"#entry","text":"local text"}]});
+    assert!(errors_of(&validate, &fill).is_empty());
+    let native: crawlx_core::scrape::ScrapeOptions = serde_json::from_value(fill.clone()).unwrap();
+    native.validate().unwrap();
+    assert!(matches!(
+        native.actions[0],
+        crawlx_core::scrape::ScrapeAction::Fill { .. }
+    ));
+    let details =
+        crawlx_api::scrape_service::parse_scrape_options(fill.as_object().unwrap(), "").unwrap_err();
+    assert!(
+        details.iter().any(|detail| detail.path.starts_with("/actions/0")),
+        "native fill must not become a facade alias: {details:?}"
+    );
+}
+
+#[test]
+fn native_feed_schema_matches_selection_compression_parameters_and_defaults() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema =
+        resolve(&document, &request)["properties"]["datasets"]["properties"]["feeds"]["items"].clone();
+    let validate = validator(&document, &schema);
+    let base = json!({
+        "id":"local-feed","source":"records","serializer":"json","serializerVersion":1,
+        "destination":"approved-destination","maxBatchItems":100,"maxBatchBytes":4096
+    });
+    let config = |feed: &Value| {
+        serde_json::from_value::<crawlx_core::dataset::DatasetConfigV1>(json!({
+            "stores":[{"name":"records","schemaVersion":"document_item_v1","maxItems":1000,"maxBytes":1048576}],
+            "feeds":[feed]
+        }))
+    };
+    let defaults: crawlx_core::dataset::FeedDeclarationV1 = serde_json::from_value(base.clone()).unwrap();
+    let defaults = serde_json::to_value(defaults).unwrap();
+    assert_eq!(defaults["compression"], "none");
+    assert_eq!(defaults["batching"], "per_request");
+    assert_eq!(defaults["emptyPolicy"], "skip");
+    assert_eq!(defaults["itemFilter"]["all"], json!([]));
+    assert_eq!(defaults["parameters"], json!({"csvColumns":[],"jsonIndent":0}));
+    for compression in ["none", "gzip", "bzip2", "xz"] {
+        let mut feed = base.clone();
+        feed["compression"] = json!(compression);
+        feed["batching"] = json!("terminal");
+        feed["emptyPolicy"] = json!("emit");
+        feed["itemFilter"] = json!({"all":[
+            {"kind":"present","field":"title"},
+            {"kind":"equals","field":"published","value":true}
+        ]});
+        feed["parameters"] = json!({"jsonIndent":2});
+        assert!(errors_of(&validate, &feed).is_empty(), "{feed}");
+        config(&feed).unwrap().validate().unwrap();
+    }
+    let mut csv = base.clone();
+    csv["serializer"] = json!("csv");
+    csv["parameters"] = json!({"csvColumns":["title","published"]});
+    assert!(errors_of(&validate, &csv).is_empty());
+    config(&csv).unwrap().validate().unwrap();
+    for (field, bad) in [
+        ("compression", json!("unknown")),
+        ("batching", json!("unknown")),
+        ("emptyPolicy", json!("unknown")),
+        (
+            "itemFilter",
+            json!({"all":[{"kind":"equals","field":"title","value":{}}]}),
+        ),
+        (
+            "itemFilter",
+            json!({"all":[{"kind":"present","field":"bad/field"}]}),
+        ),
+        ("parameters", json!({"jsonIndent":9})),
+        ("parameters", json!({"csvColumns":["title"]})),
+        ("parameters", json!({"plugin":"unapproved"})),
+    ] {
+        let mut feed = base.clone();
+        feed[field] = bad;
+        assert!(!errors_of(&validate, &feed).is_empty(), "{feed}");
+        assert!(!config(&feed).is_ok_and(|config| config.validate().is_ok()));
+    }
+}
+
+#[test]
+fn native_crawl_strategy_schema_matches_aliases_and_breadth_first_default() {
+    use crawlx_core::config::{CrawlStrategy, CreateCrawl};
+
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request);
+    let strategy_schema = &schema["properties"]["scope"]["properties"]["strategy"];
+    let validate = validator(&document, schema);
+    assert_eq!(strategy_schema["default"], "breadth_first");
+    for request in [
+        json!({"seedUrl": "https://fixture.example.test/"}),
+        json!({"seedUrl": "https://fixture.example.test/", "scope": {}}),
+    ] {
+        assert!(errors_of(&validate, &request).is_empty(), "{request}");
+        let mut crawl: CreateCrawl = serde_json::from_value(request).unwrap();
+        crawl.normalize().unwrap();
+        assert_eq!(crawl.scope.strategy, CrawlStrategy::BreadthFirst);
+        assert_eq!(
+            serde_json::to_value(crawl.scope.strategy).unwrap(),
+            strategy_schema["default"]
+        );
+    }
+    for (spellings, expected, canonical) in [
+        (
+            &["breadth_first", "bfs", "breadth-first"][..],
+            CrawlStrategy::BreadthFirst,
+            "breadth_first",
+        ),
+        (
+            &["depth_first", "dfs", "depth-first"][..],
+            CrawlStrategy::DepthFirst,
+            "depth_first",
+        ),
+        (&["priority"][..], CrawlStrategy::Priority, "priority"),
+    ] {
+        for spelling in spellings {
+            let request = json!({
+                "seedUrl": "https://fixture.example.test/",
+                "scope": {"strategy": spelling}
+            });
+            assert!(errors_of(&validate, &request).is_empty(), "{request}");
+            let crawl: CreateCrawl = serde_json::from_value(request).unwrap();
+            assert_eq!(crawl.scope.strategy, expected);
+            assert_eq!(serde_json::to_value(crawl.scope.strategy).unwrap(), canonical);
+        }
+    }
+    for strategy in [json!("unknown"), json!(null), json!(1)] {
+        let request = json!({
+            "seedUrl": "https://fixture.example.test/",
+            "scope": {"strategy": strategy}
+        });
+        assert!(!errors_of(&validate, &request).is_empty(), "{request}");
+        assert!(serde_json::from_value::<CreateCrawl>(request).is_err());
+    }
+}
+
+#[test]
+fn native_page_revisit_schema_matches_bounds_and_hash_preserving_default() {
+    let document = doc();
+    let (_, _, operation) = op_by_id(&document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let schema = resolve(&document, &request)["properties"]["dynamic"].clone();
+    let validate = validator(&document, &schema);
+    let defaults = crawlx_core::config::Dynamic::default();
+    assert_eq!(defaults.max_page_revisits, 8);
+    assert!(serde_json::to_value(defaults)
+        .unwrap()
+        .get("maxPageRevisits")
+        .is_none());
+    for cap in [0, 8, 128] {
+        let value = json!({"maxPageRevisits":cap});
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let dynamic: crawlx_core::config::Dynamic = serde_json::from_value(value).unwrap();
+        assert_eq!(dynamic.max_page_revisits, cap);
+        let serialized = serde_json::to_value(dynamic).unwrap();
+        if cap == 8 {
+            assert!(serialized.get("maxPageRevisits").is_none());
+        } else {
+            assert_eq!(serialized["maxPageRevisits"], cap);
+        }
+    }
+    for value in [
+        json!({"maxPageRevisits":-1}),
+        json!({"maxPageRevisits":129}),
+        json!({"maxPageRevisits":"unbounded"}),
+    ] {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+    }
+    let mut crawl = crawlx_core::CreateCrawl::new("https://fixture.example.test/article".parse().unwrap());
+    crawl.dynamic.max_page_revisits = 129;
+    assert!(
+        crawl.normalize().is_err(),
+        "excessive revisit caps must fail native admission"
+    );
+}
+
+#[test]
+fn archive_response_schemas_preserve_custody_source_authority_and_revisit_closure() {
+    use crawlx_core::archive_catalog::{ArchiveCustodyV1, ArchiveExportV1, ArchiveRecordV1};
+    let document = doc();
+    let (_, _, export_operation) = op_by_id(&document, "getArchive");
+    let export_schema = response_schema(export_operation, "200").unwrap();
+    let export_validate = validator(&document, &export_schema);
+    let (_, _, record_operation) = op_by_id(&document, "listArchiveRecords");
+    let record_schema = response_schema(record_operation, "200").unwrap();
+    let record_validate = validator(&document, &record_schema);
+    let id = "00000000-0000-4000-8000-000000000001";
+    let timestamp = "2026-11-01T00:00:00Z";
+    let expiry = "2026-12-01T00:00:00Z";
+    let artifact = json!({"id":id,"digest":"0".repeat(64)});
+    let custody = json!({"sensitivity":"sensitive","expiresAt":expiry});
+    let manifest = json!({
+        "schemaVersion":1,"tenant":id,"run":id,"created":timestamp,"complete":false,
+        "records":1,"custody":custody,"materializedDependencies":1,"omissions":[]
+    });
+    let export: ArchiveExportV1 = serde_json::from_value(json!({
+        "id":id,"tenant":id,"run":id,"config":{},"state":"published",
+        "createdAt":timestamp,"expiresAt":expiry,"custody":custody,
+        "fence":1,"leaseUntil":expiry,"records":1,"bytes":128,
+        "artifact":artifact,"index":null,"manifest":manifest,
+        "terminalReason":"frontier_exhausted","failure":null
+    }))
+    .unwrap();
+    let export = serde_json::to_value(export).unwrap();
+    assert!(errors_of(&export_validate, &export).is_empty(), "{export}");
+    let record: ArchiveRecordV1 = serde_json::from_value(json!({
+        "export":id,"ordinal":0,"recordId":"urn:uuid:00000000-0000-4000-8000-000000000001",
+        "artifact":artifact,"sourceArtifact":artifact,"offset":0,"length":128,
+        "payloadDigest":format!("sha256:{}", "0".repeat(64)),
+        "target":"https://fixture.example.test/article","mime":"text/html","dependency":null,
+        "custody":custody,
+        "facts":{
+            "captureSource":"retained_page_html","sourceProtocol":null,"representation":"rendered_dom",
+            "bodyState":"complete","redactionRevision":"fixture-v1","transformations":[],
+            "sourceEvent":"fixture:1","capturedAt":timestamp
+        },
+        "payloadKey":{
+            "principal":"fixture-principal","variant":"0".repeat(64),"representation":"rendered_dom",
+            "redactionRevision":"fixture-v1","mime":"text/html"
+        }
+    }))
+    .unwrap();
+    let record = serde_json::to_value(record).unwrap();
+    let response = json!({"records":[record],"next":null});
+    assert!(errors_of(&record_validate, &response).is_empty(), "{response}");
+    let mut missing_source = response;
+    missing_source["records"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("sourceArtifact");
+    assert!(!errors_of(&record_validate, &missing_source).is_empty());
+    let custody_schema = resolve(&document, &export_schema)["properties"]["custody"].clone();
+    let custody_validate = validator(&document, &custody_schema);
+    let now: crawlx_core::Timestamp = timestamp.parse().unwrap();
+    for invalid in [
+        json!({"sensitivity":"metadata","expiresAt":expiry}),
+        json!({"sensitivity":"sensitive","expiresAt":null}),
+    ] {
+        assert!(!errors_of(&custody_validate, &invalid).is_empty(), "{invalid}");
+        let custody: ArchiveCustodyV1 = serde_json::from_value(invalid).unwrap();
+        assert!(custody.validate(now).is_err());
     }
 }

@@ -16,7 +16,7 @@
 //!   with `deduplicateSimilarURLs`), no `robots.txt` gate for `scrape` and `batch` jobs
 //!   (the compatibility API scrapes the URLs it is given) and no seed-path restriction for `batch` jobs.
 
-use super::{Future, NativeHopAdmission, RequestSource, UrlPlaneRunner};
+use super::{Future, NativeHopAdmission, RequestPublication, RequestSource, UrlPlaneRunner};
 use crate::counters::{Attempt, Plane};
 use crate::error::WorkerError;
 use crate::run::RunContext;
@@ -299,6 +299,8 @@ impl UrlPlaneRunner {
                     final_url,
                     mut accepted,
                     mut outbox,
+                    content_dedupe,
+                    local_dedupe,
                 } = *page;
                 if let Some(reason) = discovery {
                     if engine.kind() == JobKind::Crawl && self.crawl.scope.sitemap != SitemapMode::Only {
@@ -331,6 +333,7 @@ impl UrlPlaneRunner {
                         let run = self.deps.runs.get(self.run).await?;
                         let (content, accepted, outbox) = crate::extensions::store_candidate(
                             self.deps.artifacts.as_ref(),
+                            &self.cpu_pool,
                             &run,
                             entry.id,
                             item,
@@ -343,6 +346,7 @@ impl UrlPlaneRunner {
                             })?,
                         )
                         .await?;
+                        record.metadata["itemPipeline"] = serde_json::json!({"accepted":1,"rejected":0});
                         record.metadata["extensions"] = serde_json::json!({"version":1,"content":content,
                             "pipeline":self.crawl.extensions.publication().map_err(|e| WorkerError::Config(e.to_string()))?});
                         (accepted.into_iter().collect(), outbox)
@@ -365,6 +369,18 @@ impl UrlPlaneRunner {
                             )
                             .await;
                     } else {
+                        if record
+                            .metadata
+                            .get(crawlx_core::scrape::ScrapeDocument::METADATA_KEY)
+                            .and_then(|value| value.get("meta"))
+                            .and_then(|value| value.get("extensionOutcome"))
+                            .and_then(serde_json::Value::as_str)
+                            == Some("rejected")
+                        {
+                            record.metadata["itemPipeline"] = serde_json::json!({
+                                "accepted":0,"rejected":1,"reason":"extension_item_rejected"
+                            });
+                        }
                         (Vec::new(), Vec::new())
                     }
                 } else {
@@ -395,7 +411,13 @@ impl UrlPlaneRunner {
                     None,
                     accepted,
                     Vec::new(),
-                    (outbox, Some(record)),
+                    RequestPublication {
+                        outbox,
+                        page: Some(record),
+                        content_dedupe,
+                        local_dedupe,
+                        ..RequestPublication::default()
+                    },
                 )
                 .await?;
                 *self.pages_written.lock() += 1;

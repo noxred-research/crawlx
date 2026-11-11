@@ -152,6 +152,14 @@ name = "Fetch.continueRequest"
 requires = "skip"
 
 [[commands]]
+name = "Fetch.continueResponse"
+requires = "skip"
+
+[[commands]]
+name = "Fetch.disable"
+requires = "page"
+
+[[commands]]
 name = "Fetch.enable"
 requires = "page"
 params = { patterns = [] }
@@ -159,6 +167,20 @@ params = { patterns = [] }
 [[commands]]
 name = "Fetch.failRequest"
 requires = "skip"
+
+[[commands]]
+name = "Fetch.takeResponseBodyAsStream"
+requires = "skip"
+
+[[commands]]
+name = "IO.close"
+requires = "page"
+params = { handle = "crawlx-cdp-surface" }
+
+[[commands]]
+name = "IO.read"
+requires = "page"
+params = { handle = "crawlx-cdp-surface", size = 1 }
 
 [[commands]]
 name = "Input.dispatchDragEvent"
@@ -224,6 +246,11 @@ requires = "page"
 params = { format = "png" }
 
 [[commands]]
+name = "Page.captureSnapshot"
+requires = "page"
+params = { format = "mhtml" }
+
+[[commands]]
 name = "Page.createIsolatedWorld"
 requires = "page"
 
@@ -237,6 +264,10 @@ requires = "page"
 
 [[commands]]
 name = "Page.getLayoutMetrics"
+requires = "page"
+
+[[commands]]
+name = "Page.getResourceTree"
 requires = "page"
 
 [[commands]]
@@ -257,6 +288,10 @@ requires = "page"
 name = "Page.setLifecycleEventsEnabled"
 requires = "page"
 params = { enabled = true }
+
+[[commands]]
+name = "Page.stopLoading"
+requires = "page"
 
 [[commands]]
 name = "Runtime.callFunctionOn"

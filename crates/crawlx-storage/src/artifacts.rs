@@ -20,6 +20,7 @@ use crate::spool::UploadSpool;
 use crate::zdr::DeliveryBuffer;
 use async_trait::async_trait;
 use bytes::Bytes;
+use crawlx_core::archive_catalog::ArchiveCustodyV1;
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
@@ -35,6 +36,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
+mod publish;
+pub use publish::AnonymousArtifactFile;
 mod sealed;
 
 use crate::artifact_custody::{ciphertext_bound, ArtifactCustody, CustodyWrites};
@@ -117,6 +120,14 @@ pub trait ArtifactBlobs: Send + Sync {
     async fn put_shared(&self, key: &str, bytes: Bytes) -> Result<(), StoreError> {
         self.put(key, &bytes).await
     }
+    /// Publish immutable artifact bytes without introducing named plaintext scratch files.
+    /// Non-filesystem backends keep their existing atomic object-write implementation.
+    ///
+    /// # Errors
+    /// Returns backend, capability or immutable-content conflict errors.
+    async fn put_immutable_shared(&self, key: &str, bytes: Bytes) -> Result<(), StoreError> {
+        self.put_shared(key, bytes).await
+    }
     /// Open a bounded-memory object reader. Unsupported stores refuse explicitly.
     ///
     /// # Errors
@@ -128,6 +139,7 @@ pub trait ArtifactBlobs: Send + Sync {
         ))
     }
     /// Stream a file without collecting its bytes. The destination becomes visible atomically.
+    /// Artifact producers use [`Self::put_immutable_file`] instead of this raw mutable capability.
     ///
     /// # Errors
     /// Returns a backend error or an unavailable streaming capability error.
@@ -136,6 +148,13 @@ pub trait ArtifactBlobs: Send + Sync {
         Err(StoreError::Unavailable(
             "streaming object writes unavailable".into(),
         ))
+    }
+    /// Publish one immutable artifact file through the backend's retention-aware sink.
+    ///
+    /// # Errors
+    /// Returns the same capability, backend and conflict errors as immutable byte publication.
+    async fn put_immutable_file(&self, key: &str, file: &Path, size: u64) -> Result<(), StoreError> {
+        self.put_file(key, file, size).await
     }
     /// Read the object at `key`; `Ok(None)` if it does not exist.
     ///
@@ -724,6 +743,21 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
         artifact: &ArtifactRef,
         max_bytes: u64,
     ) -> Result<futures::stream::BoxStream<'static, Result<Bytes, StoreError>>, StoreError> {
+        self.stream_archive_with_custody(artifact, max_bytes, &ArchiveCustodyV1::default())
+            .await
+    }
+
+    /// Stream an authorized archive representation under its exact retained classification.
+    ///
+    /// # Errors
+    /// Refuses class, scope, expiry, size and fixity mismatches.
+    pub async fn stream_archive_with_custody(
+        &self,
+        artifact: &ArtifactRef,
+        max_bytes: u64,
+        custody: &ArchiveCustodyV1,
+    ) -> Result<futures::stream::BoxStream<'static, Result<Bytes, StoreError>>, StoreError> {
+        custody.validate(self.clock.now())?;
         let row = self.row(artifact.id).await?.ok_or_else(|| StoreError::NotFound {
             entity: "artifact",
             id: artifact.id.to_string(),
@@ -733,7 +767,7 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
             .then(|| run.created_at + chrono::Duration::days(i64::from(run.retention.days)));
         if row.id != artifact.id
             || row.digest != artifact.digest
-            || row.sensitivity != Sensitivity::Content
+            || row.sensitivity != custody.sensitivity
             || row.size_bytes > max_bytes
             || row.tenant != run.tenant
             || run.retention.mode == RetentionMode::Zdr
@@ -743,14 +777,29 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
                 .is_some_and(|(tenant, run)| tenant != row.tenant || run != row.run)
             || row.expires_at.is_some_and(|expiry| expiry <= self.clock.now())
             || source_expiry.is_some_and(|expiry| expiry <= self.clock.now())
+            || custody
+                .expires_at
+                .is_some_and(|expiry| row.expires_at.is_none_or(|stored| stored > expiry))
         {
             return Err(StoreError::RetentionDenied(
                 "content stream scope, retention or bound failed".into(),
             ));
         }
+        let expires_at = earliest_expiry(earliest_expiry(row.expires_at, custody.expires_at), source_expiry);
+        let clock = Arc::clone(&self.clock);
         let sealed = self.sealed_custody(&row).await?;
         if let Some(sealed) = &sealed {
-            return self.sealed_content_stream(&row, sealed, max_bytes).await;
+            use futures::TryStreamExt as _;
+            let stream = self.sealed_content_stream(&row, sealed, max_bytes).await?;
+            return Ok(Box::pin(stream.and_then(move |chunk| {
+                futures::future::ready(if expires_at.is_some_and(|expiry| expiry <= clock.now()) {
+                    Err(StoreError::RetentionDenied(
+                        "archive source expired during stream".into(),
+                    ))
+                } else {
+                    Ok(chunk)
+                })
+            })));
         }
         if row.object_key != object_key(row.sensitivity, row.tenant, row.run, &row.digest) {
             return Err(StoreError::RetentionDenied(
@@ -770,6 +819,9 @@ impl<B: ArtifactBlobs> ObjectArtifactStore<B> {
                     .ok_or_else(|| StoreError::Conflict("content size overflow".into()))?;
                 if count > max_bytes || count > row.size_bytes { Err(StoreError::RetentionDenied("content stream exceeded approved size".into()))?; }
                 hash.update(&buffer[..n]);
+                if expires_at.is_some_and(|expiry| expiry <= clock.now()) {
+                    Err(StoreError::RetentionDenied("archive source expired during stream".into()))?;
+                }
                 yield Bytes::copy_from_slice(&buffer[..n]);
             }
             if count != row.size_bytes || Digest(*hash.finalize().as_bytes()) != row.digest {
@@ -976,6 +1028,12 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         artifact: &ArtifactRef,
         max_bytes: u64,
     ) -> Result<Vec<u8>, StoreError> {
+        let custody = self.archive_custody(tenant, run, artifact, max_bytes).await?;
+        if custody.sensitivity != Sensitivity::Content {
+            return Err(StoreError::RetentionDenied(
+                "sensitive source needs typed archive authority".into(),
+            ));
+        }
         let row = self.row(artifact.id).await?.ok_or_else(|| StoreError::NotFound {
             entity: "artifact",
             id: artifact.id.to_string(),
@@ -985,6 +1043,89 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         }
         self.read_content_limited(artifact, max_bytes).await
     }
+    async fn archive_custody(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+        artifact: &ArtifactRef,
+        max_bytes: u64,
+    ) -> Result<ArchiveCustodyV1, StoreError> {
+        let source = self.runs.get(run).await?;
+        let row = self.row(artifact.id).await?.ok_or_else(|| StoreError::NotFound {
+            entity: "artifact",
+            id: artifact.id.to_string(),
+        })?;
+        if source.tenant != tenant
+            || row.tenant != tenant
+            || row.run != run
+            || row.digest != artifact.digest
+            || row.size_bytes > max_bytes
+            || source.config.retention.mode == RetentionMode::Zdr
+            || crate::tenant::current().is_some_and(|scope| scope != tenant)
+            || self.read_scope.is_some_and(|scope| scope != (tenant, run))
+        {
+            return Err(StoreError::RetentionDenied(
+                "archive source authority mismatch".into(),
+            ));
+        }
+        let policy = artifact_expiry(
+            row.sensitivity,
+            &row.content_type,
+            source.config.retention.mode,
+            u32::from(source.config.retention.days),
+            source.created_at,
+        );
+        let custody = ArchiveCustodyV1::new(
+            row.sensitivity,
+            earliest_expiry(row.expires_at, policy),
+            self.clock.now(),
+        )?;
+        Ok(custody)
+    }
+
+    async fn read_archive_sensitive(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+        artifact: &ArtifactRef,
+        custody: &ArchiveCustodyV1,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, StoreError> {
+        use futures::TryStreamExt as _;
+        let actual = self.archive_custody(tenant, run, artifact, max_bytes).await?;
+        if actual != *custody || actual.sensitivity != Sensitivity::Sensitive {
+            return Err(StoreError::RetentionDenied(
+                "sensitive archive source authority mismatch".into(),
+            ));
+        }
+        let row = self.row(artifact.id).await?.ok_or_else(|| StoreError::NotFound {
+            entity: "artifact",
+            id: artifact.id.to_string(),
+        })?;
+        let mut stream = self
+            .stream_archive_with_custody(artifact, max_bytes, custody)
+            .await?;
+        let size = usize::try_from(row.size_bytes)
+            .map_err(|_| StoreError::RetentionDenied("archive source exceeds allocation range".into()))?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(size)
+            .map_err(|source| StoreError::ResourceExhausted {
+                resource: "sensitive archive body",
+                requested: size,
+                available: 0,
+                source: Some(source),
+            })?;
+        while let Some(chunk) = stream.try_next().await? {
+            bytes.extend_from_slice(&chunk);
+        }
+        if self.archive_custody(tenant, run, artifact, max_bytes).await? != *custody {
+            return Err(StoreError::RetentionDenied(
+                "archive source authority changed".into(),
+            ));
+        }
+        Ok(bytes)
+    }
     async fn put_archive_file(
         &self,
         run: CrawlRunId,
@@ -992,6 +1133,19 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         file: &Path,
         max_bytes: u64,
     ) -> Result<ArtifactRef, StoreError> {
+        self.put_archive_file_with_custody(run, content_type, file, max_bytes, &ArchiveCustodyV1::default())
+            .await
+    }
+
+    async fn put_archive_file_with_custody(
+        &self,
+        run: CrawlRunId,
+        content_type: &str,
+        file: &Path,
+        max_bytes: u64,
+        custody: &ArchiveCustodyV1,
+    ) -> Result<ArtifactRef, StoreError> {
+        custody.validate(self.clock.now())?;
         let source = self.runs.get_metadata(run).await?;
         // Gate before opening even a temporary content file.
         if source.retention.mode == RetentionMode::Zdr {
@@ -1000,19 +1154,31 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
             ));
         }
         let now = self.clock.now();
-        let expires_at = artifact_expiry(
-            Sensitivity::Content,
-            content_type,
-            source.retention.mode,
-            u32::from(source.retention.days),
-            source.created_at,
+        let expires_at = earliest_expiry(
+            custody.expires_at,
+            artifact_expiry(
+                custody.sensitivity,
+                content_type,
+                source.retention.mode,
+                u32::from(source.retention.days),
+                source.created_at,
+            ),
         );
         if expires_at.is_some_and(|expiry| expiry <= now) {
             return Err(StoreError::RetentionDenied("archive source expired".into()));
         }
-        if let Some(attached) = self.sealing(Sensitivity::Content, &source)? {
+        if let Some(attached) = self.sealing(custody.sensitivity, &source)? {
             return self
-                .put_sealed_file(attached, &source, content_type, file, max_bytes, now, expires_at)
+                .put_sealed_file(
+                    attached,
+                    &source,
+                    custody.sensitivity,
+                    content_type,
+                    file,
+                    max_bytes,
+                    now,
+                    expires_at,
+                )
                 .await;
         }
         let mut input = tokio::fs::File::open(file)
@@ -1040,9 +1206,14 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
             hash.update(&buffer[..n]);
         }
         let digest = Digest(*hash.finalize().as_bytes());
-        let key = object_key(Sensitivity::Content, source.tenant, run, &digest);
+        let key = object_key(custody.sensitivity, source.tenant, run, &digest);
         self.spool.ensure_file(&self.blobs, &key, file, size).await?;
         crate::chaos::pause("archive.after_object_put").await;
+        if expires_at.is_some_and(|expiry| expiry <= self.clock.now()) {
+            return Err(StoreError::RetentionDenied(
+                "archive source expired before publication".into(),
+            ));
+        }
         let row = ArtifactRow {
             id: ArtifactId::new(),
             tenant: source.tenant,
@@ -1053,7 +1224,7 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
             size_bytes: size,
             digest,
             content_type: content_type.into(),
-            sensitivity: Sensitivity::Content,
+            sensitivity: custody.sensitivity,
             created_at: now,
             expires_at,
         };
@@ -1073,72 +1244,115 @@ impl<B: ArtifactBlobs> ArtifactStore for ObjectArtifactStore<B> {
         file: &Path,
         max_bytes: u64,
     ) -> Result<u64, StoreError> {
-        let source = self.runs.get_metadata(run).await?;
-        if source.tenant != tenant || source.retention.mode == RetentionMode::Zdr {
+        let custody = self.archive_custody(tenant, run, artifact, max_bytes).await?;
+        if custody.sensitivity != Sensitivity::Content {
             return Err(StoreError::RetentionDenied(
-                "archive source is not retained tenant content".into(),
+                "sensitive source needs typed archive authority".into(),
             ));
         }
-        let row = self.row(artifact.id).await?.ok_or_else(|| StoreError::NotFound {
-            entity: "artifact",
-            id: artifact.id.to_string(),
-        })?;
-        if row.tenant != tenant
-            || row.run != run
-            || row.sensitivity != Sensitivity::Content
-            || row.digest != artifact.digest
-            || row.size_bytes > max_bytes
-            || row.expires_at.is_some_and(|expiry| expiry <= self.clock.now())
-        {
-            return Err(StoreError::RetentionDenied(
-                "archive artifact ownership, expiry or bound failed".into(),
-            ));
-        }
-        let sealed = self.sealed_custody(&row).await?;
-        if let Some(sealed) = &sealed {
-            return self.copy_sealed_to_file(&row, sealed, file, max_bytes).await;
-        }
-        if row.object_key != object_key(row.sensitivity, tenant, run, &row.digest) {
-            return Err(StoreError::RetentionDenied(
-                "archive artifact ownership, expiry or bound failed".into(),
-            ));
-        }
-        let mut input = self.blobs.reader(&row.object_key).await?;
-        let mut output = tokio::fs::File::create(file)
+        self.copy_archive_with_custody(tenant, run, artifact, &custody, file, max_bytes)
             .await
-            .map_err(|e| io(&e, "create archive spool"))?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(DIGEST_DOMAIN.as_bytes());
-        hash.update(&[0]);
-        let mut size = 0u64;
-        let mut buffer = [0u8; 32 * 1024];
-        loop {
-            let n = input
-                .read(&mut buffer)
-                .await
-                .map_err(|e| io(&e, "read archive source"))?;
-            if n == 0 {
-                break;
-            }
-            size = size
-                .checked_add(u64::try_from(n).map_err(|_| StoreError::Conflict("archive chunk size".into()))?)
-                .ok_or_else(|| StoreError::Conflict("archive size overflow".into()))?;
-            if size > max_bytes || size > row.size_bytes {
+    }
+
+    async fn copy_archive_with_custody(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+        artifact: &ArtifactRef,
+        custody: &ArchiveCustodyV1,
+        file: &Path,
+        max_bytes: u64,
+    ) -> Result<u64, StoreError> {
+        if self.archive_custody(tenant, run, artifact, max_bytes).await? != *custody {
+            return Err(StoreError::RetentionDenied(
+                "archive copy authority mismatch".into(),
+            ));
+        }
+        let copied = async {
+            let source = self.runs.get_metadata(run).await?;
+            if source.tenant != tenant || source.retention.mode == RetentionMode::Zdr {
                 return Err(StoreError::RetentionDenied(
-                    "archive source exceeds approved size".into(),
+                    "archive source is not retained tenant content".into(),
                 ));
             }
-            hash.update(&buffer[..n]);
-            output
-                .write_all(&buffer[..n])
+            let row = self.row(artifact.id).await?.ok_or_else(|| StoreError::NotFound {
+                entity: "artifact",
+                id: artifact.id.to_string(),
+            })?;
+            if row.tenant != tenant
+                || row.run != run
+                || row.sensitivity != custody.sensitivity
+                || row.digest != artifact.digest
+                || row.size_bytes > max_bytes
+                || row.expires_at.is_some_and(|expiry| expiry <= self.clock.now())
+            {
+                return Err(StoreError::RetentionDenied(
+                    "archive artifact ownership, expiry or bound failed".into(),
+                ));
+            }
+            let sealed = self.sealed_custody(&row).await?;
+            if let Some(sealed) = &sealed {
+                return self.copy_sealed_to_file(&row, sealed, file, max_bytes).await;
+            }
+            if row.object_key != object_key(row.sensitivity, tenant, run, &row.digest) {
+                return Err(StoreError::RetentionDenied(
+                    "archive artifact ownership, expiry or bound failed".into(),
+                ));
+            }
+            let mut input = self.blobs.reader(&row.object_key).await?;
+            let mut output = tokio::fs::File::create(file)
                 .await
-                .map_err(|e| io(&e, "write archive spool"))?;
+                .map_err(|e| io(&e, "create archive spool"))?;
+            let mut hash = blake3::Hasher::new();
+            hash.update(DIGEST_DOMAIN.as_bytes());
+            hash.update(&[0]);
+            let mut size = 0u64;
+            let mut buffer = [0u8; 32 * 1024];
+            loop {
+                let n = input
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| io(&e, "read archive source"))?;
+                if n == 0 {
+                    break;
+                }
+                size = size
+                    .checked_add(
+                        u64::try_from(n).map_err(|_| StoreError::Conflict("archive chunk size".into()))?,
+                    )
+                    .ok_or_else(|| StoreError::Conflict("archive size overflow".into()))?;
+                if size > max_bytes || size > row.size_bytes {
+                    return Err(StoreError::RetentionDenied(
+                        "archive source exceeds approved size".into(),
+                    ));
+                }
+                hash.update(&buffer[..n]);
+                output
+                    .write_all(&buffer[..n])
+                    .await
+                    .map_err(|e| io(&e, "write archive spool"))?;
+            }
+            if size != row.size_bytes || Digest(*hash.finalize().as_bytes()) != row.digest {
+                return Err(StoreError::RetentionDenied("archive source fixity failed".into()));
+            }
+            output.flush().await.map_err(|e| io(&e, "flush archive spool"))?;
+            Ok(size)
         }
-        if size != row.size_bytes || Digest(*hash.finalize().as_bytes()) != row.digest {
-            return Err(StoreError::RetentionDenied("archive source fixity failed".into()));
+        .await;
+        let copied = match copied {
+            Ok(size) => match self.archive_custody(tenant, run, artifact, max_bytes).await {
+                Ok(actual) if actual == *custody => Ok(size),
+                Ok(_) => Err(StoreError::RetentionDenied(
+                    "archive copy authority changed".into(),
+                )),
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        };
+        if copied.is_err() {
+            let _ = tokio::fs::remove_file(file).await;
         }
-        output.flush().await.map_err(|e| io(&e, "flush archive spool"))?;
-        Ok(size)
+        copied
     }
     async fn put(
         &self,
@@ -1456,8 +1670,9 @@ impl<B: ArtifactBlobs> ArtifactReaper for ObjectArtifactStore<B> {
     }
 }
 
-/// Directory backend. Keys are slash-separated relative paths; writes go through a
-/// temporary file and an atomic rename.
+/// Directory backend. Keys are slash-separated relative paths. Raw mutable writes
+/// use atomic replacement; artifact writes remain anonymous until direct final
+/// publication and verify identical retries.
 pub struct FsBlobs {
     root: PathBuf,
 }
@@ -1487,6 +1702,46 @@ impl FsBlobs {
         }
         Ok(self.root.join(key))
     }
+
+    async fn stage_immutable(
+        &self,
+        key: &str,
+    ) -> Result<(AnonymousArtifactFile, std::ffi::OsString), StoreError> {
+        let destination = self.path(key)?;
+        let parent = destination
+            .parent()
+            .ok_or_else(|| StoreError::Conflict("object parent missing".into()))?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| io(&e, "create object parent"))?;
+        let parent = parent.to_path_buf();
+        let name = destination
+            .file_name()
+            .ok_or_else(|| StoreError::Conflict("object name missing".into()))?
+            .to_owned();
+        let staged = tokio::task::spawn_blocking(move || AnonymousArtifactFile::new_in(&parent))
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("object staging task: {e}")))?
+            .map_err(|e| io(&e, "create anonymous object"))?;
+        Ok((staged, name))
+    }
+
+    async fn publish_immutable(
+        staged: AnonymousArtifactFile,
+        name: std::ffi::OsString,
+        size: u64,
+    ) -> Result<(), StoreError> {
+        tokio::task::spawn_blocking(move || staged.publish_identical(&name, size))
+            .await
+            .map_err(|e| StoreError::Unavailable(format!("object publication task: {e}")))?
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::InvalidData {
+                    StoreError::Conflict("immutable artifact content conflict".into())
+                } else {
+                    io(&error, "publish immutable object")
+                }
+            })
+    }
 }
 
 fn io(e: &std::io::Error, what: &str) -> StoreError {
@@ -1497,6 +1752,54 @@ fn io(e: &std::io::Error, what: &str) -> StoreError {
 impl ArtifactBlobs for FsBlobs {
     fn bucket(&self) -> &str {
         "fs"
+    }
+    async fn put_immutable_shared(&self, key: &str, bytes: Bytes) -> Result<(), StoreError> {
+        let (staged, name) = self.stage_immutable(key).await?;
+        let mut output = tokio::fs::File::from_std(
+            staged
+                .file()
+                .try_clone()
+                .map_err(|e| io(&e, "clone object descriptor"))?,
+        );
+        output
+            .write_all(&bytes)
+            .await
+            .map_err(|e| io(&e, "write immutable object"))?;
+        output
+            .flush()
+            .await
+            .map_err(|e| io(&e, "flush immutable object"))?;
+        drop(output);
+        let size =
+            u64::try_from(bytes.len()).map_err(|_| StoreError::Conflict("object size overflow".into()))?;
+        Self::publish_immutable(staged, name, size).await
+    }
+
+    async fn put_immutable_file(&self, key: &str, file: &Path, size: u64) -> Result<(), StoreError> {
+        let (staged, name) = self.stage_immutable(key).await?;
+        let input = tokio::fs::File::open(file)
+            .await
+            .map_err(|e| io(&e, "open immutable object source"))?;
+        let mut output = tokio::fs::File::from_std(
+            staged
+                .file()
+                .try_clone()
+                .map_err(|e| io(&e, "clone object descriptor"))?,
+        );
+        let copied = tokio::io::copy(&mut input.take(size.saturating_add(1)), &mut output)
+            .await
+            .map_err(|e| io(&e, "copy immutable object"))?;
+        if copied != size {
+            return Err(StoreError::Conflict(
+                "archive source changed during upload".into(),
+            ));
+        }
+        output
+            .flush()
+            .await
+            .map_err(|e| io(&e, "flush immutable object"))?;
+        drop(output);
+        Self::publish_immutable(staged, name, size).await
     }
     async fn reader(&self, key: &str) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>, StoreError> {
         Ok(Box::new(

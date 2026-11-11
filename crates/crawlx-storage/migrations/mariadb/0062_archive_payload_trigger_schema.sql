@@ -1,0 +1,1 @@
+-- no-op: MariaDB triggers resolve relations in their database and do not use search_path.

@@ -69,6 +69,20 @@ pub struct RigCore {
     pub dir: tempfile::TempDir,
 }
 
+/// Install one fixture clock before actors start, preserving the admitted run's start time.
+pub fn set_fixture_clock(rc: &mut RunContext, clock: Arc<dyn Clock>, started: Timestamp) {
+    rc.clock = clock.clone();
+    *rc.budget.lock() = crawlx_policy::Budget::new(&rc.crawl.limits, started);
+    rc.kernel = Arc::new(
+        crawlx_worker::run::build_kernel(
+            &rc.crawl,
+            clock,
+            rc.authorization.as_ref().map(|guard| guard.record()),
+        )
+        .unwrap(),
+    );
+}
+
 pub async fn rig_core(
     stores: Stores,
     dir: tempfile::TempDir,
@@ -76,15 +90,27 @@ pub async fn rig_core(
     fake: Arc<FakeBackend>,
     profile: SafetyProfile,
 ) -> RigCore {
+    rig_core_with_clock(stores, dir, backend, fake, profile, Arc::new(SystemClock)).await
+}
+
+/// Actor fixture sharing an explicitly selected run, browser and store clock.
+pub async fn rig_core_with_clock(
+    stores: Stores,
+    dir: tempfile::TempDir,
+    backend: Arc<dyn BrowserBackend>,
+    fake: Arc<FakeBackend>,
+    profile: SafetyProfile,
+    clock: Arc<dyn Clock>,
+) -> RigCore {
     let mut crawl = crawl(profile);
     // The fake browser never contacts these origins; use an explicitly authorized
     // robots override rather than attempting network access to example.test.
     crawl.safety.respect_robots_txt = false;
     crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
-    let mut record = authorization::verified_record(&crawl, stores.tenant);
+    let mut record = authorization::verified_record_with_clock(&crawl, stores.tenant, clock.as_ref());
     record.robots_override_acknowledged = true;
     record.url_prefixes.push("https://other.test".to_owned());
-    rig_core_authorized(stores, dir, backend, fake, crawl, record, None).await
+    rig_core_authorized_with_clock(stores, dir, backend, fake, crawl, record, None, clock).await
 }
 
 /// Actor fixture using the caller's selected authorization and safety settings.
@@ -96,6 +122,31 @@ pub async fn rig_core_authorized(
     crawl: CreateCrawl,
     record: crawlx_policy::AuthorizationRecord,
     initial_request: Option<crawlx_core::request::RequestEnvelopeV1>,
+) -> RigCore {
+    rig_core_authorized_with_clock(
+        stores,
+        dir,
+        backend,
+        fake,
+        crawl,
+        record,
+        initial_request,
+        Arc::new(SystemClock),
+    )
+    .await
+}
+
+/// Authorized actor fixture sharing the caller's clock without changing its epoch.
+#[allow(clippy::too_many_arguments)] // Keep the clock explicit alongside the existing fixture authorities.
+pub async fn rig_core_authorized_with_clock(
+    stores: Stores,
+    dir: tempfile::TempDir,
+    backend: Arc<dyn BrowserBackend>,
+    fake: Arc<FakeBackend>,
+    crawl: CreateCrawl,
+    record: crawlx_policy::AuthorizationRecord,
+    initial_request: Option<crawlx_core::request::RequestEnvelopeV1>,
+    clock: Arc<dyn Clock>,
 ) -> RigCore {
     if let Some(pg) = &stores.pg {
         pg.ensure_tenant(stores.tenant, "local").await.unwrap();
@@ -117,7 +168,7 @@ pub async fn rig_core_authorized(
         config: crawl.clone(),
         policy_version: 1,
         counters: PlaneCounters::default(),
-        created_at: SystemClock.now(),
+        created_at: clock.now(),
         started_at: None,
         finished_at: None,
         trace_id: None,
@@ -142,21 +193,21 @@ pub async fn rig_core_authorized(
         gates: crawlx_worker::Gates::from_status(crawlx_core::gates::GateStatus::ALL),
         ..WorkerConfig::default()
     };
-    let guard = authorization::admit(&stores, &run, &cfg).await;
-    let rc = Arc::new(
-        RunContext::build(
-            &run,
-            &cfg,
-            stores.clone(),
-            Some(backend),
-            None,
-            CancellationToken::new(),
-            None,
-            Some(guard),
-        )
-        .await
-        .unwrap(),
-    );
+    let guard = authorization::admit_with_clock(&stores, &run, &cfg, clock.clone()).await;
+    let mut rc = RunContext::build(
+        &run,
+        &cfg,
+        stores.clone(),
+        Some(backend),
+        None,
+        CancellationToken::new(),
+        None,
+        Some(guard),
+    )
+    .await
+    .unwrap();
+    set_fixture_clock(&mut rc, clock, run.started_at.unwrap_or(run.created_at));
+    let rc = Arc::new(rc);
     let scfg = rc.session_config(&session);
     let pooled = rc
         .pool
@@ -282,7 +333,12 @@ pub async fn rig_with(
 }
 
 pub async fn rig(script: FakeScript, profile: SafetyProfile) -> Rig {
-    let fake = Arc::new(FakeBackend::new(script));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     rig_with(fake.clone(), fake, false, profile).await
 }
 

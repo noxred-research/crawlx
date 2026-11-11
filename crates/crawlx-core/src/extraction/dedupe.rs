@@ -71,7 +71,8 @@ impl DedupePolicyV1 {
 
 /// Caller-supplied cache partition: tenant, run/source namespace and role/session label.
 /// Every label is non-blank, at most 128 bytes and free of control characters.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DedupeScopeV1 {
     tenant: String,
     namespace: String,
@@ -131,7 +132,8 @@ impl DedupeScopeV1 {
 }
 
 /// Full cache partition key: scope plus extractor, policy and normalization versions.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DedupeKeyV1 {
     scope: DedupeScopeV1,
     extractor: String,
@@ -147,7 +149,8 @@ impl DedupeKeyV1 {
 }
 
 /// What a cached hash identifies. Kinds never match each other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DedupeKindV1 {
     /// Normalized extracted block.
@@ -156,12 +159,12 @@ pub enum DedupeKindV1 {
     Content,
 }
 
-/// Result of [`DedupeCache::admit`].
+/// Result of checking or recording a hash in [`DedupeCache`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 #[must_use]
 pub enum DedupeAdmissionV1 {
-    /// First sighting in this partition; the hash is now cached.
+    /// No committed sighting; recording caches the hash, while checking leaves it absent.
     New,
     /// The hash was admitted before.
     Seen {
@@ -172,17 +175,109 @@ pub enum DedupeAdmissionV1 {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EntryKey {
     scope: u64,
     kind: DedupeKindV1,
     hash: [u8; 32],
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Entry {
     tick: u64,
     sightings: u32,
     origin: Digest,
+}
+
+/// Version of the bounded, hash-only checkpoint representation.
+pub const DEDUPE_SNAPSHOT_VERSION: u32 = 1;
+
+/// Why a dedupe checkpoint cannot be restored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DedupeSnapshotError {
+    /// The snapshot format is not supported.
+    #[error("dedupe snapshot version {found} is not supported")]
+    Version {
+        /// Version recorded in the checkpoint.
+        found: u32,
+    },
+    /// Capacity or serialized collection bounds are invalid.
+    #[error("dedupe snapshot exceeds cache bounds")]
+    Bounds,
+    /// Tenant, source namespace or key labels do not match the checkpoint binding.
+    #[error("dedupe snapshot scope binding does not match")]
+    Binding,
+    /// Entry identifiers, counts or logical recency are inconsistent.
+    #[error("dedupe snapshot records are inconsistent")]
+    Inconsistent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SnapshotScope {
+    key: DedupeKeyV1,
+    id: u64,
+    entries: usize,
+}
+
+/// Hash-only continuation state, subject to the enclosing checkpoint's custody and expiry.
+///
+/// Private fields prevent constructing unchecked snapshots except by deserialization. Restore
+/// validates every record before exposing a cache. Entry ticks encode the complete eviction order;
+/// no article, paragraph, URL or wall-clock value is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct DedupeSnapshotV1 {
+    version: u32,
+    tenant: String,
+    namespace: String,
+    capacity: usize,
+    tick: u64,
+    next_scope: u64,
+    #[serde(deserialize_with = "bounded_records")]
+    scopes: Vec<SnapshotScope>,
+    #[serde(deserialize_with = "bounded_records")]
+    entries: Vec<(EntryKey, Entry)>,
+}
+
+impl DedupeSnapshotV1 {
+    /// Validate bounds, key bindings, counts and eviction order without changing namespaces.
+    ///
+    /// # Errors
+    /// Returns a typed refusal for an unknown version, invalid bounds or inconsistent records.
+    pub fn validate(&self) -> Result<(), DedupeSnapshotError> {
+        DedupeCache::restore(self, self.capacity, &self.tenant, &self.namespace).map(|_| ())
+    }
+}
+
+fn bounded_records<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Records<T>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for Records<T> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a bounded array of dedupe hash records")
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut records = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(MAX_DEDUPE_CACHE_ENTRIES));
+            while let Some(record) = seq.next_element()? {
+                if records.len() == MAX_DEDUPE_CACHE_ENTRIES {
+                    return Err(serde::de::Error::custom("dedupe snapshot exceeds record bounds"));
+                }
+                records.push(record);
+            }
+            Ok(records)
+        }
+    }
+    deserializer.deserialize_seq(Records(std::marker::PhantomData))
 }
 
 /// Bounded least-recently-admitted hash cache. Admission order is the call order: callers that
@@ -219,6 +314,133 @@ impl DedupeCache {
             order: BTreeMap::new(),
         })
     }
+    /// Capture exact logical recency and hash counts for an enclosing authorized checkpoint.
+    ///
+    /// The caller supplies the checkpoint's tenant and source-run namespace. Restoration refuses
+    /// any partition outside this binding; this method grants no cross-run authorization.
+    #[must_use]
+    pub fn snapshot(&self, tenant: &str, namespace: &str) -> DedupeSnapshotV1 {
+        DedupeSnapshotV1 {
+            version: DEDUPE_SNAPSHOT_VERSION,
+            tenant: tenant.to_owned(),
+            namespace: namespace.to_owned(),
+            capacity: self.capacity,
+            tick: self.tick,
+            next_scope: self.next_scope,
+            scopes: self
+                .scopes
+                .iter()
+                .map(|(key, id)| SnapshotScope {
+                    key: key.clone(),
+                    id: *id,
+                    entries: self.scope_entries.get(id).copied().unwrap_or(0),
+                })
+                .collect(),
+            entries: self.entries.iter().map(|(key, entry)| (*key, *entry)).collect(),
+        }
+    }
+
+    /// Restore an authorized checkpoint, rebinding its source run to `namespace`.
+    ///
+    /// Tenant identity never changes. Role/session, extractor, policy and normalization bindings,
+    /// entry identifiers, counts and logical recency remain exact.
+    ///
+    /// # Errors
+    /// Refuses unsupported versions, a different capacity or tenant, invalid labels, oversized
+    /// collections, orphaned/duplicate entries or partitions, and inconsistent recency or counts.
+    pub fn restore(
+        snapshot: &DedupeSnapshotV1,
+        capacity: usize,
+        tenant: &str,
+        namespace: &str,
+    ) -> Result<Self, DedupeSnapshotError> {
+        use DedupeSnapshotError::{Binding, Bounds, Inconsistent, Version};
+        if snapshot.version != DEDUPE_SNAPSHOT_VERSION {
+            return Err(Version {
+                found: snapshot.version,
+            });
+        }
+        if capacity == 0
+            || capacity > MAX_DEDUPE_CACHE_ENTRIES
+            || snapshot.capacity != capacity
+            || snapshot.entries.len() > capacity
+            || snapshot.scopes.len() > snapshot.entries.len()
+        {
+            return Err(Bounds);
+        }
+        if snapshot.tenant != tenant
+            || !label_ok(tenant)
+            || !label_ok(namespace)
+            || !label_ok(&snapshot.namespace)
+        {
+            return Err(Binding);
+        }
+        if snapshot.next_scope > snapshot.tick || snapshot.tick == u64::MAX || snapshot.next_scope == u64::MAX
+        {
+            return Err(Inconsistent);
+        }
+        let mut restored = Self {
+            capacity,
+            tick: snapshot.tick,
+            next_scope: snapshot.next_scope,
+            scopes: BTreeMap::new(),
+            scope_entries: BTreeMap::new(),
+            entries: BTreeMap::new(),
+            order: BTreeMap::new(),
+        };
+        for scope in &snapshot.scopes {
+            let mut key = scope.key.clone();
+            if key.scope.tenant != tenant
+                || key.scope.namespace != snapshot.namespace
+                || !label_ok(&key.scope.role)
+                || !label_ok(&key.extractor)
+                || !label_ok(&key.normalization)
+            {
+                return Err(Binding);
+            }
+            key.scope.namespace = namespace.to_owned();
+            if scope.id >= snapshot.next_scope
+                || scope.entries == 0
+                || scope.entries > capacity
+                || restored.scopes.insert(key, scope.id).is_some()
+                || restored.scope_entries.insert(scope.id, 0).is_some()
+            {
+                return Err(Inconsistent);
+            }
+        }
+        let mut sightings = 0u64;
+        for (key, entry) in &snapshot.entries {
+            let owned = restored.scope_entries.get_mut(&key.scope).ok_or(Inconsistent)?;
+            if entry.tick == 0
+                || entry.tick > snapshot.tick
+                || entry.sightings == 0
+                || u64::from(entry.sightings) > entry.tick
+                || restored.entries.insert(*key, *entry).is_some()
+                || restored.order.insert(entry.tick, *key).is_some()
+            {
+                return Err(Inconsistent);
+            }
+            *owned = owned.checked_add(1).ok_or(Bounds)?;
+            sightings = sightings
+                .checked_add(u64::from(entry.sightings))
+                .ok_or(Inconsistent)?;
+        }
+        if restored
+            .order
+            .last_key_value()
+            .map(|(tick, _)| *tick)
+            .unwrap_or(0)
+            != snapshot.tick
+            || sightings > snapshot.tick
+            || snapshot
+                .scopes
+                .iter()
+                .any(|scope| restored.scope_entries.get(&scope.id).copied() != Some(scope.entries))
+        {
+            return Err(Inconsistent);
+        }
+        Ok(restored)
+    }
     /// Maximum number of cached hashes.
     #[must_use]
     pub fn capacity(&self) -> usize {
@@ -239,6 +461,38 @@ impl DedupeCache {
     pub fn partitions(&self) -> usize {
         self.scopes.len()
     }
+    /// Inspect a committed hash without changing sightings, recency, partitions or eviction order.
+    /// `New` means absent; no admission occurs until [`Self::record`] or [`Self::admit`].
+    pub fn check(
+        &self,
+        key: &DedupeKeyV1,
+        kind: DedupeKindV1,
+        hash: [u8; 32],
+        origin: Digest,
+    ) -> DedupeAdmissionV1 {
+        let Some(scope) = self.scopes.get(key).copied() else {
+            return DedupeAdmissionV1::New;
+        };
+        match self.entries.get(&EntryKey { scope, kind, hash }) {
+            Some(entry) => DedupeAdmissionV1::Seen {
+                sightings: entry.sightings,
+                same_origin: entry.origin == origin,
+            },
+            None => DedupeAdmissionV1::New,
+        }
+    }
+
+    /// Record one committed observation using the same ordered admission rules as [`Self::admit`].
+    pub fn record(
+        &mut self,
+        key: &DedupeKeyV1,
+        kind: DedupeKindV1,
+        hash: [u8; 32],
+        origin: Digest,
+    ) -> DedupeAdmissionV1 {
+        self.admit(key, kind, hash, origin)
+    }
+
     /// Record one hash in `key`'s partition. A repeat refreshes recency; a new hash may evict the
     /// least recently admitted entry of any partition.
     pub fn admit(
@@ -412,6 +666,44 @@ mod tests {
     }
 
     #[test]
+    fn checking_preserves_exact_snapshot_for_present_absent_and_foreign_hashes() {
+        let mut cache = DedupeCache::new(2).unwrap();
+        let k = key("tenant", "run", "anonymous");
+        let o = origin("first");
+        let _ = cache.record(&k, DedupeKindV1::Content, hash(1), o);
+        let before = cache.snapshot("tenant", "run");
+        for _ in 0..3 {
+            assert_eq!(
+                cache.check(&k, DedupeKindV1::Content, hash(1), o),
+                DedupeAdmissionV1::Seen {
+                    sightings: 1,
+                    same_origin: true
+                }
+            );
+            assert_eq!(
+                cache.check(&k, DedupeKindV1::Content, hash(1), origin("other")),
+                DedupeAdmissionV1::Seen {
+                    sightings: 1,
+                    same_origin: false
+                }
+            );
+            assert_eq!(
+                cache.check(&k, DedupeKindV1::Block, hash(1), o),
+                DedupeAdmissionV1::New
+            );
+            assert_eq!(
+                cache.check(&k, DedupeKindV1::Content, hash(2), o),
+                DedupeAdmissionV1::New
+            );
+            assert_eq!(
+                cache.check(&key("tenant", "run", "member"), DedupeKindV1::Content, hash(1), o),
+                DedupeAdmissionV1::New
+            );
+        }
+        assert_eq!(before, cache.snapshot("tenant", "run"));
+    }
+
+    #[test]
     fn partitions_isolate_tenant_namespace_role_and_versions() {
         let mut cache = DedupeCache::new(64).unwrap();
         let base = key("t1", "run-a", "anonymous");
@@ -502,6 +794,115 @@ mod tests {
                 same_origin: false
             }
         );
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_partitions_counts_origins_and_exact_eviction_order() {
+        let mut original = DedupeCache::new(3).unwrap();
+        let keys = [
+            key("tenant", "old-run", "anonymous"),
+            key("tenant", "old-run", "member"),
+        ];
+        for (partition, n) in [(0, 1), (1, 2), (0, 3), (0, 1)] {
+            let _ = original.admit(&keys[partition], DedupeKindV1::Content, hash(n), origin("first"));
+        }
+        let saved = original.snapshot("tenant", "old-run");
+        let json = serde_json::to_string(&saved).unwrap();
+        assert!(!json.contains("first"));
+        let decoded: DedupeSnapshotV1 = serde_json::from_str(&json).unwrap();
+        let mut restored = DedupeCache::restore(&decoded, 3, "tenant", "old-run").unwrap();
+        assert_eq!(saved, restored.snapshot("tenant", "old-run"));
+        for (partition, n) in [(0, 1), (0, 4), (1, 2), (0, 3), (1, 5)] {
+            let expected = original.admit(&keys[partition], DedupeKindV1::Content, hash(n), origin("next"));
+            let actual = restored.admit(&keys[partition], DedupeKindV1::Content, hash(n), origin("next"));
+            assert_eq!(actual, expected);
+            assert_eq!(
+                original.snapshot("tenant", "old-run"),
+                restored.snapshot("tenant", "old-run")
+            );
+        }
+        let mut remapped = DedupeCache::restore(&saved, 3, "tenant", "new-run").unwrap();
+        assert_eq!(
+            remapped.admit(
+                &key("tenant", "new-run", "anonymous"),
+                DedupeKindV1::Content,
+                hash(1),
+                origin("other"),
+            ),
+            DedupeAdmissionV1::Seen {
+                sightings: 2,
+                same_origin: false
+            }
+        );
+        assert_eq!(
+            remapped.admit(&keys[0], DedupeKindV1::Content, hash(1), origin("first"),),
+            DedupeAdmissionV1::New
+        );
+    }
+
+    #[test]
+    fn snapshot_refuses_versions_bounds_corruption_and_foreign_scope_bindings() {
+        use DedupeSnapshotError::{Binding, Bounds, Inconsistent, Version};
+        let mut cache = DedupeCache::new(2).unwrap();
+        let _ = cache.admit(
+            &key("tenant", "run", "role"),
+            DedupeKindV1::Block,
+            hash(1),
+            origin("a"),
+        );
+        let _ = cache.admit(
+            &key("tenant", "run", "role"),
+            DedupeKindV1::Content,
+            hash(2),
+            origin("b"),
+        );
+        let saved = cache.snapshot("tenant", "run");
+        let assert_refused = |snapshot: &DedupeSnapshotV1, expected| {
+            assert_eq!(
+                DedupeCache::restore(snapshot, 2, "tenant", "next").unwrap_err(),
+                expected
+            );
+        };
+        let mut bad = saved.clone();
+        bad.version = 2;
+        assert_refused(&bad, Version { found: 2 });
+        let mut bad = saved.clone();
+        bad.capacity = MAX_DEDUPE_CACHE_ENTRIES + 1;
+        assert_refused(&bad, Bounds);
+        let mut bad = saved.clone();
+        bad.entries.push(saved.entries[0]);
+        assert_refused(&bad, Bounds);
+        assert_eq!(
+            DedupeCache::restore(&saved, 1, "tenant", "next").unwrap_err(),
+            Bounds
+        );
+        assert_eq!(
+            DedupeCache::restore(&saved, 2, "other", "next").unwrap_err(),
+            Binding
+        );
+        for corrupt in 0..8 {
+            let mut bad = saved.clone();
+            match corrupt {
+                0 => bad.entries[0].0.scope = 99,
+                1 => bad.entries[0].1.tick = bad.entries[1].1.tick,
+                2 => bad.entries[0].1.sightings = 0,
+                3 => bad.scopes[0].entries = 1,
+                4 => bad.next_scope = 0,
+                5 => bad.tick = bad.tick.saturating_add(1),
+                6 => bad.entries[0] = bad.entries[1],
+                _ => bad.entries[0].1.sightings = u32::MAX,
+            }
+            assert_refused(&bad, Inconsistent);
+        }
+        let mut bad = saved.clone();
+        bad.scopes[0].key.scope.tenant = "other".to_owned();
+        assert_refused(&bad, Binding);
+        let mut bad = saved.clone();
+        bad.scopes[0].key.scope.namespace = "other-run".to_owned();
+        assert_refused(&bad, Binding);
+        let mut bad = saved.clone();
+        bad.scopes[0].key.normalization.clear();
+        assert_refused(&bad, Binding);
     }
 
     #[test]

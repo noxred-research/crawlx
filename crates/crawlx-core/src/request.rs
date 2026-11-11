@@ -95,10 +95,19 @@ impl RequestEnvelopeV1 {
     /// Native anonymous GET with legacy URL-key semantics.
     #[must_use]
     pub fn get(url: CanonicalUrl, depth: u16, parent: Option<i64>) -> Self {
+        Self::new(url, "GET".into(), depth, parent)
+    }
+
+    /// Native anonymous proposal preserving the supplied HTTP method exactly.
+    ///
+    /// This constructor grants no transport authority. Callers must validate the
+    /// envelope and apply method-specific admission before enqueueing or execution.
+    #[must_use]
+    pub fn new(url: CanonicalUrl, method: String, depth: u16, parent: Option<i64>) -> Self {
         Self {
             version: 1,
             url,
-            method: "GET".into(),
+            method,
             header_control: None,
             body: None,
             route: "default".into(),
@@ -188,6 +197,14 @@ impl RequestEnvelopeV1 {
             self.url.key
         } else if self.dialect != IdentityDialectV1::NativeV1 {
             let exported = self.source_key.ok_or(RequestError::ConflictingIdentity)?;
+            // Preserve existing imported GET identities while preventing opaque source
+            // keys from collapsing distinct HTTP methods into the same queue row.
+            let exported = if self.method == "GET" {
+                exported
+            } else {
+                Digest::of_value("crawlx/imported-request-method/v1", &(&self.method, exported))
+                    .map_err(|_| RequestError::InvalidEnvelope)?
+            };
             Digest::of_value(
                 "crawlx/imported-request-identity/v1",
                 &(

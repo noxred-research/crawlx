@@ -4,6 +4,7 @@
 //! manifest is the commit point; records are indexed only after their shard objects commit.
 
 use crate::archive::{ArchiveCaptureFactsV1, ArchiveConfigV1, ArchiveManifestV1};
+use crate::hash::Digest;
 use crate::{ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,102 @@ pub enum ArchiveFailureV1 {
     InvalidCapture,
 }
 
+/// Retained byte authority inherited by every archive representation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ArchiveCustodyV1 {
+    /// Content stays ordinary; Sensitive never becomes ordinary archive content.
+    pub sensitivity: crate::repo::Sensitivity,
+    /// Earliest approved source deadline; packaging cannot extend it.
+    pub expires_at: Option<Timestamp>,
+}
+
+impl Default for ArchiveCustodyV1 {
+    fn default() -> Self {
+        Self::content(None)
+    }
+}
+
+impl ArchiveCustodyV1 {
+    /// Validate retained byte authority loaded from an artifact index.
+    ///
+    /// # Errors
+    /// Refuses unsupported classes, expired deadlines and unbounded sensitive evidence.
+    pub fn new(
+        sensitivity: crate::repo::Sensitivity,
+        expires_at: Option<Timestamp>,
+        now: Timestamp,
+    ) -> Result<Self, StoreError> {
+        let custody = Self {
+            sensitivity,
+            expires_at,
+        };
+        custody.validate(now)?;
+        Ok(custody)
+    }
+
+    /// Ordinary retained content with an optional source deadline.
+    #[must_use]
+    pub const fn content(expires_at: Option<Timestamp>) -> Self {
+        Self {
+            sensitivity: crate::repo::Sensitivity::Content,
+            expires_at,
+        }
+    }
+
+    /// Sensitive retained evidence always has a finite source deadline.
+    #[must_use]
+    pub const fn sensitive(expires_at: Timestamp) -> Self {
+        Self {
+            sensitivity: crate::repo::Sensitivity::Sensitive,
+            expires_at: Some(expires_at),
+        }
+    }
+
+    /// Reject unsupported classes and expired or unbounded sensitive authority.
+    ///
+    /// # Errors
+    /// Returns a retention refusal for an invalid class or deadline.
+    pub fn validate(self, now: Timestamp) -> Result<(), StoreError> {
+        if !matches!(
+            self.sensitivity,
+            crate::repo::Sensitivity::Content | crate::repo::Sensitivity::Sensitive
+        ) || (self.sensitivity == crate::repo::Sensitivity::Sensitive && self.expires_at.is_none())
+            || self.expires_at.is_some_and(|expiry| expiry <= now)
+        {
+            return Err(StoreError::RetentionDenied(
+                "archive custody is invalid or expired".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Join sources without weakening sensitivity or extending either deadline.
+    ///
+    /// # Errors
+    /// Returns a retention refusal when either source authority is invalid.
+    pub fn narrow(self, source: Self, now: Timestamp) -> Result<Self, StoreError> {
+        self.validate(now)?;
+        source.validate(now)?;
+        let expires_at = match (self.expires_at, source.expires_at) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (left, right) => left.or(right),
+        };
+        let sensitivity = if self.sensitivity == crate::repo::Sensitivity::Sensitive
+            || source.sensitivity == crate::repo::Sensitivity::Sensitive
+        {
+            crate::repo::Sensitivity::Sensitive
+        } else {
+            crate::repo::Sensitivity::Content
+        };
+        Ok(Self {
+            sensitivity,
+            expires_at,
+        })
+    }
+}
+
 /// One logical export per tenant/run. IDs remain stable across worker recovery.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -91,6 +188,9 @@ pub struct ArchiveExportV1 {
     pub created_at: Timestamp,
     /// Source expiry, never extended by packaging or recovery.
     pub expires_at: Option<Timestamp>,
+    /// Aggregate byte authority, persisted before sensitive shards become catalog-visible.
+    #[serde(default)]
+    pub custody: ArchiveCustodyV1,
     /// Monotonically increasing writer fence.
     pub fence: i64,
     /// Writer lease deadline; renewed by every record commit.
@@ -130,6 +230,7 @@ impl ArchiveExportV1 {
             state: ArchiveExportState::Recording,
             created_at,
             expires_at,
+            custody: ArchiveCustodyV1::content(expires_at),
             fence: 0,
             lease_until: created_at,
             records: 0,
@@ -144,7 +245,7 @@ impl ArchiveExportV1 {
 }
 
 /// Committed gzip member and the exact retained representation it contains.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[non_exhaustive]
 pub struct ArchiveRecordV1 {
@@ -156,6 +257,10 @@ pub struct ArchiveRecordV1 {
     pub record_id: String,
     /// Actual committed shard artifact.
     pub artifact: ArtifactRef,
+    /// Original retained evidence authority; mandatory for Sensitive records.
+    /// Revocation or deadline changes invalidate publication and subsequent byte access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_artifact: Option<ArtifactRef>,
     /// Actual member offset inside that shard.
     pub offset: u64,
     /// Actual compressed gzip member length.
@@ -170,6 +275,12 @@ pub struct ArchiveRecordV1 {
     pub mime: String,
     /// Optional resolvable revisit dependency.
     pub dependency: Option<ArchiveDependencyV1>,
+    /// Exact retained authority of this shard and its approved source.
+    #[serde(default)]
+    pub custody: ArchiveCustodyV1,
+    /// Exact approved payload reuse domain. Legacy rows without a key are never reuse sources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_key: Option<ArchivePayloadKeyV1>,
 }
 
 impl ArchiveRecordV1 {
@@ -193,6 +304,7 @@ impl ArchiveRecordV1 {
             ordinal,
             record_id,
             artifact,
+            source_artifact: None,
             offset,
             length,
             payload_digest,
@@ -200,6 +312,43 @@ impl ArchiveRecordV1 {
             facts,
             mime,
             dependency: None,
+            custody: ArchiveCustodyV1::default(),
+            payload_key: None,
+        }
+    }
+}
+
+/// Content reuse identity, distinct from target-bound conditional validator history.
+///
+/// `variant` binds method, immutable request headers/session, policy, retention,
+/// representation provenance and Vary context. Retained DOM/text contexts are run-bound.
+/// This descriptor never grants authority to fetch bytes or establishes wire completeness.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ArchivePayloadKeyV1 {
+    /// Exact principal whose approved representation is reused.
+    pub principal: String,
+    /// Deterministic complete request/security/policy context.
+    pub variant: Digest,
+    /// Meaning of the approved stored bytes.
+    pub representation: crate::archive::ArchiveRepresentation,
+    /// Required privacy revision.
+    pub redaction_revision: String,
+    /// Exact representation media type.
+    pub mime: String,
+}
+
+impl ArchivePayloadKeyV1 {
+    /// Bind an approved stored representation to its principal and immutable context.
+    #[must_use]
+    pub fn new(principal: String, variant: Digest, facts: &ArchiveCaptureFactsV1, mime: String) -> Self {
+        Self {
+            principal,
+            variant,
+            representation: facts.representation,
+            redaction_revision: facts.redaction_revision.clone(),
+            mime,
         }
     }
 }
@@ -255,7 +404,7 @@ impl ArchiveHistoryKeyV1 {
 }
 
 /// Validator facts only become eligible after the referenced export publishes.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[non_exhaustive]
 pub struct ArchiveHistoryV1 {
@@ -315,6 +464,19 @@ pub enum ArchiveReadV1 {
 pub trait ArchiveRepo: Send + Sync {
     /// Persist finalization intent idempotently. Refuse policy changes on recovery.
     async fn begin(&self, export: &ArchiveExportV1) -> Result<(), StoreError>;
+    /// Narrow byte authority under the current writer fence before committing a source.
+    /// A sensitive class can never return to Content and expiry can only move earlier.
+    ///
+    /// # Errors
+    /// Returns scope, lease, retention or backend errors without weakening existing authority.
+    async fn narrow_custody(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        fence: i64,
+        custody: &ArchiveCustodyV1,
+        now: Timestamp,
+    ) -> Result<(), StoreError>;
     /// Claim or recover an expired writer lease. Returns no claim if published or held.
     async fn claim(
         &self,
@@ -349,6 +511,16 @@ pub trait ArchiveRepo: Send + Sync {
         limit: u32,
         now: Timestamp,
     ) -> Result<Vec<ArchiveRecordV1>, StoreError>;
+    /// Select one committed standalone payload in the configured reuse scope.
+    /// Foreign, expired, failed and unpublished external exports are never eligible.
+    async fn payload_source(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        key: &ArchivePayloadKeyV1,
+        payload_digest: &str,
+        now: Timestamp,
+    ) -> Result<Option<ArchiveRecordV1>, StoreError>;
     /// Publish manifest last after all referenced artifact objects commit.
     #[allow(
         clippy::too_many_arguments,

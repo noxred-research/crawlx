@@ -138,10 +138,10 @@ fn parse_field_scope(raw: &str) -> Result<FieldScopeArg, String> {
 /// `--strategy` (compatibility `-strategy`).
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum StrategyArg {
-    #[value(name = "breadth-first")]
+    #[value(name = "breadth-first", aliases = ["bfs", "breadth_first"])]
     /// Shallowest first.
     BreadthFirst,
-    #[value(name = "depth-first")]
+    #[value(name = "depth-first", aliases = ["dfs", "depth_first"])]
     /// Deepest first.
     DepthFirst,
     #[value(name = "priority")]
@@ -451,6 +451,100 @@ pub struct CrawlArgs {
     #[arg(long, help_heading = "Update")]
     pub disable_update_check: bool,
 
+    /// URL discovery, filtering, rate limits and fetch flags.
+    #[command(flatten)]
+    pub url: UrlArgs,
+
+    // --- extraction (compatibility -flc, -kb*, -fx, -aff, -fc, -td) ---
+    /// Custom regex fields: YAML or JSON list of `{name, regex: [..], part, group}`.
+    #[arg(
+        long,
+        visible_alias = "field-config",
+        value_name = "FILE",
+        help_heading = "Extraction"
+    )]
+    pub custom_field_config: Option<PathBuf>,
+    /// Detect secrets in bodies and headers (kind and keyed hash only; never the value).
+    #[arg(long, visible_alias = "kb-secrets", help_heading = "Extraction")]
+    pub detect_secrets: bool,
+    /// Extract static forms into page metadata (the default).
+    #[arg(long, conflicts_with = "no_form_extraction", help_heading = "Extraction")]
+    pub form_extraction: bool,
+    /// Do not extract static forms.
+    #[arg(long, help_heading = "Extraction")]
+    pub no_form_extraction: bool,
+    /// Complete static forms with deterministic values (seed-derived, or from `--form-config`):
+    /// GET forms are followed, other methods are recorded as endpoints, never sent.
+    #[arg(long, help_heading = "Extraction")]
+    pub automatic_form_fill: bool,
+    /// YAML of form values (`email`, `color`, `password`, `phone`, `placeholder`) for
+    /// `--automatic-form-fill`; implies it.
+    #[arg(long, value_name = "FILE", help_heading = "Extraction")]
+    pub form_config: Option<PathBuf>,
+    /// Add the `knowledgebase` object (page type, forms, secrets, endpoints) to JSONL records.
+    #[arg(long, help_heading = "Extraction")]
+    pub knowledge_base: bool,
+    /// Classify discovered endpoints as REST, GraphQL, SOAP, XHR or static.
+    #[arg(long, help_heading = "Extraction")]
+    pub kb_endpoints: bool,
+    /// Check detected secrets against the provider endpoints listed in `--secret-validators`
+    /// (sends the token to that provider); implies `--detect-secrets`. With no validators
+    /// configured every finding stays `unknown`.
+    #[arg(long, help_heading = "Extraction")]
+    pub kb_validate_secrets: bool,
+    /// File of secret validators (JSON) for `--kb-validate-secrets`; the built-in list is empty.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "kb_validate_secrets",
+        help_heading = "Extraction"
+    )]
+    pub secret_validators: Option<PathBuf>,
+    /// Keep `technologies` in the JSONL records under `--compat-defaults` (always on otherwise).
+    #[arg(long, help_heading = "Extraction")]
+    pub tech_detect: bool,
+
+    // --- browser plane (compatibility -ph, -pls, -dwt) ---
+    /// Isolated-world discovery hooks (`pushState`, `fetch`, `WebSocket`, `window.open`).
+    #[arg(long, help_heading = "Headless")]
+    pub page_hooks: bool,
+    /// Headless readiness preset.
+    #[arg(long, value_enum, help_heading = "Headless")]
+    pub page_load_strategy: Option<PageLoadArg>,
+    /// Upper bound in seconds the readiness preset waits for the DOM.
+    #[arg(long, value_name = "SECONDS", help_heading = "Headless")]
+    pub dom_wait_time: Option<u32>,
+    /// Browser launch and exploration flags.
+    #[command(flatten)]
+    pub headless: HeadlessArgs,
+
+    // --- output (compatibility -do, -jsonl, -f, -output-template, -sf, -o, -sr, ...) ---
+    /// Record out-of-scope endpoints as never-fetched leaves.
+    #[arg(long, help_heading = "Output")]
+    pub display_out_scope: bool,
+    /// Result streams, filters and verbosity.
+    #[command(flatten)]
+    pub out: OutputArgs,
+    /// System 1 model and LLM planner endpoints.
+    #[command(flatten)]
+    pub model: ModelArgs,
+    /// AI-assisted form filling (`--ai-*`).
+    #[command(flatten)]
+    pub ai: AiArgs,
+    /// Opt-in captcha solver configuration.
+    #[command(flatten)]
+    pub captcha: crate::captcha_args::CaptchaArgs,
+    /// Directory of the milestone gate files (`g1.passed`, `g3.passed`).
+    #[arg(long, env = "CRAWLX_GATES_DIR", value_name = "DIR")]
+    pub gates_dir: Option<PathBuf>,
+}
+
+/// URL-plane flags, flattened without changing their command-line names or help headings.
+///
+/// Keeping this group separate bounds the generated argument builder's stack frame in debug builds.
+#[derive(Args, Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct UrlArgs {
     // --- scope (compatibility -fs, -cs, -cos, -exclude, -strategy, -mdp, -kf, -em, -ef, -ndef, -d, -pc) ---
     /// Host scope: `dn`, `rdn`, `fqdn`, `none`, or a regex over the host name (hosts matching
     /// it are in scope in addition to the seed host).
@@ -686,122 +780,11 @@ pub struct CrawlArgs {
     /// Synthetic TLS ClientHello randomization for URL-only crawls.
     #[command(flatten)]
     pub tls: crate::tls_args::TlsArgs,
-
-    // --- extraction (compatibility -flc, -kb*, -fx, -aff, -fc, -td) ---
-    /// Custom regex fields: YAML or JSON list of `{name, regex: [..], part, group}`.
-    #[arg(
-        long,
-        visible_alias = "field-config",
-        value_name = "FILE",
-        help_heading = "Extraction"
-    )]
-    pub custom_field_config: Option<PathBuf>,
-    /// Detect secrets in bodies and headers (kind and keyed hash only; never the value).
-    #[arg(long, visible_alias = "kb-secrets", help_heading = "Extraction")]
-    pub detect_secrets: bool,
-    /// Extract static forms into page metadata (the default).
-    #[arg(long, conflicts_with = "no_form_extraction", help_heading = "Extraction")]
-    pub form_extraction: bool,
-    /// Do not extract static forms.
-    #[arg(long, help_heading = "Extraction")]
-    pub no_form_extraction: bool,
-    /// Complete static forms with deterministic values (seed-derived, or from `--form-config`):
-    /// GET forms are followed, other methods are recorded as endpoints, never sent.
-    #[arg(long, help_heading = "Extraction")]
-    pub automatic_form_fill: bool,
-    /// YAML of form values (`email`, `color`, `password`, `phone`, `placeholder`) for
-    /// `--automatic-form-fill`; implies it.
-    #[arg(long, value_name = "FILE", help_heading = "Extraction")]
-    pub form_config: Option<PathBuf>,
-    /// Add the `knowledgebase` object (page type, forms, secrets, endpoints) to JSONL records.
-    #[arg(long, help_heading = "Extraction")]
-    pub knowledge_base: bool,
-    /// Classify discovered endpoints as REST, GraphQL, SOAP, XHR or static.
-    #[arg(long, help_heading = "Extraction")]
-    pub kb_endpoints: bool,
-    /// Check detected secrets against the provider endpoints listed in `--secret-validators`
-    /// (sends the token to that provider); implies `--detect-secrets`. With no validators
-    /// configured every finding stays `unknown`.
-    #[arg(long, help_heading = "Extraction")]
-    pub kb_validate_secrets: bool,
-    /// File of secret validators (JSON) for `--kb-validate-secrets`; the built-in list is empty.
-    #[arg(
-        long,
-        value_name = "FILE",
-        requires = "kb_validate_secrets",
-        help_heading = "Extraction"
-    )]
-    pub secret_validators: Option<PathBuf>,
-    /// Keep `technologies` in the JSONL records under `--compat-defaults` (always on otherwise).
-    #[arg(long, help_heading = "Extraction")]
-    pub tech_detect: bool,
-
-    // --- browser plane (compatibility -ph, -pls, -dwt) ---
-    /// Isolated-world discovery hooks (`pushState`, `fetch`, `WebSocket`, `window.open`).
-    #[arg(long, help_heading = "Headless")]
-    pub page_hooks: bool,
-    /// Headless readiness preset.
-    #[arg(long, value_enum, help_heading = "Headless")]
-    pub page_load_strategy: Option<PageLoadArg>,
-    /// Upper bound in seconds the readiness preset waits for the DOM.
-    #[arg(long, value_name = "SECONDS", help_heading = "Headless")]
-    pub dom_wait_time: Option<u32>,
-    /// Browser launch and exploration flags.
-    #[command(flatten)]
-    pub headless: HeadlessArgs,
-
-    // --- output (compatibility -do, -jsonl, -f, -output-template, -sf, -o, -sr, ...) ---
-    /// Record out-of-scope endpoints as never-fetched leaves.
-    #[arg(long, help_heading = "Output")]
-    pub display_out_scope: bool,
-    /// Result streams, filters and verbosity.
-    #[command(flatten)]
-    pub out: OutputArgs,
-    /// System 1 model and LLM planner endpoints.
-    #[command(flatten)]
-    pub model: ModelArgs,
-    /// AI-assisted form filling (`--ai-*`).
-    #[command(flatten)]
-    pub ai: AiArgs,
-    /// Opt-in captcha solver configuration.
-    #[command(flatten)]
-    pub captcha: crate::captcha_args::CaptchaArgs,
-    /// Directory of the milestone gate files (`g1.passed`, `g3.passed`).
-    #[arg(long, env = "CRAWLX_GATES_DIR", value_name = "DIR")]
-    pub gates_dir: Option<PathBuf>,
 }
 
-impl CrawlArgs {
-    /// Fill every unset flag from `lower` (a `--config` flag layer).
-    pub(crate) fn fill_from(&mut self, lower: Self) {
+impl UrlArgs {
+    fn fill_from(&mut self, lower: Self) {
         let Self {
-            input,
-            proxy_routes,
-            mode,
-            headless_mode,
-            hybrid,
-            profile,
-            authorization_record,
-            seed,
-            output,
-            observe_only,
-            database_url,
-            roles,
-            launch_profile,
-            allow_private_networks,
-            limit_urls,
-            limit_interactions,
-            request,
-            trailing_slash,
-            delay_ms,
-            delay_seconds,
-            crawl_duration,
-            compat_defaults,
-            print_config,
-            cache_mode,
-            health_check,
-            update,
-            disable_update_check,
             field_scope,
             no_scope,
             crawl_scope,
@@ -849,70 +832,7 @@ impl CrawlArgs {
             robots_user_agent,
             skip_tls_verification,
             tls,
-            custom_field_config,
-            detect_secrets,
-            form_extraction,
-            no_form_extraction,
-            automatic_form_fill,
-            form_config,
-            knowledge_base,
-            kb_endpoints,
-            kb_validate_secrets,
-            secret_validators,
-            tech_detect,
-            page_hooks,
-            page_load_strategy,
-            dom_wait_time,
-            headless,
-            display_out_scope,
-            out,
-            model,
-            ai,
-            captcha,
-            gates_dir,
         } = lower;
-        self.input.fill_from(input);
-        fill(
-            &mut self.proxy_routes.fetch_basic_proxy_url,
-            proxy_routes.fetch_basic_proxy_url,
-        );
-        fill(
-            &mut self.proxy_routes.fetch_enhanced_proxy_url,
-            proxy_routes.fetch_enhanced_proxy_url,
-        );
-        self.proxy_routes.proxyx.fill_from(proxy_routes.proxyx);
-        self.headless.fill_from(headless);
-        self.out.fill_from(out);
-        self.model.fill_from(model);
-        self.captcha.fill_from(captcha);
-        if self.ai.is_unset() {
-            self.ai = ai;
-        }
-        fill(&mut self.mode, mode);
-        fill(&mut self.headless_mode, headless_mode);
-        fill(&mut self.hybrid, hybrid);
-        fill(&mut self.profile, profile);
-        fill(&mut self.authorization_record, authorization_record);
-        fill(&mut self.seed, seed);
-        fill(&mut self.output, output);
-        fill(&mut self.observe_only, observe_only);
-        fill(&mut self.database_url, database_url);
-        fill(&mut self.roles, roles);
-        fill(&mut self.launch_profile, launch_profile);
-        fill(&mut self.allow_private_networks, allow_private_networks);
-        fill(&mut self.limit_urls, limit_urls);
-        fill(&mut self.limit_interactions, limit_interactions);
-        fill(&mut self.request, request);
-        fill(&mut self.trailing_slash, trailing_slash);
-        fill(&mut self.delay_ms, delay_ms);
-        fill(&mut self.delay_seconds, delay_seconds);
-        fill(&mut self.crawl_duration, crawl_duration);
-        fill(&mut self.compat_defaults, compat_defaults);
-        fill(&mut self.print_config, print_config);
-        fill(&mut self.cache_mode, cache_mode);
-        fill(&mut self.health_check, health_check);
-        fill(&mut self.update, update);
-        fill(&mut self.disable_update_check, disable_update_check);
         fill(&mut self.field_scope, field_scope);
         fill(&mut self.no_scope, no_scope);
         fill(&mut self.crawl_scope, crawl_scope);
@@ -978,6 +898,106 @@ impl CrawlArgs {
         fill(&mut self.robots_user_agent, robots_user_agent);
         fill(&mut self.skip_tls_verification, skip_tls_verification);
         self.tls.fill_from(tls);
+    }
+}
+
+impl CrawlArgs {
+    /// Fill every unset flag from `lower` (a `--config` flag layer).
+    pub(crate) fn fill_from(&mut self, lower: Self) {
+        let Self {
+            input,
+            proxy_routes,
+            mode,
+            headless_mode,
+            hybrid,
+            profile,
+            authorization_record,
+            seed,
+            output,
+            observe_only,
+            database_url,
+            roles,
+            launch_profile,
+            allow_private_networks,
+            limit_urls,
+            limit_interactions,
+            request,
+            trailing_slash,
+            delay_ms,
+            delay_seconds,
+            crawl_duration,
+            compat_defaults,
+            print_config,
+            cache_mode,
+            health_check,
+            update,
+            disable_update_check,
+            url,
+            custom_field_config,
+            detect_secrets,
+            form_extraction,
+            no_form_extraction,
+            automatic_form_fill,
+            form_config,
+            knowledge_base,
+            kb_endpoints,
+            kb_validate_secrets,
+            secret_validators,
+            tech_detect,
+            page_hooks,
+            page_load_strategy,
+            dom_wait_time,
+            headless,
+            display_out_scope,
+            out,
+            model,
+            ai,
+            captcha,
+            gates_dir,
+        } = lower;
+        self.input.fill_from(input);
+        fill(
+            &mut self.proxy_routes.fetch_basic_proxy_url,
+            proxy_routes.fetch_basic_proxy_url,
+        );
+        fill(
+            &mut self.proxy_routes.fetch_enhanced_proxy_url,
+            proxy_routes.fetch_enhanced_proxy_url,
+        );
+        self.proxy_routes.proxyx.fill_from(proxy_routes.proxyx);
+        self.headless.fill_from(headless);
+        self.out.fill_from(out);
+        self.model.fill_from(model);
+        self.captcha.fill_from(captcha);
+        if self.ai.is_unset() {
+            self.ai = ai;
+        }
+        fill(&mut self.mode, mode);
+        fill(&mut self.headless_mode, headless_mode);
+        fill(&mut self.hybrid, hybrid);
+        fill(&mut self.profile, profile);
+        fill(&mut self.authorization_record, authorization_record);
+        fill(&mut self.seed, seed);
+        fill(&mut self.output, output);
+        fill(&mut self.observe_only, observe_only);
+        fill(&mut self.database_url, database_url);
+        fill(&mut self.roles, roles);
+        fill(&mut self.launch_profile, launch_profile);
+        fill(&mut self.allow_private_networks, allow_private_networks);
+        fill(&mut self.limit_urls, limit_urls);
+        fill(&mut self.limit_interactions, limit_interactions);
+        fill(&mut self.request, request);
+        fill(&mut self.trailing_slash, trailing_slash);
+        fill(&mut self.delay_ms, delay_ms);
+        fill(&mut self.delay_seconds, delay_seconds);
+        fill(&mut self.crawl_duration, crawl_duration);
+        fill(&mut self.compat_defaults, compat_defaults);
+        fill(&mut self.print_config, print_config);
+        fill(&mut self.cache_mode, cache_mode);
+        fill(&mut self.health_check, health_check);
+        fill(&mut self.update, update);
+        fill(&mut self.disable_update_check, disable_update_check);
+        self.url.fill_from(url);
         fill(&mut self.custom_field_config, custom_field_config);
         fill(&mut self.detect_secrets, detect_secrets);
         fill(&mut self.form_extraction, form_extraction);
@@ -1150,16 +1170,16 @@ fn apply_flags(args: &CrawlArgs, crawl: &mut CreateCrawl) -> anyhow::Result<()> 
     if (args.headless_mode && (args.mode.is_some() || args.hybrid)) || (args.hybrid && args.mode.is_some()) {
         bail!("--mode, --headless and --hybrid are mutually exclusive");
     }
-    if args.no_scope && args.field_scope.is_some() {
+    if args.url.no_scope && args.url.field_scope.is_some() {
         bail!("--no-scope conflicts with --field-scope");
     }
     if args.delay_seconds.is_some() && args.delay_ms.is_some() {
         bail!("--delay conflicts with --delay-ms");
     }
-    if args.content_similar.is_some()
-        && (args.page_content_similar.is_some()
-            || args.similarity_deduplication.is_some()
-            || args.page_content_similar_mode.is_some())
+    if args.url.content_similar.is_some()
+        && (args.url.page_content_similar.is_some()
+            || args.url.similarity_deduplication.is_some()
+            || args.url.page_content_similar_mode.is_some())
     {
         bail!("--content-similar conflicts with --page-content-similar, --similarity-deduplication and --page-content-similar-mode");
     }
@@ -1259,85 +1279,85 @@ fn apply_flags(args: &CrawlArgs, crawl: &mut CreateCrawl) -> anyhow::Result<()> 
 }
 
 fn apply_scope(args: &CrawlArgs, scope: &mut Scope) -> anyhow::Result<()> {
-    match &args.field_scope {
+    match &args.url.field_scope {
         Some(FieldScopeArg::Host(h)) => scope.host_scope = *h,
         Some(FieldScopeArg::Pattern(p)) => scope.host_scope_pattern = Some(p.clone()),
         None => {}
     }
-    if args.no_scope {
+    if args.url.no_scope {
         scope.host_scope = HostScope::None;
         scope.host_scope_pattern = None;
     }
-    if !args.crawl_scope.is_empty() {
-        scope.url_include = expand_file_values(&args.crawl_scope)?;
+    if !args.url.crawl_scope.is_empty() {
+        scope.url_include = expand_file_values(&args.url.crawl_scope)?;
     }
-    if !args.crawl_out_scope.is_empty() {
-        scope.url_exclude = expand_file_values(&args.crawl_out_scope)?;
+    if !args.url.crawl_out_scope.is_empty() {
+        scope.url_exclude = expand_file_values(&args.url.crawl_out_scope)?;
     }
-    if !args.exclude_hosts.is_empty() {
-        scope.exclude_hosts.clone_from(&args.exclude_hosts);
+    if !args.url.exclude_hosts.is_empty() {
+        scope.exclude_hosts.clone_from(&args.url.exclude_hosts);
     }
-    if let Some(s) = args.strategy {
+    if let Some(s) = args.url.strategy {
         scope.strategy = s.into();
     }
-    if let Some(n) = args.depth {
+    if let Some(n) = args.url.depth {
         scope.max_discovery_depth = n;
     }
-    if args.path_climb {
+    if args.url.path_climb {
         scope.path_climb = true;
     }
-    if args.ignore_query_params {
+    if args.url.ignore_query_params {
         scope.ignore_query_params = true;
     }
-    if let Some(n) = args.max_pages_per_host {
+    if let Some(n) = args.url.max_pages_per_host {
         scope.max_pages_per_host = Some(n);
     }
-    if !args.known_files.is_empty() {
-        scope.known_files = KnownFileArg::expand(&args.known_files);
+    if !args.url.known_files.is_empty() {
+        scope.known_files = KnownFileArg::expand(&args.url.known_files);
     }
-    if !args.extension_match.is_empty() {
-        scope.extension_match.clone_from(&args.extension_match);
+    if !args.url.extension_match.is_empty() {
+        scope.extension_match.clone_from(&args.url.extension_match);
     }
-    if !args.extension_filter.is_empty() {
-        scope.extension_filter.clone_from(&args.extension_filter);
+    if !args.url.extension_filter.is_empty() {
+        scope.extension_filter.clone_from(&args.url.extension_filter);
     }
-    if args.no_default_ext_filter {
+    if args.url.no_default_ext_filter {
         scope.no_default_extension_filter = true;
     }
-    if args.no_js_endpoints {
+    if args.url.no_js_endpoints {
         scope.js_endpoints = false;
     }
-    if args.js_crawl || args.jsluice || args.javascript_mode.is_some() {
+    if args.url.js_crawl || args.url.jsluice || args.url.javascript_mode.is_some() {
         scope.js_endpoints = true;
-        if matches!(args.javascript_mode, Some(JavascriptModeArg::Off)) {
+        if matches!(args.url.javascript_mode, Some(JavascriptModeArg::Off)) {
             scope.js_endpoints = false;
         }
     }
-    if args.filter_similar {
+    if args.url.filter_similar {
         scope.filter_similar = true;
     }
-    if let Some(n) = args.filter_similar_threshold {
+    if let Some(n) = args.url.filter_similar_threshold {
         scope.filter_similar_threshold = n;
     }
-    if let Some(n) = args.filter_similar_budget {
+    if let Some(n) = args.url.filter_similar_budget {
         scope.filter_similar_budget = n;
     }
-    if let Some(m) = args.content_similar {
+    if let Some(m) = args.url.content_similar {
         scope.content_similarity.mode = m.into();
     }
-    if args.page_content_similar.is_some()
-        || args.similarity_deduplication.is_some()
-        || args.page_content_similar_mode.is_some()
+    if args.url.page_content_similar.is_some()
+        || args.url.similarity_deduplication.is_some()
+        || args.url.page_content_similar_mode.is_some()
     {
         // Compatibility-flag semantics, ContentSimilarityEnabled:
         // pcs OR sdd enables; selecting pcsm alone never enables a disabled index.
-        let enabled = match (args.page_content_similar, args.similarity_deduplication) {
+        let enabled = match (args.url.page_content_similar, args.url.similarity_deduplication) {
             (None, None) => scope.content_similarity.mode != SimilarityMode::Off,
             (pcs, sdd) => pcs.unwrap_or(false) || sdd.unwrap_or(false),
         };
         scope.content_similarity.mode = if !enabled {
             SimilarityMode::Off
-        } else if let Some(mode) = args.page_content_similar_mode {
+        } else if let Some(mode) = args.url.page_content_similar_mode {
             mode.into()
         } else if scope.content_similarity.mode == SimilarityMode::Off {
             SimilarityMode::Simhash
@@ -1345,38 +1365,38 @@ fn apply_scope(args: &CrawlArgs, scope: &mut Scope) -> anyhow::Result<()> {
             scope.content_similarity.mode
         };
     }
-    if let Some(d) = args.content_similar_distance {
+    if let Some(d) = args.url.content_similar_distance {
         scope.content_similarity.distance = d;
     }
-    if let Some(t) = args.content_similar_threshold {
+    if let Some(t) = args.url.content_similar_threshold {
         scope.content_similarity.threshold = t;
     }
-    if let Some(b) = args.content_similar_budget {
+    if let Some(b) = args.url.content_similar_budget {
         scope.content_similarity.budget = b;
     }
-    if args.disable_unique_filter {
+    if args.url.disable_unique_filter {
         scope.disable_unique_filter = true;
     }
-    if !args.no_expand_page_type.is_empty() {
-        scope.filter_page_types = args.no_expand_page_type.iter().map(|&t| t.into()).collect();
+    if !args.url.no_expand_page_type.is_empty() {
+        scope.filter_page_types = args.url.no_expand_page_type.iter().map(|&t| t.into()).collect();
     }
     Ok(())
 }
 
 fn apply_politeness(args: &CrawlArgs, p: &mut Politeness) {
-    if let Some(n) = args.rate_limit {
+    if let Some(n) = args.url.rate_limit {
         p.global_rps = Some(n);
     }
-    if let Some(n) = args.rate_limit_minute {
+    if let Some(n) = args.url.rate_limit_minute {
         p.global_rpm = Some(n);
     }
-    if let Some(n) = args.host_rate_limit {
+    if let Some(n) = args.url.host_rate_limit {
         p.per_host_rps = Some(n);
     }
-    if let Some(n) = args.host_rate_limit_minute {
+    if let Some(n) = args.url.host_rate_limit_minute {
         p.per_host_rpm = Some(n);
     }
-    if let Some(n) = args.concurrency {
+    if let Some(n) = args.url.concurrency {
         p.max_concurrency = n;
     }
 }
@@ -1433,58 +1453,60 @@ fn parse_cookie(raw: &str) -> anyhow::Result<FetchCookie> {
 }
 
 fn apply_fetch(args: &CrawlArgs, f: &mut Fetch) -> anyhow::Result<()> {
-    if let Some(n) = args.max_response_size {
+    if let Some(n) = args.url.max_response_size {
         f.max_response_bytes = n;
     }
-    if let Some(secs) = args.timeout {
+    if let Some(secs) = args.url.timeout {
         f.timeout_ms = seconds_to_ms("--timeout", secs)?;
     }
-    if let Some(n) = args.retries {
+    if let Some(n) = args.url.retries {
         f.retries = n;
     }
-    if args.no_redirects {
+    if args.url.no_redirects {
         f.follow_redirects = false;
     }
-    if let Some(p) = &args.proxy {
+    if let Some(p) = &args.url.proxy {
         f.proxy = Some(p.clone());
     }
-    if !args.resolvers.is_empty() {
-        f.resolvers = crate::list_values::resolvers(&args.resolvers)?;
+    if !args.url.resolvers.is_empty() {
+        f.resolvers = crate::list_values::resolvers(&args.url.resolvers)?;
     }
-    for raw in expand_file_values(&args.headers)? {
+    for raw in expand_file_values(&args.url.headers)? {
         let (name, value) = split_header(&raw)?;
         f.set_header(name, value)
             .with_context(|| format!("--headers {name:?}"))?;
     }
-    for raw in &args.cookie {
+    for raw in &args.url.cookie {
         f.cookies.push(parse_cookie(raw)?);
     }
-    if let Some(ua) = &args.user_agent {
+    if let Some(ua) = &args.url.user_agent {
         f.user_agent = Some(ua.clone());
     }
-    if let Some(ua) = &args.robots_user_agent {
+    if let Some(ua) = &args.url.robots_user_agent {
         f.robots_user_agent = Some(ua.clone());
     }
-    if args.skip_tls_verification {
+    if args.url.skip_tls_verification {
         f.skip_tls_verification = true;
     }
-    args.tls.apply(f);
+    args.url.tls.apply(f);
     Ok(())
 }
 
 fn apply_extract(args: &CrawlArgs, e: &mut Extract) -> anyhow::Result<()> {
-    if args.javascript_mode.is_some() && (args.js_crawl || args.jsluice || args.no_js_endpoints) {
+    if args.url.javascript_mode.is_some()
+        && (args.url.js_crawl || args.url.jsluice || args.url.no_js_endpoints)
+    {
         bail!("--javascript-mode conflicts with --js-crawl, --jsluice and --no-js-endpoints");
     }
-    if args.no_js_endpoints && (args.js_crawl || args.jsluice) {
+    if args.url.no_js_endpoints && (args.url.js_crawl || args.url.jsluice) {
         bail!("--no-js-endpoints conflicts with --js-crawl and --jsluice");
     }
-    if let Some(mode) = args.javascript_mode {
+    if let Some(mode) = args.url.javascript_mode {
         e.javascript.mode = mode.into();
-    } else if args.js_crawl || args.jsluice {
-        e.javascript.mode = if args.js_crawl && args.jsluice {
+    } else if args.url.js_crawl || args.url.jsluice {
+        e.javascript.mode = if args.url.js_crawl && args.url.jsluice {
             JavascriptMode::Both
-        } else if args.js_crawl {
+        } else if args.url.js_crawl {
             JavascriptMode::Regex
         } else {
             JavascriptMode::Ast

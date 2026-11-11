@@ -84,6 +84,9 @@ fn actual_cli_replay_and_qa_report_real_baseline_and_absence() {
             .args(["--tenant", TENANT, "--out"])
             .arg(output)
             .args(["--seed", "7", "--sample", "3", "--page-filter", r"/index\.html$"]);
+        if operation == "qa" {
+            command.arg("--diff-images");
+        }
         if let Some(baseline) = baseline {
             command.arg("--baseline").arg(baseline);
         }
@@ -101,7 +104,8 @@ fn actual_cli_replay_and_qa_report_real_baseline_and_absence() {
         "filter precedes the three-page sample cap"
     );
     assert!(baseline.join("bundle.json").is_file());
-    let compared = invoke("qa", &root.path().join("matched"), Some(&baseline));
+    let matched = root.path().join("matched");
+    let compared = invoke("qa", &matched, Some(&baseline));
     assert!(
         compared.status.success(),
         "status: {}; stderr: {}; stdout: {}",
@@ -113,9 +117,72 @@ fn actual_cli_replay_and_qa_report_real_baseline_and_absence() {
     assert_eq!(report["failed"], 0);
     assert_eq!(report["not_evaluated"], 0);
     assert!(report["passed"].as_u64().unwrap() > 0);
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(assert_retained_difference_artifact_refs(&matched));
     let absent = invoke("qa", &root.path().join("absent"), None);
     assert_eq!(absent.status.code(), Some(2));
     let report: serde_json::Value = serde_json::from_slice(&absent.stdout).unwrap();
     assert_eq!(report["passed"], 0);
     assert_eq!(report["not_evaluated"], 8);
+}
+
+async fn assert_retained_difference_artifact_refs(matched: &std::path::Path) {
+    use crawlx_core::repo::Sensitivity;
+    use crawlx_storage::artifacts::FsArtifactStore;
+    use crawlx_storage::memory::MemoryStore;
+    use std::sync::Arc;
+
+    let bundle: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(matched.join("bundle.json")).unwrap()).unwrap();
+    let run = serde_json::from_value(bundle["run"].clone()).unwrap();
+    let reference = serde_json::from_value(bundle["report"].clone()).unwrap();
+    let store = FsArtifactStore::open(
+        matched.join("artifacts"),
+        Arc::new(MemoryStore::new()),
+        Arc::new(crawlx_core::time::SystemClock),
+    )
+    .await
+    .unwrap()
+    .with_read_scope(TENANT.parse().unwrap(), run);
+    let bytes = store
+        .get_bounded(&reference, Sensitivity::Content, 16 * 1024 * 1024)
+        .await
+        .unwrap();
+    let stored: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let differences = stored["differences"].as_object().unwrap();
+    assert_eq!(differences.len(), 3);
+    for (phase, reference) in differences {
+        assert!(["0/viewport", "0/full_page", "0/final"].contains(&phase.as_str()));
+        let reference = serde_json::from_value(reference.clone()).unwrap();
+        let bytes = store
+            .get_bounded(&reference, Sensitivity::Sensitive, 16 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(store
+            .get_bounded(&reference, Sensitivity::Content, 16 * 1024 * 1024)
+            .await
+            .is_err());
+    }
+}
+
+#[test]
+fn zdr_difference_images_refuse_before_reading_baseline_or_writing_output() {
+    let root = tempfile::tempdir().unwrap();
+    let output = root.path().join("must-not-exist");
+    let process = Command::new(env!("CARGO_BIN_EXE_crawlx"))
+        .args(["archive", "qa", "missing.wacz", "--tenant", TENANT, "--out"])
+        .arg(&output)
+        .args([
+            "--baseline",
+            "missing-baseline",
+            "--diff-images",
+            "--zero-data-retention",
+        ])
+        .output()
+        .unwrap();
+    assert!(!process.status.success());
+    assert!(String::from_utf8_lossy(&process.stderr).contains("retention_denied"));
+    assert!(!output.exists());
 }

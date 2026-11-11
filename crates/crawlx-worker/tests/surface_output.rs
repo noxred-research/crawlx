@@ -571,6 +571,9 @@ fn omit_raw_and_omit_body_remove_them_from_the_record() {
     let v = jsonl(&omit_raw, &pages, text.clone()).remove(0);
     assert!(v["response"].get("raw").is_none() && v["request"].get("raw").is_none());
     assert!(v["response"]["body"].is_string(), "-or keeps the body");
+    assert_eq!(v["fidelity"]["request_raw"]["availability"], "omitted");
+    assert_eq!(v["fidelity"]["response_raw"]["availability"], "omitted");
+    assert_eq!(v["fidelity"]["response_body"]["availability"], "available");
 
     let omit_body = Exporter {
         omit_body: true,
@@ -578,6 +581,9 @@ fn omit_raw_and_omit_body_remove_them_from_the_record() {
     };
     let v = jsonl(&omit_body, &pages, text).remove(0);
     assert!(v["response"].get("body").is_none());
+    assert!(v["request"].get("body").is_none());
+    assert_eq!(v["fidelity"]["request_body"]["availability"], "omitted");
+    assert_eq!(v["fidelity"]["response_body"]["availability"], "omitted");
     assert!(v["response"]["raw"].is_string(), "-ob keeps raw");
 }
 
@@ -614,14 +620,18 @@ fn every_listed_output_field_is_present_and_excludable_through_the_exporter() {
     };
     let mut present = keys(&jsonl(&full, &pages, text.clone()).remove(0));
     present.extend(failure_keys(&jsonl_exporter()));
+    let mut embedded = full.record_with(&pages[0], text.clone()).unwrap();
+    embedded
+        .response
+        .as_mut()
+        .unwrap()
+        .extra
+        .insert("fixture".to_owned(), json!({"value": 7}));
+    present.extend(keys(&serde_json::to_value(&embedded).unwrap()));
 
     let names = field_names();
     assert!(names.windows(2).all(|w| w[0] < w[1]), "-lof is sorted and unique");
     for name in names {
-        // `extra` is for embedders: no page metadata produces it
-        if name == "extra" {
-            continue;
-        }
         assert!(
             present.iter().any(|k| k == name),
             "`{name}` never appears in an exported record"
@@ -635,6 +645,16 @@ fn every_listed_output_field_is_present_and_excludable_through_the_exporter() {
             !keys(&record).iter().any(|k| k == name),
             "-eof {name} left it in the page record"
         );
+        let mut projected = embedded.clone();
+        projected.exclude_fields(&[name.to_owned()]);
+        let projected = serde_json::to_value(projected).unwrap();
+        assert!(
+            !keys(&projected).iter().any(|key| key == name),
+            "embedded field {name}"
+        );
+        if name != "extra" && name != "response" {
+            assert_eq!(projected["response"]["extra"]["fixture"]["value"], 7);
+        }
         let excluded = Exporter {
             exclude_fields: vec![name.to_owned()],
             ..jsonl_exporter()
@@ -710,10 +730,12 @@ fn store_response_writes_files_index_and_the_path_on_the_record() {
     );
     let text = std::fs::read_to_string(first).unwrap();
     assert!(
-        text.starts_with("https://e.com:8443/a?b=1\n\n\nPOST /p HTTP/1.1"),
+        text.starts_with("https://e.com:8443/a?b=1\n\n\n# request:"),
         "metadata raw request: {text}"
     );
-    assert!(text.ends_with("\n\nRAW /a\n"), "{text}");
+    assert!(text.contains("POST /p HTTP/1.1"), "{text}");
+    assert!(text.contains("representation=Unknown"), "{text}");
+    assert!(text.ends_with("\nRAW /a\n\n\n"), "{text}");
     // second page has no captured raw: both texts are rebuilt from the record
     let second =
         std::fs::read_to_string(records[1]["response"]["stored_response_path"].as_str().unwrap()).unwrap();

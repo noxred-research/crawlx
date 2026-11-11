@@ -43,6 +43,38 @@ async fn running(store: &MemoryStore) -> (CrawlRun, crawlx_core::SessionId) {
 }
 
 #[tokio::test]
+async fn session_kinds_roundtrip_through_scheduler_leases() {
+    let store = MemoryStore::new();
+    let run = crawl_run(TenantId::new(), create_crawl("https://example.test/", &[], 2));
+    store.create(&run, None).await.unwrap();
+    let mut slots = sessions(run.id, 1, 2);
+    slots[1].kind = SessionKind::HttpCoordinator;
+    store.create_sessions(&slots).await.unwrap();
+    assert_eq!(store.list_sessions(run.id).await.unwrap(), slots);
+    for slot in &slots {
+        let lease = store
+            .claim_session(run.id, WorkerId::new(), false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.session.kind, slot.kind);
+        assert!(lease.session.browser.is_none());
+        store.release(&lease, SessionStatus::Completed).await.unwrap();
+    }
+}
+
+#[test]
+fn legacy_session_json_defaults_to_browser_without_using_launch_state() {
+    let session = sessions(crawlx_core::CrawlRunId::new(), 1, 1).remove(0);
+    let mut value = serde_json::to_value(&session).unwrap();
+    value.as_object_mut().unwrap().remove("kind");
+    let decoded: CrawlSession = serde_json::from_value(value).unwrap();
+    assert_eq!(decoded, session);
+    assert_eq!(decoded.kind, SessionKind::Browser);
+    assert!(decoded.browser.is_none());
+}
+
+#[tokio::test]
 #[allow(clippy::field_reassign_with_default)] // BufferLimits is non-exhaustive outside its crate.
 async fn literal_controls_stay_volatile_and_expire_for_runs_and_replays() {
     let clock = Arc::new(ManualClock::new(Utc::now()));

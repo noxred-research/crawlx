@@ -1,7 +1,7 @@
-//! G1 lane regressions through real Chromium: a default worker run of the link fixtures G06 (cards
-//! with `open-N` links) and G07 (the self-filling feed with header links) follows links with the
-//! trusted browser-native click. Skipped (with a message) without a Chromium
-//! executable; set `CRAWLX_CHROMIUM_PATH`.
+//! G1 lane regressions through real Chromium: interactions on the link fixtures G06 (cards
+//! with `open-N` links) and G07 (the self-filling feed with header links) use trusted native input,
+//! while independent URL acquisition stays diagnostic. Skipped (with a message) without a
+//! Chromium executable; set `CRAWLX_CHROMIUM_PATH`.
 //!
 //! Two defects put scripted `Navigate` actions on the diagnostic lane here: the live `href` of an
 //! anchor was its resolved URL while the observed descriptor carried it as written, so the kernel
@@ -9,11 +9,12 @@
 //! arbiter then picked the `url_plane` navigation to the same destination; and `url_plane` raced
 //! the trusted click in the greedy phase. Both are asserted away below.
 //!
-//! The `url_plane` strategy is the recovery phases' fallback once the trusted clicks are
-//! exhausted (`crawlx-strategies`, `url_plane`), so a run that exhausts them, as G06 does after
-//! its four control families, legitimately ends with scripted navigations to destinations no click
-//! reached. The assertions therefore state the contract, not a share: a scripted navigation never
-//! precedes the trusted click on its own link, and every other action ran on the trusted lane.
+//! The `url_plane` strategy is the recovery phases' link-element fallback. It must not precede
+//! the trusted click on its own link. Separately, the worker's `discovered_urls` frontier acquires
+//! rendered links and hook destinations using URL-derived identities, including URLs with no
+//! clickable element. Those independent navigations legitimately run on the diagnostic lane;
+//! they are not `url_plane` fallbacks and have no same-element click prerequisite.
+//! Every genuine interaction strategy must still run on the trusted lane.
 //! The run ends on its interaction budget or an exhausted frontier, never on the clock: a
 //! wall-clock end decided how many actions ran (and whether the greedy phase was left at all), so
 //! the same build passed or failed with the speed of the machine, and it could leave an admitted
@@ -30,8 +31,9 @@ use crawlx_core::config::SafetyProfile;
 use crawlx_core::counters::{ActionStatus, TerminalReason};
 use crawlx_core::identity::ActionKind;
 use crawlx_core::repo::ActionRecord;
-use crawlx_core::traffic::TrustLane;
+use crawlx_core::traffic::{Fidelity, TrustLane};
 use crawlx_storage::MemoryStore;
+use crawlx_worker::driver::DISCOVERED_URLS_STRATEGY;
 use crawlx_worker::{run_local_with, DriverConfig, LocalRun, RunReport, Stores};
 use std::sync::Arc;
 
@@ -122,9 +124,22 @@ async fn link_fixtures_run_entirely_on_the_trusted_lane() {
         assert!(
             actions
                 .iter()
-                .filter(|a| a.strategy != URL_PLANE)
+                .filter(|a| a.strategy != URL_PLANE && a.strategy != DISCOVERED_URLS_STRATEGY)
                 .all(|a| a.lane == Some(TrustLane::TrustedUi)),
             "{id}: a click-driven action ran on the diagnostic lane: {:#?}",
+            detail()
+        );
+        // Independent URL acquisition must remain diagnostic and cannot masquerade as a click.
+        assert!(
+            actions
+                .iter()
+                .filter(|a| a.strategy == DISCOVERED_URLS_STRATEGY)
+                .all(|a| {
+                    a.key.action_kind == ActionKind::Navigate
+                        && a.fidelity == Some(Fidelity::ScriptedNavigation)
+                        && a.lane == Some(TrustLane::Diagnostic)
+                }),
+            "{id}: discovered URL acquisition crossed the lane boundary: {:#?}",
             detail()
         );
         // url_plane never races the trusted click: a scripted navigation to a link comes only
@@ -136,6 +151,7 @@ async fn link_fixtures_run_entirely_on_the_trusted_lane() {
         {
             let clicked_first = actions[..i].iter().any(|b| {
                 b.strategy != URL_PLANE
+                    && b.strategy != DISCOVERED_URLS_STRATEGY
                     && b.lane == Some(TrustLane::TrustedUi)
                     && b.key.action_kind == ActionKind::Click
                     && b.key.route_template == a.key.route_template
@@ -158,11 +174,17 @@ async fn link_fixtures_run_entirely_on_the_trusted_lane() {
         );
         let card = Scorecard::compute(&manifest, &rows, &gym.ledger());
         let lanes = card.lanes.expect("the run recorded lanes");
-        let scripted = u64::try_from(actions.iter().filter(|a| a.strategy == URL_PLANE).count()).unwrap();
+        let scripted = u64::try_from(
+            actions
+                .iter()
+                .filter(|a| a.strategy == URL_PLANE || a.strategy == DISCOVERED_URLS_STRATEGY)
+                .count(),
+        )
+        .unwrap();
         assert!(lanes.trusted > 0, "{id}: no trusted action ran: {lanes:?}");
         assert!(
-            lanes.diagnostic <= scripted,
-            "{id}: only the url_plane fallback may use the diagnostic lane: {lanes:?}"
+            lanes.diagnostic == scripted,
+            "{id}: exactly URL acquisition and the url_plane fallback use the diagnostic lane: {lanes:?}"
         );
     }
     gym.shutdown().await;

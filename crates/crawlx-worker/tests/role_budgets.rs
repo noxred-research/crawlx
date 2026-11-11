@@ -83,7 +83,12 @@ async fn six_uneven_turns_redistribute_unused_interactions_without_starving_late
     let report = run_local_with(
         LocalRun::new(crawl, config)
             .with_stores(stores)
-            .with_backend(Arc::new(FakeBackend::new(mesh())))
+            .with_backend(Arc::new(
+                FakeBackend::builder()
+                    .script(mesh())
+                    .clock(Arc::new(crawlx_core::SystemClock))
+                    .build(),
+            ))
             .with_strategies(vec![Arc::new(UnevenDemand(InteractionBfs::new(
                 BfsConfig::default(),
             )))]),

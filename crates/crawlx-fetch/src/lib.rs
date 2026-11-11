@@ -26,6 +26,7 @@ pub mod protocol;
 pub mod proxyx;
 pub mod redirect;
 pub mod resolver;
+pub mod resolver_https;
 pub mod retry;
 mod tls;
 pub mod upstream;
@@ -47,5 +48,6 @@ pub use lists::{EgressListSource, ListKind, ListReloader, ListsError, Reload, DE
 pub use preflight::{HeadPreflight, PreflightRefusal};
 pub use redirect::DEFAULT_MAX_REDIRECTS;
 pub use resolver::{HickoryResolver, Resolver, StaticResolver};
+pub use resolver_https::{HttpsResolver, HttpsResolverConfig};
 pub use retry::RetryPolicy;
 pub use upstream::{ProxyRoutes, UpstreamProxy, UpstreamScheme};

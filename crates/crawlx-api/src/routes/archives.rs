@@ -1,4 +1,6 @@
 //! Authenticated retained archive catalog, bounded progress, streamed export and cascading erase.
+//! Sensitive byte and record projections require `artifacts:read_sensitive`; ordinary progress
+//! stays visible without exposing the sensitive manifest or byte references.
 
 use crate::auth::Principal;
 use crate::errors::{ApiResult, HttpError};
@@ -16,6 +18,44 @@ use crawlx_core::archive_catalog::{ArchiveExportState, ArchiveExportV1, ArchiveR
 use crawlx_core::config::RetentionMode;
 use serde_json::json;
 use uuid::Uuid;
+
+fn require_bytes(principal: &Principal, row: &ArchiveExportV1) -> ApiResult<()> {
+    if row.custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive {
+        principal.require(Scope::ArtifactsReadSensitive)?;
+    }
+    Ok(())
+}
+
+async fn progress(
+    state: &AppState,
+    principal: &Principal,
+    row: &ArchiveExportV1,
+) -> ApiResult<serde_json::Value> {
+    let mut body = value(row)?;
+    let sensitive = row.custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive;
+    let authorized = !sensitive || principal.require(Scope::ArtifactsReadSensitive).is_ok();
+    let source_live = if sensitive && authorized && row.state == ArchiveExportState::Published {
+        match &row.artifact {
+            Some(artifact) => {
+                state
+                    .repos
+                    .archives
+                    .artifact_visible(principal.tenant, artifact, state.clock.now())
+                    .await?
+            }
+            None => false,
+        }
+    } else {
+        true
+    };
+    if sensitive && (!authorized || !source_live) {
+        // Progress remains visible; content-bearing capture metadata and byte references do not.
+        body["manifest"] = serde_json::Value::Null;
+        body["artifact"] = serde_json::Value::Null;
+        body["index"] = serde_json::Value::Null;
+    }
+    Ok(body)
+}
 
 fn value<T: serde::Serialize>(body: &T) -> ApiResult<serde_json::Value> {
     serde_json::to_value(body)
@@ -64,7 +104,11 @@ pub async fn list(
         .archives
         .list(principal.tenant, run.id, state.clock.now())
         .await?;
-    Ok(json_response(StatusCode::OK, &json!({"archives":rows})))
+    let mut visible = Vec::with_capacity(rows.len());
+    for row in &rows {
+        visible.push(progress(&state, &principal, row).await?);
+    }
+    Ok(json_response(StatusCode::OK, &json!({"archives":visible})))
 }
 
 /// Read an export's progress or published manifest, never a speculative download URL.
@@ -78,7 +122,10 @@ pub async fn get(
 ) -> ApiResult<Response> {
     principal.require(Scope::CrawlsRead)?;
     let row = load(&state, &principal, &id, &export_id).await?;
-    Ok(json_response(StatusCode::OK, &value(&row)?))
+    Ok(json_response(
+        StatusCode::OK,
+        &progress(&state, &principal, &row).await?,
+    ))
 }
 
 /// Bounded committed-record projection. Accepts `after` ordinal and `limit` 1..64.
@@ -93,6 +140,23 @@ pub async fn records(
 ) -> ApiResult<Response> {
     principal.require(Scope::CrawlsRead)?;
     let row = load(&state, &principal, &id, &export_id).await?;
+    require_bytes(&principal, &row)?;
+    if row.custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive
+        && row.state == ArchiveExportState::Published
+    {
+        let artifact = row
+            .artifact
+            .as_ref()
+            .ok_or_else(|| HttpError::expired("archive source is unavailable"))?;
+        if !state
+            .repos
+            .archives
+            .artifact_visible(principal.tenant, artifact, state.clock.now())
+            .await?
+        {
+            return Err(HttpError::expired("archive source is unavailable"));
+        }
+    }
     let after = params
         .get("after")
         .map(str::parse::<u64>)
@@ -135,6 +199,8 @@ pub async fn export(
 ) -> ApiResult<Response> {
     principal.require(Scope::CrawlsRead)?;
     let row = load(&state, &principal, &id, &export_id).await?;
+    require_bytes(&principal, &row)?;
+    row.custody.validate(state.clock.now())?;
     if row.state != ArchiveExportState::Published {
         return Err(HttpError::invalid_state("archive manifest is not published"));
     }
@@ -150,11 +216,32 @@ pub async fn export(
     {
         return Err(HttpError::expired("archive dependency or source is unavailable"));
     }
-    let stream = state
-        .repos
-        .artifacts
-        .stream(artifact, row.config.max_bytes)
-        .await?;
+    let stream = if row.custody.sensitivity == crawlx_core::repo::Sensitivity::Content {
+        state
+            .repos
+            .artifacts
+            .stream(artifact, row.config.max_bytes)
+            .await?
+    } else {
+        state
+            .repos
+            .artifacts
+            .stream_archive(artifact, row.config.max_bytes, &row.custody)
+            .await?
+    };
+    if row.custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive {
+        state
+            .repos
+            .api
+            .audit_append(
+                principal.tenant,
+                Some(row.run),
+                &principal.actor(),
+                "artifact.read_sensitive",
+                json!({"artifact_id":artifact.id,"kind":"archive"}),
+            )
+            .await?;
+    }
     let mut response = Response::new(Body::from_stream(stream));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -167,6 +254,10 @@ pub async fn export(
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-store"),
+    );
+    response.headers_mut().insert(
+        axum::http::HeaderName::from_static("x-crawlx-sensitivity"),
+        HeaderValue::from_static(row.custody.sensitivity.as_str()),
     );
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,

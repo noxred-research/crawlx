@@ -68,7 +68,12 @@ impl Outcome {
 
 async fn run_with(script: FakeScript, crawl: CreateCrawl, hold: Option<Duration>) -> Outcome {
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(script));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store, dir.path()).await.unwrap();
     let local = LocalRun::new(crawl, cfg(dir.path()))
@@ -435,9 +440,12 @@ async fn browser_plane_exchanges_are_exported_with_the_browser_plane_tag() {
     export.retry_delays = Vec::new();
     worker.traffic_export = Some(export);
 
-    let backend = Arc::new(FakeBackend::new(
-        FakeScript::new().page(buttons(FakePage::new(HOME), &[("a", "Alpha")])),
-    ));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(FakeScript::new().page(buttons(FakePage::new(HOME), &[("a", "Alpha")])))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
         .await
         .unwrap();

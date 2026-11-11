@@ -67,6 +67,41 @@ async fn run_of(rig: &Rig, id: &str) -> crawlx_core::repo::CrawlRun {
 }
 
 #[tokio::test]
+async fn compat_v2_create_omitted_strategy_persists_breadth_first() {
+    for mode in [
+        crawlx_api::CompatMode::Strict,
+        crawlx_api::CompatMode::NativeDefaults,
+    ] {
+        let e = env_with(
+            ApiConfig {
+                rate_limit_per_minute: 0,
+                compat: CompatConfig {
+                    mode,
+                    ..CompatConfig::default()
+                },
+                ..ApiConfig::default()
+            },
+            Settings::default(),
+            Arc::new(SystemClock),
+        );
+        let (status, _, response) = e.post(CRAWL, &json!({"url": "https://docs.example.test/"})).await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        let id: CrawlRunId = response["id"].as_str().unwrap().parse().unwrap();
+        let run = e.store.get(id).await.unwrap();
+        assert_eq!(
+            run.config.scope.strategy,
+            crawlx_core::config::CrawlStrategy::BreadthFirst,
+            "{mode:?}"
+        );
+        assert_eq!(
+            serde_json::to_value(&run.config).unwrap()["scope"]["strategy"],
+            "breadth_first"
+        );
+        assert_eq!(run.config.scrape.as_ref().unwrap().kind, JobKind::Crawl);
+    }
+}
+
+#[tokio::test]
 async fn fixture_authorization_is_verified_stable_and_revocable() {
     let rig = Rig::start(RigConfig::default()).await;
     let record =

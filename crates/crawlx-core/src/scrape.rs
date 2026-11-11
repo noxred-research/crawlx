@@ -398,6 +398,13 @@ pub enum ScrapeAction {
         /// Text to enter.
         text: String,
     },
+    /// Replace text in a freshly resolved target through governed native input.
+    Fill {
+        /// CSS selector resolved again immediately before input.
+        selector: String,
+        /// Replacement value; never included in recipe dispositions.
+        text: String,
+    },
     /// Press one key (e.g. `Enter`).
     Press {
         /// Key name.
@@ -446,6 +453,7 @@ impl ScrapeAction {
             Self::Screenshot { .. } => "screenshot",
             Self::Click { .. } => "click",
             Self::Write { .. } => "write",
+            Self::Fill { .. } => "fill",
             Self::Press { .. } => "press",
             Self::Scroll { .. } => "scroll",
             Self::Scrape => "scrape",
@@ -495,6 +503,15 @@ pub struct ScrapeOptions {
     /// Native opt-in article extraction extension. Absent preserves facade behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_policy: Option<crate::extraction::ExtractionPolicyV1>,
+    /// Opt-in native content outputs, validated by the extraction boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<serde_json::Value>,
+    /// Opt-in byte decoding diagnostics, validated by the extraction boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode: Option<serde_json::Value>,
+    /// Opt-in comment and CDATA handling, validated by the extraction boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markup: Option<serde_json::Value>,
     /// CSS selectors whose elements are kept.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include_tags: Vec<String>,
@@ -537,6 +554,9 @@ pub struct ScrapeOptions {
     /// Browser actions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ScrapeAction>,
+    /// Immutable operator-approved recipe selection; never accepts recipe contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_behavior: Option<crate::archive_behaviors::RecipeReferenceV1>,
     /// Locale emulation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<Location>,
@@ -603,6 +623,7 @@ impl ScrapeOptions {
         self.wait_for_ms > 0
             || self.mobile
             || self.profile.is_some()
+            || self.archive_behavior.is_some()
             || !self.actions.is_empty()
             || self
                 .formats
@@ -649,6 +670,9 @@ impl Default for ScrapeOptions {
             formats: Self::default_formats(),
             only_main_content: true,
             content_policy: None,
+            outputs: None,
+            decode: None,
+            markup: None,
             include_tags: Vec::new(),
             exclude_tags: Vec::new(),
             max_age_ms: DEFAULT_MAX_AGE_MS,
@@ -663,6 +687,7 @@ impl Default for ScrapeOptions {
             timeout_ms: DEFAULT_TIMEOUT_MS,
             parsers: Self::default_parsers(),
             actions: Vec::new(),
+            archive_behavior: None,
             location: None,
             remove_base64_images: true,
             block_ads: true,
@@ -752,6 +777,15 @@ impl ScrapeOptions {
     /// # Errors
     /// A message naming the violated limit, suitable for a `400` response detail.
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(reference) = &self.archive_behavior {
+            reference.validate().map_err(|error| error.to_string())?;
+            if !self.actions.is_empty() || self.mobile || self.location.is_some() || self.wait_for_ms != 0 {
+                return Err(
+                    "archiveBehavior cannot be combined with actions or timing/emulation overrides"
+                        .to_owned(),
+                );
+            }
+        }
         if self.actions.len() > MAX_ACTIONS {
             return Err(format!("actions: at most {MAX_ACTIONS} actions are allowed"));
         }
@@ -1024,6 +1058,9 @@ pub struct ScrapeDocument {
     /// markdownSpan, readingOrder, source, confidence}]}]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<serde_json::Value>,
+    /// Requested native content outputs after privacy projection and retention admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<serde_json::Value>,
     /// Results of `actions[]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<ActionResults>,
@@ -1088,6 +1125,7 @@ impl ScrapeDocument {
             change_tracking: None,
             pages: None,
             blocks: None,
+            outputs: None,
             actions: None,
             llm_tokens: 0,
             audio: None,

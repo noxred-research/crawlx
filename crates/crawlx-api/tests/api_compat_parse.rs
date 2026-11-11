@@ -496,6 +496,59 @@ async fn html_formats_links_images_rawhtml_text_and_tag_options() {
 }
 
 #[tokio::test]
+async fn upload_pipeline_uses_html_document_routing_and_preserves_options_and_hints() {
+    use crawlx_core::extraction::ParserPipelineV1;
+    use crawlx_extract::parse::ParseOptions;
+    use crawlx_extract::pipeline::{ParserPipeline, PipelineContent, PipelineInput};
+
+    let t = rig();
+    let options = json!({
+        "formats": ["markdown", "html", "rawHtml", "links", "text"],
+        "onlyMainContent": false,
+        "includeTags": ["main"],
+        "excludeTags": ["img"],
+    });
+    let options_json = options.to_string();
+    let (status, _, response) = t
+        .upload_raw(
+            Some(&t.key),
+            multipart(&[
+                ("file", None, Some("text/html; charset=utf-8"), PAGE.as_bytes()),
+                ("options", None, Some("application/json"), options_json.as_bytes()),
+            ]),
+            false,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let parse_options = ParseOptions {
+        only_main_content: false,
+        include_tags: vec!["main".into()],
+        exclude_tags: vec!["img".into()],
+        ..ParseOptions::default()
+    };
+    let expected = ParserPipeline::new(ParserPipelineV1::for_uploads())
+        .unwrap()
+        .run(
+            PipelineInput::new(PAGE.as_bytes())
+                .with_content_type("text/html; charset=utf-8")
+                .with_document_options(&parse_options),
+        )
+        .unwrap();
+    let PipelineContent::Document(expected) = expected.content else {
+        panic!("uploads must not take the page route");
+    };
+    let data = &response["data"];
+    assert_eq!(data["markdown"], expected.markdown);
+    assert_eq!(data["html"], expected.html);
+    assert_eq!(data["text"], expected.text);
+    assert_eq!(data["rawHtml"], expected.raw_html);
+    assert_eq!(data["links"], json!(expected.links));
+    assert_eq!(data["metadata"]["sourceFile"], "upload");
+    assert_eq!(data["warnings"], json!([]));
+    assert_eq!(t.ledger().await[0].credits, 1);
+}
+
+#[tokio::test]
 async fn docx_upload_converts_headings_tables_and_links() {
     let t = rig();
     let (s, v) = t

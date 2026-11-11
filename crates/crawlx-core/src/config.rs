@@ -164,8 +164,10 @@ impl HostScope {
 pub enum CrawlStrategy {
     /// Shallowest first, discovery order as the tie-break (the default).
     #[default]
+    #[serde(alias = "bfs", alias = "breadth-first")]
     BreadthFirst,
     /// Most recently discovered, deepest URL first.
+    #[serde(alias = "dfs", alias = "depth-first")]
     DepthFirst,
     /// Surface-priority order: lowest `depth - surface score` first, where the score rewards
     /// attack-surface path words, query strings and non-GET requests (ties: discovery order).
@@ -1023,6 +1025,13 @@ pub struct Dynamic {
     /// 0 keeps the driver default (30); clamped to 0..=1,000.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub max_failure_count: u32,
+    /// Additional settled browser renditions retained per URL and role (default 8, at most 128).
+    /// Zero keeps the first rendition and records a cap outcome for subsequent changed renditions.
+    #[serde(
+        default = "Dynamic::default_max_page_revisits",
+        skip_serializing_if = "Dynamic::is_default_max_page_revisits"
+    )]
+    pub max_page_revisits: u16,
     /// Compatibility flag `-enable-diagnostics`: record per-session driver diagnostics (steps, drops,
     /// recoveries, tab evictions, state counts) in the run report (default false).
     #[serde(default, skip_serializing_if = "is_false")]
@@ -1092,6 +1101,12 @@ impl Dynamic {
     const fn default_max_tabs() -> u8 {
         3
     }
+    const fn default_max_page_revisits() -> u16 {
+        8
+    }
+    fn is_default_max_page_revisits(value: &u16) -> bool {
+        *value == Self::default_max_page_revisits()
+    }
     const fn default_dom_wait_ms() -> u32 {
         5_000
     }
@@ -1122,6 +1137,7 @@ impl Default for Dynamic {
             interaction_settle_ms: 0,
             interaction_duration_seconds: 0,
             max_failure_count: 0,
+            max_page_revisits: Self::default_max_page_revisits(),
             enable_diagnostics: false,
             time_stable_ms: 0,
             page_hook_options: PageHookOptions::default(),
@@ -1190,6 +1206,9 @@ pub struct Capture {
     /// Which capture backend records traffic (default: CDP).
     #[serde(default)]
     pub backend: CaptureBackend,
+    /// Explicit bounded browser evidence; disabled unless requested.
+    #[serde(default)]
+    pub browser: crate::browser_capture::BrowserEvidenceConfig,
 }
 
 /// `output.webhook`: where run events are delivered.
@@ -1391,6 +1410,15 @@ pub struct Fetch {
     /// Synthetic seeded ClientHello randomization, URL-only mode (not browser impersonation).
     #[serde(default)]
     pub tls_impersonation: TlsImpersonation,
+    /// Optional HEAD preflight before a static GET; absence sends no preflight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<crate::acquisition::HeadPreflight>,
+    /// Optional bounded MIME, charset and HTTP status overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<crate::acquisition::ResponseDeclaration>,
+    /// Response overflow handling; absence preserves truncation at the body limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oversize: Option<crate::acquisition::OversizePolicy>,
 }
 
 impl Fetch {
@@ -1420,6 +1448,9 @@ impl Default for Fetch {
             robots_user_agent: None,
             skip_tls_verification: false,
             tls_impersonation: TlsImpersonation::Off,
+            preflight: None,
+            declaration: None,
+            oversize: None,
         }
     }
 }
@@ -1502,6 +1533,15 @@ pub struct Extract {
     /// Optional native article extraction and quality policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<crate::extraction::ExtractionPolicyV1>,
+    /// Native content outputs, parsed and validated by the extraction crate before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<serde_json::Value>,
+    /// Native decoding options, parsed and validated by the extraction crate before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode: Option<serde_json::Value>,
+    /// Native markup retention, parsed and validated by the extraction crate before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markup: Option<serde_json::Value>,
     /// Custom regex fields stored in `pages.metadata.custom_fields`; at most 50.
     #[serde(default)]
     pub custom_fields: Vec<CustomField>,
@@ -1541,6 +1581,9 @@ impl Default for Extract {
         Self {
             javascript: Javascript::default(),
             content: None,
+            outputs: None,
+            decode: None,
+            markup: None,
             custom_fields: Vec::new(),
             detect_secrets: false,
             forms: true,
@@ -1834,6 +1877,26 @@ impl CreateCrawl {
     /// malformed `extract.customFields` (name, missing regex, group index).
     pub fn normalize(&mut self) -> Result<(), Vec<CoreError>> {
         let mut errs = Vec::new();
+        if let Err(reason) = self.capture.browser.validate() {
+            errs.push(CoreError::Invalid {
+                field: "capture.browser",
+                reason: reason.to_owned(),
+            });
+        }
+        if self.capture.browser.enabled() && self.mode == CrawlMode::Static {
+            errs.push(CoreError::Conflict {
+                a: "capture.browser",
+                b: "mode",
+                reason: "browser evidence requires a browser-enabled crawl".to_owned(),
+            });
+        }
+        if self.capture.browser.durable() && self.retention.mode == RetentionMode::Zdr {
+            errs.push(CoreError::Conflict {
+                a: "capture.browser",
+                b: "retention.mode",
+                reason: "durable browser evidence is refused in zdr".to_owned(),
+            });
+        }
         if let Some(archive) = &self.output.archive {
             if let Err(reason) = archive.validate() {
                 errs.push(CoreError::Invalid {
@@ -2209,6 +2272,22 @@ impl CreateCrawl {
         self.fetch.timeout_ms = self.fetch.timeout_ms.clamp(100, 300_000);
         self.fetch.retries = self.fetch.retries.min(10);
         self.fetch.normalize_controls(&mut errs);
+        if let Some(preflight) = &self.fetch.preflight {
+            if let Err(error) = preflight.validate() {
+                errs.push(CoreError::Invalid {
+                    field: "fetch.preflight",
+                    reason: error.to_string(),
+                });
+            }
+        }
+        if let Some(declaration) = &self.fetch.declaration {
+            if let Err(error) = declaration.validate() {
+                errs.push(CoreError::Invalid {
+                    field: "fetch.declaration",
+                    reason: error.to_string(),
+                });
+            }
+        }
         if let Some(proxy) = &self.fetch.proxy {
             if !matches!(proxy.scheme(), "http" | "https" | "socks5" | "socks5h")
                 || proxy.host_str().is_none()
@@ -2367,6 +2446,12 @@ impl CreateCrawl {
         d.interaction_settle_ms = d.interaction_settle_ms.min(60_000);
         d.interaction_duration_seconds = d.interaction_duration_seconds.min(7 * 86_400);
         d.max_failure_count = d.max_failure_count.min(1000);
+        if d.max_page_revisits > 128 {
+            errs.push(CoreError::Invalid {
+                field: "dynamic.maxPageRevisits",
+                reason: "must be at most 128".to_owned(),
+            });
+        }
         d.time_stable_ms = d.time_stable_ms.min(60_000);
         d.page_hook_options.timer_acceleration =
             d.page_hook_options.timer_acceleration.min(MAX_TIMER_ACCELERATION);
@@ -2449,6 +2534,19 @@ impl CreateCrawl {
             errs.push(CoreError::Invalid {
                 field: "scrape.options",
                 reason,
+            });
+        }
+        if job.options.archive_behavior.is_some() && (self.mode == CrawlMode::Static || !self.dynamic.enabled)
+        {
+            errs.push(CoreError::Invalid {
+                field: "scrape.options.archiveBehavior",
+                reason: "approved recipes require the browser plane".to_owned(),
+            });
+        }
+        if job.options.archive_behavior.is_some() && self.retention.mode == RetentionMode::Zdr {
+            errs.push(CoreError::Invalid {
+                field: "scrape.options.archiveBehavior",
+                reason: "approved recipe provenance is unavailable under zero-data retention".to_owned(),
             });
         }
         if job.urls.len() > MAX_BATCH_URLS {
@@ -2575,6 +2673,34 @@ impl CreateCrawl {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn browser_revisit_cap_preserves_legacy_default_serialization_and_checks_bounds() {
+        let default = Dynamic::default();
+        let serialized = serde_json::to_value(&default).unwrap();
+        assert_eq!(default.max_page_revisits, 8);
+        assert!(serialized.get("maxPageRevisits").is_none());
+        let restored: Dynamic = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored.max_page_revisits, 8);
+        for cap in [0, 8, 128] {
+            let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
+            crawl.mode = CrawlMode::Dynamic;
+            crawl.dynamic.max_page_revisits = cap;
+            crawl.normalize().unwrap();
+            assert_eq!(crawl.dynamic.max_page_revisits, cap);
+        }
+        let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
+        crawl.dynamic.max_page_revisits = 129;
+        assert!(crawl.normalize().unwrap_err().iter().any(|error| {
+            matches!(
+                error,
+                CoreError::Invalid {
+                    field: "dynamic.maxPageRevisits",
+                    ..
+                }
+            )
+        }));
+    }
 
     fn req(json: &str) -> CreateCrawl {
         serde_json::from_str(json).unwrap_or_else(|e| panic!("{e}"))
@@ -2876,6 +3002,38 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn crawl_order_aliases_preserve_canonical_serialization() {
+        assert_eq!(CrawlStrategy::default(), CrawlStrategy::BreadthFirst);
+        for (aliases, expected, canonical) in [
+            (
+                ["bfs", "breadth_first", "breadth-first"],
+                CrawlStrategy::BreadthFirst,
+                "breadth_first",
+            ),
+            (
+                ["dfs", "depth_first", "depth-first"],
+                CrawlStrategy::DepthFirst,
+                "depth_first",
+            ),
+        ] {
+            for alias in aliases {
+                let crawl = req(&format!(
+                    r#"{{"seedUrl":"https://a.test/","scope":{{"strategy":"{alias}"}}}}"#
+                ));
+                assert_eq!(crawl.scope.strategy, expected, "{alias}");
+                assert_eq!(
+                    serde_json::to_value(crawl).unwrap()["scope"]["strategy"],
+                    canonical
+                );
+            }
+        }
+        assert_eq!(
+            req(r#"{"seedUrl":"https://a.test/","scope":{}}"#).scope.strategy,
+            CrawlStrategy::BreadthFirst
+        );
     }
 
     #[test]

@@ -696,6 +696,12 @@ pub(super) struct ScrapeOptions {
     /// Opt-in native article policy. Unknown keys and excessive bounds fail before admission.
     #[serde(rename = "contentPolicy")]
     content_policy: Option<ContentPolicy>,
+    /// Opt-in native content outputs; omitted by default.
+    outputs: Option<super::outputs::ContentOutputOptions>,
+    /// Opt-in byte decoding diagnostics.
+    decode: Option<super::outputs::DecodeOptions>,
+    /// Opt-in retention of comments and CDATA diagnostic payloads.
+    markup: Option<super::outputs::MarkupRetention>,
     /// CSS selectors of elements to keep.
     #[serde(rename = "includeTags")]
     include_tags: Option<Vec<String>>,

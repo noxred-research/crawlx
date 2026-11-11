@@ -254,7 +254,7 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
                     "timeout" => json!(7),
                     "delay" => json!(2),
                     "max_file_size" => json!(20_000_000),
-                    "depth" | "threads" | "max_domain_pages" => json!(2),
+                    "depth" | "threads" | "max_domain_pages" | "max_file_memo" => json!(2),
                     "retry" => json!(1),
                     "global_rps" | "global_rpm" | "host_rps" | "host_rpm" => json!(10),
                     "max_text" => json!(100_000),
@@ -286,6 +286,7 @@ pub fn pinned_profile_fixture_manifests() -> Vec<PinnedProfileFixtureV1> {
                 };
                 let state = match category {
                     "proxy" | "cookies" | "headers" | "credentials" | "recorded_flow" => State::Rejected,
+                    "legacy_category_cache" | "clean_memo_cache" => State::Rejected,
                     "solver" | "news_search" | "trends" | "archived" | "sentence_tokenizer"
                     | "list_input" => State::ExternalRequired,
                     "unavailable" | "requests_params" | "top_image_settings" | "date_params" => {

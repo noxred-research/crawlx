@@ -87,11 +87,13 @@ fn route() -> String {
 /// dedupe-bypass rows include it, so retries reuse identities while distinct batches
 /// create distinct work. Proposals still require native scope/robots/authorization/effect
 /// admission; this function grants no traffic authority.
+/// HEAD proposals preserve their method for bodyless native HTTP execution; importing
+/// them does not grant browser, delegated or body-bearing execution capabilities.
 /// Raw pickle, gob, module paths, callback code, inline bodies and unknown keys are rejected.
 ///
 /// # Errors
 /// Rejects oversized bytes/rows, invalid JSON, incorrect pins, unsupported semantics,
-/// credentials in URLs and non-GET requests without an existing journal adapter.
+/// credentials in URLs and methods other than GET or HEAD without an existing journal adapter.
 pub fn decode_export<F>(
     bytes: &[u8],
     tenant_key: &[u8; 32],
@@ -121,7 +123,7 @@ where
     let source_digest = Digest::keyed(tenant_key, "crawlx/source-request-export/v1", bytes);
     let mut requests = Vec::with_capacity(export.requests.len());
     for (ordinal, row) in export.requests.into_iter().enumerate() {
-        if row.method != "GET" {
+        if !matches!(row.method.as_str(), "GET" | "HEAD") {
             return Err(ImportError::JournalRequired);
         }
         if row.source_key.is_empty()
@@ -145,14 +147,13 @@ where
         } else {
             row.source_key.into_bytes()
         };
-        let mut envelope = RequestEnvelopeV1::get(canonicalize(&row.url)?, row.depth, None);
+        let mut envelope = RequestEnvelopeV1::new(canonicalize(&row.url)?, row.method, row.depth, None);
         envelope.dialect = export.source.dialect;
         envelope.source_key = Some(Digest::keyed(
             tenant_key,
             "crawlx/imported-request-key/v1",
             &material,
         ));
-        envelope.method = row.method;
         envelope.route = row.route;
         envelope.metadata = row.metadata;
         envelope.priority = row.priority;

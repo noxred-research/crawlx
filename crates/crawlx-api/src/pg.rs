@@ -419,11 +419,12 @@ impl PgEraser {
 #[async_trait]
 impl Eraser for PgEraser {
     async fn erase(&self, run: CrawlRunId) -> StoreResult<u64> {
+        let sweeper = RetentionSweeper::new(self.pg.clone());
+        let tenant = sweeper.begin_run_erasure(run).await?;
         if let Some(artifacts) = &self.artifacts {
-            let metadata = crawlx_core::repo::RunRepo::get_metadata(&self.pg, run).await?;
-            crate::store::erase_archives(&self.pg, artifacts.as_ref(), metadata.tenant, run.0).await?;
+            crate::store::erase_archives(&self.pg, artifacts.as_ref(), tenant, run.0).await?;
             artifacts.purge_run(run).await?;
         }
-        RetentionSweeper::new(self.pg.clone()).purge_run(run).await
+        sweeper.purge_run(run).await
     }
 }

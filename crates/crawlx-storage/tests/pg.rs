@@ -435,6 +435,28 @@ async fn sessions_roundtrip_with_browser_info() {
 }
 
 #[tokio::test]
+async fn session_kinds_roundtrip_through_scheduler_leases() {
+    let env = env!();
+    let run = env.run(&["a"], 2).await;
+    let mut slots = sessions(run.id, 1, 2);
+    slots[1].kind = SessionKind::HttpCoordinator;
+    env.pg.create_sessions(&slots).await.unwrap();
+    assert_eq!(env.pg.list_sessions(run.id).await.unwrap(), slots);
+    for slot in &slots {
+        let lease = env
+            .pg
+            .claim_session(run.id, WorkerId::new(), false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lease.session.kind, slot.kind);
+        assert!(lease.session.browser.is_none());
+        env.pg.release(&lease, SessionStatus::Completed).await.unwrap();
+    }
+    env.teardown().await;
+}
+
+#[tokio::test]
 async fn discover_dedupes_and_records_denials() {
     let env = env!();
     let run = env.run(&[], 1).await;
@@ -604,6 +626,169 @@ async fn frontier_lease_is_exclusive_across_claimers() {
         env.pg.complete(id, FrontierStatus::Failed, None).await,
         Err(StoreError::IllegalTransition { .. })
     ));
+    env.teardown().await;
+}
+
+async fn exact_claim_row(pg: &Pg, id: i64) -> serde_json::Value {
+    sqlx::query_scalar("SELECT to_jsonb(f) FROM url_frontier f WHERE frontier_id=$1")
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+}
+
+async fn assert_exact_claim_refused(pg: &Pg, run: CrawlRunId, id: i64) {
+    let before = exact_claim_row(pg, id).await;
+    assert!(pg
+        .lease_one_fenced(run, WorkerId::new(), id)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(exact_claim_row(pg, id).await, before);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exact_frontier_claim_is_exclusive_and_leaves_other_rows_untouched() {
+    let env = env!();
+    let run = env.run(&[], 1).await;
+    let mut ids = Vec::new();
+    for path in ["requested", "untouched"] {
+        ids.push(
+            env.pg
+                .discover(
+                    run.id,
+                    &canonical_url(&format!("https://example.test/{path}")),
+                    0,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .1
+                .unwrap(),
+        );
+    }
+    let before = exact_claim_row(&env.pg, ids[1]).await;
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..2 {
+        let pg = env.pg.clone();
+        let barrier = Arc::clone(&barrier);
+        let run = run.id;
+        let id = ids[0];
+        tasks.spawn(async move {
+            let worker = WorkerId::new();
+            barrier.wait().await;
+            (worker, pg.lease_one_fenced(run, worker, id).await.unwrap())
+        });
+    }
+    barrier.wait().await;
+    let mut winners = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        let (worker, claim) = result.unwrap();
+        if let Some(claim) = claim {
+            winners.push((worker, claim));
+        }
+    }
+    assert_eq!(winners.len(), 1);
+    let (worker, (entry, token)) = &winners[0];
+    assert_eq!(
+        (entry.id, entry.status, entry.attempts),
+        (ids[0], FrontierStatus::Leased, 1)
+    );
+    let valid: bool = sqlx::query_scalar(
+        "SELECT lease_owner=$2 AND fencing_token=$3 AND lease_expires_at>now() \
+         FROM url_frontier WHERE frontier_id=$1",
+    )
+    .bind(entry.id)
+    .bind(worker.0)
+    .bind(token)
+    .fetch_one(env.pg.pool())
+    .await
+    .unwrap();
+    assert!(valid);
+    assert_eq!(exact_claim_row(&env.pg, ids[1]).await, before);
+    env.teardown().await;
+}
+
+#[tokio::test]
+async fn exact_frontier_claim_refuses_ineligible_rows_foreign_runs_and_non_live_runs() {
+    let env = env!();
+    let run = env.run(&[], 1).await;
+    let id = env
+        .pg
+        .discover(
+            run.id,
+            &canonical_url("https://example.test/requested"),
+            0,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .1
+        .unwrap();
+    for status in [
+        FrontierStatus::Leased,
+        FrontierStatus::Succeeded,
+        FrontierStatus::Failed,
+        FrontierStatus::Abandoned,
+        FrontierStatus::Unreachable,
+        FrontierStatus::PolicyBlocked,
+        FrontierStatus::RobotsBlocked,
+    ] {
+        sqlx::query("UPDATE url_frontier SET status=$2,attempts=3,fencing_token=43 WHERE frontier_id=$1")
+            .bind(id)
+            .bind(status.as_str())
+            .execute(env.pg.pool())
+            .await
+            .unwrap();
+        assert_exact_claim_refused(&env.pg, run.id, id).await;
+    }
+    sqlx::query(
+        "UPDATE url_frontier SET status='pending',next_attempt_at=now()+interval '1 day' WHERE frontier_id=$1",
+    )
+    .bind(id).execute(env.pg.pool()).await.unwrap();
+    assert_exact_claim_refused(&env.pg, run.id, id).await;
+    sqlx::query("UPDATE url_frontier SET next_attempt_at=now()-interval '1 second' WHERE frontier_id=$1")
+        .bind(id)
+        .execute(env.pg.pool())
+        .await
+        .unwrap();
+    let tenant = TenantId::new();
+    env.pg.ensure_tenant(tenant, "other").await.unwrap();
+    let foreign = crawl_run(tenant, run.config.clone());
+    env.pg.create(&foreign, None).await.unwrap();
+    assert_exact_claim_refused(&env.pg, foreign.id, id).await;
+    assert!(env
+        .pg
+        .lease_one_fenced(run.id, WorkerId::new(), i64::MAX)
+        .await
+        .unwrap()
+        .is_none());
+    env.pg.set_status(run.id, RunStatus::Paused, None).await.unwrap();
+    assert_exact_claim_refused(&env.pg, run.id, id).await;
+    env.pg.set_status(run.id, RunStatus::Running, None).await.unwrap();
+    for column in ["deadline_at", "cancel_requested_at", "purge_requested_at"] {
+        let sql = format!("UPDATE crawl_runs SET {column}=now()-interval '1 second' WHERE run_id=$1");
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(run.id.0)
+            .execute(env.pg.pool())
+            .await
+            .unwrap();
+        assert_exact_claim_refused(&env.pg, run.id, id).await;
+        let sql = format!("UPDATE crawl_runs SET {column}=NULL WHERE run_id=$1");
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(run.id.0)
+            .execute(env.pg.pool())
+            .await
+            .unwrap();
+    }
+    env.pg
+        .set_status(run.id, RunStatus::Cancelled, Some(TerminalReason::Cancelled))
+        .await
+        .unwrap();
+    assert_exact_claim_refused(&env.pg, run.id, id).await;
     env.teardown().await;
 }
 

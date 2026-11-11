@@ -9,22 +9,23 @@
 //! * **Digests** record separate raw, page, main and comment hashes with the normalization and
 //!   domain that produced them, plus a similarity fingerprint from the shared URL-plane engine.
 //! * **Content dedupe** is a quality stage after every other gate: the SHA-256 of the
-//!   normalized title and body is admitted into the cache scope, and a second admission marks
-//!   the document `duplicate_main`. Both acquisitions and both origins stay distinct.
+//!   normalized title and body is checked against committed observations in the cache scope.
+//!   A match marks the document `duplicate_main`. Both acquisitions and origins stay distinct.
 //!
-//! Admission order is the order of extraction calls against one [`DedupeHandle`]; callers that
-//! extract concurrently and need reproducible results call in their ordered-commit sequence.
-//! The cache stores hashes and counts only, never paragraph text. A re-extraction of the same
-//! page in the same scope is a repeat by design; give a retry its own namespace.
+//! Parsing never mutates the shared cache, including recency and sighting counts. Successful
+//! extraction returns a runtime-only [`DedupeCommit`]; callers record it only after page commit.
+//! Dropping it leaves retries unchanged. Record tokens in ordered-commit sequence for replay.
+//! The cache and tokens store hashes and counts only, never paragraph text.
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crawlx_core::extraction::{
     ContentDigestsV1, DedupeAdmissionV1, DedupeCache, DedupeKeyV1, DedupeKindV1, DedupePolicyV1,
     DedupeReportV1, DedupeScopeV1, ExtractionPolicyV1, QualityOutcomeV1, QualityStatusV1,
-    ARTICLE_EXTRACTOR_ID_V1, DEDUPE_NORMALIZATION_V1,
+    ARTICLE_EXTRACTOR_ID_V1, DEDUPE_DIGEST_DOMAIN_V1, DEDUPE_NORMALIZATION_V1,
 };
 use crawlx_core::hash::Digest;
 use crawlx_url::content_similarity::normalize::{shingles, tokenize};
@@ -33,7 +34,7 @@ use sha2::Digest as _;
 use url::Url;
 
 use crate::dom::{Elem, Node};
-use crate::{article, text, ExtractError, ExtractOptions};
+use crate::{article, text, Document, ExtractError, ExtractOptions};
 
 const BLOCK_DOMAIN: &str = "crawlx.extract.dedupe.v1.block";
 const PAGE_DOMAIN: &str = "crawlx.extract.dedupe.v1.page";
@@ -61,6 +62,84 @@ impl DedupeHandle {
     pub fn scope(&self) -> &DedupeScopeV1 {
         &self.scope
     }
+
+    /// Check retained content digests under this caller's scope and stage content admission.
+    ///
+    /// No plaintext is reconstructed. Blocks cannot be replayed from the digest report, so this
+    /// stages only the content observation. Invalid or differently bound reports stage nothing.
+    /// This method never changes the cache; record the returned document token after page commit.
+    ///
+    /// # Errors
+    /// Returns an error when the effective policy cannot be serialized.
+    pub fn stage_cached_content(
+        &self,
+        document: &mut Document,
+        policy: &ExtractionPolicyV1,
+    ) -> Result<(), ExtractError> {
+        document.dedupe_commit = None;
+        if !policy.dedupe.is_some_and(|dedupe| dedupe.content) {
+            return Ok(());
+        }
+        let digest = policy_digest(policy)?;
+        let Some(envelope) = document.article.as_mut() else {
+            return Ok(());
+        };
+        if envelope.version != 1
+            || envelope.extractor != ARTICLE_EXTRACTOR_ID_V1
+            || envelope.policy_digest != digest
+            || envelope.quality.status != QualityStatusV1::Accepted
+        {
+            return Ok(());
+        }
+        let Some(report) = envelope.dedupe.as_mut() else {
+            return Ok(());
+        };
+        if report.version != 1
+            || report.digests.version != 1
+            || report.digests.normalization != DEDUPE_NORMALIZATION_V1
+            || report.digests.domain != DEDUPE_DIGEST_DOMAIN_V1
+            || report.digests.raw != document.raw_html_digest
+        {
+            return Ok(());
+        }
+        if report.content_duplicate || report.duplicate_same_origin.is_some() {
+            return Ok(());
+        }
+        let Some(hash) = report.content_sha256.as_deref().and_then(parse_hash) else {
+            return Ok(());
+        };
+        let Ok(url) = Url::parse(&report.origin) else {
+            return Ok(());
+        };
+        if !matches!(url.scheme(), "http" | "https") || crawlx_url::origin_of(&url) != report.origin {
+            return Ok(());
+        }
+        let origin = Digest::of(ORIGIN_DOMAIN, report.origin.as_bytes());
+        let key = self
+            .scope
+            .key(ARTICLE_EXTRACTOR_ID_V1, digest, DEDUPE_NORMALIZATION_V1);
+        let admission = self.cache.lock().unwrap_or_else(PoisonError::into_inner).check(
+            &key,
+            DedupeKindV1::Content,
+            hash,
+            origin,
+        );
+        if let DedupeAdmissionV1::Seen { same_origin, .. } = admission {
+            report.content_duplicate = true;
+            report.duplicate_same_origin = Some(same_origin);
+            crate::article_quality::mark_duplicate_main(&mut envelope.quality);
+        }
+        document.dedupe_commit = Some(DedupeCommit::new(
+            self.clone(),
+            key,
+            origin,
+            vec![Observation {
+                kind: DedupeKindV1::Content,
+                hash,
+            }],
+        ));
+        Ok(())
+    }
 }
 impl fmt::Debug for DedupeHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -75,6 +154,100 @@ impl PartialEq for DedupeHandle {
     }
 }
 impl Eq for DedupeHandle {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Observation {
+    kind: DedupeKindV1,
+    hash: [u8; 32],
+}
+
+struct Pending {
+    handle: DedupeHandle,
+    key: DedupeKeyV1,
+    origin: Digest,
+    observations: Box<[Observation]>,
+    recorded: AtomicBool,
+}
+
+/// Hash-only local cache observations awaiting a successful page commit.
+///
+/// Dropping a token does nothing. Clones share one admission right: recording any clone records
+/// the ordered observations once. Equality compares bindings and observations, never cache state.
+#[derive(Clone)]
+#[non_exhaustive]
+#[must_use]
+pub struct DedupeCommit {
+    pending: Arc<Pending>,
+}
+
+impl DedupeCommit {
+    fn new(handle: DedupeHandle, key: DedupeKeyV1, origin: Digest, observations: Vec<Observation>) -> Self {
+        Self {
+            pending: Arc::new(Pending {
+                handle,
+                key,
+                origin,
+                observations: observations.into_boxed_slice(),
+                recorded: AtomicBool::new(false),
+            }),
+        }
+    }
+
+    /// Consume this admission right after page commit, recording at most once across clones.
+    pub fn record(self) {
+        if self.pending.recorded.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let mut cache = self
+            .pending
+            .handle
+            .cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for observation in &self.pending.observations {
+            let _ = cache.record(
+                &self.pending.key,
+                observation.kind,
+                observation.hash,
+                self.pending.origin,
+            );
+        }
+    }
+}
+
+impl fmt::Debug for DedupeCommit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DedupeCommit")
+            .field("observations", &self.pending.observations.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for DedupeCommit {
+    fn eq(&self, other: &Self) -> bool {
+        self.pending.handle == other.pending.handle
+            && self.pending.key == other.pending.key
+            && self.pending.origin == other.pending.origin
+            && self.pending.observations == other.pending.observations
+    }
+}
+impl Eq for DedupeCommit {}
+
+fn parse_hash(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut hash = [0; 32];
+    for (out, pair) in hash.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        let digit = |byte| match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            _ => None,
+        };
+        *out = digit(pair[0])? * 16 + digit(pair[1])?;
+    }
+    Some(hash)
+}
 
 /// Dedupe text normalization `dedupe_text_v1`: Unicode lowercase alphanumeric words joined by
 /// one space; punctuation, symbols and whitespace runs disappear.
@@ -121,7 +294,8 @@ pub(crate) struct ContentStage {
 pub(crate) struct Context<'a> {
     policy: DedupePolicyV1,
     key: Option<DedupeKeyV1>,
-    cache: Option<&'a Mutex<DedupeCache>>,
+    handle: Option<&'a DedupeHandle>,
+    observations: Vec<Observation>,
     origin_text: String,
     origin: Digest,
 }
@@ -137,29 +311,30 @@ impl<'a> Context<'a> {
         };
         let origin_text = crawlx_url::origin_of(page);
         let origin = Digest::of(ORIGIN_DOMAIN, origin_text.as_bytes());
-        let (key, cache) = match &opts.dedupe_cache {
+        let (key, handle) = match &opts.dedupe_cache {
             Some(handle) => (
                 Some(handle.scope.key(
                     ARTICLE_EXTRACTOR_ID_V1,
                     policy_digest(policy)?,
                     DEDUPE_NORMALIZATION_V1,
                 )),
-                Some(&*handle.cache),
+                Some(handle),
             ),
             None => (None, None),
         };
         Ok(Some(Self {
             policy: dedupe,
             key,
-            cache,
+            handle,
+            observations: Vec::new(),
             origin_text,
             origin,
         }))
     }
 
     fn lock(&self) -> Option<MutexGuard<'a, DedupeCache>> {
-        self.cache
-            .map(|cache| cache.lock().unwrap_or_else(PoisonError::into_inner))
+        self.handle
+            .map(|handle| handle.cache.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Whether block removal is enabled.
@@ -168,13 +343,16 @@ impl<'a> Context<'a> {
     }
 
     /// Remove repeated blocks from the selected tree. `ids` stays aligned with `nodes`.
-    pub(crate) fn prune_blocks(&self, nodes: &mut Vec<Node>, ids: &mut Vec<usize>) -> BlockStats {
-        let mut guard = self.lock();
+    pub(crate) fn prune_blocks(&mut self, nodes: &mut Vec<Node>, ids: &mut Vec<usize>) -> BlockStats {
+        let guard = self
+            .handle
+            .map(|handle| handle.cache.lock().unwrap_or_else(PoisonError::into_inner));
         let mut pass = Pass {
             min_chars: self.policy.min_block_chars,
             origin: self.origin,
-            cache: guard.as_deref_mut(),
+            cache: guard.as_deref(),
             key: self.key.as_ref(),
+            observations: &mut self.observations,
             local: BTreeSet::new(),
             stats: BlockStats::default(),
         };
@@ -205,10 +383,10 @@ impl<'a> Context<'a> {
     }
 
     /// Content dedupe quality stage. Computes the title+body SHA-256 when the stage is enabled
-    /// and admits it only when every other gate accepted the document, so a rejected or partial
-    /// document never shadows a later good one. A repeat appends `duplicate_main` and rejects.
+    /// and checks it only when every other gate accepted the document. Observations remain staged
+    /// until page commit, so a rejected or rolled-back document cannot shadow a later good one.
     pub(crate) fn content_stage(
-        &self,
+        &mut self,
         title: Option<&str>,
         main: &str,
         quality: &mut QualityOutcomeV1,
@@ -232,12 +410,16 @@ impl<'a> Context<'a> {
         if quality.status != QualityStatusV1::Accepted {
             return stage;
         }
-        let (Some(mut guard), Some(key)) = (self.lock(), self.key.as_ref()) else {
+        let (Some(guard), Some(key)) = (self.lock(), self.key.as_ref()) else {
             return stage;
         };
-        if let DedupeAdmissionV1::Seen { same_origin, .. } =
-            guard.admit(key, DedupeKindV1::Content, hash, self.origin)
-        {
+        let admission = guard.check(key, DedupeKindV1::Content, hash, self.origin);
+        drop(guard);
+        self.observations.push(Observation {
+            kind: DedupeKindV1::Content,
+            hash,
+        });
+        if let DedupeAdmissionV1::Seen { same_origin, .. } = admission {
             stage.duplicate = true;
             stage.same_origin = Some(same_origin);
             crate::article_quality::mark_duplicate_main(quality);
@@ -254,7 +436,7 @@ impl<'a> Context<'a> {
     ) -> DedupeReportV1 {
         let mut report = DedupeReportV1::new(
             digests,
-            self.cache.is_some(),
+            self.handle.is_some(),
             blocks.seen,
             blocks.removed,
             self.origin_text.clone(),
@@ -263,6 +445,19 @@ impl<'a> Context<'a> {
         report.content_duplicate = stage.duplicate;
         report.duplicate_same_origin = stage.same_origin;
         report
+    }
+
+    /// Transfer staged hashes only after every fallible extraction stage succeeds.
+    pub(crate) fn into_commit(self) -> Option<DedupeCommit> {
+        if self.observations.is_empty() {
+            return None;
+        }
+        Some(DedupeCommit::new(
+            self.handle?.clone(),
+            self.key?,
+            self.origin,
+            self.observations,
+        ))
     }
 }
 
@@ -276,9 +471,10 @@ fn policy_digest(policy: &ExtractionPolicyV1) -> Result<Digest, ExtractError> {
 struct Pass<'g> {
     min_chars: usize,
     origin: Digest,
-    cache: Option<&'g mut DedupeCache>,
+    cache: Option<&'g DedupeCache>,
     key: Option<&'g DedupeKeyV1>,
-    /// In-document set when no cache handle was supplied; the block scan ceiling bounds it.
+    observations: &'g mut Vec<Observation>,
+    /// Every parse tracks its own blocks, independently of committed cache capacity.
     local: BTreeSet<[u8; 32]>,
     stats: BlockStats,
 }
@@ -304,18 +500,85 @@ impl Pass<'_> {
         }
         self.stats.seen = self.stats.seen.saturating_add(1);
         let hash = Digest::of(BLOCK_DOMAIN, normalized.as_bytes()).0;
-        let fresh = match (self.cache.as_deref_mut(), self.key) {
+        let first_in_document = self.local.insert(hash);
+        let fresh = match (self.cache, self.key) {
             (Some(cache), Some(key)) => {
-                matches!(
-                    cache.admit(key, DedupeKindV1::Block, hash, self.origin),
-                    DedupeAdmissionV1::New
-                )
+                self.observations.push(Observation {
+                    kind: DedupeKindV1::Block,
+                    hash,
+                });
+                first_in_document
+                    && matches!(
+                        cache.check(key, DedupeKindV1::Block, hash, self.origin),
+                        DedupeAdmissionV1::New
+                    )
             }
-            _ => self.local.insert(hash),
+            _ => first_in_document,
         };
         if !fresh {
             self.stats.removed = self.stats.removed.saturating_add(1);
         }
         fresh
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn staged_block_observations_replay_duplicates_in_exact_scan_order_before_content() {
+        let first = "The bridge authority announced the revised crossing timetable for winter travel.";
+        let second = "Passengers can inspect every departure time before booking the next river crossing.";
+        let html = format!("<body><p>{first}</p><p>{second}</p><p>{first}</p></body>");
+        let cache = Arc::new(Mutex::new(DedupeCache::new(2).unwrap()));
+        let handle = DedupeHandle::new(
+            DedupeScopeV1::new("tenant", "run", "anonymous").unwrap(),
+            Arc::clone(&cache),
+        );
+        let mut policy = ExtractionPolicyV1::default();
+        let mut dedupe = DedupePolicyV1::default();
+        dedupe.blocks = true;
+        dedupe.content = true;
+        policy.dedupe = Some(dedupe);
+        let mut document = crate::Extractor::extract(
+            &html,
+            &Url::parse("https://example.test/a").unwrap(),
+            &ExtractOptions {
+                content: Some(policy.clone()),
+                only_main_content: false,
+                dedupe_cache: Some(handle.clone()),
+                ..ExtractOptions::default()
+            },
+        )
+        .unwrap();
+        let report = document.article.as_ref().unwrap().dedupe.as_ref().unwrap();
+        assert_eq!(report.blocks_seen, 3);
+        assert_eq!(report.blocks_removed, 1);
+        let hash = parse_hash(report.content_sha256.as_deref().unwrap()).unwrap();
+        let origin = Digest::of(ORIGIN_DOMAIN, report.origin.as_bytes());
+        let key = handle.scope.key(
+            ARTICLE_EXTRACTOR_ID_V1,
+            policy_digest(&policy).unwrap(),
+            DEDUPE_NORMALIZATION_V1,
+        );
+        let mut expected = DedupeCache::new(2).unwrap();
+        for paragraph in [first, second, first] {
+            let _ = expected.record(
+                &key,
+                DedupeKindV1::Block,
+                Digest::of(BLOCK_DOMAIN, normalize(paragraph).as_bytes()).0,
+                origin,
+            );
+        }
+        let _ = expected.record(&key, DedupeKindV1::Content, hash, origin);
+        assert!(cache.lock().unwrap().is_empty());
+        document.dedupe_commit.take().unwrap().record();
+        assert_eq!(
+            expected.snapshot("tenant", "run"),
+            cache.lock().unwrap().snapshot("tenant", "run")
+        );
     }
 }

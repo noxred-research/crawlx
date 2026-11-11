@@ -1,35 +1,65 @@
-//! API coverage contract over a real crawl: the figures `GET /v1/crawls/{id}/coverage` serves for
-//! a worker run equal an offline calculation over the same run's journal, transitions and
-//! ledger, every key lands in exactly one bucket of the stated denominator, and the scorecard's
-//! ground-truth recall is computed beside them from the gym's server-side ledger. Skips without
-//! a Chromium executable.
+//! API coverage equals an offline recount over the same run, and fixture-manifest ground-truth
+//! recall equals the benchmark's independent server-ledger calculation.
 //!
-//! Ground truth: the coverage response has a `groundTruth` member and the run resource a
-//! `coverage.groundTruthRecall`. `crawlx-api` serves both as `null` and has no input through
-//! which a fixture manifest could reach them, so the API's recall can only be checked here as
-//! `exercised / discovered` over the action-context denominator, which is what it can state.
+//! The real-worker test skips without Chromium. The fixture-input contract also has a
+//! browser-free regression with duplicate, diagnostic, hidden and unsupported observations.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use crawlx_api::auth::{generate_key, key_record, tenant_id_for};
+use crawlx_api::resources::{FixtureGroundTruth, FixtureGroundTruthSource};
 use crawlx_api::{ApiConfig, AppState, Repos, Scope, Settings};
+use crawlx_bench::gym::ledger::Ledger;
 use crawlx_bench::gym::manifest::FixtureManifest;
 use crawlx_bench::gym::GymServer;
-use crawlx_bench::scorecard::Scorecard;
+use crawlx_bench::scorecard::{RunRows, Scorecard};
 use crawlx_bench::worker_exec::{authorize_fixture, crawl_request, rows_from_report, worker_config};
 use crawlx_browser::launch::find_executable;
 use crawlx_core::config::{CrawlMode, SafetyProfile};
 use crawlx_core::counters::ActionStatus;
 use crawlx_core::ids::StateId;
-use crawlx_core::{Clock, SystemClock, TrustLane};
+use crawlx_core::repo::RunRepo;
+use crawlx_core::{Clock, CrawlRunId, StoreError, SystemClock, TrustLane};
 use crawlx_storage::{MemoryArtifactStore, MemoryStore};
 use crawlx_worker::{run_local_with, LocalRun, Stores};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+/// Only this run's independent fixture evidence can enter its coverage response.
+struct GymGroundTruth {
+    run: CrawlRunId,
+    manifest: FixtureManifest,
+    stealth: bool,
+    ledger: Arc<Ledger>,
+}
+
+#[async_trait::async_trait]
+impl FixtureGroundTruthSource for GymGroundTruth {
+    async fn ground_truth(&self, run: CrawlRunId) -> Result<Option<FixtureGroundTruth>, StoreError> {
+        if run != self.run {
+            return Ok(None);
+        }
+        let manifest = serde_json::to_string(&self.manifest)
+            .map_err(|error| StoreError::Serialization(error.to_string()))?;
+        FixtureGroundTruth::from_manifest(
+            &manifest,
+            self.stealth,
+            self.ledger
+                .clicks(&self.manifest.id)
+                .into_iter()
+                .filter_map(|(id, trusted)| trusted.then_some(id)),
+        )
+        .map(Some)
+        .map_err(|error| StoreError::Serialization(error.to_string()))
+    }
+}
+
 /// An API over `store`, served on a loopback port; returns its base URL and an all-scopes key
 /// of tenant `acme`.
-async fn serve_api(store: Arc<MemoryStore>) -> (String, String) {
+async fn serve_api(
+    store: Arc<MemoryStore>,
+    source: Option<Arc<dyn FixtureGroundTruthSource>>,
+) -> (String, String) {
     let config = ApiConfig {
         rate_limit_per_minute: 0,
         ..ApiConfig::default()
@@ -40,14 +70,17 @@ async fn serve_api(store: Arc<MemoryStore>) -> (String, String) {
         Arc::new(SystemClock),
     ));
     let (repos, api) = Repos::memory_with_api(store, artifacts);
-    let state = AppState::builder(
+    let mut builder = AppState::builder(
         repos,
         crawlx_api::admission_policy(&config, clock.clone()),
         config,
     )
     .settings(Settings::default())
-    .clock(clock)
-    .build();
+    .clock(clock);
+    if let Some(source) = source {
+        builder = builder.fixture_ground_truth(source);
+    }
+    let state = builder.build();
     let key = generate_key();
     let record = key_record(&key, tenant_id_for("acme"), Scope::all_set()).unwrap();
     crawlx_api::ApiStore::key_insert(api.as_ref(), &record, "acme")
@@ -107,7 +140,13 @@ async fn api_coverage_equals_the_offline_calculation_for_a_real_run() {
     assert!(scorecard.coverage.gt_total > 0);
     assert!((0.0..=1.0).contains(&scorecard.coverage.trusted));
 
-    let (base, key) = serve_api(memory.clone()).await;
+    let source = Arc::new(GymGroundTruth {
+        run: report.run_id,
+        manifest: manifest.clone(),
+        stealth: rows.stealth,
+        ledger: gym.ledger(),
+    });
+    let (base, key) = serve_api(memory.clone(), Some(source)).await;
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let coverage = get(
         &client,
@@ -121,6 +160,14 @@ async fn api_coverage_equals_the_offline_calculation_for_a_real_run() {
     assert_eq!(coverage["denominator"], "discovered", "{coverage}");
     assert_eq!(coverage["lane"], "trusted_ui", "{coverage}");
     assert!(coverage.get("groundTruth").is_some(), "{coverage}");
+    assert_eq!(coverage["groundTruth"]["fixture"], manifest.id);
+    assert_eq!(coverage["groundTruth"]["keys"], scorecard.coverage.gt_total);
+    assert!(
+        (coverage["groundTruth"]["recall"].as_f64().unwrap() - scorecard.coverage.trusted).abs()
+            < f64::EPSILON,
+        "{coverage} vs {:?}",
+        scorecard.coverage
+    );
     for role in coverage["roles"].as_array().unwrap() {
         assert_eq!(role["denominator"], "discovered", "{role}");
     }
@@ -219,5 +266,109 @@ async fn api_coverage_equals_the_offline_calculation_for_a_real_run() {
         resource["coverage"]["discovered"], offline_discovered,
         "{resource}"
     );
+    assert_eq!(
+        resource["coverage"]["exercisedTrusted"], total["exercised"],
+        "{resource} vs {coverage}"
+    );
+    assert_eq!(
+        resource["coverage"]["groundTruthRecall"], coverage["groundTruth"]["recall"],
+        "{resource} vs {coverage}"
+    );
     gym.shutdown().await;
+}
+
+#[tokio::test]
+async fn fixture_manifest_input_matches_bench_recall_without_a_browser() {
+    let manifest = FixtureManifest::from_json(
+        r##"{"id":"truth","url_path":"/truth/","controls":[
+            {"id":"first","selector":"#first","role":"button"},
+            {"id":"second","selector":"#second","role":"button"},
+            {"id":"stealth","selector":"#stealth","role":"button","stealth_only":true},
+            {"id":"hidden","selector":"#hidden","role":"button","expected":"not_actionable"},
+            {"id":"unsupported","selector":"#unsupported","role":"generic","mechanism":"unsupported"}
+        ]}"##,
+    )
+    .unwrap();
+    let memory = Arc::new(MemoryStore::new());
+    let mut run = crawlx_storage::testkit::crawl_run(
+        tenant_id_for("acme"),
+        crawlx_storage::testkit::create_crawl("https://fixture.test/truth/", &["anonymous"], 1),
+    );
+    run.id = "00000000-0000-0000-0000-000000000001".parse().unwrap();
+    run.created_at = crawlx_core::Timestamp::default();
+    memory.create(&run, None).await.unwrap();
+    let mut ordinary = run.clone();
+    ordinary.id = "00000000-0000-0000-0000-000000000002".parse().unwrap();
+    memory.create(&ordinary, None).await.unwrap();
+    for stealth in [false, true] {
+        let ledger = Arc::new(Ledger::default());
+        for (id, trusted) in [
+            ("first", true),
+            ("first", true),
+            ("second", false),
+            ("stealth", true),
+            ("hidden", true),
+            ("unsupported", true),
+            ("outside-manifest", true),
+        ] {
+            ledger.click(&manifest.id, id, trusted);
+        }
+        let source = Arc::new(GymGroundTruth {
+            run: run.id,
+            manifest: manifest.clone(),
+            stealth,
+            ledger: ledger.clone(),
+        });
+        let (base, key) = serve_api(memory.clone(), Some(source)).await;
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut rows = RunRows::new(&manifest.id, 7, "fixture-input", SafetyProfile::ReadOnly);
+        rows.stealth = stealth;
+        let offline = Scorecard::compute(&manifest, &rows, &ledger);
+        let coverage_url = format!("{base}/v1/crawls/{}/coverage", run.id);
+        let coverage = get(&client, &key, &coverage_url).await;
+        assert_eq!(coverage["groundTruth"]["fixture"], manifest.id);
+        assert_eq!(coverage["groundTruth"]["keys"], offline.coverage.gt_total);
+        assert_eq!(coverage["groundTruth"]["keys"], if stealth { 3 } else { 2 });
+        let expected_recall = if stealth { 2.0 / 3.0 } else { 0.5 };
+        assert!((coverage["groundTruth"]["recall"].as_f64().unwrap() - expected_recall).abs() < f64::EPSILON);
+        assert!(
+            (coverage["groundTruth"]["recall"].as_f64().unwrap() - offline.coverage.trusted).abs()
+                < f64::EPSILON
+        );
+        let resource = get(&client, &key, &format!("{base}/v1/crawls/{}", run.id)).await;
+        assert_eq!(
+            resource["coverage"]["groundTruthRecall"],
+            coverage["groundTruth"]["recall"]
+        );
+        assert_eq!(
+            resource["coverage"]["exercisedTrusted"],
+            coverage["total"]["exercised"]
+        );
+        // A fixture can observe new evidence while its API remains live.
+        ledger.click(&manifest.id, "second", true);
+        let updated = get(&client, &key, &coverage_url).await;
+        let offline = Scorecard::compute(&manifest, &rows, &ledger);
+        assert!(
+            (updated["groundTruth"]["recall"].as_f64().unwrap() - offline.coverage.trusted).abs()
+                < f64::EPSILON
+        );
+        for suffix in ["?role=anonymous", "?lane=diagnostic"] {
+            let filtered = get(&client, &key, &format!("{coverage_url}{suffix}")).await;
+            assert!(filtered["groundTruth"].is_null(), "{filtered}");
+        }
+        // Other runs cannot inherit this run's fixture observations.
+        let other = get(
+            &client,
+            &key,
+            &format!("{base}/v1/crawls/{}/coverage", ordinary.id),
+        )
+        .await;
+        assert!(other["groundTruth"].is_null(), "{other}");
+    }
+    let (base, key) = serve_api(memory, None).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let coverage = get(&client, &key, &format!("{base}/v1/crawls/{}/coverage", run.id)).await;
+    assert!(coverage["groundTruth"].is_null());
+    let resource = get(&client, &key, &format!("{base}/v1/crawls/{}", run.id)).await;
+    assert!(resource["coverage"]["groundTruthRecall"].is_null());
 }

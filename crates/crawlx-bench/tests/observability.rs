@@ -84,7 +84,12 @@ fn telemetry() -> TelemetryConfig {
 
 /// Explore `four_page_site` end to end over `stores` (a dynamic crawl, ten interactions).
 async fn explore(stores: Stores, artifacts_dir: &std::path::Path) -> RunReport {
-    let backend = Arc::new(FakeBackend::new(four_page_site()));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(four_page_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
     crawl.mode = CrawlMode::Dynamic;
     crawl.seed = Some(20_261_020);

@@ -12,11 +12,13 @@ use crawlx_core::repo::{PageRecord, PageRepo, RunRepo};
 use crawlx_core::{CrawlRunId, TenantId, Timestamp};
 use crawlx_storage::archive::collection::{ApprovedLocalDependency, ArchiveCollection};
 use crawlx_storage::archive::resolver::RecordLocation;
-use crawlx_storage::archive::{cdxj, retained, wacz, warc, ArchiveError, Limits};
+use crawlx_storage::archive::{
+    cdxj, retained, rollover, staging::StagedFile, wacz, warc, ArchiveError, Limits,
+};
+use crawlx_storage::artifacts::AnonymousArtifactFile;
 use crawlx_telemetry::redact::Redactor;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -38,6 +40,8 @@ pub enum ArchiveCommand {
     Import(ArchiveImportArgs),
     /// Validate actual formats, fixities, dependencies and member ranges.
     Inspect(ArchiveInspectArgs),
+    /// Verify native publication completeness, fixities and the complete offline record graph.
+    Verify(ArchiveInspectArgs),
     /// Replay validated archive content on an isolated owned loopback origin.
     Replay(crate::archive_replay::ReplayArgs),
     /// Compare an isolated archive replay against supplied evidence.
@@ -79,6 +83,9 @@ pub struct ArchiveExportArgs {
     /// Maximum encoded output bytes, at most 1 GiB.
     #[arg(long, default_value_t = 1_073_741_824)]
     pub max_bytes: u64,
+    /// Hard encoded size cap per WARC file; requires --format wacz.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub rollover_bytes: Option<u64>,
 }
 
 /// Validated import is opt-in content retention, never a ZDR exception.
@@ -406,25 +413,15 @@ fn export_recorded(
             .then(a.frontier_id.cmp(&b.frontier_id))
             .then(a.url.url.as_str().cmp(b.url.url.as_str()))
     });
-    let stage = tempfile::tempdir_in(parent(&args.out))?;
-    std::fs::create_dir(stage.path().join("archive"))?;
-    std::fs::create_dir(stage.path().join("indexes"))?;
-    std::fs::create_dir(stage.path().join("pages"))?;
-    std::fs::create_dir(stage.path().join("crawlx"))?;
-    let warc_path = stage.path().join("archive/data.warc.gz");
-    let cdx_path = stage.path().join("indexes/index.cdxj");
-    let pages_path = stage.path().join("pages/pages.jsonl");
-    let manifest_path = stage.path().join("crawlx/manifest.json");
-    let mut output = File::create(&warc_path)?;
-    let mut pages = File::create(&pages_path)?;
-    pages.write_all(
+    let mut output = rollover::Writer::new(config.rollover_bytes, limits)?;
+    let mut pages = StagedFile::new()?;
+    pages.file_mut().write_all(
         b"{\"format\":\"json-pages-1.0\",\"id\":\"pages\",\"title\":\"Retained page renditions\"}\n",
     )?;
     let mut sorter = cdxj::Sorter::new()?;
     let mut manifest = ArchiveManifestV1::available(args.tenant, source.run, source.created);
     let info = b"software: crawlx native offline archive codec\r\nformat: WARC File Format 1.1\r\nconformsTo: https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/\r\n";
-    warc::write_record(
-        &mut output,
+    output.write_record(
         &fields(
             record_id(args.tenant, source.run, 0, "warcinfo", source.created, info),
             "warcinfo",
@@ -434,7 +431,6 @@ fn export_recorded(
         ),
         &mut std::io::Cursor::new(info),
         info.len() as u64,
-        limits,
     )?;
     let mut ordinal = 1u64;
     for page in &source.pages {
@@ -519,25 +515,23 @@ fn export_recorded(
             header
                 .fields
                 .insert("WARC-Crawlx-Capture-Facts".into(), serde_json::to_string(&facts)?);
-            let record = warc::write_record(
-                &mut output,
+            let (record, filename) = output.write_record(
                 &header,
                 &mut std::io::Cursor::new(text.as_bytes()),
                 text.len() as u64,
-                limits,
             )?;
-            sorter.push(cdxj::Entry::from_record(&record, "data.warc.gz")?.line(&record)?)?;
+            sorter.push(cdxj::Entry::from_record(&record, &filename)?.line(&record)?)?;
             manifest.records += 1;
             ordinal += 1;
             entry_point = true;
         }
         if entry_point {
             serde_json::to_writer(
-                &mut pages,
+                pages.file_mut(),
                 &serde_json::json!({"url": target, "ts":warc::date(page.fetched_at),
                 "id":format!("page-{}", page.frontier_id), "title":approved_text(page.title.as_deref().unwrap_or("").as_bytes())?}),
             )?;
-            pages.write_all(b"\n")?;
+            pages.file_mut().write_all(b"\n")?;
         }
     }
     for event in &source.traffic {
@@ -615,14 +609,12 @@ fn export_recorded(
             header
                 .fields
                 .insert("WARC-Crawlx-Capture-Facts".into(), serde_json::to_string(&facts)?);
-            let record = warc::write_record(
-                &mut output,
+            let (record, filename) = output.write_record(
                 &header,
                 &mut std::io::Cursor::new(text.as_bytes()),
                 text.len() as u64,
-                limits,
             )?;
-            sorter.push(cdxj::Entry::from_record(&record, "data.warc.gz")?.line(&record)?)?;
+            sorter.push(cdxj::Entry::from_record(&record, &filename)?.line(&record)?)?;
             manifest.records += 1;
             ordinal += 1;
         }
@@ -630,15 +622,22 @@ fn export_recorded(
     if manifest.records == 0 {
         bail!("no retention-approved text artifacts are available for export");
     }
-    output.flush()?;
-    pages.flush()?;
-    sorter.finish(&mut File::create(&cdx_path)?)?;
+    let mut files = output.finish()?;
+    pages.file_mut().flush()?;
+    let mut index = StagedFile::new()?;
+    sorter.finish(index.file_mut())?;
     // This final content-bearing manifest is created only after every WARC/index/page resource succeeds.
-    serde_json::to_writer_pretty(File::create(&manifest_path)?, &manifest)?;
-    let total = [&warc_path, &cdx_path, &pages_path, &manifest_path]
-        .into_iter()
-        .try_fold(0u64, |sum, path| -> anyhow::Result<u64> {
-            sum.checked_add(path.metadata()?.len())
+    let mut manifest_file = StagedFile::new()?;
+    serde_json::to_writer_pretty(manifest_file.file_mut(), &manifest)?;
+    files.extend([
+        ("indexes/index.cdxj".into(), index),
+        ("pages/pages.jsonl".into(), pages),
+        ("crawlx/manifest.json".into(), manifest_file),
+    ]);
+    let total = files
+        .iter()
+        .try_fold(0u64, |sum, (_, source)| -> anyhow::Result<u64> {
+            sum.checked_add(source.file().metadata()?.len())
                 .ok_or_else(|| anyhow!("archive bundle size overflow"))
         })?;
     if total > limits.total_bytes {
@@ -646,21 +645,25 @@ fn export_recorded(
     }
     match config.format {
         ArchiveFormat::Warc => {
-            std::fs::rename(stage.path(), &args.out).context("publishing complete WARC bundle")?;
+            crawlx_storage::archive::publication::publish_bundle(
+                &args.out,
+                &source.run.to_string(),
+                &mut files,
+            )?;
         }
         ArchiveFormat::Wacz => {
-            let mut file = tempfile::NamedTempFile::new_in(parent(&args.out))?;
-            let files = vec![
-                ("archive/data.warc.gz".into(), warc_path),
-                ("indexes/index.cdxj".into(), cdx_path),
-                ("pages/pages.jsonl".into(), pages_path),
-                ("crawlx/manifest.json".into(), manifest_path),
-            ];
-            wacz::write(file.as_file_mut(), &files, &warc::date(source.created), limits)?;
-            file.as_file_mut().sync_all()?;
-            file.persist_noclobber(&args.out)
-                .map_err(|error| error.error)
-                .context("publishing complete WACZ")?;
+            let mut file = AnonymousArtifactFile::new_in(parent(&args.out))?;
+            let paths = files
+                .iter()
+                .map(|(name, source)| (name.clone(), source.path().to_owned()))
+                .collect::<Vec<_>>();
+            wacz::write(file.file_mut(), &paths, &warc::date(source.created), limits)?;
+            file.publish(
+                args.out
+                    .file_name()
+                    .ok_or_else(|| anyhow!("archive output filename missing"))?,
+            )
+            .context("publishing complete WACZ")?;
         }
         _ => bail!("unsupported archive format"),
     }
@@ -676,19 +679,24 @@ fn validate(path: &Path, limits: Limits, dependencies: &ArchiveDependencyArgs) -
         bail!("capability_unavailable: external HTTP dependencies have no network fallback");
     }
     let metadata = std::fs::symlink_metadata(path)?;
-    if !metadata.is_file() || metadata.len() > limits.total_bytes {
-        bail!("archive primary exceeds bound or is not a regular file");
+    if (!metadata.is_file() && !metadata.is_dir()) || metadata.len() > limits.total_bytes {
+        bail!("archive primary exceeds bound or is not a regular file or native bundle");
     }
-    let approved = dependencies.approve(limits, metadata.len())?;
+    // The collection guards the pinned source and its native ancestors before any codec read.
+    // Native directory bytes are checked against the remaining aggregate budget there.
+    let primary_bytes = if metadata.is_dir() { 0 } else { metadata.len() };
+    let approved = dependencies.approve(limits, primary_bytes)?;
     let collection = ArchiveCollection::open(path, dependencies.tenant, approved, limits)?;
     let records = collection.records();
     Ok(Validated { collection, records })
 }
 fn atomic_bytes(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let mut file = tempfile::NamedTempFile::new_in(parent(path))?;
-    file.write_all(bytes)?;
-    file.as_file_mut().sync_all()?;
-    file.persist_noclobber(path).map_err(|error| error.error)?;
+    let mut file = AnonymousArtifactFile::new_in(parent(path))?;
+    file.file_mut().write_all(bytes)?;
+    file.publish(
+        path.file_name()
+            .ok_or_else(|| anyhow!("archive output filename missing"))?,
+    )?;
     Ok(())
 }
 fn safe_json(value: &serde_json::Value, name: Option<&str>) -> bool {
@@ -821,10 +829,10 @@ fn import_archive(args: ArchiveImportArgs) -> anyhow::Result<serde_json::Value> 
     if rewritten && args.dependencies.tenant.is_none() {
         bail!("retention_denied: opaque ZIP metadata requires --tenant for a closed WACZ rewrite");
     }
-    let mut destination = tempfile::NamedTempFile::new_in(parent(&args.out))?;
+    let mut destination = AnonymousArtifactFile::new_in(parent(&args.out))?;
     let (copied, format) = if !rewritten {
         approve_package_metadata(&mut validated, limits)?;
-        let copied = validated.collection.copy_primary(destination.as_file_mut())?;
+        let copied = validated.collection.copy_primary(destination.file_mut())?;
         (
             copied,
             if validated.collection.primary_package().is_some() {
@@ -835,16 +843,14 @@ fn import_archive(args: ArchiveImportArgs) -> anyhow::Result<serde_json::Value> 
         )
     } else {
         // Source package extras are deliberately excluded; only approved physical records survive.
-        let scratch = tempfile::tempdir_in(parent(&args.out))?;
-        validated
-            .collection
-            .write_closed_wacz(destination.as_file_mut(), scratch.path())?;
-        (destination.as_file().metadata()?.len(), "wacz/1.1.1")
+        validated.collection.write_closed_wacz(destination.file_mut())?;
+        (destination.file().metadata()?.len(), "wacz/1.1.1")
     };
-    destination.as_file_mut().sync_all()?;
-    destination
-        .persist_noclobber(&args.out)
-        .map_err(|error| error.error)?;
+    destination.publish(
+        args.out
+            .file_name()
+            .ok_or_else(|| anyhow!("archive import output filename missing"))?,
+    )?;
     Ok(
         serde_json::json!({"format":format,"imported":true,"records":validated.records.len(),"bytes":copied,
         "materializedDependencies":dependencies,"containerRewritten":rewritten,"contentExecuted":false}),
@@ -872,6 +878,7 @@ pub async fn execute_with_clock(
         ArchiveCommand::Export(args) => {
             let mut config = ArchiveConfigV1::default();
             config.max_bytes = args.max_bytes;
+            config.rollover_bytes = args.rollover_bytes;
             config.format = match args.format {
                 FormatArg::Warc => ArchiveFormat::Warc,
                 FormatArg::Wacz => ArchiveFormat::Wacz,
@@ -896,6 +903,7 @@ pub async fn execute_with_clock(
         }
         ArchiveCommand::Inspect(args) => tokio::task::spawn_blocking(move || inspect_archive(args)).await??,
         ArchiveCommand::Import(args) => tokio::task::spawn_blocking(move || import_archive(args)).await??,
+        ArchiveCommand::Verify(args) => tokio::task::spawn_blocking(move || inspect_archive(args)).await??,
         ArchiveCommand::Replay(args) => return crate::archive_replay::replay(args, out).await,
         ArchiveCommand::Qa(args) => return crate::archive_replay::qa(args, out).await,
     };

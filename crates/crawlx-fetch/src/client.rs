@@ -25,7 +25,7 @@ use crate::governor::{GlobalOriginCap, GovernorConfig, Origin, OriginGovernor};
 use crate::preflight::HeadPreflight;
 use crate::proxyx::{PoolBinding, PoolTunnel};
 use crate::redirect::{is_redirect, location, strip_credentials, DEFAULT_MAX_REDIRECTS};
-use crate::resolver::Resolver;
+use crate::resolver::{CheckedResolution, Resolver};
 use crate::retry::{is_retryable_status, parse_retry_after, RetryPolicy};
 use crate::tls::HttpClient;
 use bytes::Bytes;
@@ -614,7 +614,7 @@ impl Fetcher {
             Some(pool) => Some(EgressProxy::serve_in_runtime(
                 Arc::clone(&policy),
                 Arc::clone(&resolver),
-                EgressOptions::new().with_upstream(pool.upstream().clone()),
+                EgressOptions::http_adapter().with_upstream(pool.upstream().clone()),
             )?),
             None => None,
         };
@@ -1221,14 +1221,15 @@ impl Fetcher {
         Ok(response.attempts)
     }
 
-    /// Resolve and check `url`'s host; every address must pass.
-    async fn resolve_checked(&self, url: &Url) -> Result<(String, Vec<IpAddr>), FetchError> {
-        if let Err(denied) = self.policy.check_url(url) {
-            count_egress_denial(denied.rule);
-            return Err(denied.into());
-        }
-        let (host, literal) = host_of(url)?;
-        self.resolve_host_checked(host, literal).await
+    /// Resolve and check the target, preserving evidence separately from proxy addresses.
+    async fn resolve_checked(&self, url: &Url) -> Result<CheckedResolution, FetchError> {
+        CheckedResolution::resolve(self.resolver.as_ref(), &self.policy, url)
+            .await
+            .inspect_err(|error| {
+                if let FetchError::EgressDenied(denied) = error {
+                    count_egress_denial(denied.rule);
+                }
+            })
     }
 
     /// Resolve `host` (or take the literal) and check the name and every address.
@@ -1255,18 +1256,20 @@ impl Fetcher {
         Ok((host, addrs))
     }
 
-    /// The addresses the connector may dial for this hop: the proxy's when one is
-    /// configured (checked against the policy like any target), else the target's.
-    async fn dial_checked(&self, url: &Url) -> Result<(String, Vec<IpAddr>, bool), FetchError> {
-        // The target is checked first on every hop, proxy or not.
-        let (host, addrs) = self.resolve_checked(url).await?;
-        match &self.proxy {
-            None => Ok((host, addrs, matches!(url.host(), Some(Host::Domain(_))))),
+    /// Check the target first, then any proxy. Proxy routes never replace target evidence.
+    async fn dial_checked(
+        &self,
+        url: &Url,
+    ) -> Result<(CheckedResolution, Option<(String, Vec<IpAddr>, bool)>), FetchError> {
+        let target = self.resolve_checked(url).await?;
+        let proxy = match &self.proxy {
+            None => None,
             Some(p) => {
-                let (phost, paddrs) = self.resolve_host_checked(p.host.clone(), p.literal).await?;
-                Ok((phost, paddrs, p.literal.is_none()))
+                let (host, addrs) = self.resolve_host_checked(p.host.clone(), p.literal).await?;
+                Some((host, addrs, p.literal.is_none()))
             }
-        }
+        };
+        Ok((target, proxy))
     }
 
     /// Queue a block signal for a response of a pool-routed fetch; a no-op otherwise.
@@ -1283,6 +1286,9 @@ impl Fetcher {
         let (Some(pool), Some((host, port))) = (&self.cfg.pool, authority_of(url)) else {
             return error;
         };
+        if let Err(error @ crate::proxyx::ProxyxError::PinAuthority(_)) = pool.log().ensure_pin() {
+            return FetchError::Pool(error);
+        }
         if let Some(refusal) = pool.refusal_since(&host, port, since) {
             return FetchError::PoolRefused {
                 cause: refusal.cause,
@@ -1321,9 +1327,17 @@ impl Fetcher {
         let mut attempt: u32 = 0;
         loop {
             // Re-resolve and re-check on every attempt: the pin is only as fresh as the check.
-            let (host, addrs, by_name) = self.dial_checked(url).await?;
-            let guard = by_name.then(|| self.pins.pin(&host, &addrs));
-            let permit = self.governor.acquire(&origin).await?;
+            let (target, proxy) = self.dial_checked(url).await?;
+            let (host, addrs, by_name) = match &proxy {
+                Some((host, addrs, by_name)) => (host.as_str(), addrs.as_slice(), *by_name),
+                None => (
+                    target.host(),
+                    target.addresses(),
+                    matches!(url.host(), Some(Host::Domain(_))),
+                ),
+            };
+            let guard = by_name.then(|| self.pins.pin(host, addrs));
+            let permit = self.governor.acquire_resolved(&origin, &target).await?;
 
             let mut req_headers = self.request_headers(url, headers)?;
             // Content codings are decoded here, under the body limits, not by the transport.
@@ -1385,7 +1399,10 @@ impl Fetcher {
                 .as_ref()
                 .map_or_else(|| addrs.contains(&peer), |g| g.contains(peer));
             if !pinned {
-                return Err(FetchError::PeerNotPinned { host, peer });
+                return Err(FetchError::PeerNotPinned {
+                    host: host.to_owned(),
+                    peer,
+                });
             }
 
             let status = resp.status();
@@ -1463,7 +1480,7 @@ impl Fetcher {
                 });
             }
             let encoding = ContentEncoding::from_headers(&resp_headers)?;
-            let coded = !encoding.codings().is_empty();
+            let coded = method != Method::HEAD && !encoding.codings().is_empty();
             let declared_length = resp_headers
                 .get(header::CONTENT_LENGTH)
                 .and_then(|v| v.to_str().ok())
@@ -1510,7 +1527,7 @@ impl Fetcher {
             };
             let truncated = read.limit.is_some();
             let body = read.body;
-            if capture {
+            if capture && method != Method::HEAD {
                 self.retain_response_body(url, &mut resp_headers, &body, truncated)
                     .await?;
                 if let Some(flow) = &mut flow {
@@ -1525,7 +1542,7 @@ impl Fetcher {
                 }
             }
             self.observe_pool(url, status, &resp_headers, &body);
-            self.emit_flow(flow, Some(&body));
+            self.emit_flow(flow, (method != Method::HEAD).then_some(&body));
             // The decoded body no longer matches the wire framing, like a transport decoder.
             if coded {
                 resp_headers.remove(header::CONTENT_ENCODING);

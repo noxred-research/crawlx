@@ -1,11 +1,12 @@
 //! Durable archive catalog, memory parity and fenced PostgreSQL persistence.
 
 mod memory;
+mod payload;
 mod pg;
 
 use crawlx_core::archive::ArchiveManifestV1;
 use crawlx_core::archive_catalog::{
-    ArchiveExportState, ArchiveExportV1, ArchiveHistoryKeyV1, ArchiveRecordV1,
+    ArchiveCustodyV1, ArchiveExportState, ArchiveExportV1, ArchiveHistoryKeyV1, ArchiveRecordV1,
 };
 use crawlx_core::{StoreError, TenantId, Timestamp};
 
@@ -21,6 +22,9 @@ fn invalid(reason: &str) -> StoreError {
     StoreError::Conflict(reason.into())
 }
 fn pending_bounds(export: &ArchiveExportV1) -> Result<(), StoreError> {
+    if export.custody != ArchiveCustodyV1::content(export.expires_at) {
+        return Err(invalid("archive intent source authority mismatch"));
+    }
     if export.state != ArchiveExportState::Recording
         || export.fence != 0
         || export.records != 0
@@ -35,7 +39,10 @@ fn pending_bounds(export: &ArchiveExportV1) -> Result<(), StoreError> {
     Ok(())
 }
 fn live(export: &ArchiveExportV1, now: Timestamp) -> bool {
-    export.state != ArchiveExportState::Deleted && export.expires_at.is_none_or(|expiry| expiry > now)
+    export.state != ArchiveExportState::Deleted
+        && export.expires_at.is_none_or(|expiry| expiry > now)
+        && export.custody.validate(now).is_ok()
+        && !expires_before(export.custody.expires_at, export.expires_at)
 }
 fn writer(export: &ArchiveExportV1, fence: i64, now: Timestamp) -> Result<(), StoreError> {
     if !live(export, now)
@@ -54,7 +61,38 @@ fn expires_before(source: Option<Timestamp>, dependent: Option<Timestamp>) -> bo
         (Some(source), Some(dependent)) => source < dependent,
     }
 }
+fn narrowed(
+    export: &ArchiveExportV1,
+    custody: ArchiveCustodyV1,
+    now: Timestamp,
+) -> Result<ArchiveCustodyV1, StoreError> {
+    export
+        .custody
+        .narrow(ArchiveCustodyV1::content(export.expires_at), now)?
+        .narrow(custody, now)
+}
+
+fn artifact_custody(
+    class: crawlx_core::repo::Sensitivity,
+    expires_at: Option<Timestamp>,
+    custody: ArchiveCustodyV1,
+    now: Timestamp,
+) -> bool {
+    custody.validate(now).is_ok()
+        && class == custody.sensitivity
+        && expires_at.is_none_or(|expiry| expiry > now)
+        && (class == crawlx_core::repo::Sensitivity::Content
+            || !expires_before(custody.expires_at, expires_at))
+}
+
 fn record_bounds(export: &ArchiveExportV1, record: &ArchiveRecordV1) -> Result<(), StoreError> {
+    if narrowed(export, record.custody, export.created_at)?
+        != export
+            .custody
+            .narrow(ArchiveCustodyV1::content(export.expires_at), export.created_at)?
+    {
+        return Err(invalid("archive source authority was not narrowed before commit"));
+    }
     if record.export != export.id
         || record.length == 0
         || i64::try_from(record.ordinal).is_err()
@@ -67,6 +105,13 @@ fn record_bounds(export: &ArchiveExportV1, record: &ArchiveRecordV1) -> Result<(
     {
         return Err(invalid("invalid archive record descriptor"));
     }
+    if record
+        .payload_key
+        .as_ref()
+        .is_some_and(|key| !payload::key_matches(record, key))
+    {
+        return Err(invalid("archive payload key mismatches approved representation"));
+    }
     if export.records >= u64::from(export.config.max_records)
         || export
             .bytes
@@ -78,11 +123,18 @@ fn record_bounds(export: &ArchiveExportV1, record: &ArchiveRecordV1) -> Result<(
     Ok(())
 }
 fn publish_bounds(export: &ArchiveExportV1, manifest: &ArchiveManifestV1) -> Result<(), StoreError> {
+    if manifest.custody != export.custody
+        && (export.custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive
+            || manifest.custody != ArchiveCustodyV1::default())
+    {
+        return Err(invalid("archive manifest byte authority mismatch"));
+    }
     if manifest.schema_version != 1
         || manifest.tenant != export.tenant
         || manifest.run != export.run
         || manifest.records != export.records
         || manifest.records == 0
+        || manifest.materialized_dependencies > manifest.records
         || manifest.complete
     {
         return Err(invalid(

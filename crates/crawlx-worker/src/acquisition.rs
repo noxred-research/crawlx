@@ -12,7 +12,7 @@ use crawlx_core::acquisition::{
 use crawlx_core::hash::Digest;
 use crawlx_core::{CrawlRunId, TenantId};
 use crawlx_extract::validation::{validate_acquisition, ValidationInput};
-use crawlx_extract::{Document, ExtractOptions, Extractor};
+use crawlx_extract::{Document, ExtractOptions};
 use crawlx_fetch::{FetchError, FetchOptions, FetchResponse, Fetcher};
 use std::sync::{
     atomic::{AtomicU32, Ordering},
@@ -22,6 +22,70 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use url::Url;
+
+/// Map admitted request controls onto the existing fetcher's per-request policy.
+pub(crate) fn fetch_options(fetch: &crawlx_core::config::Fetch) -> FetchOptions {
+    let mut options = FetchOptions {
+        preflight: fetch.preflight.as_ref().map(|policy| {
+            let mut preflight =
+                crawlx_fetch::HeadPreflight::new().with_content_types(policy.content_types.iter().cloned());
+            preflight.max_content_length = policy.max_content_length;
+            preflight
+        }),
+        ..FetchOptions::default()
+    };
+    if let Some(policy) = &fetch.declaration {
+        options.declaration.content_type.clone_from(&policy.content_type);
+        options.declaration.charset.clone_from(&policy.charset);
+        options.declaration.statuses = crawlx_fetch::HttpErrorStatuses::default()
+            .allowing(policy.statuses.allow.iter().copied())
+            .denying(policy.statuses.deny.iter().copied());
+    }
+    if let Some(policy) = fetch.oversize {
+        options.oversize = match policy {
+            crawlx_core::acquisition::OversizePolicy::Refuse => crawlx_fetch::OversizePolicy::Reject,
+            _ => crawlx_fetch::OversizePolicy::Truncate,
+        };
+    }
+    options
+}
+
+/// Compile extract-owned option contracts before any network request is dispatched.
+pub(crate) fn configure_extract(
+    options: &mut ExtractOptions,
+    extract: &crawlx_core::config::Extract,
+) -> Result<(), crate::error::WorkerError> {
+    options.outputs = extract
+        .outputs
+        .as_ref()
+        .map(|value| {
+            serde_json::from_value::<crawlx_extract::content_outputs::ContentOutputOptions>(value.clone())
+                .map_err(|error| crate::error::WorkerError::Config(format!("extract.outputs: {error}")))
+        })
+        .transpose()?;
+    if let Some(outputs) = &options.outputs {
+        outputs
+            .validate()
+            .map_err(|error| crate::error::WorkerError::Config(error.to_string()))?;
+    }
+    options.decode = extract
+        .decode
+        .as_ref()
+        .map(|value| {
+            serde_json::from_value(value.clone())
+                .map_err(|error| crate::error::WorkerError::Config(format!("extract.decode: {error}")))
+        })
+        .transpose()?;
+    options.markup = extract
+        .markup
+        .as_ref()
+        .map(|value| {
+            serde_json::from_value(value.clone())
+                .map_err(|error| crate::error::WorkerError::Config(format!("extract.markup: {error}")))
+        })
+        .transpose()?;
+    Ok(())
+}
 
 /// Live destination admission, shared by HTTP redirects and the meta transition.
 #[async_trait::async_trait]
@@ -35,6 +99,26 @@ pub(crate) trait HopAdmission: Send + Sync {
     ) -> Result<(), FetchError>;
     /// Recheck live parent ownership and authorization without loading robots.
     async fn check_authority(&self) -> Result<(), FetchError>;
+    /// Recheck destination scope without recursively loading its robots document.
+    /// An admission owner without a protocol-resource scope fails closed.
+    async fn check_scope(&self, _url: &Url) -> Result<(), FetchError> {
+        Err(FetchError::AcquisitionUnavailable)
+    }
+    /// Execute one transport attempt beneath the existing shared budget and admission owner.
+    async fn fetch_attempt(
+        &self,
+        fetcher: &Fetcher,
+        url: &Url,
+        options: &FetchOptions,
+    ) -> Result<FetchResponse, FetchError> {
+        fetcher
+            .fetch_once_with_authority(url, options, &|| self.check_authority())
+            .await
+    }
+    /// Whether this authority owns a stateful transport requiring caller-managed hops.
+    fn requires_checked_hops(&self) -> bool {
+        false
+    }
 }
 
 /// Project URL evidence through existing userinfo, sensitive-name and literal secret rules.
@@ -91,12 +175,11 @@ pub(crate) async fn fetch_budgeted_once(
     }
     let remaining = budget.reserve(cancel)?;
     let options = budget.options(options, fetcher.config().max_body_bytes);
-    let check_authority = || admission.check_authority();
     let result = tokio::select! {
         biased;
         () = cancel.cancelled() => Err(FetchError::AcquisitionCancelled),
         result = watch_authority(admission) => result.and(Err(FetchError::AcquisitionCancelled)),
-        result = tokio::time::timeout(remaining, fetcher.fetch_once_with_authority(url, &options, &check_authority)) =>
+        result = tokio::time::timeout(remaining, admission.fetch_attempt(fetcher, url, &options)) =>
             result.unwrap_or(Err(FetchError::AcquisitionDeadline)),
     };
     match result {
@@ -132,13 +215,13 @@ async fn watch_authority(admission: &dyn HopAdmission) -> Result<(), FetchError>
     }
 }
 
-/// Retrieve a single selected representation without resetting hop or parent allowances.
+/// Retrieve one checked representation, optionally following a single HTML meta refresh.
 #[allow(clippy::too_many_arguments)]
-async fn fetch_refresh(
+async fn fetch_checked(
     fetcher: &Fetcher,
     original: &Url,
     original_options: &FetchOptions,
-    policy: &crawlx_core::acquisition::MetaRefreshPolicyV1,
+    policy: Option<&crawlx_core::acquisition::MetaRefreshPolicyV1>,
     budget: &mut AcquisitionBudgetV1,
     cancel: &CancellationToken,
     cpu: &CpuPool,
@@ -226,16 +309,17 @@ async fn fetch_refresh(
                     })
                 }
             }
-        } else if evidence.is_none()
-            && response.status.is_success()
-            && !response.truncated
-            && response.content_type.as_deref().is_some_and(|mime| {
-                mime.split(';').next().is_some_and(|mime| {
-                    mime.trim().eq_ignore_ascii_case("text/html")
-                        || mime.trim().eq_ignore_ascii_case("application/xhtml+xml")
+        } else if let Some(policy) = policy.filter(|_| {
+            evidence.is_none()
+                && response.status.is_success()
+                && !response.truncated
+                && response.content_type.as_deref().is_some_and(|mime| {
+                    mime.split(';').next().is_some_and(|mime| {
+                        mime.trim().eq_ignore_ascii_case("text/html")
+                            || mime.trim().eq_ignore_ascii_case("application/xhtml+xml")
+                    })
                 })
-            })
-        {
+        }) {
             let body = response.body.clone();
             let observed = response.final_url.clone();
             let bound = policy.max_parser_bytes;
@@ -302,6 +386,9 @@ async fn fetch_refresh(
                 .map(|hop: &crawlx_fetch::FetchHop| hop.url.to_string())
                 .collect();
             response.hops = hops;
+            response.attempts = u32::try_from(response.hops.len())
+                .unwrap_or(u32::MAX)
+                .saturating_add(1);
             return Ok((response, evidence));
         };
         next.set_fragment(None);
@@ -524,6 +611,68 @@ impl AcquisitionBudgetV1 {
     }
 }
 
+/// The immutable page pipeline shared by all acquisitions in this process.
+pub(crate) fn parser_pipeline(
+) -> Result<&'static crawlx_extract::pipeline::ParserPipeline, &'static crawlx_extract::pipeline::PipelineError>
+{
+    static PIPELINE: std::sync::LazyLock<
+        Result<crawlx_extract::pipeline::ParserPipeline, crawlx_extract::pipeline::PipelineError>,
+    > = std::sync::LazyLock::new(|| {
+        crawlx_extract::pipeline::ParserPipeline::new(crawlx_core::extraction::ParserPipelineV1::default())
+    });
+    PIPELINE.as_ref()
+}
+
+type ContentProjection<'a> = dyn Fn(&str) -> Option<String> + 'a;
+
+/// Run page bytes through the shared versioned parser before any caller persists content.
+fn pipeline_document(
+    body: &[u8],
+    base: &Url,
+    options: &ExtractOptions,
+    projection: Option<&ContentProjection<'_>>,
+) -> Result<Document, crawlx_extract::ExtractError> {
+    use crawlx_extract::pipeline::{PipelineContent, PipelineError, PipelineInput};
+    let pipeline = parser_pipeline().map_err(|error| {
+        crawlx_extract::ExtractError::InvalidContentPolicy(crawlx_core::CoreError::Invalid {
+            field: "extract.pipeline",
+            reason: error.to_string(),
+        })
+    })?;
+    let execute = || {
+        let mut input = PipelineInput::new(body)
+            .with_page_url(base)
+            .with_content_type("text/html")
+            .with_page_options(options);
+        if let Some(project) = projection {
+            input = input.with_projection(project);
+        }
+        pipeline.run(input)
+    };
+    let output = execute().map_err(|error| match error {
+        PipelineError::Extract(error) => error,
+        PipelineError::Invalid(error) => crawlx_extract::ExtractError::InvalidContentPolicy(error),
+        PipelineError::Limit { what, limit, actual } => crawlx_extract::ExtractError::TooLarge {
+            what,
+            limit: usize::try_from(limit).unwrap_or(usize::MAX),
+            actual: usize::try_from(actual).unwrap_or(usize::MAX),
+        },
+        error => crawlx_extract::ExtractError::InvalidContentPolicy(crawlx_core::CoreError::Invalid {
+            field: "extract.pipeline",
+            reason: error.to_string(),
+        }),
+    })?;
+    match output.content {
+        PipelineContent::Page(document) => Ok(*document),
+        _ => Err(crawlx_extract::ExtractError::InvalidContentPolicy(
+            crawlx_core::CoreError::Invalid {
+                field: "extract.pipeline",
+                reason: "page extraction requires an HTML route".into(),
+            },
+        )),
+    }
+}
+
 /// Extract with final normalized secret projection before article quality, ranges and digests.
 pub(crate) fn extract_document(
     body: &[u8],
@@ -532,7 +681,7 @@ pub(crate) fn extract_document(
     controls: &crawlx_core::request_controls::RequestControls,
 ) -> Result<Document, crawlx_extract::ExtractError> {
     if options.content.is_none() {
-        return Extractor::extract_bytes(body, base, options);
+        return pipeline_document(body, base, options, None);
     }
     let redactor = crawlx_telemetry::Redactor::new();
     let prepared = redactor.scrub_bytes(body, controls.secret_values());
@@ -543,7 +692,7 @@ pub(crate) fn extract_document(
             Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
         }),
     };
-    Extractor::extract_bytes_with_projection(prepared.as_ref(), base, options, &project)
+    pipeline_document(prepared.as_ref(), base, options, Some(&project))
 }
 
 /// Project actual request and live provider secrets before canonical derived outputs.
@@ -585,7 +734,7 @@ pub(crate) fn extract_document_with_secrets(
             }
         }
     };
-    let document = Extractor::extract_bytes_with_projection(prepared.as_ref(), base, options, &project);
+    let document = pipeline_document(prepared.as_ref(), base, options, Some(&project));
     if failed.get() {
         return Err(unavailable());
     }
@@ -641,11 +790,12 @@ pub(crate) async fn validate_body(
             .counter("crawlx_acquisition_transport_success_total")
             .inc_by(1, &[]);
     }
+    let method_head = context.method_head;
     let controls = controls.clone();
     let captcha = captcha.cloned();
     let result = cpu
         .run(move || {
-            if is_html {
+            if is_html && !method_head {
                 let parsed = match &captcha {
                     Some(captcha) => {
                         extract_document_with_secrets(&body, &base, &extract, &controls, captcha)
@@ -686,7 +836,7 @@ pub(crate) async fn validate_body(
         })
         .await
         .map_err(|_| FetchError::AcquisitionUnavailable)?;
-    if result.0.content_accepted {
+    if !method_head && result.0.content_accepted {
         crawlx_telemetry::Metrics::global()
             .counter("crawlx_acquisition_accepted_document_total")
             .inc_by(1, &[]);
@@ -808,23 +958,32 @@ pub(crate) async fn fetch_native(
     if policy.meta_refresh.is_some() && (admission.is_none() || options.method != http::Method::GET) {
         return Err(FetchError::AcquisitionUnavailable);
     }
+    let checked_hops = policy.meta_refresh.is_some()
+        || options.method == http::Method::HEAD
+        || admission.is_some_and(|authority| authority.requires_checked_hops());
     loop {
         let mut refresh_evidence = None;
-        let fetched = if let Some(refresh) = &policy.meta_refresh {
-            let (response, evidence) = fetch_refresh(
+        let fetched = if checked_hops {
+            let selected = fetch_checked(
                 fetcher,
                 url,
                 options,
-                refresh,
+                policy.meta_refresh.as_ref(),
                 budget,
                 cancel,
                 cpu,
                 observe,
                 admission.ok_or(FetchError::AcquisitionUnavailable)?,
             )
-            .await?;
-            refresh_evidence = evidence;
-            Ok(response)
+            .await;
+            match selected {
+                Ok((response, evidence)) => {
+                    refresh_evidence = evidence;
+                    Ok(response)
+                }
+                Err(error) if policy.meta_refresh.is_some() => return Err(error),
+                Err(error) => Err(error),
+            }
         } else {
             let remaining = budget.reserve(cancel)?;
             let options = budget.options(options, fetcher.config().max_body_bytes);
@@ -834,21 +993,23 @@ pub(crate) async fn fetch_native(
                 result = tokio::time::timeout(remaining, fetcher.fetch_once(url, &options)) => result.unwrap_or(Err(FetchError::AcquisitionDeadline)),
             }
         };
-        if policy.meta_refresh.is_none() {
+        if !checked_hops {
             observe(url, &fetched);
         }
         let response = match fetched {
             Ok(response) => response,
             Err(error) => {
-                budget.on_fetch_failure(
-                    &error,
-                    options.max_body_bytes.unwrap_or(fetcher.config().max_body_bytes),
-                );
-                budget.record(
-                    "native_http",
-                    None,
-                    crawlx_core::acquisition::ValidationCategoryV1::TransportError,
-                );
+                if !checked_hops {
+                    budget.on_fetch_failure(
+                        &error,
+                        options.max_body_bytes.unwrap_or(fetcher.config().max_body_bytes),
+                    );
+                    budget.record(
+                        "native_http",
+                        None,
+                        crawlx_core::acquisition::ValidationCategoryV1::TransportError,
+                    );
+                }
                 let safe_transport = matches!(
                     error,
                     FetchError::Transport(_) | FetchError::Timeout(_) | FetchError::Resolve { .. }
@@ -863,7 +1024,7 @@ pub(crate) async fn fetch_native(
                 return Err(error);
             }
         };
-        if policy.meta_refresh.is_none() {
+        if !checked_hops {
             budget.charge_bytes(response.body.len());
         }
         let mut metadata = http_metadata(run, tenant, url, &response, fetcher);
@@ -871,6 +1032,8 @@ pub(crate) async fn fetch_native(
         metadata.meta_refresh_policy.clone_from(&policy.meta_refresh);
         if policy.meta_refresh.is_some() {
             metadata.meta_refresh_revision = Some(crawlx_core::acquisition::META_REFRESH_RUNTIME_REVISION);
+        }
+        if policy.meta_refresh.is_some() || options.method == http::Method::HEAD {
             let requested = public_url(&metadata.requested_url, &fetcher.config().controls)?;
             metadata.evidence_truncated |= requested != metadata.requested_url;
             metadata.requested_url = requested;
@@ -909,7 +1072,7 @@ pub(crate) async fn fetch_native(
             article.acquisition_request_digest = Some(metadata.request_digest);
             article.source_artifact.clone_from(&metadata.wire_body);
         }
-        if policy.meta_refresh.is_none() {
+        if !checked_hops {
             budget.record(
                 "native_http",
                 metadata.target_status,

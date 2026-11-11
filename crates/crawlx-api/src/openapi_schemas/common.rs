@@ -299,6 +299,9 @@ pub(super) struct Document {
     /// PDF `blocks` parser option: typed layout blocks per page.
     #[serde(skip_serializing_if = "Option::is_none")]
     blocks: Option<Value>,
+    /// Opt-in native content renditions, table analysis and link/media reports.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outputs: Option<super::outputs::ContentOutputs>,
     /// A non-fatal problem the caller should know (a format that was skipped, ...).
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,
@@ -353,9 +356,9 @@ pub(super) struct CoverageSummary {
     unit: String,
     /// Units discovered.
     discovered: u64,
-    /// Units exercised on the trusted lane.
+    /// Successful trusted executions from trusted-reachable states, excluding not-observable contexts.
     exercised_trusted: u64,
-    /// Recall against a ground truth; `null` without one.
+    /// Recall against fixture ground-truth input; `null` without that input.
     ground_truth_recall: Option<f64>,
 }
 

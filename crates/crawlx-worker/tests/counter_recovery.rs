@@ -5,8 +5,9 @@
 //! before the session acts again, so the stored `interactions.*` counters equal the journal
 //! counts once the run is recovered and finished (`crawlx_bench::trail` `counter_mismatch`).
 //!
-//! * `a_recovered_session_re_derives_*`: the dead holder's journal rows are written directly
-//!   (T2 committed, nothing counted), on the in-memory store and on PostgreSQL.
+//! * `a_recovered_session_re_derives_*`: the dead holder's journal rows and one completed
+//!   browser page (observation custody) are written directly (committed, nothing counted), on
+//!   memory and PostgreSQL.
 //! * `a_kill_between_t2_and_the_counter_flush_*` (`--features chaos`): a real worker is
 //!   killed at the `after_outcome_before_counter_flush` failpoint, the same window the
 //!   SIGKILL drill of `crawlx-cli/tests/chaos.rs` hits.
@@ -18,7 +19,10 @@ use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
 use crawlx_core::counters::{ActionStatus, PlaneCounters, RunStatus};
+use crawlx_core::custody::CustodyLease;
+use crawlx_core::orchestration::{ObservedAppendV1, ObservedCommitV1, ObservedRequestV1, RequestCommitV1};
 use crawlx_core::repo::{CrawlRun, OutcomeRecord, SessionStatus};
+use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::{
     Clock, CrawlRunId, CreateCrawl, ObservationEpoch, SessionId, StateClusterId, SystemClock, TenantId,
     WorkerId,
@@ -227,7 +231,7 @@ fn outcome(status: ActionStatus) -> OutcomeRecord {
     }
 }
 
-/// The previous holder claimed the session, committed T2 for `outcomes`, journaled one more
+/// The previous holder published a browser URL, committed T2 for `outcomes`, journaled one more
 /// intent and died: none of it reached `crawl_runs.counters`.
 async fn dead_holder(stores: &Stores, run: CrawlRunId, outcomes: &[ActionStatus]) -> SessionId {
     let scheduler = Scheduler::new(Arc::clone(&stores.leases));
@@ -237,12 +241,62 @@ async fn dead_holder(stores: &Stores, run: CrawlRunId, outcomes: &[ActionStatus]
         .unwrap()
         .unwrap();
     let session = lease.session.id;
-    let cluster = StateClusterId::new();
+    stores
+        .runs
+        .set_status(run, RunStatus::Running, None)
+        .await
+        .unwrap();
     let epoch = ObservationEpoch {
         navigation_seq: 1,
         document_seq: 1,
         mutation_seq: 0,
     };
+    // Browser pages are session-observation custody, not URL work: the dead holder published
+    // one under its session fence and committed it.
+    let custody = CustodyLease::new(stores.tenant, run, session, lease.worker, lease.fencing_token);
+    let envelope = RequestEnvelopeV1::get(
+        testkit::canonical_url("https://example.test/committed-before-kill"),
+        1,
+        None,
+    );
+    let ObservedAppendV1::Appended { request_id, .. } = stores
+        .request_commits
+        .append_observed_fenced(ObservedRequestV1::new(
+            custody.clone(),
+            epoch,
+            envelope,
+            SystemClock.now(),
+        ))
+        .await
+        .unwrap()
+    else {
+        panic!("the first rendition of the URL is appended");
+    };
+    let (_, fence) = stores
+        .request_commits
+        .lease_observed_fenced(&custody, epoch, request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let queued = stores.frontier.get_request(run, request_id).await.unwrap();
+    let committed = stores
+        .request_commits
+        .commit_observed_fenced(
+            RequestCommitV1::terminal(
+                run,
+                request_id,
+                fence,
+                queued.state_version,
+                crawlx_core::repo::FrontierStatus::Succeeded,
+                None,
+            ),
+            custody,
+            epoch,
+        )
+        .await
+        .unwrap();
+    assert_eq!(committed, ObservedCommitV1::Committed);
+    let cluster = StateClusterId::new();
     for (n, status) in outcomes.iter().enumerate() {
         let proposal = testkit::proposal("anonymous", cluster, u32::try_from(n + 1).unwrap());
         let id = stores
@@ -280,6 +334,27 @@ async fn assert_counters_match_the_journal(stores: &Stores, run: CrawlRunId) {
         "interactions.unknown_outcome: {stored:?} vs {derived:?}"
     );
     assert!(stored.interactions.invariants_hold(), "{stored:?}");
+    let observed = stores
+        .frontier
+        .list(run)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|entry| entry.status == crawlx_core::repo::FrontierStatus::Succeeded)
+        .count();
+    assert!(
+        observed >= 1,
+        "the dead holder's committed page stays visible as observation custody"
+    );
+    assert_eq!(
+        stores.frontier.state_counts(run).await.unwrap(),
+        crawlx_core::repo::FrontierStateCounts::default(),
+        "observation custody is not URL work"
+    );
+    assert_eq!(
+        stored.urls.succeeded, 0,
+        "browser pages never charge the URL-plane counters"
+    );
 }
 
 async fn recovered_session_re_derives_its_counters(backing: Backing) {

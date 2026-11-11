@@ -506,6 +506,59 @@ impl ScopePolicy {
         self.decide_with(&url.url, 0, None, true)
     }
 
+    /// Admit an origin protocol document without page-only selection rules.
+    ///
+    /// Authorization records still bind origins, ports and prefixes. Host and URL denials,
+    /// including explicit excluded paths, remain effective. Page include paths, seed paths,
+    /// extension selection and depth do not prevent obtaining an origin's robots policy.
+    #[must_use]
+    pub fn decide_protocol_resource(&self, url: &Url) -> ScopeVerdict {
+        self.decide_protocol_resource_with_host(url, false)
+    }
+
+    /// Admit `/robots.txt` on the exact origin of an already-admitted external hop.
+    ///
+    /// This delegates only the host-scope check. Explicit host, URL, path and authorization
+    /// record denials still apply, including the record's port and prefix restrictions.
+    /// Other origins and other resources retain ordinary protocol-resource admission.
+    #[must_use]
+    pub fn decide_robots_for_admitted_hop(&self, url: &Url, destination: &Url) -> ScopeVerdict {
+        let delegated_host = self.fetch_leaves
+            && url.path() == "/robots.txt"
+            && url.scheme() == destination.scheme()
+            && url.host_str() == destination.host_str()
+            && url.port_or_known_default() == destination.port_or_known_default()
+            && self.decide_url(destination, 0).is_admitted();
+        self.decide_protocol_resource_with_host(url, delegated_host)
+    }
+
+    fn decide_protocol_resource_with_host(&self, url: &Url, delegated_host: bool) -> ScopeVerdict {
+        if self
+            .record_scope
+            .as_ref()
+            .is_some_and(|scope| scope.check_request(url).is_err())
+        {
+            return ScopeVerdict::Denied(DenialReason::AuthorizationScope);
+        }
+        let host = url.host_str().unwrap_or("");
+        if let Some(entry) = self.exclude_hosts.matches(host, None) {
+            return ScopeVerdict::Denied(DenialReason::HostExcluded(entry.to_owned()));
+        }
+        if let Err(reason) = self.hosts.check(host) {
+            if !delegated_host && !self.host_pattern_admits(host) {
+                return ScopeVerdict::Denied(reason);
+            }
+        }
+        if let Err(reason) = self.urls.check_exclude(url.as_str()) {
+            return ScopeVerdict::Denied(reason);
+        }
+        match self.filter.decide_entry_path(url) {
+            ScopeDecision::Excluded(pattern) => ScopeVerdict::Denied(DenialReason::Excluded(pattern)),
+            ScopeDecision::InScope => ScopeVerdict::Admitted { leaf_only: false },
+            _ => ScopeVerdict::Denied(DenialReason::HostScope),
+        }
+    }
+
     /// The include denial of the crawl's entry URL `url` when the include filters are the only
     /// rule that refuses it ([`Self::decide`] denies it with [`DenialReason::is_include`] and
     /// [`Self::decide_entry`] admits it); `None` when it is admitted or refused for any other
@@ -1095,5 +1148,93 @@ mod tests {
         assert_eq!(off.max_pages_per_host(), Some(5));
         assert_eq!(DenialReason::HostPageLimit.as_str(), "host_page_limit");
         assert_eq!(DenialReason::HostScope.as_str(), "host_scope");
+    }
+
+    #[test]
+    fn protocol_resource_skips_page_selection_but_keeps_denials() {
+        let request = crawl("https://fixture.test/articles/start", |request| {
+            request.scope.include_paths = vec!["/articles/".into()];
+            request.scope.url_include = vec!["/articles/".into()];
+            request.scope.extension_match = vec!["html".into()];
+            request.scope.exclude_hosts = vec!["blocked.fixture.test".into()];
+            request.scope.url_exclude = vec!["forbidden".into()];
+            request.scope.exclude_paths = vec!["/private".into()];
+            request.scope.allow_external_links = true;
+        });
+        let policy = ScopePolicy::new(&request).unwrap();
+        let robots = Url::parse("https://fixture.test/robots.txt").unwrap();
+        assert!(!policy.decide_url(&robots, 1).is_admitted());
+        assert!(policy.decide_protocol_resource(&robots).is_admitted());
+        assert!(!policy
+            .decide_protocol_resource(&Url::parse("https://foreign.test/robots.txt").unwrap())
+            .is_admitted());
+        assert!(matches!(
+            policy.decide_protocol_resource(&Url::parse("https://blocked.fixture.test/robots.txt").unwrap()),
+            ScopeVerdict::Denied(DenialReason::HostExcluded(_))
+        ));
+        assert!(matches!(
+            policy.decide_protocol_resource(&Url::parse("https://fixture.test/forbidden").unwrap()),
+            ScopeVerdict::Denied(DenialReason::UrlExcluded(_))
+        ));
+        assert!(matches!(
+            policy.decide_protocol_resource(&Url::parse("https://fixture.test/private/robots.txt").unwrap()),
+            ScopeVerdict::Denied(DenialReason::Excluded(_))
+        ));
+    }
+
+    #[test]
+    fn external_hop_delegates_only_its_own_robots_origin_and_never_explicit_denials() {
+        let request = crawl("https://fixture.test/start", |request| {
+            request.scope.allow_external_links = true;
+            request.scope.exclude_hosts = vec!["blocked.foreign.test".into()];
+        });
+        let policy = ScopePolicy::new(&request).unwrap();
+        let destination = Url::parse("https://foreign.test/leaf").unwrap();
+        let robots = Url::parse("https://foreign.test/robots.txt").unwrap();
+        assert!(policy.decide_url(&destination, 1).is_admitted());
+        assert!(!policy.decide_protocol_resource(&robots).is_admitted());
+        assert!(policy
+            .decide_robots_for_admitted_hop(&robots, &destination)
+            .is_admitted());
+        for refused in [
+            "https://other.test/robots.txt",
+            "https://foreign.test:8443/robots.txt",
+            "http://foreign.test/robots.txt",
+            "https://foreign.test/other",
+        ] {
+            assert!(
+                !policy
+                    .decide_robots_for_admitted_hop(&Url::parse(refused).unwrap(), &destination)
+                    .is_admitted(),
+                "{refused}"
+            );
+        }
+        assert!(matches!(
+            policy.decide_robots_for_admitted_hop(
+                &Url::parse("https://blocked.foreign.test/robots.txt").unwrap(),
+                &Url::parse("https://blocked.foreign.test/leaf").unwrap(),
+            ),
+            ScopeVerdict::Denied(DenialReason::HostExcluded(_))
+        ));
+        for (url_exclude, exclude_paths) in [
+            (vec!["robots".into()], Vec::new()),
+            (Vec::new(), vec!["/robots.txt".into()]),
+        ] {
+            let mut denied = request.clone();
+            denied.scope.url_exclude = url_exclude;
+            denied.scope.exclude_paths = exclude_paths;
+            assert!(!ScopePolicy::new(&denied)
+                .unwrap()
+                .decide_robots_for_admitted_hop(&robots, &destination)
+                .is_admitted());
+        }
+        let mut record = crate::authorization::tests::record();
+        record.origins = vec!["https://fixture.test".into()];
+        record.url_prefixes.clear();
+        let bound = policy.with_record_scope(record.scope());
+        assert!(matches!(
+            bound.decide_robots_for_admitted_hop(&robots, &destination),
+            ScopeVerdict::Denied(DenialReason::AuthorizationScope)
+        ));
     }
 }

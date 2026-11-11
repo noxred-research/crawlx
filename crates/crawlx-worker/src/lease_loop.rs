@@ -325,7 +325,7 @@ async fn run_with_inner(
                         } else {
                             export.terminal_reason
                         };
-                        stores.finish_run(row.id, reason).await?;
+                        stores.finish_run(row.id, reason, &cfg.cpu_pool).await?;
                         did_work = true;
                     }
                 }
@@ -360,7 +360,8 @@ async fn run_with_inner(
             }
             did_work = true;
             let run_id = lease.session.run;
-            let admission = match slot_for(&mut slots, &cfg, &stores, &backend, &cancel, run_id).await {
+            let admission = match slot_for(&mut slots, &cfg, &stores, &backend, &cancel, run_id, &lease).await
+            {
                 Ok(slot) => slot,
                 Err(WorkerError::AcquisitionUnavailable(reason)) => {
                     // This worker narrowed its live manifest. Another capable worker may recover the run.
@@ -601,6 +602,7 @@ async fn slot_for<'a>(
     backend: &Option<Arc<dyn BrowserBackend>>,
     cancel: &CancellationToken,
     run_id: CrawlRunId,
+    lease: &crawlx_storage::SessionLease,
 ) -> Result<Option<&'a mut RunSlot>, WorkerError> {
     match slots.entry(run_id) {
         Entry::Occupied(o) => Ok(Some(o.into_mut())),
@@ -623,7 +625,7 @@ async fn slot_for<'a>(
             let authorization = match authorize(stores, cfg, &row).await {
                 Ok(guard) => guard,
                 Err(WorkerError::Authorization(stop)) => {
-                    refuse_run(stores, run_id, &stop).await;
+                    refuse_run(stores, run_id, &stop, &cfg.cpu_pool).await;
                     return Ok(None);
                 }
                 Err(e) => return Err(e),
@@ -641,7 +643,13 @@ async fn slot_for<'a>(
             let proxy = if dynamic || crate::scrape::needs_browser_renderer(&row.config, cfg) {
                 Some(
                     cfg.egress
-                        .serve_proxy(&row.config, run_id, record, resolver, EgressOptions::new())
+                        .serve_proxy(
+                            &row.config,
+                            run_id,
+                            record,
+                            resolver,
+                            EgressOptions::new().with_global_cap(Arc::clone(&cfg.origin_cap)),
+                        )
                         .await?,
                 )
             } else {
@@ -674,33 +682,42 @@ async fn slot_for<'a>(
                     Arc::clone(&rc.origin_governor),
                 )?;
                 let fetcher = rc.capture_fetcher(fetcher)?;
-                let plane = Arc::new(
-                    UrlPlaneRunner::new(
-                        run_id,
-                        row.config.clone(),
-                        cfg.worker_id,
-                        UrlPlaneDeps {
-                            runs: Arc::clone(&stores.runs),
-                            frontier: Arc::clone(&stores.frontier),
-                            request_commits: Arc::clone(&stores.request_commits),
-                            leases: Arc::clone(&stores.leases),
-                            pages: Arc::clone(&stores.pages),
-                            events: Arc::clone(&stores.events),
-                            artifacts: Arc::clone(&stores.artifacts),
-                            archives: Arc::clone(&stores.archives),
-                            clock: Arc::clone(&rc.clock),
-                        },
-                        fetcher,
-                        rc.counters.clone(),
-                        rc.canon.clone(),
-                    )?
-                    .with_cpu_pool(rc.cpu_pool.clone())
-                    .with_route_learner(rc.routes.clone())
-                    .with_surface_services(&rc)
-                    .with_scrape_services(&rc, cfg)
-                    .with_authorization(authorization.clone())
-                    .with_graceful_drain(cancel.clone(), None),
-                );
+                // Facade scrapes use their stateless run fetcher, not a strict named HTTP client.
+                let http_session = if row.config.mode == CrawlMode::Static && row.config.scrape.is_none() {
+                    Some(crate::session_lifecycle::register_http_session(&rc, lease, &fetcher).await?)
+                } else {
+                    None
+                };
+                let mut plane = UrlPlaneRunner::new(
+                    run_id,
+                    row.config.clone(),
+                    cfg.worker_id,
+                    UrlPlaneDeps {
+                        runs: Arc::clone(&stores.runs),
+                        frontier: Arc::clone(&stores.frontier),
+                        request_commits: Arc::clone(&stores.request_commits),
+                        source_memo: Arc::clone(&stores.source_memo),
+                        leases: Arc::clone(&stores.leases),
+                        pages: Arc::clone(&stores.pages),
+                        events: Arc::clone(&stores.events),
+                        artifacts: Arc::clone(&stores.artifacts),
+                        archives: Arc::clone(&stores.archives),
+                        clock: Arc::clone(&rc.clock),
+                    },
+                    fetcher,
+                    rc.counters.clone(),
+                    rc.canon.clone(),
+                )?
+                .with_cpu_pool(rc.cpu_pool.clone())
+                .with_route_learner(rc.routes.clone())
+                .with_surface_services(&rc)
+                .with_scrape_services(&rc, cfg)
+                .with_authorization(authorization.clone())
+                .with_graceful_drain(cancel.clone(), None);
+                if let Some(http_session) = http_session {
+                    plane = plane.with_http_sessions(http_session.manager, http_session.authority);
+                }
+                let plane = Arc::new(plane);
                 plane.seed_if_empty().await?;
                 Some(plane)
             };
@@ -734,6 +751,8 @@ async fn slot_for<'a>(
 /// The authorization guard of a run the worker is about to serve: the stored record named by
 /// `safety.authorizationRecordRef`, read through the stores' [`AuthorizationSource`].
 /// Only a run that references no record may run without an authorization source.
+/// Memory-backed admissions retain the live source and original body binding for uncached HEAD
+/// disclosure after the worker releases the run; a global API authorizer still takes precedence.
 ///
 /// [`AuthorizationSource`]: crate::authorization::AuthorizationSource
 async fn authorize(
@@ -761,14 +780,22 @@ async fn authorize(
     .await?;
     guard.check_tenant(row.tenant)?;
     crate::run::check_role_credentials(&row.config, Some(&guard))?;
+    if let Some(memory) = &stores.memory {
+        memory.set_run_head_response_authorizer(row.id, guard.head_response_authorizer()?);
+    }
     Ok(Some(guard))
 }
 
 /// End a run the worker refused to serve because its authorization was lost at lease time: failed
 /// with `authorization_revoked`. Its sessions are never leased again (leases need a running run).
-async fn refuse_run(stores: &Stores, run: CrawlRunId, stop: &AuthorizationStop) {
+async fn refuse_run(
+    stores: &Stores,
+    run: CrawlRunId,
+    stop: &AuthorizationStop,
+    cpu: &crate::runtime::CpuPool,
+) {
     tracing::warn!(run = %run, reason = stop.reason(), "run refused: authorization record unusable");
-    end_unauthorized(stores, run, stop.reason(), None).await;
+    end_unauthorized(stores, run, stop.reason(), None, cpu).await;
 }
 
 /// End a running run whose authorization was lost: the guard has cancelled its token, here the
@@ -781,17 +808,23 @@ async fn halt_unauthorized(stores: &Stores, slot: &mut RunSlot) {
     slot.halted = true;
     let reason = slot.authorization.as_ref().and_then(|guard| guard.stop());
     let code = reason.as_ref().map_or("revoked", AuthorizationStop::reason);
-    end_unauthorized(stores, slot.rc.run, code, Some(&slot.rc)).await;
+    end_unauthorized(stores, slot.rc.run, code, Some(&slot.rc), &slot.rc.cpu_pool).await;
 }
 
-async fn end_unauthorized(stores: &Stores, run: CrawlRunId, code: &str, rc: Option<&Arc<RunContext>>) {
+async fn end_unauthorized(
+    stores: &Stores,
+    run: CrawlRunId,
+    code: &str,
+    rc: Option<&Arc<RunContext>>,
+    cpu: &crate::runtime::CpuPool,
+) {
     let reason = TerminalReason::AuthorizationRevoked;
     if let Some(rc) = rc {
         if let Err(e) = rc.counters.persist(stores.runs.as_ref(), run).await {
             tracing::warn!(run = %run, error = %e, "counters not persisted");
         }
     }
-    match stores.finish_run(run, reason).await {
+    match stores.finish_run(run, reason, cpu).await {
         Ok(()) => {
             let _ = stores
                 .events
@@ -925,7 +958,7 @@ async fn finalize_if_done(
             crate::archive_recorder::Finalization::Ready => {}
         }
     }
-    stores.finish_run(id, reason).await?;
+    stores.finish_run(id, reason, &slot.rc.cpu_pool).await?;
     let _ = stores
         .events
         .append(

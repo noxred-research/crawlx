@@ -52,6 +52,14 @@ impl CustodyLease {
         }
     }
 
+    /// Retain the producer's actual hard-stop token across storage lock waits.
+    /// Graceful worker drain must use a separate token, so acquired effects can publish.
+    #[must_use]
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.local_cancellation = Some(cancellation);
+        self
+    }
+
     /// Bind a static/URL producer to its real existing frontier lease.
     #[must_use]
     pub const fn for_url(

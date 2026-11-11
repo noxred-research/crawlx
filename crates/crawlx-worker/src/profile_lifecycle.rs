@@ -135,13 +135,9 @@ impl ProfileRun {
                 .0,
         );
         let cipher = Arc::new(ProfileCipher::new(key.as_slice())?);
-        // A stable secret-keyed egress identity distinguishes sticky credentials without
-        // exposing them or changing identity merely because the loopback proxy port changed.
-        let egress = Digest::keyed(
-            &key,
-            "crawlx/profile-egress/v1",
-            rc.egress.route_for(&rc.crawl)?.identity().as_bytes(),
-        );
+        // Profile and session bindings must measure the same approved route identity.
+        // The route digest excludes transient loopback listener ports.
+        let egress = rc.egress.route_for(&rc.crawl)?.egress_digest();
         Ok((cipher, egress))
     }
 
@@ -313,3 +309,7 @@ impl ProfileRun {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "profile_lifecycle_tests.rs"]
+mod tests;

@@ -17,6 +17,7 @@
 //! this module validates locally and a bad selector fails before any connection is made.
 
 use super::{PoolTier, ProxyxError};
+use crawlx_core::session_binding::SessionBindingV1;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
@@ -29,7 +30,7 @@ const MAX_CITY_LEN: usize = 48;
 /// Prefix of every derived sticky id.
 const SID_PREFIX: &str = "cx";
 /// Shortest hash a derived sticky id may fall back to (a 32-bit collision space is too small).
-const MIN_SID_HASH_HEX: usize = 16;
+const MIN_SID_HASH_HEX: usize = 32;
 
 /// Pool class.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -168,7 +169,7 @@ pub struct PoolSelector {
     /// Lease idle time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttl: Option<PoolTtl>,
-    /// Rotation; `None` is sticky with a per-crawl `sid`.
+    /// Rotation; `None` is sticky. Session-bound routes refuse per-connection rotation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation: Option<PoolRotation>,
 }
@@ -318,52 +319,66 @@ impl PoolSelector {
         Ok(username)
     }
 
-    /// The sticky id of `crawl` under this selector, or `None` for `rotation = each`.
+    /// Derive a sticky id from the complete immutable identity and explicit generation.
     ///
-    /// The id is `cx_<tier>_<crawl>` with the crawl key lower-cased and every character outside
-    /// `[a-z0-9]` turned into `_`, so the same crawl always yields the same id and the two
-    /// tiers of one crawl never share a lease. When that does not fit the username budget the
-    /// crawl key is replaced by a prefix of its BLAKE3 hash, never by a truncation.
+    /// Tenant, run, principal, session slot, profile and acquisition settings remain distinct.
+    /// Lease renewal does not change the id. Only explicit generation replacement may change
+    /// identity. The digest never exposes role names or profile references in proxy credentials.
     ///
     /// # Errors
-    /// [`ProxyxError::Selector`] for an invalid field, [`ProxyxError::UsernameTooLong`] when
-    /// even the shortest id does not fit next to the other options.
-    pub fn sticky_id(&self, tier: PoolTier, crawl: &str) -> Result<Option<String>, ProxyxError> {
+    /// Returns a selector error for per-connection rotation or a missing generation, or
+    /// [`ProxyxError::UsernameTooLong`] when fewer than 128 digest bits fit.
+    pub fn sticky_id(&self, tier: PoolTier, session: &SessionBindingV1) -> Result<String, ProxyxError> {
+        if self.rotates_each() {
+            return Err(ProxyxError::selector(
+                "rotation",
+                "a session generation requires sticky rotation",
+            ));
+        }
+        if session.generation == 0 {
+            return Err(ProxyxError::SessionUnavailable);
+        }
+        let identity = &session.identity;
+        let mut hash = blake3::Hasher::new_derive_key("crawlx/proxy-session-generation/v1");
+        hash.update(identity.tenant.0.as_bytes());
+        hash.update(identity.run.0.as_bytes());
+        hash.update(identity.session.0.as_bytes());
+        hash.update(&session.generation.to_be_bytes());
+        hash.update(&identity.acquisition.0);
+        hash.update(&identity.backend_build.0);
+        hash.update(&identity.egress.0);
+        hash.update(&identity.identity_policy.0);
+        hash.update(&[u8::from(identity.profile.is_some())]);
+        if let Some(profile) = identity.profile {
+            hash.update(&profile.0);
+        }
+        // The only variable-width field comes last, after all fixed-width fields.
+        hash.update(identity.principal.0.as_bytes());
+        self.digest_sid(tier, hash.finalize())
+    }
+
+    pub(super) fn run_sticky_id(
+        &self,
+        tier: PoolTier,
+        run: crawlx_core::CrawlRunId,
+    ) -> Result<Option<String>, ProxyxError> {
         if self.rotates_each() {
             return Ok(None);
         }
+        self.digest_sid(tier, blake3::hash(run.0.as_bytes())).map(Some)
+    }
+
+    fn digest_sid(&self, tier: PoolTier, digest: blake3::Hash) -> Result<String, ProxyxError> {
         let base = self.username(None)?;
-        // `-sid-` plus the id; the id head is `cx_<tier>_`
         let head = format!("{SID_PREFIX}_{}_", tier.tag());
-        let budget = MAX_USERNAME_LEN.saturating_sub(base.len() + "-sid-".len());
-        let sanitized: String = crawl
-            .chars()
-            .map(|c| {
-                let c = c.to_ascii_lowercase();
-                if c.is_ascii_lowercase() || c.is_ascii_digit() {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        if sanitized.is_empty() {
-            return Err(ProxyxError::selector("sid", "the crawl key is empty"));
-        }
-        if head.len() + sanitized.len() <= budget {
-            return Ok(Some(format!("{head}{sanitized}")));
-        }
-        let hex_len = budget.saturating_sub(head.len());
-        if hex_len < MIN_SID_HASH_HEX {
+        let budget = MAX_USERNAME_LEN.saturating_sub(base.len() + "-sid-".len() + head.len());
+        if budget < MIN_SID_HASH_HEX {
             return Err(ProxyxError::UsernameTooLong {
                 len: base.len() + "-sid-".len() + head.len() + MIN_SID_HASH_HEX,
             });
         }
-        let digest = blake3::hash(crawl.as_bytes()).to_hex();
-        Ok(Some(format!(
-            "{head}{}",
-            &digest.as_str()[..hex_len.min(digest.len())]
-        )))
+        let digest = digest.to_hex();
+        Ok(format!("{head}{}", &digest.as_str()[..budget.min(digest.len())]))
     }
 }
 
@@ -492,47 +507,51 @@ mod tests {
     }
 
     #[test]
-    fn sticky_id_is_deterministic_sanitized_and_tier_scoped() {
+    fn sticky_id_preserves_full_generation_identity_without_lossy_sanitizing() {
         let s = sel("kind=rotating,cc=fr");
-        let id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
-        let basic = s.sticky_id(PoolTier::Basic, id).unwrap().unwrap();
-        let again = s.sticky_id(PoolTier::Basic, id).unwrap().unwrap();
-        let enhanced = s.sticky_id(PoolTier::Enhanced, id).unwrap().unwrap();
-        assert_eq!(basic, "cx_b_0190a1b2_c3d4_7e5f_8a9b_0c1d2e3f4a5b");
-        assert_eq!(basic, again);
-        assert_eq!(enhanced, "cx_e_0190a1b2_c3d4_7e5f_8a9b_0c1d2e3f4a5b");
-        assert!(s.username(Some(&basic)).unwrap().len() <= MAX_USERNAME_LEN);
-        assert_eq!(
-            s.sticky_id(PoolTier::Basic, "Crawl 42/é").unwrap().unwrap(),
-            "cx_b_crawl_42__"
-        );
-        assert!(s.sticky_id(PoolTier::Basic, "").is_err());
-    }
-
-    #[test]
-    fn sticky_id_hashes_instead_of_truncating_and_never_exceeds_the_budget() {
-        let s = sel("kind=rotating,cc=fr,city=new_york,prov=oxylabs_res,ttl=10m,rot=sticky");
-        let long = "x".repeat(200);
-        let one = s.sticky_id(PoolTier::Basic, &long).unwrap().unwrap();
-        let other = s
-            .sticky_id(PoolTier::Basic, &format!("{long}y"))
-            .unwrap()
-            .unwrap();
-        assert_ne!(one, other, "a truncating id would collide");
-        for id in [&one, &other] {
-            assert!(s.username(Some(id)).unwrap().len() <= MAX_USERNAME_LEN);
-            assert!(id.starts_with("cx_b_"));
+        let route = super::super::tests::route("http://pool.internal", "").unwrap();
+        let session = super::super::tests::session(&route, PoolTier::Basic);
+        let basic = s.sticky_id(PoolTier::Basic, &session).unwrap();
+        assert_eq!(basic, s.sticky_id(PoolTier::Basic, &session).unwrap());
+        let mut renewed = session.clone();
+        renewed.lease_fence += 1;
+        renewed.state_version += 1;
+        assert_eq!(basic, s.sticky_id(PoolTier::Basic, &renewed).unwrap());
+        for changed in [
+            {
+                let mut changed = session.clone();
+                changed.generation += 1;
+                changed
+            },
+            {
+                let mut changed = session.clone();
+                changed.identity.principal.0 = "role/a".into();
+                changed
+            },
+            {
+                let mut changed = session.clone();
+                changed.identity.profile = Some(crawlx_core::hash::Digest::of("test", b"profile"));
+                changed
+            },
+            {
+                let mut changed = session.clone();
+                changed.identity.tenant = "00000000-0000-0000-0000-000000000009".parse().unwrap();
+                changed
+            },
+        ] {
+            assert_ne!(basic, s.sticky_id(PoolTier::Basic, &changed).unwrap());
         }
-        // no room left for even a 16-character hash
+        assert_ne!(basic, s.sticky_id(PoolTier::Enhanced, &session).unwrap());
+        assert!(s.username(Some(&basic)).unwrap().len() <= MAX_USERNAME_LEN);
+        assert!(sel("rot=each").sticky_id(PoolTier::Basic, &session).is_err());
         let tight = PoolSelector {
             provider: Some("p".repeat(95)),
             ..PoolSelector::default()
         };
         assert!(matches!(
-            tight.sticky_id(PoolTier::Basic, &long),
+            tight.sticky_id(PoolTier::Basic, &session),
             Err(ProxyxError::UsernameTooLong { .. })
         ));
-        assert_eq!(sel("rot=each").sticky_id(PoolTier::Basic, "x").unwrap(), None);
     }
 
     #[test]

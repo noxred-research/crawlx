@@ -24,6 +24,7 @@ use rand::rand_core::UnwrapErr;
 use rand::rngs::SysRng;
 use rand::Rng as _;
 use serde_json::{json, Value};
+use std::future::Future;
 
 /// A freshly persisted run.
 pub(crate) struct Created {
@@ -145,7 +146,28 @@ pub(crate) async fn create_replay_run(
     .await
 }
 
-async fn create_admitted_run(
+fn create_admitted_run<'a>(
+    state: &'a AppState,
+    principal: &'a Principal,
+    crawl: CreateCrawl,
+    details: Vec<Detail>,
+    warnings: Vec<Warning>,
+    id: CrawlRunId,
+    replay_spec: Option<&'a Value>,
+) -> impl Future<Output = ApiResult<Created>> + Send + 'a {
+    // Admission retains configuration and storage state; do not copy it into every route future.
+    Box::pin(create_admitted_run_inner(
+        state,
+        principal,
+        crawl,
+        details,
+        warnings,
+        id,
+        replay_spec,
+    ))
+}
+
+async fn create_admitted_run_inner(
     state: &AppState,
     principal: &Principal,
     mut crawl: CreateCrawl,
@@ -337,7 +359,9 @@ pub(crate) async fn load_run_metadata(
 
 async fn metadata_resource(state: &AppState, run: &crawlx_core::repo::RunMetadata) -> ApiResult<Value> {
     let sessions = state.repos.runs.list_sessions(run.id).await?;
-    let coverage = state.repos.ledger.summary(run.id).await?;
+    let rows = state.repos.api.coverage(run.id).await?;
+    let ground_truth = state.load_fixture_ground_truth(run.id).await?;
+    let coverage = crate::resources::coverage_summary(&rows, ground_truth.as_ref());
     let dead = if run.webhook_configured {
         Some(state.repos.api.webhook_dead_count(run.id).await?)
     } else {
@@ -352,7 +376,9 @@ async fn metadata_resource(state: &AppState, run: &crawlx_core::repo::RunMetadat
 /// The full crawl resource for `run`.
 pub(crate) async fn run_resource(state: &AppState, run: &CrawlRun, warnings: &[Warning]) -> ApiResult<Value> {
     let sessions = state.repos.runs.list_sessions(run.id).await?;
-    let ledger = state.repos.ledger.list(run.id).await?;
+    let rows = state.repos.api.coverage(run.id).await?;
+    let ground_truth = state.load_fixture_ground_truth(run.id).await?;
+    let coverage = crate::resources::coverage_summary(&rows, ground_truth.as_ref());
     let dead = if run.config.output.webhook.is_some() {
         Some(state.repos.api.webhook_dead_count(run.id).await?)
     } else {
@@ -364,7 +390,7 @@ pub(crate) async fn run_resource(state: &AppState, run: &CrawlRun, warnings: &[W
             all.push(w.clone());
         }
     }
-    Ok(run_json(run, &sessions, &ledger, dead, &all))
+    Ok(run_json(run, &sessions, coverage, dead, &all))
 }
 
 /// `POST /v1/crawls`.
@@ -384,6 +410,7 @@ pub async fn create(
     let key = idempotency_key(&headers, false)?;
     idempotent(&state, &principal, key, "POST", "/v1/crawls", &body, || async {
         let (crawl, details) = parse_create(&body)?;
+        crate::scrape_service::validate_native_extraction(&crawl.extract)?;
         let created = create_run(&state, &principal, crawl, details, Vec::new()).await?;
         let resource = run_resource(&state, &created.run, &created.warnings).await?;
         let id = created.run.id;
@@ -485,7 +512,9 @@ pub(crate) async fn apply_verb(
                 }
             }
             let after = runs.get(run.id).await?;
-            let ledger = state.repos.ledger.list(run.id).await?;
+            let rows = state.repos.api.coverage(run.id).await?;
+            let ground_truth = state.load_fixture_ground_truth(run.id).await?;
+            let coverage = crate::resources::coverage_summary(&rows, ground_truth.as_ref());
             state
                 .repos
                 .events
@@ -505,7 +534,7 @@ pub(crate) async fn apply_verb(
                         "status": "cancelled",
                         "terminalReason": "cancelled",
                         "counters": crate::resources::counters_json(&after.counters),
-                        "coverage": crate::resources::coverage_summary(&ledger),
+                        "coverage": coverage,
                     }),
                 )
                 .await?;

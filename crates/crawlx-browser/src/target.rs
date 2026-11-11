@@ -18,6 +18,8 @@ pub const FIRST_NAVIGATION_WAIT: Duration = Duration::from_secs(2);
 pub enum RejectReason {
     /// Too many targets created in a short window.
     Storm,
+    /// The one pending popup already occupies the diagnostic quarantine slot.
+    Capacity,
 }
 
 /// Outcome of [`TabGraph::on_target_created`].
@@ -52,7 +54,7 @@ pub struct TabGraph {
 }
 
 impl TabGraph {
-    /// A graph admitting at most `max_tabs` tabs (a value of 0 is raised to 1).
+    /// Admit at most `max_tabs` tabs (zero becomes one), plus one quarantined pending target.
     #[must_use]
     pub fn new(max_tabs: u8) -> Self {
         Self {
@@ -97,6 +99,12 @@ impl TabGraph {
         if self.created.len() > STORM_LIMIT {
             self.rejected += 1;
             return TabDecision::Reject(RejectReason::Storm);
+        }
+        // A browser creates its target before publishing the event. Keep one bounded
+        // diagnostic slot for journaled eviction, but close every further target now.
+        if self.tabs.values().any(|tab| tab.pending) {
+            self.rejected = self.rejected.saturating_add(1);
+            return TabDecision::Reject(RejectReason::Capacity);
         }
         let pending = self.attached_len() >= self.max_tabs;
         self.tabs.insert(
@@ -294,6 +302,64 @@ mod tests {
         assert!(g.admit("p3"));
         assert_eq!(g.attached_len(), 3);
         assert!(g.contains("home"));
+    }
+
+    #[test]
+    fn slow_popups_cannot_accumulate_behind_one_pending_target() {
+        let now = Instant::now();
+        let mut graph = TabGraph::new(2);
+        graph.add_home("home", "http://h/");
+        assert_eq!(
+            graph.on_target_created("admitted", Some("home"), "http://h/a", now),
+            TabDecision::Attach
+        );
+        assert_eq!(
+            graph.on_target_created("pending", Some("home"), "http://h/p", now),
+            TabDecision::Pending
+        );
+        for index in 1..=100 {
+            let later = now + (STORM_WINDOW + Duration::from_secs(1)) * index;
+            assert_eq!(
+                graph.on_target_created(&format!("excess-{index}"), Some("home"), "http://h/x", later),
+                TabDecision::Reject(RejectReason::Capacity)
+            );
+            assert!(!graph.storm_active(later));
+            assert_eq!(graph.attached_len(), 2);
+            assert_eq!(graph.len(), 3);
+            assert_eq!(graph.infos("home").iter().filter(|tab| tab.pending).count(), 1);
+        }
+        assert_eq!(graph.rejected(), 100);
+        assert!(graph.contains("pending"));
+        graph.remove("admitted");
+        assert!(graph.admit("pending"));
+        assert_eq!(
+            graph.on_target_created("next", Some("home"), "http://h/n", now + Duration::from_secs(400)),
+            TabDecision::Pending
+        );
+        assert_eq!(graph.len(), 3);
+    }
+
+    #[test]
+    fn rejecting_a_pending_target_reopens_only_one_quarantine_slot() {
+        let now = Instant::now();
+        let mut graph = TabGraph::new(1);
+        graph.add_home("home", "http://h/");
+        assert_eq!(
+            graph.on_target_created("pending", Some("home"), "http://h/p", now),
+            TabDecision::Pending
+        );
+        assert_eq!(
+            graph.on_target_created("excess", Some("home"), "http://h/x", now),
+            TabDecision::Reject(RejectReason::Capacity)
+        );
+        graph.remove("pending");
+        assert_eq!(
+            graph.on_target_created("replacement", Some("home"), "http://h/r", now),
+            TabDecision::Pending
+        );
+        assert_eq!(graph.len(), 2);
+        assert_eq!(graph.attached_len(), 1);
+        assert_eq!(graph.rejected(), 1);
     }
 
     #[test]
