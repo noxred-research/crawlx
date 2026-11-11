@@ -868,3 +868,92 @@ async fn bootstrap_keys_and_run_wiring_accept_requests() {
     let (s, _, _) = e.get_as(&key, "/v1/crawls/x").await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+/// A device matrix as a worker's startup probe publishes it: every preset measured as asked.
+fn measured_matrix(coherent: bool) -> crawlx_core::page_op::DeviceMatrixV1 {
+    use crawlx_core::page_op::{
+        DeviceBuildV1, DeviceMatrixEntryV1, DeviceMatrixV1, DeviceMeasurement, DevicePreset,
+    };
+    let version = "155.0.8059.84";
+    let entries = DevicePreset::ALL
+        .into_iter()
+        .map(|preset| {
+            let requested = preset.emulation(version, "en-US");
+            let viewport = requested.viewport.unwrap();
+            let measured = DeviceMeasurement {
+                viewport,
+                screen: viewport,
+                device_pixel_ratio_milli: requested.device_scale_milli.unwrap(),
+                user_agent: requested
+                    .user_agent
+                    .clone()
+                    .unwrap_or_else(|| format!("fixture HeadlessChrome/{version} Safari/537.36")),
+                language: "en-US".to_owned(),
+                time_zone: "UTC".to_owned(),
+                max_touch_points: if requested.mobile && coherent { 5 } else { 0 },
+                pointer_coarse: requested.mobile,
+                geolocation: None,
+                geolocation_error: None,
+            };
+            DeviceMatrixEntryV1::check(preset, requested, measured, version)
+        })
+        .collect();
+    DeviceMatrixV1::new(
+        DeviceBuildV1 {
+            chromium_version: version.to_owned(),
+            pinned: true,
+        },
+        entries,
+    )
+}
+
+fn browser_capability(
+    matrix: Option<crawlx_core::page_op::DeviceMatrixV1>,
+) -> crawlx_core::acquisition::BackendCapabilitiesV1 {
+    use crawlx_core::observation::BrowserBuildInfo;
+    let mut capability = crawlx_core::acquisition::BackendCapabilitiesV1::native_browser(BrowserBuildInfo {
+        chromium_version: "155.0.8059.84".to_owned(),
+        cdp_revision: "1.3".to_owned(),
+        user_agent: "fixture".to_owned(),
+        pinned: true,
+        launch_profile: crawlx_core::LaunchProfile::Standard,
+        console_capture: false,
+        attached: false,
+    });
+    capability.device_matrix = matrix;
+    capability
+}
+
+#[tokio::test]
+async fn published_device_matrices_are_counted_as_measured_and_coherent_workers() {
+    use crawlx_storage::WorkerRegistry as _;
+    let e = env();
+    let (_, _, before) = e.get("/v1/capabilities/acquisition").await;
+    assert_eq!(before["devices"]["measuredWorkers"], json!(0));
+    assert_eq!(before["devices"]["coherentWorkers"], json!(0));
+    for matrix in [Some(measured_matrix(true)), Some(measured_matrix(false)), None] {
+        let worker = crawlx_core::WorkerId::new();
+        e.store
+            .register_worker(worker, "device-matrix-fixture", "1")
+            .await
+            .unwrap();
+        e.store
+            .publish_acquisition_capabilities(worker, &[browser_capability(matrix)])
+            .await
+            .unwrap();
+    }
+    let (status, _, after) = e.get("/v1/capabilities/acquisition").await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    let devices = &after["devices"];
+    assert_eq!(devices["measuredWorkers"], json!(2), "{devices}");
+    assert_eq!(devices["coherentWorkers"], json!(1), "{devices}");
+    assert_eq!(devices["stealthClaim"], json!(false));
+    let published: Vec<_> = after["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|worker| worker["backends"][0].get("deviceMatrix"))
+        .collect();
+    assert_eq!(published.len(), 2);
+    assert_eq!(published[0]["entries"].as_array().unwrap().len(), 3);
+}

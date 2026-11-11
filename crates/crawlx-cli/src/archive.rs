@@ -48,6 +48,14 @@ pub enum ArchiveCommand {
     Replay(crate::archive_replay::ReplayArgs),
     /// Compare an isolated archive replay against supplied evidence.
     Qa(crate::archive_replay::QaArgs),
+    /// Remove a committed export: its catalog rows become a tombstone and its package and shard
+    /// objects are queued for physical erasure. Exit code 25 when other exports depend on it.
+    Remove(ArchiveRemoveArgs),
+    /// Abandon an export that is still recording. Exit code 24 when it is already committed.
+    Cancel(ArchiveManageArgs),
+    /// Confirm an export is durably committed and print its completion receipt (package hash
+    /// and exact size). Exit code 22 while it is still recording and 23 after a failure.
+    Commit(ArchiveManageArgs),
 }
 
 /// Export container selection.
@@ -57,6 +65,31 @@ pub enum FormatArg {
     Wacz,
     /// Directory containing archive/data.warc.gz, indexes/index.cdxj and a manifest.
     Warc,
+}
+
+/// Identity of the catalog export a management command acts on.
+#[derive(Args, Debug)]
+pub struct ArchiveManageArgs {
+    /// Export identity (the run UUID of the archived run).
+    pub export: uuid::Uuid,
+    /// Owning tenant UUID; an export of another tenant is reported as not found.
+    #[arg(long)]
+    pub tenant: TenantId,
+    /// Database connection of the archive catalog; no archive bytes are read.
+    #[arg(long, env = "CRAWLX_DATABASE_URL", hide_env_values = true)]
+    pub database_url: Option<String>,
+}
+
+/// Arguments of `archive remove`.
+#[derive(Args, Debug)]
+pub struct ArchiveRemoveArgs {
+    /// Export to remove.
+    #[command(flatten)]
+    pub manage: ArchiveManageArgs,
+    /// Also erase every export that transitively depends on this one. Without it, a removal
+    /// that would orphan a dependent export is refused with its own exit code.
+    #[arg(long)]
+    pub cascade: bool,
 }
 
 /// Arguments for an offline recorded-run export.
@@ -959,8 +992,200 @@ pub async fn execute_with_clock(
         ArchiveCommand::Verify(args) => tokio::task::spawn_blocking(move || inspect_archive(args)).await??,
         ArchiveCommand::Replay(args) => return crate::archive_replay::replay(args, out).await,
         ArchiveCommand::Qa(args) => return crate::archive_replay::qa(args, out).await,
+        ArchiveCommand::Remove(args) => {
+            let command = ManageCommand::Remove {
+                cascade: args.cascade,
+            };
+            return manage_command(args.manage, command, out, clock).await;
+        }
+        ArchiveCommand::Cancel(args) => return manage_command(args, ManageCommand::Cancel, out, clock).await,
+        ArchiveCommand::Commit(args) => return manage_command(args, ManageCommand::Commit, out, clock).await,
     };
     serde_json::to_writer_pretty(&mut *out, &result)?;
     writeln!(out)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Catalog operation selected by `archive remove`, `archive cancel` or `archive commit`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ManageCommand {
+    /// Tombstone a committed export (and, when allowed, its dependents).
+    Remove {
+        /// Also erase every export that depends on the removed one.
+        cascade: bool,
+    },
+    /// Abandon an export that is still recording.
+    Cancel,
+    /// Confirm an export is durably committed and print its completion receipt.
+    Commit,
+}
+
+/// Result of a catalog operation. Every failure has its own process exit code, so a script can
+/// tell "nothing to do" from "refused" from "not there" without parsing text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ManageOutcome {
+    /// The operation took effect (or, for `commit`, the export is committed).
+    Done,
+    /// No such export for this tenant, or it was already erased.
+    NotFound,
+    /// The export's retention elapsed.
+    Expired,
+    /// The export is still recording: it is not committed yet.
+    StillRecording,
+    /// The export ended in a permanent failure and was never committed.
+    ExportFailed,
+    /// `cancel` refused: the export is already committed (use `remove`).
+    AlreadyCommitted,
+    /// `remove` refused: other exports depend on it (use `--cascade`).
+    DependentsPresent,
+    /// The export is committed but predates size receipts, so no hash/size receipt exists.
+    ReceiptUnavailable,
+}
+
+impl ManageOutcome {
+    /// Process exit code: 0 for success, a distinct nonzero code per failure. The codes avoid
+    /// 1 and 2, which the CLI uses for unclassified and usage errors.
+    #[must_use]
+    pub const fn exit_code(self) -> u8 {
+        match self {
+            Self::Done => 0,
+            Self::NotFound => 20,
+            Self::Expired => 21,
+            Self::StillRecording => 22,
+            Self::ExportFailed => 23,
+            Self::AlreadyCommitted => 24,
+            Self::DependentsPresent => 25,
+            Self::ReceiptUnavailable => 26,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::NotFound => "not_found",
+            Self::Expired => "expired",
+            Self::StillRecording => "still_recording",
+            Self::ExportFailed => "export_failed",
+            Self::AlreadyCommitted => "already_committed",
+            Self::DependentsPresent => "dependents_present",
+            Self::ReceiptUnavailable => "receipt_unavailable",
+        }
+    }
+}
+
+/// Apply one catalog operation to `export` of `tenant` and describe what happened.
+///
+/// The decision and the change are made by the catalog: `cancel` is atomic against
+/// publication, and `remove` tombstones exactly the dependency closure it reported.
+///
+/// # Errors
+/// Returns storage failures. Refusals are outcomes, not errors.
+pub async fn manage(
+    repo: &dyn crawlx_core::archive_catalog::ArchiveRepo,
+    tenant: TenantId,
+    export: uuid::Uuid,
+    command: ManageCommand,
+    now: Timestamp,
+) -> anyhow::Result<(ManageOutcome, serde_json::Value)> {
+    use crawlx_core::archive_catalog::{
+        ArchiveCancelV1, ArchiveCompletionV1, ArchiveExportState, ArchiveReadV1,
+    };
+    let done = |outcome: ManageOutcome, mut body: serde_json::Value| {
+        body["outcome"] = outcome.label().into();
+        body["exit"] = outcome.exit_code().into();
+        body["export"] = export.to_string().into();
+        (outcome, body)
+    };
+    let state = |value: &ArchiveExportState| match value {
+        ArchiveExportState::Recording => "recording",
+        ArchiveExportState::Published => "published",
+        ArchiveExportState::Failed => "failed",
+        _ => "deleted",
+    };
+    let current = match repo.get(tenant, export, now).await? {
+        ArchiveReadV1::Available(row) => Some(row),
+        ArchiveReadV1::Expired => return Ok(done(ManageOutcome::Expired, serde_json::json!({}))),
+        _ => None,
+    };
+    Ok(match command {
+        ManageCommand::Commit => {
+            let Some(row) = current else {
+                return Ok(done(ManageOutcome::NotFound, serde_json::json!({})));
+            };
+            match row.state {
+                ArchiveExportState::Recording => done(
+                    ManageOutcome::StillRecording,
+                    serde_json::json!({"state": state(&row.state)}),
+                ),
+                ArchiveExportState::Failed => done(
+                    ManageOutcome::ExportFailed,
+                    serde_json::json!({"state": state(&row.state), "failure": row.failure}),
+                ),
+                ArchiveExportState::Published => match ArchiveCompletionV1::committed(&row) {
+                    Ok(receipt) => done(ManageOutcome::Done, serde_json::json!({"receipt": receipt})),
+                    Err(_) => done(
+                        ManageOutcome::ReceiptUnavailable,
+                        serde_json::json!({"state": state(&row.state)}),
+                    ),
+                },
+                _ => done(ManageOutcome::NotFound, serde_json::json!({})),
+            }
+        }
+        ManageCommand::Cancel => match repo.cancel(tenant, export, now).await? {
+            ArchiveCancelV1::Cancelled => done(ManageOutcome::Done, serde_json::json!({"state": "deleted"})),
+            ArchiveCancelV1::Refused(ArchiveExportState::Published) => done(
+                ManageOutcome::AlreadyCommitted,
+                serde_json::json!({"state": "published"}),
+            ),
+            ArchiveCancelV1::Refused(ArchiveExportState::Failed) => done(
+                ManageOutcome::ExportFailed,
+                serde_json::json!({"state": "failed"}),
+            ),
+            _ => done(ManageOutcome::NotFound, serde_json::json!({})),
+        },
+        ManageCommand::Remove { cascade } => {
+            let Some(row) = current else {
+                return Ok(done(ManageOutcome::NotFound, serde_json::json!({})));
+            };
+            if row.state == ArchiveExportState::Recording {
+                return Ok(done(
+                    ManageOutcome::StillRecording,
+                    serde_json::json!({"state": "recording", "hint": "cancel the export instead"}),
+                ));
+            }
+            let dependents = repo.dependents(tenant, export).await?;
+            let listed: Vec<String> = dependents.iter().map(ToString::to_string).collect();
+            if !dependents.is_empty() && !cascade {
+                return Ok(done(
+                    ManageOutcome::DependentsPresent,
+                    serde_json::json!({"dependents": listed}),
+                ));
+            }
+            repo.erase(tenant, export).await?;
+            done(
+                ManageOutcome::Done,
+                serde_json::json!({"removedDependents": listed}),
+            )
+        }
+    })
+}
+
+async fn manage_command(
+    args: ArchiveManageArgs,
+    command: ManageCommand,
+    out: &mut dyn Write,
+    clock: &dyn crawlx_core::Clock,
+) -> anyhow::Result<ExitCode> {
+    let durable = crate::inspect::connect(args.database_url.as_deref()).await?;
+    let now = clock.now();
+    let (outcome, body) = crawlx_worker::on_store!(&durable, store => crawlx_storage::tenant::scope(
+        args.tenant,
+        manage(store, args.tenant, args.export, command, now),
+    )
+    .await)?;
+    serde_json::to_writer_pretty(&mut *out, &body)?;
+    writeln!(out)?;
+    Ok(ExitCode::from(outcome.exit_code()))
 }

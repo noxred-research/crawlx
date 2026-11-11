@@ -1,0 +1,34 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-credential-bearing",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "credential_bearing/" },
+      "Expiration": { "Days": 2 }
+    },
+    {
+      "ID": "expire-zdr-delivery",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "zdr/" },
+      "Expiration": { "Days": 2 }
+    },
+    {
+      "ID": "expire-content",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "content/" },
+      "Expiration": { "Days": 400 }
+    },
+    {
+      "ID": "expire-sensitive",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "sensitive/" },
+      "Expiration": { "Days": 400 }
+    },
+    {
+      "ID": "expire-artifact-index",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "_index/" },
+      "Expiration": { "Days": 400 }
+    }
+  ]
+}

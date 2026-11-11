@@ -518,7 +518,7 @@ mod tests {
         // Path B: one very reliable (p = 19/20) but slow, unverified edge c0 -> c9.
         for i in 0..18 {
             let mut o = obs(act(2), cluster(0), cluster(9), &[], t0() + Duration::seconds(i));
-            o.latency_ms = 5000;
+            o.latency_ms = Some(5000);
             g.observe_transition(&o);
         }
         g.on_build_change("B"); // +0.5 unverified

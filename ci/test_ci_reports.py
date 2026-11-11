@@ -55,7 +55,8 @@ class UpgradeReportTests(unittest.TestCase):
         path = self.root / 'suite.log'
         self.assertEqual(UPGRADE.suite(path, 'success')['state'], 'unmeasured')
         for text in ('', GOOD_LOG.replace('2 passed', '0 passed'),
-                     GOOD_LOG.replace('0 ignored', '1 ignored'), 'skipped: missing browser\n' + GOOD_LOG):
+                     GOOD_LOG.replace('0 ignored', '1 ignored'), 'skipped: missing browser\n' + GOOD_LOG,
+                     'SKIP: no Chromium (set CRAWLX_CHROMIUM_PATH)\n' + GOOD_LOG):
             with self.subTest(text=text):
                 path.write_text(text)
                 self.assertEqual(UPGRADE.suite(path, 'success')['state'], 'unmeasured')
@@ -79,9 +80,9 @@ class UpgradeReportTests(unittest.TestCase):
                 self.assertEqual(UPGRADE.golden(path)['state'], 'fail')
 
     def test_missing_trace_blocks_canary_even_with_successful_logs(self):
-        for name in ('cdp', 'browser', 'golden'):
+        for name in ('cdp', 'browser', 'replay', 'golden'):
             (self.root / f'chromium-next-{name}.log').write_text(GOOD_LOG)
-        outcomes = {f'{name}_OUTCOME': 'success' for name in ('CDP', 'BROWSER', 'GOLDEN')}
+        outcomes = {f'{name}_OUTCOME': 'success' for name in ('CDP', 'BROWSER', 'REPLAY', 'GOLDEN')}
         with patch.dict(os.environ, outcomes):
             self.assertEqual(UPGRADE.report(self.root, self.pin)['canary_state'], 'unmeasured')
             self.trace()
@@ -89,6 +90,44 @@ class UpgradeReportTests(unittest.TestCase):
         self.assertEqual(value['canary_state'], 'pass')
         self.assertIn('upgrade_suite', value['unmeasured'])
         self.assertFalse((self.root / 'suites/chromium_upgrade.json').exists())
+
+    def replay_report(self, replay_log, replay_outcome):
+        for name in ('cdp', 'browser', 'golden'):
+            (self.root / f'chromium-next-{name}.log').write_text(GOOD_LOG)
+        if replay_log is not None:
+            (self.root / 'chromium-next-replay.log').write_text(replay_log)
+        self.trace()
+        outcomes = {f'{name}_OUTCOME': 'success' for name in ('CDP', 'BROWSER', 'GOLDEN')}
+        outcomes['REPLAY_OUTCOME'] = replay_outcome
+        with patch.dict(os.environ, outcomes):
+            return UPGRADE.report(self.root, self.pin)
+
+    def test_replay_suite_is_part_of_the_canary(self):
+        value = self.replay_report(GOOD_LOG, 'success')
+        self.assertEqual(value['suites']['replay']['state'], 'pass')
+        self.assertEqual(value['canary_state'], 'pass')
+
+    def test_missing_or_failed_replay_log_blocks_the_canary(self):
+        # no log at all: the step never ran, so the replay is unmeasured and the canary cannot pass
+        value = self.replay_report(None, 'success')
+        self.assertEqual(value['suites']['replay']['state'], 'unmeasured')
+        self.assertIn('absent', value['suites']['replay']['reason'])
+        self.assertEqual(value['canary_state'], 'unmeasured')
+        # a failed step and a failing libtest summary are failures, whatever the other suites say
+        value = self.replay_report(GOOD_LOG, 'failure')
+        self.assertEqual(value['suites']['replay']['state'], 'fail')
+        self.assertEqual(value['canary_state'], 'fail')
+        failed = GOOD_LOG.replace('test result: ok. 2 passed; 0 failed', 'test result: FAILED. 1 passed; 1 failed')
+        value = self.replay_report(failed, 'success')
+        self.assertEqual(value['suites']['replay']['state'], 'fail')
+        self.assertEqual(value['canary_state'], 'fail')
+
+    def test_replay_without_a_browser_is_unmeasured_not_a_pass(self):
+        # the replay tests print this line and pass when no Chromium starts
+        text = 'SKIP: no Chromium (set CRAWLX_CHROMIUM_PATH)\n' + GOOD_LOG
+        value = self.replay_report(text, 'success')
+        self.assertEqual(value['suites']['replay']['state'], 'unmeasured')
+        self.assertEqual(value['canary_state'], 'unmeasured')
 
     def test_cli_writes_reports_without_claiming_missing_evidence(self):
         subprocess.run([sys.executable, '-B', str(HERE / 'chromium-upgrade-report.py'),

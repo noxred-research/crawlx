@@ -17,8 +17,8 @@ use crate::store::Store;
 use async_trait::async_trait;
 use crawlx_core::archive::{ArchiveDedupe, ArchiveManifestV1};
 use crawlx_core::archive_catalog::{
-    ArchiveCustodyV1, ArchiveExportState, ArchiveExportV1, ArchiveHistoryKeyV1, ArchiveHistoryV1,
-    ArchiveReadV1, ArchiveRecordV1, ArchiveRepo,
+    ArchiveCancelV1, ArchiveCustodyV1, ArchiveExportState, ArchiveExportV1, ArchiveHistoryKeyV1,
+    ArchiveHistoryV1, ArchiveReadV1, ArchiveRecordV1, ArchiveRepo,
 };
 use crawlx_core::repo::Sensitivity;
 use crawlx_core::{ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
@@ -940,6 +940,43 @@ impl<B: Sql> ArchiveRepo for Store<B> {
         tx.commit().await
     }
 
+    async fn dependents(&self, tenant: TenantId, export: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        scope(tenant)?;
+        let mut tx = self.begin_write().await?;
+        let mut closure = doomed_set::<B>(tx.conn(), tenant, export).await?;
+        tx.commit().await?;
+        closure.remove(&export);
+        Ok(closure.into_iter().collect())
+    }
+
+    async fn cancel(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        now: Timestamp,
+    ) -> Result<ArchiveCancelV1, StoreError> {
+        scope(tenant)?;
+        let mut tx = self.begin_write().await?;
+        // The same tenant-scoped lock serializes this decision against publication and erasure.
+        B::xact_lock(tx.conn(), &tenant.to_string(), LockMode::Exclusive).await?;
+        let Some(payload) = export_payload::<B>(tx.conn(), tenant, export).await? else {
+            return Ok(ArchiveCancelV1::Missing);
+        };
+        let mut row: ArchiveExportV1 = decode(payload)?;
+        if row.state == ArchiveExportState::Deleted || !live(&row, now) {
+            return Ok(ArchiveCancelV1::Missing);
+        }
+        if row.state != ArchiveExportState::Recording {
+            return Ok(ArchiveCancelV1::Refused(row.state));
+        }
+        row.state = ArchiveExportState::Deleted;
+        row.fence = row.fence.saturating_add(1);
+        row.manifest = None;
+        save::<B>(tx.conn(), &row).await?;
+        tx.commit().await?;
+        Ok(ArchiveCancelV1::Cancelled)
+    }
+
     async fn renew(
         &self,
         tenant: TenantId,
@@ -1140,7 +1177,9 @@ impl<B: Sql> ArchiveRepo for Store<B> {
                     row.captured_at,
                     row.request_body,
                     row.response_body,
-                ))
+                )
+                // The SQL journal persists method and headers but not the observed protocol.
+                .with_wire(row.method, row.request_headers, None))
             })
             .collect()
     }

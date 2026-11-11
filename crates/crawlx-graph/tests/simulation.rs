@@ -109,7 +109,7 @@ fn simulate(seed: u64, filtered: bool) -> SimResult {
             revealed,
             baseline_revealed: baseline,
             confounders,
-            latency_ms: 120,
+            latency_ms: Some(120),
             lane: TrustLane::TrustedUi,
             now,
         });

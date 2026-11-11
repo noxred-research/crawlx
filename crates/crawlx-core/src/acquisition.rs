@@ -561,6 +561,10 @@ pub struct BackendCapabilitiesV1 {
     /// Installed coherent HTTP profile; absent for ordinary HTTP or unattested service claims.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_profile: Option<Digest>,
+    /// Emulated-device matrix the worker measured on its own browser build (browser backends
+    /// only). Evidence of what the page reported under each preset; no stealth claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_matrix: Option<crate::page_op::DeviceMatrixV1>,
 }
 impl BackendCapabilitiesV1 {
     /// Package-backed HTTP capability; no certificate or HTTP/3 claim.
@@ -578,6 +582,7 @@ impl BackendCapabilitiesV1 {
                 "build_digest_unavailable".to_owned(),
             ],
             identity_profile: None,
+            device_matrix: None,
         }
     }
     /// Capability from a real browser backend's observed build.
@@ -595,6 +600,7 @@ impl BackendCapabilitiesV1 {
             ],
             browser: Some(build),
             identity_profile: None,
+            device_matrix: None,
             available: true,
         }
     }
@@ -610,6 +616,7 @@ impl BackendCapabilitiesV1 {
             available: false,
             limitations: vec![reason.to_owned(), "build_digest_unavailable".to_owned()],
             identity_profile: None,
+            device_matrix: None,
         }
     }
     /// Check bounded structural capability facts before publishing or accepting a heartbeat.
@@ -643,6 +650,9 @@ impl BackendCapabilitiesV1 {
                 build.chromium_version.len() > 256
                     || build.cdp_revision.len() > 256
                     || build.user_agent.len() > 1024
+            })
+            || self.device_matrix.as_ref().is_some_and(|matrix| {
+                self.backend_id != "native_browser" || !self.available || !matrix.within_bounds()
             })
         {
             return Err(AcquisitionPolicyError("invalid capability evidence"));
@@ -798,11 +808,53 @@ pub struct ConnectionEvidenceV1 {
     pub pool_exit_ip: Option<std::net::IpAddr>,
     /// Effective TLS verification configuration, independent of certificate capture.
     pub tls_verification: Option<String>,
-    /// Observed certificate material is unavailable in these native adapters.
+    /// A leaf certificate was observed on the request's own connection; the facts are in
+    /// `certificate`. Observation is never a claim that the certificate verified.
     pub certificate_observed: bool,
     /// Observed final-response application protocol; absent for unmeasured service reports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub negotiated_protocol: Option<crate::traffic::Protocol>,
+    /// Leaf certificate facts of the request's own connection; absent when none was observed
+    /// (plain text, no reported certificate, oversized or malformed). Holds no key material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<PeerCertificateFactsV1>,
+}
+
+/// Facts of the leaf certificate a peer presented, as observed by the transport.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct PeerCertificateFactsV1 {
+    /// Lower-case hex SHA-256 of the DER encoding.
+    pub sha256: String,
+    /// Start of the validity period.
+    pub not_before: crate::Timestamp,
+    /// End of the validity period.
+    pub not_after: crate::Timestamp,
+    /// Issuer and subject names are byte-identical.
+    pub self_issued: bool,
+    /// Length of the DER encoding.
+    pub der_len: u32,
+}
+
+impl PeerCertificateFactsV1 {
+    /// Describe an observed certificate.
+    #[must_use]
+    pub fn new(
+        sha256: String,
+        not_before: crate::Timestamp,
+        not_after: crate::Timestamp,
+        self_issued: bool,
+        der_len: u32,
+    ) -> Self {
+        Self {
+            sha256,
+            not_before,
+            not_after,
+            self_issued,
+            der_len,
+        }
+    }
 }
 
 /// One body-free completed dispatch summary, capped at eight per result.

@@ -546,13 +546,20 @@ impl MemoryStore {
             if ordinal <= after || !state.actions.get(action).is_some_and(|row| row.rec.run == run) {
                 continue;
             }
-            rows.push(crawlx_core::archive_catalog::ArchiveTrafficV1::new(
-                ordinal,
-                Some(event.url.clone()),
-                event.started_at,
-                event.request_body.clone(),
-                event.response_body.clone(),
-            ));
+            rows.push(
+                crawlx_core::archive_catalog::ArchiveTrafficV1::new(
+                    ordinal,
+                    Some(event.url.clone()),
+                    event.started_at,
+                    event.request_body.clone(),
+                    event.response_body.clone(),
+                )
+                .with_wire(
+                    Some(event.method.clone()),
+                    Some(event.request_headers.clone()),
+                    event.protocol,
+                ),
+            );
             if rows.len() >= usize::try_from(limit).unwrap_or(64) {
                 break;
             }

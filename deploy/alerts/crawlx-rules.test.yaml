@@ -90,3 +90,61 @@ tests:
       - eval_time: 35m
         alertname: CrawlxBrowserCrashLoopWide
         exp_alerts: []
+
+  # A model whose rolling-window ECE sits at 0.08 for 30 minutes pages the ticket queue after
+  # the 15 minute `for`; a model at 0.03 stays silent, and so does a young window that reports a
+  # high ECE from fewer than 200 outcomes.
+  - name: model calibration drift
+    interval: 1m
+    input_series:
+      - series: 'crawlx_model_calibration_ece{provider="onnx-ranker", model="drifting"}'
+        values: "0.08x40"
+      - series: 'crawlx_model_calibration_samples{provider="onnx-ranker", model="drifting"}'
+        values: "1000x40"
+      - series: 'crawlx_model_calibration_ece{provider="onnx-ranker", model="healthy"}'
+        values: "0.03x40"
+      - series: 'crawlx_model_calibration_samples{provider="onnx-ranker", model="healthy"}'
+        values: "1000x40"
+      - series: 'crawlx_model_calibration_ece{provider="onnx-ranker", model="young"}'
+        values: "0.4x40"
+      - series: 'crawlx_model_calibration_samples{provider="onnx-ranker", model="young"}'
+        values: "50x40"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CrawlxModelCalibrationDrift
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CrawlxModelCalibrationDrift
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              runbook: model-calibration
+              provider: onnx-ranker
+              model: drifting
+            exp_annotations:
+              summary: "Model confidence no longer matches outcomes: rolling-window ECE above 0.05"
+              runbook: docs/ops/runbooks.md#33-crawlxmodelcalibrationdrift
+
+  # The same model recovering: ECE falls under the ceiling and the alert resolves.
+  - name: model calibration recovers
+    interval: 1m
+    input_series:
+      - series: 'crawlx_model_calibration_ece{provider="onnx-ranker", model="refit"}'
+        values: "0.09x25 0.02x25"
+      - series: 'crawlx_model_calibration_samples{provider="onnx-ranker", model="refit"}'
+        values: "1000x50"
+    alert_rule_test:
+      - eval_time: 24m
+        alertname: CrawlxModelCalibrationDrift
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              runbook: model-calibration
+              provider: onnx-ranker
+              model: refit
+            exp_annotations:
+              summary: "Model confidence no longer matches outcomes: rolling-window ECE above 0.05"
+              runbook: docs/ops/runbooks.md#33-crawlxmodelcalibrationdrift
+      - eval_time: 45m
+        alertname: CrawlxModelCalibrationDrift
+        exp_alerts: []

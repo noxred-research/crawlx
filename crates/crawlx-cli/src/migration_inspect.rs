@@ -6,12 +6,17 @@
 use anyhow::{bail, Context};
 use clap::{Args, Subcommand};
 use crawlx_core::{extensions::ExtensionPipelineV1, CreateCrawl};
+use crawlx_extract::item_loader::{translate_struct_tags, StructTagManifestV1};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, io::Write, path::PathBuf, process::ExitCode};
 use tokio::io::AsyncReadExt;
 
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
+/// Option of a `go-collector` manifest that carries the exported struct-tag manifest.
+const STRUCT_TAGS_OPTION: &str = "fields";
+/// Where a translated struct-tag manifest lands.
+const STRUCT_TAGS_TARGET: &str = "CreateCrawl.extract.content.item_loader";
 /// Offline source migration; preserves `crawlx migrate` database semantics.
 #[derive(Debug, Args)]
 pub struct SourceImportArgs {
@@ -410,6 +415,68 @@ fn literal_valid(source: SourceDialectV1, target: &str, value: &Value) -> bool {
         _ => false,
     }
 }
+/// A report id for a struct-tag row: the dotted Go field path when it is plain identifier text,
+/// otherwise the row's position, so no arbitrary manifest text is echoed.
+fn struct_tag_id(path: &str, position: usize) -> String {
+    if !path.is_empty()
+        && path.len() <= 160
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.'))
+    {
+        format!("{STRUCT_TAGS_OPTION}.{path}")
+    } else {
+        format!("{STRUCT_TAGS_OPTION}[{position}]")
+    }
+}
+
+/// Translate the exported struct-tag manifest of `value` into an item loader. One disposition per
+/// field is appended; an unsupported field (or an unreadable manifest) is a `rejected` row and the
+/// import is then not convertible, never a partial recipe with zero-filled fields.
+fn inspect_struct_tags(
+    value: &Value,
+    dispositions: &mut Vec<ImportDispositionV1>,
+    valid: &mut bool,
+) -> Option<crawlx_core::selectors::ItemLoaderV1> {
+    let Ok(tags) = serde_json::from_value::<StructTagManifestV1>(value.clone()) else {
+        *valid = false;
+        dispositions.push(ImportDispositionV1 {
+            id: STRUCT_TAGS_OPTION.into(),
+            state: "rejected",
+            target: None,
+            reason: "the option is not a version 1 struct-tag manifest (name, goType, selector, attr, fields); nothing is guessed from it",
+            requested: true,
+        });
+        return None;
+    };
+    let translation = translate_struct_tags(&tags);
+    for (position, row) in translation.rows.iter().enumerate() {
+        dispositions.push(ImportDispositionV1 {
+            id: struct_tag_id(&row.path, position),
+            state: if row.translated { "translated" } else { "rejected" },
+            target: row.translated.then_some(STRUCT_TAGS_TARGET),
+            reason: row.reason,
+            requested: true,
+        });
+    }
+    let complete = translation.complete();
+    dispositions.push(ImportDispositionV1 {
+        id: STRUCT_TAGS_OPTION.into(),
+        state: if complete { "translated" } else { "rejected" },
+        target: complete.then_some(STRUCT_TAGS_TARGET),
+        reason: if complete {
+            "every tagged field translated to a versioned item loader; the loader is bounded, static data"
+        } else {
+            "at least one tagged field cannot be translated exactly; no item loader is produced and no field is zero-filled"
+        },
+        requested: true,
+    });
+    if !complete {
+        *valid = false;
+    }
+    translation.loader
+}
+
 fn inspect_aliases(
     manifest: &SourceManifestV1,
     dispositions: &mut Vec<ImportDispositionV1>,
@@ -474,6 +541,7 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
     let mut dispositions = Vec::new();
     let mut mapped = BTreeMap::new();
     let mut fields = BTreeMap::<&str, Value>::new();
+    let mut item_loader = None;
     let mut valid = true;
     if manifest.pipeline.configured() {
         dispositions.push(ImportDispositionV1 { id:"pipeline".into(), state:"native",
@@ -509,6 +577,13 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
             })
         {
             bail!("invalid source option identifier");
+        }
+        if matches!(manifest.source, SourceDialectV1::GoCollector) && key == STRUCT_TAGS_OPTION {
+            item_loader = inspect_struct_tags(value, &mut dispositions, &mut valid);
+            if item_loader.is_some() {
+                mapped.insert("CO13", STRUCT_TAGS_TARGET);
+            }
+            continue;
         }
         let Some((target, inventory)) = manifest.source.key(key) else {
             valid = false;
@@ -678,8 +753,11 @@ pub fn inspect(manifest: &SourceManifestV1) -> anyhow::Result<(ImportReportV1, O
         if queue_alias {
             crawl.orchestration = Some(crawlx_core::orchestration::OrchestrationConfigV1::default());
         }
-        if manifest.pipeline.requires_document() {
+        if manifest.pipeline.requires_document() || item_loader.is_some() {
             crawl.extract.content = Some(crawlx_core::extraction::ExtractionPolicyV1::default());
+        }
+        if let (Some(loader), Some(policy)) = (item_loader, crawl.extract.content.as_mut()) {
+            policy.item_loader = Some(loader);
         }
         if let Some(v) = fields.get("limits.urls") {
             if let Some(n) = v
@@ -1188,5 +1266,190 @@ mod tests {
         assert!(!serde_json::to_string(&report)
             .unwrap()
             .contains("private-callback-value"));
+    }
+    /// A manifest with one struct-tag option, as a trusted exporter writes it.
+    fn tagged(fields: serde_json::Value) -> SourceManifestV1 {
+        collector(
+            json!({"URL":"https://fixture.test/","fields":{"version":1,"fields":fields}}),
+            json!({}),
+        )
+    }
+
+    #[test]
+    fn struct_tags_translate_to_a_versioned_item_loader_on_the_converted_crawl() {
+        let (report, crawl) = inspect(&tagged(json!([
+            {"name":"Title","goType":"string","selector":"h1"},
+            {"name":"Links","goType":"[]string","selector":"a","attr":"href"},
+            {"name":"Authors","goType":"[]struct","selector":".author","fields":[
+                {"name":"Name","goType":"string","selector":".name"}]}
+        ])))
+        .unwrap();
+        assert!(report.convertible, "{:?}", report.dispositions);
+        let loader = crawl.unwrap().extract.content.unwrap().item_loader.unwrap();
+        assert_eq!(loader.version, 1);
+        assert_eq!(
+            loader.fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+            ["Title", "Links", "Authors"]
+        );
+        let row = |id: &str| report.dispositions.iter().find(|d| d.id == id).unwrap();
+        for id in [
+            "fields",
+            "fields.Title",
+            "fields.Links",
+            "fields.Authors",
+            "fields.Authors.Name",
+        ] {
+            assert_eq!(row(id).state, "translated", "{id}");
+            assert_eq!(row(id).target, Some(STRUCT_TAGS_TARGET), "{id}");
+        }
+        // the Go collector inventory row is requested only through the option, never claimed whole
+        assert_eq!(
+            report
+                .dispositions
+                .iter()
+                .find(|d| d.id == "CO13")
+                .unwrap()
+                .target,
+            Some(STRUCT_TAGS_TARGET)
+        );
+        assert_eq!(
+            report.dispositions.iter().find(|d| d.id == "CO13").unwrap().state,
+            "decision_needed"
+        );
+    }
+
+    #[test]
+    fn an_unsupported_go_type_makes_the_import_unconvertible_and_is_never_zero_filled() {
+        for go_type in [
+            "map[string]string",
+            "chan string",
+            "int",
+            "bool",
+            "func()",
+            "interface{}",
+        ] {
+            let (report, crawl) = inspect(&tagged(json!([
+                {"name":"Title","goType":"string","selector":"h1"},
+                {"name":"Odd","goType":go_type,"selector":"p"}
+            ])))
+            .unwrap();
+            assert!(!report.convertible, "{go_type}");
+            assert!(
+                crawl.is_none(),
+                "{go_type}: no config that silently lacks the field"
+            );
+            let odd = report.dispositions.iter().find(|d| d.id == "fields.Odd").unwrap();
+            assert_eq!((odd.state, odd.target), ("rejected", None), "{go_type}");
+            let all = report.dispositions.iter().find(|d| d.id == "fields").unwrap();
+            assert_eq!(all.state, "rejected", "{go_type}");
+            // the supported field is still listed as translatable: the report is complete
+            assert_eq!(
+                report
+                    .dispositions
+                    .iter()
+                    .find(|d| d.id == "fields.Title")
+                    .unwrap()
+                    .state,
+                "translated"
+            );
+            assert!(report.config_digest.is_none());
+        }
+    }
+
+    #[test]
+    fn a_malformed_struct_tag_manifest_is_rejected_without_echoing_its_text() {
+        for fields in [
+            json!("private-selector-text"),
+            json!({"version":1,"fields":[{"name":"A","goType":"string","selector":"p","surprise":"private-selector-text"}]}),
+            json!({"version":2,"fields":[]}),
+        ] {
+            let manifest = collector(json!({"URL":"https://fixture.test/","fields":fields}), json!({}));
+            let (report, crawl) = inspect(&manifest).unwrap();
+            assert!(!report.convertible && crawl.is_none());
+            assert!(report
+                .dispositions
+                .iter()
+                .any(|d| d.state == "rejected" && d.requested));
+            assert!(!serde_json::to_string(&report)
+                .unwrap()
+                .contains("private-selector-text"));
+        }
+    }
+
+    #[test]
+    fn unsafe_field_names_are_reported_by_position_not_echoed() {
+        let (report, _) = inspect(&tagged(json!([
+            {"name":"sk-live-secret value","goType":"map[string]string","selector":"p"}
+        ])))
+        .unwrap();
+        let text = serde_json::to_string(&report).unwrap();
+        assert!(!text.contains("sk-live-secret"), "{text}");
+        assert!(report
+            .dispositions
+            .iter()
+            .any(|d| d.id == "fields[0]" && d.state == "rejected"));
+    }
+
+    #[test]
+    fn struct_tags_are_a_collector_option_only() {
+        let manifest: SourceManifestV1 = serde_json::from_value(json!({
+            "version":1,"source":"python-spider","sourceVersion":"2.19.0",
+            "options":{"start_urls":["https://fixture.test/"],
+                "fields":{"version":1,"fields":[{"name":"A","goType":"string","selector":"p"}]}}
+        }))
+        .unwrap();
+        let (report, crawl) = inspect(&manifest).unwrap();
+        assert!(!report.convertible && crawl.is_none());
+        assert!(report
+            .dispositions
+            .iter()
+            .any(|d| d.id == "fields" && d.state == "rejected" && d.target.is_none()));
+    }
+
+    #[tokio::test]
+    async fn the_command_exits_two_for_an_unsupported_type_and_zero_for_a_translated_struct() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_with = |fields: serde_json::Value| {
+            let path = dir.path().join("manifest.json");
+            std::fs::write(
+                &path,
+                serde_json::to_vec(
+                    &json!({"version":1,"source":"go-collector","sourceVersion":"2.2.0",
+                    "options":{"URL":"https://fixture.test/","fields":{"version":1,"fields":fields}}}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            path
+        };
+        let good = run_with(json!([{"name":"Title","goType":"string","selector":"h1"}]));
+        let mut out = Vec::new();
+        let code = run(
+            SourceImportArgs {
+                command: SourceImportCommand::Convert(ManifestArgs { manifest: good }),
+            },
+            &mut out,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, ExitCode::SUCCESS);
+        let converted: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(
+            converted["extract"]["content"]["itemLoader"]["fields"][0]["name"], "Title",
+            "{converted}"
+        );
+        let bad = run_with(json!([{"name":"Cache","goType":"map[string]string","selector":"p"}]));
+        let mut out = Vec::new();
+        let code = run(
+            SourceImportArgs {
+                command: SourceImportCommand::Convert(ManifestArgs { manifest: bad }),
+            },
+            &mut out,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, ExitCode::from(2));
+        let report: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(report["convertible"], false);
     }
 }

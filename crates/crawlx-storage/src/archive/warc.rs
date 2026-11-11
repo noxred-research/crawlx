@@ -550,8 +550,11 @@ pub fn retention_safe_url(target: &str) -> bool {
         })
 }
 
-pub(super) fn retention_safe_text(bytes: &[u8], mime: &str) -> bool {
-    let textual = mime.starts_with("text/")
+/// Whether `mime` (a bare media type, without parameters) is one the text-only archive policy
+/// accepts for stored bytes.
+#[must_use]
+pub fn is_text_media_type(mime: &str) -> bool {
+    mime.starts_with("text/")
         || matches!(
             mime,
             "application/json"
@@ -561,9 +564,12 @@ pub(super) fn retention_safe_text(bytes: &[u8], mime: &str) -> bool {
                 | "application/javascript"
                 | "application/http"
                 | "message/http"
-        );
+        )
+}
+
+pub(super) fn retention_safe_text(bytes: &[u8], mime: &str) -> bool {
     let redactor = crawlx_telemetry::redact::Redactor::new();
-    textual
+    is_text_media_type(mime)
         && std::str::from_utf8(bytes)
             .is_ok_and(|text| redactor.scrub(text) == text && redactor.scrub_session_queries(text) == text)
 }
@@ -756,7 +762,11 @@ pub fn inspect_shard<R: Read + Seek>(input: R, limits: Limits) -> Result<RecordS
     let record = records
         .pop()
         .ok_or(ArchiveError::Invalid("archive shard empty"))?;
-    if !matches!(record.record_type.as_str(), "resource" | "revisit") || record.segment_number.is_some() {
+    if !matches!(
+        record.record_type.as_str(),
+        "resource" | "revisit" | "request" | "response"
+    ) || record.segment_number.is_some()
+    {
         return Err(ArchiveError::Invalid("unsupported archive shard type"));
     }
     Ok(record)

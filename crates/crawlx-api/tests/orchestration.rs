@@ -117,7 +117,10 @@ async fn native_head_and_get_keep_distinct_frontier_rows_and_retry_receipts() {
     let (_, _, doc) = env.get("/v1/openapi.json").await;
     let method = &doc["paths"]["/v1/crawls/{id}/requests"]["post"]["requestBody"]["content"]
         ["application/json"]["schema"]["properties"]["requests"]["items"]["properties"]["method"];
-    assert_eq!(method["enum"], json!(["GET", "HEAD"]));
+    assert_eq!(
+        method["enum"],
+        json!(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+    );
     assert_eq!(method["default"], "GET");
 }
 

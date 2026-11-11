@@ -20,6 +20,7 @@ mod projection_plane;
 mod protocol_plane;
 mod recipe_plane;
 mod scrape_plane;
+mod write_plane;
 
 /// The configuration the URL plane of a run executes with, which decides what the run's
 /// `robots.txt` gate honours (`safety.respectRobotsTxt` after the adaptation of the compatibility API's
@@ -780,6 +781,8 @@ pub struct UrlPlaneRunner {
     source_dispatch: Option<Arc<crate::source_dispatch::SourceDispatcher>>,
     /// Run-clock instant the advisory controller's millisecond time is measured from.
     started_at: crawlx_core::Timestamp,
+    /// Write intents of earlier holders, learned incrementally from the run's event log.
+    write_journal: Mutex<write_plane::WriteJournalScan>,
 }
 
 impl UrlPlaneRunner {
@@ -1573,6 +1576,7 @@ impl UrlPlaneRunner {
             advisory: None,
             source_dispatch: None,
             started_at,
+            write_journal: Mutex::new(write_plane::WriteJournalScan::default()),
         })
     }
 
@@ -3310,6 +3314,11 @@ impl UrlPlaneRunner {
                 )
                 .await;
         }
+        if crawlx_core::request::RequestEnvelopeV1::is_write_method(&queued.envelope.method) {
+            // Mutating methods never reach the read path below: the write plane applies the safety
+            // verdict, the replay guard, the effect charge and the journal before any byte is sent.
+            return self.process_write_entry(entry, &queued, cancel).await;
+        }
         if queued.principal != "anonymous" && queued.envelope.session_generation.is_none() {
             return self
                 .fail(
@@ -3326,7 +3335,7 @@ impl UrlPlaneRunner {
             || queued.envelope.header_control.is_some()
         {
             return self.fail(entry, "unsupported_request_method", "unsupported_request_method", Attempt::Failed,
-                serde_json::json!({ "reason": "body-bearing requests require journalled action admission" })).await;
+                serde_json::json!({ "reason": "only GET, HEAD and admitted writes without request controls are executable" })).await;
         }
         let method_head = queued.envelope.method == "HEAD";
         if method_head

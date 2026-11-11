@@ -556,6 +556,8 @@ pub struct FakeScript {
     pub settle_timeout: bool,
     /// `waited_ms` reported by a successful `settle`.
     pub settle_waited_ms: u64,
+    /// Action kind (`ActionKind::as_str()`) -> Tokio time each `perform` of it takes.
+    pub kind_latency: BTreeMap<String, std::time::Duration>,
 }
 
 impl FakeScript {
@@ -644,6 +646,14 @@ impl FakeScript {
     #[must_use]
     pub fn settle_waited_ms(mut self, waited_ms: u64) -> Self {
         self.settle_waited_ms = waited_ms;
+        self
+    }
+
+    /// Every `perform` of `kind` takes `latency` of Tokio time before its effects apply: a slow
+    /// browser, reproducible under a paused clock.
+    #[must_use]
+    pub fn action_latency(mut self, kind: ActionKind, latency: std::time::Duration) -> Self {
+        self.kind_latency.insert(kind.as_str().to_owned(), latency);
         self
     }
 }
@@ -1611,6 +1621,15 @@ impl Inner {
         true
     }
 
+    /// Scripted duration of `action`'s kind, if any.
+    fn action_latency(&self, action: &BrowserAction) -> Option<std::time::Duration> {
+        self.script
+            .lock()
+            .kind_latency
+            .get(action.kind().as_str())
+            .copied()
+    }
+
     fn perform(&mut self, action: BrowserAction, refused: &Refusals) -> Result<ActionReceipt, BrowserError> {
         let started_at = self.clock.now();
         let kind = action.kind();
@@ -2421,6 +2440,10 @@ impl BrowserContext for FakeContext {
         let _entered = self.enter();
         self.wait_performs_open().await;
         let refused = self.refusals_for(&action).await;
+        let latency = self.inner.lock().action_latency(&action);
+        if let Some(latency) = latency {
+            tokio::time::sleep(latency).await;
+        }
         self.inner.lock().perform(action, &refused)
     }
 
@@ -2465,6 +2488,16 @@ impl BrowserContext for FakeContext {
             PageOp::BlockUrls(patterns) => {
                 self.inner.lock().block_urls(patterns);
                 Ok(PageOpResult::Done)
+            }
+            PageOp::BlockResources(spec) => {
+                let patterns: Vec<String> = spec.entries.into_iter().map(|entry| entry.pattern).collect();
+                let install = crawlx_core::page_op::BlockInstall {
+                    patterns: u32::try_from(patterns.len()).unwrap_or(u32::MAX),
+                    sessions_applied: 1,
+                    sessions_failed: 0,
+                };
+                self.inner.lock().block_urls(patterns);
+                Ok(PageOpResult::BlockInstalled(install))
             }
             PageOp::Html => {
                 let inner = self.inner.lock();

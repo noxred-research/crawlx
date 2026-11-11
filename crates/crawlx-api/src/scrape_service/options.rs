@@ -8,11 +8,11 @@
 use crate::errors::{ApiResult, Detail, HttpError};
 use crate::resources::Warning;
 use crawlx_core::config::{BrowserProfile, CreateCrawl, OutputFormat, RetentionMode, SafetyProfile};
-use crawlx_core::page_op::SelectorState;
+use crawlx_core::page_op::{BlockClass, FlattenSpec, GeoPosition, SelectorState};
 use crawlx_core::scrape::{
     AttributeSelector, ChangeMode, ContentStrategySpecV1, FormatSpec, JobKind, Location, ParserSpec, PdfMode,
-    PiiEntity, PiiMode, PiiReplaceStyle, QueryMode, RedactPii, ScrapeAction, ScrapeJob, ScrapeOptions,
-    ScreenshotViewport, ScrollDirection,
+    PiiEntity, PiiMode, PiiReplaceStyle, QueryMode, RedactPii, ResourceBlocking, ScrapeAction, ScrapeJob,
+    ScrapeOptions, ScreenshotViewport, ScrollDirection,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -25,7 +25,7 @@ const MAX_PROMPT_CHARS: usize = 10_000;
 
 /// Scrape option keys (compat v2 plus the v1 `extract` / `jsonOptions` aliases and the
 /// request-level `zeroDataRetention`).
-const SCRAPE_KEYS: [&str; 32] = [
+const SCRAPE_KEYS: [&str; 35] = [
     "formats",
     "onlyMainContent",
     "contentPolicy",
@@ -58,6 +58,9 @@ const SCRAPE_KEYS: [&str; 32] = [
     "checkPromptInjection",
     "redactPII",
     "profile",
+    "deviceScaleFactor",
+    "resourceBlocking",
+    "flatten",
 ];
 
 /// Formats the compat API documents that crawlx does not produce.
@@ -461,6 +464,15 @@ pub fn parse_scrape_options_in(
     if let Some(v) = obj.get("location") {
         o.location = parse_location(&mut cx, v);
     }
+    if let Some(v) = obj.get("deviceScaleFactor").filter(|v| !v.is_null()) {
+        o.device_scale_milli = parse_device_scale(&mut cx, v);
+    }
+    if let Some(v) = obj.get("resourceBlocking").filter(|v| !v.is_null()) {
+        o.resource_blocking = parse_resource_blocking(&mut cx, v);
+    }
+    if let Some(v) = obj.get("flatten").filter(|v| !v.is_null()) {
+        o.flatten = parse_flatten(&mut cx, v);
+    }
     if let Some(b) = cx.boolean(obj, "removeBase64Images") {
         o.remove_base64_images = b;
     }
@@ -785,7 +797,225 @@ fn parse_location(cx: &mut Cx, v: &Value) -> Option<Location> {
             }
         }
     }
+    if let Some(g) = m.get("geolocation").filter(|g| !g.is_null()) {
+        loc.geolocation = parse_geolocation(cx, g);
+    }
     Some(loc)
+}
+
+/// `location.geolocation`: `{latitude, longitude, accuracy?}` in degrees and metres. Unknown
+/// members, missing coordinates and out-of-range values are errors.
+fn parse_geolocation(cx: &mut Cx, v: &Value) -> Option<GeoPosition> {
+    let at = cx.at("location/geolocation");
+    let Some(m) = v.as_object() else {
+        cx.bad(at, "invalid_type", "expected an object");
+        return None;
+    };
+    let mut ok = true;
+    for key in m
+        .keys()
+        .filter(|k| !["latitude", "longitude", "accuracy"].contains(&k.as_str()))
+    {
+        cx.bad(
+            format!("{at}/{key}"),
+            "unknown_field",
+            "expected latitude, longitude or accuracy",
+        );
+        ok = false;
+    }
+    let latitude = degrees_e6(cx, &at, m, "latitude", 90.0);
+    let longitude = degrees_e6(cx, &at, m, "longitude", 180.0);
+    let accuracy = match m.get("accuracy").filter(|a| !a.is_null()) {
+        None => Some(GeoPosition::DEFAULT_ACCURACY_M),
+        Some(a) => match a.as_f64() {
+            Some(metres)
+                if metres.is_finite() && (1.0..=f64::from(GeoPosition::MAX_ACCURACY_M)).contains(&metres) =>
+            {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let rounded = metres.ceil() as u32;
+                Some(rounded)
+            }
+            _ => {
+                cx.bad(
+                    format!("{at}/accuracy"),
+                    "out_of_range",
+                    format!(
+                        "must be a number of metres between 1 and {}",
+                        GeoPosition::MAX_ACCURACY_M
+                    ),
+                );
+                None
+            }
+        },
+    };
+    match (ok, latitude, longitude, accuracy) {
+        (true, Some(lat), Some(lon), Some(acc)) => GeoPosition::new(lat, lon, acc).ok(),
+        _ => None,
+    }
+}
+
+/// A required coordinate of `m` in degrees within `-limit..=limit`, as millionths of a degree.
+fn degrees_e6(cx: &mut Cx, at: &str, m: &Map<String, Value>, key: &str, limit: f64) -> Option<i32> {
+    match m.get(key).and_then(Value::as_f64) {
+        Some(deg) if deg.is_finite() && (-limit..=limit).contains(&deg) => {
+            #[allow(clippy::cast_possible_truncation)]
+            let e6 = (deg * 1e6).round() as i32;
+            Some(e6)
+        }
+        Some(_) => {
+            cx.bad(
+                format!("{at}/{key}"),
+                "out_of_range",
+                format!("must be between -{limit} and {limit} degrees"),
+            );
+            None
+        }
+        None => {
+            cx.bad(
+                format!("{at}/{key}"),
+                "invalid_type",
+                "expected a number of degrees",
+            );
+            None
+        }
+    }
+}
+
+/// `deviceScaleFactor`: the device pixel ratio of the browser page, 0.5 to 4, kept in
+/// thousandths.
+fn parse_device_scale(cx: &mut Cx, v: &Value) -> Option<u32> {
+    let at = cx.at("deviceScaleFactor");
+    match v.as_f64() {
+        Some(scale) if scale.is_finite() && (0.5..=4.0).contains(&scale) => {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let milli = (scale * 1000.0).round() as u32;
+            Some(milli)
+        }
+        Some(_) => {
+            cx.bad(at, "out_of_range", "must be a number between 0.5 and 4");
+            None
+        }
+        None => {
+            cx.bad(at, "invalid_type", "expected a number");
+            None
+        }
+    }
+}
+
+/// `resourceBlocking`: `{resourceTypes?: ["font" | "media" | "image"], domains?: [host]}`. The
+/// lists are sorted and de-duplicated, so equal requests have one identity.
+fn parse_resource_blocking(cx: &mut Cx, v: &Value) -> Option<ResourceBlocking> {
+    let at = cx.at("resourceBlocking");
+    let Some(m) = v.as_object() else {
+        cx.bad(at, "invalid_type", "expected an object");
+        return None;
+    };
+    let mut blocking = ResourceBlocking::default();
+    let before = cx.details.len();
+    for key in m
+        .keys()
+        .filter(|k| !["resourceTypes", "domains"].contains(&k.as_str()))
+    {
+        cx.bad(
+            format!("{at}/{key}"),
+            "unknown_field",
+            "expected resourceTypes or domains",
+        );
+    }
+    if let Some(list) = m.get("resourceTypes").filter(|l| !l.is_null()) {
+        match list.as_array() {
+            Some(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    match item.as_str() {
+                        Some("font") => blocking.resource_types.push(BlockClass::Font),
+                        Some("media") => blocking.resource_types.push(BlockClass::Media),
+                        Some("image") => blocking.resource_types.push(BlockClass::Image),
+                        _ => cx.bad(
+                            format!("{at}/resourceTypes/{i}"),
+                            "unknown_enum",
+                            "resource type must be font, media or image",
+                        ),
+                    }
+                }
+            }
+            None => cx.bad(format!("{at}/resourceTypes"), "invalid_type", "expected an array"),
+        }
+    }
+    if let Some(list) = m.get("domains").filter(|l| !l.is_null()) {
+        match list.as_array() {
+            Some(items) if items.len() <= ResourceBlocking::MAX_DOMAINS => {
+                for (i, item) in items.iter().enumerate() {
+                    match item.as_str() {
+                        Some(host) if ResourceBlocking::is_valid_domain(host) => {
+                            blocking.domains.push(host.to_owned());
+                        }
+                        _ => cx.bad(
+                            format!("{at}/domains/{i}"),
+                            "invalid_string",
+                            "expected a lower-case host name without scheme, port or wildcard",
+                        ),
+                    }
+                }
+            }
+            Some(_) => cx.bad(
+                format!("{at}/domains"),
+                "out_of_range",
+                format!("at most {} hosts are allowed", ResourceBlocking::MAX_DOMAINS),
+            ),
+            None => cx.bad(format!("{at}/domains"), "invalid_type", "expected an array"),
+        }
+    }
+    blocking.resource_types.sort();
+    blocking.resource_types.dedup();
+    blocking.domains.sort();
+    blocking.domains.dedup();
+    (cx.details.len() == before).then_some(blocking)
+}
+
+/// `flatten`: `true` for shadow roots and frames, `false` for neither, or
+/// `{shadowDom?, frames?, maxFrames?}` with the defaults of [`FlattenSpec`].
+fn parse_flatten(cx: &mut Cx, v: &Value) -> Option<FlattenSpec> {
+    let at = cx.at("flatten");
+    match v {
+        Value::Bool(true) => Some(FlattenSpec::default()),
+        Value::Bool(false) => None,
+        Value::Object(m) => {
+            let before = cx.details.len();
+            for key in m
+                .keys()
+                .filter(|k| !["shadowDom", "frames", "maxFrames"].contains(&k.as_str()))
+            {
+                cx.bad(
+                    format!("{at}/{key}"),
+                    "unknown_field",
+                    "expected shadowDom, frames or maxFrames",
+                );
+            }
+            let mut spec = FlattenSpec::default();
+            for (key, slot) in [("shadowDom", &mut spec.shadow_dom), ("frames", &mut spec.frames)] {
+                match m.get(key).filter(|b| !b.is_null()) {
+                    None => {}
+                    Some(Value::Bool(b)) => *slot = *b,
+                    Some(_) => cx.bad(format!("{at}/{key}"), "invalid_type", "expected a boolean"),
+                }
+            }
+            if let Some(n) = m.get("maxFrames").filter(|n| !n.is_null()) {
+                match n.as_u64().and_then(|n| u32::try_from(n).ok()) {
+                    Some(n) if (1..=FlattenSpec::MAX_FRAMES_LIMIT).contains(&n) => spec.max_frames = n,
+                    _ => cx.bad(
+                        format!("{at}/maxFrames"),
+                        "out_of_range",
+                        format!("must be between 1 and {}", FlattenSpec::MAX_FRAMES_LIMIT),
+                    ),
+                }
+            }
+            (cx.details.len() == before).then_some(spec)
+        }
+        _ => {
+            cx.bad(at, "invalid_type", "expected a boolean or an options object");
+            None
+        }
+    }
 }
 
 /// `parsers`: an absent key keeps the default `[pdf, image]`; a list replaces it (an empty list
@@ -1485,6 +1715,145 @@ mod tests {
         assert!(p.warnings.is_empty());
     }
 
+    fn paths(details: &[Detail]) -> Vec<String> {
+        details.iter().map(|d| d.path.clone()).collect()
+    }
+
+    #[test]
+    fn device_scale_geolocation_blocking_and_flatten_parse_and_force_the_browser() {
+        let p = parse(&json!({
+            "deviceScaleFactor": 2.625,
+            "location": { "country": "DE", "geolocation": { "latitude": 48.137154, "longitude": -11.576124, "accuracy": 24.2 } },
+            "resourceBlocking": { "resourceTypes": ["media", "font", "font"], "domains": ["b.example", "a.example", "b.example"] },
+            "flatten": { "frames": false },
+        }))
+        .unwrap();
+        let o = &p.options;
+        assert_eq!(o.device_scale_milli, Some(2_625));
+        let geo = o.location.as_ref().unwrap().geolocation.unwrap();
+        assert_eq!(
+            (geo.latitude_e6, geo.longitude_e6, geo.accuracy_m),
+            (48_137_154, -11_576_124, 25)
+        );
+        let blocking = o.resource_blocking.as_ref().unwrap();
+        assert_eq!(blocking.resource_types, [BlockClass::Font, BlockClass::Media]);
+        assert_eq!(blocking.domains, ["a.example", "b.example"]);
+        let flatten = o.flatten.unwrap();
+        assert!(flatten.shadow_dom && !flatten.frames);
+        assert!(o.needs_browser());
+        // each of them alone needs the browser, except blocking, which only shapes it
+        for (key, value, browser) in [
+            ("deviceScaleFactor", json!(2), true),
+            ("flatten", json!(true), true),
+            (
+                "location",
+                json!({ "geolocation": { "latitude": 1, "longitude": 2 } }),
+                true,
+            ),
+            ("resourceBlocking", json!({ "domains": ["a.example"] }), false),
+        ] {
+            let p = parse(&json!({ key: value })).unwrap();
+            assert_eq!(p.options.needs_browser(), browser, "{key}");
+            assert!(p.warnings.is_empty(), "{key}: {:?}", p.warnings);
+        }
+        // the accuracy defaults, and `flatten: false` is no flattening
+        let p = parse(
+            &json!({ "location": { "geolocation": { "latitude": 1, "longitude": 2 } }, "flatten": false }),
+        )
+        .unwrap();
+        assert_eq!(
+            p.options.location.unwrap().geolocation.unwrap().accuracy_m,
+            GeoPosition::DEFAULT_ACCURACY_M
+        );
+        assert_eq!(p.options.flatten, None);
+    }
+
+    #[test]
+    fn invalid_device_geolocation_blocking_and_flatten_values_are_all_reported() {
+        let details = parse(&json!({
+            "deviceScaleFactor": 5,
+            "location": { "geolocation": { "latitude": 91, "longitude": "x", "extra": 1, "accuracy": 0 } },
+            "resourceBlocking": { "resourceTypes": ["ad", 3], "domains": ["Bad.Host", "a:80", "*.x"], "more": 1 },
+            "flatten": { "maxFrames": 0, "frames": "yes", "other": true },
+        }))
+        .unwrap_err();
+        let at = paths(&details);
+        for expected in [
+            "/deviceScaleFactor",
+            "/location/geolocation/latitude",
+            "/location/geolocation/longitude",
+            "/location/geolocation/extra",
+            "/location/geolocation/accuracy",
+            "/resourceBlocking/resourceTypes/0",
+            "/resourceBlocking/resourceTypes/1",
+            "/resourceBlocking/domains/0",
+            "/resourceBlocking/domains/1",
+            "/resourceBlocking/domains/2",
+            "/resourceBlocking/more",
+            "/flatten/maxFrames",
+            "/flatten/frames",
+            "/flatten/other",
+        ] {
+            assert!(at.iter().any(|p| p == expected), "{expected} not in {at:?}");
+        }
+        for bad in [json!(0.4), json!("2"), json!(true)] {
+            assert!(parse(&json!({ "deviceScaleFactor": bad })).is_err());
+        }
+        for bad in [json!(1), json!("on"), json!([])] {
+            assert!(parse(&json!({ "flatten": bad })).is_err());
+        }
+        // more hosts than allowed
+        let many: Vec<String> = (0..=ResourceBlocking::MAX_DOMAINS)
+            .map(|i| format!("h{i}.example"))
+            .collect();
+        assert!(parse(&json!({ "resourceBlocking": { "domains": many } })).is_err());
+    }
+
+    #[test]
+    fn the_boundaries_of_the_ranges_are_accepted() {
+        let p = parse(&json!({
+            "deviceScaleFactor": 0.5,
+            "location": { "geolocation": { "latitude": -90, "longitude": 180, "accuracy": 100000 } },
+            "flatten": { "maxFrames": 64, "shadowDom": false },
+        }))
+        .unwrap();
+        assert_eq!(p.options.device_scale_milli, Some(500));
+        let geo = p.options.location.unwrap().geolocation.unwrap();
+        assert_eq!((geo.latitude_e6, geo.longitude_e6), (-90_000_000, 180_000_000));
+        assert_eq!(p.options.flatten.unwrap().max_frames, 64);
+        assert_eq!(
+            parse(&json!({ "deviceScaleFactor": 4 }))
+                .unwrap()
+                .options
+                .device_scale_milli,
+            Some(4_000)
+        );
+        // `flatten` with neither part would fold nothing in
+        assert!(parse(&json!({ "flatten": { "shadowDom": false, "frames": false } })).is_err());
+    }
+
+    #[test]
+    fn equal_requests_have_one_cache_identity_whatever_the_order_of_blocking_lists() {
+        let a = parse(&json!({ "resourceBlocking": { "resourceTypes": ["font", "media"], "domains": ["b.example", "a.example"] } })).unwrap();
+        let b = parse(&json!({ "resourceBlocking": { "resourceTypes": ["media", "font"], "domains": ["a.example", "b.example"] } })).unwrap();
+        assert_eq!(a.options.cache_digest(), b.options.cache_digest());
+        let c = parse(&json!({ "resourceBlocking": { "resourceTypes": ["font"] } })).unwrap();
+        assert_ne!(a.options.cache_digest(), c.options.cache_digest());
+        // a request without the new options keeps the digest it always had
+        let plain = parse(&json!({})).unwrap();
+        let value = serde_json::to_value(&plain.options).unwrap();
+        for key in [
+            "deviceScaleFactor",
+            "deviceScaleMilli",
+            "resourceBlocking",
+            "flatten",
+        ] {
+            assert!(
+                value.get(key).is_none(),
+                "{key} must not be serialized when absent"
+            );
+        }
+    }
     #[test]
     fn every_format_form_parses() {
         let p = parse(&json!({ "formats": [

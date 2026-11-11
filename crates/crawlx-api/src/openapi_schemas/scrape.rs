@@ -407,6 +407,76 @@ pub(super) struct Location {
     country: Option<String>,
     /// Preferred languages (BCP 47 tags), sent as `Accept-Language`.
     languages: Option<Vec<String>>,
+    /// Position the page's `navigator.geolocation` reports for the whole browser context, in
+    /// every tab and frame it opens. Forces a browser render; the page reads it without a prompt.
+    geolocation: Option<Geolocation>,
+}
+
+/// A position for `location.geolocation`.
+#[derive(JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Geolocation {
+    /// Latitude in degrees.
+    #[schemars(range(min = -90, max = 90))]
+    latitude: f64,
+    /// Longitude in degrees.
+    #[schemars(range(min = -180, max = 180))]
+    longitude: f64,
+    /// Accuracy radius in metres (default 100).
+    #[schemars(range(min = 1, max = 100000))]
+    accuracy: Option<f64>,
+}
+
+/// Resource types `resourceBlocking` can block.
+#[derive(JsonSchema)]
+pub(super) enum BlockableResource {
+    /// Web fonts.
+    #[serde(rename = "font")]
+    Font,
+    /// Audio and video.
+    #[serde(rename = "media")]
+    Media,
+    /// Images.
+    #[serde(rename = "image")]
+    Image,
+}
+
+/// `resourceBlocking`: resource types and hosts a browser render does not load, besides
+/// `blockAds`. It shapes a browser render and does not force one.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ResourceBlocking {
+    /// Resource types to block. Types are matched by the request's URL extension, so a resource
+    /// served without one is not blocked.
+    resource_types: Option<Vec<BlockableResource>>,
+    /// Lower-case host names to block with their subdomains (no scheme, port or wildcard), at
+    /// most 64.
+    #[schemars(length(max = 64))]
+    domains: Option<Vec<String>>,
+}
+
+/// `flatten` given as an object.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct FlattenSpec {
+    /// Inline the content of open shadow roots (default `true`).
+    shadow_dom: Option<bool>,
+    /// Inline the document of every readable iframe (default `true`); cross-origin frames are
+    /// never read.
+    frames: Option<bool>,
+    /// Most frames, the main document included, folded in (1 to 64, default 16).
+    #[schemars(range(min = 1, max = 64))]
+    max_frames: Option<u32>,
+}
+
+/// `flatten`: `true` for shadow roots and frames, `false` for neither, or an options object.
+#[derive(JsonSchema)]
+#[serde(untagged)]
+pub(super) enum Flatten {
+    /// Both on with the defaults, or off.
+    Switch(bool),
+    /// Chosen parts.
+    Spec(FlattenSpec),
 }
 
 /// Proxy tier.
@@ -827,6 +897,16 @@ pub(super) struct ScrapeOptions {
     wait_for: Option<u32>,
     /// Emulate a mobile device.
     mobile: Option<bool>,
+    /// Device pixel ratio of the browser page, 0.5 to 4. Forces a browser render.
+    #[serde(rename = "deviceScaleFactor")]
+    #[schemars(range(min = 0.5, max = 4.0))]
+    device_scale_factor: Option<f64>,
+    /// Resource types and hosts a browser render does not load.
+    #[serde(rename = "resourceBlocking")]
+    resource_blocking: Option<ResourceBlocking>,
+    /// Fold open shadow roots and readable iframes into the extraction text with per-frame origin
+    /// provenance. Forces a browser render; the live DOM and action identity are untouched.
+    flatten: Option<Flatten>,
     /// Do not verify TLS certificates (default `true`).
     #[serde(rename = "skipTlsVerification")]
     skip_tls_verification: Option<bool>,

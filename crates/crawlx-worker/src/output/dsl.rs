@@ -16,23 +16,26 @@
 //!   wins over `request` for names both have (`body`, `raw`), as in the reference;
 //! * operators, loosest first: `||`, `&&`, `==` `!=` and infix `contains`, `<` `<=` `>`
 //!   `>=`, unary `!`, parentheses. `&&`/`||` short-circuit;
-//! * functions (reference names): `contains(s, sub)`, `contains_any(s, sub...)`,
-//!   `contains_all(s, sub...)`, `starts_with(s, prefix...)`, `ends_with(s, suffix...)`,
-//!   `regex(pattern, input)`, `len(x)` (list length, otherwise byte length), `to_lower(x)`,
-//!   `to_upper(x)`, `trim(s, cutset)`, `trim_left(s, cutset)`, `trim_right(s, cutset)`,
-//!   `trim_space(s)`, `trim_prefix(s, prefix)`, `trim_suffix(s, suffix)`. Arguments are
-//!   stringified; a list stringifies as `[a b]` with object elements shown by their `name`,
-//!   so `contains(to_lower(technologies), "php")` works.
+//! * functions: the table in [`functions`]; [`supported_functions`] lists every name with its
+//!   argument count and [`UNSUPPORTED_FUNCTIONS`] every function of the pinned reference DSL
+//!   this language lacks, with the reason. Names follow the reference (`contains_any`, `to_lower`,
+//!   `trim_space`, `regex_all`, `base64_decode`, `sha256`, ...) and the underscore-free spelling the
+//!   reference also registers (`containsany`) works too. Arguments are stringified; a list
+//!   stringifies as `[a b]` with object elements shown by their `name`, so
+//!   `contains(to_lower(technologies), "php")` works. Every function is pure (no clock, environment,
+//!   network or random source) and bounded: operands and results over [`MAX_VALUE_LEN`] bytes
+//!   and lists over [`MAX_LIST_LEN`] elements evaluate to no value, which makes the condition `false`.
+//!   A condition never evaluates its text as code.
 //!
-//! The trim family follows the pinned string-function semantics of an MIT-licensed upstream
-//! (see THIRD_PARTY_NOTICES.md), selected by the reference tool's
-//! `35267ac5c8ff1db9694a319d0eb466ed97b0969f` `go.mod`. Cutsets contain Unicode
-//! characters, not substrings; prefix/suffix removal happens only once. `trim_space`
-//! uses Unicode whitespace. Results never grow. Inputs over [`MAX_TRIM_INPUT_LEN`]
-//! bytes or second arguments over [`MAX_TRIM_CUTSET_LEN`] bytes evaluate to false.
-//! Cutset scans cost at most input bytes times cutset bytes; no I/O, random state,
-//! environment access or additional record fields are available to these functions.
-//! Other function names remain explicit [`DslError::UnknownFunction`] parse errors.
+//! The function semantics follow the pinned release of the reference DSL's function library
+//! (v0.8.21, selected by the reference tool's
+//! `35267ac5c8ff1db9694a319d0eb466ed97b0969f` `go.mod`), an MIT-licensed upstream (see
+//! THIRD_PARTY_NOTICES.md). The trim family follows its Go string functions: cutsets contain Unicode
+//! characters, not substrings; prefix/suffix removal happens only once; `trim_space` uses Unicode
+//! whitespace; results never grow. Case mapping is per character like Go's, not the full
+//! (multi-character, context-sensitive) mapping. A function name in neither table is a
+//! [`DslError::UnknownFunction`] parse error and one in the second table a
+//! [`DslError::UnsupportedFunction`], both with the byte position of the name.
 //!
 //! Evaluation never fails loudly: as in the reference, a reference to an unknown variable, a type
 //! mismatch (`!` of a string, `<` between a string and a number) or a non-boolean result
@@ -43,7 +46,11 @@
 //! [`MAX_REGEX_LEN`] bytes with a bounded compiled size; a literal pattern is compiled at
 //! parse time so a bad one is a [`DslError::Regex`].
 
+mod functions;
+
 use super::jsonl::Record;
+use functions::{apply, unsupported_reason, Func};
+pub use functions::{supported_functions, FunctionInfo, MAX_LIST_LEN, MAX_VALUE_LEN, UNSUPPORTED_FUNCTIONS};
 use regex::{Regex, RegexBuilder};
 use serde_json::Value as Json;
 use std::cmp::Ordering;
@@ -56,7 +63,7 @@ pub const MAX_SOURCE_LEN: usize = 4096;
 /// Longest accepted `regex()` pattern in bytes.
 pub const MAX_REGEX_LEN: usize = 512;
 /// Longest stringified input accepted by the trim family, in bytes.
-pub const MAX_TRIM_INPUT_LEN: usize = 1 << 20;
+pub const MAX_TRIM_INPUT_LEN: usize = MAX_VALUE_LEN;
 /// Longest stringified trim cutset, prefix or suffix, in bytes.
 pub const MAX_TRIM_CUTSET_LEN: usize = 512;
 /// Deepest nesting of parentheses, `!` and function calls.
@@ -117,6 +124,16 @@ pub enum DslError {
         /// The name.
         name: String,
     },
+    /// A function of the reference DSL that this language does not have.
+    #[error("function `{name}` at byte {position} is not supported: {reason}")]
+    UnsupportedFunction {
+        /// Byte offset of the name.
+        position: usize,
+        /// The name.
+        name: String,
+        /// Why the language lacks it.
+        reason: &'static str,
+    },
     /// A call with the wrong number of arguments.
     #[error("function `{name}` at byte {position} takes {expected} argument(s), got {got}")]
     Arity {
@@ -124,7 +141,7 @@ pub enum DslError {
         position: usize,
         /// The function.
         name: &'static str,
-        /// `2` or `at least 2`.
+        /// `2`, `2 to 3` or `at least 2`.
         expected: &'static str,
         /// Arguments given.
         got: usize,
@@ -172,6 +189,7 @@ impl DslError {
             | Self::InvalidNumber { position, .. }
             | Self::Unexpected { position, .. }
             | Self::UnknownFunction { position, .. }
+            | Self::UnsupportedFunction { position, .. }
             | Self::Arity { position, .. }
             | Self::Regex { position, .. }
             | Self::TooDeep { position } => Some(*position),
@@ -389,97 +407,6 @@ enum CmpOp {
     Contains,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Func {
-    Contains,
-    ContainsAny,
-    ContainsAll,
-    StartsWith,
-    EndsWith,
-    Regex,
-    Len,
-    ToLower,
-    ToUpper,
-    Trim,
-    TrimLeft,
-    TrimRight,
-    TrimSpace,
-    TrimPrefix,
-    TrimSuffix,
-}
-
-impl Func {
-    fn lookup(name: &str) -> Option<Self> {
-        Some(match name {
-            "contains" => Self::Contains,
-            "contains_any" => Self::ContainsAny,
-            "contains_all" => Self::ContainsAll,
-            "starts_with" => Self::StartsWith,
-            "ends_with" => Self::EndsWith,
-            "regex" => Self::Regex,
-            "len" => Self::Len,
-            "to_lower" => Self::ToLower,
-            "to_upper" => Self::ToUpper,
-            "trim" => Self::Trim,
-            "trim_left" => Self::TrimLeft,
-            "trim_right" => Self::TrimRight,
-            "trim_space" => Self::TrimSpace,
-            "trim_prefix" => Self::TrimPrefix,
-            "trim_suffix" => Self::TrimSuffix,
-            _ => return None,
-        })
-    }
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Contains => "contains",
-            Self::ContainsAny => "contains_any",
-            Self::ContainsAll => "contains_all",
-            Self::StartsWith => "starts_with",
-            Self::EndsWith => "ends_with",
-            Self::Regex => "regex",
-            Self::Len => "len",
-            Self::ToLower => "to_lower",
-            Self::ToUpper => "to_upper",
-            Self::Trim => "trim",
-            Self::TrimLeft => "trim_left",
-            Self::TrimRight => "trim_right",
-            Self::TrimSpace => "trim_space",
-            Self::TrimPrefix => "trim_prefix",
-            Self::TrimSuffix => "trim_suffix",
-        }
-    }
-
-    /// `(minimum, maximum)` argument count, `usize::MAX` for unbounded.
-    const fn arity(self) -> (usize, usize) {
-        match self {
-            Self::Contains
-            | Self::Regex
-            | Self::Trim
-            | Self::TrimLeft
-            | Self::TrimRight
-            | Self::TrimPrefix
-            | Self::TrimSuffix => (2, 2),
-            Self::ContainsAny | Self::ContainsAll | Self::StartsWith | Self::EndsWith => (2, usize::MAX),
-            Self::Len | Self::ToLower | Self::ToUpper | Self::TrimSpace => (1, 1),
-        }
-    }
-
-    const fn arity_text(self) -> &'static str {
-        match self {
-            Self::Contains
-            | Self::Regex
-            | Self::Trim
-            | Self::TrimLeft
-            | Self::TrimRight
-            | Self::TrimPrefix
-            | Self::TrimSuffix => "2",
-            Self::ContainsAny | Self::ContainsAll | Self::StartsWith | Self::EndsWith => "at least 2",
-            Self::Len | Self::ToLower | Self::ToUpper | Self::TrimSpace => "1",
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 enum Expr {
     Lit(Val),
@@ -491,7 +418,7 @@ enum Expr {
     Call {
         func: Func,
         args: Vec<Expr>,
-        /// A literal `regex()` pattern, compiled at parse time.
+        /// A literal regex pattern argument, compiled at parse time.
         compiled: Option<Regex>,
     },
 }
@@ -646,10 +573,19 @@ impl Parser {
     }
 
     fn call(&mut self, name: &str, pos: usize) -> Result<Expr, DslError> {
-        let func = Func::lookup(name).ok_or_else(|| DslError::UnknownFunction {
-            position: pos,
-            name: name.to_owned(),
-        })?;
+        let Some(func) = Func::lookup(name) else {
+            return Err(match unsupported_reason(name) {
+                Some(reason) => DslError::UnsupportedFunction {
+                    position: pos,
+                    name: name.to_owned(),
+                    reason,
+                },
+                None => DslError::UnknownFunction {
+                    position: pos,
+                    name: name.to_owned(),
+                },
+            });
+        };
         self.enter()?;
         self.bump(); // `(`
         let mut args = Vec::new();
@@ -680,8 +616,8 @@ impl Parser {
                 got: args.len(),
             });
         }
-        let compiled = match (func, args.first()) {
-            (Func::Regex, Some(Expr::Lit(Val::Str(pattern)))) => {
+        let compiled = match func.pattern_argument().and_then(|at| args.get(at)) {
+            Some(Expr::Lit(Val::Str(pattern))) => {
                 Some(build_regex(pattern).map_err(|source| DslError::Regex {
                     position: pos,
                     source,
@@ -705,8 +641,10 @@ enum EvalError {
     Type(&'static str),
     #[error("regex pattern rejected")]
     Regex,
-    #[error("trim operand exceeds byte limit")]
-    TrimLimit,
+    #[error("operand or result exceeds the size limit")]
+    Limit,
+    #[error("argument the function rejects")]
+    Argument,
 }
 
 fn snake(name: &str) -> String {
@@ -863,77 +801,12 @@ fn eval(expr: &Expr, root: &Json) -> Result<Val, EvalError> {
     }
 }
 
-fn trim(func: Func, mut input: String, cutset: &str) -> Result<Val, EvalError> {
-    if input.len() > MAX_TRIM_INPUT_LEN || cutset.len() > MAX_TRIM_CUTSET_LEN {
-        return Err(EvalError::TrimLimit);
-    }
-    let left = match func {
-        Func::Trim | Func::TrimLeft => input.trim_start_matches(|ch| cutset.contains(ch)),
-        Func::TrimSpace => input.trim_start(),
-        Func::TrimPrefix => input.strip_prefix(cutset).unwrap_or(&input),
-        _ => &input,
-    };
-    let start = input.len() - left.len();
-    let len = match func {
-        Func::Trim | Func::TrimRight => left.trim_end_matches(|ch| cutset.contains(ch)).len(),
-        Func::TrimSpace => left.trim_end().len(),
-        Func::TrimSuffix => left.strip_suffix(cutset).unwrap_or(left).len(),
-        _ => left.len(),
-    };
-    // Reuse the owned buffer; both offsets come from UTF-8 subslices of the input.
-    drop(input.drain(..start));
-    input.truncate(len);
-    Ok(Val::Str(input))
-}
-
 fn call(func: Func, args: &[Expr], compiled: Option<&Regex>, root: &Json) -> Result<Val, EvalError> {
-    let mut values = args
+    let values = args
         .iter()
         .map(|a| eval(a, root))
         .collect::<Result<Vec<_>, _>>()?;
-    let first = values
-        .first_mut()
-        .map(|value| match value {
-            Val::Str(text) => std::mem::take(text),
-            _ => stringify(value),
-        })
-        .unwrap_or_default();
-    let rest = || values.iter().skip(1).map(stringify);
-    Ok(match func {
-        Func::Contains => Val::Bool(first.contains(&rest().next().unwrap_or_default())),
-        Func::ContainsAny => Val::Bool(rest().any(|s| first.contains(&s))),
-        Func::ContainsAll => Val::Bool(rest().all(|s| first.contains(&s))),
-        Func::StartsWith => Val::Bool(rest().any(|s| first.starts_with(&s))),
-        Func::EndsWith => Val::Bool(rest().any(|s| first.ends_with(&s))),
-        Func::Regex => {
-            let input = values.get(1).map(stringify).unwrap_or_default();
-            match compiled {
-                Some(re) => Val::Bool(re.is_match(&input)),
-                None => Val::Bool(
-                    build_regex(&first)
-                        .map_err(|_| EvalError::Regex)?
-                        .is_match(&input),
-                ),
-            }
-        }
-        Func::Len => match values.first() {
-            Some(Val::List(items)) => Val::Num(usize_to_f64(items.len())),
-            _ => Val::Num(usize_to_f64(first.len())),
-        },
-        Func::ToLower => Val::Str(first.to_lowercase()),
-        Func::ToUpper => Val::Str(first.to_uppercase()),
-        Func::Trim
-        | Func::TrimLeft
-        | Func::TrimRight
-        | Func::TrimSpace
-        | Func::TrimPrefix
-        | Func::TrimSuffix => trim(func, first, &rest().next().unwrap_or_default())?,
-    })
-}
-
-fn usize_to_f64(n: usize) -> f64 {
-    // Lengths of in-memory strings and lists are far below 2^53.
-    u32::try_from(n).map_or(f64::from(u32::MAX), f64::from)
+    apply(func, values, compiled)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1180,8 +1053,8 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_upstream_functions_remain_parse_errors_even_in_dead_branches() {
-        for name in ["repeat", "replace", "base64", "rand_char", "trimspace"] {
+    fn unlisted_and_unsupported_functions_remain_parse_errors_even_in_dead_branches() {
+        for name in ["eval", "exec", "nosuch", "trimspaces", "Repeat"] {
             let source = format!("false && {name}('sensitive-literal')");
             let error = Dsl::parse(&source).unwrap_err();
             assert!(matches!(
@@ -1189,6 +1062,21 @@ mod tests {
                 DslError::UnknownFunction { name: actual, position: 9 } if actual == name
             ));
             assert!(!error.to_string().contains("sensitive-literal"));
+        }
+        for (name, reason) in [
+            ("rand_char", "random"),
+            ("randchar", "random"),
+            ("gzip", "compression"),
+        ] {
+            let source = format!("false && {name}('sensitive-literal')");
+            let error = Dsl::parse(&source).unwrap_err();
+            assert!(matches!(
+                &error,
+                DslError::UnsupportedFunction { name: actual, position: 9, reason: why }
+                    if actual == name && why.contains(reason)
+            ));
+            assert!(!error.to_string().contains("sensitive-literal"));
+            assert!(error.to_string().contains("byte 9"), "{error}");
         }
     }
 
@@ -1202,7 +1090,7 @@ mod tests {
         // come from an ordinary comparison mismatch.
         assert!(matches!(
             super::eval(&condition.root, &record),
-            Err(EvalError::TrimLimit)
+            Err(EvalError::Limit)
         ));
         assert!(!condition.eval_value(&record));
 

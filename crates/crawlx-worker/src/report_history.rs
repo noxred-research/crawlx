@@ -463,7 +463,9 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use async_trait::async_trait;
-    use crawlx_core::report_history::{PipelineStageV1, PipelineStateV1, ReportPageV1, ReportQueryV1};
+    use crawlx_core::report_history::{
+        PipelineStageV1, PipelineStateV1, ReportPageV1, ReportQueryV1, RouteCountersV1,
+    };
     use crawlx_core::{CrawlRunId, TenantId, WorkerId};
 
     #[derive(Default)]
@@ -485,6 +487,14 @@ mod tests {
             _: &ReportQueryV1,
         ) -> Result<ReportPageV1, StoreError> {
             Ok(ReportPageV1::default())
+        }
+
+        async fn route_counters(
+            &self,
+            _: TenantId,
+            _: CrawlRunId,
+        ) -> Result<Vec<RouteCountersV1>, StoreError> {
+            Ok(Vec::new())
         }
     }
 

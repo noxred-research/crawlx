@@ -158,6 +158,39 @@ pub struct ArchiveCaptureFactsV1 {
     pub source_event: String,
     /// Real capture date from the retained source.
     pub captured_at: Timestamp,
+    /// HTTP status the source response carried; absent unless the persisted source recorded
+    /// it. Never a status inferred from a retained rendition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_status: Option<u16>,
+    /// Transport-security facts observed on the source request's own connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<ArchiveTlsFactsV1>,
+}
+
+/// TLS facts observed for one archived source response. Observation is not verification:
+/// `verification` names the mode the request actually ran under.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ArchiveTlsFactsV1 {
+    /// Effective verification configuration (`verify_peer_and_hostname`, `explicit_insecure`).
+    pub verification: Option<String>,
+    /// Leaf certificate observed on the request's own connection; absent when none was.
+    pub certificate: Option<crate::acquisition::PeerCertificateFactsV1>,
+}
+
+impl ArchiveTlsFactsV1 {
+    /// Describe the observed connection security.
+    #[must_use]
+    pub fn new(
+        verification: Option<String>,
+        certificate: Option<crate::acquisition::PeerCertificateFactsV1>,
+    ) -> Self {
+        Self {
+            verification,
+            certificate,
+        }
+    }
 }
 
 impl ArchiveCaptureFactsV1 {
@@ -181,9 +214,26 @@ impl ArchiveCaptureFactsV1 {
             ],
             source_event: source_event.into(),
             captured_at,
+            source_status: None,
+            tls: None,
         }
     }
+
+    /// Record the wire facts the persisted source observed. Absent facts stay absent.
+    #[must_use]
+    pub fn with_source_wire(
+        mut self,
+        protocol: Option<crate::traffic::Protocol>,
+        status: Option<u16>,
+        tls: Option<ArchiveTlsFactsV1>,
+    ) -> Self {
+        self.source_protocol = protocol.map(|protocol| protocol.as_str().to_owned());
+        self.source_status = status;
+        self.tls = tls;
+        self
+    }
 }
+
 /// Resource excluded or unavailable in this export.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -229,6 +279,10 @@ pub struct ArchiveManifestV1 {
     /// Standalone source records embedded to close cross-export revisit dependencies.
     #[serde(default, skip_serializing_if = "zero")]
     pub materialized_dependencies: u64,
+    /// Exact byte length of the committed package object. Set by the writer after the package
+    /// is built, so the copy embedded inside a package (written earlier) never carries it.
+    #[serde(default, skip_serializing_if = "zero")]
+    pub package_bytes: u64,
     /// Explicit absent representations and privacy exclusions.
     pub omissions: Vec<ArchiveOmissionV1>,
 }
@@ -246,6 +300,7 @@ impl ArchiveManifestV1 {
             records: 0,
             custody: crate::archive_catalog::ArchiveCustodyV1::default(),
             materialized_dependencies: 0,
+            package_bytes: 0,
             omissions: vec![
                 ArchiveOmissionV1::new(
                     "run",

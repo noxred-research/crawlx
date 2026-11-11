@@ -3,7 +3,10 @@
 
 Run after the canary suites, including after failure:
   python3 -B ci/chromium-upgrade-report.py --evidence bench/out
-CDP_OUTCOME, BROWSER_OUTCOME and GOLDEN_OUTCOME carry the CI step outcomes.
+CDP_OUTCOME, BROWSER_OUTCOME, REPLAY_OUTCOME and GOLDEN_OUTCOME carry the CI step outcomes.
+The replay suite (`crawlx-bench --test replay_chromium`, the recorded-path replays on the candidate
+build) counts like every other suite: a missing log is unmeasured, a failed run is a failure, and a run
+that skipped its cases because no browser started is unmeasured, never a pass.
 JSON and Markdown retain missing measurements instead of substituting passing claims.
 """
 
@@ -14,6 +17,9 @@ import os
 from pathlib import Path
 import re
 import tomllib
+
+
+SUITES = ('cdp', 'browser', 'replay', 'golden')
 
 
 def artifact(path):
@@ -36,7 +42,7 @@ def suite(path, outcome):
         row['reason'] = f'suite outcome is {outcome}, not success'
     elif not summaries or sum(int(passed) for _, passed, _, _ in summaries) == 0:
         row['reason'] = 'no executed libtest cases in the log'
-    elif re.search(r'^\s*skipped:', text, re.MULTILINE) or any(
+    elif re.search(r'^\s*(skipped|SKIP):', text, re.MULTILINE) or any(
             int(failed) or int(ignored) for _, _, failed, ignored in summaries):
         row['reason'] = 'suite contains skipped, failed or ignored cases'
     else:
@@ -71,7 +77,7 @@ def golden(path):
 def report(evidence, pin):
     suites = {name: suite(evidence / f'chromium-next-{name}.log',
                           os.environ.get(f'{name.upper()}_OUTCOME', 'unknown'))
-              for name in ('cdp', 'browser', 'golden')}
+              for name in SUITES}
     traces = [golden(path) for path in sorted(evidence.glob('golden-trace-diff.*.json'))]
     states = [row['state'] for row in suites.values()] + [row['state'] for row in traces]
     state = 'fail' if 'fail' in states else (

@@ -48,7 +48,8 @@ pub struct ScreenshotViewport {
     pub height: u32,
 }
 
-/// `location{country, languages}`: Accept-Language plus the browser's locale and time zone.
+/// `location{country, languages, geolocation}`: Accept-Language plus the browser's locale,
+/// time zone and, when asked, the position `navigator.geolocation` reports.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Location {
@@ -58,6 +59,9 @@ pub struct Location {
     /// Preferred languages (BCP 47), most preferred first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub languages: Vec<String>,
+    /// Position the page's `navigator.geolocation` reports for the whole browser context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geolocation: Option<crate::page_op::GeoPosition>,
 }
 
 /// `attributes` format: attribute values of the elements a selector matches.
@@ -646,6 +650,17 @@ pub struct ScrapeOptions {
     /// zero-data-retention runs before any model I/O.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_strategy: Option<ContentStrategySpecV1>,
+    /// Device pixel ratio of the browser page in thousandths (`2000` is 2x); forces the browser
+    /// leg. Absent keeps ratio 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_scale_milli: Option<u32>,
+    /// Native opt-in: block resource types and hosts besides `blockAds` in the browser leg.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_blocking: Option<ResourceBlocking>,
+    /// Native opt-in: fold open shadow roots and readable iframes into the browser leg's
+    /// serialized DOM, with per-frame origin provenance; forces the browser leg.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flatten: Option<crate::page_op::FlattenSpec>,
 }
 
 fn is_zero_u32(n: &u32) -> bool {
@@ -677,6 +692,9 @@ impl ScrapeOptions {
         self.wait_for_ms > 0
             || self.mobile
             || self.profile.is_some()
+            || self.device_scale_milli.is_some()
+            || self.location.as_ref().is_some_and(|l| l.geolocation.is_some())
+            || self.flatten.is_some()
             || self.archive_behavior.is_some()
             || !self.actions.is_empty()
             || self
@@ -757,6 +775,9 @@ impl Default for ScrapeOptions {
             redact_pii: None,
             content_strategy: None,
             profile: None,
+            device_scale_milli: None,
+            resource_blocking: None,
+            flatten: None,
         }
     }
 }
@@ -843,7 +864,14 @@ impl ScrapeOptions {
     pub fn validate(&self) -> Result<(), String> {
         if let Some(reference) = &self.archive_behavior {
             reference.validate().map_err(|error| error.to_string())?;
-            if !self.actions.is_empty() || self.mobile || self.location.is_some() || self.wait_for_ms != 0 {
+            if !self.actions.is_empty()
+                || self.mobile
+                || self.location.is_some()
+                || self.wait_for_ms != 0
+                || self.device_scale_milli.is_some()
+                || self.flatten.is_some()
+                || self.resource_blocking.is_some()
+            {
                 return Err(
                     "archiveBehavior cannot be combined with actions or timing/emulation overrides"
                         .to_owned(),
@@ -947,6 +975,56 @@ impl ScrapeOptions {
                     "contentStrategy: modelV1 processes page markdown and cannot be used with the `rawBase64` format"
                         .to_owned(),
                 );
+            }
+        }
+        if let Some(scale) = self.device_scale_milli {
+            if !(crate::page_op::DEVICE_SCALE_MIN_MILLI..=crate::page_op::DEVICE_SCALE_MAX_MILLI)
+                .contains(&scale)
+            {
+                return Err("deviceScaleFactor must be 0.5..=4".to_owned());
+            }
+        }
+        if let Some(geo) = self.location.as_ref().and_then(|l| l.geolocation) {
+            crate::page_op::GeoPosition::new(geo.latitude_e6, geo.longitude_e6, geo.accuracy_m)
+                .map_err(|member| format!("location.geolocation: {member} is out of range"))?;
+        }
+        if let Some(blocking) = &self.resource_blocking {
+            use crate::page_op::BlockClass;
+            if blocking
+                .resource_types
+                .iter()
+                .any(|class| !matches!(class, BlockClass::Font | BlockClass::Media | BlockClass::Image))
+            {
+                return Err(
+                    "resourceBlocking.resourceTypes: only font, media and image can be blocked".to_owned(),
+                );
+            }
+            if blocking.domains.len() > ResourceBlocking::MAX_DOMAINS {
+                return Err(format!(
+                    "resourceBlocking.domains: at most {} hosts are allowed",
+                    ResourceBlocking::MAX_DOMAINS
+                ));
+            }
+            if blocking
+                .domains
+                .iter()
+                .any(|d| !ResourceBlocking::is_valid_domain(d))
+            {
+                return Err(
+                    "resourceBlocking.domains: hosts must be lower-case names without scheme, port or wildcard"
+                        .to_owned(),
+                );
+            }
+        }
+        if let Some(flatten) = &self.flatten {
+            if !flatten.shadow_dom && !flatten.frames {
+                return Err("flatten: enable shadowDom or frames".to_owned());
+            }
+            if !(1..=crate::page_op::FlattenSpec::MAX_FRAMES_LIMIT).contains(&flatten.max_frames) {
+                return Err(format!(
+                    "flatten: maxFrames must be 1..={}",
+                    crate::page_op::FlattenSpec::MAX_FRAMES_LIMIT
+                ));
             }
         }
         Ok(())
@@ -1227,6 +1305,11 @@ pub struct ScrapeDocument {
     /// `redactPII` ran over the content (billed).
     #[serde(default, skip_serializing_if = "is_false")]
     pub pii_redacted: bool,
+    /// How the page was rendered in a browser: block list version and completeness, requested
+    /// versus measured device, flattened frames. Absent for the HTTP plane and for renders
+    /// that used none of these.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_page: Option<BrowserPageReportV1>,
 }
 
 impl ScrapeDocument {
@@ -1279,6 +1362,7 @@ impl ScrapeDocument {
             transcript: None,
             prompt_injection_checked: false,
             pii_redacted: false,
+            browser_page: None,
         }
     }
 
@@ -1286,6 +1370,116 @@ impl ScrapeDocument {
     #[must_use]
     pub fn from_page_metadata(metadata: &serde_json::Value) -> Option<Self> {
         serde_json::from_value(metadata.get(Self::METADATA_KEY)?.clone()).ok()
+    }
+}
+
+/// The block list of one browser render: which version of the list was installed and how
+/// completely it could be enforced.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockListReportV1 {
+    /// Version of the built-in list the patterns were taken from.
+    pub list_version: String,
+    /// The built-in advertising, measurement and consent hosts were blocked (`blockAds`).
+    pub ads: bool,
+    /// Resource types that were blocked, in a stable order.
+    pub resource_types: Vec<crate::page_op::BlockClass>,
+    /// Hosts the caller named that were blocked.
+    pub custom_domains: u32,
+    /// Patterns installed per browser session.
+    pub patterns_installed: u32,
+    /// Browser sessions (tabs and child frames) the list reached.
+    pub sessions_applied: u32,
+    /// Browser sessions that refused the list.
+    pub sessions_failed: u32,
+    /// `true` when no code of `gaps` applies: every rule was enforced exactly on every session.
+    pub complete: bool,
+    /// Stable codes of what the list could not guarantee: `type_by_url_extension:<class>`
+    /// (a resource type is matched by the URL's extension, so a font or medium served
+    /// without one is not blocked), `first_party_rules_exempt:<n>` (rules for the scraped
+    /// page's own host family were left out), `session_apply_failed`.
+    pub gaps: Vec<String>,
+}
+
+/// What a request asked of the device and what the page measured afterwards.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceReportV1 {
+    /// Requested device pixel ratio in thousandths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_scale_milli: Option<u32>,
+    /// Requested geolocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_geolocation: Option<crate::page_op::GeoPosition>,
+    /// Measured by script in the rendered page; absent when the page would not run the
+    /// measurement script.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measured: Option<crate::page_op::DeviceMeasurement>,
+}
+
+/// Frames and shadow roots folded into the extraction text of a render.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FlattenReportV1 {
+    /// What was asked for.
+    pub spec: crate::page_op::FlattenSpec,
+    /// Origin provenance of every frame met, main document first.
+    pub frames: Vec<crate::page_op::FrameProvenance>,
+    /// Frames beyond the list bound whose markup is not in the text.
+    pub frames_omitted: u32,
+}
+
+/// Browser-plane facts about how a page was rendered, beside the content.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserPageReportV1 {
+    /// Block list and its completeness; absent when nothing was blocked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_list: Option<BlockListReportV1>,
+    /// Requested versus measured device; absent when no device profile was asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<DeviceReportV1>,
+    /// Frame and shadow-root flattening; absent when the text was not flattened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flatten: Option<FlattenReportV1>,
+}
+
+impl BrowserPageReportV1 {
+    /// Is there nothing to report?
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.block_list.is_none() && self.device.is_none() && self.flatten.is_none()
+    }
+}
+
+/// `resourceBlocking`: native opt-in to block resource types and hosts besides `blockAds`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceBlocking {
+    /// Resource types to block ([`crate::page_op::BlockClass::Font`], `Media`, `Image`); other
+    /// classes are not caller-selectable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_types: Vec<crate::page_op::BlockClass>,
+    /// Hosts to block with their subdomains (lower-case, no scheme, port or wildcard).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<String>,
+}
+
+impl ResourceBlocking {
+    /// Most hosts one request may name.
+    pub const MAX_DOMAINS: usize = 64;
+
+    /// Is `host` a blockable host name: lower-case letters, digits, `-` and non-empty `.`
+    /// separated labels, at most 253 bytes, no scheme, port, path or wildcard?
+    #[must_use]
+    pub fn is_valid_domain(host: &str) -> bool {
+        host.len() <= 253
+            && host.split('.').all(|label| {
+                !label.is_empty()
+                    && label
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            })
     }
 }
 

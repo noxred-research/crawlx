@@ -601,6 +601,7 @@ async fn documented_report_kinds_and_query_allowlists_match_runtime_inventory() 
         "class",
         "urlKey",
         "hostKey",
+        "routeKey",
         "event",
         "since",
         "until",

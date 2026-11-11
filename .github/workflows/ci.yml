@@ -457,12 +457,13 @@ jobs:
         with:
           tool: cargo-nextest
       - run: cargo build -q -p crawlx-bench --bin flake-report
-      - name: Browser tests and the lane regression (nextest, one rerun to classify)
+      - name: Browser tests, browser robots obedience and the lane regression (nextest, one rerun to classify)
         env:
           FLAKE_REPORT: target/debug/flake-report
         run: |
           F="$(ci/flake-gate.sh filter)"
-          cargo nextest run --profile ci --no-fail-fast -p crawlx-bench -j 1 -E "($F) & (test(/browser_/) | binary(lane_chromium))"
+          cargo nextest run --profile ci --no-fail-fast -p crawlx-bench -p crawlx-worker -j 1 \
+            -E "($F) & ((package(crawlx-bench) & (test(/browser_/) | binary(lane_chromium))) | (package(crawlx-worker) & binary(browser_robots)))"
       - name: Record the browser flake history
         if: always()
         env:
@@ -677,6 +678,9 @@ jobs:
     # Protocol drift canary: the browser suite and the CDP surface
     # probe against the latest *stable* Chrome for Testing build, not the pin. Nightly and
     # never blocking: a failure here is the early warning that the next pin bump needs work.
+    # The recorded-path replays (`replay_chromium`: crawl a fixture, replay the path to its last
+    # succeeded action) feed the upgrade report as their own suite; a missing or failed log is
+    # `unmeasured` or `fail`, never a pass.
     # The golden-trace comparison (crawlx_bench::golden, fixture g03) runs last and its diff is
     # uploaded as the pin-bump review artifact: a pin may move only with a clean diff or with
     # every reported difference resolved.
@@ -727,6 +731,13 @@ jobs:
           mkdir -p bench/out
           cargo test -p crawlx-browser --test chromium -- --test-threads 1 --nocapture 2>&1 | tee bench/out/chromium-next-browser.log
           cargo test -p crawlx-bench -- browser_ --test-threads 1 --nocapture 2>&1 | tee -a bench/out/chromium-next-browser.log
+      - name: Recorded-path replay against Stable
+        id: replay
+        shell: bash
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p bench/out
+          cargo test -p crawlx-bench --test replay_chromium -- --test-threads 1 --nocapture 2>&1 | tee bench/out/chromium-next-replay.log
       - name: Golden-trace comparison against Stable (pin-bump review artifact)
         id: golden
         shell: bash
@@ -739,6 +750,7 @@ jobs:
         env:
           CDP_OUTCOME: ${{ steps.cdp.outcome }}
           BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          REPLAY_OUTCOME: ${{ steps.replay.outcome }}
           GOLDEN_OUTCOME: ${{ steps.golden.outcome }}
         run: |
           python3 -B ci/chromium-upgrade-report.py

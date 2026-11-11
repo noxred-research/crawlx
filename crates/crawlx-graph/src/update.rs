@@ -79,8 +79,9 @@ pub struct TransitionObservation {
     pub baseline_revealed: Vec<ElementIdentityHash>,
     /// Extra traffic and volatile mutations seen in the settle window.
     pub confounders: Confounders,
-    /// Time from action to settled state, in milliseconds.
-    pub latency_ms: u32,
+    /// Time from action to settled state, in milliseconds; `None` when the caller has no
+    /// reproducible measurement (a wall-clock reading would make edge costs vary run to run).
+    pub latency_ms: Option<u32>,
     /// Execution lane; only [`TrustLane::TrustedUi`] observations become evidence.
     pub lane: TrustLane,
     /// Observation time supplied by the caller; the graph never reads the clock.
@@ -168,7 +169,7 @@ impl EnablementGraph {
         }
         for target in credited {
             let e = self.upsert_mut(ctx.clone(), obs.source, target, obs.now);
-            e.credit(weak, Some(obs.latency_ms), build.as_deref(), obs.now);
+            e.credit(weak, obs.latency_ms, build.as_deref(), obs.now);
             let id = e.id;
             if weak {
                 out.weak.push(id)

@@ -4,11 +4,13 @@
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::config::CrawlMode;
+use crawlx_core::ActionKind;
 use crawlx_core::CreateCrawl;
 use crawlx_fetch::StaticResolver;
 use crawlx_storage::MemoryStore;
 use crawlx_worker::{run_local_with, EgressConfig, LocalRun, Stores, WorkerConfig};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A hub page with a menu that reveals more controls, plus three leaf pages.
 fn app() -> FakeScript {
@@ -51,10 +53,18 @@ async fn once_with_trace(
     seed: u64,
     action_trace: Option<Arc<crawlx_worker::action_trace::ActionTrace>>,
 ) -> (Vec<String>, Vec<(String, String)>) {
+    once_in(app(), seed, action_trace).await
+}
+
+async fn once_in(
+    script: FakeScript,
+    seed: u64,
+    action_trace: Option<Arc<crawlx_worker::action_trace::ActionTrace>>,
+) -> (Vec<String>, Vec<(String, String)>) {
     let dir = tempfile::tempdir().unwrap();
     let backend = Arc::new(
         FakeBackend::builder()
-            .script(app())
+            .script(script)
             .clock(Arc::new(crawlx_core::SystemClock))
             .build(),
     );
@@ -134,4 +144,27 @@ async fn action_evidence_does_not_change_effective_browser_or_journal_trace() {
     let steps = trace.take();
     assert_eq!(steps.len(), recorded.0.len());
     assert!(steps.iter().all(|step| step.step.parameters_digest.is_some()));
+}
+
+/// How long the browser takes to run an action is a timing input: it must never change which
+/// action a seed picks. Every `click` takes 300 ms of the browser's time here; the other run has
+/// no delay. An action's measured duration used to feed the arbiter's utility, so a slow `click`
+/// outweighed the `click` over `keyboard_activate` ranking of the same control and the two
+/// runs diverged at the first leaf-page decision.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn slow_actions_do_not_change_the_action_sequence() {
+    let fast = once_in(app(), 20_261_019, None).await;
+    let slow = once_in(
+        app().action_latency(ActionKind::Click, Duration::from_millis(300)),
+        20_261_019,
+        None,
+    )
+    .await;
+    assert!(
+        fast.0.len() >= 10,
+        "too few actions to mean anything: {:?}",
+        fast.0
+    );
+    assert_eq!(fast.0, slow.0, "slow clicks changed the performed actions");
+    assert_eq!(fast.1, slow.1, "slow clicks changed the journal");
 }

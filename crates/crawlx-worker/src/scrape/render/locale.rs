@@ -170,6 +170,7 @@ pub fn location_emulation(location: &Location) -> Option<Emulation> {
         accept_language: accept_language(&langs),
         locale: langs.first().cloned(),
         timezone: profile.map(|p| p.timezone.to_owned()),
+        geolocation: location.geolocation,
         ..Emulation::default()
     };
     (em != Emulation::default()).then_some(em)
@@ -189,6 +190,7 @@ pub fn emulation_for(options: &ScrapeOptions) -> Option<Emulation> {
         em.mobile = true;
         em.user_agent = Some(MOBILE_USER_AGENT.to_owned());
     }
+    em.device_scale_milli = options.device_scale_milli;
     (em != Emulation::default()).then_some(em)
 }
 
@@ -202,6 +204,7 @@ mod tests {
         Location {
             country: country.map(str::to_owned),
             languages: languages.iter().map(|l| (*l).to_owned()).collect(),
+            ..Location::default()
         }
     }
 

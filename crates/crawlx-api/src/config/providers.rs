@@ -29,7 +29,7 @@ pub const DEFAULT_BRANDING_TIMEOUT_MS: u64 = 5_000;
 
 /// Self-host variables of the reference service that crawlx reads but cannot act on, with the reason (shown by
 /// `crawlx config check` when one is set).
-pub const UNSUPPORTED_ENV: [(&str, &str); 6] = [
+pub const UNSUPPORTED_ENV: [(&str, &str); 10] = [
     (
         "TYPESAFE_API_KEY", // wire-compat: variable name of the reference self-host configuration
         "a hosted classifier API without a self-hostable endpoint; crawlx has no client for it",
@@ -53,6 +53,22 @@ pub const UNSUPPORTED_ENV: [(&str, &str); 6] = [
     (
         "EXTRACTION_PROVIDER_OUTPUT_COST_PER_MTOK",
         "crawlx meters tokens and credits, not currency",
+    ),
+    (
+        "NUM_WORKERS_PER_QUEUE",
+        "unmapped worker count: crawlx sizes a worker by its sessions; set `worker.max_sessions` (CRAWLX_WORKER__MAX_SESSIONS) and start more `crawlx worker` processes for more workers",
+    ),
+    (
+        "MAX_CONCURRENT_JOBS",
+        "unmapped job concurrency: set `worker.max_sessions` (CRAWLX_WORKER__MAX_SESSIONS) for one worker, and `politeness.maxConcurrency` on a crawl request for its own limit",
+    ),
+    (
+        "BROWSER_POOL_SIZE",
+        "unmapped browser pool size: set `worker.max_sessions` (CRAWLX_WORKER__MAX_SESSIONS), the number of browser sessions one worker runs",
+    ),
+    (
+        "CRAWL_CONCURRENT_REQUESTS",
+        "unmapped crawl request concurrency: set `politeness.maxConcurrency` on the crawl request (1..=256)",
     ),
 ];
 
@@ -598,5 +614,15 @@ mod tests {
         let names: Vec<&str> = UNSUPPORTED_ENV.iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"TYPESAFE_API_KEY") && names.contains(&"BRANDING_JEV")); // wire-compat: reference self-host variable names
         assert!(UNSUPPORTED_ENV.iter().all(|(_, why)| !why.is_empty()));
+        for (name, native) in [
+            ("NUM_WORKERS_PER_QUEUE", "worker.max_sessions"),
+            ("MAX_CONCURRENT_JOBS", "worker.max_sessions"),
+            ("MAX_CONCURRENT_JOBS", "politeness.maxConcurrency"),
+            ("BROWSER_POOL_SIZE", "worker.max_sessions"),
+            ("CRAWL_CONCURRENT_REQUESTS", "politeness.maxConcurrency"),
+        ] {
+            let (_, why) = UNSUPPORTED_ENV.iter().find(|(n, _)| *n == name).unwrap();
+            assert!(why.contains(native), "{name} must name `{native}`: {why}");
+        }
     }
 }

@@ -572,6 +572,7 @@ async fn emulate_mobile_sets_viewport_agent_touch_locale_and_zone_for_tabs_and_p
         accept_language: Some("de-DE".to_owned()),
         locale: Some("de-DE".to_owned()),
         timezone: Some("Asia/Tokyo".to_owned()),
+        ..Emulation::default()
     };
     assert_eq!(op(&mut ctx, PageOp::Emulate(phone)).await, PageOpResult::Done);
     goto(&mut ctx, &server, "/phone").await;

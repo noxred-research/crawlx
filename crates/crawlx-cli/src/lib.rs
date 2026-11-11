@@ -21,6 +21,7 @@ pub mod archive;
 mod archive_replay;
 mod authz;
 mod browser_cmd;
+pub mod cache_import;
 pub mod captcha_args;
 mod compat_flag_defaults;
 mod compat_flags;
@@ -159,6 +160,8 @@ pub enum Command {
     DatasetExport(dataset_export::DatasetExportArgs),
     /// Inspect or apply safe bounded exported dataset and KV JSON.
     DatasetImport(dataset_import::DatasetImportArgs),
+    /// Screen an exported response cache for import: tenant, private and credential refusals.
+    CacheImport(cache_import::CacheImportArgs),
     /// Stream CSV or XML URL proposals into an authorized run with a durable loader cursor.
     FeedImport(dataset_feed::FeedImportArgs),
     /// Export, inspect, or import a bounded local WARC/WACZ archive.
@@ -281,6 +284,7 @@ pub async fn execute_with_env(
         Command::Extract(args) => extract::run(args, out).await,
         Command::DatasetExport(args) => dataset_export::run(args, out).await,
         Command::DatasetImport(args) => dataset_import::run(args, out).await,
+        Command::CacheImport(args) => cache_import::run(args, out).await,
         Command::FeedImport(args) => dataset_feed::run(args, out).await,
         Command::Archive(args) => archive::execute(args, out).await,
         Command::SourceImport(args) => migration_inspect::run(args, out).await,

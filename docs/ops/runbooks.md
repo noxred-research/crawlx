@@ -14,6 +14,9 @@ repository; the on-call rota, paging backend and escalation timers are yours to 
 For object-store configuration, supported profiles and deployment checks, see
 [object storage](object-storage.md) before diagnosing an outage or changing a backend.
 
+For the model's calibration drift monitor and its alert, see
+[model calibration](model-calibration.md).
+
 ## Severity scale
 
 The cards suggest a severity. Adapt the response targets to your organization.
@@ -46,7 +49,7 @@ The cards suggest a severity. Adapt the response targets to your organization.
 | `crawlx admin durability-audit [--since <rfc3339>] [--json]` | accepted-job audit against `crawl_runs`; exit 1 when any accepted run is missing |
 | `crawlx admin safety-audit --reader-database-url <reader-dsn> --pause-database-url <pause-dsn> [--json]` | independent cross-tenant action-safety audit; automatically pauses violating runs; exit 1 on violations, 0 when clean; errors propagate |
 | `crawlx admin engine --tenant <id> [--set crawlx\|upstream\|shadow]` | show or set the compat engine flag |
-| `crawlx admin audit-export --tenant <id>\|--all [--day <date>]` | write the daily Merkle root of the audit chain |
+| `crawlx admin audit-export --tenant <id>\|--all [--day <date>] [--s3-bucket <b>]` | write the daily Merkle root of the audit chain ([scheduled export](#audit-export)) |
 | `crawlx inspect trail <run-id>` | trail verifier: checks the journal, safety-decision and trust-lane invariants of a run, exit 1 on violations; `inspect actions <run-id> --status unknown` lists rows |
 | `crawlx healthcheck --url <url>` | exit 0 for a 2xx answer; `/v0/health/readiness` proves storage answers |
 | `crawlx config check` | validate `crawlx.toml` and `CRAWLX_*` before rolling a configuration |
@@ -114,6 +117,30 @@ The [Kubernetes deployment guide](../../deploy/k8s/README.md#independent-safety-
 one-minute CronJob, independent credential secrets, and PostgreSQL-only service egress (plus DNS).
 The schedule uses the API CLI image, not a browser worker. It does not export process-local metrics;
 route failed Jobs and preserved JSON to paging rather than assuming Prometheus scraped the counter.
+### Audit export
+
+`crawlx admin audit-export --all --s3-bucket <bucket>` writes the Merkle root of each tenant's
+`audit_events` chain for the UTC day that just completed to `audit/{tenant}/{yyyy-mm-dd}.json`.
+Run it every day against an **object-lock (WORM) bucket** ([object storage](object-storage.md);
+the `edge` profile has no object lock) so an exported root cannot be replaced afterwards.
+The chart renders the schedule as the `auditExport` CronJob (off by default) and
+[`deploy/k8s/audit-export-cronjob.yaml`](../../deploy/k8s/audit-export-cronjob.yaml) is the plain
+manifest; both set `CRAWLX_S3_OBJECT_LOCK=1`, read the database URL from a mounted secret file and the
+object-store credentials from a Secret, and mount no other secret.
+
+- **Credentials.** The export needs a dedicated database login that can read `audit_events` across tenants
+  and nothing else. Never give it the migration (DDL), owner, worker, request or safety-auditor login:
+  the chart refuses to render when `auditExport.databaseSecret` names one of those Secrets. The
+  object-store key pair needs write access to the `audit/` prefix of the audit bucket only.
+- **Failure.** The Job does not retry: a bucket under object lock refuses a replacement object, so a
+  rerun of a half-finished day fails on the tenants already written. Read the failed Job's log, then
+  repeat the missing tenants by hand: `crawlx admin audit-export --tenant <id> --day <yyyy-mm-dd>
+  --s3-bucket <bucket>`. A failed or missing Job is a gap in the evidence chain: page on it like any
+  other control that did not run.
+- **Retention.** The bucket's lifecycle rules never expire `audit/`
+  ([lifecycle rules](object-storage.md#lifecycle-rules)); the retention period of the exports is the
+  object-lock period you set on the bucket.
+
 <a id="rollback-toolbox"></a>
 
 **Rollback toolbox** (cards name these):
@@ -555,7 +582,7 @@ duplicated writes, metadata corruption.
 | Asset | Backup | Targets |
 |---|---|---|
 | PostgreSQL | Continuous WAL archiving plus daily base backups, verified by automated restores | RPO 5 minutes, RTO 60 minutes (suggested) |
-| Object store | Versioning enabled; optional cross-region replication; lifecycle expiry aligned with retention | Per provider |
+| Object store | Versioning enabled; optional cross-region replication; lifecycle expiry aligned with retention ([rule template](object-storage.md#lifecycle-rules)) | Per provider |
 | Secrets and keys | Provider-managed with documented recovery (the artifact key file or KMS key must survive: sealed artifacts are unreadable without it) | |
 | Configuration, pin file, dashboards | Version control | |
 
@@ -608,7 +635,7 @@ migration role; it is idempotent. The Helm chart runs `crawlx config check` befo
 
 ## Alert cards
 
-One card for each of the 32 rules, in file order.
+One card for each of the 33 rules, in file order.
 
 ## 1. CrawlxApiAvailabilityFastBurn
 
@@ -1004,3 +1031,19 @@ One card for each of the 32 rules, in file order.
 
 - **Then.** [RB-01](#rb-01) at fleet level: scope (one crawl, one tenant, all), the lease and the current action state, browser and CDP health, the frontier (backoff and politeness waits are not stalls), journal halts. [RB-04](#rb-04) for leases and [RB-07](#rb-07) for the database. **STOP** if any action is `unknown`: finish [RB-02](#rb-02) first.
 - **Rollback.** R-ADMISSION if admission was left `drain` or `frozen`; R-APP or R-CHROMIUM when a rollout preceded it.
+
+## 33. CrawlxModelCalibrationDrift
+
+**SEV-3, ticket.** The rolling-window ECE of a System 1 model stayed above 0.05 for 15 min, over a window of at least 200 graded outcomes.
+
+- **Symptom.** None acute: the model's stated confidence no longer matches how often it is right, so the gate accepts or abstains on a wrong basis. The deterministic ranking is unaffected.
+- **Dashboards.** Query `crawlx_model_calibration_ece`, `crawlx_model_calibration_samples` and `crawlx_model_abstention_rate` by `provider` and `model`.
+- **First commands.**
+
+  ```promql
+  max by (provider, model) (crawlx_model_calibration_ece) > 0.05
+  max by (provider, model) (crawlx_model_calibration_samples)
+  ```
+
+- **Then.** Compare the model's calibration version with the one it was released with, and refit on fresh held-out logits; if no fit passes the release gate, set `dynamic.system1Mode` to `shadow` or `off` for that model. The steps are in [model calibration](model-calibration.md#response).
+- **Rollback.** R-CFG (`dynamic.system1Mode`) when the model is switched off.

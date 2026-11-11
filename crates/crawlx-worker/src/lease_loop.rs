@@ -182,6 +182,7 @@ async fn acquisition_manifest_inner(
         launch.profiles_dir = None;
         launch.egress_proxy_port = None;
         launch.auto_download_chromium = false;
+        let launch_profile = launch.launch_profile;
         let observed = tokio::select! {
             biased;
             () = cancel.cancelled() => None,
@@ -190,10 +191,15 @@ async fn acquisition_manifest_inner(
         match observed {
             Some(browser) => {
                 let build = browser.build_info().clone();
+                let device_matrix = probe_device_matrix(&browser, launch_profile, &build).await;
                 match tokio::time::timeout(Duration::from_secs(10), browser.shutdown_confirmed()).await {
                     Ok(Ok(())) => {
                         let mut capability = BackendCapabilitiesV1::native_browser(build);
                         capability.limitations.push("startup_probe_build_only".to_owned());
+                        if device_matrix.is_none() {
+                            capability.limitations.push("device_matrix_unmeasured".to_owned());
+                        }
+                        capability.device_matrix = device_matrix;
                         capability
                     }
                     _ => BackendCapabilitiesV1::native_browser_unavailable("probe_shutdown_unconfirmed"),
@@ -216,6 +222,33 @@ async fn acquisition_manifest_inner(
         capabilities.push(service);
     }
     Ok(capabilities)
+}
+
+/// Measure the emulated-device matrix on the startup probe's own browser, in a throwaway
+/// context. `None` when the browser does not answer within the bound: the worker then reports
+/// no matrix rather than a partial one.
+async fn probe_device_matrix(
+    browser: &crawlx_browser::ChromiumBackend,
+    launch_profile: crawlx_core::LaunchProfile,
+    build: &crawlx_core::observation::BrowserBuildInfo,
+) -> Option<crawlx_core::page_op::DeviceMatrixV1> {
+    use crawlx_core::browser::BrowserContext as _;
+    let mut config = crawlx_core::ContextConfig::new(crawlx_core::SessionId::new());
+    config.launch_profile = launch_profile;
+    let measure = async {
+        let context = browser.new_cdp_context(config).await.ok()?;
+        let matrix = context
+            .measure_device_matrix(&build.chromium_version, build.pinned)
+            .await
+            .ok();
+        // A context that cannot close is still reaped with the probe browser.
+        let _ = Box::new(context).close().await;
+        matrix
+    };
+    tokio::time::timeout(Duration::from_secs(15), measure)
+        .await
+        .ok()
+        .flatten()
 }
 
 /// [`run`] over explicit stores, backend and cancellation (tests).
@@ -1096,5 +1129,57 @@ mod tests {
             "down".into()
         ))));
         assert!(!admission_lease_lost(&WorkerError::Config("bad".into())));
+    }
+
+    /// The startup probe measures the device matrix on its own browser and publishes it with
+    /// the browser capability, so the capabilities endpoint can count the worker as measured.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_startup_probe_publishes_a_coherent_device_matrix_for_the_browser_backend() {
+        let Some(executable) = crawlx_browser::launch::find_executable() else {
+            eprintln!("SKIP: no Chromium executable found (set CRAWLX_CHROMIUM_PATH)");
+            return;
+        };
+        let mut cfg = WorkerConfig::default();
+        cfg.launch.executable = executable;
+        cfg.launch.allow_unpinned = true;
+        cfg.protocol_registry = Some(Arc::new(crate::protocol::ProtocolRegistry::default()));
+        let mut manifest = acquisition_manifest(&cfg, None, &CancellationToken::new())
+            .await
+            .unwrap();
+        if !manifest
+            .iter()
+            .any(|backend| backend.backend_id == "native_browser" && backend.available)
+        {
+            eprintln!("warning: probe launch failed; retrying once with --no-sandbox (CI containers only)");
+            cfg.launch.unsafe_no_sandbox_for_ci = true;
+            manifest = acquisition_manifest(&cfg, None, &CancellationToken::new())
+                .await
+                .unwrap();
+        }
+        let browser = manifest
+            .iter()
+            .find(|backend| backend.backend_id == "native_browser")
+            .unwrap();
+        assert!(browser.available, "{:?}", browser.limitations);
+        let matrix = browser
+            .device_matrix
+            .as_ref()
+            .expect("the probe measured a matrix");
+        assert!(matrix.coherent(), "{matrix:#?}");
+        assert_eq!(
+            matrix.entries.len(),
+            crawlx_core::page_op::DevicePreset::ALL.len()
+        );
+        assert_eq!(
+            matrix.build.chromium_version,
+            browser.browser.as_ref().unwrap().chromium_version
+        );
+        assert!(!matrix.stealth_claim);
+        assert!(!browser
+            .limitations
+            .iter()
+            .any(|l| l == "device_matrix_unmeasured"));
+        // what the registry accepts and the capabilities endpoint counts
+        browser.validate_evidence().unwrap();
     }
 }

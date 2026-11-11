@@ -415,6 +415,8 @@ struct RenderExtras {
     actions: ActionOutputs,
     /// What `getComputedStyle` reported (requested with the `branding` format).
     computed: Option<ComputedStyles>,
+    /// Block list, device and flatten facts of the render.
+    browser_page: Option<crawlx_core::scrape::BrowserPageReportV1>,
 }
 
 /// Does a run need the production browser renderer: a scrape job that renders and no renderer
@@ -1309,6 +1311,7 @@ impl ScrapeEngine {
         );
         doc.outputs = composed.outputs.take();
         doc.proxy_used = acq.proxy_used;
+        doc.browser_page = acq.render.as_ref().and_then(|render| render.browser_page.clone());
         doc.content_type.clone_from(&acq.content_type);
         if status >= 400
             && self.fetch_options.declaration.statuses.verdict(status) != crawlx_fetch::StatusVerdict::Allow
@@ -1939,6 +1942,10 @@ impl ScrapeEngine {
                     screenshot: rendered.screenshot,
                     actions: rendered.actions,
                     computed: rendered.computed_styles,
+                    browser_page: rendered
+                        .evidence
+                        .as_ref()
+                        .and_then(|evidence| evidence.browser_page.clone()),
                 }),
                 metadata,
                 document,
@@ -2279,6 +2286,10 @@ impl ScrapeEngine {
                         screenshot: rendered.screenshot,
                         actions: rendered.actions,
                         computed: rendered.computed_styles,
+                        browser_page: rendered
+                            .evidence
+                            .as_ref()
+                            .and_then(|evidence| evidence.browser_page.clone()),
                     }),
                     metadata,
                     document,

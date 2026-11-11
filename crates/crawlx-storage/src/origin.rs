@@ -17,7 +17,7 @@ use crate::store::Store;
 use crate::Pg;
 use async_trait::async_trait;
 use crawlx_core::hash::Digest;
-use crawlx_core::origin::{OriginAdmission, OriginPermit};
+use crawlx_core::origin::{is_physical_address_key, OriginAdmission, OriginPermit};
 use crawlx_core::{CrawlRunId, StoreError};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Executor, PgPool, Postgres, Transaction};
@@ -217,7 +217,8 @@ impl OriginAdmission for PgOriginAdmission {
         connection.close_on_drop();
         let mut tx = Transaction::begin(connection, None).await.map_err(db)?;
         let origin_digest = Digest::of("crawlx/origin-admission/origin/v1", origin.as_bytes());
-        if let Some((run, run_limit)) = self.run {
+        // A physical address is deployment capacity only: no run row, run slot or run limit.
+        if let Some((run, run_limit)) = self.run.filter(|_| !is_physical_address_key(origin)) {
             let run_limit = conv(run_limit, "run origin concurrency")?;
             let ticket = self.run_ticket(run, origin, run_limit).await?;
             let run_digest = Digest::keyed(
@@ -823,7 +824,8 @@ impl OriginAdmission for MariaOriginAdmission {
         connection.close_on_drop();
         let mut tx = Transaction::begin(connection, None).await.map_err(db)?;
         let origin_digest = Digest::of("crawlx/origin-admission/origin/v1", origin.as_bytes());
-        if let Some((run, run_limit)) = self.run {
+        // A physical address is deployment capacity only: no run row, run slot or run limit.
+        if let Some((run, run_limit)) = self.run.filter(|_| !is_physical_address_key(origin)) {
             let run_limit: i64 = conv(run_limit, "run origin concurrency")?;
             let mut meta = self.metadata_tx().await?;
             let ticket = run_ticket::<MariaBackend>(meta.conn(), run, origin, run_limit).await?;
@@ -968,7 +970,8 @@ impl OriginAdmission for SqliteOriginAdmission {
     async fn reserve(&self, origin: &str) -> Result<Box<dyn OriginPermit>, StoreError> {
         let limit: i64 = conv(self.limit, "origin concurrency")?;
         let mut held = Vec::new();
-        if let Some((run, run_limit)) = self.run {
+        // A physical address is deployment capacity only: no run row, run slot or run limit.
+        if let Some((run, run_limit)) = self.run.filter(|_| !is_physical_address_key(origin)) {
             let mut tx = self.store.begin_write().await?;
             run_ticket::<SqliteBackend>(tx.conn(), run, origin, conv(run_limit, "run origin concurrency")?)
                 .await?;

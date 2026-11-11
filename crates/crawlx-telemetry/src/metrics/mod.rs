@@ -100,6 +100,13 @@ impl Family {
         let key = self.normalize(labels).ok()?;
         self.series.lock().get(&key).cloned()
     }
+
+    /// Forget one series; a reader no longer sees its last value.
+    fn remove(&self, labels: &[(&str, &str)]) {
+        if let Ok(key) = self.normalize(labels) {
+            self.series.lock().remove(&key);
+        }
+    }
 }
 
 /// Shared handle plumbing: the target family plus the registry's rejection counter.
@@ -131,6 +138,12 @@ impl Target {
 
     fn read(&self, labels: &[(&str, &str)]) -> Option<Series> {
         self.family.as_ref().ok().and_then(|f| f.read(labels))
+    }
+
+    fn remove(&self, labels: &[(&str, &str)]) {
+        if let Ok(fam) = &self.family {
+            fam.remove(labels);
+        }
     }
 }
 
@@ -193,6 +206,12 @@ impl Gauge {
             Some(Series::Gauge(g)) => Some(g),
             _ => None,
         }
+    }
+
+    /// Retire the series identified by `labels`: it stops being exported instead of keeping a
+    /// value that no longer describes anything. Writing it again recreates it.
+    pub fn remove(&self, labels: &[(&str, &str)]) {
+        self.0.remove(labels);
     }
 }
 
@@ -408,6 +427,23 @@ mod tests {
         g.add(-1.0, &[("profile", "standard")]);
         assert_eq!(g.get(&[("profile", "standard")]), Some(2.0));
         assert_eq!(g.get(&[("profile", "stealth")]), None);
+    }
+
+    #[test]
+    fn retired_gauge_series_is_no_longer_exported() {
+        let m = Metrics::new();
+        let g = m.gauge("crawlx.sessions.by_launch_profile");
+        g.set(1.0, &[("profile", "standard")]);
+        g.set(2.0, &[("profile", "stealth")]);
+        g.remove(&[("profile", "standard")]);
+        g.remove(&[("profile", "never-written")]);
+        assert_eq!(g.get(&[("profile", "standard")]), None);
+        assert_eq!(g.get(&[("profile", "stealth")]), Some(2.0));
+        let text = m.render_prometheus();
+        assert!(!text.contains("profile=\"standard\""), "{text}");
+        assert!(text.contains("profile=\"stealth\""), "{text}");
+        g.set(5.0, &[("profile", "standard")]);
+        assert_eq!(g.get(&[("profile", "standard")]), Some(5.0));
     }
 
     #[test]

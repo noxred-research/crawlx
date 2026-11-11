@@ -5,6 +5,15 @@
 //! resolved to absolute URLs and dropped when the scheme is not a safe link
 //! scheme. Event handlers, `style` and `class` (except on `pre`/`code`) are
 //! never emitted.
+//!
+//! The browser plane's flattening serialization folds open shadow roots and readable iframes into
+//! the text as `<crawlx-shadow data-crawlx-mode="open">` and
+//! `<crawlx-frame data-crawlx-frame data-crawlx-origin data-crawlx-status>` elements. Those two
+//! elements keep exactly those attributes, and only in their validated forms (an ordinal, a
+//! bare web origin, a fixed status, the mode `open`); the browser serializer unwraps any element
+//! of these names the page wrote itself, so on a flattened render the markers come from the
+//! browser and the provenance list stored with the result explains each ordinal. On any other
+//! plane the elements are page content like any other.
 
 use url::Url;
 
@@ -41,6 +50,50 @@ fn attr(out: &mut String, name: &str, value: &str) {
     out.push_str("=\"");
     escape_attr(value, out);
     out.push('"');
+}
+
+/// A frame ordinal: one to three ASCII digits.
+fn is_frame_ordinal(v: &str) -> bool {
+    (1..=3).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// A web origin: `http` or `https`, a host (DNS name, IPv4 or bracketed IPv6) and an optional
+/// port, without userinfo, path, query or fragment; or the opaque origin `null`.
+fn is_frame_origin(v: &str) -> bool {
+    if v == "null" {
+        return true;
+    }
+    let Some(rest) = v.strip_prefix("https://").or_else(|| v.strip_prefix("http://")) else {
+        return false;
+    };
+    let host = match rest.rsplit_once(':') {
+        Some((host, port)) if (1..=5).contains(&port.len()) && port.bytes().all(|b| b.is_ascii_digit()) => {
+            host
+        }
+        _ => rest,
+    };
+    if host.is_empty() || host.len() > 255 {
+        return false;
+    }
+    match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        Some(v6) => {
+            !v6.is_empty()
+                && v6
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.')
+        }
+        None => host
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.'),
+    }
+}
+
+/// A frame status the flattening serialization writes.
+fn is_frame_status(v: &str) -> bool {
+    matches!(
+        v,
+        "flattened" | "cross_origin" | "depth_limit" | "frame_limit" | "unavailable"
+    )
 }
 
 fn url_attr(e: &Elem, name: &str, base: &Url, out: &mut String) {
@@ -94,6 +147,24 @@ fn open_tag(e: &Elem, base: &Url, keep_data_images: bool, out: &mut String) {
             }
         }
         "blockquote" | "q" => url_attr(e, "cite", base, out),
+        "crawlx-frame" => {
+            // Written by the browser's flattening serialization; only the validated forms of
+            // its three attributes survive, never anything else a page put on the element.
+            for (name, valid) in [
+                ("data-crawlx-frame", is_frame_ordinal as fn(&str) -> bool),
+                ("data-crawlx-origin", is_frame_origin),
+                ("data-crawlx-status", is_frame_status),
+            ] {
+                if let Some(v) = e.attr(name).filter(|v| valid(v)) {
+                    attr(out, name, v);
+                }
+            }
+        }
+        "crawlx-shadow" => {
+            if let Some(v) = e.attr("data-crawlx-mode").filter(|v| *v == "open") {
+                attr(out, "data-crawlx-mode", v);
+            }
+        }
         _ => {}
     }
     out.push('>');

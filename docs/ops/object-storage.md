@@ -160,6 +160,39 @@ Audit export on an object-lock bucket (any profile except `edge`):
 CRAWLX_S3_OBJECT_LOCK=1
 ```
 
+## Lifecycle rules
+
+The sweeper (`crawlx admin sweep-retention`) is the authority on retention: it deletes an artifact
+when its run's retention ends and the database says so. The bucket's own expiry rules are a
+**backstop** for objects the sweeper could not reach (a long outage, a lost database row), so each
+rule expires later than the longest retention its prefix can legally carry. The repository ships a
+rule template, [`deploy/object-store/lifecycle.json`](../../deploy/object-store/lifecycle.json), in
+the standard S3 lifecycle-configuration shape:
+
+| Prefix | Backstop expiry | Why |
+|---|---|---|
+| `credential_bearing/` | 2 days | stored for at most one day |
+| `zdr/` | 2 days | zero-retention delivery files live one hour |
+| `content/` | 400 days | `extended` retention is at most 365 days |
+| `sensitive/` | 400 days | same bound |
+| `_index/` | 400 days | index records follow their artifact |
+
+Two prefixes have **no rule on purpose**. `metadata/` lives until the run is purged, so only the
+database knows when it may go. `audit/` holds the daily Merkle exports of the audit chain: the
+bucket under object lock owns their retention, the artifact orphan collector never touches the
+prefix, and an expiry rule there would delete the evidence the export exists to preserve. Never
+add a rule whose filter is empty (whole bucket) or that covers `audit/`.
+
+Apply the template to the artifact bucket with your service's lifecycle command (it is the
+rule document, not a deployment step CrawlX performs). The audit bucket is a separate,
+object-lock bucket and takes no lifecycle template; if you must share one bucket, apply the
+template there too, and the `audit/` prefix stays exempt. Applying the rules to a real bucket is
+an operator action and is not verified by CrawlX's tests; the repository test checks the template.
+
+The daily audit export itself is a scheduled job: the Helm chart renders it from the
+`auditExport` values and `deploy/k8s/audit-export-cronjob.yaml` is the plain manifest
+([audit export](runbooks.md#audit-export)).
+
 ## Verification
 
 `cargo test -p crawlx-storage --test s3 --test s3_profiles` runs the profile parsing,

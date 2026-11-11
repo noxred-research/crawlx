@@ -8,6 +8,82 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added: write requests with retained bodies
+
+Native request append now accepts admitted `POST`, `PUT`, `PATCH` and `DELETE` requests with
+retained bodies (text, JSON or base64, up to 1 MiB). Bodies are credential-bearing artifacts
+referenced by a tenant-keyed digest; request identity covers method, body, media type and
+principal. The worker decides each write with the safety profile, `safety.destructiveActions`
+and the authorization record (`read_only` refuses `write_read_only`; reviewer approval is
+carried per request and accepted only from a key with `approvals:decide`), journals a
+`request.write_intent` event before sending, charges one non-refundable effect against
+`attempts.maxTotalEffects`, and sends exactly once: no retry, no redirect, no replay. A row an
+earlier holder journaled is never re-sent after a crash and ends `write_outcome_unknown`;
+missing or altered bodies refuse.
+
+### Added: archive wire facts and completion callbacks
+
+Archives record the observed protocol (for example h2), the true response status and the TLS
+facts of the request's own connection. Natively fetched pages get a separate normalized HTTP
+response record, labelled as not original wire bytes. Journal events get separate
+request-header and protocol records with credential headers dropped. The fetch plane can export
+the observed leaf certificate (capped DER and PEM) from the request's own connection, with no
+extra socket. The archive completion callback references only a committed export, by package
+hash and size, and is idempotent on retry. `crawlx archive remove`, `cancel` and `commit` map
+each failure to a distinct exit code: 20 not found, 21 expired, 22 still recording, 23 export
+failed, 24 already committed, 25 dependents present, 26 receipt unavailable.
+
+### Added: browser page options and a measured device matrix
+
+Browser renders accept `deviceScaleFactor`, `location.geolocation`, `resourceBlocking`
+(font, media and image types and named hosts) and `flatten` (open shadow roots and readable
+iframes folded into the extraction text with per-frame origin provenance; the live DOM and
+action identity are untouched). Results carry `browserPage` metadata: block-list version and
+completeness (with gap codes), requested versus measured device pixel ratio and geolocation,
+and frame provenance. The worker's startup probe measures a desktop, phone and tablet device
+matrix on its own browser build and publishes it with its browser capability
+(`backends[].deviceMatrix`). The capabilities endpoint reports the device preset catalogue and
+how many fresh workers measured the matrix and found it coherent. The matrix makes no stealth
+claim.
+
+### Added: report route keys, calibration drift monitor and IP admission
+
+Report facts now carry an opaque route key, and a failed attempt records a redacted,
+retention-bounded failure snapshot (stage, reason code, status, bounded detail). The repository
+stamps the route from the request. Per-route counters are read from committed rows, and the
+report APIs gain a `routeKey` filter. Adds migration 0092 for all three engines. A new
+rolling-window calibration drift monitor for decision models publishes the gauges
+`crawlx.model.calibration.ece`, `crawlx.model.calibration.samples` and
+`crawlx.model.abstention.rate`, and the alert `CrawlxModelCalibrationDrift` (ECE above 0.05 for
+15 minutes); see `docs/ops/model-calibration.md`. Deployment origin admission now also charges
+one slot per checked physical IP (`ip:` key), so host aliases of one address cannot exceed the
+cap across workers.
+
+### Added: operator tooling, CI coverage and importers
+
+`crawlx config check` lists `NUM_WORKERS_PER_QUEUE`, `MAX_CONCURRENT_JOBS`,
+`BROWSER_POOL_SIZE` and `CRAWL_CONCURRENT_REQUESTS` as unmapped, naming `worker.max_sessions`
+and `politeness.maxConcurrency`. The Helm chart and `deploy/k8s` gain a daily audit-export
+CronJob (object-lock bucket, dedicated database login), and `deploy/object-store/lifecycle.json`
+adds per-prefix expiry with `audit/` exempt. CI runs `browser_robots` in the blocking Chromium
+job; the next-Chromium job and the upgrade report include the `replay_chromium` suite, and a
+missing or failed log reports unmeasured or fail. Importers: a struct-tag manifest translates
+to a versioned item loader and an unsupported type blocks conversion;
+`crawlx cache-import inspect` screens an exported response cache, and screened entries can be
+stored as pages of a retaining run of the same tenant. The output DSL condition language has
+44 pure, bounded functions checked against a pinned reference; a function it lacks is refused
+at parse time with its byte position and reason.
+
+### Fixed: same-seed action sequence depended on measured action latency
+
+`same_seed_same_action_sequence` failed on a loaded host. The driver fed each action's
+wall-clock duration into the ledger's per-kind latency average (the arbiter's `latency_cost`
+utility term) and into the enablement graph's edge latency (path cost). A slow `click` could
+outweigh the `click` over `keyboard_activate` ranking of the same control, so two runs with one
+seed performed different actions. The utility function no longer has a latency term, the
+exploration driver records no live latency on graph edges, and `ActionOutcome` no longer
+carries a latency. The `crawlx-graph` `TransitionObservation::latency_ms` is now optional.
+
 ### Fixed: terminal feed custody, cancelled-run admission and TEI validation deadline
 
 Terminal feed batches are sealed artifacts that are written after the last session or URL

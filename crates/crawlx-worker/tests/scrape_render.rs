@@ -250,7 +250,7 @@ impl BrowserContext for OpsContext {
                 self.ops.emulations.lock().push(em);
                 Ok(PageOpResult::Done)
             }
-            PageOp::BlockUrls(_) => self.inner.page_op(op).await,
+            PageOp::BlockUrls(_) | PageOp::BlockResources(_) => self.inner.page_op(op).await,
             PageOp::DocumentResponse => Ok(PageOpResult::Response {
                 status: Some(200),
                 headers: vec![("content-type".to_owned(), "text/html".to_owned())],
@@ -299,7 +299,9 @@ impl BrowserContext for OpsContext {
             | PageOp::RestoreVirtualRows
             | PageOp::Capture(_)
             | PageOp::Download(_)
-            | PageOp::CaptureProjection) => self.inner.page_op(other).await,
+            | PageOp::CaptureProjection
+            | PageOp::FlattenedHtml(_)
+            | PageOp::MeasureDevice { .. }) => self.inner.page_op(other).await,
         }
     }
 }
@@ -724,7 +726,7 @@ async fn emulation_and_blocking_are_applied_before_the_navigation() {
         ops.log(),
         [
             "page_op:emulate",
-            "page_op:block_urls",
+            "page_op:block_resources",
             "navigate:https://example.test/",
             "page_op:document_response",
             "page_op:html"

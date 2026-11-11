@@ -181,8 +181,6 @@ pub struct ActionOutcome {
     /// never loaded them, so the action did not take effect. The action's status is `Failed`
     /// with an `error` starting `robots_blocked:`; the outcome is known, never `unknown`.
     pub robots_blocked: Vec<BlockedNavigation>,
-    /// Latency ms.
-    pub latency_ms: u64,
 }
 
 impl ActionOutcome {
@@ -198,7 +196,6 @@ impl ActionOutcome {
             live: None,
             error: None,
             robots_blocked: Vec::new(),
-            latency_ms: 0,
         }
     }
 }
@@ -3379,7 +3376,6 @@ impl SessionActor {
             live: None,
             error,
             robots_blocked,
-            latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         })
     }
 

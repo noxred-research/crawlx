@@ -179,10 +179,18 @@ async fn worker_request(
     assert_eq!(receipt["connection"]["peerChecked"], true);
     assert_eq!(receipt["connection"]["proxyRoute"], "direct");
     assert_eq!(receipt["connection"]["tlsVerification"], "explicit_insecure");
-    assert_eq!(receipt["connection"]["certificateObserved"], false);
+    // The leaf the server presented is read from the request's own connection; observation is
+    // not verification, and the receipt says verification was explicitly skipped.
+    assert_eq!(receipt["connection"]["certificateObserved"], true);
+    let certificate = &receipt["connection"]["certificate"];
+    assert_eq!(
+        certificate["sha256"],
+        "1bb0682e7256efceefe2d64c65a6af436cfcc6431d967774f1048d71e043d947"
+    );
+    assert_eq!(certificate["selfIssued"], true);
     assert!(receipt["backend"]["browser"].is_null());
     assert!(receipt["backend"]["buildDigest"].is_null());
-    assert!(receipt["backend"]["limitations"]
+    assert!(!receipt["backend"]["limitations"]
         .as_array()
         .unwrap()
         .iter()

@@ -8,15 +8,20 @@ use crawlx_core::config::{Dynamic, LlmPlannerMode, StrategyName, System1Mode};
 use crawlx_core::repo::{ModelDecisionKind, ModelDecisionRecord, SafetyContext, SafetyGate};
 use crawlx_core::secret::SecretOr;
 use crawlx_core::{CrawlRunId, Timestamp};
+use crawlx_model::calibration::{DriftMonitor, DriftReading};
 use crawlx_model::decision_http::{DecisionHttpConfig, DecisionHttpEngine};
 use crawlx_model::llm::PlannerClient;
-use crawlx_model::{DecisionEngine, G3Token, HttpPlanner, HttpPlannerConfig, MockEngine, ModelId};
+use crawlx_model::{
+    DecisionEngine, G3Token, HttpPlanner, HttpPlannerConfig, MockEngine, ModelError, ModelId,
+};
 use crawlx_strategies::{
     Gates, LlmPlanner, LlmPlannerConfig, Strategy, System1, System1Config, System1Record,
 };
 use crawlx_telemetry::metrics::names;
 use crawlx_telemetry::Metrics;
-use std::sync::Arc;
+use parking_lot::Mutex;
+use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -440,6 +445,86 @@ pub fn decision_record(run: CrawlRunId, rec: &System1Record, at: Timestamp) -> M
     }
 }
 
+/// Rolling calibration windows of the System 1 models in this process, one per provider and
+/// model. A model whose calibration version changes starts a fresh window: a new fit is judged on
+/// its own outcomes, not on the previous fit's.
+static CALIBRATION: LazyLock<Mutex<CalibrationWindows>> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// Calibration windows keyed by `(provider, model)`, each with the calibration version it
+/// belongs to.
+type CalibrationWindows = BTreeMap<(String, String), (String, DriftMonitor)>;
+
+/// Run `f` on the model's window; the reading afterwards and whether the window was just reset.
+fn with_window<R>(model: &ModelId, f: impl FnOnce(&mut DriftMonitor) -> R) -> (R, DriftReading, bool) {
+    let mut windows = CALIBRATION.lock();
+    let slot = windows
+        .entry((model.provider.clone(), model.model.clone()))
+        .or_insert_with(|| (model.calibration_version.clone(), DriftMonitor::default()));
+    let reset = slot.0 != model.calibration_version;
+    if reset {
+        *slot = (model.calibration_version.clone(), DriftMonitor::default());
+    }
+    let out = f(&mut slot.1);
+    (out, slot.1.reading(), reset)
+}
+
+/// Publish a window: the ECE gauge exists only while the window is mature, so a young or reset
+/// window never reports (or keeps reporting) a number it cannot back.
+fn publish_calibration(model: &ModelId, reading: &DriftReading, reset: bool) {
+    let labels = [
+        ("provider", model.provider.as_str()),
+        ("model", model.model.as_str()),
+    ];
+    let m = Metrics::global();
+    if reset {
+        m.gauge(names::MODEL_CALIBRATION_ECE).remove(&labels);
+    }
+    m.gauge(names::MODEL_CALIBRATION_SAMPLES)
+        .set(u32::try_from(reading.graded).map_or(f64::MAX, f64::from), &labels);
+    if let Some(ece) = reading.ece {
+        m.gauge(names::MODEL_CALIBRATION_ECE).set(ece, &labels);
+    }
+    if let Some(rate) = reading.abstention_rate {
+        m.gauge(names::MODEL_ABSTENTION_RATE).set(rate, &labels);
+    }
+}
+
+/// Record one graded outcome of a model decision: the calibrated probability of the option the
+/// model ranked first and whether that option turned out right. The outcome enters the model's
+/// rolling window, and `crawlx.model.calibration.ece` follows once the window is mature (a window
+/// above the 0.05 release ceiling raises `CrawlxModelCalibrationDrift`).
+///
+/// Only an outcome that was actually observed belongs here; agreement with the deterministic
+/// leader is not an outcome.
+///
+/// # Errors
+/// [`ModelError::Calibration`] for a confidence that is not a probability; nothing is recorded.
+pub fn record_calibration_outcome(
+    model: &ModelId,
+    confidence: f32,
+    correct: bool,
+) -> Result<DriftReading, ModelError> {
+    let (result, reading, reset) = with_window(model, |window| window.observe_outcome(confidence, correct));
+    result?;
+    publish_calibration(model, &reading, reset);
+    Ok(reading)
+}
+
+/// Record that the gate accepted or abstained on one decision (`crawlx.model.abstention.rate`).
+/// Every flushed System 1 record does this through [`decision_record`].
+pub fn record_gate_decision(model: &ModelId, abstained: bool) {
+    let ((), reading, reset) = with_window(model, |window| window.observe_decision(abstained));
+    publish_calibration(model, &reading, reset);
+}
+
+/// The model's current calibration window, `None` before its first decision or outcome.
+#[must_use]
+pub fn calibration_reading(model: &ModelId) -> Option<DriftReading> {
+    let windows = CALIBRATION.lock();
+    let (version, window) = windows.get(&(model.provider.clone(), model.model.clone()))?;
+    (*version == model.calibration_version).then(|| window.reading())
+}
+
 /// Emit the metrics of one System 1 call: `outcome` is `ok` when the gate accepted a
 /// candidate and `abstain` otherwise.
 fn observe_decision(rec: &System1Record) {
@@ -448,6 +533,7 @@ fn observe_decision(rec: &System1Record) {
     let model = rec.model.model.as_str();
     let mode = system1_mode_label(rec.mode);
     let abstained = rec.selected.is_none();
+    record_gate_decision(&rec.model, abstained);
     m.counter(names::MODEL_REQUESTS).inc_by(
         1,
         &[
@@ -656,5 +742,78 @@ mod tests {
             .extend(Vec::new(), &dynamic, None, false)
             .strategies
             .is_empty());
+    }
+
+    fn ece_gauge(model: &ModelId) -> Option<f64> {
+        Metrics::global()
+            .gauge(names::MODEL_CALIBRATION_ECE)
+            .get(&[("provider", &model.provider), ("model", &model.model)])
+    }
+
+    /// Ten outcomes per confidence tenth in `tenths`, `c * 10` of them right: ECE of zero.
+    fn feed_calibrated(model: &ModelId, rounds: usize) {
+        for round in 0..rounds {
+            for tenths in [6_usize, 8, 10] {
+                #[allow(clippy::cast_precision_loss)]
+                let confidence = tenths as f32 / 10.0;
+                record_calibration_outcome(model, confidence, round % 10 < tenths).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn synthetic_outcomes_push_the_published_ece_over_the_ceiling_and_back() {
+        let model = ModelId::new("drift-test", "ranker-a", "", "fit-1");
+        // a young window publishes no ECE: 150 outcomes are below the 200 minimum
+        feed_calibrated(&model, 50);
+        assert_eq!(ece_gauge(&model), None);
+        assert_eq!(calibration_reading(&model).unwrap().graded, 150);
+        // calibrated outcomes read as calibrated
+        feed_calibrated(&model, 100);
+        let calibrated = ece_gauge(&model).unwrap();
+        assert!(calibrated < 0.05, "{calibrated}");
+        // the model turns overconfident: answers at 0.9, right six times in ten
+        for i in 0..1000 {
+            record_calibration_outcome(&model, 0.9, i % 10 < 6).unwrap();
+        }
+        let drifted = ece_gauge(&model).unwrap();
+        assert!(drifted > 0.05, "{drifted}");
+        assert!(calibration_reading(&model).unwrap().drifted());
+        // a malformed confidence is refused and leaves the published value alone
+        assert!(record_calibration_outcome(&model, 1.5, true).is_err());
+        assert_eq!(ece_gauge(&model), Some(drifted));
+        // recovery fills the window with calibrated outcomes again
+        feed_calibrated(&model, 400);
+        assert!(ece_gauge(&model).unwrap() < 0.05);
+    }
+
+    #[test]
+    fn a_new_calibration_version_starts_a_fresh_window_and_retires_the_stale_gauge() {
+        let first = ModelId::new("drift-test", "ranker-b", "", "fit-1");
+        for i in 0..300 {
+            record_calibration_outcome(&first, 0.95, i % 2 == 0).unwrap();
+        }
+        assert!(ece_gauge(&first).unwrap() > 0.05);
+        let refit = ModelId::new("drift-test", "ranker-b", "", "fit-2");
+        record_calibration_outcome(&refit, 0.95, true).unwrap();
+        assert_eq!(
+            ece_gauge(&refit),
+            None,
+            "the old fit's number must not describe the new one"
+        );
+        assert_eq!(calibration_reading(&refit).unwrap().graded, 1);
+        assert!(calibration_reading(&first).is_none());
+    }
+
+    #[test]
+    fn gate_decisions_publish_the_abstention_rate() {
+        let model = ModelId::new("drift-test", "ranker-c", "", "fit-1");
+        for abstained in [true, false, false, false] {
+            record_gate_decision(&model, abstained);
+        }
+        let rate = Metrics::global()
+            .gauge(names::MODEL_ABSTENTION_RATE)
+            .get(&[("provider", "drift-test"), ("model", "ranker-c")]);
+        assert_eq!(rate, Some(0.25));
     }
 }

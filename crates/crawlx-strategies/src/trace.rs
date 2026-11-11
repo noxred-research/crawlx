@@ -235,7 +235,6 @@ mod tests {
                 revealed: vec![],
                 baseline_revealed: vec![],
                 confounders: Confounders::default(),
-                latency_ms: 50,
                 new_operation: false,
                 now: Timestamp::from_timestamp_millis(10_000 + i64::try_from(i).unwrap()).unwrap(),
             });

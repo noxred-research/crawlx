@@ -26,6 +26,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use url::Url;
+mod archive_completion;
+pub(crate) use archive_completion::archive_completion_notice;
+pub use archive_completion::ARCHIVE_COMPLETION_SOURCE;
 mod compression;
 mod config;
 mod feed_policy;
@@ -204,6 +207,8 @@ impl DeliveryRegistry {
         config.datasets.validate()?;
         for feed in &config.datasets.feeds {
             article_format(&feed.serializer)?;
+            crate::delivery::archive_completion::validate_feed(feed, config.output.archive.is_some())
+                .map_err(DeliveryError::Unavailable)?;
             let destination = self
                 .destinations
                 .get(&feed.destination)

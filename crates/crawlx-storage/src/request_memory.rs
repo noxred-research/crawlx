@@ -32,6 +32,13 @@ impl RequestState {
         self.content_registry.purge_run(run);
         self.extension_attempts.retain(|(_, owner, ..), _| *owner != run);
     }
+
+    /// Opaque report identity of the route a request was queued with, when it is known.
+    pub(super) fn report_route_key(&self, request: i64) -> Option<Digest> {
+        self.envelopes
+            .get(&request)
+            .map(|(envelope, _, _)| crawlx_core::report_history::report_route_key(&envelope.route))
+    }
 }
 
 #[derive(Clone)]
@@ -1644,8 +1651,14 @@ impl RequestCommitRepo for MemoryStore {
             }
             // Lock order is inner first, report history second; both are held to the end.
             let mut report = self.report_history.lock();
-            let report_delta =
-                super::report_history::prepare_commit(&report, run, &commit, now, attempt.max(1))?;
+            let report_delta = super::report_history::prepare_commit(
+                &report,
+                run,
+                &commit,
+                now,
+                attempt.max(1),
+                g.requests.report_route_key(commit.request_id),
+            )?;
             let mut children = commit.children.take();
             if let Some(batch) = &children {
                 if batch.run != commit.run

@@ -9,9 +9,17 @@ use crate::hash::Digest;
 use crate::{CrawlRunId, StoreError, TenantId, Timestamp};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 /// Maximum facts returned by one history query or percentile sample.
 pub const REPORT_PAGE_LIMIT: u32 = 64;
+
+/// Longest error-snapshot code, matching the request disposition code bound.
+pub const ERROR_CODE_MAX_BYTES: usize = 128;
+
+/// Longest redacted error-snapshot detail text.
+pub const ERROR_DETAIL_MAX_BYTES: usize = 256;
 
 /// A finite, versioned class of report evidence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +91,21 @@ pub enum ProcessorStageV1 {
     Delivery,
 }
 
+impl ProcessorStageV1 {
+    /// Stable label, matching the serialized payload value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Admission => "admission",
+            Self::Fetch => "fetch",
+            Self::Parse => "parse",
+            Self::Extract => "extract",
+            Self::Index => "index",
+            Self::Delivery => "delivery",
+        }
+    }
+}
+
 /// Observed terminal result of one processor attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +119,19 @@ pub enum StageOutcomeV1 {
     Cancelled,
     /// Processing was deliberately skipped.
     Skipped,
+}
+
+impl StageOutcomeV1 {
+    /// Stable label, matching the serialized payload value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Skipped => "skipped",
+        }
+    }
 }
 
 /// Finite native processor identity; no arbitrary plugin labels.
@@ -130,6 +166,19 @@ pub enum AlertSeverityV1 {
     Error,
     /// Critical operation failure.
     Critical,
+}
+
+impl AlertSeverityV1 {
+    /// Stable label, matching the serialized payload value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+            Self::Critical => "critical",
+        }
+    }
 }
 
 /// Privacy-safe alert code.
@@ -181,6 +230,19 @@ pub enum PipelineStageV1 {
     Completion,
 }
 
+impl PipelineStageV1 {
+    /// Stable label, matching the serialized payload value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fetch => "fetch",
+            Self::Parse => "parse",
+            Self::Index => "index",
+            Self::Completion => "completion",
+        }
+    }
+}
+
 /// State of a durable pipeline checkpoint.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -195,6 +257,19 @@ pub enum PipelineStateV1 {
     Failed,
     /// Checkpoint deliberately skipped.
     Skipped,
+}
+
+impl PipelineStateV1 {
+    /// Stable label, matching the serialized payload value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+        }
+    }
 }
 
 /// Finite payload; all durations are measured monotonic microseconds.
@@ -288,6 +363,22 @@ impl ReportDataV1 {
             _ => None,
         }
     }
+
+    /// Finite outcome label of a terminal or checkpoint fact, `kind:stage:state`. Facts that do
+    /// not state an outcome (DNS, wire, loss) have none. Report counters group by this label.
+    #[must_use]
+    pub fn outcome_label(&self) -> Option<String> {
+        match self {
+            Self::Pipeline { stage, state } => {
+                Some(format!("pipeline:{}:{}", stage.as_str(), state.as_str()))
+            }
+            Self::Stage { stage, outcome, .. } => {
+                Some(format!("stage:{}:{}", stage.as_str(), outcome.as_str()))
+            }
+            Self::Alert { severity, .. } => Some(format!("alert:{}", severity.as_str())),
+            Self::Dns { .. } | Self::Wire { .. } | Self::Loss { .. } => None,
+        }
+    }
 }
 
 /// Opaque privacy-safe identity of a host as facts and reports show it: the digest every
@@ -297,6 +388,173 @@ impl ReportDataV1 {
 #[must_use]
 pub fn report_host_key(host: &str) -> Digest {
     Digest::of("crawlx:report:dns-host:v1", host.trim_end_matches('.').as_bytes())
+}
+
+/// Opaque privacy-safe identity of a request route (the route label a request carries), as
+/// facts and counters show it. The label itself never leaves the frontier row.
+#[must_use]
+pub fn report_route_key(route: &str) -> Digest {
+    Digest::of("crawlx:report:route:v1", route.as_bytes())
+}
+
+/// Retention-bounded, redacted description of one failed attempt.
+///
+/// It lives inside the alert fact it explains, so it shares that fact's deadline (the owning
+/// run's retention) and disappears with it. The code is a bounded identifier; the optional
+/// detail is free text that has been redacted, stripped of URLs and control characters and
+/// cut to [`ERROR_DETAIL_MAX_BYTES`]. No constructor or repository keeps unredacted text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ErrorSnapshotV1 {
+    /// Processing boundary that failed, when it is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<ProcessorStageV1>,
+    /// Bounded reason code: ASCII letters, digits, `_`, `-` and `:`.
+    pub code: String,
+    /// Final HTTP status when the attempt reached the network.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    /// Redacted diagnostic text, never a URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl ErrorSnapshotV1 {
+    /// Build a snapshot, redacting `detail`.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Serialization`] for an empty, oversized or non-identifier code or
+    /// an HTTP status outside 100..=599.
+    pub fn new(
+        stage: Option<ProcessorStageV1>,
+        code: &str,
+        http_status: Option<u16>,
+        detail: Option<&str>,
+    ) -> Result<Self, StoreError> {
+        let snapshot = Self {
+            stage,
+            code: code.to_owned(),
+            http_status,
+            detail: detail.map(sanitize_detail).filter(|text| !text.is_empty()),
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    /// Check code, status and detail bounds.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::Serialization`] for malformed evidence.
+    pub fn validate(&self) -> Result<(), StoreError> {
+        if self.code.is_empty()
+            || self.code.len() > ERROR_CODE_MAX_BYTES
+            || !self
+                .code
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':'))
+        {
+            return Err(invalid(
+                "error snapshot code is empty, oversized or not an identifier",
+            ));
+        }
+        if !crate::secret::Redactor::default().is_clean_text(&self.code) {
+            return Err(invalid("error snapshot code looks like a credential"));
+        }
+        if self
+            .http_status
+            .is_some_and(|status| !(100..=599).contains(&status))
+        {
+            return Err(invalid("error snapshot status outside 100..=599"));
+        }
+        if self
+            .detail
+            .as_deref()
+            .is_some_and(|text| text.len() > ERROR_DETAIL_MAX_BYTES || text.chars().any(char::is_control))
+        {
+            return Err(invalid(
+                "error snapshot detail is oversized or has control characters",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The snapshot with its code and detail passed through the redactor again, or the same
+    /// value when nothing changes. Repositories apply this before they persist or serve a fact.
+    /// A code that looks like a credential is replaced by `redacted`.
+    #[must_use]
+    pub fn redacted(&self) -> Cow<'_, Self> {
+        let code_clean = crate::secret::Redactor::default().is_clean_text(&self.code);
+        let detail = self.detail.as_deref().map(sanitize_detail);
+        if code_clean && detail == self.detail {
+            return Cow::Borrowed(self);
+        }
+        Cow::Owned(Self {
+            code: if code_clean {
+                self.code.clone()
+            } else {
+                "redacted".to_owned()
+            },
+            detail: detail.filter(|text| !text.is_empty()),
+            ..self.clone()
+        })
+    }
+}
+
+/// Redact, strip URLs and control characters and bound free diagnostic text.
+fn sanitize_detail(text: &str) -> String {
+    let redacted = crate::secret::Redactor::default().redact_text(text).into_inner();
+    let mut clean = String::with_capacity(redacted.len().min(ERROR_DETAIL_MAX_BYTES));
+    for word in redacted.split_whitespace() {
+        if !clean.is_empty() {
+            clean.push(' ');
+        }
+        // A URL carries host, path and query values no pattern can all recognise.
+        clean.push_str(if word.contains("://") { "[url]" } else { word });
+    }
+    clean.retain(|c| !c.is_control());
+    while clean.len() > ERROR_DETAIL_MAX_BYTES {
+        clean.pop();
+    }
+    clean
+}
+
+/// Committed outcome counters of one route within one run, read from retained facts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct RouteCountersV1 {
+    /// Opaque route identity, see [`report_route_key`].
+    pub route_key: Digest,
+    /// Number of retained facts per [`ReportDataV1::outcome_label`].
+    pub outcomes: BTreeMap<String, u64>,
+}
+
+impl RouteCountersV1 {
+    /// Empty counters of one route.
+    #[must_use]
+    pub const fn new(route_key: Digest) -> Self {
+        Self {
+            route_key,
+            outcomes: BTreeMap::new(),
+        }
+    }
+
+    /// Count of one outcome label; zero when none was recorded.
+    #[must_use]
+    pub fn count(&self, label: &str) -> u64 {
+        self.outcomes.get(label).copied().unwrap_or(0)
+    }
+
+    /// Terminal results committed on this route: one fetch checkpoint per committed attempt.
+    #[must_use]
+    pub fn committed(&self) -> u64 {
+        self.outcomes
+            .iter()
+            .filter(|(label, _)| label.starts_with("pipeline:fetch:"))
+            .map(|(_, count)| *count)
+            .fold(0, u64::saturating_add)
+    }
 }
 
 /// Fenced fact; scope always comes from an authenticated producer lease.
@@ -324,6 +582,12 @@ pub struct ReportFactV1 {
     pub url_key: Option<Digest>,
     /// Opaque privacy-safe host identity.
     pub host_key: Option<Digest>,
+    /// Opaque privacy-safe route identity of the request, see [`report_route_key`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_key: Option<Digest>,
+    /// Redacted failure snapshot; allowed on alert facts only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorSnapshotV1>,
     /// One-based attempt ordinal.
     pub attempt: u16,
     /// Bounded measured evidence.
@@ -345,6 +609,8 @@ impl ReportFactV1 {
             request_id: None,
             url_key: None,
             host_key: None,
+            route_key: None,
+            error: None,
             attempt: 1,
             data,
         }
@@ -400,6 +666,12 @@ impl ReportFactV1 {
             ReportDataV1::Loss { dropped } => signed(*dropped)?,
             ReportDataV1::Alert { .. } | ReportDataV1::Pipeline { .. } => {}
         }
+        if let Some(error) = &self.error {
+            if !matches!(self.data, ReportDataV1::Alert { .. }) {
+                return Err(invalid("error snapshot requires an alert fact"));
+            }
+            error.validate()?;
+        }
         Ok(())
     }
 
@@ -418,6 +690,20 @@ impl ReportFactV1 {
         }
         Ok(())
     }
+
+    /// The fact with its failure snapshot redacted again, or the same fact when nothing
+    /// changes. Repositories apply this before they persist or serve a fact, so a producer
+    /// that skipped redaction still cannot store unredacted text.
+    #[must_use]
+    pub fn redacted(&self) -> Cow<'_, Self> {
+        match self.error.as_ref().map(ErrorSnapshotV1::redacted) {
+            Some(Cow::Owned(error)) => Cow::Owned(Self {
+                error: Some(error),
+                ..self.clone()
+            }),
+            _ => Cow::Borrowed(self),
+        }
+    }
 }
 
 /// Bounded filter applied before repository keyset pagination.
@@ -435,6 +721,8 @@ pub struct ReportQueryV1 {
     pub url_key: Option<Digest>,
     /// Optional exact opaque host key.
     pub host_key: Option<Digest>,
+    /// Optional exact opaque route key.
+    pub route_key: Option<Digest>,
     /// Inclusive observation lower bound.
     pub since: Option<Timestamp>,
     /// Inclusive observation upper bound.
@@ -457,6 +745,7 @@ impl Default for ReportQueryV1 {
             kind: None,
             url_key: None,
             host_key: None,
+            route_key: None,
             since: None,
             until: None,
             min_duration_us: None,
@@ -508,6 +797,7 @@ impl ReportQueryV1 {
         self.kind.is_none_or(|kind| kind == fact.data.kind())
             && self.url_key.is_none_or(|key| fact.url_key == Some(key))
             && self.host_key.is_none_or(|key| fact.host_key == Some(key))
+            && self.route_key.is_none_or(|key| fact.route_key == Some(key))
             && in_range(Some(fact.at), self.since, self.until)
             && in_range(
                 fact.data.duration_us(),
@@ -578,6 +868,19 @@ pub trait ReportHistoryRepo: Send + Sync {
         run: Option<CrawlRunId>,
         query: &ReportQueryV1,
     ) -> Result<ReportPageV1, StoreError>;
+
+    /// Committed outcome counters per route of one retained run, ordered by route key.
+    ///
+    /// Only facts that carry a route key count. Expired facts are unavailable, a volatile
+    /// (ZDR) run is withheld, and the counters are derived from committed rows alone, so a
+    /// restarted reader sees the same numbers.
+    /// # Errors
+    /// Returns authorization, retention or backend errors.
+    async fn route_counters(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+    ) -> Result<Vec<RouteCountersV1>, StoreError>;
 }
 
 /// Exact nearest-rank percentile of at most one page of durations.
@@ -960,5 +1263,96 @@ mod tests {
             .apply(&state(PipelineStageV1::Parse, PipelineStateV1::Succeeded))
             .is_err());
         assert!(recovered.acknowledge_delivery().is_err());
+    }
+
+    const CANARY: &str = "canary-secret-7f3a91";
+
+    #[test]
+    fn error_snapshot_never_keeps_credentials_urls_or_control_text() {
+        crate::secret::register_secret(CANARY);
+        let detail = format!(
+            "GET https://user:pw@internal.example/path?sig=abc&token={CANARY} failed\n\
+             authorization: Bearer {CANARY}; password={CANARY} saw {CANARY}"
+        );
+        let snapshot = ErrorSnapshotV1::new(
+            Some(ProcessorStageV1::Fetch),
+            "fetch_failed",
+            Some(502),
+            Some(&detail),
+        )
+        .unwrap();
+        let text = serde_json::to_string(&snapshot).unwrap();
+        for leaked in [CANARY, "internal.example", "user:pw", "sig=abc", "Bearer"] {
+            assert!(!text.contains(leaked), "{leaked} leaked into {text}");
+        }
+        assert!(snapshot.detail.as_deref().unwrap().contains("[url]"));
+        assert!(!text.contains('\n'));
+        // an unredacted snapshot built by hand is cleaned by the repository-side pass
+        let mut raw = snapshot.clone();
+        raw.detail = Some(format!("token={CANARY}"));
+        let cleaned = raw.redacted();
+        assert!(!cleaned.detail.as_deref().unwrap().contains(CANARY));
+        assert!(matches!(snapshot.redacted(), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn error_snapshot_is_bounded_and_alert_only() {
+        assert!(ErrorSnapshotV1::new(None, "", None, None).is_err());
+        assert!(ErrorSnapshotV1::new(None, "has space", None, None).is_err());
+        assert!(ErrorSnapshotV1::new(None, &"a".repeat(ERROR_CODE_MAX_BYTES + 1), None, None).is_err());
+        assert!(ErrorSnapshotV1::new(None, "ok", Some(99), None).is_err());
+        let long = "word ".repeat(200);
+        let snapshot = ErrorSnapshotV1::new(None, "ok", None, Some(&long)).unwrap();
+        assert!(snapshot.detail.as_deref().unwrap().len() <= ERROR_DETAIL_MAX_BYTES);
+
+        let mut alert = fact(ReportDataV1::Alert {
+            severity: AlertSeverityV1::Error,
+            code: AlertCodeV1::ProcessorFailure,
+            context: AlertContextV1::Processing,
+        });
+        alert.error = Some(snapshot.clone());
+        alert.validate().unwrap();
+        let mut wire = fact(ReportDataV1::Loss { dropped: 1 });
+        wire.error = Some(snapshot);
+        assert!(wire.validate().is_err());
+    }
+
+    #[test]
+    fn route_dimension_filters_and_old_facts_keep_their_bytes() {
+        let plain = fact(ReportDataV1::Loss { dropped: 1 });
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(!json.contains("routeKey") && !json.contains("error"), "{json}");
+        assert_eq!(serde_json::from_str::<ReportFactV1>(&json).unwrap(), plain);
+        let mut routed = plain.clone();
+        routed.route_key = Some(report_route_key("listing"));
+        let query = ReportQueryV1 {
+            route_key: Some(report_route_key("listing")),
+            ..ReportQueryV1::default()
+        };
+        assert!(query.matches(&routed));
+        assert!(!query.matches(&plain));
+        let other = ReportQueryV1 {
+            route_key: Some(report_route_key("detail")),
+            ..ReportQueryV1::default()
+        };
+        assert!(!other.matches(&routed));
+        assert_ne!(report_route_key("listing"), report_route_key("detail"));
+    }
+
+    #[test]
+    fn outcome_labels_name_checkpoints_stages_and_alerts_only() {
+        let pipeline = ReportDataV1::Pipeline {
+            stage: PipelineStageV1::Fetch,
+            state: PipelineStateV1::Failed,
+        };
+        assert_eq!(pipeline.outcome_label().as_deref(), Some("pipeline:fetch:failed"));
+        assert_eq!(ReportDataV1::Loss { dropped: 1 }.outcome_label(), None);
+        let mut counters = RouteCountersV1::new(report_route_key("a"));
+        counters.outcomes.insert("pipeline:fetch:failed".into(), 2);
+        counters.outcomes.insert("pipeline:fetch:succeeded".into(), 3);
+        counters.outcomes.insert("pipeline:index:pending".into(), 9);
+        assert_eq!(counters.committed(), 5);
+        assert_eq!(counters.count("pipeline:index:pending"), 9);
+        assert_eq!(counters.count("absent"), 0);
     }
 }

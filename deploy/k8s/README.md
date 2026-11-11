@@ -164,3 +164,16 @@ SEV-1; other command errors, stuck audits, or missing scheduled Jobs mean the in
 complete and need operator attention. `SAFETY_INVARIANT_VIOLATIONS` increments inside the short-lived
 process; the supplied schedule does not export that counter to Prometheus. Do not assume the existing
 Prometheus alert sees it. Use the Job result and preserved JSON report for reliable scheduled paging.
+
+## Audit export
+
+`audit-export-cronjob.yaml` runs `crawlx admin audit-export --all --s3-bucket <bucket>` once a day
+(00:10 UTC, the day that just completed) and writes one Merkle-root record per tenant under `audit/`
+of an object-lock (WORM) bucket. Provision the two Secrets named at the top of the manifest first and
+edit the bucket name; use the Helm `auditExport` values for the same job in a chart deployment. The pod
+has no worker configuration, artifact volume, service account token or Chromium, and its database
+login is a dedicated one that may read `audit_events`, never the migration (DDL), owner, worker,
+request or safety-auditor login. The job has no retry: a bucket under object lock refuses a replacement
+object, so repeat a half-finished day by hand with `--day`. The bucket, its object lock and the
+lifecycle rules ([`deploy/object-store/lifecycle.json`](../object-store/lifecycle.json), which exempts
+`audit/`) are applied by the operator, see [docs/ops/object-storage.md](../../docs/ops/object-storage.md).

@@ -277,6 +277,7 @@ impl Kind {
                 "kind",
                 "urlKey",
                 "hostKey",
+                "routeKey",
                 "since",
                 "until",
                 "minDurationUs",
@@ -288,6 +289,7 @@ impl Kind {
             Self::WireHistory => &[
                 "urlKey",
                 "hostKey",
+                "routeKey",
                 "since",
                 "until",
                 "minDurationUs",
@@ -298,12 +300,13 @@ impl Kind {
             Self::ProcessorHistory | Self::HostDnsHealth => &[
                 "urlKey",
                 "hostKey",
+                "routeKey",
                 "since",
                 "until",
                 "minDurationUs",
                 "maxDurationUs",
             ],
-            Self::PipelineHistory | Self::AlertLog => &["urlKey", "hostKey", "since", "until"],
+            Self::PipelineHistory | Self::AlertLog => &["urlKey", "hostKey", "routeKey", "since", "until"],
             Self::Frontier | Self::Hosts | Self::ProcessorFailures | Self::ErrorLog => &[
                 "state",
                 "minDepth",
@@ -670,6 +673,7 @@ struct Query {
     class: Option<Class>,
     url_key: Option<Digest>,
     host_key: Option<Digest>,
+    route_key: Option<Digest>,
     event: Option<&'static str>,
     since: Option<Timestamp>,
     until: Option<Timestamp>,
@@ -847,6 +851,7 @@ impl Query {
             class: report_class(params)?,
             url_key: digest(params, "urlKey")?,
             host_key: digest(params, "hostKey")?,
+            route_key: digest(params, "routeKey")?,
             event: event_class(params)?,
             since: timestamp(params, "since")?,
             until: timestamp(params, "until")?,
@@ -909,6 +914,7 @@ impl Query {
         core.kind = forced.or(self.kind);
         core.url_key = self.url_key;
         core.host_key = self.host_key;
+        core.route_key = self.route_key;
         core.since = self.since;
         core.until = self.until;
         core.min_duration_us = self.min_duration_us;
@@ -1395,12 +1401,13 @@ async fn history_page(
     };
     let core = query.history_query(forced)?;
     let scope = (!query.cross_run).then_some(run.id);
-    let facts = state
+    let mut facts = state
         .repos
         .report_history
         .query_facts(principal.tenant, scope, &core)
         .await
         .map_err(report_error)?;
+    withhold_diagnostic_text(&mut facts.entries);
     page.cross_run = query.cross_run;
     page.scanned = facts.entries.len();
     page.next = facts.next;
@@ -1408,6 +1415,16 @@ async fn history_page(
     prune_not_recorded(&mut page.not_recorded, &facts.entries);
     page.rows = facts.entries.into_iter().map(Row::Fact).collect();
     Ok(())
+}
+
+/// Report APIs never serve diagnostic text: a failure snapshot keeps its stage, bounded code and
+/// status, while the redacted free-text detail stays in the repository for operators.
+fn withhold_diagnostic_text(entries: &mut [ReportEntryV1]) {
+    for entry in entries {
+        if let Some(error) = &mut entry.fact.error {
+            error.detail = None;
+        }
+    }
 }
 
 /// Attach a legacy report's companion fact page; its cursor is independent of the source cursor.
@@ -1422,12 +1439,13 @@ async fn attach_companion(
         return Ok(());
     };
     if let Some(core) = query.companion_query(query.fact_kind.unwrap_or(default))? {
-        let facts = state
+        let mut facts = state
             .repos
             .report_history
             .query_facts(run.tenant, Some(run.id), &core)
             .await
             .map_err(report_error)?;
+        withhold_diagnostic_text(&mut facts.entries);
         page.fact_next = facts.next;
         page.facts = facts.entries;
     }
