@@ -56,11 +56,13 @@ pub enum PoolCause {
     ProviderAuth,
     /// `502 upstream_error`: the provider answered the `CONNECT` with an unexpected status.
     UpstreamError,
+    /// Local terminal failure: the gateway lost this generation's pinned session or exit.
+    SessionPinLost,
 }
 
 impl PoolCause {
     /// Every cause, for tests and metric pre-registration.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::AuthRequired,
         Self::SourceLimited,
         Self::OrgDisabled,
@@ -78,6 +80,7 @@ impl PoolCause {
         Self::ProviderUnavailable,
         Self::ProviderAuth,
         Self::UpstreamError,
+        Self::SessionPinLost,
     ];
 
     /// The cause named by a reason phrase; `None` for a phrase the gateway does not send.
@@ -107,6 +110,7 @@ impl PoolCause {
             Self::ProviderUnavailable => "provider_unavailable",
             Self::ProviderAuth => "provider_auth",
             Self::UpstreamError => "upstream_error",
+            Self::SessionPinLost => "session_pin_lost",
         }
     }
 
@@ -126,15 +130,17 @@ impl PoolCause {
             | Self::NoHealthyIp
             | Self::CacheUnavailable => 503,
             Self::LeaseTimeout | Self::ProviderTimeout => 504,
-            Self::ProviderUnavailable | Self::ProviderAuth | Self::UpstreamError => 502,
+            Self::ProviderUnavailable | Self::ProviderAuth | Self::UpstreamError | Self::SessionPinLost => {
+                502
+            }
         }
     }
 
     /// Whether and how fast another attempt can succeed.
     ///
-    /// `org_budget` is terminal for the rest of the UTC day and `provider_auth` (the provider
-    /// rejected the rendered credential) is an operator-side fault a retry does not clear; the
-    /// other provider failures may clear when the gateway picks another unit or provider.
+    /// Gateway guidance applies only to an unbound diagnostic route. A strict generation
+    /// converts transient refusal into [`Self::SessionPinLost`], because choosing a fresh exit
+    /// requires explicit session replacement.
     #[must_use]
     pub const fn retryability(self) -> Retryability {
         match self {
@@ -145,7 +151,8 @@ impl PoolCause {
             | Self::PortNotAllowed
             | Self::DestinationDenied
             | Self::ProviderAuth
-            | Self::OrgBudget => Retryability::Terminal,
+            | Self::OrgBudget
+            | Self::SessionPinLost => Retryability::Terminal,
             Self::SourceLimited
             | Self::OrgCapacity
             | Self::CacheEmpty
@@ -189,6 +196,7 @@ mod tests {
             ("provider_unavailable", 502),
             ("provider_auth", 502),
             ("upstream_error", 502),
+            ("session_pin_lost", 502),
         ];
         assert_eq!(table.len(), PoolCause::ALL.len());
         for (code, status) in table {
@@ -213,6 +221,7 @@ mod tests {
             (PoolCause::DestinationDenied, Terminal),
             (PoolCause::OrgBudget, Terminal),
             (PoolCause::ProviderAuth, Terminal),
+            (PoolCause::SessionPinLost, Terminal),
             (PoolCause::SourceLimited, Backoff),
             (PoolCause::OrgCapacity, Backoff),
             (PoolCause::CacheEmpty, Backoff),

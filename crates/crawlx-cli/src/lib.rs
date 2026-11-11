@@ -27,13 +27,18 @@ mod compat_flags;
 pub mod config_check;
 mod config_file;
 mod config_intel;
+pub mod convert;
 pub mod crawl;
 mod crawl_out;
 mod crawl_run;
+mod dataset_export;
+mod dataset_feed;
+pub mod dataset_import;
 mod duration;
 mod egress_feed;
 mod extract;
 mod extraction_import;
+pub mod flow_import;
 mod headless_args;
 mod health;
 mod healthcheck;
@@ -51,6 +56,7 @@ pub mod pprof;
 pub mod profiles;
 pub mod protocol;
 pub mod proxyx_config;
+mod resolver_https_config;
 pub mod response_replay;
 mod resume_file;
 mod style;
@@ -140,10 +146,20 @@ pub enum Command {
     Export(ExportArgs),
     /// Extract article content from local HTML without network access.
     Extract(ExtractArgs),
+    /// Stream bounded JSON object lines into JSON, JSONL, CSV or XML.
+    DatasetExport(dataset_export::DatasetExportArgs),
+    /// Inspect or apply safe bounded exported dataset and KV JSON.
+    DatasetImport(dataset_import::DatasetImportArgs),
+    /// Stream CSV or XML URL proposals into an authorized run with a durable loader cursor.
+    FeedImport(dataset_feed::FeedImportArgs),
     /// Export, inspect, or import a bounded local WARC/WACZ archive.
     Archive(archive::ArchiveArgs),
     /// Inspect or convert a declarative upstream manifest without running source-language code.
     SourceImport(migration_inspect::SourceImportArgs),
+    /// Inspect or convert bounded recorded-flow JSON offline; never grants execution approval.
+    FlowImport(flow_import::FlowImportArgs),
+    /// Convert a quoted request command into admitted, redacted JSON without network access.
+    Convert(convert::ConvertArgs),
     /// Manage operator-approved encrypted browser profiles under an active session lease.
     Profiles(profiles::ProfilesArgs),
     /// Extract an operator-authorized local corpus without enabling file URLs on the API.
@@ -218,6 +234,8 @@ pub async fn execute_with_env(
     out: &mut dyn Write,
     getenv: &dyn Fn(&str) -> Option<String>,
 ) -> anyhow::Result<ExitCode> {
+    let recovery = tokio::task::spawn_blocking(crawlx_storage::archive::publication::recover_owned).await??;
+    report_archive_recovery(recovery);
     let Cli {
         log,
         otlp_endpoint,
@@ -249,8 +267,13 @@ pub async fn execute_with_env(
             ops::export(args, out).await
         }
         Command::Extract(args) => extract::run(args, out).await,
+        Command::DatasetExport(args) => dataset_export::run(args, out).await,
+        Command::DatasetImport(args) => dataset_import::run(args, out).await,
+        Command::FeedImport(args) => dataset_feed::run(args, out).await,
         Command::Archive(args) => archive::execute(args, out).await,
         Command::SourceImport(args) => migration_inspect::run(args, out).await,
+        Command::FlowImport(args) => flow_import::run(args, out).await,
+        Command::Convert(args) => convert::run(args, out),
         Command::Profiles(args) => profiles::run(args).await,
         Command::Corpus(args) => protocol::run(args, out).await,
         Command::Protocol(args) => protocol::acquire(args, out).await,
@@ -310,5 +333,14 @@ fn init_logging(filter: &str, otlp_endpoint: Option<&str>) -> Option<crawlx_tele
             eprintln!("telemetry: {e}");
             None
         }
+    }
+}
+
+pub(crate) fn report_archive_recovery(report: crawlx_storage::archive::publication::RecoveryReport) {
+    if report.refused != 0 {
+        eprintln!(
+            "archive publication recovery: {} active or unproven transaction(s) left untouched",
+            report.refused
+        );
     }
 }

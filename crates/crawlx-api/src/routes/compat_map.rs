@@ -704,6 +704,7 @@ mod tests {
         let c = map_crawl(&r).unwrap();
         assert_eq!(c.scope.host_scope, HostScope::Rdn);
         assert_eq!(c.scope.query_policy, QueryPolicy::StripAll);
+        assert_eq!(c.scope.strategy, crawlx_core::config::CrawlStrategy::BreadthFirst);
         assert_eq!(c.scope.max_discovery_depth, 0);
         assert_eq!(c.scrape.as_ref().unwrap().kind, JobKind::Map);
         assert_eq!(c.output.formats, vec![OutputFormat::Metadata]);

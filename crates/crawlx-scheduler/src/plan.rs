@@ -1,7 +1,7 @@
 //! `RunPlanner`: `roles[] × runsPerRole` into run slots.
 
-use crawlx_core::config::RoleOrder;
-use crawlx_core::repo::{CrawlSession, SessionStatus};
+use crawlx_core::config::{CrawlMode, RoleOrder};
+use crawlx_core::repo::{CrawlSession, SessionKind, SessionStatus};
 use crawlx_core::{CrawlRunId, CreateCrawl, PrincipalId, SessionId};
 use rand::seq::SliceRandom;
 
@@ -26,6 +26,7 @@ impl RunSlot {
         CrawlSession {
             id: SessionId::new(),
             run,
+            kind: SessionKind::Browser,
             role: self.role.clone(),
             run_index: self.run_index,
             schedule_slot: self.schedule_slot,
@@ -70,9 +71,19 @@ impl RunPlanner {
     }
 
     /// Session rows for `run`, ready for `RunRepo::create_sessions`.
+    /// Static runs coordinate HTTP work; hybrid and dynamic slots execute browser actors.
     #[must_use]
     pub fn sessions(run: CrawlRunId, cfg: &CreateCrawl) -> Vec<CrawlSession> {
-        Self::plan(cfg).iter().map(|s| s.into_session(run)).collect()
+        Self::plan(cfg)
+            .iter()
+            .map(|slot| {
+                let mut session = slot.into_session(run);
+                if cfg.mode == CrawlMode::Static {
+                    session.kind = SessionKind::HttpCoordinator;
+                }
+                session
+            })
+            .collect()
     }
 }
 
@@ -116,6 +127,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("anonymous", 0), ("anonymous", 1), ("anonymous", 2)]
         );
+    }
+
+    #[test]
+    fn session_kind_follows_execution_mode_not_browser_launch_state() {
+        let mut cfg = create_crawl("https://example.test/", &[], 1);
+        for (mode, kind) in [
+            (CrawlMode::Static, SessionKind::HttpCoordinator),
+            (CrawlMode::Hybrid, SessionKind::Browser),
+            (CrawlMode::Dynamic, SessionKind::Browser),
+        ] {
+            cfg.mode = mode;
+            let sessions = RunPlanner::sessions(CrawlRunId::new(), &cfg);
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].kind, kind);
+            assert!(sessions[0].browser.is_none());
+        }
     }
 
     #[test]

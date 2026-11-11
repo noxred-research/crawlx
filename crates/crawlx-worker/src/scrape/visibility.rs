@@ -114,7 +114,7 @@ impl ScrapeEngine {
     ) -> Option<bytes::Bytes> {
         let options = FetchOptions {
             max_body_bytes: Some(MAX_BODY_BYTES),
-            ..FetchOptions::default()
+            ..self.http_options()
         };
         match self.fetch_auxiliary(url, &options, acq, observe).await {
             Ok(r) if r.status.is_success() => Some(r.body),

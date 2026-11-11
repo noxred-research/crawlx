@@ -4,7 +4,7 @@
 mod common;
 
 use async_trait::async_trait;
-use common::{canonical, proposal_for, rig_core, RigCore, SEED};
+use common::{canonical, proposal_for, RigCore, SEED};
 use crawlx_browser::fake::{FakeAxSpec, FakeEffect, FakePage, FakeScript};
 use crawlx_browser::FakeBackend;
 use crawlx_core::action::BrowserAction;
@@ -222,17 +222,35 @@ async fn actor_with_bounds(
     binding_ttl: Option<Duration>,
     execution_ttl: Option<Duration>,
 ) -> ActorRig {
-    let fake = Arc::new(FakeBackend::new(script()));
+    let clock: Arc<dyn crawlx_core::Clock> = if binding_ttl.is_some() || execution_ttl.is_some() {
+        Arc::new(BindingClock {
+            started: Instant::now(),
+        })
+    } else {
+        Arc::new(crawlx_core::SystemClock)
+    };
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(script())
+            .clock(clock.clone())
+            .build(),
+    );
     let recording = Arc::new(Recording::default());
     let backend = Arc::new(RecordingBackend {
         fake: Arc::clone(&fake),
         recording: Arc::clone(&recording),
     });
     let dir = tempfile::tempdir().unwrap();
-    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
-        .await
-        .unwrap();
-    let core = rig_core(stores, dir, backend, fake, SafetyProfile::ReadOnly).await;
+    let store = Arc::new(MemoryStore::with_clock(clock.clone()));
+    let mut stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
+    stores.artifacts = Arc::new(
+        crawlx_storage::FsArtifactStore::open(dir.path(), store.clone(), clock.clone())
+            .await
+            .unwrap()
+            .with_index(store),
+    );
+    let core =
+        common::rig_core_with_clock(stores, dir, backend, fake, SafetyProfile::ReadOnly, clock.clone()).await;
     core.handle.shutdown(ShutdownReason::Completed).await.unwrap();
     let session = core.stores.runs.list_sessions(core.run).await.unwrap()[0].clone();
     let mut config = SessionConfig::new(
@@ -244,9 +262,6 @@ async fn actor_with_bounds(
     if let Some(governor) = governor {
         config.origin_governor = governor;
     }
-    let clock = Arc::new(BindingClock {
-        started: Instant::now(),
-    });
     if let Some(ttl) = binding_ttl {
         let digest = crawlx_core::hash::Digest::of("pacing-fixture", b"identity");
         let build =
@@ -285,10 +300,7 @@ async fn actor_with_bounds(
         (&core.rc.controls, &core.rc.captcha_secrets),
     ));
     let cancel = config.origin_cancel.clone();
-    let mut services = core.rc.services();
-    if binding_ttl.is_some() || execution_ttl.is_some() {
-        services.clock = clock;
-    }
+    let services = core.rc.services();
     let handle = SessionActor::spawn(config, services, analyzer, 19, pooled)
         .await
         .unwrap();
@@ -598,9 +610,7 @@ async fn run_cancellation_stops_browser_admission_without_starting_the_effect() 
     rig.cancel.cancel();
     assert!(matches!(
         waiting.await,
-        Err(crawlx_worker::SessionError::Browser(
-            BrowserError::OriginAdmission(_)
-        ))
+        Err(crawlx_worker::SessionError::Cancelled)
     ));
     assert!(rig.recording.starts.lock().is_empty());
     drop(held);

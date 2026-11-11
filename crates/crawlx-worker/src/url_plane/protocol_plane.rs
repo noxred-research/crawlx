@@ -1,7 +1,20 @@
 //! Delegate resources enter native extraction and publication, never a synthetic HTTP transport.
 
+use super::RequestPublication;
 use super::*;
 use crawlx_core::protocol::ProtocolRouteV1;
+
+fn protocol_item_summary(
+    candidate: &Result<Option<serde_json::Value>, crawlx_core::extensions::ExtensionError>,
+) -> Option<serde_json::Value> {
+    match candidate {
+        Ok(Some(_)) => Some(serde_json::json!({"accepted":1,"rejected":0})),
+        Err(crawlx_core::extensions::ExtensionError::Rejected) => Some(serde_json::json!({
+            "accepted":0,"rejected":1,"reason":"extension_item_rejected",
+        })),
+        _ => None,
+    }
+}
 
 impl UrlPlaneRunner {
     pub(super) fn process_protocol_entry<'a>(
@@ -38,6 +51,44 @@ impl UrlPlaneRunner {
             }
         };
         let run = self.deps.runs.get(self.run).await?;
+        let mut scoped_extract = self.extract.clone();
+        if scoped_extract
+            .content
+            .as_ref()
+            .is_some_and(|policy| policy.dedupe.is_some())
+        {
+            let queued = self.deps.frontier.get_request(self.run, entry.id).await?;
+            let representation = crawlx_core::hash::Digest::of_value(
+                "crawlx/extraction-representation/v1",
+                &(
+                    queued.envelope.header_control.as_ref(),
+                    queued.envelope.session_generation,
+                    route.delegate_id.as_ref(),
+                    &route.id,
+                    &route.policy_revision,
+                    crawlx_core::protocol::protocol_origin(&entry.url.url),
+                ),
+            )
+            .map_err(|error| WorkerError::Config(error.to_string()))?;
+            let namespace = if self.durable_dedupe {
+                format!("{}:{}", self.run, entry.id)
+            } else {
+                self.run.to_string()
+            };
+            let scope = crawlx_core::extraction::DedupeScopeV1::new(
+                &run.tenant.to_string(),
+                &namespace,
+                &representation.to_hex(),
+            )?;
+            let cache = if self.durable_dedupe {
+                Arc::new(std::sync::Mutex::new(crawlx_core::extraction::DedupeCache::new(
+                    65_536,
+                )?))
+            } else {
+                Arc::clone(&self.content_dedupe)
+            };
+            scoped_extract.dedupe_cache = Some(crawlx_extract::DedupeHandle::new(scope, cache));
+        }
         let mut policy = self.crawl.acquisition.clone().unwrap_or_default();
         policy.max_decoded_bytes = policy.max_decoded_bytes.min(u64::from(route.max_body_bytes));
         policy.max_elapsed_ms = policy.max_elapsed_ms.min(route.max_elapsed_ms);
@@ -83,7 +134,7 @@ impl UrlPlaneRunner {
         let body = crate::acquisition::extraction_body(
             &resource.body,
             &self.fetcher.config().controls,
-            &self.extract,
+            &scoped_extract,
         );
         let validation = crate::acquisition::validate_body(
             body,
@@ -91,7 +142,7 @@ impl UrlPlaneRunner {
             resource.media_type.clone(),
             Vec::new(),
             context,
-            self.extract.clone(),
+            scoped_extract.clone(),
             &self.cpu_pool,
             &self.fetcher.config().controls,
             self.captcha_secrets.as_ref(),
@@ -150,19 +201,42 @@ impl UrlPlaneRunner {
         let mut accepted = Vec::new();
         let mut outbox = Vec::new();
         let mut links = Vec::new();
+        let mut content_dedupe = None;
+        let mut local_dedupe = None;
         if let Some(mut doc) = document {
+            if self.durable_dedupe {
+                content_dedupe = super::content_dedupe_claim(
+                    run.tenant,
+                    self.run,
+                    scoped_extract.dedupe_cache.as_ref(),
+                    &doc,
+                )?;
+            } else {
+                local_dedupe = doc.dedupe_commit.take();
+            }
             record.metadata["acquisition"]["extractionSucceeded"] = serde_json::json!(true);
             links = doc.links.iter().map(|link| link.url.clone()).collect();
-            if self.crawl.extensions.configured() {
+            if self.crawl.extensions.configured()
+                || doc
+                    .item
+                    .as_ref()
+                    .is_some_and(|item| !item.valid || item.schema_valid == Some(false))
+            {
                 let pipeline = self.crawl.extensions.clone();
                 let label = label.to_owned();
                 let token = cancel.clone();
                 let (returned, candidate) = self
                     .cpu_pool
                     .run(move || {
-                        let result = if doc.validation.as_ref().is_some_and(|v| !v.content_accepted) {
+                        let result = if doc
+                            .item
+                            .as_ref()
+                            .is_some_and(|item| !item.valid || item.schema_valid == Some(false))
+                            || (pipeline.configured()
+                                && doc.validation.as_ref().is_some_and(|v| !v.content_accepted))
+                        {
                             Err(crawlx_core::extensions::ExtensionError::Rejected)
-                        } else {
+                        } else if pipeline.configured() {
                             doc.article
                                 .as_ref()
                                 .map(|article| {
@@ -170,12 +244,17 @@ impl UrlPlaneRunner {
                                 })
                                 .transpose()
                                 .map(Option::flatten)
+                        } else {
+                            Ok(None)
                         };
                         (doc, result)
                     })
                     .await
                     .map_err(|_| WorkerError::Config("protocol item pipeline unavailable".to_owned()))?;
                 doc = returned;
+                if let Some(summary) = protocol_item_summary(&candidate) {
+                    record.metadata["itemPipeline"] = summary;
+                }
                 match candidate {
                     Ok(Some(candidate)) => {
                         let captcha = self.captcha_secrets.as_ref().ok_or_else(|| {
@@ -183,6 +262,7 @@ impl UrlPlaneRunner {
                         })?;
                         let (content, batch, delivery) = crate::extensions::store_candidate(
                             self.deps.artifacts.as_ref(),
+                            &self.cpu_pool,
                             &run,
                             entry.id,
                             &candidate,
@@ -194,6 +274,9 @@ impl UrlPlaneRunner {
                         accepted.extend(batch);
                         outbox.extend(delivery);
                         record.metadata["extensions"] = serde_json::json!({"version":1,"content":content});
+                    }
+                    Err(crawlx_core::extensions::ExtensionError::Rejected) => {
+                        record.metadata["extensions"] = serde_json::json!({"version":1,"outcome":"rejected"});
                     }
                     Ok(None) if !self.crawl.extensions.requires_document() => {}
                     _ => {
@@ -254,11 +337,19 @@ impl UrlPlaneRunner {
             serde_json::json!({"id":route.id,"policyRevision":route.policy_revision,"lane":"diagnostic"});
         self.finish_protocol_page(
             entry,
-            record,
             discovery,
             resource.final_url.as_ref(),
             &links,
-            (accepted, outbox),
+            (
+                accepted,
+                RequestPublication {
+                    outbox,
+                    page: Some(record),
+                    content_dedupe,
+                    local_dedupe,
+                    ..RequestPublication::default()
+                },
+            ),
         )
         .await
     }
@@ -266,14 +357,10 @@ impl UrlPlaneRunner {
     async fn finish_protocol_page(
         &self,
         entry: &FrontierEntry,
-        record: PageRecord,
         discovery: Option<&DenialReason>,
         final_url: Option<&Url>,
         links: &[Url],
-        publication: (
-            Vec<crawlx_core::dataset::AcceptedBatchV1>,
-            Vec<crawlx_core::dataset::DeliveryBatchV1>,
-        ),
+        publication: (Vec<crawlx_core::dataset::AcceptedBatchV1>, RequestPublication),
     ) -> Result<(), WorkerError> {
         // Child appends require this parent's still-live lease fence. A parse base is not final URL evidence.
         let leaf_only = matches!(
@@ -294,7 +381,7 @@ impl UrlPlaneRunner {
                 None,
                 publication.0,
                 Vec::new(),
-                (publication.1, Some(record)),
+                publication.1,
             )
             .await?;
             *self.pages_written.lock() += 1;
@@ -309,6 +396,30 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crawlx_core::repo::CrawlRun;
+
+    #[test]
+    fn protocol_item_counts_do_not_turn_failures_or_cancellation_into_rejections() {
+        use crawlx_core::extensions::ExtensionError;
+        assert_eq!(
+            protocol_item_summary(&Ok(Some(serde_json::json!({})))),
+            Some(serde_json::json!({"accepted":1,"rejected":0}))
+        );
+        assert_eq!(
+            protocol_item_summary(&Err(ExtensionError::Rejected)),
+            Some(serde_json::json!({"accepted":0,"rejected":1,"reason":"extension_item_rejected"}))
+        );
+        assert_eq!(protocol_item_summary(&Ok(None)), None);
+        for error in [
+            ExtensionError::Failed,
+            ExtensionError::Cancelled,
+            ExtensionError::Limit,
+            ExtensionError::Deadline,
+            ExtensionError::PolicyDenied,
+            ExtensionError::Task,
+        ] {
+            assert_eq!(protocol_item_summary(&Err(error)), None);
+        }
+    }
 
     #[tokio::test]
     async fn protocol_children_append_under_live_parent_fence_before_terminal_commit() {
@@ -370,6 +481,7 @@ mod tests {
             runs: stores.runs.clone(),
             frontier: stores.frontier.clone(),
             request_commits: stores.request_commits.clone(),
+            source_memo: stores.source_memo.clone(),
             leases: stores.leases.clone(),
             pages: stores.pages.clone(),
             events: stores.events.clone(),
@@ -408,11 +520,16 @@ mod tests {
         runner
             .finish_protocol_page(
                 &entry,
-                record,
                 None,
                 Some(&base),
                 std::slice::from_ref(&child),
-                (Vec::new(), Vec::new()),
+                (
+                    Vec::new(),
+                    RequestPublication {
+                        page: Some(record),
+                        ..RequestPublication::default()
+                    },
+                ),
             )
             .await
             .unwrap();

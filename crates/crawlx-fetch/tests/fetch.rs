@@ -635,16 +635,49 @@ async fn conditional_request_gets_304() {
 
 #[tokio::test]
 async fn only_get_and_head_are_supported() {
+    #[derive(Debug)]
+    struct UnavailableBodySink(std::sync::atomic::AtomicUsize);
+    #[async_trait::async_trait]
+    impl crawlx_core::browser::ResponseBodySink for UnavailableBodySink {
+        async fn store(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: bool,
+        ) -> Result<Option<crawlx_core::ArtifactRef>, crawlx_core::StoreError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(crawlx_core::StoreError::Unavailable(
+                "owned fixture body store unavailable".into(),
+            ))
+        }
+    }
     let server = MockServer::start().await;
     Mock::given(method("HEAD"))
-        .respond_with(ResponseTemplate::new(200).insert_header("X-A", "1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("X-A", "1")
+                .insert_header("Content-Length", "1000000")
+                .insert_header("Content-Encoding", "gzip"),
+        )
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("owned GET body"))
+        .mount(&server)
+        .await;
+    let sink = Arc::new(UnavailableBodySink(std::sync::atomic::AtomicUsize::new(0)));
+    let (capture, mut captured) = tokio::sync::mpsc::channel(4);
     let f = fetcher(
         fast_config(),
         allow_private_policy(&server),
         resolver(&["pub.test"]),
-    );
+    )
+    .with_response_body_sink(
+        crawlx_core::config::ResponseBodies::Full,
+        sink.clone(),
+        url("pub.test", &server, "/"),
+    )
+    .with_capture(capture);
     let u = url("pub.test", &server, "/");
     let err = f
         .fetch(
@@ -669,6 +702,29 @@ async fn only_get_and_head_are_supported() {
         .unwrap();
     assert_eq!(head.status.as_u16(), 200);
     assert!(head.body.is_empty());
+    assert_eq!(head.headers["x-a"], "1");
+    assert_eq!(head.headers["content-length"], "1000000");
+    assert_eq!(head.headers["content-encoding"], "gzip");
+    let evidence = head.evidence().unwrap();
+    assert!(!evidence.body.decoded);
+    assert_eq!(evidence.body.wire_bytes, 0);
+    assert_eq!(evidence.body.decoded_bytes, 0);
+    assert_eq!(evidence.body.declared_length, Some(1_000_000));
+    assert!(head.retained_response_body().is_none());
+    assert_eq!(sink.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let flow = captured.try_recv().unwrap();
+    assert_eq!(flow.method, "HEAD");
+    assert!(flow.response_body.is_none());
+    let get = f.fetch(&u, &FetchOptions::default()).await.unwrap();
+    assert_eq!(get.body.as_ref(), b"owned GET body");
+    assert_eq!(get.headers["x-crawlx-stream-body-capture"], "storage_error");
+    assert_eq!(sink.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let flow = captured.try_recv().unwrap();
+    assert_eq!(flow.method, "GET");
+    assert_eq!(
+        flow.response_body,
+        Some(crawlx_core::traffic::BodyDigest::of_prefix(b"owned GET body", 14))
+    );
 }
 
 #[tokio::test]

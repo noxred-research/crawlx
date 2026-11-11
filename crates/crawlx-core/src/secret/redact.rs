@@ -280,6 +280,36 @@ impl Redactor {
         Ok(Redacted { data: value })
     }
 
+    /// Verify and freeze JSON Lines without copying or rewriting their canonical bytes.
+    ///
+    /// Each record receives the same schema, source-lineage and decoded-secret checks as
+    /// [`Self::verify_canonical`]. Registered literals are also checked across the full stream.
+    /// An empty stream and a final newline are allowed; blank or malformed records are not.
+    ///
+    /// # Errors
+    /// Rejects malformed JSON, duplicate members, invalid lineage, remaining secrets or unavailable patterns.
+    pub fn verify_canonical_jsonl_owned(
+        &self,
+        value: Vec<u8>,
+    ) -> Result<Redacted<Vec<u8>>, crate::StoreError> {
+        if contains_registered(&value) {
+            return Err(approval_denied());
+        }
+        if !value.is_empty() {
+            for line in value
+                .strip_suffix(b"\n")
+                .unwrap_or(&value)
+                .split(|byte| *byte == b'\n')
+            {
+                match inspect_json(line) {
+                    JsonDocument::Value(json) if self.canonical_json_is_clean(&json) => {}
+                    _ => return Err(approval_denied()),
+                }
+            }
+        }
+        Ok(Redacted { data: value })
+    }
+
     /// Check finalized canonical bytes without copying them or granting an artifact token.
     ///
     /// This applies the same source-lineage and secret rules as [`Self::verify_canonical`].
@@ -856,11 +886,25 @@ mod tests {
         let original = serde_json::to_vec(&content).unwrap();
         let redactor = Redactor::new();
         assert_eq!(redactor.verify_canonical(&original).unwrap().as_ref(), original);
+        let mut records = original.clone();
+        records.push(b'\n');
+        records.extend_from_slice(&original);
+        records.push(b'\n');
+        let allocation = records.as_ptr();
+        let approved = redactor.verify_canonical_jsonl_owned(records.clone()).unwrap();
+        assert_eq!(approved.as_ref(), &records);
+        let approved = redactor.verify_canonical_jsonl_owned(records).unwrap();
+        assert_eq!(approved.as_ref().as_ptr(), allocation);
         let mut corrupt_chunks = content.clone();
         corrupt_chunks["article"]["chunks"]["ranges"][0]["end"] = serde_json::json!(text.len() + 1);
         assert!(redactor
             .verify_canonical(&serde_json::to_vec(&corrupt_chunks).unwrap())
             .is_err());
+        let mut invalid_records = original.clone();
+        invalid_records.push(b'\n');
+        invalid_records.extend_from_slice(&serde_json::to_vec(&corrupt_chunks).unwrap());
+        invalid_records.push(b'\n');
+        assert!(redactor.verify_canonical_jsonl_owned(invalid_records).is_err());
         content["article"]["metadata"]["keywords"][0]["token"] = Value::String("unverified".into());
         assert!(redactor
             .verify_canonical(&serde_json::to_vec(&content).unwrap())
@@ -875,6 +919,9 @@ mod tests {
             .is_err());
         register_secret(KEYWORD);
         assert!(redactor.verify_canonical(&original).is_err());
+        assert!(redactor
+            .verify_canonical_jsonl_owned(approved.into_inner())
+            .is_err());
     }
 
     #[test]
@@ -907,6 +954,49 @@ mod tests {
             .is_err());
         assert!(redactor.verify_canonical(b"/?sessionid=unknown-session").is_err());
         assert!(redactor.verify_canonical(b"\xff").is_err());
+    }
+
+    #[test]
+    fn canonical_jsonl_checks_every_record_without_losing_framing_or_privacy() {
+        let redactor = Redactor::new();
+        let safe = b"{\"n\":1}\n{\"password\":\"[REDACTED]\",\"n\":2}\n";
+        assert_eq!(
+            redactor
+                .verify_canonical_jsonl_owned(safe.to_vec())
+                .unwrap()
+                .as_ref(),
+            safe
+        );
+        assert!(redactor
+            .verify_canonical_jsonl_owned(Vec::new())
+            .unwrap()
+            .as_ref()
+            .is_empty());
+        for unsafe_stream in [
+            b"{\"n\":1}\nnot-json\n".as_slice(),
+            b"{\"n\":1}\n{\"n\":2".as_slice(),
+            b"{\"n\":1}\n{\"n\":2,\"n\":3}\n".as_slice(),
+            b"{\"n\":1}\n\n{\"n\":2}\n".as_slice(),
+            b"{\"n\":1}\n{\"password\":\"unregistered-value\"}\n".as_slice(),
+            b"{\"n\":1}\n{\"text\":\"Bearer unregistered-value\"}\n".as_slice(),
+            b"{\"n\":1}\n{\"text\":\"\xff\"}\n".as_slice(),
+        ] {
+            assert!(redactor
+                .verify_canonical_jsonl_owned(unsafe_stream.to_vec())
+                .is_err());
+        }
+        register_secret("jsonl-decoded-canary-9e42");
+        assert!(redactor
+            .verify_canonical_jsonl_owned(
+                b"{\"n\":1}\n{\"text\":\"jsonl-\\u0064ecoded-canary-9e42\"}\n".to_vec()
+            )
+            .is_err());
+        register_secret("jsonl-stream-canary-7c21\"}\n{\"text\":\"second");
+        assert!(redactor
+            .verify_canonical_jsonl_owned(
+                b"{\"text\":\"jsonl-stream-canary-7c21\"}\n{\"text\":\"second\"}\n".to_vec()
+            )
+            .is_err());
     }
 
     #[test]

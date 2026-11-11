@@ -5,7 +5,7 @@
 //! Options crawlx does not implement but the compat API documents are accepted and reported in the
 //! additive `warnings[]` instead of failing the request.
 
-use crate::errors::Detail;
+use crate::errors::{ApiResult, Detail, HttpError};
 use crate::resources::Warning;
 use crawlx_core::config::{BrowserProfile, CreateCrawl, OutputFormat, RetentionMode, SafetyProfile};
 use crawlx_core::page_op::SelectorState;
@@ -25,10 +25,13 @@ const MAX_PROMPT_CHARS: usize = 10_000;
 
 /// Scrape option keys (compat v2 plus the v1 `extract` / `jsonOptions` aliases and the
 /// request-level `zeroDataRetention`).
-const SCRAPE_KEYS: [&str; 28] = [
+const SCRAPE_KEYS: [&str; 31] = [
     "formats",
     "onlyMainContent",
     "contentPolicy",
+    "outputs",
+    "decode",
+    "markup",
     "cache",
     "includeTags",
     "excludeTags",
@@ -117,6 +120,9 @@ impl ParsedScrape {
         crawl.output.formats = output_formats(o);
         crawl.output.only_main_content = o.only_main_content;
         crawl.extract.content.clone_from(&o.content_policy);
+        crawl.extract.outputs.clone_from(&o.outputs);
+        crawl.extract.decode.clone_from(&o.decode);
+        crawl.extract.markup.clone_from(&o.markup);
         crawl.output.include_tags = o.include_tags.clone();
         crawl.output.exclude_tags = o.exclude_tags.clone();
         crawl.output.wait_for_ms = o.wait_for_ms;
@@ -272,6 +278,60 @@ impl Cx {
     }
 }
 
+fn extraction_details(
+    outputs: Option<&Value>,
+    decode: Option<&Value>,
+    markup: Option<&Value>,
+    path: &str,
+) -> Vec<Detail> {
+    let mut details = Vec::new();
+    for (key, value) in [("outputs", outputs), ("decode", decode), ("markup", markup)] {
+        let Some(value) = value.filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let result = match key {
+            "outputs" => {
+                serde_json::from_value::<crawlx_extract::content_outputs::ContentOutputOptions>(value.clone())
+                    .map_err(|error| error.to_string())
+                    .and_then(|options| options.validate().map_err(|error| error.to_string()))
+            }
+            "decode" => serde_json::from_value::<crawlx_extract::decode::DecodeOptions>(value.clone())
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+            _ => serde_json::from_value::<crawlx_extract::decode::MarkupRetention>(value.clone())
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+        };
+        if let Err(message) = result {
+            let code = if key == "outputs" {
+                "invalid_outputs"
+            } else {
+                "invalid_extraction_option"
+            };
+            details.push(Detail::new(format!("{path}/{key}"), code, message));
+        }
+    }
+    details
+}
+
+/// Validate extraction-owned native JSON controls before admission or persistence.
+///
+/// # Errors
+/// Returns `400 BAD_REQUEST` with every invalid `/extract` option group.
+pub(crate) fn validate_native_extraction(extract: &crawlx_core::config::Extract) -> ApiResult<()> {
+    let details = extraction_details(
+        extract.outputs.as_ref(),
+        extract.decode.as_ref(),
+        extract.markup.as_ref(),
+        "/extract",
+    );
+    if details.is_empty() {
+        Ok(())
+    } else {
+        Err(HttpError::bad_request(details))
+    }
+}
+
 /// Parse the scrape options of `obj` (every key of a scrape request, or a crawl's
 /// `scrapeOptions`); `path` is the JSON Pointer of `obj` for the details (`""` for a request
 /// body, `/scrapeOptions` for a crawl). Keys that are not scrape options produce an
@@ -334,6 +394,15 @@ pub fn parse_scrape_options_in(
             }
         }
     }
+    o.outputs = obj.get("outputs").filter(|value| !value.is_null()).cloned();
+    o.decode = obj.get("decode").filter(|value| !value.is_null()).cloned();
+    o.markup = obj.get("markup").filter(|value| !value.is_null()).cloned();
+    cx.details.extend(extraction_details(
+        o.outputs.as_ref(),
+        o.decode.as_ref(),
+        o.markup.as_ref(),
+        &cx.path,
+    ));
     if let Some(value) = obj.get("cache").filter(|value| !value.is_null()) {
         match serde_json::from_value::<crawlx_core::cache::CachePolicyV1>(value.clone()) {
             Ok(policy) => match policy.validate() {

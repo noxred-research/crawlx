@@ -408,6 +408,54 @@ async fn crawl_returns_the_id_and_the_status_tool_reads_it() {
 }
 
 #[tokio::test]
+async fn crawl_order_defaults_to_breadth_first_through_real_mcp_api() {
+    use crawlx_api::auth::{generate_key, key_record_for, tenant_id_for};
+    use crawlx_api::{ApiConfig, AppState, Repos, Scope};
+    use crawlx_core::repo::RunRepo as _;
+    use crawlx_core::{Clock, CrawlRunId, SystemClock};
+    use crawlx_policy::AdmissionPolicy;
+    use crawlx_storage::{MemoryArtifactStore, MemoryStore};
+    use std::sync::Arc;
+
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let store = Arc::new(MemoryStore::new());
+    let artifacts = Arc::new(MemoryArtifactStore::in_memory(store.clone(), clock.clone()));
+    let (repos, api) = Repos::memory_with_api(store.clone(), artifacts);
+    let state = AppState::builder(
+        repos,
+        AdmissionPolicy::new(clock.clone()),
+        ApiConfig {
+            rate_limit_per_minute: 0,
+            ..ApiConfig::default()
+        },
+    )
+    .clock(clock)
+    .build();
+    let key = generate_key();
+    let record = key_record_for(&key, tenant_id_for("mcp-order"), Scope::all_set(), false).unwrap();
+    crawlx_api::ApiStore::key_insert(api.as_ref(), &record, "mcp-order")
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        axum::serve(listener, crawlx_api::router(state)).await.unwrap();
+    }));
+    let mut mcp = Session::spawn(&["--api-url", &api_url, "--api-key", &key], &[]).await;
+    mcp.initialize().await;
+    let result = mcp.call(TOOL_CRAWL, json!({"url":"https://example.test/"})).await;
+    let body = json_of(&result);
+    let id: CrawlRunId = body["id"].as_str().expect("crawl accepted").parse().unwrap();
+    let run = store.get(id).await.unwrap();
+    assert_eq!(
+        run.config.scope.strategy,
+        crawlx_core::config::CrawlStrategy::BreadthFirst
+    );
+    mcp.finish().await;
+    drop(server);
+}
+
+#[tokio::test]
 async fn crawl_status_path_encodes_the_id() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

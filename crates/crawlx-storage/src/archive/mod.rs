@@ -5,9 +5,12 @@
 
 pub mod cdxj;
 pub mod collection;
+pub mod publication;
 pub mod recorded;
 pub mod resolver;
 pub mod retained;
+pub mod rollover;
+pub mod staging;
 pub mod wacz;
 pub mod warc;
 mod zip_bounds;
@@ -64,6 +67,16 @@ pub enum ArchiveError {
     /// Bounded parser refused further work.
     #[error("archive limit exceeded: {0}")]
     Limit(&'static str),
+    /// One compressed WARC record cannot fit the configured per-file hard cap.
+    #[error(
+        "encoded archive record of {encoded_bytes} bytes exceeds rollover cap of {rollover_bytes} bytes"
+    )]
+    RecordExceedsRollover {
+        /// Actual encoded gzip member size.
+        encoded_bytes: u64,
+        /// Configured hard file-size cap.
+        rollover_bytes: u64,
+    },
     /// Format or relationship violation. Details intentionally exclude untrusted content.
     #[error("invalid archive: {0}")]
     Invalid(&'static str),

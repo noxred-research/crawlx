@@ -149,7 +149,12 @@ async fn cancellation_before_browser_admission_closes_unleased_sessions_on_postg
         let report = run_local_with(
             LocalRun::new(crawl, cfg)
                 .with_stores(stores.clone())
-                .with_backend(Arc::new(FakeBackend::new(FakeScript::new())))
+                .with_backend(Arc::new(
+                    FakeBackend::builder()
+                        .script(FakeScript::new())
+                        .clock(Arc::new(crawlx_core::SystemClock))
+                        .build(),
+                ))
                 .with_cancel(cancel),
         )
         .await

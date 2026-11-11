@@ -143,15 +143,15 @@ pub async fn lookup(
         if doc.not_cacheable || doc.options_digest != digest {
             continue;
         }
-        let source = match runs.get(page.run).await {
+        let source = match runs.get_metadata(page.run).await {
             Ok(run) => run,
             Err(StoreError::NotFound { .. }) => continue,
             Err(error) => return Err(error.into()),
         };
         if source.tenant != tenant
-            || source.config.retention.mode == RetentionMode::Zdr
-            || source.config.retention.days == 0
-            || source.created_at + chrono::Duration::days(i64::from(source.config.retention.days)) <= now
+            || source.retention.mode == RetentionMode::Zdr
+            || source.retention.days == 0
+            || source.created_at + chrono::Duration::days(i64::from(source.retention.days)) <= now
         {
             continue;
         }
@@ -480,11 +480,11 @@ pub(crate) async fn lookup_native(
         {
             continue;
         }
-        let owner = runs.get(page.run).await?;
+        let owner = runs.get_metadata(page.run).await?;
         if owner.tenant != tenant
-            || owner.config.retention.mode == RetentionMode::Zdr
-            || owner.config.retention.days == 0
-            || owner.created_at + chrono::Duration::days(i64::from(owner.config.retention.days)) <= now
+            || owner.retention.mode == RetentionMode::Zdr
+            || owner.retention.days == 0
+            || owner.created_at + chrono::Duration::days(i64::from(owner.retention.days)) <= now
         {
             continue;
         }

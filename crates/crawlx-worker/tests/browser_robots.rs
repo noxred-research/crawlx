@@ -251,6 +251,7 @@ async fn browse(site: &Site, crawl: CreateCrawl) -> Browsed {
     let backend = Arc::new(
         FakeBackend::builder()
             .script(script(&site.base))
+            .clock(Arc::new(crawlx_core::SystemClock))
             .honour_navigation_guard()
             .build(),
     );
@@ -315,9 +316,16 @@ async fn the_observe_only_walk_skips_disallowed_paths_and_the_server_never_sees_
     assert_eq!(site.count("/private/x"), 0);
     assert_eq!(site.count("/private/open"), 0);
     assert_eq!(site.count("/robots.txt"), 1, "fetched once for the origin");
-    assert!(
-        run.report.pages.is_empty(),
-        "no page record: the URL plane never ran"
+    let pages: BTreeSet<_> = run
+        .report
+        .pages
+        .iter()
+        .map(|page| page.url.url.path().to_owned())
+        .collect();
+    assert_eq!(
+        pages,
+        set(["/", "/public"]),
+        "only browser-admitted documents become pages"
     );
 }
 
@@ -471,6 +479,7 @@ async fn ignoring_robots_under_a_record_navigates_the_disallowed_path() {
     let backend = Arc::new(
         FakeBackend::builder()
             .script(script(&site.base))
+            .clock(Arc::new(crawlx_core::SystemClock))
             .honour_navigation_guard()
             .build(),
     );
@@ -509,6 +518,7 @@ async fn ignoring_robots_in_the_browser_without_a_record_is_a_configuration_erro
     let backend = Arc::new(
         FakeBackend::builder()
             .script(script(&site.base))
+            .clock(Arc::new(crawlx_core::SystemClock))
             .honour_navigation_guard()
             .build(),
     );
@@ -532,7 +542,12 @@ async fn a_backend_without_a_guard_runs_unchecked() {
     let stores = Stores::over_memory(store, dir.path()).await.unwrap();
     let mut c = crawl(&site.base, CrawlMode::Dynamic);
     c.dynamic.observe_only = true;
-    let backend = Arc::new(FakeBackend::new(script(&site.base)));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script(&site.base))
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let report = run_local_with(
         LocalRun::new(c, config(dir.path()))
             .with_backend(backend)

@@ -397,4 +397,25 @@ mod tests {
             Err(ProtocolError::Refused("special corpus file"))
         ));
     }
+    #[tokio::test]
+    async fn renamed_root_descriptor_does_not_follow_replacement_path() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("owned"), b"original inode").unwrap();
+        let corpus = FileCorpus::open(&root, 8).unwrap();
+        std::fs::rename(&root, base.path().join("moved")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("owned"), b"replacement path").unwrap();
+        let resource = corpus
+            .acquire(
+                &FileCorpus::parse_url("file:///owned").unwrap(),
+                4096,
+                Duration::from_secs(1),
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resource.body.as_ref(), b"original inode");
+    }
 }

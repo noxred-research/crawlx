@@ -318,6 +318,9 @@ pub enum FakeEffect {
         /// New accessible name.
         name: String,
     },
+    /// Replace serialized DOM without navigating; bumps `mutation_seq` by one.
+    /// AX nodes remain scripted independently.
+    SetHtml(String),
     /// Open a popup tab at `url` (opener = the acting tab).
     OpenTab(String),
     /// Open an initially blank popup whose first navigation commits after `delay_ms`.
@@ -683,6 +686,8 @@ struct TabState {
     page_key: Option<String>,
     url: String,
     status: u16,
+    /// Main-document response declared by the loaded script; absent for a blank tab.
+    response_status: Option<u16>,
     title: Option<String>,
     html: String,
     nodes: Vec<LiveNode>,
@@ -708,6 +713,7 @@ impl TabState {
             page_key: None,
             url,
             status: 200,
+            response_status: None,
             title: None,
             html: String::new(),
             nodes: Vec::new(),
@@ -1067,6 +1073,7 @@ impl Inner {
         t.page_key = Some(snap.key.clone());
         t.url.clone_from(&snap.url);
         t.status = snap.status;
+        t.response_status = Some(snap.status);
         t.title.clone_from(&snap.title);
         t.html.clone_from(&snap.html);
         t.nodes = snap
@@ -1816,6 +1823,13 @@ impl Inner {
                     t.pending.records += 1;
                     t.bump_mutation(1);
                 }
+                FakeEffect::SetHtml(html) => {
+                    let t = self.tab_mut(tab)?;
+                    t.html = html;
+                    t.pending.text_changes = t.pending.text_changes.saturating_add(1);
+                    t.pending.records = t.pending.records.saturating_add(1);
+                    t.bump_mutation(1);
+                }
                 FakeEffect::OpenTab(raw) => {
                     if self.refuse(&raw, tab, refused) {
                         continue;
@@ -2417,6 +2431,23 @@ impl BrowserContext for FakeContext {
             PageOp::BlockUrls(patterns) => {
                 self.inner.lock().block_urls(patterns);
                 Ok(PageOpResult::Done)
+            }
+            PageOp::Html => {
+                let inner = self.inner.lock();
+                let tab = inner.tab(&inner.current)?;
+                Ok(PageOpResult::Html {
+                    html: tab.html.clone(),
+                    url: tab.url.clone(),
+                })
+            }
+            PageOp::DocumentResponse => {
+                let inner = self.inner.lock();
+                let tab = inner.tab(&inner.current)?;
+                Ok(PageOpResult::Response {
+                    status: tab.response_status,
+                    headers: Vec::new(),
+                    content_type: tab.response_status.map(|_| "text/html".to_owned()),
+                })
             }
             PageOp::WaitForSelector {
                 selector,
@@ -3152,6 +3183,43 @@ mod tests {
             rig.handle.navigations(),
             vec!["https://example.test/", "https://example.test/about", "/"]
         );
+    }
+
+    #[tokio::test]
+    async fn set_html_reveals_same_document_content_without_navigation() {
+        let html = "<html><title>Revealed</title><body>Revealed article.</body></html>";
+        let script = FakeScript::new().page(
+            FakePage::new("https://example.test/")
+                .status(200)
+                .html("<html><body>Initial shell.</body></html>")
+                .node(FakeAxSpec::button("reveal", "Reveal"))
+                .on_click("reveal", vec![FakeEffect::SetHtml(html.into())]),
+        );
+        let mut rig = rig_with(script, ContextConfig::new(SessionId::new()));
+        assert!(matches!(
+            rig.ctx.page_op(PageOp::DocumentResponse).await.unwrap(),
+            PageOpResult::Response {
+                status: None,
+                content_type: None,
+                ..
+            }
+        ));
+        let before = home(&mut rig).await;
+        rig.ctx.perform(click(loc(&before, "reveal"))).await.unwrap();
+        let after = rig.ctx.observe(ObservationSpec::default()).await.unwrap();
+        assert_eq!(after.url, before.url);
+        assert_eq!(after.epoch.navigation_seq, before.epoch.navigation_seq);
+        assert_eq!(after.epoch.document_seq, before.epoch.document_seq);
+        assert_eq!(
+            after.epoch.mutation_seq,
+            before.epoch.mutation_seq.saturating_add(1)
+        );
+        assert_eq!(after.html.as_deref(), Some(html));
+        assert!(matches!(
+            rig.ctx.page_op(PageOp::Html).await.unwrap(),
+            PageOpResult::Html { html: actual, .. } if actual == html
+        ));
+        assert_eq!(rig.handle.navigations(), vec!["https://example.test/"]);
     }
 
     #[tokio::test]

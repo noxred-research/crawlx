@@ -1,6 +1,6 @@
 //! compat v2 `parse` endpoints of the compat facade: `POST /parse` converts an
 //! uploaded file (`multipart/form-data`: `file` + an `options` JSON part) into Markdown, HTML,
-//! text, links, images and metadata with [`crawlx_extract::parse`], and `GET /parse/formats` lists
+//! text, links, images and metadata with [`crawlx_extract::pipeline`], and `GET /parse/formats` lists
 //! what it accepts.
 //!
 //! | `options` | behaviour |
@@ -38,14 +38,15 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use base64::Engine as _;
+use crawlx_core::extraction::{ParserPipelineV1, PipelineRouteV1};
 use crawlx_extract::base64_images::strip_base64_images;
 use crawlx_extract::parse::injection;
 use crawlx_extract::parse::ocr::PdfOcr;
 use crawlx_extract::parse::redact::redact;
 use crawlx_extract::parse::{
-    detect_format, parse_document_with, supported_formats_with, ParseError, ParseFormat, ParseLimits,
-    ParseOptions, ParsedDocument,
+    detect_format, supported_formats_with, ParseError, ParseFormat, ParseLimits, ParseOptions, ParsedDocument,
 };
+use crawlx_extract::pipeline::{ParserPipeline, PipelineContent, PipelineError, PipelineInput};
 use crawlx_model::llm::TokenUsage;
 use futures::StreamExt;
 use options::{parse_options, ParseRequest, PdfMode};
@@ -330,6 +331,21 @@ fn parse_error(e: ParseError, req: &ParseRequest) -> HttpError {
     }
 }
 
+fn pipeline_error(error: PipelineError, request: &ParseRequest) -> HttpError {
+    match error {
+        PipelineError::Detect(error) | PipelineError::Parse(error) => parse_error(error, request),
+        error @ PipelineError::Limit { .. } => HttpError::compat(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
+            error.to_string(),
+        ),
+        error => {
+            tracing::error!(error = %error, "the upload parser pipeline failed");
+            HttpError::internal()
+        }
+    }
+}
+
 fn timed_out() -> HttpError {
     HttpError::compat(StatusCode::REQUEST_TIMEOUT, "SCRAPE_TIMEOUT", "Scrape timed out")
 }
@@ -340,16 +356,38 @@ fn parse_blocking(
     content_type: Option<&str>,
     opts: &ParseOptions,
     raw_pdf: bool,
-) -> Result<Parsed, ParseError> {
+) -> Result<Parsed, PipelineError> {
     if raw_pdf {
-        let format = detect_format(bytes, filename, content_type, &opts.limits)?;
+        let format =
+            detect_format(bytes, filename, content_type, &opts.limits).map_err(PipelineError::Detect)?;
         if format == ParseFormat::Pdf {
             return Ok(Parsed::RawPdf {
                 base64: base64::engine::general_purpose::STANDARD.encode(bytes),
             });
         }
     }
-    parse_document_with(bytes, filename, content_type, opts).map(|d| Parsed::Document(Box::new(d)))
+    let mut spec = ParserPipelineV1::for_uploads();
+    // The document parser retains the existing typed OCR refusal when no engine is configured.
+    for format in ["png", "jpeg", "gif", "webp", "bmp", "tiff"] {
+        spec.routes.insert(format.to_owned(), PipelineRouteV1::Document);
+    }
+    let pipeline = ParserPipeline::new(spec)?;
+    let mut input = PipelineInput::new(bytes).with_document_options(opts);
+    if let Some(filename) = filename {
+        input = input.with_filename(filename);
+    }
+    if let Some(content_type) = content_type {
+        input = input.with_content_type(content_type);
+    }
+    let output = pipeline.run(input)?;
+    match output.content {
+        PipelineContent::Document(mut document) => {
+            // Parser findings live on the pipeline report; the upload renderer reads the document.
+            document.warnings = output.warnings;
+            Ok(Parsed::Document(document))
+        }
+        _ => Err(PipelineError::Parse(ParseError::Internal { format: "upload" })),
+    }
 }
 
 // ---- post-processing -----------------------------------------------------------------------
@@ -503,7 +541,7 @@ pub async fn parse(
             tracing::error!(error = %e, "the parse task did not finish");
             return Err(HttpError::internal());
         }
-        Ok(Ok(Err(e))) => return Err(parse_error(e, &request)),
+        Ok(Ok(Err(e))) => return Err(pipeline_error(e, &request)),
         Ok(Ok(Ok(p))) => p,
     };
 

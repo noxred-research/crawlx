@@ -20,9 +20,16 @@ enum Case {
     Schema,
     MissingFinal,
     Hang,
+    HangBody,
     Bounce,
     WrongKey,
     PrivatePeer,
+    MissingPeers,
+    MissingData,
+    OriginChanged,
+    Partial,
+    Malformed,
+    WrongFinalPort,
 }
 fn pem_bytes(pem: &str) -> Vec<u8> {
     STANDARD
@@ -142,6 +149,11 @@ async fn fixture(case: Case) -> (ServiceAdapter, tokio::task::JoinHandle<()>) {
             "sftpHostKey":if is_sftp {json!("SHA256:fixture-pinned-key")} else {Value::Null},
             "redactionPolicyDigest":request["scope"]["policyDigest"],
             "leaseCompleted":true,"bodyComplete":true,"networkRequests":1});
+        if target.starts_with("ftp:") {
+            response["peers"].as_array_mut().unwrap().push(json!({
+                "host":"target.invalid", "ip":"93.184.216.34", "port":5000, "ftpData":true
+            }));
+        }
         match case {
             Case::Audience => response["audience"] = json!("another-service"),
             Case::Nonce => response["nonce"] = json!("replayed-nonce"),
@@ -149,15 +161,29 @@ async fn fixture(case: Case) -> (ServiceAdapter, tokio::task::JoinHandle<()>) {
             Case::Schema => response["schemaVersion"] = json!(2),
             Case::MissingFinal => response["finalUrl"] = Value::Null,
             Case::Bounce => {
-                response["peers"][0]["ftpData"] = json!(true);
-                response["peers"][0]["ip"] = json!("8.8.8.8");
+                response["peers"][1]["ip"] = json!("8.8.8.8");
             }
             Case::WrongKey => response["sftpHostKey"] = json!("SHA256:wrong-key"),
             Case::PrivatePeer => response["peers"][0]["ip"] = json!("169.254.169.254"),
-            Case::Normal | Case::Hang => {}
+            Case::MissingPeers => response["peers"] = json!([]),
+            Case::MissingData => {
+                response["peers"].as_array_mut().unwrap().truncate(1);
+            }
+            Case::OriginChanged => response["finalUrl"] = json!("sftp://other.invalid/document"),
+            Case::Partial => response["bodyComplete"] = json!(false),
+            Case::WrongFinalPort => response["finalUrl"] = json!("https://target.invalid:5000/document"),
+            Case::Normal | Case::Hang | Case::HangBody | Case::Malformed => {}
         }
-        let body = serde_json::to_vec(&response).unwrap();
+        let body = if matches!(case, Case::Malformed) {
+            b"{".to_vec()
+        } else {
+            serde_json::to_vec(&response).unwrap()
+        };
         stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+        if matches!(case, Case::HangBody) {
+            stream.flush().await.unwrap();
+            std::future::pending::<()>().await;
+        }
         stream.write_all(&body).await.unwrap();
         stream.shutdown().await.unwrap();
     });
@@ -210,12 +236,20 @@ async fn local_service_refuses_wrong_scope_nonce_schema_and_protocol_attestation
         (Case::Bounce, "ftp"),
         (Case::WrongKey, "sftp"),
         (Case::PrivatePeer, "https"),
+        (Case::MissingPeers, "https"),
+        (Case::MissingData, "ftp"),
+        (Case::OriginChanged, "sftp"),
+        (Case::Partial, "https"),
+        (Case::WrongFinalPort, "https"),
     ] {
         let (adapter, task) = fixture(case).await;
         let expected = match case {
             Case::Bounce => "FTP passive bounce",
             Case::WrongKey => "SFTP host key mismatch",
-            Case::PrivatePeer => "service target peer policy",
+            Case::PrivatePeer => "missing target control peer",
+            Case::MissingData => "missing FTP data peer",
+            Case::OriginChanged => "protocol origin changed",
+            Case::WrongFinalPort => "final URL lacks peer evidence",
             _ => "service response scope, schema or evidence",
         };
         assert!(
@@ -251,6 +285,7 @@ async fn cancellation_releases_local_call_without_claiming_remote_ack() {
     .unwrap();
     assert!(matches!(result, Err(ProtocolError::Cancelled)));
     cancel_task.await.unwrap();
+    assert_eq!(adapter.slots.available_permits(), 2);
     task.abort();
     let _ = task.await;
 }
@@ -321,4 +356,36 @@ async fn unavailable_capability_and_cross_origin_credential_refs_fail_before_dns
             "credential reference outside approved target scope"
         ))
     ));
+}
+
+#[tokio::test]
+async fn complete_ftp_and_pinned_sftp_resources_keep_http_status_absent() {
+    for scheme in ["ftp", "sftp"] {
+        let (adapter, task) = fixture(Case::Normal).await;
+        let resource = call(&adapter, scheme).await.unwrap();
+        assert_eq!(resource.target_status, None);
+        assert_eq!(resource.gateway_status, Some(200));
+        task.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn malformed_delegate_and_deadline_release_local_slots() {
+    let (adapter, task) = fixture(Case::Malformed).await;
+    assert!(matches!(
+        call(&adapter, "https").await,
+        Err(ProtocolError::Schema(_))
+    ));
+    assert_eq!(adapter.slots.available_permits(), 2);
+    task.await.unwrap();
+    for case in [Case::Hang, Case::HangBody] {
+        let (adapter, task) = fixture(case).await;
+        assert!(matches!(
+            call(&adapter, "https").await,
+            Err(ProtocolError::Deadline)
+        ));
+        assert_eq!(adapter.slots.available_permits(), 2);
+        task.abort();
+        let _ = task.await;
+    }
 }

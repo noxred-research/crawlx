@@ -283,9 +283,8 @@ fn explicit_bundle_revisit_resolves_and_imported_wacz_is_self_contained() {
         resolved.source.target.as_deref(),
         Some("https://example.test/source")
     );
-    let scratch = tempfile::tempdir().unwrap();
     let closed = collection
-        .write_closed_wacz(Cursor::new(Vec::new()), scratch.path())
+        .write_closed_wacz(Cursor::new(Vec::new()))
         .unwrap()
         .into_inner();
     let inspected = wacz::inspect(Cursor::new(&closed), Limits::default()).unwrap();

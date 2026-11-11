@@ -399,7 +399,7 @@ mod tests {
         assert_eq!(AdaptiveSelectorRepo::sweep(&store, clock.now()).await.unwrap(), 1);
         replacement.expires_at = clock.now() + Duration::minutes(2);
         AdaptiveSelectorRepo::put(&store, &replacement).await.unwrap();
-        store.purge_run(run.id);
+        store.purge_run(run.id).await.unwrap();
         assert!(store.inner.lock().adaptive_selectors.is_empty());
     }
     #[tokio::test]

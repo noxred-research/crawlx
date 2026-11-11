@@ -189,3 +189,315 @@ async fn expired_archive_read_returns_gone_without_content_metadata() {
     assert_eq!(status, StatusCode::GONE);
     assert!(!body.to_string().contains("captureSource"));
 }
+
+#[tokio::test]
+async fn sensitive_archive_shards_package_and_index_keep_scope_and_source_deadline() {
+    use crawlx_core::archive_catalog::{ArchiveCustodyV1, ArchiveReadV1};
+    use crawlx_core::repo::ArtifactStore as _;
+    let now = SystemClock.now();
+    let clock = std::sync::Arc::new(crawlx_core::time::ManualClock::new(now));
+    let mut e = common::env_with(
+        crawlx_api::ApiConfig {
+            rate_limit_per_minute: 0,
+            ..crawlx_api::ApiConfig::default()
+        },
+        crawlx_api::Settings::default(),
+        clock.clone(),
+    );
+    // Archive file publication requires a streaming sink; the shared memory fixture
+    // deliberately refuses that capability. Serve the same filesystem store we write.
+    let artifact_root = tempfile::tempdir().unwrap();
+    let artifacts = std::sync::Arc::new(
+        crawlx_storage::FsArtifactStore::open(artifact_root.path(), e.store.clone(), clock.clone())
+            .await
+            .unwrap()
+            .with_index(e.store.clone()),
+    );
+    let mut repos = e.state.repos.clone();
+    repos.artifacts = artifacts.clone();
+    e.state = crawlx_api::AppState::builder(
+        repos,
+        crawlx_api::admission_policy(&e.state.config, clock.clone()),
+        e.state.config.clone(),
+    )
+    .clock(clock.clone())
+    .zdr_buffer(e.state.zdr.clone())
+    .build();
+    e.app = crawlx_api::router(e.state.clone());
+    let mut config = ArchiveConfigV1::default();
+    config.format = ArchiveFormat::Warc;
+    let mut crawl = testkit::create_crawl("https://archive.example.test/", &[], 1);
+    crawl.retention.days = 7;
+    crawl.output.archive = Some(config.clone());
+    let mut run = testkit::crawl_run(e.tenant, crawl);
+    run.created_at = now;
+    RunRepo::create(e.store.as_ref(), &run, None).await.unwrap();
+    let pending = ArchiveExportV1::pending(
+        e.tenant,
+        run.id,
+        config,
+        now,
+        Some(now + chrono::Duration::days(7)),
+        TerminalReason::FrontierExhausted,
+    );
+    e.store.begin(&pending).await.unwrap();
+    let claim = e.store.claim(e.tenant, pending.id, now).await.unwrap().unwrap();
+    let deadline = now + chrono::Duration::minutes(10);
+    let evidence = b"approved sensitive capture";
+    let source = artifacts
+        .put_until(run.id, Sensitivity::Sensitive, "text/plain", evidence, deadline)
+        .await
+        .unwrap();
+    let custody = artifacts
+        .archive_custody(e.tenant, run.id, &source, 1024)
+        .await
+        .unwrap();
+    assert_eq!(custody, ArchiveCustodyV1::sensitive(deadline));
+    assert!(artifacts
+        .read_archive_content(e.tenant, run.id, &source, 1024)
+        .await
+        .is_err());
+    assert_eq!(
+        artifacts
+            .read_archive_sensitive(e.tenant, run.id, &source, &custody, 1024,)
+            .await
+            .unwrap(),
+        evidence
+    );
+    let wrong = ArchiveCustodyV1::content(Some(deadline));
+    assert!(artifacts
+        .read_archive_sensitive(e.tenant, run.id, &source, &wrong, 1024,)
+        .await
+        .is_err());
+    e.store
+        .narrow_custody(e.tenant, pending.id, claim.fence, &custody, now)
+        .await
+        .unwrap();
+    // Replaying the original intent cannot reset the persisted class or deadline.
+    e.store.begin(&pending).await.unwrap();
+    clock.advance_ms(121_000);
+    let recovered = e
+        .store
+        .claim(e.tenant, pending.id, clock.now())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.custody, custody);
+    assert_eq!(recovered.expires_at, Some(deadline));
+    let header = warc::RecordHeader {
+        fields: BTreeMap::from([
+            ("WARC-Type".into(), "resource".into()),
+            ("WARC-Record-ID".into(), format!("<urn:uuid:{}>", run.id)),
+            ("WARC-Date".into(), warc::date(now)),
+            ("WARC-Target-URI".into(), "https://archive.example.test/".into()),
+            ("Content-Type".into(), "text/plain".into()),
+        ]),
+        payload_offset: 0,
+    };
+    let mut member = Cursor::new(Vec::new());
+    let summary = warc::write_record(
+        &mut member,
+        &header,
+        &mut Cursor::new(evidence),
+        u64::try_from(evidence.len()).unwrap(),
+        Limits::default(),
+    )
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let shard_path = root.path().join("shard.warc.gz");
+    let package_path = root.path().join("package.warc.gz");
+    let index_path = root.path().join("index.cdxj");
+    tokio::fs::write(&shard_path, member.get_ref()).await.unwrap();
+    let shard = artifacts
+        .put_archive_file_with_custody(run.id, "application/warc", &shard_path, 1_048_576, &custody)
+        .await
+        .unwrap();
+    artifacts
+        .copy_archive_with_custody(e.tenant, run.id, &shard, &custody, &package_path, 1_048_576)
+        .await
+        .unwrap();
+    let package = artifacts
+        .put_archive_file_with_custody(run.id, "application/warc", &package_path, 1_048_576, &custody)
+        .await
+        .unwrap();
+    let index_text = cdxj::Entry::from_record(&summary, "data.warc.gz")
+        .unwrap()
+        .line(&summary)
+        .unwrap();
+    tokio::fs::write(&index_path, index_text).await.unwrap();
+    let index = artifacts
+        .put_archive_file_with_custody(run.id, "application/cdxj", &index_path, 1_048_576, &custody)
+        .await
+        .unwrap();
+    let mut record = ArchiveRecordV1::resource(
+        pending.id,
+        1,
+        summary.id,
+        shard.clone(),
+        summary.offset,
+        summary.length,
+        summary.payload_digest,
+        "https://archive.example.test/".into(),
+        ArchiveCaptureFactsV1::retained(
+            "fixture:1",
+            now,
+            ArchiveRepresentation::ProtocolResource,
+            "approved_sensitive_capture",
+        ),
+        "text/plain".into(),
+    );
+    record.custody = custody;
+    assert!(e
+        .store
+        .commit_record(e.tenant, recovered.fence, &record, None, clock.now())
+        .await
+        .is_err());
+    record.source_artifact = Some(source.clone());
+    e.store
+        .commit_record(e.tenant, recovered.fence, &record, None, clock.now())
+        .await
+        .unwrap();
+    let mut manifest = ArchiveManifestV1::available(e.tenant, run.id, now);
+    manifest.records = 1;
+    assert!(e
+        .store
+        .publish(
+            e.tenant,
+            pending.id,
+            recovered.fence,
+            &package,
+            Some(&index),
+            &manifest,
+            clock.now(),
+        )
+        .await
+        .is_err());
+    manifest.custody = custody;
+    let ordinary = artifacts
+        .put_kind(
+            run.id,
+            Sensitivity::Content,
+            "evidence",
+            "application/warc",
+            member.get_ref(),
+        )
+        .await
+        .unwrap();
+    assert!(e
+        .store
+        .publish(
+            e.tenant,
+            pending.id,
+            recovered.fence,
+            &ordinary,
+            Some(&index),
+            &manifest,
+            clock.now(),
+        )
+        .await
+        .is_err());
+    let extended = artifacts
+        .put_until(
+            run.id,
+            Sensitivity::Sensitive,
+            "application/warc",
+            member.get_ref(),
+            deadline + chrono::Duration::seconds(1),
+        )
+        .await
+        .unwrap();
+    assert!(e
+        .store
+        .publish(
+            e.tenant,
+            pending.id,
+            recovered.fence,
+            &extended,
+            Some(&index),
+            &manifest,
+            clock.now(),
+        )
+        .await
+        .is_err());
+    e.store
+        .publish(
+            e.tenant,
+            pending.id,
+            recovered.fence,
+            &package,
+            Some(&index),
+            &manifest,
+            clock.now(),
+        )
+        .await
+        .unwrap();
+    for reference in [&source, &shard, &package, &index] {
+        let row = artifacts.row(reference.id).await.unwrap().unwrap();
+        assert_eq!(row.sensitivity, Sensitivity::Sensitive);
+        assert_eq!(row.expires_at, Some(deadline));
+    }
+    let reader = e.key_for("acme", &[Scope::CrawlsRead]).await;
+    let sensitive_reader = e
+        .key_for("acme", &[Scope::CrawlsRead, Scope::ArtifactsReadSensitive])
+        .await;
+    let foreign_reader = e
+        .key_for(
+            "other-sensitive-archive-tenant",
+            &[Scope::CrawlsRead, Scope::ArtifactsReadSensitive],
+        )
+        .await;
+    let export_root = format!("/v1/crawls/{}/archives/{}", run.id, pending.id);
+    for path in [
+        format!("{export_root}/export"),
+        format!("{export_root}/records"),
+        format!("/v1/crawls/{}/artifacts/{}", run.id, shard.id),
+        format!("/v1/crawls/{}/artifacts/{}", run.id, package.id),
+        format!("/v1/crawls/{}/artifacts/{}", run.id, index.id),
+    ] {
+        assert_eq!(e.get_as(&reader, &path).await.0, StatusCode::FORBIDDEN);
+        assert_eq!(e.get_as(&sensitive_reader, &path).await.0, StatusCode::OK);
+        assert_eq!(e.get_as(&foreign_reader, &path).await.0, StatusCode::NOT_FOUND);
+    }
+    let (_, _, progress) = e.get_as(&reader, &export_root).await;
+    assert!(progress["manifest"].is_null());
+    assert!(progress["artifact"].is_null());
+    let ArchiveReadV1::Available(saved) =
+        ArchiveRepo::get(e.store.as_ref(), e.tenant, pending.id, clock.now())
+            .await
+            .unwrap()
+    else {
+        panic!("published sensitive archive missing");
+    };
+    assert_eq!(saved.custody, custody);
+    let mut shortened_source = artifacts.row(source.id).await.unwrap().unwrap();
+    shortened_source.expires_at = Some(deadline - chrono::Duration::seconds(1));
+    ArtifactIndex::record(e.store.as_ref(), &shortened_source)
+        .await
+        .unwrap();
+    for path in [
+        format!("{export_root}/export"),
+        format!("{export_root}/records"),
+        format!("/v1/crawls/{}/artifacts/{}", run.id, shard.id),
+        format!("/v1/crawls/{}/artifacts/{}", run.id, index.id),
+    ] {
+        assert_eq!(e.get_as(&sensitive_reader, &path).await.0, StatusCode::GONE);
+    }
+    let (_, _, revoked_progress) = e.get_as(&sensitive_reader, &export_root).await;
+    assert!(revoked_progress["manifest"].is_null());
+    clock.advance_ms(480_000);
+    assert_eq!(
+        e.get_as(&sensitive_reader, &format!("{export_root}/export"))
+            .await
+            .0,
+        StatusCode::GONE
+    );
+    assert_eq!(
+        e.send(Method::DELETE, &export_root, Some(&e.key), &[], None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    for reference in [&shard, &package, &index] {
+        assert!(artifacts.row(reference.id).await.unwrap().is_none());
+    }
+}

@@ -228,6 +228,8 @@ fn restore_article_cache(
         custom_fields: Default::default(),
         item: saved.item,
         discovered_endpoints: Vec::new(),
+        discovery_unresolved: Vec::new(),
+        discovery_unresolved_dropped: 0,
         article: Some(saved.article),
         comments: saved.comments,
         validation: None,
@@ -236,6 +238,7 @@ fn restore_article_cache(
         outputs: None,
         decode: None,
         markup: None,
+        dedupe_commit: None,
     });
     Ok((document, saved.expires_at, saved.source))
 }

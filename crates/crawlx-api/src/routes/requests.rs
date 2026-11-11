@@ -1,7 +1,8 @@
 //! Authenticated bounded request append, metadata keysets and producer sealing.
 //!
-//! This route accepts anonymous GET proposals only. Body-bearing methods, session
+//! This route accepts anonymous GET and HEAD proposals only. Body-bearing methods, session
 //! bindings and credential controls remain behind their existing admitted-effect paths.
+//! HEAD proposals are bodyless native HTTP requests, not browser or delegated execution support.
 
 use crate::auth::Principal;
 use crate::errors::{ApiResult, HttpError};
@@ -44,6 +45,19 @@ fn get_method() -> String {
 fn default_route() -> String {
     "default".into()
 }
+
+fn require_url_queue(mode: crawlx_core::config::CrawlMode) -> ApiResult<()> {
+    if matches!(
+        mode,
+        crawlx_core::config::CrawlMode::Static | crawlx_core::config::CrawlMode::Hybrid
+    ) {
+        Ok(())
+    } else {
+        Err(HttpError::malformed(
+            "native request queue requires a static or hybrid URL plane",
+        ))
+    }
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Append {
@@ -85,6 +99,7 @@ pub async fn import(
 ) -> ApiResult<Response> {
     principal.require(Scope::CrawlsWrite)?;
     let run = load_run(&state, &principal, &id).await?;
+    require_url_queue(run.config.mode)?;
     if let Some(record) = run.config.safety.authorization_record_ref {
         let record = state
             .repos
@@ -162,6 +177,7 @@ pub async fn append(
 ) -> ApiResult<Response> {
     principal.require(Scope::CrawlsWrite)?;
     let run = load_run(&state, &principal, &id).await?;
+    require_url_queue(run.config.mode)?;
     let input: Append =
         serde_json::from_value(body).map_err(|_| HttpError::malformed("invalid native request batch"))?;
     let maximum = run
@@ -195,9 +211,9 @@ pub async fn append(
     let scope = ScopePolicy::new(&run.config).map_err(|_| HttpError::malformed("invalid run scope"))?;
     let mut requests = Vec::with_capacity(input.requests.len());
     for proposal in input.requests {
-        if proposal.method != "GET" {
+        if !matches!(proposal.method.as_str(), "GET" | "HEAD") {
             return Err(HttpError::malformed(
-                "request methods other than GET require journalled action admission",
+                "request methods other than GET or HEAD require journalled action admission",
             ));
         }
         if !proposal.url.username().is_empty() || proposal.url.password().is_some() {
@@ -212,7 +228,7 @@ pub async fn append(
             .extensions
             .route(&proposal.route)
             .map_err(|_| HttpError::malformed("unknown request route"))?;
-        let mut envelope = RequestEnvelopeV1::get(url, proposal.depth, None);
+        let mut envelope = RequestEnvelopeV1::new(url, proposal.method, proposal.depth, None);
         envelope.route = proposal.route;
         envelope.metadata = proposal.metadata;
         envelope.priority = proposal.priority;

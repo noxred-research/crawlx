@@ -8,6 +8,8 @@ use crate::surface::form_ai::FormAi;
 use crate::surface::traffic_export::TrafficExportConfig;
 use crawlx_browser::LaunchConfig;
 use crawlx_core::config::System1Mode;
+use crawlx_core::hash::Digest;
+use crawlx_core::session_binding::SessionBindingV1;
 use crawlx_core::{CrawlRunId, CreateCrawl, SafetyProfile, WorkerId};
 use crawlx_extract::secret_validation::SecretValidators;
 use crawlx_fetch::proxyx::{PoolBinding, PoolTier, ProxyxRoute};
@@ -43,6 +45,9 @@ pub struct EgressConfig {
     pub extra_ports: Vec<u16>,
     /// DNS resolver; `None` uses the system configuration.
     pub resolver: Option<Arc<dyn Resolver>>,
+    /// Operator-owned checked encrypted DNS. Wins over injected and tenant-listed resolvers.
+    /// Construct with explicit endpoint pins and endpoint/answer policies; never tenant URLs.
+    pub resolver_https: Option<Arc<crawlx_fetch::HttpsResolver>>,
     /// The live deployment lists (`egress.deployment_allowlist`, `egress.operator_blocklist`):
     /// every run's policy carries this handle, so a reload reaches runs in flight.
     pub lists: Option<SharedEgressLists>,
@@ -60,6 +65,7 @@ impl fmt::Debug for EgressConfig {
             .field("extra_deny", &self.extra_deny)
             .field("extra_ports", &self.extra_ports)
             .field("resolver", &self.resolver.as_ref().map(|_| "custom"))
+            .field("resolver_https", &self.resolver_https)
             .field("lists", &self.lists)
             .field("proxy_routes", &self.proxy_routes)
             .finish()
@@ -107,24 +113,36 @@ impl<'a> TierRoute<'a> {
         }
     }
 
-    /// A stable name of the route for identity digests: `direct`, the proxy URL as configured, or
-    /// the credential-free pool identity (gateway and selector).
+    /// A credential-free diagnostic name. Authorization uses [`Self::egress_digest`].
     #[must_use]
     pub fn identity(&self) -> String {
         match self {
             Self::Direct => "direct".to_owned(),
-            Self::Url(url) => url.as_str().to_owned(),
+            Self::Url(url) => {
+                let mut identity = (*url).clone();
+                let _ = identity.set_username("");
+                let _ = identity.set_password(None);
+                identity.to_string()
+            }
             Self::Pool(route, _) => route.identity(),
         }
     }
 
-    /// The upstream run `run` binds for this route: the pool binding of a pool route, `None`
-    /// otherwise. `report` carries the run's egress policy and resolver when block signals should
-    /// be reported (the fetch plane).
+    /// The exact approved route authority, including tier and credential identity.
+    #[must_use]
+    pub fn egress_digest(&self) -> Digest {
+        match self {
+            Self::Direct => Digest::of("crawlx/session-direct-egress/v1", b"direct"),
+            Self::Url(url) => Digest::of("crawlx/session-url-egress/v1", url.as_str().as_bytes()),
+            Self::Pool(route, tier) => route.egress_digest(*tier),
+        }
+    }
+
+    /// Bind stateless run traffic. Never use this route for a named HTTP or browser session.
     ///
     /// # Errors
     /// [`WorkerError::Fetch`] when the selector does not fit the username budget.
-    pub fn bind(
+    pub fn bind_run(
         &self,
         run: CrawlRunId,
         report: Option<(Arc<EgressPolicy>, Arc<dyn Resolver>)>,
@@ -133,9 +151,33 @@ impl<'a> TierRoute<'a> {
             return Ok(None);
         };
         let binding = route
-            .bind(tier, &run.0.simple().to_string(), report)
+            .bind_run(tier, run, report)
             .map_err(crawlx_fetch::FetchError::from)?;
         Ok(Some(binding))
+    }
+
+    /// Bind an admitted generation without changing its approved route.
+    ///
+    /// # Errors
+    /// Returns a fetch error for identity drift, an inactive binding or an invalid selector.
+    pub fn bind(
+        &self,
+        session: &SessionBindingV1,
+        report: Option<(Arc<EgressPolicy>, Arc<dyn Resolver>)>,
+    ) -> Result<Option<Arc<PoolBinding>>, WorkerError> {
+        if session.identity.egress != self.egress_digest() {
+            return Err(
+                crawlx_fetch::FetchError::from(crawlx_fetch::proxyx::ProxyxError::EgressMismatch).into(),
+            );
+        }
+        self.pool()
+            .map(|(route, tier)| {
+                route
+                    .bind(tier, session, report)
+                    .map_err(crawlx_fetch::FetchError::from)
+            })
+            .transpose()
+            .map_err(WorkerError::from)
     }
 }
 
@@ -238,26 +280,29 @@ impl EgressConfig {
         policy
     }
 
-    /// The configured resolver, or the system resolver.
+    /// The operator's encrypted resolver, otherwise the injected or system resolver.
     ///
     /// # Errors
     /// Fails when a storage, browser or network operation it depends on fails.
     pub fn resolver(&self) -> Result<Arc<dyn Resolver>, WorkerError> {
+        if let Some(resolver) = &self.resolver_https {
+            return Ok(Arc::clone(resolver) as Arc<dyn Resolver>);
+        }
         match &self.resolver {
             Some(r) => Ok(Arc::clone(r)),
             None => Ok(Arc::new(HickoryResolver::from_system_conf()?)),
         }
     }
 
-    /// The resolver of `crawl`'s fetch plane: the injected one when set, else the servers
-    /// the request lists in `fetch.resolvers` (the `-r` compatibility flag), else the system resolver.
-    /// Egress checks apply to whatever the chosen resolver answers.
+    /// The resolver of `crawl`'s fetch plane: operator encrypted DNS first, then the
+    /// injected resolver, tenant-listed servers, or system configuration.
+    /// Checked target resolution still applies the run's policy to every answer.
     ///
     /// # Errors
     /// [`WorkerError::Config`] when a listed server is not an `ip` or `ip:port`;
     /// [`WorkerError::Fetch`] when resolver configuration or construction fails.
     pub fn resolver_for(&self, crawl: &CreateCrawl) -> Result<Arc<dyn Resolver>, WorkerError> {
-        if self.resolver.is_some() || crawl.fetch.resolvers.is_empty() {
+        if self.resolver_https.is_some() || self.resolver.is_some() || crawl.fetch.resolvers.is_empty() {
             return self.resolver();
         }
         let servers = crawl
@@ -292,10 +337,59 @@ impl EgressConfig {
         let options = match route {
             TierRoute::Direct => options,
             TierRoute::Url(url) => options.with_upstream(UpstreamProxy::from_url(url)?),
-            TierRoute::Pool(..) => match route.bind(run, None)? {
+            TierRoute::Pool(..) => match route.bind_run(run, None)? {
                 Some(binding) => options.with_upstream(binding.upstream().clone()),
                 None => options,
             },
+        };
+        Ok(EgressProxy::serve_with(Arc::new(self.policy_for_run(crawl, record)), resolver, options).await?)
+    }
+
+    /// Select only an operator route already approved by this generation.
+    ///
+    /// # Errors
+    /// Refuses a changed request override, deployment route or unapproved tier.
+    pub(crate) fn bound_route<'a>(
+        &'a self,
+        crawl: &'a CreateCrawl,
+        binding: &SessionBindingV1,
+    ) -> Result<TierRoute<'a>, WorkerError> {
+        let route = self.route_for(crawl)?;
+        if route.egress_digest() == binding.identity.egress {
+            return Ok(route);
+        }
+        if let Some(enhanced) = self.enhanced_route() {
+            if enhanced.egress_digest() == binding.identity.egress {
+                return Ok(enhanced);
+            }
+        }
+        Err(crawlx_fetch::FetchError::from(crawlx_fetch::proxyx::ProxyxError::EgressMismatch).into())
+    }
+
+    /// Serve a generation-owned browser proxy using the same pool binding as HTTP.
+    ///
+    /// # Errors
+    /// Returns an error for missing/shared binding drift, unapproved routes or listener failure.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn serve_bound_proxy(
+        &self,
+        crawl: &CreateCrawl,
+        binding: &SessionBindingV1,
+        record: Option<&AuthorizationRecord>,
+        resolver: Arc<dyn Resolver>,
+        options: EgressOptions,
+        pool: Option<Arc<PoolBinding>>,
+    ) -> Result<EgressProxyHandle, WorkerError> {
+        let route = self.bound_route(crawl, binding)?;
+        let options = match (route, pool) {
+            (TierRoute::Direct, None) => options,
+            (TierRoute::Url(url), None) => options.with_upstream(UpstreamProxy::from_url(url)?),
+            (TierRoute::Pool(..), Some(pool)) => {
+                pool.validate_session(binding)
+                    .map_err(crawlx_fetch::FetchError::from)?;
+                options.with_upstream(pool.upstream().clone())
+            }
+            _ => return Err(WorkerError::Config("session proxy binding unavailable".into())),
         };
         Ok(EgressProxy::serve_with(Arc::new(self.policy_for_run(crawl, record)), resolver, options).await?)
     }
@@ -489,6 +583,8 @@ pub struct WorkerConfig {
     pub renderer: Option<Arc<dyn PageRenderer>>,
     /// Operator-only approved protocol services; absent registry also checks `CRAWLX_PROTOCOL_REGISTRY` at run admission.
     pub protocol_registry: Option<Arc<crate::protocol::ProtocolRegistry>>,
+    /// Operator-owned immutable recipe registry; never read from tenant request JSON.
+    pub archive_behaviors: Option<Arc<crate::archive_behaviors::RecipeRegistry>>,
     /// Largest audio or video file one scrape downloads per `audio` / `video` format, bytes. The
     /// file is held in memory while it is downloaded, transcribed and stored, so this bounds the
     /// memory of one scrape; a larger file adds a `media_too_large:` warning to the page.
@@ -546,6 +642,7 @@ impl Default for WorkerConfig {
             branding_llm: None,
             renderer: None,
             protocol_registry: None,
+            archive_behaviors: None,
             media_max_bytes: crate::scrape::DEFAULT_MEDIA_MAX_BYTES,
             ocr: None,
             authorization_recheck: crate::authorization::DEFAULT_RECHECK_INTERVAL,
@@ -895,6 +992,10 @@ impl fmt::Debug for WorkerConfig {
                 "protocol_registry",
                 &self.protocol_registry.as_ref().map(|_| "[approved]"),
             )
+            .field(
+                "archive_behaviors",
+                &self.archive_behaviors.as_ref().map(|_| "[approved]"),
+            )
             .field("media_max_bytes", &self.media_max_bytes)
             .field("ocr", &self.ocr)
             .field("authorization_recheck", &self.authorization_recheck)
@@ -959,11 +1060,92 @@ impl WorkerConfig {
     }
 }
 
+impl WorkerConfig {
+    /// Resolve a tenant's recipe reference once, before creating any browser context.
+    ///
+    /// # Errors
+    /// Refuses absent registries, unknown pins, unapproved tenants and conflicting request options.
+    pub async fn resolve_archive_behaviors(
+        &self,
+        crawl: &CreateCrawl,
+        tenant: crawlx_core::TenantId,
+    ) -> Result<Option<Arc<crawlx_core::archive_behaviors::RecipeV1>>, WorkerError> {
+        let Some(options) = crawl.scrape.as_ref().map(|job| &job.options) else {
+            return Ok(None);
+        };
+        let Some(reference) = &options.archive_behavior else {
+            return Ok(None);
+        };
+        options.validate().map_err(WorkerError::Config)?;
+        if crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr {
+            return Err(WorkerError::Config(
+                "approved recipe provenance is unavailable under zero-data retention".to_owned(),
+            ));
+        }
+        if self.renderer.is_some() {
+            return Err(WorkerError::Config(
+                "approved recipes require the native Session Actor renderer".to_owned(),
+            ));
+        }
+        let registry = match &self.archive_behaviors {
+            Some(registry) => Arc::clone(registry),
+            None => {
+                let path = std::env::var_os("CRAWLX_RECIPE_REGISTRY")
+                    .ok_or_else(|| WorkerError::Config("operator recipe registry absent".to_owned()))?;
+                crate::archive_behaviors::RecipeRegistry::from_file(std::path::Path::new(&path)).await?
+            }
+        };
+        let recipe = registry.resolve(reference, tenant)?;
+        if recipe
+            .entry_url
+            .as_ref()
+            .is_some_and(|url| url != &crawl.seed_url)
+            || (recipe.entry_url.is_some() && crawl.scrape.as_ref().is_some_and(|job| !job.urls.is_empty()))
+        {
+            return Err(WorkerError::Config(
+                "recorded recipe requires its exact single initial URL".to_owned(),
+            ));
+        }
+        Ok(Some(recipe))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crawlx_fetch::proxyx::PoolTier;
+
+    #[tokio::test]
+    async fn operator_encrypted_dns_wins_over_injected_and_tenant_resolvers() {
+        let endpoint = "https://resolver.test/dns-query".parse().unwrap();
+        let config = crawlx_fetch::HttpsResolverConfig::new(endpoint, vec!["93.184.216.34".parse().unwrap()]);
+        let encrypted = Arc::new(
+            crawlx_fetch::HttpsResolver::new(
+                config,
+                Arc::new(EgressPolicy::default()),
+                Arc::new(EgressPolicy::default()),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .unwrap(),
+        );
+        let expected: Arc<dyn Resolver> = encrypted.clone();
+        let egress = EgressConfig {
+            resolver_https: Some(encrypted),
+            resolver: Some(Arc::new(crawlx_fetch::StaticResolver::new())),
+            ..EgressConfig::default()
+        };
+        let mut crawl = CreateCrawl::new("https://owned.test/".parse().unwrap());
+        // A tenant cannot replace the operator endpoint, even with malformed server input.
+        crawl.fetch.resolvers = vec!["not-an-address".to_owned()];
+        let selected = egress.resolver_for(&crawl).unwrap();
+        assert!(Arc::ptr_eq(&selected, &expected));
+        assert!(matches!(
+            selected.resolve("127.0.0.1").await,
+            Err(crawlx_fetch::FetchError::EgressDenied(_))
+        ));
+        assert!(Arc::ptr_eq(&egress.resolver().unwrap(), &expected));
+    }
 
     #[test]
     fn native_budget_auto_keeps_basic_while_legacy_auto_and_explicit_enhanced_fail_closed() {
@@ -1065,6 +1247,72 @@ mod tests {
         let shown = format!("{egress:?}");
         assert!(!shown.contains("ak_fixture-key"), "{shown}");
         assert!(shown.contains("[configured]"));
+    }
+
+    #[test]
+    fn strict_generation_refuses_tier_switch_even_after_health_replacement() {
+        use crawlx_core::scrape::{JobKind, ScrapeJob, ScrapeOptions};
+        use crawlx_core::session_binding::{RetirementReason, SessionIdentityV1};
+        let mut crawl = CreateCrawl::new("https://fixture.example.test/".parse().unwrap());
+        crawl.scrape = Some(ScrapeJob::new(JobKind::Scrape, ScrapeOptions::default()));
+        let mut egress = EgressConfig::default();
+        egress.proxy_routes.basic_pool = Some(pool_route("cc=fr"));
+        egress.proxy_routes.enhanced_pool = Some(pool_route("cc=de"));
+        let route = egress.route_for(&crawl).unwrap();
+        let digest = Digest::of("fixture", b"identity");
+        let identity: SessionIdentityV1 = serde_json::from_value(serde_json::json!({
+            "tenant": "00000000-0000-0000-0000-000000000001",
+            "run": "00000000-0000-0000-0000-000000000002",
+            "principal": crawlx_core::PrincipalId::anonymous(),
+            "session": "00000000-0000-0000-0000-000000000003",
+            "acquisition": digest,
+            "backend_build": digest,
+            "egress": route.egress_digest(),
+            "identity_policy": digest,
+            "profile": null,
+        }))
+        .unwrap();
+        let binding = SessionBindingV1::new(
+            identity,
+            7,
+            chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
+        );
+        let enhanced = egress.enhanced_route().unwrap();
+        assert!(enhanced.bind(&binding, None).is_err());
+        let mut changed = binding.identity.clone();
+        changed.egress = enhanced.egress_digest();
+        assert!(binding
+            .replace(changed.clone(), true, binding.expires_at)
+            .is_err());
+        let mut retired = binding.clone();
+        retired.begin_drain(RetirementReason::Unhealthy).unwrap();
+        retired.finish_cleanup(true).unwrap();
+        // Health replacement preserves approved egress; it cannot authorize a tier switch.
+        assert!(retired.replace(changed, true, retired.expires_at).is_err());
+        let next = retired
+            .replace(retired.identity.clone(), true, retired.expires_at)
+            .unwrap();
+        assert!(enhanced.bind(&next, None).is_err());
+        assert!(egress
+            .bound_route(&crawl, &next)
+            .unwrap()
+            .bind(&next, None)
+            .is_ok());
+        let pool = route.bind(&binding, None).unwrap().unwrap();
+        assert!(pool.validate_session(&next).is_err());
+        egress.proxy_routes.basic_pool = Some(pool_route("cc=us"));
+        assert!(egress.bound_route(&crawl, &binding).is_err());
+    }
+
+    #[test]
+    fn diagnostic_proxy_name_hides_credentials_but_authority_digest_keeps_them_distinct() {
+        let one: url::Url = "http://reader:first-secret@proxy.fixture:8080".parse().unwrap();
+        let two: url::Url = "http://reader:second-secret@proxy.fixture:8080".parse().unwrap();
+        let one = TierRoute::Url(&one);
+        let two = TierRoute::Url(&two);
+        assert_eq!(one.identity(), "http://proxy.fixture:8080/");
+        assert_eq!(one.identity(), two.identity());
+        assert_ne!(one.egress_digest(), two.egress_digest());
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crawlx_storage::{BufferLimits, DeliveryBuffer, MemoryStore, WorkerRegistry};
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn run(mode: RetentionMode, now: crawlx_core::Timestamp, formats: &[&str]) -> CrawlRun {
+pub(super) fn run(mode: RetentionMode, now: crawlx_core::Timestamp, formats: &[&str]) -> CrawlRun {
     let mut config = create_crawl("https://fixture.test/", &[], 1);
     config.retention.mode = mode;
     config.retention.days = if mode == RetentionMode::Zdr { 0 } else { 1 };
@@ -33,7 +33,7 @@ fn run(mode: RetentionMode, now: crawlx_core::Timestamp, formats: &[&str]) -> Cr
     run.created_at = now;
     run
 }
-async fn document(status: u16) -> crawlx_extract::Document {
+pub(super) async fn document(status: u16) -> crawlx_extract::Document {
     let mut fetch = crawlx_core::config::Fetch::default();
     fetch.extra_headers.insert("x-custom", "hdrCanary742");
     fetch

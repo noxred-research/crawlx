@@ -191,6 +191,9 @@ pub struct ApiConfig {
     pub intel: IntelConfig,
     /// compatibility API settings.
     pub compat: CompatConfig,
+    /// Explicit startup override applied after compatibility environment defaults.
+    /// Unlike `compat.mode`, `Some(Strict)` remains explicit when the environment selects native defaults.
+    pub compat_mode_override: Option<CompatMode>,
     /// OCR for `POST /v2/parse` uploads (scanned PDFs, images). `backend: off` (the default)
     /// keeps images refused and scanned pages empty; the facade's scrape runs read the worker's
     /// own setting (`WorkerConfig::ocr`), so configure both processes alike.
@@ -224,11 +227,31 @@ impl Default for ApiConfig {
             metrics_bind: None,
             intel: IntelConfig::default(),
             compat: CompatConfig::default(),
+            compat_mode_override: None,
             ocr: crawlx_extract::parse::ocr::OcrConfig::default(),
             egress_lists: None,
             operator_keys: crawlx_policy::attestation::OperatorKeys::default(),
             ownership_probe: None,
         }
+    }
+}
+
+impl ApiConfig {
+    pub(crate) fn resolved_compat(
+        &self,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<CompatConfig, EnvError> {
+        let mut compat = self.compat.from_lookup(|key| {
+            if key == "CRAWLX_COMPAT_MODE" && self.compat_mode_override.is_some() {
+                None
+            } else {
+                lookup(key)
+            }
+        })?;
+        if let Some(mode) = self.compat_mode_override {
+            compat.mode = mode;
+        }
+        Ok(compat)
     }
 }
 
@@ -254,6 +277,7 @@ impl std::fmt::Debug for ApiConfig {
             .field("metrics_bind", &self.metrics_bind)
             .field("intel", &self.intel)
             .field("compat", &self.compat)
+            .field("compat_mode_override", &self.compat_mode_override)
             .field("ocr", &self.ocr)
             .field("egress_lists", &self.egress_lists.as_ref().map(|_| "live"))
             .field("operator_keys", &self.operator_keys)
@@ -606,6 +630,31 @@ mod intel_tests {
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         let map: BTreeMap<&str, &str> = pairs.iter().copied().collect();
         move |k| map.get(k).map(|v| (*v).to_owned())
+    }
+
+    #[test]
+    fn explicit_compat_mode_wins_over_environment_defaults() {
+        let cfg = ApiConfig {
+            compat_mode_override: Some(CompatMode::Strict),
+            ..ApiConfig::default()
+        };
+        for value in ["native_defaults", "invalid"] {
+            let compat = cfg
+                .resolved_compat(env(&[
+                    ("CRAWLX_COMPAT_MODE", value),
+                    ("CRAWLX_COMPAT_KEYS", "true"),
+                ]))
+                .unwrap();
+            assert_eq!(compat.mode, CompatMode::Strict);
+            assert!(compat.prefixed_keys);
+        }
+        let defaults = ApiConfig::default()
+            .resolved_compat(env(&[("CRAWLX_COMPAT_MODE", "native_defaults")]))
+            .unwrap();
+        assert_eq!(defaults.mode, CompatMode::NativeDefaults);
+        assert!(ApiConfig::default()
+            .resolved_compat(env(&[("CRAWLX_COMPAT_MODE", "invalid")]))
+            .is_err());
     }
 
     #[test]

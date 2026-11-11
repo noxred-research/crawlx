@@ -26,7 +26,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use url::Url;
+mod compression;
 mod config;
+mod feed_policy;
+pub(crate) use feed_policy::{finalize_feeds, take_fragments as take_feed_fragments};
 mod recovery;
 pub(crate) use recovery::recover_once;
 mod article_cache;
@@ -109,6 +112,11 @@ pub trait DeliveryDestination: Send + Sync {
     fn duplicate_possible(&self) -> bool;
     /// Whether content may leave volatile retention (false for local/object persistence).
     fn permits_zdr(&self) -> bool;
+    /// Whether this sink preserves pre-compressed feed artifacts as opaque bytes.
+    /// Structured or external implementations must explicitly opt in; transport encoding differs.
+    fn permits_feed_compression(&self) -> bool {
+        false
+    }
     /// Account for bounded encoding/acknowledgement buffers in the existing shared spool quota.
     fn working_bytes(&self, input: u64) -> Option<u64> {
         Some(input)
@@ -196,6 +204,13 @@ impl DeliveryRegistry {
                 .destinations
                 .get(&feed.destination)
                 .ok_or(DeliveryError::Unavailable("approved_destination_not_registered"))?;
+            if feed.compression != crawlx_core::dataset::FeedCompressionV1::None
+                && !destination.permits_feed_compression()
+            {
+                return Err(DeliveryError::Unavailable(
+                    "feed_compression_unsupported_for_sink",
+                ));
+            }
             if config.retention.mode == RetentionMode::Zdr && !destination.permits_zdr() {
                 return Err(DeliveryError::Unavailable("destination_forbids_zdr_persistence"));
             }
@@ -434,13 +449,19 @@ async fn prepare_article_feeds_inner(
         .iter()
         .filter(|feed| feed.source == dataset)
     {
+        if !feed_policy::article_matches(feed, &document) {
+            continue;
+        }
         let format = article_format(&feed.serializer)
             .map_err(|_| StoreError::Conflict("unsupported article feed serializer".into()))?;
         let maximum = usize::try_from(feed.max_batch_bytes.min(MAX_VALUE_BYTES))
             .map_err(|_| StoreError::Conflict("feed byte limit overflow".into()))?;
         let search_json = feed.serializer == "search_json";
-        let reservation = cpu.try_reserve_article_output(maximum)?;
+        let codec = feed_policy::codec(feed);
+        let reservation = cpu.try_reserve_article_output(compression::reservation_bytes(codec, maximum)?)?;
         let source = source.to_owned();
+        let feed_options = feed.clone();
+        let parameter_cpu = cpu.clone();
         // Produce one bounded output at a time. The pool owns all source buffers
         // until serialization and canonical lineage/privacy approval finish.
         let (returned, approved, reservation) = cpu
@@ -474,6 +495,14 @@ async fn prepare_article_feeds_inner(
                     };
                     serde_json::to_writer(&mut output, &projection)
                         .map_err(|_| output.serialization_error("search projection serialization failed"))?;
+                } else if feed_policy::article_parameters(
+                    &mut output,
+                    &document,
+                    &source,
+                    &feed_options,
+                    &parameter_cpu,
+                )? {
+                    // Explicit columns use only the approved article CSV field projection.
                 } else {
                     let serialized = (|| {
                         let mut stream = ArticleStream::begin(&mut output, format)
@@ -485,7 +514,9 @@ async fn prepare_article_feeds_inner(
                     })();
                     serialized.map_err(|message| output.serialization_error(message))?;
                 }
+                let output = feed_policy::pretty_json(output, &feed_options, maximum, &parameter_cpu)?;
                 let approved = Redactor::new().verify_canonical_owned(output.bytes)?;
+                let approved = compression::encode_approved(approved, codec, maximum)?;
                 Ok::<_, StoreError>((document, approved, reservation))
             })
             .await
@@ -503,11 +534,12 @@ async fn prepare_article_feeds_inner(
             ArticleFormat::Html => "text/html",
             _ => "text/plain",
         };
+        let mime = compression::media_type(codec, mime)?;
         let artifact = put_approved(
             artifacts,
             run,
             page,
-            &format!("feed.{}", feed.id),
+            &format!("feed.{}", crawlx_core::dataset::feed_key_component(&feed.id)),
             mime,
             &output.0,
             source_deadline,
@@ -519,7 +551,10 @@ async fn prepare_article_feeds_inner(
             .expires_at()
             .or(article_deadline(run, source_deadline))
             .ok_or_else(|| StoreError::RetentionDenied("feed deadline unavailable".into()))?;
-        let key = format!("request.{page}.{}", feed.id);
+        let key = format!(
+            "request.{page}.{}",
+            crawlx_core::dataset::feed_key_component(&feed.id)
+        );
         batches.push(DeliveryBatchV1::for_request(
             feed.id.clone(),
             key,
@@ -651,6 +686,7 @@ pub(crate) async fn prepare_article_acceptance_retained(
         source,
     )
     .await?;
+    let outbox = feed_policy::take_fragments(run, &mut item, outbox);
     Ok((
         document,
         vec![AcceptedBatchV1::new(store.name.clone(), vec![item])],
@@ -664,90 +700,14 @@ pub(crate) async fn prepare_article_acceptance_retained(
 /// Returns input-schema, serializer, byte quota or original-expiry errors.
 pub async fn prepare_item_feeds(
     artifacts: &dyn ArtifactStore,
+    cpu: &CpuPool,
     run: &CrawlRun,
     page: i64,
     dataset: &str,
     artifact: &crawlx_core::ArtifactRef,
-    approved_json: &[u8],
+    approved_json: Redacted<Vec<u8>>,
 ) -> Result<Vec<DeliveryBatchV1>, StoreError> {
-    use crawlx_extract::serialize::{write_item, ItemFormat};
-    let size_bytes = u64::try_from(approved_json.len())
-        .map_err(|_| StoreError::Conflict("item feed length overflow".into()))?;
-    let content = artifacts
-        .dataset_content(run.id, page, artifact, size_bytes)
-        .await?;
-    let deadline = content
-        .expires_at()
-        .or_else(|| {
-            run.created_at
-                .checked_add_signed(chrono::Duration::days(i64::from(run.config.retention.days)))
-        })
-        .ok_or_else(|| StoreError::RetentionDenied("feed deadline unavailable".into()))?;
-    let mut item: Option<Value> = None;
-    let mut batches = Vec::new();
-    for feed in run
-        .config
-        .datasets
-        .feeds
-        .iter()
-        .filter(|feed| feed.source == dataset)
-    {
-        let (content, size) = match feed.serializer.as_str() {
-            "json" | "jsonl" => (content.clone(), size_bytes),
-            "csv" | "xml" => {
-                if item.is_none() {
-                    item =
-                        Some(serde_json::from_slice(approved_json).map_err(|_| {
-                            StoreError::Serialization("approved item JSON is malformed".into())
-                        })?);
-                }
-                let value = item
-                    .as_ref()
-                    .ok_or_else(|| StoreError::Serialization("approved item missing".into()))?;
-                let maximum = usize::try_from(feed.max_batch_bytes.min(MAX_VALUE_BYTES))
-                    .map_err(|_| StoreError::Conflict("item feed byte limit overflow".into()))?;
-                let mut output = LimitedOutput::new(maximum);
-                let format = if feed.serializer == "csv" {
-                    ItemFormat::Csv
-                } else {
-                    ItemFormat::Xml
-                };
-                write_item(&mut output, value, format)
-                    .map_err(|_| output.serialization_error("item feed serialization failed"))?;
-                let mime = if feed.serializer == "csv" {
-                    "text/csv"
-                } else {
-                    "application/xml"
-                };
-                let approved = crawlx_core::secret::Redactor::new().redact_artifact(&output.bytes)?;
-                let reference = ArtifactSink::over(artifacts)
-                    .put_dataset(run.id, page, &format!("feed.{}", feed.id), mime, &approved)
-                    .await?;
-                let size = u64::try_from(approved.as_ref().len())
-                    .map_err(|_| StoreError::Conflict("item feed length overflow".into()))?;
-                (
-                    artifacts.dataset_content(run.id, page, &reference, size).await?,
-                    size,
-                )
-            }
-            _ => {
-                return Err(StoreError::Conflict(
-                    "serializer requires an article envelope, not a generic item".into(),
-                ))
-            }
-        };
-        if size > feed.max_batch_bytes {
-            return Err(StoreError::RetentionDenied("candidate feed byte limit".into()));
-        }
-        batches.push(DeliveryBatchV1::for_request(
-            feed.id.clone(),
-            format!("request.{page}.{}", feed.id),
-            content,
-            size,
-            deadline,
-        ));
-    }
-    Ok(batches)
+    feed_policy::prepare_generic(artifacts, cpu, run, page, dataset, artifact, approved_json).await
 }
 
 /// Approved stdout data channel. A crash after writing but before receipt commit can duplicate output.
@@ -773,6 +733,9 @@ impl DeliveryDestination for StdoutDestination {
     }
     fn permits_zdr(&self) -> bool {
         self.allows_zdr
+    }
+    fn permits_feed_compression(&self) -> bool {
+        true
     }
     async fn send(
         &self,
@@ -824,6 +787,9 @@ impl DeliveryDestination for LocalDestination {
     }
     fn permits_zdr(&self) -> bool {
         false
+    }
+    fn permits_feed_compression(&self) -> bool {
+        true
     }
     async fn send(
         &self,
@@ -907,6 +873,9 @@ impl DeliveryDestination for S3Destination {
     }
     fn permits_zdr(&self) -> bool {
         false
+    }
+    fn permits_feed_compression(&self) -> bool {
+        true
     }
     async fn send(
         &self,
@@ -1015,6 +984,14 @@ impl DeliveryDestination for HttpDestination {
     }
     fn permits_zdr(&self) -> bool {
         self.allows_zdr
+    }
+    fn permits_feed_compression(&self) -> bool {
+        matches!(
+            self.protocol,
+            HttpDeliveryProtocol::Http
+                | HttpDeliveryProtocol::ObjectJsonUpload
+                | HttpDeliveryProtocol::FtpServiceV1
+        )
     }
     fn working_bytes(&self, input: u64) -> Option<u64> {
         let factor = match self.protocol {

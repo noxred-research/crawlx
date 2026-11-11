@@ -698,15 +698,6 @@ fn classify_group(
         return FormSemantics::Login;
     }
 
-    // Search
-    let few_fields = visible.len() <= 3;
-    if few_fields
-        && (kind_count(InputKind::Search) > 0 || search_landmark || text.has_any(SEARCH_WORDS))
-        && kind_count(InputKind::File) == 0
-    {
-        return FormSemantics::Search;
-    }
-
     if kind_count(InputKind::File) > 0 {
         return FormSemantics::Upload;
     }
@@ -716,9 +707,20 @@ fn classify_group(
     if role_of(FieldRole::Comment) || (role_of(FieldRole::Message) && text.has_any(COMMENT_WORDS)) {
         return FormSemantics::Comment;
     }
-    if role_of(FieldRole::Message) || text.has_any(CONTACT_WORDS) {
+    if role_of(FieldRole::Message) || role_of(FieldRole::Subject) || text.has_any(CONTACT_WORDS) {
         return FormSemantics::Contact;
     }
+
+    // Search evidence must not erase contact fields or their required test sink.
+    // Search
+    let few_fields = visible.len() <= 3;
+    if few_fields
+        && (kind_count(InputKind::Search) > 0 || search_landmark || text.has_any(SEARCH_WORDS))
+        && kind_count(InputKind::File) == 0
+    {
+        return FormSemantics::Search;
+    }
+
     if text.has_any(SETTINGS_WORDS) {
         return FormSemantics::Settings;
     }
@@ -1204,6 +1206,39 @@ mod tests {
             semantics_of(vec![input(1, &[("name", "foo")])], "OK", "/x"),
             S::Unknown
         );
+    }
+
+    #[test]
+    fn contact_fields_outrank_search_labels_and_metadata() {
+        use crate::sinks::{requires_sink, SinkKind};
+
+        for field_name in ["message", "subject", "m\u{200b}sg", "ko\u{2060}nu"] {
+            for (label, key, value) in [
+                ("Search", "action", "/x"),
+                ("Go", "action", "/search"),
+                ("Go", "name", "search"),
+                ("Go", "aria-label", "Search"),
+            ] {
+                let c = vec![
+                    desc(
+                        1,
+                        "form",
+                        "form",
+                        &[("id", "f"), ("crawlx:form", "f"), (key, value)],
+                    ),
+                    with(input(2, &[("type", "text"), ("name", field_name)]), "form", "f"),
+                    with(submit(3, label), "form", "f"),
+                ];
+                let groups = FormGrouper::new().group(&c);
+                assert_eq!(groups.len(), 1);
+                assert_eq!(
+                    groups[0].semantics,
+                    FormSemantics::Contact,
+                    "{field_name:?}, {key}"
+                );
+                assert_eq!(requires_sink(&groups[0]), Some(SinkKind::Email));
+            }
+        }
     }
 
     #[test]

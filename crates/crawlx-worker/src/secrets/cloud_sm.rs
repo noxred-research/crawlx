@@ -11,6 +11,7 @@ use aws_smithy_http_client::tls;
 use crawlx_core::secret::{CredentialRef, SecretOr, SecretResolver};
 use crawlx_core::CoreError;
 use std::fmt;
+use std::future::Future;
 
 /// Environment variables any of which means the SDK default chain has a credential
 /// source without a network round trip; the resolver is registered only when one is set.
@@ -56,14 +57,21 @@ impl CloudSecretsResolver {
         if !configured {
             return None;
         }
-        let http = aws_smithy_http_client::Builder::new()
-            .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))
-            .build_https();
-        let sdk = aws_config::defaults(BehaviorVersion::latest())
-            .http_client(http)
-            .load()
-            .await;
-        Some(Self::with_client(Client::new(&sdk)))
+        Some(Self::from_configured_env().await)
+    }
+
+    // Keep SDK construction state out of the unconfigured path and its callers.
+    fn from_configured_env() -> impl Future<Output = Self> + Send {
+        Box::pin(async {
+            let http = aws_smithy_http_client::Builder::new()
+                .tls_provider(tls::Provider::Rustls(tls::rustls_provider::CryptoMode::Ring))
+                .build_https();
+            let sdk = aws_config::defaults(BehaviorVersion::latest())
+                .http_client(http)
+                .load()
+                .await;
+            Self::with_client(Client::new(&sdk))
+        })
     }
 
     /// Region the client is configured for, if any.

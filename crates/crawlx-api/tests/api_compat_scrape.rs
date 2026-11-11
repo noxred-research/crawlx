@@ -108,6 +108,71 @@ async fn scrape_returns_the_compat_document_with_metadata_and_credits() {
     rig.stop().await;
 }
 
+#[tokio::test]
+async fn requested_native_outputs_reach_scrape_status_and_keep_selection_distinct_from_capture() {
+    const SOURCE: &str = "<html><body><nav><a href='/outside'>Navigation only</a></nav><main id='selected'><h1>Output fixture</h1><p>Local article words explain the selected content and its <a href='/terms'>useful terms</a>.</p><table><thead><tr><th>Item</th><th>Count</th></tr></thead><tbody><tr><td>Books</td><td>7</td></tr></tbody></table></main><footer>Outside selected content</footer><script>discard_this_script()</script></body></html>";
+    let rig = Rig::start(RigConfig {
+        site_routes: Some(axum::Router::new().route(
+            "/native-outputs",
+            axum::routing::get(|| async { axum::response::Html(SOURCE) }),
+        )),
+        ..RigConfig::default()
+    })
+    .await;
+    let url = rig.url("/native-outputs");
+    let plain = scrape_ok(&rig, j!({"url": url, "maxAge": 0})).await;
+    assert!(plain.get("outputs").is_none(), "{plain}");
+    let selected = j!({
+        "targetElements": ["#selected"],
+        "discoveryScope": "selected",
+        "rawHtml": true,
+        "cleanedHtml": true,
+        "fit": {"strategy": "pruning", "thresholdPermille": 0},
+        "citations": "selected",
+        "tables": true,
+        "linkMedia": {"maxPreviews": 0},
+    });
+    let data = scrape_ok(
+        &rig,
+        j!({"url": url, "maxAge": 0, "formats": ["markdown", "links"], "outputs": selected}),
+    )
+    .await;
+    let outputs = &data["outputs"];
+    assert_eq!(outputs["discoveryScope"], "selected");
+    assert_eq!(outputs["rawHtml"], SOURCE);
+    assert!(outputs["cleanedHtml"]
+        .as_str()
+        .unwrap()
+        .contains("Outside selected content"));
+    assert!(!outputs["cleanedHtml"]
+        .as_str()
+        .unwrap()
+        .contains("discard_this_script"));
+    assert!(outputs["fitMarkdown"]
+        .as_str()
+        .unwrap()
+        .contains("Output fixture"));
+    assert!(outputs["fitHtml"].as_str().unwrap().contains("<h1>"));
+    assert_eq!(outputs["fit"]["strategy"], "pruning_v1");
+    assert!(outputs["markdownWithCitations"]
+        .as_str()
+        .unwrap()
+        .contains("useful terms"));
+    assert_eq!(outputs["citations"][0]["url"], rig.url("/terms"));
+    assert_eq!(outputs["citations"][0]["linkIndex"], 0);
+    assert_eq!(data["links"], j!([rig.url("/terms")]));
+    assert_eq!(outputs["tables"]["tables"][0]["rows"], j!([["Books", "7"]]));
+    assert_eq!(outputs["linkMedia"]["links"][0]["url"], rig.url("/terms"));
+    assert!(outputs["linkMedia"]["previews"].as_array().unwrap().is_empty());
+    let id = data["metadata"]["scrapeId"].as_str().unwrap();
+    let (status, _, stored) = rig.env.get(&format!("{V2}/scrape/{id}")).await;
+    assert_eq!(status, StatusCode::OK, "{stored}");
+    assert_eq!(stored["data"]["outputs"], *outputs);
+    let run = rig.env.state.repos.runs.get(id.parse().unwrap()).await.unwrap();
+    assert_eq!(run.config.extract.outputs.as_ref(), Some(&selected));
+    rig.stop().await;
+}
+
 /// Real deployment proxy tiers, selected only by the facade request and worker egress config.
 mod proxy_facade {
     use super::*;
@@ -1698,6 +1763,7 @@ async fn every_optional_field_of_a_stored_document_is_rendered() {
         doc.query = Some("q-out".into());
         doc.branding = Some(j!({ "colorScheme": "dark" }));
         doc.warning = Some("careful".into());
+        doc.outputs = Some(j!({"discoveryScope": "whole_page", "rawHtml": "not requested"}));
         doc.error = Some("Not Found".into());
         doc.status_code = 404;
         doc.cache_state = CacheState::Hit;
@@ -1718,6 +1784,10 @@ async fn every_optional_field_of_a_stored_document_is_rendered() {
     );
     assert_eq!(data["branding"]["colorScheme"], "dark");
     assert_eq!(data["warning"], "careful");
+    assert!(
+        data.get("outputs").is_none(),
+        "unselected stored outputs must stay absent"
+    );
     assert_eq!(
         data["actions"],
         j!({ "screenshots": [], "scrapes": [], "javascriptReturns": [], "pdfs": [] })
@@ -2196,5 +2266,85 @@ async fn map_of_a_deep_seed_lists_links_elsewhere_on_the_host() {
         );
     }
     assert_eq!(rig.site.hits("/other/c"), 0, "listed, never fetched");
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn decode_and_markup_only_requests_return_their_selected_diagnostics() {
+    let rig = Rig::start(RigConfig {
+        site_routes: Some(axum::Router::new().route(
+            "/diagnostic-outputs",
+            axum::routing::get(|| async {
+                axum::response::Html("<html><body><!--retained note--><main><h1>Diagnostic fixture</h1><p>Local fixture words stay in the cleaned text.</p></main></body></html>")
+            }),
+        )),
+        ..RigConfig::default()
+    })
+    .await;
+    let data = scrape_ok(
+        &rig,
+        j!({
+            "url": rig.url("/diagnostic-outputs"),
+            "decode": {"declaredCharset": "utf-8"},
+            "markup": {"comments": true},
+        }),
+    )
+    .await;
+    let outputs = &data["outputs"];
+    assert_eq!(outputs["discoveryScope"], "whole_page");
+    assert_eq!(outputs["decode"]["encoding"], "UTF-8");
+    assert_eq!(outputs["markup"]["comments"], j!(["retained note"]));
+    for absent in [
+        "rawHtml",
+        "cleanedHtml",
+        "fitHtml",
+        "fitMarkdown",
+        "tables",
+        "linkMedia",
+    ] {
+        assert!(
+            outputs.get(absent).is_none(),
+            "{absent} was not requested: {outputs}"
+        );
+    }
+    assert!(!data["markdown"].as_str().unwrap().contains("retained note"));
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn native_output_markup_and_citations_do_not_bypass_requested_pii_redaction() {
+    let rig = Rig::start(RigConfig {
+        site_routes: Some(axum::Router::new().route(
+            "/private-outputs",
+            axum::routing::get(|| async {
+                axum::response::Html("<html><body><main><h1>Private fixture</h1><p>Contact output-person@example.test for local article details.</p><a href='/terms'>Useful terms</a></main></body></html>")
+            }),
+        )),
+        ..RigConfig::default()
+    })
+    .await;
+    let data = scrape_ok(
+        &rig,
+        j!({
+            "url": rig.url("/private-outputs"), "redactPII": true,
+            "outputs": {
+                "rawHtml": true, "cleanedHtml": true, "citations": "selected",
+                "fit": {"strategy": "pruning", "thresholdPermille": 0}
+            },
+        }),
+    )
+    .await;
+    assert!(data["outputs"].is_object(), "{data}");
+    assert!(
+        !data["outputs"].to_string().contains("output-person@example.test"),
+        "{data}"
+    );
+    assert!(
+        !data["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("output-person@example.test"),
+        "{data}"
+    );
     rig.stop().await;
 }

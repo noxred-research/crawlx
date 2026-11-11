@@ -38,6 +38,7 @@ impl Fixture {
                 artifacts_dir: None,
                 database_url: None,
                 max_bytes: 1_073_741_824,
+                rollover_bytes: None,
             }),
         }
     }
@@ -532,4 +533,353 @@ async fn actual_archive_export_cli_refuses_fifo_and_symlink_reports_without_wait
     let linked_root = directory.path().join("linked-store");
     std::os::unix::fs::symlink(directory.path(), &linked_root).unwrap();
     invoke(linked_root, directory.path().join("symlink-directory.wacz")).await;
+}
+
+#[tokio::test]
+async fn wacz_rollover_preserves_exact_ranges_fixities_and_refuses_oversized_members() {
+    let fixture = fixture().await;
+    execute_with_clock(fixture.export("baseline.wacz"), &mut Vec::new(), &fixture.clock)
+        .await
+        .unwrap();
+    let baseline = wacz::inspect(
+        File::open(fixture.dir.path().join("baseline.wacz")).unwrap(),
+        Limits::default(),
+    )
+    .unwrap();
+    let cap = baseline
+        .records
+        .values()
+        .flatten()
+        .map(|record| record.length)
+        .max()
+        .unwrap();
+    for name in ["rolled.wacz", "rolled-again.wacz"] {
+        let mut args = fixture.export(name);
+        let ArchiveCommand::Export(export) = &mut args.command else {
+            panic!("export expected")
+        };
+        export.rollover_bytes = Some(cap);
+        execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+            .await
+            .unwrap();
+    }
+    let path = fixture.dir.path().join("rolled.wacz");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        std::fs::read(fixture.dir.path().join("rolled-again.wacz")).unwrap()
+    );
+    let inspected = wacz::inspect(File::open(&path).unwrap(), Limits::default()).unwrap();
+    assert!(inspected.records.len() > 1);
+    assert_eq!(inspected.indexed, 2);
+    let mut zip = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+    for resource in &inspected.resources {
+        let mut bytes = Vec::new();
+        zip.by_name(&resource.path)
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(resource.bytes, u64::try_from(bytes.len()).unwrap());
+        assert_eq!(resource.hash, warc::digest(&bytes));
+        if resource.path.starts_with("archive/") {
+            assert!(resource.bytes <= cap);
+            assert!(inspected.records.contains_key(&resource.path));
+        }
+    }
+    let mut index = String::new();
+    zip.by_name("indexes/index.cdxj")
+        .unwrap()
+        .read_to_string(&mut index)
+        .unwrap();
+    for line in index.lines() {
+        let entry: crawlx_storage::archive::cdxj::Entry =
+            serde_json::from_str(line.splitn(3, ' ').nth(2).unwrap()).unwrap();
+        let filename = format!("archive/{}", entry.filename);
+        let mut bytes = Vec::new();
+        zip.by_name(&filename).unwrap().read_to_end(&mut bytes).unwrap();
+        let start = usize::try_from(entry.offset).unwrap();
+        let end = usize::try_from(entry.offset.checked_add(entry.length).unwrap()).unwrap();
+        let (record, body) =
+            warc::read_member(std::io::Cursor::new(&bytes[start..end]), Limits::default()).unwrap();
+        assert_eq!(record.length, entry.length);
+        assert_eq!(record.payload_digest, entry.digest);
+        assert_eq!(record.target.as_deref(), Some(entry.url.as_str()));
+        assert!(!body.is_empty());
+    }
+    let mut args = fixture.export("too-small.wacz");
+    let ArchiveCommand::Export(export) = &mut args.command else {
+        panic!("export expected")
+    };
+    export.rollover_bytes = Some(cap - 1);
+    let error = execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<crawlx_storage::archive::ArchiveError>(),
+        Some(crawlx_storage::archive::ArchiveError::RecordExceedsRollover { .. })
+    ));
+    assert!(!fixture.dir.path().join("too-small.wacz").exists());
+    let mut args = fixture.export("unsupported-warc");
+    let ArchiveCommand::Export(export) = &mut args.command else {
+        panic!("export expected")
+    };
+    export.format = FormatArg::Warc;
+    export.rollover_bytes = Some(cap);
+    assert!(execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("requires WACZ"));
+    assert!(!fixture.dir.path().join("unsupported-warc").exists());
+}
+
+#[tokio::test]
+async fn native_bundle_verify_inspect_import_and_member_paths_enforce_completeness() {
+    let fixture = fixture().await;
+    let mut args = fixture.export("native-complete");
+    let ArchiveCommand::Export(export) = &mut args.command else {
+        panic!("export expected");
+    };
+    export.format = FormatArg::Warc;
+    execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+        .await
+        .unwrap();
+    let bundle = fixture.dir.path().join("native-complete");
+    assert!(bundle.join("publication.json").is_file());
+    assert!(!bundle.join(".incomplete").exists());
+    let state = fixture.dir.path().join("isolated-state");
+    let invoke = |operation: &str, input: &std::path::Path, output: Option<&std::path::Path>| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_crawlx"));
+        command
+            .args(["archive", operation])
+            .arg(input)
+            .env("XDG_STATE_HOME", &state);
+        if let Some(output) = output {
+            command.arg("--out").arg(output);
+        }
+        command.output().unwrap()
+    };
+    let verified = invoke("verify", &bundle, None);
+    assert!(
+        verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&verified.stdout).unwrap()["valid"],
+        true
+    );
+    let inspected = invoke("inspect", &bundle, None);
+    assert!(
+        inspected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspected.stderr)
+    );
+    let imported = fixture.dir.path().join("native-import.warc.gz");
+    let result = invoke("import", &bundle, Some(&imported));
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(imported.is_file());
+
+    // A foreign sentinel cannot be swept, even when every listed fixity is already complete.
+    std::fs::write(bundle.join(".incomplete"), b"foreign export").unwrap();
+    for input in [&bundle, &bundle.join("archive/data.warc.gz")] {
+        for operation in ["verify", "inspect", "import"] {
+            let out = fixture.dir.path().join(format!("denied-{operation}.warc.gz"));
+            let result = invoke(operation, input, (operation == "import").then_some(out.as_path()));
+            assert!(!result.status.success(), "{operation}");
+            assert!(
+                String::from_utf8_lossy(&result.stderr).contains("incomplete"),
+                "{operation}"
+            );
+            assert!(!out.exists());
+        }
+    }
+    std::fs::remove_file(bundle.join(".incomplete")).unwrap();
+    std::fs::remove_file(bundle.join("publication.json")).unwrap();
+    assert!(!invoke("verify", &bundle.join("archive/data.warc.gz"), None)
+        .status
+        .success());
+}
+
+// Explicit diagnostics builds only. The production binary has no publication-stop hook.
+#[cfg(all(feature = "chaos", debug_assertions, target_os = "linux"))]
+mod publication_crashes {
+    use super::*;
+    use crawlx_storage::archive::{publication, staging::StagedFile};
+    use std::io::{BufRead as _, BufReader};
+    use std::path::Path;
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    struct Paused {
+        child: Child,
+        state: PathBuf,
+        out: PathBuf,
+    }
+    impl Paused {
+        fn start(base: &Path, source: &Path, checkpoint: &str) -> Self {
+            let state = base.join("state");
+            let out = base.join("publication");
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "publication_crashes::publication_child", "--nocapture"])
+                .env("XDG_STATE_HOME", &state)
+                .env("CRAWLX_PUBLICATION_CLI_SOURCE", source)
+                .env("CRAWLX_PUBLICATION_CLI_OUT", &out)
+                .env("CRAWLX_PUBLICATION_TEST_STOP", checkpoint)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            let stdout = child.stdout.take().unwrap();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines() {
+                    if line.unwrap().contains("publication checkpoint") {
+                        sender.send(()).unwrap();
+                        return;
+                    }
+                }
+            });
+            let paused = Self { child, state, out };
+            receiver
+                .recv_timeout(Duration::from_secs(30))
+                .expect("publication checkpoint");
+            paused
+        }
+        fn kill(&mut self) {
+            use std::os::unix::process::ExitStatusExt as _;
+            self.child.kill().unwrap();
+            assert_eq!(self.child.wait().unwrap().signal(), Some(9));
+        }
+        fn cli(&self, args: &[&str]) -> std::process::Output {
+            Command::new(env!("CARGO_BIN_EXE_crawlx"))
+                .args(args)
+                .env("XDG_STATE_HOME", &self.state)
+                .env_remove("CRAWLX_PUBLICATION_TEST_STOP")
+                .output()
+                .unwrap()
+        }
+    }
+    impl Drop for Paused {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    #[test]
+    fn publication_child() {
+        let Some(source) = std::env::var_os("CRAWLX_PUBLICATION_CLI_SOURCE") else {
+            return;
+        };
+        let source = PathBuf::from(source);
+        let out = PathBuf::from(std::env::var_os("CRAWLX_PUBLICATION_CLI_OUT").unwrap());
+        let mut files = Vec::new();
+        for name in [
+            "archive/data.warc.gz",
+            "indexes/index.cdxj",
+            "pages/pages.jsonl",
+            "crawlx/manifest.json",
+        ] {
+            let mut staged = StagedFile::new().unwrap();
+            std::io::copy(&mut File::open(source.join(name)).unwrap(), staged.file_mut()).unwrap();
+            files.push((name.to_owned(), staged));
+        }
+        publication::publish_bundle(&out, "test-export", &mut files).unwrap();
+    }
+
+    #[tokio::test]
+    async fn cli_startup_and_admin_cleanup_resolve_real_sigkill_publications() {
+        let fixture = fixture().await;
+        let mut args = fixture.export("crash-source");
+        let ArchiveCommand::Export(export) = &mut args.command else {
+            panic!("export expected");
+        };
+        export.format = FormatArg::Warc;
+        execute_with_clock(args, &mut Vec::new(), &fixture.clock)
+            .await
+            .unwrap();
+        let source = fixture.dir.path().join("crash-source");
+
+        for checkpoint in ["sentinel", "member", "manifest"] {
+            let base = tempfile::tempdir().unwrap();
+            let mut paused = Paused::start(base.path(), &source, checkpoint);
+            let out = paused.out.to_str().unwrap();
+            let refused = paused.cli(&["archive", "verify", out]);
+            assert!(!refused.status.success());
+            assert!(String::from_utf8_lossy(&refused.stderr).contains("incomplete"));
+            paused.kill();
+            if checkpoint == "manifest" {
+                let verified = paused.cli(&["archive", "verify", paused.out.to_str().unwrap()]);
+                assert!(
+                    verified.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&verified.stderr)
+                );
+                assert!(!paused.out.join(".incomplete").exists());
+            } else {
+                let startup = paused.cli(&["config", "features"]);
+                assert!(
+                    startup.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&startup.stderr)
+                );
+                assert!(!paused.out.exists());
+            }
+        }
+
+        // The actual admin invocation must sweep before its unavailable database is contacted.
+        let base = tempfile::tempdir().unwrap();
+        let mut paused = Paused::start(base.path(), &source, "manifest");
+        paused.kill();
+        std::fs::write(paused.out.join("archive/data.warc.gz"), b"bad fixity").unwrap();
+        let admin = paused.cli(&[
+            "admin",
+            "sweep-retention",
+            "--database-url",
+            "invalid-database-url",
+        ]);
+        assert!(!admin.status.success());
+        assert!(!paused.out.exists());
+        assert!(!String::from_utf8_lossy(&admin.stderr).contains("unrecognized"));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn startup_without_publication_journal_never_creates_user_state() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let home = tempfile::tempdir().unwrap();
+    let app = home.path().join(".local/state/crawlx");
+    std::fs::create_dir_all(&app).unwrap();
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_crawlx"))
+        .args(["config", "features"])
+        .env("HOME", home.path())
+        .env_remove("XDG_STATE_HOME")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!app.join("archive-publications").exists());
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    let absent = home.path().join("absent-state");
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_crawlx"))
+        .args(["config", "features"])
+        .env("XDG_STATE_HOME", &absent)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!absent.exists());
 }

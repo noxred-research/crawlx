@@ -56,6 +56,72 @@ async fn native_append_is_retryable_redacted_scoped_and_sealable() {
 }
 
 #[tokio::test]
+async fn native_head_and_get_keep_distinct_frontier_rows_and_retry_receipts() {
+    let mut env = env();
+    let id = env.create_run(&simple_body()).await;
+    let run_id = id.parse().unwrap();
+    let endpoint = format!("/v1/crawls/{id}/requests");
+    let body = json!({"producerEpoch":1,"requests":[
+        {"url":"https://app.example.test/article","method":"GET"},
+        {"url":"https://app.example.test/article","method":"HEAD"},
+        {"url":"https://app.example.test/article","method":"HEAD"}
+    ]});
+    let (status, _, first) = env
+        .post_with(&endpoint, &[("Idempotency-Key", "head-get")], &body)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let inserted = first["data"]["inserted"].as_array().unwrap();
+    assert_eq!(inserted.len(), 2);
+    assert_eq!(first["data"]["duplicates"], 1);
+    let get = env
+        .store
+        .get_request(run_id, inserted[0].as_i64().unwrap())
+        .await
+        .unwrap();
+    let head = env
+        .store
+        .get_request(run_id, inserted[1].as_i64().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(get.envelope.method, "GET");
+    assert_eq!(head.envelope.method, "HEAD");
+    assert_eq!(head.envelope.url, get.envelope.url);
+    assert_ne!(head.identity, get.identity);
+    assert_eq!(head.principal, "anonymous");
+    assert!(head.envelope.body.is_none());
+    assert!(head.envelope.header_control.is_none());
+    assert!(head.envelope.session_generation.is_none());
+    // Rebuild the API router against the accepted frontier, without process-local receipts.
+    env.app = crawlx_api::router(env.state.clone());
+    let (status, _, retry) = env
+        .post_with(&endpoint, &[("Idempotency-Key", "head-get")], &body)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{retry}");
+    assert_eq!(first["data"], retry["data"]);
+    let (status, _, next) = env
+        .post_with(&endpoint, &[("Idempotency-Key", "head-get-next")], &body)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{next}");
+    assert!(next["data"]["inserted"].as_array().unwrap().is_empty());
+    assert_eq!(next["data"]["duplicates"], 3);
+    let (status, _, page) = env.get(&endpoint).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let listed: Vec<_> = page["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].clone())
+        .collect();
+    assert_eq!(&listed, inserted);
+    assert!(!page.to_string().contains("app.example.test"));
+    let (_, _, doc) = env.get("/v1/openapi.json").await;
+    let method = &doc["paths"]["/v1/crawls/{id}/requests"]["post"]["requestBody"]["content"]
+        ["application/json"]["schema"]["properties"]["requests"]["items"]["properties"]["method"];
+    assert_eq!(method["enum"], json!(["GET", "HEAD"]));
+    assert_eq!(method["default"], "GET");
+}
+
+#[tokio::test]
 async fn caller_cannot_supply_authority_unknown_methods_or_scope_escape() {
     let env = env();
     let id = env.create_run(&simple_body()).await;
@@ -66,6 +132,13 @@ async fn caller_cannot_supply_authority_unknown_methods_or_scope_escape() {
         json!({"producerEpoch":1,"requests":[{"url":"https://outside.invalid/"}]}),
         json!({"producerEpoch":1,"requests":[{"url":"https://app.example.test/","sessionGeneration":3}]}),
         json!({"producerEpoch":1,"requests":[{"url":"https://user:secret@app.example.test/"}]}),
+        json!({"producerEpoch":1,"requests":[{"url":"https://app.example.test/","method":"head"}]}),
+        json!({"producerEpoch":1,"requests":[{"url":"https://app.example.test/","method":"HEAD","body":"inline"}]}),
+        json!({"producerEpoch":1,"requests":[{"url":"https://app.example.test/","method":"HEAD","headers":{"Authorization":"secret"}}]}),
+        json!({"producerEpoch":1,"requests":[{"url":"https://app.example.test/","method":"HEAD","headerControl":"credential"}]}),
+        json!({"producerEpoch":1,"requests":[{"url":"https://app.example.test/","method":"HEAD","sessionGeneration":3}]}),
+        json!({"producerEpoch":1,"requests":[{"url":"https://app.example.test/","method":"HEAD","principal":"member"}]}),
+        json!({"producerEpoch":1,"requests":[{"url":"https://outside.invalid/","method":"HEAD"}]}),
     ] {
         let (status, _, response) = env
             .post_with(&endpoint, &[("Idempotency-Key", "invalid")], &body)
@@ -138,20 +211,101 @@ fn import_env() -> common::Env {
 }
 
 #[tokio::test]
-async fn import_bypass_uses_batch_identity_and_keeps_normal_dedupe_and_conflicts() {
-    let env = import_env();
-    for (pin, flag) in [
-        (import::SOURCE_PINS[1], "alwaysEnqueue"),
-        (import::SOURCE_PINS[2], "dontFilter"),
-        (import::SOURCE_PINS[3], "allowUrlRevisit"),
-    ] {
+async fn every_pinned_import_preserves_head_without_collapsing_get_or_weakening_admission() {
+    let mut env = import_env();
+    for pin in import::SOURCE_PINS {
         let id = env.create_run(&simple_body()).await;
         let run_id = id.parse().unwrap();
         let endpoint = format!("/v1/crawls/{id}/requests/import");
-        let mut bypass =
-            json!({"url":"https://app.example.test/imported","sourceKey":"private-canary-source"});
+        let body = json!({"producerEpoch":1,"export":{"version":1,
+        "source":{"dialect":pin.0,"release":pin.1,"commit":pin.2},
+        "requests":[
+            {"url":"https://app.example.test/imported","method":"GET","sourceKey":"same"},
+            {"url":"https://app.example.test/imported","method":"HEAD","sourceKey":"same"},
+            {"url":"https://app.example.test/imported","method":"HEAD","sourceKey":"same"}
+        ]}});
+        let (status, _, first) = env
+            .post_with(&endpoint, &[("Idempotency-Key", "head-import")], &body)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{}: {first}", pin.0);
+        let inserted = first["data"]["inserted"].as_array().unwrap();
+        assert_eq!(inserted.len(), 2);
+        assert_eq!(first["data"]["duplicates"], 1);
+        let get = env
+            .store
+            .get_request(run_id, inserted[0].as_i64().unwrap())
+            .await
+            .unwrap();
+        let head = env
+            .store
+            .get_request(run_id, inserted[1].as_i64().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(get.envelope.method, "GET");
+        assert_eq!(head.envelope.method, "HEAD");
+        assert_eq!(get.envelope.source_key, head.envelope.source_key);
+        assert_ne!(get.identity, head.identity);
+        assert_eq!(head.principal, "anonymous");
+        assert!(head.envelope.body.is_none());
+        assert!(head.envelope.header_control.is_none());
+        assert!(head.envelope.session_generation.is_none());
+        env.app = crawlx_api::router(env.state.clone());
+        let (status, _, retry) = env
+            .post_with(&endpoint, &[("Idempotency-Key", "head-import")], &body)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{retry}");
+        assert_eq!(first["data"], retry["data"]);
+        let (status, _, next) = env
+            .post_with(&endpoint, &[("Idempotency-Key", "head-import-next")], &body)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{next}");
+        assert!(next["data"]["inserted"].as_array().unwrap().is_empty());
+        assert_eq!(next["data"]["duplicates"], 3);
+        let mut post = body.clone();
+        post["export"]["requests"][1]["method"] = json!("POST");
+        let (status, _, refused) = env
+            .post_with(&endpoint, &[("Idempotency-Key", "head-import-post")], &post)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_eq!(
+            refused["error"]["message"],
+            "request method requires admitted effect journal"
+        );
+        let mut inline = body.clone();
+        inline["export"]["requests"][1]["body"] = json!("inline content");
+        let (status, _, refused) = env
+            .post_with(&endpoint, &[("Idempotency-Key", "head-import-body")], &inline)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        let (status, _, page) = env.get(&format!("/v1/crawls/{id}/requests")).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let listed: Vec<_> = page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].clone())
+            .collect();
+        assert_eq!(&listed, inserted);
+    }
+}
+
+#[tokio::test]
+async fn import_bypass_uses_batch_identity_and_keeps_normal_dedupe_and_conflicts() {
+    let env = import_env();
+    for (pin, flag, method) in [
+        (import::SOURCE_PINS[1], "alwaysEnqueue"),
+        (import::SOURCE_PINS[2], "dontFilter"),
+        (import::SOURCE_PINS[3], "allowUrlRevisit"),
+    ]
+    .into_iter()
+    .flat_map(|(pin, flag)| ["GET", "HEAD"].map(|method| (pin, flag, method)))
+    {
+        let id = env.create_run(&simple_body()).await;
+        let run_id = id.parse().unwrap();
+        let endpoint = format!("/v1/crawls/{id}/requests/import");
+        let mut bypass = json!({"url":"https://app.example.test/imported","sourceKey":"private-canary-source","method":method});
         bypass[flag] = json!(true);
-        let normal = json!({"url":"https://app.example.test/imported","sourceKey":"private-canary-source"});
+        let normal = json!({"url":"https://app.example.test/imported","sourceKey":"private-canary-source","method":method});
         let body = json!({"producerEpoch":1,"export":{"version":1,
             "source":{"dialect":pin.0,"release":pin.1,"commit":pin.2},
             "requests":[bypass.clone(),bypass,normal.clone(),normal]}});
@@ -163,6 +317,7 @@ async fn import_bypass_uses_batch_identity_and_keeps_normal_dedupe_and_conflicts
         assert_eq!(first["data"]["duplicates"], 1);
         let first_id = first["data"]["inserted"][0].as_i64().unwrap();
         let accepted = env.store.get_request(run_id, first_id).await.unwrap();
+        assert_eq!(accepted.envelope.method, method);
         let encoded = serde_json::to_string(&accepted.envelope).unwrap();
         assert!(!encoded.contains("private-canary-source"));
         assert!(!encoded.contains("private-canary-batch"));
@@ -292,4 +447,42 @@ async fn pre_batch_identity_bypass_receipt_conflicts_without_mutating_accepted_r
     );
     assert_eq!(env.store.append_batch(batch).await.unwrap(), receipt);
     assert_eq!(env.store.page(run_id, 0, 1000).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn native_request_append_and_import_refuse_runs_without_a_url_plane() {
+    let env = import_env();
+    let pin = import::SOURCE_PINS[0];
+    let native = json!({"producerEpoch":1,"requests":[
+        {"url":"https://app.example.test/article","method":"GET"},
+        {"url":"https://app.example.test/article","method":"HEAD"}
+    ]});
+    let imported = json!({"producerEpoch":1,"export":{"version":1,
+    "source":{"dialect":pin.0,"release":pin.1,"commit":pin.2},
+    "requests":[
+        {"url":"https://app.example.test/article","method":"GET","sourceKey":"same"},
+        {"url":"https://app.example.test/article","method":"HEAD","sourceKey":"same"}
+    ]}});
+    for mode in ["static", "hybrid", "dynamic"] {
+        for (suffix, proposal) in [("requests", &native), ("requests/import", &imported)] {
+            let mut body = simple_body();
+            body["mode"] = json!(mode);
+            let id = env.create_run(&body).await;
+            let run = id.parse().unwrap();
+            let (status, _, reply) = env
+                .post_with(
+                    &format!("/v1/crawls/{id}/{suffix}"),
+                    &[("Idempotency-Key", "mode-admission")],
+                    proposal,
+                )
+                .await;
+            if mode == "dynamic" {
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{reply}");
+                assert!(env.store.metadata_page(run, 0, 1000).await.unwrap().is_empty());
+            } else {
+                assert_eq!(status, StatusCode::OK, "{reply}");
+                assert_eq!(reply["data"]["inserted"].as_array().unwrap().len(), 2);
+            }
+        }
+    }
 }

@@ -164,7 +164,12 @@ struct Outcome {
 
 async fn run(script: FakeScript, crawl: CreateCrawl, cfg: impl FnOnce(&mut WorkerConfig)) -> Outcome {
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(script));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
     let mut worker = worker_cfg(dir.path());
@@ -221,7 +226,12 @@ fn with_system1(mode: System1Mode) -> impl FnOnce(&mut CreateCrawl) {
 async fn model_authority_without_g3_is_refused_before_a_local_run_starts() {
     for mode in [System1Mode::Advisory, System1Mode::Active] {
         let dir = tempfile::tempdir().unwrap();
-        let backend = Arc::new(FakeBackend::new(button_app()));
+        let backend = Arc::new(
+            FakeBackend::builder()
+                .script(button_app())
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        );
         let mut worker = worker_cfg(dir.path());
         worker.gates = crawlx_worker::Gates::none();
         worker.model = Some(ModelConfig {

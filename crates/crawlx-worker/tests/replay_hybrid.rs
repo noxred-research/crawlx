@@ -73,12 +73,25 @@ async fn dual_alias_scenario(stores: Stores, worker: WorkerConfig) {
     .unwrap();
     assert_eq!(report.status, RunStatus::Completed);
     assert!(!report.actions.is_empty());
+    let mut descriptor_actions = 0;
     for action in &report.actions {
         let aliases = stores
             .identity_aliases
             .aliases_of(report.run_id, action.key.element)
             .await
             .unwrap();
+        if action.strategy == crawlx_worker::driver::DISCOVERED_URLS_STRATEGY {
+            // URL-derived identities do not use either descriptor identity algorithm.
+            assert_eq!(action.key.action_kind, crawlx_core::ActionKind::Navigate);
+            assert_eq!(action.lane, Some(crawlx_core::TrustLane::Diagnostic));
+            assert!(["/", "/alpha", "/beta"].iter().any(|path| {
+                crawlx_worker::driver::discovered_url_element(&format!("https://example.test{path}"))
+                    == action.key.element
+            }));
+            assert!(aliases.is_empty(), "synthetic URL identities have no V1/V2 pair");
+            continue;
+        }
+        descriptor_actions += 1;
         assert!(
             aliases.iter().any(|alias| {
                 alias.from_version == 2
@@ -90,6 +103,10 @@ async fn dual_alias_scenario(stores: Stores, worker: WorkerConfig) {
             action.key.element
         );
     }
+    assert!(
+        descriptor_actions > 0,
+        "exercise descriptor identity dual computation"
+    );
     let target = report
         .actions
         .iter()
@@ -258,6 +275,74 @@ async fn a_recorded_path_replays_and_verifies_against_the_live_target() {
         cfg(dir.path()),
         plan,
         ReplayMode::Reproduce,
+        Some(real_clock_backend(changed)),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!broken.ok);
+    assert_eq!(broken.steps.len(), 1);
+    assert_eq!(broken.steps[0].verdict, StepVerdict::ElementNotFound);
+}
+
+#[tokio::test]
+async fn rendered_html_navigation_replays_without_page_hooks_or_ax_candidates() {
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let script = FakeScript::new()
+        .page(
+            FakePage::new("https://example.test/")
+                .title("Home")
+                .html("<html><body><a href='/alpha'>Alpha</a></body></html>"),
+        )
+        .page(FakePage::new("https://example.test/alpha").title("Alpha"));
+    let mut crawl = CreateCrawl::new(url::Url::parse("https://example.test/").unwrap());
+    crawl.mode = CrawlMode::Dynamic;
+    crawl.dynamic.page_hooks = false;
+    crawl.limits.interactions = 1;
+    let report = run_local_with(
+        LocalRun::new(crawl, cfg(dir.path()))
+            .with_backend(real_clock_backend(script.clone()))
+            .with_stores(stores.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.status, RunStatus::Completed);
+    let target = report
+        .actions
+        .iter()
+        .find(|action| action.status == ActionStatus::Succeeded)
+        .expect("rendered HTML supplies a navigation target without AX candidates");
+    assert_eq!(target.strategy, crawlx_worker::driver::DISCOVERED_URLS_STRATEGY);
+    let plan = ReplayPlan::load(&stores, report.run_id, target.id).await.unwrap();
+    assert_eq!(plan.steps.len(), 1);
+    let verified = ReplayRunner::run(
+        cfg(dir.path()),
+        plan.clone(),
+        ReplayMode::Verify,
+        Some(real_clock_backend(script)),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(verified.ok, "{verified:#?}");
+    assert_eq!(verified.steps.len(), 1);
+    assert!(verified
+        .steps
+        .iter()
+        .all(|step| matches!(step.verdict, StepVerdict::Matched { .. })));
+
+    let changed = FakeScript::new().page(
+        FakePage::new("https://example.test/")
+            .title("Home")
+            .html("<html><body><a href='/changed'>Alpha</a></body></html>"),
+    );
+    let broken = ReplayRunner::run(
+        cfg(dir.path()),
+        plan,
+        ReplayMode::Verify,
         Some(real_clock_backend(changed)),
         None,
     )
@@ -450,4 +535,74 @@ async fn hybrid_mode_honors_always_browser_paths_for_plain_pages() {
             .collect::<Vec<_>>()
     );
     assert!(!report.states.iter().any(|s| s.url.url.path() == "/about"));
+}
+
+#[tokio::test]
+async fn retained_body_replay_runs_the_parser_pipeline_without_target_requests() {
+    use crawlx_core::cache::CachePolicyV1;
+    use crawlx_core::config::{HostScope, SitemapMode};
+    use crawlx_core::extraction::ParserPipelineV1;
+
+    let site = common::site::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let mut crawl = CreateCrawl::new(url::Url::parse(&format!("{}/", site.base)).unwrap());
+    crawl.mode = CrawlMode::Static;
+    crawl.seed = Some(20_261_110);
+    crawl.safety.allow_private_networks = true;
+    crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
+    crawl.politeness.delay_ms = 0;
+    crawl.scope.host_scope = HostScope::None;
+    crawl.scope.sitemap = SitemapMode::Skip;
+    crawl.scope.known_files.clear();
+    crawl.scope.max_discovery_depth = 0;
+    crawl.cache_principal = Some(uuid::Uuid::from_u128(1));
+    crawl.cache = Some(CachePolicyV1::default());
+    let source = run_local_with(LocalRun::new(crawl.clone(), cfg(dir.path())).with_stores(stores.clone()))
+        .await
+        .unwrap();
+    assert_eq!(source.status, RunStatus::Completed);
+    assert_eq!(source.pages.len(), 1);
+    let mut legacy = source.pages[0].clone();
+    assert!(legacy.metadata["nativeCache"]["wire"].is_object());
+    // A retained capture can predate pipeline provenance. Its derived projection must not
+    // supply either the replay's title or its current parser version.
+    legacy.title = Some("Obsolete derived projection".to_owned());
+    legacy.metadata.as_object_mut().unwrap().remove("parserPipeline");
+    stores.pages.put(&legacy).await.unwrap();
+    drop(site);
+
+    crawl.cache.as_mut().unwrap().development_replay = true;
+    let replay = run_local_with(LocalRun::new(crawl, cfg(dir.path())).with_stores(stores.clone()))
+        .await
+        .unwrap();
+    assert_eq!(replay.status, RunStatus::Completed);
+    assert_eq!(replay.pages.len(), 1, "{:?}", replay.failures);
+    let page = &replay.pages[0];
+    assert_eq!(page.title.as_deref(), Some("Home"));
+    assert_eq!(page.content_digest, legacy.content_digest);
+    assert_eq!(page.fetched_at, legacy.fetched_at);
+    assert_eq!(
+        page.metadata["developmentReplay"],
+        serde_json::json!({
+            "version": 1,
+            "provenance": "retained_artifacts",
+            "sourceRun": source.run_id,
+            "networkRequests": 0,
+        }),
+    );
+    assert_eq!(page.metadata["robots_observation"], "unobserved_replay");
+    let spec = ParserPipelineV1::default();
+    assert_eq!(
+        page.metadata["parserPipeline"],
+        serde_json::json!({
+            "recordVersion": spec.record_version().unwrap(),
+            "digest": spec.digest().unwrap(),
+        }),
+    );
+    let unchanged = stores.pages.list(source.run_id).await.unwrap();
+    assert_eq!(unchanged[0].title, legacy.title);
+    assert!(unchanged[0].metadata.get("parserPipeline").is_none());
 }

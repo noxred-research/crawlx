@@ -27,8 +27,8 @@ crates.io packages are not part of the initial distribution.
 
 ## Data and secrets
 
-- **Retention sweeper loop.** `crawlx admin sweep-retention` runs one pass and must be scheduled by the
-  operator. A built-in scheduled loop would remove that step.
+- **Retention operations.** `crawlx admin sweep-retention --every 5m` runs the built-in scheduled
+  sweeper; monitor its failures and overdue artifacts ([operations](ops/README.md#scheduled-retention-sweeper)).
 - **Secret authority renewal.** The run-wide secret registry lives at most 24 hours with no mid-run renewal;
   after expiry, durable content writes of that run fail closed.
 - **Retained browser profiles.** Unavailable while encrypted artifact custody is enabled; bring profiles

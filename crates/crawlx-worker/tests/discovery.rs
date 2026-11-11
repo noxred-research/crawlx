@@ -126,6 +126,13 @@ async fn site(park: bool) -> Site {
         .route("/labeled-feed", get(|| async { ([(header::CONTENT_TYPE, "application/rss+xml")], SIMPLE_FEED) }))
         .route("/robots.txt", get(|| async { "User-agent: *\nDisallow: /robots-private\n" }))
         .route("/feed", get(|| async { ([(header::CONTENT_TYPE, "application/rss+xml")], r#"<rss xmlns:a="http://www.w3.org/2005/Atom"><channel><a:link rel="next" href="/feed"/><item><title>Article</title><link>/article</link></item><item><link>/article</link></item><item><link>/outside</link></item><item><link>/robots-private</link></item><item><link>http://169.254.169.254/latest/meta-data/</link></item></channel></rss>"#) }))
+        .route("/private-feed", get(|headers: axum::http::HeaderMap| async move {
+            let secret = headers.get("x-qa-token").unwrap().to_str().unwrap();
+            let title = format!("{secret} {}", "abcdef0123456789".repeat(4));
+            let item = format!("<item><title>{title}</title><link>/article</link></item>");
+            ([(header::CONTENT_TYPE, "application/rss+xml")],
+                format!("<rss><channel>{}</channel></rss>", item.repeat(5)))
+        }))
         .route("/article", get(|State(state): State<Arc<StateData>>| async move {
             if state.park_article.load(Ordering::SeqCst) {
                 state.article_started.notify_one();
@@ -1314,4 +1321,123 @@ async fn interrupted_unknown_fetch_still_forfeits_unsettled_acquisition_allowanc
         Some(TerminalReason::FatalError)
     );
     rig.teardown().await;
+}
+
+#[tokio::test]
+async fn actual_xml_feed_commits_physical_row_cursor_and_bounded_evidence_chain() {
+    use crawlx_core::hash::Digest;
+    let site = site(false).await;
+    let dir = tempfile::tempdir().unwrap();
+    let stores = crawlx_worker::Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let mut request = crawl(&site);
+    request.seed_url = url::Url::parse(&format!("{}/feed", site.base)).unwrap();
+    request.scope.discovery.as_mut().unwrap().media_probes = 0;
+    request.scope.discovery.as_mut().unwrap().read_more_hops = 0;
+    let report = common::authorization::run_authorized_local_with(
+        crawlx_worker::LocalRun::new(request, config(dir.path())).with_stores(stores.clone()),
+    )
+    .await
+    .unwrap();
+    let feed = report
+        .pages
+        .iter()
+        .find(|page| page.url.url.path() == "/feed")
+        .unwrap();
+    let metadata = &feed.metadata["source_discovery"];
+    assert_eq!(metadata["streamed"], true);
+    assert_eq!(metadata["rows"], 5);
+    assert_eq!(metadata["malformed"], 0);
+    assert_eq!(metadata["contentLayout"], "reverse_batch_chain_v1");
+    let source = format!(
+        "discovery:{}",
+        Digest::of_value("crawlx/discovery-source/v1", &(feed.url.key, "feed"))
+            .unwrap()
+            .to_hex(),
+    );
+    let cursor = stores
+        .frontier
+        .loader_cursor(report.run_id, &source)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        cursor.position, 5,
+        "denied and duplicate rows still advance the source cursor"
+    );
+    let mut next = metadata["content"].clone();
+    let mut rows = 0;
+    let mut batches = 0;
+    while !next.is_null() {
+        let reference: crawlx_core::ArtifactRef = serde_json::from_value(next).unwrap();
+        let bytes = stores.artifacts.get(&reference).await.unwrap();
+        assert_eq!(reference.digest, Digest::of("crawlx/artifact/v1", &bytes));
+        let batch: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let entries = batch["entries"].as_array().unwrap();
+        assert!(entries.len() <= 4);
+        rows += entries.len();
+        batches += 1;
+        next = batch["previous"].clone();
+    }
+    assert_eq!(rows, 5);
+    assert_eq!(batches, 2);
+    assert_eq!(site.count("/article"), 1);
+    assert_eq!(site.count("/outside"), 0);
+    assert_eq!(site.count("/robots-private"), 0);
+}
+
+#[tokio::test]
+async fn xml_feed_evidence_redacts_source_hints_without_corrupting_generated_references() {
+    const SECRET: &str = "feedHintCanary718";
+    let site = site(false).await;
+    let dir = tempfile::tempdir().unwrap();
+    let stores = crawlx_worker::Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let mut request = crawl(&site);
+    request.seed_url = url::Url::parse(&format!("{}/private-feed", site.base)).unwrap();
+    request.scope.include_paths.push("^/private-feed$".into());
+    request.fetch.extra_headers.insert("x-qa-token", SECRET);
+    request.scope.discovery.as_mut().unwrap().media_probes = 0;
+    request.scope.discovery.as_mut().unwrap().read_more_hops = 0;
+    let mut worker = config(dir.path());
+    worker.request_identity_key = Some(crawlx_core::secret::SecretOr::secret([71; 32]));
+    let report = common::authorization::run_authorized_local_with(
+        crawlx_worker::LocalRun::new(request, worker).with_stores(stores.clone()),
+    )
+    .await
+    .unwrap();
+    let feed = report
+        .pages
+        .iter()
+        .find(|page| page.url.url.path() == "/private-feed")
+        .unwrap();
+    let mut next = feed.metadata["source_discovery"]["content"].clone();
+    let mut rows = 0;
+    let mut batches = 0;
+    while !next.is_null() {
+        let reference: crawlx_core::ArtifactRef = serde_json::from_value(next).unwrap();
+        let bytes = stores.artifacts.get(&reference).await.unwrap();
+        let batch: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let entries = batch["entries"].as_array().unwrap();
+        assert!(entries.len() <= 4);
+        for entry in entries {
+            let title = entry["titleHint"].as_str().unwrap();
+            assert!(
+                !title.contains(SECRET),
+                "request-secret echoes must remain redacted"
+            );
+            assert!(
+                !title.contains(&"abcdef0123456789".repeat(4)),
+                "source-authored bare hexadecimal values must still take generic redaction"
+            );
+            assert!(title.contains("[REDACTED]"));
+        }
+        rows += entries.len();
+        batches += 1;
+        next = batch["previous"].clone();
+    }
+    assert_eq!(rows, 5);
+    assert_eq!(batches, 2);
 }

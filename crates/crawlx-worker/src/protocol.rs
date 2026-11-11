@@ -31,6 +31,7 @@ pub struct ProtocolRegistry {
     services: BTreeMap<String, Arc<ServiceAdapter>>,
     approved_tenants: BTreeSet<String>,
     whois: Option<crawlx_fetch::protocol::whois::WhoisRegistry>,
+    ftp: Option<crawlx_fetch::protocol::ftp::FtpRegistry>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -40,6 +41,8 @@ struct RegistryFile {
     services: BTreeMap<String, ServiceRegistration>,
     #[serde(default)]
     whois: Option<crawlx_fetch::protocol::whois::WhoisRegistry>,
+    #[serde(default)]
+    ftp: Option<crawlx_fetch::protocol::ftp::FtpRegistry>,
 }
 impl ProtocolRegistry {
     /// Load bounded operator configuration named by `CRAWLX_PROTOCOL_REGISTRY`.
@@ -68,9 +71,26 @@ impl ProtocolRegistry {
         resolver: &dyn SecretResolver,
     ) -> Result<Arc<Self>, WorkerError> {
         let mut bytes = Vec::new();
-        tokio::fs::File::open(path)
-            .await
-            .map_err(|_| WorkerError::Config("protocol registry unavailable".to_owned()))?
+        // Nonblocking descriptor admission prevents operator path mistakes from hanging on a FIFO.
+        let fd = rustix::fs::open(
+            path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::NONBLOCK
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| WorkerError::Config("protocol registry unavailable".to_owned()))?;
+        let stat = rustix::fs::fstat(&fd)
+            .map_err(|_| WorkerError::Config("protocol registry metadata unavailable".to_owned()))?;
+        if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::RegularFile
+            || !(0..=65_536).contains(&stat.st_size)
+        {
+            return Err(WorkerError::Config(
+                "protocol registry requires a bounded regular file".to_owned(),
+            ));
+        }
+        tokio::fs::File::from_std(std::fs::File::from(fd))
             .take(65_537)
             .read_to_end(&mut bytes)
             .await
@@ -98,10 +118,18 @@ impl ProtocolRegistry {
         }) {
             return Err(WorkerError::Config("WHOIS registry bounds".to_owned()));
         }
+        if let Some(ftp) = &file.ftp {
+            ftp.validate()
+                .map_err(|error| WorkerError::Config(error.to_string()))?;
+        }
+        if file.services.contains_key("native_ftp") || file.services.contains_key("native_whois") {
+            return Err(WorkerError::Config("reserved protocol registry id".to_owned()));
+        }
         let mut registry = Self {
             services: BTreeMap::new(),
             approved_tenants: file.approved_tenants,
             whois: file.whois,
+            ftp: file.ftp,
         };
         for (id, registration) in file.services {
             if id.is_empty() || id.len() > 128 {
@@ -170,6 +198,35 @@ impl ProtocolRuntime {
             .iter()
             .filter(|route| route.backend == ProtocolBackendV1::Delegate)
         {
+            if route.delegate_id.as_deref() == Some("native_ftp") {
+                let registry = self.registry.ftp.as_ref().ok_or_else(|| {
+                    WorkerError::Config("protocol capability unavailable: native FTP registration".to_owned())
+                })?;
+                if route.schemes != ["ftp"]
+                    || !route.required_capabilities.iter().all(|id| {
+                        matches!(
+                            id.as_str(),
+                            "checked_egress"
+                                | "bounded_body"
+                                | "cancellation"
+                                | "ftp_passive_pinned"
+                                | "ftp_anonymous_file"
+                        )
+                    })
+                    || !self.registry.approved_tenants.contains(&tenant.to_string())
+                    || !registry.policy_digests.contains(&route.policy_revision)
+                {
+                    return Err(WorkerError::Config(
+                        "protocol capability unavailable: native FTP scope".to_owned(),
+                    ));
+                }
+                if target.scheme() == "ftp" {
+                    registry
+                        .admit(target, &route.policy_revision)
+                        .map_err(|error| WorkerError::Config(error.to_string()))?;
+                }
+                continue;
+            }
             if route.delegate_id.as_deref() == Some("native_whois") {
                 if self.registry.whois.is_none()
                     || route.schemes != ["whois"]
@@ -177,6 +234,7 @@ impl ProtocolRuntime {
                         "checked_egress".to_owned(),
                         "bounded_referrals".to_owned(),
                     ]))
+                    || !self.registry.approved_tenants.contains(&tenant.to_string())
                 {
                     return Err(WorkerError::Config(
                         "protocol capability unavailable: native WHOIS registration".to_owned(),
@@ -244,11 +302,29 @@ impl ProtocolRuntime {
     ) -> Result<ProtocolResource, ProtocolError> {
         use std::sync::atomic::Ordering;
         let scope = self.scope(run, tenant, attempt, &route.policy_revision, zdr);
+        self.admit(std::slice::from_ref(route), run, tenant, url, zdr)
+            .map_err(|_| ProtocolError::CapabilityUnavailable("protocol route scope"))?;
         let allowance = requests.load(Ordering::Acquire);
         requests
             .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
             .map_err(|_| ProtocolError::Limit)?;
-        let resource = if route.delegate_id.as_deref() == Some("native_whois") {
+        let resource = if route.delegate_id.as_deref() == Some("native_ftp") {
+            self.registry
+                .ftp
+                .as_ref()
+                .ok_or(ProtocolError::CapabilityUnavailable("native FTP registry"))?
+                .acquire(
+                    url,
+                    &route.policy_revision,
+                    route.max_body_bytes,
+                    std::time::Duration::from_millis(u64::from(route.max_elapsed_ms)),
+                    cancel,
+                    &self.policy,
+                    self.resolver.as_ref(),
+                    &self.governor,
+                )
+                .await?
+        } else if route.delegate_id.as_deref() == Some("native_whois") {
             let mut registry = self
                 .registry
                 .whois
@@ -317,6 +393,11 @@ pub fn resource_metadata(
         backend.version = env!("CARGO_PKG_VERSION").to_owned();
         backend.limitations[1] = "native_protocol_resource_without_http_status".to_owned();
     }
+    if route.delegate_id.as_deref() == Some("native_ftp") {
+        backend.implementation = "crawlx-fetch/native-ftp".to_owned();
+        backend.version = env!("CARGO_PKG_VERSION").to_owned();
+        backend.limitations[1] = "native_anonymous_ftp_file_without_http_status".to_owned();
+    }
     let mut result = AcquisitionResultV1::new(
         run,
         tenant,
@@ -354,3 +435,60 @@ pub fn select_route<'a>(routes: &'a CompiledProtocolRoutes, url: &Url) -> Option
     });
     routes.select(url, &SCHEDULER_FACTS)
 }
+
+/// Report validated local registrations without DNS, target fetches or service health claims.
+#[must_use]
+pub fn capability_report(
+    registry: Option<&ProtocolRegistry>,
+) -> crawlx_core::protocol::ProtocolCapabilityReportV1 {
+    use crawlx_core::protocol::{ProtocolCapabilityEntryV1, ProtocolCapabilityReportV1};
+    let mut delegates = Vec::new();
+    if let Some(registry) = registry {
+        for (id, adapter) in &registry.services {
+            let cap = adapter.capabilities();
+            delegates.push(ProtocolCapabilityEntryV1::configured(
+                id.clone(),
+                cap.schemes.clone(),
+                cap.capabilities.clone(),
+                cap.max_bytes,
+                Some(cap.build_digest.clone()),
+            ));
+        }
+        for (id, scheme, enabled, capabilities) in [
+            (
+                "native_ftp",
+                "ftp",
+                registry.ftp.is_some(),
+                &[
+                    "bounded_body",
+                    "cancellation",
+                    "checked_egress",
+                    "ftp_anonymous_file",
+                    "ftp_passive_pinned",
+                ][..],
+            ),
+            (
+                "native_whois",
+                "whois",
+                registry.whois.is_some(),
+                &["bounded_referrals", "checked_egress"][..],
+            ),
+        ] {
+            if enabled {
+                delegates.push(ProtocolCapabilityEntryV1::configured(
+                    id.to_owned(),
+                    BTreeSet::from([scheme.to_owned()]),
+                    capabilities.iter().map(|id| (*id).to_owned()).collect(),
+                    67_108_864,
+                    None,
+                ));
+            }
+        }
+    }
+    delegates.sort_by(|a, b| a.id.cmp(&b.id));
+    ProtocolCapabilityReportV1::configured(registry.is_some(), delegates)
+}
+
+#[cfg(test)]
+#[path = "protocol_tests.rs"]
+mod tests;

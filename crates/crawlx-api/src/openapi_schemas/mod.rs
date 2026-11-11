@@ -23,11 +23,14 @@
 mod agent;
 mod common;
 mod crawl;
+mod datasets;
 mod extract;
 mod map;
 mod monitor;
 mod native;
+mod outputs;
 mod parse;
+mod reports;
 mod scrape;
 mod search;
 mod selectors;

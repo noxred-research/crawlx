@@ -85,7 +85,7 @@ pub enum CitationSource {
 pub struct ContentOutputOptions {
     /// CSS selectors of the elements to extract. Narrows text, Markdown and HTML like
     /// `includeTags`; links and assets keep [`Self::discovery_scope`]. Malformed selectors fail
-    /// extraction with `InvalidSelector`; at most 64 selectors of 1024 bytes.
+    /// validation with [`ContentOutputError::InvalidOption`]; at most 64 selectors of 1024 bytes.
     pub target_elements: Vec<String>,
     /// Scope of `Document::links` and `Document::assets`.
     pub discovery_scope: DiscoveryScope,
@@ -119,6 +119,13 @@ impl ContentOutputOptions {
             .any(|s| s.trim().is_empty() || s.len() > MAX_TARGET_SELECTOR_BYTES)
         {
             return bad("targetElements", "empty selector or longer than 1024 bytes");
+        }
+        if self
+            .target_elements
+            .iter()
+            .any(|selector| scraper::Selector::parse(selector).is_err())
+        {
+            return bad("targetElements", "invalid CSS element selector");
         }
         if let Some(filter) = &self.fit {
             filter.validate()?;
@@ -357,4 +364,27 @@ pub(crate) fn referenced_urls(nodes: &[Node], base: &Url) -> BTreeSet<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    #[test]
+    fn target_elements_require_element_selectors_before_parsing() {
+        let mut options = ContentOutputOptions::default();
+        for selector in ["[", "article::text", "a::attr(href)"] {
+            options.target_elements = vec![selector.into()];
+            assert!(matches!(
+                options.validate(),
+                Err(ContentOutputError::InvalidOption {
+                    name: "targetElements",
+                    ..
+                })
+            ));
+        }
+        options.target_elements = vec!["article > p:first-child".into()];
+        options.validate().unwrap();
+    }
 }

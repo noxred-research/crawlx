@@ -83,6 +83,7 @@ pub mod checkpoint_crypto;
 mod codec;
 pub mod custody;
 pub mod dataset;
+mod digest_registry;
 mod error;
 pub mod intel;
 mod intel_memory;

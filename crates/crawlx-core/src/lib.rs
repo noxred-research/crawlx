@@ -7,9 +7,13 @@
 pub mod acquisition;
 pub mod action;
 pub mod archive;
+pub mod archive_behaviors;
 pub mod archive_catalog;
 pub mod article_language;
 pub mod browser;
+pub mod browser_capture;
+pub mod browser_download;
+pub mod browser_projection;
 pub mod cache;
 pub mod captcha;
 pub mod checkpoint_crypto;
@@ -18,6 +22,7 @@ pub mod counters;
 pub mod custody;
 pub mod data_capabilities;
 pub mod dataset;
+pub mod digest_registry;
 pub mod discovery;
 pub mod dom_ops;
 pub mod epoch;
@@ -58,6 +63,9 @@ pub use browser::{
     NavigationVerdict,
 };
 pub use config::{CrawlMode, CreateCrawl, LaunchProfile, SafetyProfile};
+pub use digest_registry::{
+    ContentDedupeClaimV1, DigestDispositionV1, DigestOutcomeV1, DigestRegistryRepo, DigestStageV1,
+};
 pub use epoch::ObservationEpoch;
 pub use error::{Classify, CoreError, ErrorClass, StoreError};
 pub use identity::{

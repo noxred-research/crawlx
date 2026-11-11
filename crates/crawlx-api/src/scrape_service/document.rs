@@ -224,6 +224,12 @@ pub(crate) async fn render(
     if let Some(b) = &doc.blocks {
         data.insert("blocks".to_owned(), b.clone());
     }
+    if let (true, Some(outputs)) = (
+        o.outputs.is_some() || o.decode.is_some() || o.markup.is_some(),
+        doc.outputs.take(),
+    ) {
+        data.insert("outputs".to_owned(), outputs);
+    }
     if let Some(w) = &doc.warning {
         data.insert("warning".to_owned(), json!(w));
     }

@@ -12,8 +12,9 @@
 //! endpoint_class}` objects sorted by `(method, url)` (a request seen twice keeps its last
 //! status): `resource_type` is `xhr` or `fetch`, `status` is the response status when one arrived
 //! and `endpoint_class` is the traffic classifier's family (`rest`, `graphql`, `soap`, `xhr`,
-//! `static`). Request URLs are redacted like every captured URL. A `dynamic`-only run has no
-//! page records (only the URL plane writes them), so it has nowhere to attach requests.
+//! `static`). Request URLs are redacted like every captured URL. Dynamic-only runs publish
+//! settled browser DOM pages through the URL-plane output lane, so the same merge attaches
+//! their requests without another HTTP acquisition.
 
 use crawlx_core::dom_ops::XhrRecord;
 use crawlx_core::hash::Digest;
@@ -97,6 +98,8 @@ impl XhrSink {
     /// Merge the collected requests into `metadata.xhr_requests` of every stored page of `run`
     /// that the browser issued requests from, and return how many records changed. Idempotent:
     /// a record that already holds exactly these requests is not written again.
+    /// Immutable browser renditions with an explicit late-attribution-unavailable marker retain
+    /// their committed snapshot; a URL-wide aggregate must not replace their canonical projection.
     ///
     /// # Errors
     /// [`StoreError`] when pages cannot be listed or a record cannot be stored.
@@ -106,6 +109,11 @@ impl XhrSink {
         }
         let mut changed = 0;
         for mut page in pages.list(run).await? {
+            if page.metadata.get("late_xhr_attribution").and_then(Value::as_str)
+                == Some("late_xhr_not_epoch_attributed")
+            {
+                continue;
+            }
             let requests = self.requests_for(&page.url.key);
             if requests.is_empty() {
                 continue;

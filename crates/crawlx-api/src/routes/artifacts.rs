@@ -98,7 +98,29 @@ pub async fn artifact(
             ));
         }
         if params.get("view") != Some("metadata") {
-            let stream = state.repos.artifacts.stream(&reference, row.size_bytes).await?;
+            let custody = crawlx_core::archive_catalog::ArchiveCustodyV1::new(
+                row.sensitivity,
+                row.expires_at,
+                state.clock.now(),
+            )?;
+            let stream = state
+                .repos
+                .artifacts
+                .stream_archive(&reference, row.size_bytes, &custody)
+                .await?;
+            if row.sensitivity == Sensitivity::Sensitive {
+                state
+                    .repos
+                    .api
+                    .audit_append(
+                        principal.tenant,
+                        Some(run.id),
+                        &principal.actor(),
+                        "artifact.read_sensitive",
+                        json!({"artifact_id":row.id,"kind":row.kind}),
+                    )
+                    .await?;
+            }
             let mut response = Response::new(Body::from_stream(stream));
             if let Ok(content_type) = HeaderValue::from_str(&row.content_type) {
                 response.headers_mut().insert(header::CONTENT_TYPE, content_type);
@@ -106,6 +128,10 @@ pub async fn artifact(
             response.headers_mut().insert(
                 header::CACHE_CONTROL,
                 HeaderValue::from_static("private, no-store"),
+            );
+            response.headers_mut().insert(
+                HeaderName::from_static("x-crawlx-sensitivity"),
+                HeaderValue::from_static(row.sensitivity.as_str()),
             );
             return Ok(response);
         }

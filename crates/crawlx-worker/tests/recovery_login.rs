@@ -155,7 +155,12 @@ async fn recovery_events(r: &common::Rig) -> Vec<(String, bool)> {
 
 #[tokio::test]
 async fn rung_one_reattaches_when_the_target_recovers() {
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let backend = KillableBackend::new(fake.clone(), &[]);
     let r = rig_with(backend.clone(), fake, false, SafetyProfile::ReadOnly).await;
     r.handle.observe(spec::after_action()).await.unwrap();
@@ -174,7 +179,12 @@ async fn rung_one_reattaches_when_the_target_recovers() {
 
 #[tokio::test]
 async fn rung_two_opens_a_new_context_and_restores_the_checkpoint() {
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let backend = KillableBackend::new(fake.clone(), &[]);
     let r = rig_with(backend.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
     r.handle
@@ -253,7 +263,12 @@ fn material() -> LoginMaterial {
 
 #[tokio::test]
 async fn login_types_the_secret_through_the_actor_and_never_leaks_it() {
-    let fake = Arc::new(FakeBackend::new(login_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(login_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
     let report = r.handle.login(material()).await.unwrap();
     assert_eq!(report.final_url, "https://example.test/home");
@@ -270,7 +285,12 @@ async fn login_types_the_secret_through_the_actor_and_never_leaks_it() {
 
 #[tokio::test]
 async fn a_page_without_a_login_form_fails_the_session() {
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake, false, SafetyProfile::ReadOnly).await;
     let err = r.handle.login(material()).await.unwrap_err();
     assert!(matches!(err, SessionError::LoginFailed(_)), "{err:?}");
@@ -279,28 +299,33 @@ async fn a_page_without_a_login_form_fails_the_session() {
 
 #[tokio::test]
 async fn login_is_refused_off_origin() {
-    let fake = Arc::new(FakeBackend::new(
-        login_site().page(
-            FakePage::new("https://evil.test/")
-                .node(
-                    FakeAxSpec::textbox("user", "Username")
-                        .attr("type", "text")
-                        .attr("autocomplete", "username")
-                        .attr("crawlx:form", "login"),
-                )
-                .node(
-                    FakeAxSpec::textbox("pw", "Password")
-                        .attr("type", "password")
-                        .attr("autocomplete", "current-password")
-                        .attr("crawlx:form", "login"),
-                )
-                .node(
-                    FakeAxSpec::button("go", "Sign in")
-                        .attr("type", "submit")
-                        .attr("crawlx:form", "login"),
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(
+                login_site().page(
+                    FakePage::new("https://evil.test/")
+                        .node(
+                            FakeAxSpec::textbox("user", "Username")
+                                .attr("type", "text")
+                                .attr("autocomplete", "username")
+                                .attr("crawlx:form", "login"),
+                        )
+                        .node(
+                            FakeAxSpec::textbox("pw", "Password")
+                                .attr("type", "password")
+                                .attr("autocomplete", "current-password")
+                                .attr("crawlx:form", "login"),
+                        )
+                        .node(
+                            FakeAxSpec::button("go", "Sign in")
+                                .attr("type", "submit")
+                                .attr("crawlx:form", "login"),
+                        ),
                 ),
-        ),
-    ));
+            )
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
     r.handle
         .navigate(crawlx_core::request::RequestEnvelopeV1::get(
@@ -317,7 +342,12 @@ async fn login_is_refused_off_origin() {
 
 #[tokio::test]
 async fn rung_three_logs_in_again_when_restore_fails() {
-    let fake = Arc::new(FakeBackend::new(login_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(login_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     // contexts 0 (original), 1 and 2 (rung 2 attempts) are dead; context 3 is healthy
     let backend = KillableBackend::new(fake.clone(), &[1, 2]);
     let r = rig_with(backend.clone(), fake, false, SafetyProfile::ReadOnly).await;
@@ -341,7 +371,12 @@ async fn rung_three_logs_in_again_when_restore_fails() {
 
 #[tokio::test]
 async fn an_exhausted_ladder_fails_the_session() {
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let backend = KillableBackend::new(fake.clone(), &(1..40).collect::<Vec<_>>());
     let r = rig_with(backend.clone(), fake, false, SafetyProfile::ReadOnly).await;
     r.handle.observe(spec::after_action()).await.unwrap();

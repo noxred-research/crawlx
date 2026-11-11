@@ -109,6 +109,178 @@ impl Rig {
 }
 
 #[tokio::test]
+async fn native_and_all_pinned_head_identities_and_receipts_survive_postgres_restart() {
+    use crawlx_core::repo::FrontierRepo;
+    use crawlx_core::request::import::SOURCE_PINS;
+
+    let Some(mut r) = rig().await else {
+        eprintln!("skipped: CRAWLX_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let config = ApiConfig {
+        rate_limit_per_minute: 0,
+        request_identity_key: Some(crawlx_core::SecretOr::secret([9; 32])),
+        ..ApiConfig::default()
+    };
+    let clock = Arc::new(SystemClock);
+    r.app = crawlx_api::router(
+        AppState::builder(
+            Repos::pg(&r.pg, r.artifacts.clone()),
+            crawlx_api::admission_policy(&config, clock.clone()),
+            config.clone(),
+        )
+        .clock(clock)
+        .build(),
+    );
+    let mut cases = Vec::new();
+    for pin in std::iter::once(None).chain(SOURCE_PINS.into_iter().map(Some)) {
+        let create = json!({"seedUrl":"https://app.example.test/","seed":11,
+            "roles":[{"name":"anonymous"}]});
+        let (status, _, created, _) = r.call(Method::POST, "/v1/crawls", &[], Some(&create)).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{created}");
+        let id = created["id"].as_str().unwrap();
+        let run_id: CrawlRunId = id.parse().unwrap();
+        let mut rows = json!([
+            {"url":"https://app.example.test/same","method":"GET"},
+            {"url":"https://app.example.test/same","method":"HEAD"},
+            {"url":"https://app.example.test/same","method":"HEAD"}
+        ]);
+        let (endpoint, body) = match pin {
+            Some((dialect, release, commit)) => {
+                for row in rows.as_array_mut().unwrap() {
+                    row["sourceKey"] = json!("same-opaque-key");
+                }
+                (
+                    format!("/v1/crawls/{id}/requests/import"),
+                    json!({
+                        "producerEpoch":1,"export":{"version":1,
+                            "source":{"dialect":dialect,"release":release,"commit":commit},
+                            "requests":rows}
+                    }),
+                )
+            }
+            None => (
+                format!("/v1/crawls/{id}/requests"),
+                json!({
+                    "producerEpoch":1,"requests":rows
+                }),
+            ),
+        };
+        let (status, _, receipt, _) = r
+            .call(
+                Method::POST,
+                &endpoint,
+                &[("Idempotency-Key", "head-restart")],
+                Some(&body),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{receipt}");
+        let inserted = receipt["data"]["inserted"].as_array().unwrap();
+        assert_eq!(inserted.len(), 2);
+        assert_eq!(receipt["data"]["duplicates"], 1);
+        let get =
+            r.pg.get_request(run_id, inserted[0].as_i64().unwrap())
+                .await
+                .unwrap();
+        let head =
+            r.pg.get_request(run_id, inserted[1].as_i64().unwrap())
+                .await
+                .unwrap();
+        assert_eq!(get.envelope.method, "GET");
+        assert_eq!(head.envelope.method, "HEAD");
+        assert_ne!(get.identity, head.identity);
+        cases.push((run_id, endpoint, body, receipt, get.identity, head.identity));
+    }
+    // Close all old API connections. Reopen both the repository and artifact index.
+    r.app = Router::new();
+    r.pg.pool().close().await;
+    r.pg = Pg::connect_existing(
+        &std::env::var("CRAWLX_TEST_DATABASE_URL").unwrap(),
+        r.pg.config().clone(),
+    )
+    .await
+    .unwrap();
+    let clock = Arc::new(SystemClock);
+    r.artifacts = Arc::new(
+        FsArtifactStore::open(r._dir.path(), Arc::new(r.pg.clone()), clock.clone())
+            .await
+            .unwrap()
+            .with_index(Arc::new(r.pg.clone())),
+    );
+    r.app = crawlx_api::router(
+        AppState::builder(
+            Repos::pg(&r.pg, r.artifacts.clone()),
+            crawlx_api::admission_policy(&config, clock.clone()),
+            config,
+        )
+        .clock(clock)
+        .build(),
+    );
+    for (run_id, endpoint, body, first, get_identity, head_identity) in cases {
+        let (status, _, retry, _) = r
+            .call(
+                Method::POST,
+                &endpoint,
+                &[("Idempotency-Key", "head-restart")],
+                Some(&body),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{retry}");
+        assert_eq!(first["data"], retry["data"]);
+        let inserted = first["data"]["inserted"].as_array().unwrap();
+        let get =
+            r.pg.get_request(run_id, inserted[0].as_i64().unwrap())
+                .await
+                .unwrap();
+        let head =
+            r.pg.get_request(run_id, inserted[1].as_i64().unwrap())
+                .await
+                .unwrap();
+        assert_eq!(get.identity, get_identity);
+        assert_eq!(head.identity, head_identity);
+        assert_eq!(head.envelope.method, "HEAD");
+        let (status, _, next, _) = r
+            .call(
+                Method::POST,
+                &endpoint,
+                &[("Idempotency-Key", "head-restart-next")],
+                Some(&body),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{next}");
+        assert!(next["data"]["inserted"].as_array().unwrap().is_empty());
+        assert_eq!(next["data"]["duplicates"], 3);
+        let (status, _, page, _) = r
+            .call(Method::GET, &format!("/v1/crawls/{run_id}/requests"), &[], None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let listed: Vec<_> = page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].clone())
+            .collect();
+        assert_eq!(&listed, inserted);
+        let mut post = body.clone();
+        if post.get("export").is_some() {
+            post["export"]["requests"][1]["method"] = json!("POST");
+        } else {
+            post["requests"][1]["method"] = json!("POST");
+        }
+        let (status, _, refused, _) = r
+            .call(
+                Method::POST,
+                &endpoint,
+                &[("Idempotency-Key", "head-restart-post")],
+                Some(&post),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    }
+    r.pg.drop_schema().await.unwrap();
+}
+
+#[tokio::test]
 async fn full_lifecycle_over_postgres() {
     let Some(r) = rig().await else {
         eprintln!("skipped: CRAWLX_TEST_DATABASE_URL is not set");

@@ -103,11 +103,16 @@ async fn rig(pg: &Pg) -> RigCore {
         .with_index(Arc::new(pg.clone()));
     let mut stores = Stores::over_pg(pg.clone(), Arc::new(artifacts), TenantId::new());
     stores.checkpoint_keys = Arc::new(MemoryCheckpointKeys::new().unwrap());
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     rig_core(stores, dir, fake.clone(), fake, SafetyProfile::ReadOnly).await
 }
 
-async fn count(pg: &Pg, sql: &str, id: uuid::Uuid) -> i64 {
+async fn count(pg: &Pg, sql: &'static str, id: uuid::Uuid) -> i64 {
     sqlx::query_scalar(sql)
         .bind(id)
         .fetch_one(pg.pool())

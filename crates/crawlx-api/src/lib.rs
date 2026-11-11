@@ -176,8 +176,7 @@ pub async fn run_until_bound(
         .from_env()
         .map_err(|e| ApiError::Config(format!("intel: {e}")))?;
     cfg.compat = cfg
-        .compat
-        .from_lookup(|k| std::env::var(k).ok())
+        .resolved_compat(|k| std::env::var(k).ok())
         .map_err(|e| ApiError::Config(format!("compat: {e}")))?;
     if cfg.request_identity_key.is_none() {
         for name in ["CRAWLX_REQUEST_IDENTITY_KEY", "CRAWLX_REQUEST_IDENTITY_KEY_FILE"] {

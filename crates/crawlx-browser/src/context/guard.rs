@@ -92,6 +92,14 @@ pub(crate) async fn answer_paused(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, ev: A
         client: ctl.client.clone(),
         session_id: session.to_owned(),
     };
+    // A download owns only its registered main-frame response pauses. Other document responses
+    // can share the session while temporary response interception is enabled; never strand them.
+    if ev.params.get("responseStatusCode").is_some() || ev.params.get("responseErrorReason").is_some() {
+        let _ = sess
+            .send("Fetch.continueResponse", json!({ "requestId": request_id }))
+            .await;
+        return;
+    }
     let main_document =
         text(&ev.params, "resourceType") == "Document" && text(&ev.params, "frameId") == main_frame;
     let url = ev

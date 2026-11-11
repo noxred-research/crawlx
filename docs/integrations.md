@@ -38,7 +38,12 @@ with secret-manager files instead of environment values containing credentials.
   library the setting is `ApiConfig.compat.prefixed_keys`. **Run**: the bootstrap test starts the `crawlx` binary with the flag
   and with the variable, calls `GET /compat/v2/team/credit-usage` with the key (200) and
   checks that an unknown `fc-` key and the same key on `/v1/crawls/{id}` get 401.
-* **Without the switch** a bootstrap `fc-` key is refused at startup (`bootstrap_keys`,
+* **Compatibility defaults.** `crawlx serve --compat-mode strict` keeps compatibility query
+  handling and dual-signed native webhooks. `--compat-mode native_defaults` selects native query
+  policy and native-only webhook signatures. `CRAWLX_COMPAT_MODE` supplies the same setting;
+  an explicit flag wins, including `--compat-mode strict`. The default remains `strict`.
+  Library hosts can set `ApiConfig.compat_mode_override` for the same explicit precedence.
+* **Without the key switch** a bootstrap `fc-` key is refused at startup (`bootstrap_keys`,
   `crates/crawlx-api/src/lib.rs`): `API key for tenant "acme" must look like cx_live_<26 base32
   characters>` (same test, third phase: the process exits non-zero with that message).
 * **Key shape.** `fc-` followed by 16 to 64 ASCII alphanumerics (`parse_compat_key`,
@@ -387,3 +392,28 @@ and the plain proxy URLs keep working.
   [reference: proxy tiers and the ProxyX pool gateway](reference.md#deployment-proxy-tiers-and-the-proxyx-pool-gateway).
 * **Not covered.** SOCKS5 ingress (it does not carry the session id, so block feedback would be
   impossible), the gateway's admin API, and block feedback from the browser plane.
+
+## 10. Offline curl request conversion
+
+Convert a curl command into a native request for review, without executing it:
+
+```sh
+crawlx convert curl "curl https://example.test/page -H 'Accept: text/html'"
+```
+
+The converter applies normal request admission and prints redacted `CreateCrawl` JSON.
+It selects a static, single-URL request with depth zero, redirects disabled and no retries.
+It makes no DNS or HTTP requests, opens no command-referenced files and never invokes a shell.
+The output is a review template: secret values must be supplied through approved secret handling,
+and execution must pass admission again.
+
+Supported options are a positional URL or `--url`, `--`, `-X`/`--request GET`,
+`-H`/`--header`, `-A`/`--user-agent` and inline `-b`/`--cookie` pairs.
+Attached short values and `--option=value` are accepted. Unsupported flags, header files,
+repeated headers, URL ranges, command substitution and non-GET methods are typed refusals;
+methods requiring a journal cannot bypass that requirement through conversion.
+Header, cookie, user-agent and query values are masked; fragments are removed and URL credentials
+are refused. Do not place real credentials in shell history or process arguments.
+
+An interactive shell, HTML viewer and arbitrary code execution are not exposed.
+Their local execution boundary and viewer isolation remain product decisions, not server capabilities.

@@ -339,6 +339,9 @@ impl CdpContext {
             PageOp::Html => self.html().await,
             PageOp::Screenshot(spec) => self.screenshot(&spec).await,
             PageOp::PrintToPdf(spec) => self.print_to_pdf(&spec).await,
+            PageOp::Capture(spec) => self.retained_capture(spec).await.map(PageOpResult::Capture),
+            PageOp::Download(spec) => self.download(spec).await.map(PageOpResult::Capture),
+            PageOp::CaptureProjection => self.capture_projection().await.map(PageOpResult::Projection),
             PageOp::WaitForSelector {
                 selector,
                 state,

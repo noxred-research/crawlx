@@ -248,6 +248,7 @@ pub(crate) async fn assemble(
     let mut native_meta = std::collections::BTreeMap::new();
     for key in [
         "article",
+        "articleParseQuality",
         "articleTextRef",
         "articleCommentsRef",
         "articleDocumentRef",
@@ -508,6 +509,8 @@ pub(crate) async fn assemble(
         record,
         accepted: Vec::new(),
         outbox: Vec::new(),
+        content_dedupe: None,
+        local_dedupe: None,
         links: if engine.kind == JobKind::Crawl {
             composed.links
         } else {

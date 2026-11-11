@@ -229,11 +229,22 @@ impl RobotsGate {
             .map_err(|_| FetchError::AcquisitionUnavailable)?;
         let mut seen = std::collections::BTreeSet::new();
         let mut options = original_options.clone();
+        options.method = http::Method::GET;
         options.follow_redirects = false;
         options.validators = None;
         options.suppress_validators = true;
+        // Page declarations do not describe the origin's independent robots document.
+        options.preflight = None;
+        options.declaration = crawlx_fetch::ResponseDeclaration::default();
         let max_hops = self.fetcher.config().max_redirects.min(20);
         for _ in 0..=max_hops {
+            let remaining = budget.preflight(cancel)?;
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(FetchError::AcquisitionCancelled),
+                result = tokio::time::timeout(remaining, admission.check_scope(&current)) =>
+                    result.map_err(|_| FetchError::AcquisitionDeadline)??,
+            }
             if !seen.insert(current.as_str().to_owned()) {
                 return Err(FetchError::TooManyRedirects { limit: max_hops });
             }
@@ -297,6 +308,50 @@ impl RobotsGate {
             }
         }
         RobotsDecision::Blocked("robots_unavailable")
+    }
+
+    /// Decide a parser-produced hop using the same cache and fresh-robots policy as a page.
+    pub(crate) async fn decide_hop(&self, kind: crawlx_policy::robots::HopKind, url: &Url) -> RobotsDecision {
+        let origin = crawlx_policy::authorization::origin_string(url);
+        let decision = self.decide(&origin, url).await;
+        self.hop_verdict(kind, url, decision)
+    }
+
+    /// Decide a hop while charging robots requests to its parent acquisition allowance.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn decide_hop_with_budget(
+        &self,
+        kind: crawlx_policy::robots::HopKind,
+        url: &Url,
+        options: &FetchOptions,
+        budget: &mut crate::acquisition::AcquisitionBudgetV1,
+        cancel: &tokio_util::sync::CancellationToken,
+        admission: &dyn crate::acquisition::HopAdmission,
+    ) -> Result<RobotsDecision, FetchError> {
+        let origin = crawlx_policy::authorization::origin_string(url);
+        let decision = self
+            .decide_with_budget(&origin, url, options, budget, cancel, admission)
+            .await?;
+        Ok(self.hop_verdict(kind, url, decision))
+    }
+
+    fn hop_verdict(
+        &self,
+        kind: crawlx_policy::robots::HopKind,
+        url: &Url,
+        decision: RobotsDecision,
+    ) -> RobotsDecision {
+        if !self.shared.obey || !matches!(decision, RobotsDecision::Allowed) {
+            return decision;
+        }
+        match self.shared.cache.lock().evaluate_hop(kind, url) {
+            crawlx_policy::robots::HopVerdict::Allowed => RobotsDecision::Allowed,
+            crawlx_policy::robots::HopVerdict::Denied {
+                by: DisallowedBy::Rule(_),
+                ..
+            } => RobotsDecision::Blocked("robots_disallow"),
+            _ => RobotsDecision::Blocked("robots_unavailable"),
+        }
     }
 
     /// The cached verdict for `path` on `origin`; an allowed verdict paces the governor origin
@@ -567,6 +622,9 @@ mod tests {
         async fn check_authority(&self) -> Result<(), FetchError> {
             Ok(())
         }
+        async fn check_scope(&self, _: &Url) -> Result<(), FetchError> {
+            Ok(())
+        }
     }
 
     /// A gate reading `/robots.txt` from a loopback server that answers `status` with `body`,
@@ -717,6 +775,9 @@ mod tests {
                 Err(FetchError::AcquisitionUnavailable)
             }
             async fn check_authority(&self) -> Result<(), FetchError> {
+                Ok(())
+            }
+            async fn check_scope(&self, _: &Url) -> Result<(), FetchError> {
                 Ok(())
             }
         }

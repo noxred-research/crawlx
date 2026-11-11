@@ -2,7 +2,7 @@
 //!
 //! [`ParserPipeline::run`] executes one [`ParserPipelineV1`]: it detects the input format,
 //! looks up the explicit route for that format and either calls the page extractor
-//! ([`Extractor::extract_bytes`]) or the document parser ([`parse_document_with`]), then
+//! ([`Extractor`]) or the document parser ([`parse_document_with`]), then
 //! projects both onto one result type, [`PipelineOutput`]. Static fetches, scrape-engine
 //! parses, settled dynamic DOMs, replayed bodies and uploaded files all enter here, so they
 //! share one set of limits and one output record version.
@@ -16,6 +16,10 @@
 //! operations, children, output) refuse the input with [`PipelineError::Limit`]; they never
 //! return a silently shortened record. Page, slide and sheet counts keep the document
 //! parser's soft truncation with a warning.
+//!
+//! Page decode options apply to the original bytes before depth checks. Without decode options,
+//! the legacy BOM-aware UTF-8/UTF-16 path remains in use. Extraction reuses the decoded text,
+//! retains its diagnostics, and hashes the original input rather than the converted text.
 //!
 //! No network, clock, filesystem or randomness is used.
 
@@ -447,8 +451,37 @@ impl ParserPipeline {
             }
         }
 
-        // decode_input
-        let (decoded, lossy, converted) = decode_markup(input.bytes);
+        // Decode once, retaining the original bytes for extraction evidence and its raw digest.
+        let max_bytes = if options.content.is_some() {
+            options
+                .max_input_bytes
+                .min(crate::document::DEFAULT_MAX_INPUT_BYTES)
+        } else {
+            options.max_input_bytes
+        };
+        if input.bytes.len() > max_bytes {
+            return Err(extract_error(ExtractError::TooLarge {
+                what: "bytes",
+                limit: max_bytes,
+                actual: input.bytes.len(),
+            }));
+        }
+        let mut charge =
+            parse_budget::charge(input.bytes.len()).map_err(|error| extract_error(error.into()))?;
+        let (decoded, decode_report, lossy, converted) = if options.decode.is_some() {
+            let (decoded, report) = crate::decode_bytes(input.bytes, &options).map_err(extract_error)?;
+            let lossy = report.as_ref().is_some_and(|report| report.issue_count > 0);
+            let converted = report
+                .as_ref()
+                .is_some_and(|report| report.bom_len > 0 || report.encoding != "UTF-8");
+            (decoded, report, lossy, converted)
+        } else {
+            let (decoded, lossy, converted) = decode_markup(input.bytes);
+            (decoded, None, lossy, converted)
+        };
+        charge
+            .cover(decoded.len())
+            .map_err(|error| extract_error(error.into()))?;
         let mut warnings = Vec::new();
         if lossy {
             warnings.push(
@@ -472,12 +505,15 @@ impl ParserPipeline {
         if limits.max_depth < u32::try_from(crate::dom::MAX_DEPTH).unwrap_or(u32::MAX) {
             check_depth(&decoded, limits.max_depth)?;
         }
-        let document = match input.projection {
-            Some(project) => {
-                Extractor::extract_bytes_with_projection(decoded.as_bytes(), page_url, &options, project)
-            }
-            None => Extractor::extract_bytes(decoded.as_bytes(), page_url, &options),
-        }
+        let document = Extractor::extract_inner(
+            &decoded,
+            input.bytes,
+            Digest::of(crate::RAW_HTML_DOMAIN, input.bytes),
+            page_url,
+            &options,
+            input.projection,
+            Some((charge, decode_report)),
+        )
         .map_err(extract_error)?;
         stages.push(StageReportV1::new(
             PipelineStageV1::Parse,

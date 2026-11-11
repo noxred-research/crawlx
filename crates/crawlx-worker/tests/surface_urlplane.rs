@@ -177,6 +177,259 @@ async fn breadth_first_keeps_discovery_order() {
     );
 }
 
+// ---- scope.strategy across execution planes -----------------------------------------------
+
+const STRATEGY_TREE: [(&str, &[&str]); 15] = [
+    ("/", &["/a", "/b"]),
+    ("/a", &["/a/0", "/a/1"]),
+    ("/b", &["/b/0", "/b/1"]),
+    ("/a/0", &["/a/0/0", "/a/0/1"]),
+    ("/a/1", &["/a/1/0", "/a/1/1"]),
+    ("/b/0", &["/b/0/0", "/b/0/1"]),
+    ("/b/1", &["/b/1/0", "/b/1/1"]),
+    ("/a/0/0", &[]),
+    ("/a/0/1", &[]),
+    ("/a/1/0", &[]),
+    ("/a/1/1", &[]),
+    ("/b/0/0", &[]),
+    ("/b/0/1", &[]),
+    ("/b/1/0", &[]),
+    ("/b/1/1", &[]),
+];
+
+fn strategy_tree_order(strategy: CrawlStrategy) -> Vec<&'static str> {
+    match strategy {
+        CrawlStrategy::BreadthFirst => STRATEGY_TREE.iter().map(|(path, _)| *path).collect(),
+        CrawlStrategy::DepthFirst => vec![
+            "/", "/b", "/b/1", "/b/1/1", "/b/1/0", "/b/0", "/b/0/1", "/b/0/0", "/a", "/a/1", "/a/1/1",
+            "/a/1/0", "/a/0", "/a/0/1", "/a/0/0",
+        ],
+        CrawlStrategy::Priority => unreachable!("this fixture pins BFS and DFS"),
+    }
+}
+
+async fn strategy_tree_site() -> Site {
+    Site::start(|_| {
+        Router::new().fallback(|uri: axum::http::Uri| async move {
+            let Some((path, children)) = STRATEGY_TREE.iter().find(|(path, _)| *path == uri.path()) else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            let links = children
+                .iter()
+                .map(|child| format!(r#"<a href="{child}">{child}</a>"#))
+                .collect::<String>();
+            page(path, &links)
+        })
+    })
+    .await
+}
+
+fn strategy_tree_browser(base: &str) -> crawlx_browser::FakeBackend {
+    use crawlx_browser::fake::{FakePage, FakeScript};
+
+    let script = STRATEGY_TREE
+        .iter()
+        .fold(FakeScript::new(), |script, (path, children)| {
+            let mut document = FakePage::new(&format!("{base}{path}")).title(*path).html(format!(
+                "<html><head><title>{path}</title></head><body><p>Page {path}</p></body></html>"
+            ));
+            // Hooks, not AX controls: navigation must pass through the browser URL queue.
+            for child in *children {
+                document = document.discovered(*child, "fixture");
+            }
+            script.page(document)
+        });
+    crawlx_browser::FakeBackend::builder()
+        .script(script)
+        .clock(Arc::new(crawlx_core::SystemClock))
+        .build()
+}
+
+async fn run_queued_strategy_tree(
+    crawl: crawlx_core::CreateCrawl,
+    mut config: crawlx_worker::WorkerConfig,
+    stores: crawlx_worker::Stores,
+    backend: Arc<crawlx_browser::FakeBackend>,
+) -> crawlx_core::CrawlRunId {
+    use crawlx_core::counters::{PlaneCounters, RunStatus};
+    use crawlx_core::{Clock, CrawlRunId, SystemClock};
+
+    let run = crawlx_core::repo::CrawlRun {
+        id: CrawlRunId::new(),
+        tenant: stores.tenant,
+        status: RunStatus::Queued,
+        terminal_reason: None,
+        seed: crawl.effective_seed(),
+        config_digest: crawl.digest().unwrap(),
+        config: crawl.clone(),
+        policy_version: 1,
+        counters: PlaneCounters::default(),
+        created_at: SystemClock.now(),
+        started_at: None,
+        finished_at: None,
+        trace_id: None,
+    };
+    stores.runs.create(&run, None).await.unwrap();
+    stores
+        .runs
+        .create_sessions(&crawlx_scheduler::RunPlanner::sessions(run.id, &crawl))
+        .await
+        .unwrap();
+    config.idle_exit_after = Some(std::time::Duration::from_millis(200));
+    config.checkpoint_keys = Some(Arc::new(
+        crawlx_storage::checkpoint_crypto::MemoryCheckpointKeys::new().unwrap(),
+    ));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        crawlx_worker::lease_loop::run_with(
+            config,
+            stores.clone(),
+            Some(backend),
+            tokio_util::sync::CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let finished = stores.runs.get(run.id).await.unwrap();
+    assert_eq!(
+        finished.status,
+        RunStatus::Completed,
+        "{:?}",
+        finished.terminal_reason
+    );
+    assert_eq!(finished.terminal_reason, Some(TerminalReason::FrontierExhausted));
+    run.id
+}
+
+async fn assert_strategy_tree(
+    mode: crawlx_core::config::CrawlMode,
+    strategy: CrawlStrategy,
+    leased: bool,
+    observe_only: bool,
+) {
+    use crawlx_core::config::CrawlMode;
+    use crawlx_core::counters::RunStatus;
+
+    let site = strategy_tree_site().await;
+    let directory = tempfile::tempdir().unwrap();
+    let mut crawl = surface_common::static_crawl(&site.base);
+    crawl.mode = mode;
+    crawl.scope.strategy = strategy;
+    crawl.scope.max_discovery_depth = 3;
+    crawl.dynamic.observe_only = observe_only;
+    crawl.dynamic.page_hooks = true;
+    if mode == CrawlMode::Hybrid {
+        crawl.dynamic.always_browser_paths = vec!["^/$".into()];
+    }
+    crawl.limits.states = 100;
+    crawl.limits.interactions = 100;
+    crawl.normalize().unwrap();
+    let stores =
+        crawlx_worker::Stores::over_memory(Arc::new(crawlx_storage::MemoryStore::new()), directory.path())
+            .await
+            .unwrap();
+    let record = surface_common::authorization_fixture::verified_record(&crawl, stores.tenant);
+    let stores =
+        stores.with_authorization_source(Arc::new(crawlx_worker::StaticAuthorizationSource::new(record)));
+    let backend = Arc::new(strategy_tree_browser(&site.base));
+    let config = surface_common::config(directory.path());
+    let run = if leased {
+        run_queued_strategy_tree(crawl, config, stores.clone(), backend.clone()).await
+    } else {
+        let report = surface_common::authorization_fixture::run_authorized_local_with(
+            crawlx_worker::LocalRun::new(crawl, config)
+                .with_stores(stores.clone())
+                .with_backend(backend.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            report.status,
+            RunStatus::Completed,
+            "{:?}",
+            report.terminal_reason
+        );
+        assert_eq!(report.terminal_reason, Some(TerminalReason::FrontierExhausted));
+        report.run_id
+    };
+    let expected = strategy_tree_order(strategy);
+    let pages = stores.pages.list(run).await.unwrap();
+    assert_eq!(
+        pages.len(),
+        STRATEGY_TREE.len(),
+        "{mode:?}, {strategy:?}, leased={leased}"
+    );
+    if mode != CrawlMode::Dynamic {
+        assert_eq!(
+            site.gets(),
+            expected,
+            "HTTP {mode:?}, {strategy:?}, leased={leased}"
+        );
+    } else {
+        assert!(
+            site.gets().is_empty(),
+            "dynamic never fetches target pages over HTTP"
+        );
+    }
+    if mode != CrawlMode::Static {
+        let contexts = backend.context_handles();
+        assert_eq!(contexts.len(), 1);
+        let navigated: Vec<_> = contexts[0]
+            .navigations()
+            .iter()
+            .map(|url| Url::parse(url).unwrap().path().to_owned())
+            .collect();
+        assert_eq!(
+            navigated, expected,
+            "browser {mode:?}, {strategy:?}, leased={leased}, observe_only={observe_only}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn static_tree_preserves_bfs_levels_and_dfs_deepest_first_locally_and_when_leased() {
+    for leased in [false, true] {
+        for strategy in [CrawlStrategy::BreadthFirst, CrawlStrategy::DepthFirst] {
+            assert_strategy_tree(crawlx_core::config::CrawlMode::Static, strategy, leased, true).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn hybrid_tree_preserves_bfs_levels_and_dfs_deepest_first_locally_and_when_leased() {
+    for leased in [false, true] {
+        for strategy in [CrawlStrategy::BreadthFirst, CrawlStrategy::DepthFirst] {
+            for observe_only in [true, false] {
+                assert_strategy_tree(
+                    crawlx_core::config::CrawlMode::Hybrid,
+                    strategy,
+                    leased,
+                    observe_only,
+                )
+                .await;
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn dynamic_tree_preserves_bfs_levels_and_dfs_deepest_first_locally_and_when_leased() {
+    for leased in [false, true] {
+        for strategy in [CrawlStrategy::BreadthFirst, CrawlStrategy::DepthFirst] {
+            for observe_only in [true, false] {
+                assert_strategy_tree(
+                    crawlx_core::config::CrawlMode::Dynamic,
+                    strategy,
+                    leased,
+                    observe_only,
+                )
+                .await;
+            }
+        }
+    }
+}
+
 // ---- extract.formFill ---------------------------------------------------------------------
 
 const FORMS_PAGE: &str = r#"

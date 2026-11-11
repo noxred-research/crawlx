@@ -11,7 +11,61 @@ use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{LoaderCursorV1, RequestBatchV1};
 use crawlx_core::request::RequestEnvelopeV1;
 use std::borrow::Cow;
+use std::future::Future;
 use std::io::Read;
+
+#[path = "delivery/memo.rs"]
+mod memo;
+
+/// Live run authority used by budgeted robots acquisition for discovery resources.
+struct DiscoveryHopAdmission<'a>(&'a UrlPlaneRunner);
+
+#[async_trait::async_trait]
+impl crate::acquisition::HopAdmission for DiscoveryHopAdmission<'_> {
+    async fn admit(
+        &self,
+        url: &Url,
+        _options: &FetchOptions,
+        _budget: &mut AcquisitionBudgetV1,
+        _cancel: &CancellationToken,
+    ) -> Result<(), FetchError> {
+        let canonical = self.0.admit_native_scope(url, 0, false).await?;
+        if canonical.url != *url {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        Ok(())
+    }
+
+    async fn check_scope(&self, url: &Url) -> Result<(), FetchError> {
+        self.check_authority().await?;
+        if !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || self.0.prefetch.check(url).is_some()
+            || !self.0.scope.decide_protocol_resource(url).is_admitted()
+        {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        Ok(())
+    }
+
+    async fn check_authority(&self) -> Result<(), FetchError> {
+        if self.0.authorization_lost().await
+            || self
+                .0
+                .deps
+                .runs
+                .get(self.0.run)
+                .await
+                .map_err(FetchError::OriginAdmission)?
+                .status
+                == RunStatus::Cancelled
+        {
+            return Err(FetchError::AcquisitionCancelled);
+        }
+        Ok(())
+    }
+}
 
 /// Independent gzip expansion ceiling, including every concatenated member.
 const MAX_SITEMAP_GZIP_RATIO: usize = 100;
@@ -70,6 +124,18 @@ enum SourceParseError {
     Feed(#[from] crawlx_url::feed::FeedError),
     #[error(transparent)]
     Decode(#[from] SitemapDecodeError),
+}
+
+/// Shared checkpoint authority for list and row-stream source loaders.
+struct DiscoveryLoader {
+    tenant: crawlx_core::TenantId,
+    private_key: Option<Digest>,
+    source: String,
+    digest: Digest,
+    cursor: Option<LoaderCursorV1>,
+    fence: i64,
+    chunk_size: usize,
+    label: String,
 }
 
 impl UrlPlaneRunner {
@@ -143,19 +209,18 @@ impl UrlPlaneRunner {
         candidates
     }
 
-    /// Admit a parsed source as bounded atomic chunks, including rejected input positions.
-    async fn append_source_urls(
+    /// Open one immutable representation; row and list positions share the same cursor CAS.
+    async fn source_loader(
         &self,
-        urls: &[Url],
         parent: &FrontierEntry,
         label: &str,
         source_bytes: &[u8],
-    ) -> Result<usize, WorkerError> {
+    ) -> Result<Option<DiscoveryLoader>, WorkerError> {
         let Some(policy) = &self.crawl.scope.discovery else {
-            return Ok(0);
+            return Ok(None);
         };
         if parent.depth >= policy.max_source_depth {
-            return Ok(0);
+            return Ok(None);
         }
         let tenant = self.deps.runs.get(self.run).await?.tenant;
         let private_key = if self.crawl.retention.mode == crawlx_core::config::RetentionMode::Zdr {
@@ -180,7 +245,7 @@ impl UrlPlaneRunner {
                 .to_hex()
         );
         let digest = Digest::of_value(
-            if label == "html_sources" {
+            if matches!(label, "html_sources" | "feed") {
                 "crawlx/discovery-representation/v2"
             } else {
                 "crawlx/discovery-representation/v1"
@@ -195,18 +260,12 @@ impl UrlPlaneRunner {
         let digest = private_key.as_ref().map_or(digest, |key| {
             Digest::keyed(&key.0, "crawlx/discovery-private-source/v1", &digest.0)
         });
-        let mut cursor = self.deps.frontier.loader_cursor(self.run, &source).await?;
+        let cursor = self.deps.frontier.loader_cursor(self.run, &source).await?;
         if cursor
             .as_ref()
             .is_some_and(|cursor| cursor.source_digest != digest)
         {
             return Err(StoreError::Conflict("discovery source changed during resume".into()).into());
-        }
-        let start = cursor
-            .as_ref()
-            .map_or(0, |cursor| usize::try_from(cursor.position).unwrap_or(usize::MAX));
-        if start > urls.len() {
-            return Err(StoreError::Conflict("discovery cursor exceeds source".into()).into());
         }
         let fence = self
             .held
@@ -223,88 +282,350 @@ impl UrlPlaneRunner {
                 usize::try_from(config.queue.batch_size).unwrap_or(128)
             })
             .clamp(1, 128);
+        Ok(Some(DiscoveryLoader {
+            tenant,
+            private_key,
+            source,
+            digest,
+            cursor,
+            fence,
+            chunk_size,
+            label: label.to_owned(),
+        }))
+    }
+
+    /// Commit bounded proposals and their physical source position under the parent fence.
+    async fn append_source_chunk(
+        &self,
+        urls: &[Url],
+        position: u64,
+        parent: &FrontierEntry,
+        loader: &mut DiscoveryLoader,
+    ) -> Result<usize, WorkerError> {
+        if self.authorization_lost().await {
+            return Err(DiscoveryErrorV1::Protocol("authorization revoked".into()).into());
+        }
+        let mut requests = Vec::new();
+        let mut denied = Vec::new();
+        let memo_scope = self.discovery_memo_scope(parent, &loader.label).await?;
+        let mut memo_keys = Vec::new();
+        let depth = parent.depth.saturating_add(1);
+        for url in urls {
+            let Some((canonical, bearing)) = self.canonicalize(url) else {
+                continue;
+            };
+            if self.ledger.lock().carried.contains(canonical.url.as_str()) {
+                continue;
+            }
+            let (denial, counted_as, reason) = self
+                .discovery_admission(&canonical, depth, Some(parent.id), bearing)
+                .await;
+            if let Some((status, _)) = denial {
+                denied.push((
+                    counted_as.unwrap_or(if status == FrontierStatus::RobotsBlocked {
+                        DiscoveryOutcome::RobotsBlocked
+                    } else {
+                        DiscoveryOutcome::PolicyBlocked
+                    }),
+                    reason,
+                ));
+                continue;
+            }
+            let pending = {
+                let ledger = self.ledger.lock();
+                ledger.pending.len().saturating_add(ledger.visited.len())
+            };
+            if pending.saturating_add(requests.len())
+                >= usize::try_from(self.crawl.scope.max_known_urls).unwrap_or(usize::MAX)
+            {
+                denied.push((DiscoveryOutcome::PolicyBlocked, "known_url_limit"));
+                continue;
+            }
+            if self.discovery_memo_seen(&memo_scope, canonical.key).await? {
+                continue;
+            }
+            memo_keys.push(canonical.key);
+            requests.push(RequestEnvelopeV1::get(canonical, depth, Some(parent.id)));
+        }
+        let next = LoaderCursorV1::new(loader.source.clone(), loader.digest, position);
+        let batch_id = Digest::of_value(
+            "crawlx/discovery-batch/v1",
+            &(self.run, &loader.source, loader.digest, &loader.cursor, &next),
+        )
+        .map_err(|error| WorkerError::Other(error.to_string()))?;
+        let batch_id = loader.private_key.as_ref().map_or(batch_id, |key| {
+            Digest::keyed(&key.0, "crawlx/discovery-private-batch/v1", &batch_id.0)
+        });
+        let mut batch = RequestBatchV1::new(loader.tenant, self.run, "anonymous".into(), batch_id, requests);
+        batch.expected_cursor = loader.cursor.clone();
+        batch.next_cursor = Some(next.clone());
+        batch.parent_fence = Some((parent.id, loader.fence));
+        let receipt = self.deps.frontier.append_batch(batch).await?;
+        self.discovery_memo_record(&memo_scope, &memo_keys).await?;
+        let inserted = receipt.inserted.len();
+        for id in receipt.inserted {
+            let request = self.deps.frontier.get_request(self.run, id).await?;
+            self.ledger.lock().pending.insert(
+                id,
+                PendingUrl {
+                    resume: ResumeEntry::new(request.envelope.url.url.to_string(), depth),
+                    is_get: request.envelope.method == "GET",
+                },
+            );
+            self.counters.discovery(Plane::Urls, DiscoveryOutcome::Admitted);
+        }
+        for _ in 0..receipt.duplicates {
+            self.counters.discovery(Plane::Urls, DiscoveryOutcome::Duplicate);
+        }
+        for (outcome, reason) in denied {
+            self.counters.discovery_with_reason(Plane::Urls, outcome, reason);
+        }
+        loader.cursor = Some(next);
+        Ok(inserted)
+    }
+
+    /// Admit a parsed source as bounded atomic chunks, including rejected input positions.
+    async fn append_source_urls(
+        &self,
+        urls: &[Url],
+        parent: &FrontierEntry,
+        label: &str,
+        source_bytes: &[u8],
+    ) -> Result<usize, WorkerError> {
+        let Some(mut loader) = self.source_loader(parent, label, source_bytes).await? else {
+            return Ok(0);
+        };
+        let start = loader
+            .cursor
+            .as_ref()
+            .map_or(0, |cursor| usize::try_from(cursor.position).unwrap_or(usize::MAX));
+        if start > urls.len() {
+            return Err(StoreError::Conflict("discovery cursor exceeds source".into()).into());
+        }
         let mut inserted = 0usize;
         // Even an empty selected set pins its representation and policy across restart.
-        let empty_source = (urls.is_empty() && cursor.is_none()).then_some(urls);
-        for (chunk_index, chunk) in urls[start..].chunks(chunk_size).chain(empty_source).enumerate() {
+        let empty_source = (urls.is_empty() && loader.cursor.is_none()).then_some(urls);
+        let chunk_size = loader.chunk_size;
+        for (index, chunk) in urls[start..].chunks(chunk_size).chain(empty_source).enumerate() {
+            let position = start
+                .saturating_add(index.saturating_mul(chunk_size))
+                .saturating_add(chunk.len());
+            inserted = inserted.saturating_add(
+                self.append_source_chunk(
+                    chunk,
+                    u64::try_from(position).unwrap_or(u64::MAX),
+                    parent,
+                    &mut loader,
+                )
+                .await?,
+            );
+        }
+        Ok(inserted)
+    }
+
+    /// Redact source-authored fields before attaching the generated artifact-chain link.
+    async fn store_feed_batch(
+        &self,
+        page: i64,
+        evidence: &[u8],
+        previous: Option<&crawlx_core::ArtifactRef>,
+    ) -> Option<crawlx_core::ArtifactRef> {
+        let registry = self.captcha_secrets.as_ref()?;
+        let controls = &self.fetcher.config().controls;
+        let redactor = crawlx_core::secret::Redactor::new();
+        let evidence = redactor.scrub_bytes(evidence, controls.secret_values());
+        let mut entries: serde_json::Value = serde_json::from_slice(evidence.as_ref()).ok()?;
+        registry.redact_json(&mut entries).ok()?;
+        let entries = redactor
+            .redact_artifact(&serde_json::to_vec(&entries).ok()?)
+            .ok()?;
+        let entries: serde_json::Value = serde_json::from_slice(entries.as_ref()).ok()?;
+        // Only this locally generated reference avoids the bare-hex heuristic. Source fields
+        // already passed generic redaction; canonical approval and scoped checks still inspect
+        // the complete envelope, including the reference, before it reaches ArtifactSink.
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "previous":previous,"entries":entries,
+        }))
+        .ok()?;
+        let bytes = redactor.verify_canonical_owned(bytes).ok()?;
+        crate::capture::check_run_secrets(bytes.as_ref(), controls, Some(registry)).ok()?;
+        match ArtifactSink::over(self.deps.artifacts.as_ref())
+            .put_page(
+                self.run,
+                page,
+                Sensitivity::Content,
+                "application/vnd.crawlx.discovery+json",
+                &bytes,
+            )
+            .await
+        {
+            Ok(reference) => Some(reference),
+            Err(error) => {
+                tracing::debug!(error = %error, "feed evidence artifact not stored");
+                None
+            }
+        }
+    }
+
+    /// Stream XML rows on the bounded CPU pool, committing physical positions, not selected URLs.
+    async fn discover_xml_feed(
+        &self,
+        entry: &FrontierEntry,
+        response: &FetchResponse,
+        record: &mut PageRecord,
+        expand: bool,
+    ) -> Result<(), WorkerError> {
+        let Some(policy) = &self.crawl.scope.discovery else {
+            return Ok(());
+        };
+        let mut loader = if expand && !self.crawl.cache_only() {
+            self.source_loader(entry, "feed", &response.body).await?
+        } else {
+            None
+        };
+        let start = loader
+            .as_ref()
+            .and_then(|loader| loader.cursor.as_ref())
+            .map_or(0, |cursor| cursor.position);
+        let row_chunk_size = loader
+            .as_ref()
+            .map_or(4, |loader| (loader.chunk_size / 16).clamp(1, 4));
+        let body = response.body.clone();
+        let base = response.final_url.clone();
+        let parser_policy = policy.clone();
+        let opened = self
+            .cpu_pool
+            .run(move || crawlx_url::feed::XmlFeedStream::new(body, base, parser_policy))
+            .await
+            .map_err(|error| WorkerError::Other(error.to_string()))?;
+        let mut stream = match opened {
+            Ok(stream) => stream,
+            Err(_) => {
+                record.metadata["source_discovery"] = serde_json::json!({
+                    "status":"rejected","reason":"source_protocol","kind":"feed","streamed":true,
+                });
+                return Ok(());
+            }
+        };
+        let mut position = 0u64;
+        let mut candidates = 0usize;
+        let mut admitted = 0usize;
+        let mut malformed = 0usize;
+        let mut content = None;
+        let mut truncated = false;
+        let mut rejected = false;
+        let max_entries = u64::try_from(policy.max_entries).unwrap_or(u64::MAX);
+        loop {
             if self.authorization_lost().await {
                 return Err(DiscoveryErrorV1::Protocol("authorization revoked".into()).into());
             }
-            let mut requests = Vec::new();
-            let mut denied = Vec::new();
-            let depth = parent.depth.saturating_add(1);
-            for url in chunk {
-                let Some((canonical, bearing)) = self.canonicalize(url) else {
-                    continue;
-                };
-                if self.ledger.lock().carried.contains(canonical.url.as_str()) {
-                    continue;
+            let (returned, parsed) = self
+                .cpu_pool
+                .run(move || {
+                    let mut urls = Vec::new();
+                    let mut evidence = Vec::new();
+                    let mut next_position = position;
+                    let mut bad = 0usize;
+                    let mut count = 0usize;
+                    let mut done = false;
+                    let mut truncated = false;
+                    let result = (|| -> Result<_, crawlx_url::feed::FeedError> {
+                        for _ in 0..row_chunk_size {
+                            if next_position >= max_entries {
+                                truncated = stream.next().transpose()?.is_some();
+                                done = true;
+                                break;
+                            }
+                            let Some(row) = stream.next().transpose()? else {
+                                done = true;
+                                break;
+                            };
+                            next_position = row.cursor.row_index;
+                            match row.document {
+                                Ok(document) => {
+                                    count = count.saturating_add(document.entries.len());
+                                    for item in document.entries {
+                                        evidence.push(serde_json::json!({
+                                            "row":row.cursor.row_index.saturating_sub(1),"url":item.url,
+                                            "titleHint":item.title,"dateHint":item.date,
+                                            "publisherHint":item.publisher,"mediaIntents":item.media,
+                                            "readMoreIntents":item.read_more,
+                                        }));
+                                        if next_position > start {
+                                            urls.push(item.url);
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    bad = bad.saturating_add(1);
+                                    evidence.push(serde_json::json!({
+                                        "row":row.cursor.row_index.saturating_sub(1),"outcome":"malformed",
+                                    }));
+                                }
+                            }
+                        }
+                        let bytes =
+                            serde_json::to_vec(&evidence).map_err(crawlx_url::feed::FeedError::from)?;
+                        Ok((urls, bytes, next_position, bad, count, done, truncated))
+                    })();
+                    (stream, result)
+                })
+                .await
+                .map_err(|error| WorkerError::Other(error.to_string()))?;
+            stream = returned;
+            let (urls, evidence, next_position, bad, count, done, limited) = match parsed {
+                Ok(chunk) => chunk,
+                Err(_) => {
+                    rejected = true;
+                    break;
                 }
-                let (denial, counted_as, reason) = self
-                    .discovery_admission(&canonical, depth, Some(parent.id), bearing)
-                    .await;
-                if let Some((status, _)) = denial {
-                    denied.push((
-                        counted_as.unwrap_or(if status == FrontierStatus::RobotsBlocked {
-                            DiscoveryOutcome::RobotsBlocked
-                        } else {
-                            DiscoveryOutcome::PolicyBlocked
-                        }),
-                        reason,
-                    ));
-                    continue;
+            };
+            malformed = malformed.saturating_add(bad);
+            candidates = candidates.saturating_add(count);
+            truncated |= limited;
+            if next_position > position {
+                content = self.store_feed_batch(entry.id, &evidence, content.as_ref()).await;
+            }
+            position = next_position;
+            if let Some(loader) = &mut loader {
+                let committed = loader.cursor.as_ref().map_or(0, |cursor| cursor.position);
+                if position > committed || (done && loader.cursor.is_none()) {
+                    if urls.len() > loader.chunk_size {
+                        return Err(DiscoveryErrorV1::Limit("feed_row_requests").into());
+                    }
+                    admitted = admitted
+                        .saturating_add(self.append_source_chunk(&urls, position, entry, loader).await?);
                 }
-                let pending = {
-                    let ledger = self.ledger.lock();
-                    ledger.pending.len().saturating_add(ledger.visited.len())
-                };
-                if pending.saturating_add(requests.len())
-                    >= usize::try_from(self.crawl.scope.max_known_urls).unwrap_or(usize::MAX)
-                {
-                    denied.push((DiscoveryOutcome::PolicyBlocked, "known_url_limit"));
-                    continue;
-                }
-                requests.push(RequestEnvelopeV1::get(canonical, depth, Some(parent.id)));
             }
-            let position = start
-                .saturating_add(chunk_index.saturating_mul(chunk_size))
-                .saturating_add(chunk.len());
-            let next = LoaderCursorV1::new(
-                source.clone(),
-                digest,
-                u64::try_from(position).unwrap_or(u64::MAX),
-            );
-            let batch_id = Digest::of_value(
-                "crawlx/discovery-batch/v1",
-                &(self.run, &source, digest, &cursor, &next),
-            )
-            .map_err(|error| WorkerError::Other(error.to_string()))?;
-            let batch_id = private_key.as_ref().map_or(batch_id, |key| {
-                Digest::keyed(&key.0, "crawlx/discovery-private-batch/v1", &batch_id.0)
-            });
-            let mut batch = RequestBatchV1::new(tenant, self.run, "anonymous".into(), batch_id, requests);
-            batch.expected_cursor = cursor.clone();
-            batch.next_cursor = Some(next.clone());
-            batch.parent_fence = Some((parent.id, fence));
-            let receipt = self.deps.frontier.append_batch(batch).await?;
-            inserted = inserted.saturating_add(receipt.inserted.len());
-            for id in receipt.inserted {
-                let request = self.deps.frontier.get_request(self.run, id).await?;
-                self.ledger
-                    .lock()
-                    .pending
-                    .insert(id, ResumeEntry::new(request.envelope.url.url.to_string(), depth));
-                self.counters.discovery(Plane::Urls, DiscoveryOutcome::Admitted);
+            if done {
+                break;
             }
-            for _ in 0..receipt.duplicates {
-                self.counters.discovery(Plane::Urls, DiscoveryOutcome::Duplicate);
-            }
-            for (outcome, reason) in denied {
-                self.counters.discovery_with_reason(Plane::Urls, outcome, reason);
-            }
-            cursor = Some(next);
         }
-        Ok(inserted)
+        if start > position && !rejected {
+            return Err(StoreError::Conflict("discovery cursor exceeds source".into()).into());
+        }
+        if !rejected && expand && !self.crawl.cache_only() {
+            let mut links: Vec<_> = stream
+                .next_links()
+                .iter()
+                .take(policy.max_source_documents)
+                .cloned()
+                .collect();
+            if entry.depth == 0 {
+                links.extend(self.configured_discovery_sources(&entry.url));
+            }
+            admitted = admitted.saturating_add(
+                self.append_source_urls(&links, entry, "feed_links", &response.body)
+                    .await?,
+            );
+        }
+        record.metadata["source_discovery"] = serde_json::json!({
+            "status":if rejected { "partial" } else { "parsed" },"kind":"feed","streamed":true,
+            "reason":if rejected { Some("source_protocol") } else { None },
+            "rows":position,"candidates":candidates,"admitted":admitted,"malformed":malformed,
+            "truncated":truncated,"content":content,"contentLayout":"reverse_batch_chain_v1",
+        });
+        Ok(())
     }
 
     /// Consume actual feed/provider responses before generic endpoint mining can treat feed
@@ -365,6 +686,20 @@ impl UrlPlaneRunner {
         if response.truncated || response.body.len() > policy.max_feed_bytes {
             record.metadata["source_discovery"] =
                 serde_json::json!({"status":"resource_limit","reason":"source_bytes"});
+            return Ok(true);
+        }
+        if connector.is_none()
+            && feed
+            && !sitemap
+            && response
+                .body
+                .strip_prefix(&[0xef, 0xbb, 0xbf])
+                .unwrap_or(&response.body)
+                .iter()
+                .find(|byte| !byte.is_ascii_whitespace())
+                .is_some_and(|byte| *byte == b'<')
+        {
+            self.discover_xml_feed(entry, response, record, expand).await?;
             return Ok(true);
         }
         let body = response.body.clone();
@@ -543,13 +878,7 @@ impl UrlPlaneRunner {
             record.metadata["discovery_probe"]["homepageFallback"] = serde_json::json!(true);
         }
         if self.source_enabled(DiscoverySourceV1::Categories) {
-            sources.extend(
-                doc.links
-                    .iter()
-                    .filter(|link| !link.nofollow && category_signal(&link.url))
-                    .map(|link| link.url.clone())
-                    .take(policy.max_category_links),
-            );
+            sources.extend(self.discovery_categories(entry, response, doc).await?);
         }
         // No domain/category heuristic can authorize a URL; every proposal below goes through
         // the same admission gate as ordinary links. Sitemap enumeration precedes this stage.
@@ -636,7 +965,14 @@ impl UrlPlaneRunner {
                 continue;
             };
             let response = match self
-                .fetch_discovery_auxiliary(&url, parent.depth, policy.max_feed_bytes, budget, cancel)
+                .fetch_discovery_auxiliary(
+                    &url,
+                    parent.depth,
+                    policy.max_feed_bytes,
+                    budget,
+                    cancel,
+                    crawlx_policy::robots::HopKind::Feed,
+                )
                 .await
             {
                 Ok(response) => response,
@@ -758,75 +1094,135 @@ impl UrlPlaneRunner {
     }
 
     /// Shared scope and authority admission, without recursively loading robots.
-    pub(super) async fn admit_native_scope(&self, url: &Url, depth: u16) -> Result<CanonicalUrl, FetchError> {
+    pub(super) async fn admit_native_scope(
+        &self,
+        url: &Url,
+        depth: u16,
+        allow_leaf: bool,
+    ) -> Result<CanonicalUrl, FetchError> {
         if self.crawl.cache_only() || self.authorization_lost().await {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        if self.prefetch.check(url).is_some() {
             return Err(FetchError::AcquisitionUnavailable);
         }
         let (canonical, bearing) = self.canonicalize(url).ok_or(FetchError::AcquisitionUnavailable)?;
         if bearing
-            || !matches!(
-                self.scope.decide(&canonical, depth),
-                ScopeVerdict::Admitted { leaf_only: false }
-            )
+            || !match self.scope.decide(&canonical, depth) {
+                ScopeVerdict::Admitted { leaf_only } => {
+                    !leaf_only || (allow_leaf && self.scope.fetch_leaves())
+                }
+                ScopeVerdict::Denied(_) => false,
+            }
         {
             return Err(FetchError::AcquisitionUnavailable);
         }
         Ok(canonical)
     }
 
-    /// Legacy auxiliary admission retains its existing separate robots policy.
-    pub(super) async fn admit_native_destination(&self, url: &Url, depth: u16) -> Result<(), FetchError> {
-        let canonical = self.admit_native_scope(url, depth).await?;
-        if !matches!(self.robots_decision(&canonical).await, RobotsDecision::Allowed) {
-            return Err(FetchError::AcquisitionUnavailable);
-        }
-        Ok(())
-    }
-
     /// Fetch one auxiliary resource with scope/robots checked before every manual redirect.
     /// Same fetcher means checked DNS/peer/cert/proxy and shared OriginGovernor, never a raw client.
-    pub(super) async fn fetch_discovery_auxiliary(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fetch_discovery_auxiliary<'a>(
+        &'a self,
+        original: &'a Url,
+        depth: u16,
+        cap: usize,
+        budget: &'a mut AcquisitionBudgetV1,
+        cancel: &'a CancellationToken,
+        kind: crawlx_policy::robots::HopKind,
+    ) -> impl Future<Output = Result<FetchResponse, FetchError>> + 'a {
+        Box::pin(self.fetch_discovery_auxiliary_inner(original, depth, cap, budget, cancel, kind, None))
+    }
+
+    /// Bind parser-produced auxiliary work to the exact live parent URL lease.
+    #[allow(clippy::too_many_arguments)]
+    fn fetch_discovery_auxiliary_owned<'a>(
+        &'a self,
+        parent: &'a FrontierEntry,
+        original: &'a Url,
+        depth: u16,
+        cap: usize,
+        budget: &'a mut AcquisitionBudgetV1,
+        cancel: &'a CancellationToken,
+        kind: crawlx_policy::robots::HopKind,
+    ) -> impl Future<Output = Result<FetchResponse, FetchError>> + 'a {
+        Box::pin(self.fetch_discovery_auxiliary_inner(
+            original,
+            depth,
+            cap,
+            budget,
+            cancel,
+            kind,
+            Some(parent),
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn fetch_discovery_auxiliary_inner(
         &self,
         original: &Url,
         depth: u16,
         cap: usize,
         budget: &mut AcquisitionBudgetV1,
         cancel: &CancellationToken,
+        kind: crawlx_policy::robots::HopKind,
+        parent: Option<&FrontierEntry>,
     ) -> Result<FetchResponse, FetchError> {
         if self.crawl.cache_only() {
             return Err(FetchError::AcquisitionUnavailable);
         }
+        let parent_authority = parent
+            .map(|entry| NativeHopAdmission::new(self, entry))
+            .transpose()?;
+        let discovery_authority = DiscoveryHopAdmission(self);
+        let authority: &dyn crate::acquisition::HopAdmission = match &parent_authority {
+            Some(parent) => parent,
+            None => &discovery_authority,
+        };
         let mut current = original.clone();
         let mut seen = BTreeSet::new();
         let mut redirects = Vec::new();
-        for _ in 0..=self.fetcher.config().max_redirects.min(20) {
+        let mut original_options = crate::acquisition::fetch_options(&self.crawl.fetch);
+        original_options.max_body_bytes = Some(cap);
+        original_options.follow_redirects = false;
+        for hop in 0..=self.fetcher.config().max_redirects.min(20) {
             if !seen.insert(current.as_str().to_owned()) {
                 return Err(FetchError::AcquisitionAllowance);
             }
-            self.admit_native_destination(&current, depth).await?;
-            let remaining = budget.reserve(cancel)?;
-            let mut options = budget.options(&FetchOptions::default(), cap);
-            options.follow_redirects = false;
-            let fetched = tokio::select! {
-                biased;
-                () = cancel.cancelled() => Err(FetchError::AcquisitionCancelled),
-                result = tokio::time::timeout(remaining, self.fetcher.fetch_once(&current, &options)) =>
-                    result.unwrap_or(Err(FetchError::AcquisitionDeadline)),
+            authority.check_authority().await?;
+            let canonical = self.admit_native_scope(&current, depth, false).await?;
+            if canonical.url != current {
+                return Err(FetchError::AcquisitionUnavailable);
+            }
+            if kind == crawlx_policy::robots::HopKind::Page {
+                crawlx_core::extraction::check_preview_target(&current)
+                    .map_err(|_| FetchError::AcquisitionUnavailable)?;
+            }
+            let hop_kind = if hop == 0 {
+                kind
+            } else {
+                crawlx_policy::robots::HopKind::Redirect
             };
+            if self
+                .robots
+                .decide_hop_with_budget(hop_kind, &current, &original_options, budget, cancel, authority)
+                .await?
+                != RobotsDecision::Allowed
+            {
+                return Err(FetchError::AcquisitionUnavailable);
+            }
+            let fetched = Box::pin(crate::acquisition::fetch_budgeted_once(
+                &self.fetcher,
+                &current,
+                &original_options,
+                budget,
+                cancel,
+                authority,
+            ))
+            .await;
             self.record_exchange(&current, &fetched);
-            let mut response = match fetched {
-                Ok(response) => response,
-                Err(error) => {
-                    budget.on_fetch_failure(&error, options.max_body_bytes.unwrap_or(cap));
-                    return Err(error);
-                }
-            };
-            budget.charge_bytes(response.body.len());
-            budget.record(
-                "discovery_auxiliary",
-                Some(response.status.as_u16()),
-                crawlx_core::acquisition::ValidationCategoryV1::Indeterminate,
-            );
+            let mut response = fetched?;
             if !response.status.is_redirection() || !self.fetcher.config().follow_redirects {
                 response.redirects = redirects;
                 return Ok(response);
@@ -836,10 +1232,17 @@ impl UrlPlaneRunner {
                 .get(http::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
                 .ok_or(FetchError::AcquisitionUnavailable)?;
-            redirects.push(current.to_string());
-            current = current
+            let next = current
                 .join(location)
                 .map_err(|_| FetchError::AcquisitionUnavailable)?;
+            if current.origin() != next.origin() {
+                original_options.suppress_credentials = true;
+                crawlx_fetch::redirect::strip_credentials(&mut original_options.headers);
+            }
+            original_options.validators = None;
+            original_options.suppress_validators = true;
+            redirects.push(current.to_string());
+            current = next;
         }
         Err(FetchError::AcquisitionAllowance)
     }
@@ -848,21 +1251,23 @@ impl UrlPlaneRunner {
         &self,
         entry: &FrontierEntry,
         doc: &Document,
+        primary_body: &[u8],
         record: &mut PageRecord,
         budget: Option<&mut AcquisitionBudgetV1>,
         cancel: &CancellationToken,
     ) -> Result<(), WorkerError> {
-        let Some(policy) = &self.crawl.scope.discovery else {
-            return Ok(());
-        };
+        let defaults = crawlx_core::discovery::SourceDiscoveryPolicyV1::default();
+        let policy = self.crawl.scope.discovery.as_ref().unwrap_or(&defaults);
         if self.crawl.cache_only() {
             record.metadata["discovery_auxiliary"] =
                 serde_json::json!({"status":"unavailable","reason":"cache_only","followed":0});
             return Ok(());
         }
-        let Some(article) = &doc.article else {
-            return Ok(());
-        };
+        let discovery = doc
+            .article
+            .as_ref()
+            .map(|article| article.discovery.as_slice())
+            .unwrap_or(&[]);
         let Some(budget) = budget else {
             return Ok(());
         };
@@ -870,10 +1275,81 @@ impl UrlPlaneRunner {
             StoreError::RetentionDenied("discovery dynamic-secret registry unavailable".into())
         })?;
         let mut reports = Vec::new();
+        if let Some(link_media) = doc
+            .outputs
+            .as_ref()
+            .and_then(|outputs| outputs.link_media.as_ref())
+        {
+            for intent in &link_media.previews {
+                let primary_target = intent.url == entry.url.url
+                    || record.metadata["final_url"].as_str() == Some(intent.url.as_str());
+                let obtained = if primary_target {
+                    let cap = usize::try_from(intent.max_head_bytes).unwrap_or(usize::MAX);
+                    Ok((
+                        bytes::Bytes::copy_from_slice(&primary_body[..primary_body.len().min(cap)]),
+                        primary_body.len() > cap,
+                    ))
+                } else {
+                    match self
+                        .fetch_discovery_auxiliary_owned(
+                            entry,
+                            &intent.url,
+                            entry.depth,
+                            usize::try_from(intent.max_head_bytes).unwrap_or(usize::MAX),
+                            budget,
+                            cancel,
+                            crawlx_policy::robots::HopKind::Page,
+                        )
+                        .await
+                    {
+                        Ok(response) if response.status.is_success() => {
+                            Ok((response.body, response.truncated))
+                        }
+                        Ok(_) => Err("target_status".to_owned()),
+                        Err(error) => Err(error.code().to_owned()),
+                    }
+                };
+                let report = match obtained {
+                    Ok((body, truncated)) => {
+                        let intent = intent.clone();
+                        let controls = self.fetcher.config().controls.clone();
+                        let registry = captcha.clone();
+                        let head = self
+                            .cpu_pool
+                            .run(move || {
+                                let redactor = crawlx_core::secret::Redactor::new();
+                                let body = redactor.scrub_bytes(&body, controls.secret_values());
+                                let decoded = String::from_utf8_lossy(body.as_ref());
+                                let projected = registry.redact_if_present(&decoded).map_err(|_| {
+                                    StoreError::RetentionDenied(
+                                        "preview secret projection unavailable".into(),
+                                    )
+                                })?;
+                                let mut head =
+                                    crawlx_extract::link_media::project_head(&intent, projected.as_bytes())
+                                        .map_err(WorkerError::Extraction)?;
+                                head.truncated |= truncated;
+                                Ok::<_, WorkerError>(head)
+                            })
+                            .await
+                            .map_err(|error| WorkerError::Other(error.to_string()))??;
+                        serde_json::json!({"purpose":"preview","status":"fulfilled","head":head})
+                    }
+                    Err(reason) => {
+                        serde_json::json!({"purpose":"preview","status":"unavailable","reason":reason})
+                    }
+                };
+                reports.push(report);
+            }
+        }
         let mut media_count = 0usize;
+        let article_hops_enabled = self.crawl.scope.discovery.is_some();
         let mut seen = BTreeSet::from([entry.url.url.as_str().to_owned()]);
-        for intent in &article.discovery {
-            if intent.purpose != DiscoveryPurposeV1::ImageReference || media_count >= policy.media_probes {
+        for intent in discovery {
+            if !article_hops_enabled
+                || intent.purpose != DiscoveryPurposeV1::ImageReference
+                || media_count >= policy.media_probes
+            {
                 continue;
             }
             if !seen.insert(intent.url.as_str().to_owned()) {
@@ -881,12 +1357,14 @@ impl UrlPlaneRunner {
             }
             media_count = media_count.saturating_add(1);
             let outcome = match self
-                .fetch_discovery_auxiliary(
+                .fetch_discovery_auxiliary_owned(
+                    entry,
                     &intent.url,
                     entry.depth,
                     policy.media_header_bytes,
                     budget,
                     cancel,
+                    crawlx_policy::robots::HopKind::Media,
                 )
                 .await
             {
@@ -912,12 +1390,15 @@ impl UrlPlaneRunner {
             };
             reports.push(outcome);
         }
-        let mut next = article
-            .discovery
+        let mut next = discovery
             .iter()
             .find(|intent| intent.purpose == DiscoveryPurposeV1::ReadMoreReference)
             .map(|intent| intent.url.clone());
-        for hop in 0..policy.read_more_hops {
+        for hop in 0..if article_hops_enabled {
+            policy.read_more_hops
+        } else {
+            0
+        } {
             let Some(url) = next.take() else {
                 break;
             };
@@ -925,12 +1406,14 @@ impl UrlPlaneRunner {
                 break;
             }
             match self
-                .fetch_discovery_auxiliary(
+                .fetch_discovery_auxiliary_owned(
+                    entry,
                     &url,
                     entry.depth.saturating_add(u16::from(hop)).saturating_add(1),
                     policy.max_feed_bytes,
                     budget,
                     cancel,
+                    crawlx_policy::robots::HopKind::ReadMore,
                 )
                 .await
             {

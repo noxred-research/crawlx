@@ -104,7 +104,7 @@ use crawlx_core::hash::Digest;
 use scraper::{Html, Selector};
 use url::Url;
 
-pub use dedupe::DedupeHandle;
+pub use dedupe::{DedupeCommit, DedupeHandle};
 pub use document::{Document, ExtractOptions, ExtractedLink};
 pub use endpoints::{DiscoveredEndpoint, DiscoveryInput, DiscoveryOptions};
 pub use forms::{StaticForm, StaticInput};
@@ -234,6 +234,36 @@ fn find_body(doc: &Html) -> ego_tree::NodeRef<'_, scraper::Node> {
     body.unwrap_or_else(|| *doc.root_element())
 }
 
+/// Decode raw bytes once while preserving the report needed by byte-based extraction.
+fn decode_bytes<'a>(
+    bytes: &'a [u8],
+    opts: &ExtractOptions,
+) -> Result<(std::borrow::Cow<'a, str>, Option<decode::DecodeReport>), ExtractError> {
+    match &opts.decode {
+        Some(decode_opts) => {
+            let declared = decode_opts
+                .declared_charset
+                .as_deref()
+                .map(std::borrow::Cow::Borrowed)
+                .or_else(|| {
+                    opts.content_type
+                        .as_deref()
+                        .and_then(decode::charset_of_content_type)
+                        .map(std::borrow::Cow::Owned)
+                });
+            let decoded = decode::decode(bytes, declared.as_deref()).map_err(|error| match error {
+                decode::DecodeError::TooLarge { len } => ExtractError::TooLarge {
+                    what: "bytes",
+                    limit: decode::MAX_DECODE_BYTES,
+                    actual: len,
+                },
+            })?;
+            Ok((std::borrow::Cow::Owned(decoded.text), Some(decoded.report)))
+        }
+        None => Ok((String::from_utf8_lossy(bytes), None)),
+    }
+}
+
 impl Extractor {
     /// Extract a [`Document`] from `html`. `base` is the URL the document was
     /// fetched from; relative references resolve against it unless the
@@ -305,24 +335,7 @@ impl Extractor {
         // The charge covers the lossy copy too: it is taken on the byte length here and topped
         // up to the decoded length in `extract_inner` (replacement characters expand input).
         let charge = parse_budget::charge(bytes.len())?;
-        let (html, decode_report) = match &opts.decode {
-            Some(decode_opts) => {
-                let declared = decode_opts.declared_charset.clone().or_else(|| {
-                    opts.content_type
-                        .as_deref()
-                        .and_then(decode::charset_of_content_type)
-                });
-                let decoded = decode::decode(bytes, declared.as_deref()).map_err(|error| match error {
-                    decode::DecodeError::TooLarge { len } => ExtractError::TooLarge {
-                        what: "bytes",
-                        limit: decode::MAX_DECODE_BYTES,
-                        actual: len,
-                    },
-                })?;
-                (std::borrow::Cow::Owned(decoded.text), Some(decoded.report))
-            }
-            None => (String::from_utf8_lossy(bytes), None),
-        };
+        let (html, decode_report) = decode_bytes(bytes, opts)?;
         Self::extract_inner(
             &html,
             bytes,
@@ -461,7 +474,7 @@ impl Extractor {
             .and_then(|_| body.clone())
             .map(|node| vec![node]);
         let mut native = None;
-        let dedupe_ctx = dedupe::Context::new(opts, page)?;
+        let mut dedupe_ctx = dedupe::Context::new(opts, page)?;
         let mut page_text = String::new();
         let mut block_stats = dedupe::BlockStats::default();
         let mut content: Vec<Node> = match body {
@@ -487,7 +500,7 @@ impl Extractor {
                         result.strategy = "explicit_selectors_v1";
                     }
                     let mut nodes = std::mem::take(&mut result.nodes);
-                    if let Some(ctx) = dedupe_ctx.as_ref().filter(|ctx| ctx.blocks_enabled()) {
+                    if let Some(ctx) = dedupe_ctx.as_mut().filter(|ctx| ctx.blocks_enabled()) {
                         block_stats = ctx.prune_blocks(&mut nodes, &mut result.main_ids);
                     }
                     native = Some(result);
@@ -622,7 +635,7 @@ impl Extractor {
                     author_excluded,
                 );
                 let content_stage = dedupe_ctx
-                    .as_ref()
+                    .as_mut()
                     .map(|ctx| ctx.content_stage(metadata.title.value.as_deref(), &text, &mut quality))
                     .unwrap_or_default();
                 let policy_bytes = serde_json::to_vec(policy)
@@ -711,7 +724,7 @@ impl Extractor {
         } else {
             custom_fields::extract(&opts.custom_fields, &opts.headers, html)
         };
-        let discovered_endpoints = if opts.discover_endpoints {
+        let discovery = if opts.discover_endpoints {
             let input = DiscoveryInput {
                 url: page,
                 status: opts.status,
@@ -720,7 +733,7 @@ impl Extractor {
                 body: raw,
                 depth: opts.depth,
             };
-            endpoints::discover_html(
+            endpoints::discover_html_report(
                 &doc,
                 &base,
                 &input,
@@ -730,7 +743,7 @@ impl Extractor {
                 },
             )?
         } else {
-            Vec::new()
+            endpoints::DiscoveryReport::default()
         };
 
         let (links, assets, outputs) = match &opts.outputs {
@@ -768,6 +781,7 @@ impl Extractor {
             }
         };
 
+        let dedupe_commit = dedupe_ctx.and_then(dedupe::Context::into_commit);
         Ok(Document {
             title: head.title,
             description: head.description,
@@ -786,7 +800,9 @@ impl Extractor {
             page_type,
             technologies,
             custom_fields,
-            discovered_endpoints,
+            discovered_endpoints: discovery.endpoints,
+            discovery_unresolved: discovery.unresolved,
+            discovery_unresolved_dropped: discovery.unresolved_dropped,
             article,
             comments,
             validation,
@@ -796,6 +812,7 @@ impl Extractor {
             outputs,
             decode: decode_report,
             markup,
+            dedupe_commit,
         })
     }
 }

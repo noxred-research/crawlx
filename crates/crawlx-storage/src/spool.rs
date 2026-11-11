@@ -192,7 +192,7 @@ impl UploadSpool {
         };
         self.request(
             "put",
-            backend.put_file(
+            backend.put_immutable_file(
                 key,
                 file,
                 u64::try_from(size).map_err(|_| StoreError::Conflict("archive spool size".into()))?,
@@ -236,7 +236,7 @@ impl UploadSpool {
                     return Ok(());
                 }
                 let payload = shared.get_or_insert_with(|| Bytes::copy_from_slice(bytes));
-                self.request("put", backend.put_shared(key, payload.clone()))
+                self.request("put", backend.put_immutable_shared(key, payload.clone()))
                     .await
             }
             .await;

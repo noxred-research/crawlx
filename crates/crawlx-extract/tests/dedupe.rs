@@ -54,6 +54,12 @@ fn run(
     .unwrap()
 }
 
+fn commit(document: &mut Document) {
+    if let Some(token) = document.dedupe_commit.take() {
+        token.record();
+    }
+}
+
 fn story(chrome: &str, paragraphs: &[&str]) -> String {
     let body: String = paragraphs.iter().map(|p| format!("<p>{p}</p>")).collect();
     format!(
@@ -143,20 +149,21 @@ fn cache_scope_separates_namespace_role_tenant_and_replays_identically() {
         ]
         .iter()
         .map(|(namespace, role)| {
-            let doc = run(
+            let mut doc = run(
                 &html,
                 "https://example.test/a",
                 policy(true, false),
                 false,
                 Some(handle(namespace, role, &shared)),
             );
+            commit(&mut doc);
             doc.text.matches(BOILERPLATE).count() + doc.text.matches(FIRST).count() * 10
         })
         .collect();
         texts
     };
     let first = sequence();
-    // run-1/anonymous second extraction sees every block already admitted; other scopes do not
+    // run-1/anonymous second extraction sees committed blocks; other scopes do not
     assert_eq!(first, [11, 0, 11, 11]);
     assert_eq!(first, sequence());
 }
@@ -168,13 +175,14 @@ fn cache_is_bounded_and_stores_hashes_not_text() {
         let paragraph =
             format!("Distinct paragraph number {n} carries enough words to be compared reliably.");
         let html = story("", &[&paragraph]);
-        let _ = run(
+        let mut document = run(
             &html,
             "https://example.test/a",
             policy(true, false),
             false,
             Some(handle("run-1", "anonymous", &shared)),
         );
+        commit(&mut document);
         assert!(shared.lock().unwrap().len() <= 2);
     }
     let rendered = format!("{:?}", shared.lock().unwrap());
@@ -245,13 +253,14 @@ fn same_main_text_under_different_chrome_has_same_main_digest_and_different_raw_
 fn same_content_at_two_origins_dedupes_ingestion_but_keeps_both_acquisitions() {
     let shared = cache(64);
     let html = story("", &[FIRST, SECOND]);
-    let first = run(
+    let mut first = run(
         &html,
         "http://example.test/news/a",
         policy(false, true),
         false,
         Some(handle("run-1", "anonymous", &shared)),
     );
+    commit(&mut first);
     let second = run(
         &html,
         "https://www.example.test/story/b",
@@ -303,13 +312,14 @@ fn content_dedupe_needs_a_scope_and_a_clean_first_acceptance() {
     let shared = cache(64);
     let other = html.replace("Ferry timetable changes", "Harbour notice");
     for page in [&html, &other] {
-        let doc = run(
+        let mut doc = run(
             page,
             "https://example.test/a",
             policy(false, true),
             false,
             Some(handle("run-1", "anonymous", &shared)),
         );
+        commit(&mut doc);
         assert_eq!(doc.article.unwrap().quality.status, QualityStatusV1::Accepted);
     }
     // a document rejected for another reason is not admitted, so it cannot shadow a later one
@@ -317,16 +327,268 @@ fn content_dedupe_needs_a_scope_and_a_clean_first_acceptance() {
     strict.min_main_chars = 10_000;
     let shared = cache(64);
     for _ in 0..2 {
-        let doc = run(
+        let mut doc = run(
             &html,
             "https://example.test/a",
             strict.clone(),
             false,
             Some(handle("run-2", "anonymous", &shared)),
         );
+        commit(&mut doc);
         let article = doc.article.unwrap();
         assert_eq!(article.quality.reasons, vec![QualityReasonV1::TooShort]);
         assert!(article.dedupe.unwrap().content_sha256.is_some());
+    }
+}
+
+#[test]
+fn rollback_and_parallel_parse_leave_cache_unchanged_until_explicit_commit() {
+    let shared = cache(64);
+    let binding = handle("run", "anonymous", &shared);
+    let html = story("", &[FIRST, BOILERPLATE, SECOND, BOILERPLATE]);
+    let before = shared.lock().unwrap().snapshot("tenant-a", "run");
+    let parse = || {
+        run(
+            &html,
+            "https://example.test/a",
+            policy(true, true),
+            false,
+            Some(binding.clone()),
+        )
+    };
+    let rolled_back = parse();
+    assert_eq!(
+        rolled_back.article.as_ref().unwrap().quality.status,
+        QualityStatusV1::Accepted
+    );
+    assert_eq!(rolled_back.text.matches(BOILERPLATE).count(), 1);
+    assert_eq!(before, shared.lock().unwrap().snapshot("tenant-a", "run"));
+    drop(rolled_back);
+    let mut retry = parse();
+    let parallel = parse();
+    assert_eq!(retry.text, parallel.text);
+    assert_eq!(retry.article, parallel.article);
+    assert_eq!(
+        retry.article.as_ref().unwrap().quality.status,
+        QualityStatusV1::Accepted
+    );
+    assert_eq!(before, shared.lock().unwrap().snapshot("tenant-a", "run"));
+    let serialized = serde_json::to_value(&retry).unwrap();
+    assert!(serialized.get("dedupe_commit").is_none());
+    let restored: Document = serde_json::from_value(serialized).unwrap();
+    assert!(restored.dedupe_commit.is_none());
+    let cloned = retry.clone();
+    assert_eq!(retry, cloned);
+    commit(&mut retry);
+    let after = shared.lock().unwrap().snapshot("tenant-a", "run");
+    cloned.dedupe_commit.unwrap().record();
+    assert_eq!(after, shared.lock().unwrap().snapshot("tenant-a", "run"));
+    drop(parallel);
+    assert_eq!(after, shared.lock().unwrap().snapshot("tenant-a", "run"));
+}
+
+#[test]
+fn block_local_set_survives_small_committed_cache_capacity() {
+    let shared = cache(1);
+    let html = story("", &[FIRST, SECOND, THIRD, FIRST]);
+    let mut document = run(
+        &html,
+        "https://example.test/a",
+        policy(true, false),
+        false,
+        Some(handle("run", "anonymous", &shared)),
+    );
+    assert_eq!(document.text.matches(FIRST).count(), 1);
+    assert_eq!(
+        document
+            .article
+            .as_ref()
+            .unwrap()
+            .dedupe
+            .as_ref()
+            .unwrap()
+            .blocks_removed,
+        1
+    );
+    assert!(shared.lock().unwrap().is_empty());
+    commit(&mut document);
+    assert_eq!(shared.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn committed_content_rejects_retry_and_cached_content_stages_without_plaintext_reconstruction() {
+    let shared = cache(64);
+    let binding = handle("run", "anonymous", &shared);
+    let effective = policy(false, true);
+    let html = story("", &[FIRST, SECOND]);
+    let parse = || {
+        run(
+            &html,
+            "https://example.test/a",
+            effective.clone(),
+            false,
+            Some(binding.clone()),
+        )
+    };
+    drop(parse());
+    let mut accepted = parse();
+    assert_eq!(
+        accepted.article.as_ref().unwrap().quality.status,
+        QualityStatusV1::Accepted
+    );
+    let mut cached: Document = serde_json::from_value(serde_json::to_value(&accepted).unwrap()).unwrap();
+    cached.text.clear();
+    cached.title = None;
+    cached.base_url = Url::parse("about:blank").unwrap();
+    binding.stage_cached_content(&mut cached, &effective).unwrap();
+    assert!(cached.dedupe_commit.is_some());
+    assert!(shared.lock().unwrap().is_empty());
+    let saved_digests = cached
+        .article
+        .as_ref()
+        .unwrap()
+        .dedupe
+        .as_ref()
+        .unwrap()
+        .digests
+        .clone();
+    commit(&mut accepted);
+    let before = shared.lock().unwrap().snapshot("tenant-a", "run");
+    binding.stage_cached_content(&mut cached, &effective).unwrap();
+    let envelope = cached.article.as_ref().unwrap();
+    assert_eq!(envelope.quality.status, QualityStatusV1::Rejected);
+    assert_eq!(envelope.quality.reasons, [QualityReasonV1::DuplicateMain]);
+    assert_eq!(envelope.dedupe.as_ref().unwrap().digests, saved_digests);
+    assert_eq!(before, shared.lock().unwrap().snapshot("tenant-a", "run"));
+    let duplicate = parse();
+    assert_eq!(
+        duplicate.article.as_ref().unwrap().quality.reasons,
+        [QualityReasonV1::DuplicateMain]
+    );
+}
+
+#[test]
+fn ordered_tokens_preserve_exact_eviction_after_snapshot_restore() {
+    let shared = cache(2);
+    let binding = handle("run", "anonymous", &shared);
+    let paragraphs = [FIRST, SECOND, THIRD];
+    let mut documents: Vec<_> = paragraphs
+        .iter()
+        .map(|paragraph| {
+            run(
+                &story("", &[*paragraph]),
+                "https://example.test/a",
+                policy(false, true),
+                false,
+                Some(binding.clone()),
+            )
+        })
+        .collect();
+    assert!(shared.lock().unwrap().is_empty());
+    for document in &mut documents[..2] {
+        commit(document);
+    }
+    let saved = shared.lock().unwrap().snapshot("tenant-a", "run");
+    let bytes = serde_json::to_vec(&saved).unwrap();
+    let snapshot = serde_json::from_slice(&bytes).unwrap();
+    let resumed_cache = Arc::new(Mutex::new(
+        DedupeCache::restore(&snapshot, 2, "tenant-a", "run").unwrap(),
+    ));
+    let resumed = handle("run", "anonymous", &resumed_cache);
+    for index in [0, 2] {
+        let html = story("", &[paragraphs[index]]);
+        let mut original = run(
+            &html,
+            "https://example.test/a",
+            policy(false, true),
+            false,
+            Some(binding.clone()),
+        );
+        let mut restored = run(
+            &html,
+            "https://example.test/a",
+            policy(false, true),
+            false,
+            Some(resumed.clone()),
+        );
+        assert_eq!(original.article, restored.article);
+        commit(&mut original);
+        commit(&mut restored);
+        assert_eq!(
+            shared.lock().unwrap().snapshot("tenant-a", "run"),
+            resumed_cache.lock().unwrap().snapshot("tenant-a", "run")
+        );
+    }
+    let evicted = run(
+        &story("", &[SECOND]),
+        "https://example.test/a",
+        policy(false, true),
+        false,
+        Some(binding),
+    );
+    assert_eq!(evicted.article.unwrap().quality.status, QualityStatusV1::Accepted);
+}
+
+#[test]
+fn isolated_document_scopes_produce_identical_main_hashes_in_parallel() {
+    let html = story("", &[FIRST, BOILERPLATE, SECOND, BOILERPLATE]);
+    let documents = std::thread::scope(|scope| {
+        let extract = |namespace| {
+            run(
+                &html,
+                "https://example.test/a",
+                policy(true, true),
+                false,
+                Some(handle(namespace, "anonymous", &cache(64))),
+            )
+        };
+        let first = scope.spawn(move || extract("document-a"));
+        let second = scope.spawn(move || extract("document-b"));
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    let (first, second) = documents;
+    assert_eq!(first.text, second.text);
+    assert_eq!(first.article, second.article);
+    assert_eq!(
+        first.article.as_ref().unwrap().quality.status,
+        QualityStatusV1::Accepted
+    );
+    let first_report = first.article.as_ref().unwrap().dedupe.as_ref().unwrap();
+    let second_report = second.article.as_ref().unwrap().dedupe.as_ref().unwrap();
+    assert_eq!(first_report.digests.main, second_report.digests.main);
+    assert_eq!(first_report.content_sha256, second_report.content_sha256);
+}
+
+#[test]
+fn cached_content_refuses_invalid_or_mismatched_digest_bindings_without_recording() {
+    let shared = cache(64);
+    let binding = handle("run", "anonymous", &shared);
+    let effective = policy(false, true);
+    let source = run(
+        &story("", &[FIRST, SECOND]),
+        "https://example.test/a",
+        effective.clone(),
+        false,
+        Some(binding.clone()),
+    );
+    let before = shared.lock().unwrap().snapshot("tenant-a", "run");
+    for invalid in 0..8 {
+        let mut document = source.clone();
+        let envelope = document.article.as_mut().unwrap();
+        let report = envelope.dedupe.as_mut().unwrap();
+        match invalid {
+            0 => envelope.policy_digest = crawlx_core::hash::Digest::of("test", b"other-policy"),
+            1 => report.version = 2,
+            2 => report.digests.normalization = "different-normalization".into(),
+            3 => report.digests.domain = "different-domain".into(),
+            4 => report.digests.raw = crawlx_core::hash::Digest::of("test", b"other-raw"),
+            5 => report.content_sha256 = Some("g".repeat(64)),
+            6 => report.origin = "https://example.test/path".into(),
+            _ => report.content_sha256 = None,
+        }
+        binding.stage_cached_content(&mut document, &effective).unwrap();
+        assert!(document.dedupe_commit.is_none());
+        assert_eq!(before, shared.lock().unwrap().snapshot("tenant-a", "run"));
     }
 }
 

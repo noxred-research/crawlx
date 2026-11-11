@@ -16,6 +16,8 @@ use sqlx::{Postgres, Transaction};
 #[path = "dataset_state.rs"]
 mod state;
 pub(crate) use state::{apply_prepared, prepare_memory, prepare_memory_action, DatasetState};
+#[path = "dataset_memo.rs"]
+pub(crate) mod memo;
 
 fn conflict(message: &'static str) -> StoreError {
     StoreError::Conflict(message.into())
@@ -82,8 +84,130 @@ fn item_valid(item: &AcceptedItemV1, zdr: bool, now: Timestamp) -> Result<(), St
             "dataset item exceeds content policy".into(),
         ));
     }
+    if item.feed_fragments.len() > 64 {
+        return Err(conflict("feed fragment count limit"));
+    }
+    let mut feeds = std::collections::BTreeSet::new();
+    for fragment in &item.feed_fragments {
+        validate_identifier(&fragment.feed)?;
+        validate_identifier(&fragment.idempotency_key)?;
+        if !feeds.insert(&fragment.feed)
+            || fragment.range != DeliveryRangeV1::AcceptedRequest
+            || fragment.size_bytes > MAX_VALUE_BYTES
+            || item.expires_at.is_none_or(|end| fragment.expires_at > end)
+        {
+            return Err(conflict("invalid accepted feed fragment"));
+        }
+        content_valid(&fragment.content, zdr, Some(fragment.expires_at), now)?;
+    }
     content_valid(&item.content, zdr, item.expires_at, now)
 }
+
+fn item_bytes(item: &AcceptedItemV1) -> Result<u64, StoreError> {
+    item.feed_fragments
+        .iter()
+        .try_fold(item.size_bytes, |total, fragment| {
+            total
+                .checked_add(fragment.size_bytes)
+                .ok_or_else(|| conflict("feed fragment byte overflow"))
+        })
+}
+
+fn fragments_valid(item: &AcceptedItemV1, config: &DatasetConfigV1, source: &str) -> Result<(), StoreError> {
+    for fragment in &item.feed_fragments {
+        let feed = config
+            .feeds
+            .iter()
+            .find(|feed| feed.id == fragment.feed)
+            .ok_or_else(|| conflict("undeclared fragment feed"))?;
+        if feed.source != source
+            || feed.batching != FeedBatchingV1::Terminal
+            || fragment.size_bytes > feed.max_batch_bytes
+        {
+            return Err(conflict("feed fragment declaration mismatch"));
+        }
+    }
+    Ok(())
+}
+// RFC 9110 media-type syntax, not a header-value or media-range check. The existing
+// metadata policy forbids controls, including HTAB, even inside quoted parameters.
+fn valid_content_type(value: &str) -> bool {
+    if value.len() > 128 || value.bytes().any(|byte| byte.is_ascii_control()) {
+        return false;
+    }
+    fn token_len(bytes: &[u8]) -> usize {
+        bytes
+            .iter()
+            .position(|byte| {
+                !(byte.is_ascii_alphanumeric()
+                    || matches!(
+                        byte,
+                        b'!' | b'#'
+                            | b'$'
+                            | b'%'
+                            | b'&'
+                            | b'\''
+                            | b'*'
+                            | b'+'
+                            | b'-'
+                            | b'.'
+                            | b'^'
+                            | b'_'
+                            | b'`'
+                            | b'|'
+                            | b'~'
+                    ))
+            })
+            .unwrap_or(bytes.len())
+    }
+    let mut remaining = value.as_bytes();
+    let end = token_len(remaining);
+    if end == 0 || remaining.get(end) != Some(&b'/') || remaining[..end].contains(&b'*') {
+        return false;
+    }
+    remaining = &remaining[end + 1..];
+    let end = token_len(remaining);
+    if end == 0 || remaining[..end].contains(&b'*') {
+        return false;
+    }
+    remaining = &remaining[end..];
+    loop {
+        remaining = remaining.trim_ascii_start();
+        if remaining.is_empty() {
+            return true;
+        }
+        let Some(parameters) = remaining.strip_prefix(b";") else {
+            return false;
+        };
+        remaining = parameters.trim_ascii_start();
+        let end = token_len(remaining);
+        if end == 0 || remaining.get(end) != Some(&b'=') {
+            return false;
+        }
+        remaining = &remaining[end + 1..];
+        if remaining.first() == Some(&b'"') {
+            let mut cursor = 1;
+            loop {
+                match remaining.get(cursor) {
+                    Some(b'"') => {
+                        remaining = &remaining[cursor + 1..];
+                        break;
+                    }
+                    Some(b'\\') if remaining.get(cursor + 1).is_some() => cursor += 2,
+                    Some(b'\\') | None => return false,
+                    Some(_) => cursor += 1,
+                }
+            }
+        } else {
+            let end = token_len(remaining);
+            if end == 0 {
+                return false;
+            }
+            remaining = &remaining[end..];
+        }
+    }
+}
+
 fn delta_valid(
     delta: &KvCasV1,
     config: &DatasetConfigV1,
@@ -97,9 +221,7 @@ fn delta_valid(
         .iter()
         .find(|store| store.name == delta.store)
         .ok_or_else(|| conflict("undeclared kv namespace"))?;
-    if delta.content_type.is_empty()
-        || delta.content_type.len() > 128
-        || delta.content_type.bytes().any(|b| b.is_ascii_control())
+    if !valid_content_type(&delta.content_type)
         || delta.size_bytes > declaration.max_value_bytes
         || delta.expected_version >= i64::MAX.unsigned_abs()
     {
@@ -128,21 +250,21 @@ fn delivery_valid(
         .iter()
         .find(|feed| feed.id == batch.feed)
         .ok_or_else(|| conflict("undeclared delivery feed"))?;
-    let (first, last) = match batch.range {
-        DeliveryRangeV1::Committed { first, last } => (first, last),
+    let count = match batch.range {
+        DeliveryRangeV1::Empty if feed.empty_policy == EmptyFeedPolicyV1::Emit => 0,
+        DeliveryRangeV1::Committed { first, last } if first > 0 => last
+            .checked_sub(first)
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| conflict("invalid delivery ordinal range"))?,
         _ => return Err(conflict("delivery range has not been allocated")),
     };
-    let count = last
-        .checked_sub(first)
-        .and_then(|n| n.checked_add(1))
-        .ok_or_else(|| conflict("invalid delivery ordinal range"))?;
-    if first == 0 || count > u64::from(feed.max_batch_items) || batch.size_bytes > feed.max_batch_bytes {
+    if count > u64::from(feed.max_batch_items) || batch.size_bytes > feed.max_batch_bytes {
         return Err(conflict("delivery batch exceeds feed bounds"));
     }
     content_valid(&batch.content, zdr, Some(batch.expires_at), now)
 }
 
-async fn config_tx(
+pub(crate) async fn config_tx(
     pg: &Pg,
     tx: &mut Transaction<'_, Postgres>,
     run: CrawlRunId,
@@ -251,7 +373,7 @@ async fn write_payload<T: Serialize + Sync>(
             .map_err(|error| StoreError::Serialization(error.to_string()))
     }
 }
-async fn read_payload<T: DeserializeOwned>(
+pub(crate) async fn read_payload<T: DeserializeOwned>(
     pg: &Pg,
     tenant: TenantId,
     run: CrawlRunId,
@@ -265,6 +387,53 @@ async fn read_payload<T: DeserializeOwned>(
                 .await
         }
     }
+}
+
+pub(crate) async fn verify_pg_delivery(
+    pg: &Pg,
+    tx: &mut Transaction<'_, Postgres>,
+    tenant: TenantId,
+    run: CrawlRunId,
+    config: &CreateCrawl,
+    batch: &DeliveryBatchV1,
+    now: Timestamp,
+) -> Result<(), StoreError> {
+    delivery_valid(
+        batch,
+        &config.datasets,
+        config.retention.mode == RetentionMode::Zdr,
+        now,
+    )?;
+    verify_content(
+        pg,
+        tx,
+        tenant,
+        run,
+        &batch.content,
+        batch.size_bytes,
+        Some(batch.expires_at),
+        now,
+    )
+    .await?;
+    if let DeliveryRangeV1::Committed { first, last } = batch.range {
+        let feed = config
+            .datasets
+            .feeds
+            .iter()
+            .find(|feed| feed.id == batch.feed)
+            .ok_or_else(|| conflict("undeclared delivery feed"))?;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND i.ordinal BETWEEN $4 AND $5 AND (i.expires_at IS NULL OR i.expires_at>now())")
+            .bind(tenant.0).bind(run.0).bind(&feed.source).bind(signed(first)?).bind(signed(last)?)
+            .fetch_one(&mut **tx).await.map_err(db)?;
+        let wanted = last
+            .checked_sub(first)
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| conflict("delivery range overflow"))?;
+        if unsigned(count)? != wanted {
+            return Err(conflict("delivery references uncommitted items"));
+        }
+    }
+    Ok(())
 }
 
 /// Apply accepted items, state CAS and immutable outbox in the existing request transaction.
@@ -295,7 +464,7 @@ pub(crate) async fn apply_pg_action(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn apply_pg_source(
+pub(crate) async fn apply_pg_source(
     pg: &Pg,
     tx: &mut Transaction<'_, Postgres>,
     run: CrawlRunId,
@@ -318,6 +487,13 @@ async fn apply_pg_source(
     }
     let (tenant, config, now) = config_tx(pg, tx, run).await?;
     config.datasets.validate()?;
+    if !accepted.is_empty() {
+        let sealed: bool = sqlx::query_scalar("SELECT feed_finalizing OR status IN ('completed','failed','cancelled') FROM crawl_runs WHERE run_id=$1")
+            .bind(run.0).fetch_one(&mut **tx).await.map_err(db)?;
+        if sealed {
+            return Err(conflict("feed source is sealed for finalization"));
+        }
+    }
     let zdr = config.retention.mode == RetentionMode::Zdr;
     if deltas.len() > MAX_BATCH_ITEMS || outbox.len() > MAX_BATCH_ITEMS {
         return Err(conflict("dataset transaction batch limit"));
@@ -348,6 +524,20 @@ async fn apply_pg_source(
         let mut bytes = unsigned(get(&row, "size_bytes")?)?;
         for item in &batch.items {
             item_valid(item, zdr, now)?;
+            fragments_valid(item, &config.datasets, &batch.dataset)?;
+            for fragment in &item.feed_fragments {
+                verify_content(
+                    pg,
+                    tx,
+                    tenant,
+                    run,
+                    &fragment.content,
+                    fragment.size_bytes,
+                    Some(fragment.expires_at),
+                    now,
+                )
+                .await?;
+            }
             if item.schema_version != declaration.schema_version {
                 return Err(conflict("dataset schema mismatch"));
             }
@@ -381,7 +571,7 @@ async fn apply_pg_source(
                 .checked_add(1)
                 .ok_or_else(|| conflict("dataset count overflow"))?;
             bytes = bytes
-                .checked_add(item.size_bytes)
+                .checked_add(item_bytes(item)?)
                 .ok_or_else(|| conflict("dataset bytes overflow"))?;
             if count > declaration.max_items || bytes > declaration.max_bytes {
                 return Err(conflict("dataset quota exhausted"));
@@ -426,17 +616,6 @@ async fn apply_pg_source(
     }
     for batch in outbox {
         let mut resolved = batch.clone();
-        verify_content(
-            pg,
-            tx,
-            tenant,
-            run,
-            &batch.content,
-            batch.size_bytes,
-            Some(batch.expires_at),
-            now,
-        )
-        .await?;
         let feed = config
             .datasets
             .feeds
@@ -457,21 +636,10 @@ async fn apply_pg_source(
             };
         }
         let batch = &resolved;
-        delivery_valid(batch, &config.datasets, zdr, now)?;
-        let (first, last) = match batch.range {
-            DeliveryRangeV1::Committed { first, last } => (first, last),
-            _ => return Err(conflict("delivery range has not been allocated")),
-        };
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dataset_items i JOIN datasets d ON d.dataset_id=i.dataset_id AND d.tenant_id=i.tenant_id WHERE i.tenant_id=$1 AND i.run_id=$2 AND d.name=$3 AND i.ordinal BETWEEN $4 AND $5 AND (i.expires_at IS NULL OR i.expires_at>now())")
-            .bind(tenant.0).bind(run.0).bind(&feed.source).bind(signed(first)?).bind(signed(last)?)
-            .fetch_one(&mut **tx).await.map_err(db)?;
-        let wanted = last
-            .checked_sub(first)
-            .and_then(|n| n.checked_add(1))
-            .ok_or_else(|| conflict("delivery range overflow"))?;
-        if unsigned(count)? != wanted {
-            return Err(conflict("delivery references uncommitted items"));
+        if matches!(batch.range, DeliveryRangeV1::Empty) && (request != 0 || action.is_some()) {
+            return Err(conflict("empty feed requires terminal transaction"));
         }
+        verify_pg_delivery(pg, tx, tenant, run, &config, batch, now).await?;
         let old = sqlx::query("SELECT payload,volatile_page FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND feed=$3 AND idempotency_key=$4")
             .bind(tenant.0).bind(run.0).bind(&batch.feed).bind(&batch.idempotency_key).fetch_optional(&mut **tx).await.map_err(db)?;
         if let Some(old) = old {
@@ -481,12 +649,13 @@ async fn apply_pg_source(
             }
             continue;
         }
-        let id: i64 = sqlx::query_scalar("INSERT INTO dataset_delivery_outbox(tenant_id,run_id,source_request_id,feed,idempotency_key,payload,volatile_page,expires_at,source_action_id,content_page) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING delivery_id")
-            .bind(tenant.0).bind(run.0).bind(action.is_none().then_some(request)).bind(&batch.feed).bind(&batch.idempotency_key)
+        let id: i64 = sqlx::query_scalar("INSERT INTO dataset_delivery_outbox(tenant_id,run_id,source_request_id,feed,idempotency_key,payload,volatile_page,expires_at,source_action_id,content_page,terminal_source) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING delivery_id")
+            .bind(tenant.0).bind(run.0).bind((action.is_none() && request != 0).then_some(request)).bind(&batch.feed).bind(&batch.idempotency_key)
             .bind(if zdr { None } else { Some(serde_json::to_value(batch).map_err(|error| StoreError::Serialization(error.to_string()))?) })
             .bind(zdr.then_some(0i64)).bind(batch.expires_at).bind(action.map(|id| id.0))
             .bind(match &batch.content { DatasetContentV1::Volatile {page,..} => Some(*page),DatasetContentV1::Durable {..} => None,
                 _ => return Err(conflict("unsupported dataset content handle")) })
+            .bind(request == 0 && action.is_none())
             .fetch_one(&mut **tx).await.map_err(db)?;
         if zdr {
             let page = manifest_page(2, id)?;
@@ -800,16 +969,24 @@ async fn kv_scope(
 impl DeliveryOutboxRepo for Pg {
     async fn ready_runs(&self, after: Option<CrawlRunId>, limit: u16) -> Result<Vec<CrawlRunId>, StoreError> {
         bounds(limit)?;
-        let rows:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT run_id FROM dataset_delivery_outbox WHERE ($2::uuid IS NULL OR run_id>$2) AND ($3::uuid IS NULL OR tenant_id=$3) AND ((state IN ('pending','leased') AND (expires_at<=now() OR (not_before<=now() AND (lease_expires_at IS NULL OR lease_expires_at<=now())))) OR (state IN ('delivered','content_expired') AND erased_at IS NULL AND volatile_page IS NOT NULL)) GROUP BY run_id ORDER BY run_id LIMIT $1")
+        let rows:Vec<uuid::Uuid> = sqlx::query_scalar("SELECT run_id FROM (SELECT run_id FROM dataset_delivery_outbox o WHERE ($2::uuid IS NULL OR run_id>$2) AND ($3::uuid IS NULL OR tenant_id=$3) AND ((state IN ('pending','leased') AND (expires_at<=now() OR ((NOT terminal_source OR EXISTS(SELECT 1 FROM crawl_runs r WHERE r.run_id=o.run_id AND r.feed_finalized)) AND not_before<=now() AND (lease_expires_at IS NULL OR lease_expires_at<=now())))) OR (state IN ('delivered','content_expired') AND erased_at IS NULL AND volatile_page IS NOT NULL)) UNION SELECT run_id FROM crawl_runs WHERE NOT feed_finalized AND (feed_finalizing OR (feed_required AND status IN ('completed','failed','cancelled'))) AND ($2::uuid IS NULL OR run_id>$2) AND ($3::uuid IS NULL OR tenant_id=$3)) pending GROUP BY run_id ORDER BY run_id LIMIT $1")
             .bind(i64::from(limit)).bind(after.map(|run|run.0)).bind(crate::tenant::current().map(|tenant|tenant.0)).fetch_all(&self.pool).await.map_err(db)?;
         Ok(rows.into_iter().map(CrawlRunId).collect())
     }
     async fn maintain(&self, run: CrawlRunId) -> Result<(), StoreError> {
-        let (tenant, _) = self.privacy_scope(run).await?;
+        let (tenant, zdr) = self.privacy_scope(run).await?;
         check_tenant(tenant)?;
+        let retired = self
+            .retire_expired_feed_finalization_owned(run, tenant, zdr)
+            .await?;
         sqlx::query("WITH expired AS (SELECT delivery_id FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND state IN ('pending','leased') AND expires_at<=now() ORDER BY delivery_id LIMIT 1000 FOR UPDATE SKIP LOCKED) UPDATE dataset_delivery_outbox o SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL FROM expired WHERE o.delivery_id=expired.delivery_id")
             .bind(tenant.0).bind(run.0).execute(&self.pool).await.map_err(db)?;
-        cleanup_delivered(self, tenant, run).await
+        cleanup_delivered(self, tenant, run).await?;
+        if retired {
+            Err(StoreError::RetentionDenied("feed content_expired".into()))
+        } else {
+            Ok(())
+        }
     }
     async fn expire(&self, run: CrawlRunId, id: i64, fence: i64) -> Result<(), StoreError> {
         let (tenant, _) = self.privacy_scope(run).await?;
@@ -842,7 +1019,7 @@ impl DeliveryOutboxRepo for Pg {
         let mut tx = self.pool.begin().await.map_err(db)?;
         sqlx::query("UPDATE dataset_delivery_outbox SET state='content_expired',lease_owner=NULL,lease_expires_at=NULL WHERE tenant_id=$1 AND run_id=$2 AND state IN ('pending','leased') AND expires_at<=now()")
             .bind(tenant.0).bind(run.0).execute(&mut *tx).await.map_err(db)?;
-        let rows = sqlx::query("WITH picked AS (SELECT delivery_id FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND expires_at>now() AND not_before<=now() AND (state='pending' OR (state='leased' AND lease_expires_at<=now())) ORDER BY delivery_id FOR UPDATE SKIP LOCKED LIMIT $3) UPDATE dataset_delivery_outbox o SET state='leased',attempts=o.attempts+1,fence=o.fence+1,lease_owner=$4,lease_expires_at=now()+make_interval(secs=>$5) FROM picked WHERE o.delivery_id=picked.delivery_id RETURNING o.delivery_id,o.payload,o.volatile_page,o.fence,o.attempts")
+        let rows = sqlx::query("WITH picked AS (SELECT delivery_id FROM dataset_delivery_outbox WHERE tenant_id=$1 AND run_id=$2 AND expires_at>now() AND not_before<=now() AND (NOT terminal_source OR (SELECT feed_finalized FROM crawl_runs WHERE run_id=$2)) AND (state='pending' OR (state='leased' AND lease_expires_at<=now())) ORDER BY delivery_id FOR UPDATE SKIP LOCKED LIMIT $3) UPDATE dataset_delivery_outbox o SET state='leased',attempts=o.attempts+1,fence=o.fence+1,lease_owner=$4,lease_expires_at=now()+make_interval(secs=>$5) FROM picked WHERE o.delivery_id=picked.delivery_id RETURNING o.delivery_id,o.payload,o.volatile_page,o.fence,o.attempts")
             .bind(tenant.0).bind(run.0).bind(i64::from(limit)).bind(worker.0).bind(f64::from(lease_seconds))
             .fetch_all(&mut *tx).await.map_err(db)?;
         let mut claims = Vec::with_capacity(rows.len());

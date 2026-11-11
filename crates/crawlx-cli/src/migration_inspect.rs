@@ -867,6 +867,10 @@ mod tests {
         let (report, crawl) = inspect(&manifest).unwrap();
         assert!(report.convertible);
         let crawl = crawl.unwrap();
+        assert_eq!(
+            crawl.scope.strategy,
+            crawlx_core::config::CrawlStrategy::BreadthFirst
+        );
         let options = crawlx_extract::ExtractOptions {
             content: Some(crawlx_core::extraction::ExtractionPolicyV1::default()),
             ..Default::default()

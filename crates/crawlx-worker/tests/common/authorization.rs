@@ -9,7 +9,16 @@ use std::sync::Arc;
 
 /// A verified record matching the fixture's selected ID, tenant and target.
 pub fn verified_record(crawl: &CreateCrawl, tenant: TenantId) -> AuthorizationRecord {
-    let now = SystemClock.now();
+    verified_record_with_clock(crawl, tenant, &SystemClock)
+}
+
+/// A verified record in the caller's explicit fixture clock domain.
+pub fn verified_record_with_clock(
+    crawl: &CreateCrawl,
+    tenant: TenantId,
+    clock: &dyn Clock,
+) -> AuthorizationRecord {
+    let now = clock.now();
     let origin = crawl.seed_url.origin().ascii_serialization();
     let mut record = sample_record(tenant, now, &[&origin]);
     record.id = crawl
@@ -77,6 +86,16 @@ pub async fn run_authorized_local(crawl: CreateCrawl, cfg: WorkerConfig) -> Resu
 
 /// Admit a direct `RunContext` fixture through its installed authorization source.
 pub async fn admit(stores: &Stores, run: &CrawlRun, cfg: &WorkerConfig) -> Arc<AuthorizationGuard> {
+    admit_with_clock(stores, run, cfg, Arc::new(SystemClock)).await
+}
+
+/// Admit a direct fixture using the same clock as its run, browser and store.
+pub async fn admit_with_clock(
+    stores: &Stores,
+    run: &CrawlRun,
+    cfg: &WorkerConfig,
+    clock: Arc<dyn Clock>,
+) -> Arc<AuthorizationGuard> {
     AuthorizationGuard::admit(
         run.id,
         None,
@@ -87,7 +106,7 @@ pub async fn admit(stores: &Stores, run: &CrawlRun, cfg: &WorkerConfig) -> Arc<A
                 .as_ref()
                 .expect("fixture authorization source"),
         ),
-        Arc::new(SystemClock),
+        clock,
         Arc::clone(&stores.events),
         cfg.authorization_recheck,
     )

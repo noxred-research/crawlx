@@ -64,6 +64,22 @@ async fn production_dispatch_records_bounded_worker_admission_before_leasing() {
         .await
         .unwrap();
     let events = stores.events.list_after(report.run_id, 0, 256).await.unwrap();
+    let tasks: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "runtime.task")
+        .collect();
+    assert!(
+        !tasks.is_empty(),
+        "each admitted URL task must record bounded resource observations"
+    );
+    for task in tasks {
+        assert_eq!(task.payload["version"], 1);
+        assert!(task.payload["elapsed_ms"].as_u64().is_some());
+        assert!(task.payload["frontier_id"].as_i64().is_some());
+        for key in ["process_rss_before_bytes", "process_rss_after_bytes"] {
+            assert!(task.payload[key].is_null() || task.payload[key].as_u64().is_some());
+        }
+    }
     let records: Vec<crawlx_core::runtime_admission::AdmissionRecordV1> = events
         .into_iter()
         .filter(|event| event.kind == "runtime.admission")
@@ -79,6 +95,7 @@ async fn production_dispatch_records_bounded_worker_admission_before_leasing() {
         assert_eq!(record.decision.hard_limit, 1);
         assert!(record.decision.ceiling <= 1);
         assert!(record.decision.pressure.spool_permille.is_some());
+        assert!(record.decision.pressure.event_loop_lag_ms.is_some());
         assert_eq!(record.decision.pressure.store_available, Some(true));
     }
     assert!(report.counters.urls.invariants_hold());
@@ -476,6 +493,538 @@ async fn the_static_plane_emits_the_url_metrics() {
         0,
         "unknown planes never get a series"
     );
+}
+
+/// Policy fixtures count methods separately so a refused HEAD cannot pass as a GET.
+async fn acquisition_policy_site() -> Counted {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let hits: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route("/robots.txt", get(|| async { "" }))
+        .route(
+            "/preflight",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html")],
+                    "<html><title>GET must not run</title><body>Refused target.</body></html>",
+                )
+            })
+            .head(|| async {
+                (
+                    [
+                        (header::CONTENT_TYPE, "application/octet-stream"),
+                        (header::CONTENT_LENGTH, "8192"),
+                    ],
+                    "",
+                )
+            }),
+        )
+        .route(
+            "/declared",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    "<html><head><title>Declared article</title></head><body><main>\
+                     <h1>Declared article</h1><p>This article reaches HTML extraction only \
+                     through the explicit response declaration.</p></main></body></html>",
+                )
+            }),
+        )
+        .route(
+            "/oversize",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    format!(
+                        "<html><title>Partial page must not persist</title><body><main><p>{}</p>\
+                         </main></body></html>",
+                        "Bounded article content. ".repeat(256),
+                    ),
+                )
+            }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&hits),
+            |State(hits): State<Arc<Mutex<Vec<String>>>>,
+             req: axum::extract::Request,
+             next: axum::middleware::Next| async move {
+                hits.lock()
+                    .unwrap()
+                    .push(format!("{} {}", req.method(), req.uri().path()));
+                next.run(req).await
+            },
+        ));
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Counted { base, hits, task }
+}
+
+/// Acceptance #1: both HEAD refusal rules stop the target GET and persist failure.
+#[tokio::test]
+async fn acceptance_1_fetch_preflight_refusal_prevents_target_get() {
+    let site = acquisition_policy_site().await;
+    for (max_content_length, content_types) in
+        [(Some(1024), Vec::new()), (None, vec!["text/html".to_owned()])]
+    {
+        let heads_before = site.count("HEAD /preflight");
+        let (report, frontier) = crawl_with_frontier(&site, |crawl| {
+            crawl.seed_url = url::Url::parse(&format!("{}/preflight", site.base)).unwrap();
+            crawl.fetch.retries = 0;
+            let mut preflight = crawlx_core::acquisition::HeadPreflight::default();
+            preflight.max_content_length = max_content_length;
+            preflight.content_types = content_types;
+            crawl.fetch.preflight = Some(preflight);
+        })
+        .await;
+
+        assert_eq!(report.status, RunStatus::Completed);
+        assert_eq!(site.count("HEAD /preflight"), heads_before + 1);
+        assert_eq!(site.count("GET /preflight"), 0);
+        assert!(report.pages.is_empty());
+        assert!(report.page_contents.is_empty());
+        assert_eq!(report.counters.urls.attempted, 1);
+        assert_eq!(report.counters.urls.failed, 1);
+        assert_eq!(report.counters.urls.succeeded, 0);
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].reason, "preflight_refused");
+        let target = row(&frontier, "/preflight");
+        assert_eq!(target.status, FrontierStatus::Failed);
+        assert_eq!(target.denial_reason.as_deref(), Some("preflight_refused"));
+    }
+}
+
+/// Acceptance #2: the declared MIME type, not the plain wire type, selects HTML extraction.
+#[tokio::test]
+async fn acceptance_2_response_declaration_routes_plain_response_to_html_extraction() {
+    let site = acquisition_policy_site().await;
+    let (ordinary, _) = crawl_with_frontier(&site, |crawl| {
+        crawl.seed_url = url::Url::parse(&format!("{}/declared", site.base)).unwrap();
+    })
+    .await;
+    assert_eq!(ordinary.pages.len(), 1);
+    assert_eq!(ordinary.pages[0].title, None);
+
+    let (declared, frontier) = crawl_with_frontier(&site, |crawl| {
+        crawl.seed_url = url::Url::parse(&format!("{}/declared", site.base)).unwrap();
+        let mut declaration = crawlx_core::acquisition::ResponseDeclaration::default();
+        declaration.content_type = Some("text/html".to_owned());
+        declaration.charset = Some("utf-8".to_owned());
+        crawl.fetch.declaration = Some(declaration);
+    })
+    .await;
+
+    assert_eq!(declared.status, RunStatus::Completed);
+    assert_eq!(declared.pages.len(), 1);
+    assert_eq!(declared.pages[0].title.as_deref(), Some("Declared article"));
+    let markdown = declared.page_contents[0].markdown.as_deref().unwrap();
+    assert!(
+        markdown.contains("through the explicit response declaration."),
+        "{markdown}"
+    );
+    assert!(!markdown.contains("<main>"), "{markdown}");
+    assert_eq!(declared.counters.urls.succeeded, 1);
+    assert_eq!(declared.counters.urls.failed, 0);
+    assert_eq!(row(&frontier, "/declared").status, FrontierStatus::Succeeded);
+    assert_eq!(site.count("GET /declared"), 2);
+    assert_eq!(site.count("HEAD /declared"), 0);
+}
+
+/// Acceptance #2: refusing an oversized body produces no partial extracted page.
+#[tokio::test]
+async fn acceptance_2_oversize_refusal_fails_without_persisting_partial_page() {
+    let site = acquisition_policy_site().await;
+    let (report, frontier) = crawl_with_frontier(&site, |crawl| {
+        crawl.seed_url = url::Url::parse(&format!("{}/oversize", site.base)).unwrap();
+        crawl.fetch.max_response_bytes = 1024;
+        crawl.fetch.retries = 0;
+        crawl.fetch.oversize = Some(crawlx_core::acquisition::OversizePolicy::Refuse);
+    })
+    .await;
+
+    assert_eq!(site.count("GET /oversize"), 1);
+    assert_eq!(site.count("HEAD /oversize"), 0);
+    assert!(report.pages.is_empty());
+    assert!(report.page_contents.is_empty());
+    assert_eq!(report.counters.urls.attempted, 1);
+    assert_eq!(report.counters.urls.failed, 1);
+    assert_eq!(report.counters.urls.succeeded, 0);
+    assert_eq!(report.failures.len(), 1);
+    assert_eq!(report.failures[0].reason, "body_limit");
+    let target = row(&frontier, "/oversize");
+    assert_eq!(target.status, FrontierStatus::Failed);
+    assert_eq!(target.denial_reason.as_deref(), Some("body_limit"));
+}
+
+#[tokio::test]
+async fn extraction_url_exclusion_blocks_target_and_robots_before_any_request() {
+    for use_pattern in [false, true] {
+        let site = counted_site("").await;
+        let (report, frontier) = crawl_with_frontier(&site, |crawl| {
+            let mut exclusions = crawlx_core::extraction::UrlExclusionPolicyV1::default();
+            if use_pattern {
+                exclusions.patterns = vec![r"^http://127\.0\.0\.1:[0-9]+/$".to_owned()];
+            } else {
+                exclusions.substrings = vec![site.base.to_ascii_uppercase()];
+            }
+            let mut content = crawlx_core::extraction::ExtractionPolicyV1::default();
+            content.excluded_urls = Some(exclusions);
+            crawl.extract.content = Some(content);
+        })
+        .await;
+
+        assert!(site.hits.lock().unwrap().is_empty());
+        assert_eq!(site.count("/"), 0);
+        assert_eq!(site.count("/robots.txt"), 0);
+        assert!(report.pages.is_empty());
+        assert_eq!(report.counters.urls.policy_blocked, 1);
+        assert_eq!(report.counters.urls.attempted, 0);
+        let seed = row(&frontier, "/");
+        assert_eq!(seed.status, FrontierStatus::PolicyBlocked);
+        assert_eq!(seed.denial_reason.as_deref(), Some("url_excluded"));
+    }
+}
+
+#[tokio::test]
+async fn selected_ast_mode_persists_bounded_unresolved_endpoint_outcomes() {
+    use crawlx_extract::endpoints::{ScriptOrigin, UnresolvedEndpoint, UnresolvedKind};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let hits: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let script = "fetch(runtimeEndpoint);".repeat(1003);
+    let script_bytes = u32::try_from(script.len()).unwrap();
+    let body = format!(
+        "<html><head><title>Unresolved endpoints</title></head><body><main>\
+         <p>Static analysis must not evaluate dynamic request expressions.</p></main>\
+         <script>{script}</script></body></html>"
+    );
+    let app = Router::new()
+        .route(
+            "/",
+            get(move || async move { ([(header::CONTENT_TYPE, "text/html")], body) }),
+        )
+        .route("/robots.txt", get(|| async { "" }))
+        .layer(axum::middleware::from_fn_with_state(Arc::clone(&hits), count_hit));
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let site = Counted { base, hits, task };
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let mut crawl = static_crawl(&site.base);
+    crawl.extract.javascript.mode = crawlx_core::config::JavascriptMode::Ast;
+    crawl.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
+    let report = run_local_with(LocalRun::new(crawl, config(dir.path())).with_stores(stores.clone()))
+        .await
+        .unwrap();
+
+    assert_eq!(report.browser_launches, 0);
+    assert_eq!(report.pages.len(), 1);
+    let persisted = stores.pages.list(report.run_id).await.unwrap();
+    assert_eq!(persisted.len(), 1);
+    let discovery = &persisted[0].metadata["endpointDiscovery"];
+    assert_eq!(*discovery, report.pages[0].metadata["endpointDiscovery"]);
+    assert_eq!(discovery["unresolvedDropped"], 3);
+    let unresolved = discovery["unresolved"].as_array().unwrap();
+    assert_eq!(unresolved.len(), 1000);
+    for value in unresolved {
+        let object = value.as_object().unwrap();
+        assert_eq!(object.len(), 7, "{value}");
+        let outcome: UnresolvedEndpoint = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(outcome.kind, UnresolvedKind::Variable);
+        assert_eq!(outcome.origin, ScriptOrigin::InlineScript);
+        assert_eq!(outcome.method, http::Method::GET);
+        assert_eq!(outcome.depth, 1);
+        assert!(!outcome.partial);
+        assert!(outcome.span.start < outcome.span.end);
+        assert!(outcome.span.end <= script_bytes);
+    }
+    assert!(!discovery.to_string().contains("runtimeEndpoint"));
+    assert_eq!(site.count("/"), 1);
+    assert_eq!(site.count("/robots.txt"), 1);
+    assert_eq!(site.count("/sitemap.xml"), 0);
+    assert_eq!(site.hits.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn duplicate_article_marks_second_url_without_crossing_runs_or_tenants() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let hits: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let article = || async {
+        (
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            "<html><head><title>Shared article</title></head><body>\
+             <nav><a href=\"/article-b\">Second address</a></nav><main><article>\
+             <h1>Shared article</h1><p>This substantial article has identical main content \
+             at both addresses. Its distinct acquisitions must remain visible, while \
+             ingestion rejects the repeated normalized title and body.</p>\
+             <p>Each crawl owns its content admission cache. Neither later runs nor \
+             another tenant may inherit the earlier admission decision.</p>\
+             </article></main></body></html>",
+        )
+    };
+    let app = Router::new()
+        .route("/article-a", get(article))
+        .route("/article-b", get(article))
+        .route("/robots.txt", get(|| async { "" }))
+        .layer(axum::middleware::from_fn_with_state(Arc::clone(&hits), count_hit));
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let site = Counted { base, hits, task };
+    let dir = tempfile::tempdir().unwrap();
+    let mut stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let original_tenant = stores.tenant;
+    let mut prior_runs = Vec::new();
+    for change_tenant in [false, false, true] {
+        if change_tenant {
+            stores.tenant = crawlx_core::TenantId::new();
+            assert_ne!(stores.tenant, original_tenant);
+        } else {
+            assert_eq!(stores.tenant, original_tenant);
+        }
+        let mut crawl = static_crawl(&site.base);
+        crawl.seed_url = url::Url::parse(&format!("{}/article-a", site.base)).unwrap();
+        // The duplicate lives beside the seed, not beneath its default path scope.
+        crawl.scope.crawl_entire_domain = true;
+        crawl.politeness.max_concurrency = 1;
+        crawl.scope.disable_unique_filter = true;
+        let mut dedupe = crawlx_core::extraction::DedupePolicyV1::default();
+        dedupe.content = true;
+        let mut content = crawlx_core::extraction::ExtractionPolicyV1::default();
+        content.dedupe = Some(dedupe);
+        crawl.extract.content = Some(content);
+        let report = run_local_with(LocalRun::new(crawl, config(dir.path())).with_stores(stores.clone()))
+            .await
+            .unwrap();
+
+        assert!(!prior_runs.contains(&report.run_id));
+        prior_runs.push(report.run_id);
+        assert_eq!(report.status, RunStatus::Completed);
+        assert_eq!(report.counters.urls.succeeded, 2);
+        assert_eq!(paths(&report), vec!["/article-a", "/article-b"]);
+        let persisted = stores.pages.list(report.run_id).await.unwrap();
+        assert_eq!(persisted.len(), 2);
+        let frontier = stores.frontier.list(report.run_id).await.unwrap();
+        for path in ["/article-a", "/article-b"] {
+            let entry = frontier
+                .iter()
+                .find(|entry| entry.url.url.path() == path)
+                .unwrap();
+            assert_eq!(entry.status, FrontierStatus::Succeeded);
+        }
+        for (path, status, reasons) in [
+            ("/article-a", "accepted", serde_json::json!([])),
+            ("/article-b", "rejected", serde_json::json!(["duplicate_main"])),
+        ] {
+            let page = persisted.iter().find(|page| page.url.url.path() == path).unwrap();
+            let quality = &page.metadata["extraction"]["quality"];
+            assert_eq!(quality["status"], status, "{quality}");
+            assert_eq!(quality["reasons"], reasons, "{quality}");
+            assert!(quality["mainChars"].as_u64().unwrap() >= 40);
+            assert_eq!(page.status, 200);
+            assert!(!page.metadata["extraction"]["content"].is_null());
+        }
+    }
+    assert_eq!(site.count("/article-a"), 3);
+    assert_eq!(site.count("/article-b"), 3);
+}
+
+/// Dotted hosts exercise the preview target guard while all sockets stay on loopback.
+async fn native_preview_site() -> Counted {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let base = format!("http://preview.example.test:{}", address.port());
+    let hits = Arc::new(Mutex::new(Vec::new()));
+    let source = format!(
+        "<html><head><title>Preview source</title></head><body><main>\
+         <p>Preview requests must use the guarded shared acquisition allowance.</p>\
+         <a href='/preview'>Preview article</a>\
+         <a href='http://{address}/refused'>Private literal target</a>\
+         </main></body></html>"
+    );
+    let app = Router::new()
+        .route(
+            "/",
+            get(move || async move { ([(header::CONTENT_TYPE, "text/html")], source) }),
+        )
+        .route(
+            "/preview",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html")],
+                    "<html lang='en'><head><title>Fulfilled preview</title>\
+                     <meta name='description' content='Retained auxiliary head metadata'>\
+                     <link rel='canonical' href='/preview-canonical'>\
+                     <meta property='og:image' content='/preview-image.png'>\
+                     <meta property='og:site_name' content='Preview fixture'>\
+                     </head><body>Auxiliary representation.</body></html>",
+                )
+            }),
+        )
+        .route(
+            "/entry",
+            get(|| async { axum::response::Redirect::temporary("/article") }),
+        )
+        .route(
+            "/article",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/html")],
+                    "<html lang='en'><head><title>Retained primary head</title>\
+                     <meta name='description' content='Already acquired primary representation'>\
+                     <link rel='canonical' href='/article'>\
+                     </head><body><main><p>The original URL previews this same representation \
+                     after its redirect, without acquiring the primary document again.</p>\
+                     <a href='/entry'>Original article address</a></main></body></html>",
+                )
+            }),
+        )
+        .route(
+            "/refused",
+            get(|| async { "<title>Private preview must never be fetched</title>" }),
+        )
+        .fallback(|| async { (StatusCode::NOT_FOUND, "unexpected request") })
+        .layer(axum::middleware::from_fn_with_state(Arc::clone(&hits), count_hit));
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Counted { base, hits, task }
+}
+
+async fn run_native_previews(site: &Counted, path: &str) -> (RunReport, serde_json::Value) {
+    use crawlx_extract::content_outputs::ContentOutputOptions;
+    use crawlx_extract::link_media::LinkMediaOptions;
+
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
+        .await
+        .unwrap();
+    let mut request = static_crawl(&site.base);
+    request.seed_url = url::Url::parse(&format!("{}{path}", site.base)).unwrap();
+    request.scope.max_discovery_depth = 0;
+    request.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
+    request.safety.respect_robots_txt = false;
+    request.retention.mode = crawlx_core::config::RetentionMode::Standard;
+    request.fetch.retries = 0;
+    let mut link_media = LinkMediaOptions::with_previews(4);
+    link_media.min_preview_score = 0;
+    let mut outputs = ContentOutputOptions::default();
+    outputs.link_media = Some(link_media);
+    request.extract.outputs = Some(serde_json::to_value(outputs).unwrap());
+    assert!(request.acquisition.is_none());
+    assert!(request.scope.discovery.is_none());
+    let mut cfg = config(dir.path());
+    cfg.egress.resolver = Some(Arc::new(
+        StaticResolver::new().with("preview.example.test", [std::net::IpAddr::from([127, 0, 0, 1])]),
+    ));
+    let mut authorization = common::authorization::verified_record(&request, stores.tenant);
+    authorization.url_prefixes = vec![site.base.clone()];
+    let report = run_local_with(
+        LocalRun::new(request, cfg)
+            .with_authorization(authorization)
+            .with_stores(stores.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.status, RunStatus::Completed);
+    assert_eq!(report.browser_launches, 0);
+    assert_eq!(report.pages.len(), 1);
+    assert!(report.failures.is_empty());
+    assert_eq!(report.counters.urls.attempted, 1);
+    assert_eq!(report.counters.urls.succeeded, 1);
+    assert!(report.counters.urls.invariants_hold());
+    let persisted = stores.pages.list(report.run_id).await.unwrap();
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].metadata, report.pages[0].metadata);
+    let auxiliary = &persisted[0].metadata["discovery_auxiliary"];
+    assert_eq!(auxiliary["count"], 1);
+    assert_eq!(auxiliary.as_object().unwrap().len(), 2);
+    assert!(auxiliary.get("head").is_none());
+    let reference: crawlx_core::ArtifactRef = serde_json::from_value(auxiliary["content"].clone()).unwrap();
+    let reports: serde_json::Value =
+        serde_json::from_slice(&stores.artifacts.get(&reference).await.unwrap()).unwrap();
+    assert_eq!(reports.as_array().unwrap().len(), 1);
+    assert_eq!(reports[0]["purpose"], "preview");
+    assert_eq!(reports[0]["status"], "fulfilled");
+    (report, reports)
+}
+
+#[tokio::test]
+async fn native_preview_without_acquisition_or_discovery_fetches_guarded_target_once() {
+    let site = native_preview_site().await;
+    let (report, previews) = run_native_previews(&site, "/").await;
+    assert_eq!(site.count("/"), 1);
+    assert_eq!(site.count("/preview"), 1);
+    assert_eq!(site.count("/refused"), 0);
+    assert_eq!(site.hits.lock().unwrap().len(), 2);
+    assert!(report.pages[0]
+        .links
+        .iter()
+        .any(|link| link.ends_with("/refused")));
+    assert_eq!(report.pages[0].title.as_deref(), Some("Preview source"));
+    let acquisition: crawlx_core::acquisition::AcquisitionResultV1 =
+        serde_json::from_value(report.pages[0].metadata["acquisition"].clone()).unwrap();
+    assert_eq!(acquisition.network_requests, 2, "primary plus auxiliary request");
+    assert_eq!(acquisition.network_requests_observed, Some(2));
+    assert_eq!(acquisition.allowance_usage.network_requests_reserved, 2);
+    assert_eq!(acquisition.attempts, 2);
+    let head = &previews[0]["head"];
+    assert_eq!(head["url"], format!("{}/preview", site.base));
+    assert_eq!(head["title"], "Fulfilled preview");
+    assert_eq!(head["description"], "Retained auxiliary head metadata");
+    assert_eq!(head["language"], "en");
+    assert_eq!(head["canonicalUrl"], format!("{}/preview-canonical", site.base));
+    assert_eq!(head["imageUrl"], format!("{}/preview-image.png", site.base));
+    assert_eq!(head["siteName"], "Preview fixture");
+    assert_eq!(head["truncated"], false);
+    assert!(!report.pages[0]
+        .metadata
+        .to_string()
+        .contains("Retained auxiliary head metadata"));
+}
+
+#[tokio::test]
+async fn native_self_preview_reuses_redirected_primary_without_second_get() {
+    let site = native_preview_site().await;
+    // Exact final-URL self-links are not preview intents. The original redirect URL is an
+    // intent, so this exercises the worker's primary-representation reuse path end to end.
+    let (report, previews) = run_native_previews(&site, "/entry").await;
+    assert_eq!(site.count("/entry"), 1);
+    assert_eq!(site.count("/article"), 1);
+    assert_eq!(site.count("/preview"), 0);
+    assert_eq!(site.count("/refused"), 0);
+    assert_eq!(site.hits.lock().unwrap().len(), 2);
+    assert_eq!(
+        report.pages[0].metadata["final_url"],
+        format!("{}/article", site.base)
+    );
+    assert_eq!(report.pages[0].title.as_deref(), Some("Retained primary head"));
+    let acquisition: crawlx_core::acquisition::AcquisitionResultV1 =
+        serde_json::from_value(report.pages[0].metadata["acquisition"].clone()).unwrap();
+    assert_eq!(
+        acquisition.network_requests, 2,
+        "only the original redirect and primary GET"
+    );
+    assert_eq!(acquisition.network_requests_observed, Some(2));
+    assert_eq!(acquisition.allowance_usage.network_requests_reserved, 2);
+    assert_eq!(
+        acquisition.attempts, 1,
+        "the redirect stays inside the primary attempt"
+    );
+    let head = &previews[0]["head"];
+    assert_eq!(head["url"], format!("{}/entry", site.base));
+    assert_eq!(head["title"], "Retained primary head");
+    assert_eq!(head["description"], "Already acquired primary representation");
+    assert_eq!(head["canonicalUrl"], format!("{}/article", site.base));
+    assert_eq!(head["truncated"], false);
 }
 
 #[tokio::test]

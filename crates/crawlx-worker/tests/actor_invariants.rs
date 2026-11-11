@@ -13,7 +13,7 @@ use crawlx_core::counters::{PlaneCounters, RunStatus};
 use crawlx_core::identity::ActionKind;
 use crawlx_core::observation::{DomSelector, QuiescencePolicy};
 use crawlx_core::repo::{CrawlRun, StateRepo};
-use crawlx_core::{ActionId, Clock, CrawlRunId, CreateCrawl, SafetyProfile, SystemClock, WorkerId};
+use crawlx_core::{ActionId, Clock, CrawlRunId, CreateCrawl, SafetyProfile, SystemClock};
 use crawlx_observe::spec;
 use crawlx_safety::Adjudication;
 use crawlx_scheduler::{CheckpointReason, RunPlanner, Scheduler};
@@ -449,7 +449,12 @@ async fn cancellation_releases_permits_and_closes_contexts_within_5s() {
         .unwrap();
     let run = stores.runs.get(run.id).await.unwrap();
 
-    let fake = Arc::new(FakeBackend::new(long_site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(long_site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let cancel = CancellationToken::new();
     let cfg = WorkerConfig {
         artifacts_dir: dir.path().to_path_buf(),
@@ -473,7 +478,7 @@ async fn cancellation_releases_permits_and_closes_contexts_within_5s() {
         .unwrap(),
     );
     let scheduler = Scheduler::new(store.clone());
-    let worker = WorkerId::new();
+    let worker = cfg.worker_id;
     let mut sessions = JoinSet::new();
     // Sessions start one after another, as leases are granted in practice: a session's first
     // state must be stored before the next one attaches to the same cluster (the in-memory

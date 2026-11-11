@@ -74,6 +74,22 @@ const OPERATIONS: &[Operation] = &[
         "Committed accepted items, using ordinal keyset pagination", "crawls:read", "200",
     ),
     (
+        "post", "/v1/crawls/{id}/datasets/import", "importDataset",
+        "Import bounded safe JSON under an existing live request fence", "crawls:write", "200",
+    ),
+    (
+        "delete", "/v1/crawls/{id}/source-memo", "resetSourceMemo",
+        "Reset scoped source memo and category cache without purging frontier work", "crawls:write", "200",
+    ),
+    (
+        "get", "/v1/crawls/{id}/reports", "listOperationalReports",
+        "List finite operational reports, source facts and withheld fields", "crawls:read", "200",
+    ),
+    (
+        "get", "/v1/crawls/{id}/reports/{report}", "searchOperationalReport",
+        "Search one bounded retained report source page using structured filters", "crawls:read", "200",
+    ),
+    (
         "get", "/v1/crawls/{id}/kv/{store}", "listKvKeys",
         "Bounded run-local KV metadata, using keyset pagination", "crawls:read", "200",
     ),
@@ -99,7 +115,7 @@ const OPERATIONS: &[Operation] = &[
     ),
     (
         "post", "/v1/crawls/{id}/requests", "appendRequests",
-        "Append bounded admitted GET proposals under an Idempotency-Key", "crawls:write", "200",
+        "Append bounded admitted GET or HEAD proposals under an Idempotency-Key", "crawls:write", "200",
     ),
     (
         "post", "/v1/crawls/{id}/requests/seal", "sealRequests",

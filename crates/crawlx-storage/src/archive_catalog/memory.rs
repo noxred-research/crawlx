@@ -18,6 +18,9 @@ use uuid::Uuid;
 pub(crate) struct ArchiveState {
     exports: BTreeMap<(TenantId, Uuid), ArchiveExportV1>,
     records: BTreeMap<(TenantId, Uuid, u64), ArchiveRecordV1>,
+    local_payloads: BTreeMap<(TenantId, Uuid), super::payload::Rows>,
+    published_payloads: BTreeMap<TenantId, super::payload::Rows>,
+    published_artifacts: BTreeMap<crawlx_core::ArtifactId, (TenantId, Uuid)>,
     history: BTreeMap<(TenantId, Uuid, u64), ArchiveHistoryV1>,
     artifacts: BTreeMap<crawlx_core::ArtifactId, crate::ArtifactRow>,
 }
@@ -38,6 +41,77 @@ impl ArchiveState {
         }
     }
 
+    fn index_payload(&mut self, tenant: TenantId, export: Uuid, ordinal: u64) {
+        let Some(owner) = self.exports.get(&(tenant, export)) else {
+            return;
+        };
+        let Some(record) = self.records.get(&(tenant, export, ordinal)) else {
+            return;
+        };
+        if record.payload_key.is_none()
+            || record.dependency.is_some()
+            || owner.custody.sensitivity != crawlx_core::repo::Sensitivity::Content
+        {
+            return;
+        }
+        super::payload::insert(
+            self.local_payloads.entry((tenant, export)).or_default(),
+            owner,
+            record,
+        );
+    }
+
+    fn publish_payloads(&mut self, tenant: TenantId, export: Uuid) {
+        self.local_payloads.remove(&(tenant, export));
+        let Some(owner) = self.exports.get(&(tenant, export)) else {
+            return;
+        };
+        for artifact in [owner.artifact.as_ref(), owner.index.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            self.published_artifacts.insert(artifact.id, (tenant, export));
+        }
+        if owner.config.dedupe != crawlx_core::archive::ArchiveDedupe::Tenant
+            || owner.custody.sensitivity != crawlx_core::repo::Sensitivity::Content
+        {
+            return;
+        }
+        for (_, record) in self
+            .records
+            .range((tenant, export, 0)..=(tenant, export, u64::MAX))
+        {
+            if record.payload_key.is_some() && record.dependency.is_none() {
+                super::payload::insert(self.published_payloads.entry(tenant).or_default(), owner, record);
+            }
+        }
+    }
+
+    fn unindex_payloads(&mut self, tenant: TenantId, export: Uuid) {
+        self.local_payloads.remove(&(tenant, export));
+        let Some(owner) = self.exports.get(&(tenant, export)) else {
+            return;
+        };
+        for artifact in [owner.artifact.as_ref(), owner.index.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            self.published_artifacts.remove(&artifact.id);
+        }
+        let Some(rows) = self.published_payloads.get_mut(&tenant) else {
+            return;
+        };
+        for (_, record) in self
+            .records
+            .range((tenant, export, 0)..=(tenant, export, u64::MAX))
+        {
+            super::payload::remove(rows, owner, record);
+        }
+        if rows.is_empty() {
+            self.published_payloads.remove(&tenant);
+        }
+    }
+
     fn artifact(
         &self,
         export: &ArchiveExportV1,
@@ -45,6 +119,7 @@ impl ArchiveState {
         minimum: u64,
         content_type: &str,
         now: Timestamp,
+        custody: crawlx_core::archive_catalog::ArchiveCustodyV1,
     ) -> Result<(), StoreError> {
         let row = self
             .artifacts
@@ -53,7 +128,7 @@ impl ArchiveState {
         if row.tenant != export.tenant
             || row.run != export.run
             || row.digest != artifact.digest
-            || row.sensitivity != crawlx_core::repo::Sensitivity::Content
+            || !super::artifact_custody(row.sensitivity, row.expires_at, custody, now)
             || row.size_bytes < minimum
             || row.content_type != content_type
             || row.expires_at.is_some_and(|expiry| expiry <= now)
@@ -61,6 +136,96 @@ impl ArchiveState {
             return Err(invalid("archive artifact custody, format or expiry mismatch"));
         }
         Ok(())
+    }
+
+    fn content_package(
+        &self,
+        source: &ArchiveExportV1,
+        dependent: &ArchiveExportV1,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        if source.tenant != dependent.tenant
+            || source.state != ArchiveExportState::Published
+            || !live(source, now)
+            || source.custody.sensitivity != crawlx_core::repo::Sensitivity::Content
+            || super::expires_before(source.expires_at, dependent.expires_at)
+        {
+            return Err(invalid("archive dependency package authority is incompatible"));
+        }
+        let artifact = source
+            .artifact
+            .as_ref()
+            .ok_or_else(|| invalid("archive dependency package missing"))?;
+        let mime = if source.config.format == crawlx_core::archive::ArchiveFormat::Warc {
+            "application/warc"
+        } else {
+            "application/wacz+zip"
+        };
+        self.artifact(source, artifact, 1, mime, now, source.custody)?;
+        if self
+            .artifacts
+            .get(&artifact.id)
+            .is_none_or(|row| super::expires_before(row.expires_at, dependent.expires_at))
+        {
+            return Err(invalid("archive dependency package deadline is incompatible"));
+        }
+        Ok(())
+    }
+
+    fn payload_sources_live(&self, export: &ArchiveExportV1, now: Timestamp) -> Result<(), StoreError> {
+        for (_, record) in self
+            .records
+            .range((export.tenant, export.id, 0)..=(export.tenant, export.id, u64::MAX))
+        {
+            if let Some(dependency) = record
+                .dependency
+                .as_ref()
+                .filter(|source| source.export != export.id)
+            {
+                let source = self
+                    .exports
+                    .get(&(export.tenant, dependency.export))
+                    .ok_or_else(|| invalid("archive dependency package missing"))?;
+                self.content_package(source, export, now)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn source(
+        &self,
+        export: &ArchiveExportV1,
+        record: &ArchiveRecordV1,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        if record.custody.sensitivity != crawlx_core::repo::Sensitivity::Sensitive {
+            return Ok(());
+        }
+        let source = record
+            .source_artifact
+            .as_ref()
+            .ok_or_else(|| invalid("sensitive archive source missing"))?;
+        let row = self
+            .artifacts
+            .get(&source.id)
+            .ok_or_else(|| invalid("sensitive archive source revoked"))?;
+        if row.tenant != export.tenant
+            || row.run != export.run
+            || row.digest != source.digest
+            || row.sensitivity != record.custody.sensitivity
+            || row.expires_at != record.custody.expires_at
+            || row.content_type != record.mime
+            || row.expires_at.is_none_or(|expiry| expiry <= now)
+        {
+            return Err(invalid("sensitive archive source authority changed"));
+        }
+        Ok(())
+    }
+
+    fn sources_live(&self, export: &ArchiveExportV1, now: Timestamp) -> bool {
+        self.records
+            .range((export.tenant, export.id, 0)..=(export.tenant, export.id, u64::MAX))
+            .all(|(_, record)| self.source(export, record, now).is_ok())
     }
 
     fn erase(&mut self, tenant: TenantId, export: Uuid) {
@@ -82,6 +247,7 @@ impl ArchiveState {
             }
         }
         for id in &doomed {
+            self.unindex_payloads(tenant, *id);
             if let Some(row) = self.exports.get_mut(&(tenant, *id)) {
                 row.state = ArchiveExportState::Deleted;
                 row.fence = row.fence.saturating_add(1);
@@ -100,7 +266,21 @@ impl crate::ArtifactIndex for MemoryStore {
         if RunRepo::get_metadata(self, row.run).await?.tenant != row.tenant {
             return Err(StoreError::AccessDenied("artifact index tenant mismatch".into()));
         }
-        self.archives.lock().artifacts.insert(row.id, row.clone());
+        let mut state = self.archives.lock();
+        if state.artifacts.get(&row.id).is_some_and(|previous| {
+            previous.tenant != row.tenant
+                || previous.run != row.run
+                || previous.digest != row.digest
+                || previous.sensitivity != row.sensitivity
+                || previous.expires_at != row.expires_at
+                || previous.content_type != row.content_type
+                || previous.size_bytes != row.size_bytes
+        }) {
+            if let Some((tenant, export)) = state.published_artifacts.get(&row.id).copied() {
+                state.erase(tenant, export);
+            }
+        }
+        state.artifacts.insert(row.id, row.clone());
         Ok(())
     }
 
@@ -130,6 +310,9 @@ impl crate::ArtifactIndex for MemoryStore {
                 return Err(StoreError::AccessDenied(
                     "artifact index erasure tenant mismatch".into(),
                 ));
+            }
+            if let Some((tenant, export)) = state.published_artifacts.get(id).copied() {
+                state.erase(tenant, export);
             }
             state.artifacts.remove(id);
         }
@@ -163,12 +346,40 @@ impl ArchiveRepo for MemoryStore {
         }
         let mut state = self.archives.lock();
         if let Some(existing) = state.exports.get(&(export.tenant, export.id)) {
+            if existing.state == ArchiveExportState::Deleted {
+                return Err(StoreError::RetentionDenied(
+                    "archive export permanently erased".into(),
+                ));
+            }
             if super::json(&existing.config)? != super::json(&export.config)? {
                 return Err(invalid("archive configuration changed during recovery"));
             }
             return Ok(());
         }
         state.exports.insert((export.tenant, export.id), export.clone());
+        Ok(())
+    }
+
+    async fn narrow_custody(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        fence: i64,
+        custody: &crawlx_core::archive_catalog::ArchiveCustodyV1,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        scope(tenant)?;
+        let mut state = self.archives.lock();
+        let row = state
+            .exports
+            .get_mut(&(tenant, export))
+            .ok_or(StoreError::LeaseLost)?;
+        writer(row, fence, now)?;
+        row.custody = super::narrowed(row, *custody, now)?;
+        row.expires_at = row.custody.expires_at;
+        if row.custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive {
+            state.unindex_payloads(tenant, export);
+        }
         Ok(())
     }
 
@@ -238,12 +449,9 @@ impl ArchiveRepo for MemoryStore {
             .get(&(tenant, record.export))
             .ok_or_else(|| invalid("archive export missing"))?;
         writer(export, fence, now)?;
+        state.source(export, record, now)?;
         if let Some(existing) = state.records.get(&(tenant, record.export, record.ordinal)) {
-            if existing.record_id != record.record_id
-                || existing.payload_digest != record.payload_digest
-                || existing.target != record.target
-                || existing.length != record.length
-            {
+            if existing != record || state.history.get(&(tenant, record.export, record.ordinal)) != history {
                 return Err(invalid("archive ordinal conflicts with committed shard"));
             }
             return Ok(());
@@ -258,8 +466,14 @@ impl ArchiveRepo for MemoryStore {
                 .ok_or_else(|| invalid("archive record range overflow"))?,
             "application/warc",
             now,
+            record.custody,
         )?;
         if let Some(history) = history {
+            if record.custody.sensitivity != crawlx_core::repo::Sensitivity::Content {
+                return Err(invalid(
+                    "sensitive archive records cannot become validator history",
+                ));
+            }
             history_key(&history.key)?;
             if history.source.export != record.export
                 || history.source.ordinal != record.ordinal
@@ -278,14 +492,29 @@ impl ArchiveRepo for MemoryStore {
                 .get(&(tenant, source.export, source.ordinal))
                 .ok_or_else(|| invalid("archive dependency record missing"))?;
             let baseline_history = state.history.get(&(tenant, source.export, source.ordinal));
-            if source.export == record.export
-                || !live(baseline, now)
-                || baseline.state != ArchiveExportState::Published
-                || super::expires_before(baseline.expires_at, export.expires_at)
-                || baseline_record.dependency.is_some()
-                || baseline_record.payload_digest != record.payload_digest
-                || history.is_none_or(|current| baseline_history.is_none_or(|prior| prior.key != current.key))
-            {
+            if source.export != record.export {
+                state.content_package(baseline, export, now)?;
+            }
+            let payload_compatible = record.payload_key.as_ref().is_some_and(|key| {
+                super::payload::eligible(
+                    export,
+                    baseline,
+                    baseline_record,
+                    key,
+                    &record.payload_digest,
+                    now,
+                ) && (source.export != record.export || source.ordinal < record.ordinal)
+            });
+            let validator_compatible = record.payload_key.is_none()
+                && source.export != record.export
+                && live(baseline, now)
+                && baseline.state == ArchiveExportState::Published
+                && !super::expires_before(baseline.expires_at, export.expires_at)
+                && baseline_record.dependency.is_none()
+                && baseline_record.payload_digest == record.payload_digest
+                && history
+                    .is_some_and(|current| baseline_history.is_some_and(|prior| prior.key == current.key));
+            if !payload_compatible && !validator_compatible {
                 return Err(invalid("archive dependency is incompatible or not durable"));
             }
         }
@@ -299,6 +528,7 @@ impl ArchiveRepo for MemoryStore {
         state
             .records
             .insert((tenant, record.export, record.ordinal), record.clone());
+        state.index_payload(tenant, record.export, record.ordinal);
         if let Some(history) = history {
             state
                 .history
@@ -335,6 +565,46 @@ impl ArchiveRepo for MemoryStore {
             .collect())
     }
 
+    async fn payload_source(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        key: &crawlx_core::archive_catalog::ArchivePayloadKeyV1,
+        payload_digest: &str,
+        now: Timestamp,
+    ) -> Result<Option<ArchiveRecordV1>, StoreError> {
+        scope(tenant)?;
+        let state = self.archives.lock();
+        let Some(current) = state.exports.get(&(tenant, export)) else {
+            return Ok(None);
+        };
+        if let Some((source, ordinal)) = state
+            .local_payloads
+            .get(&(tenant, export))
+            .and_then(|rows| super::payload::candidate(rows, current, key, payload_digest, now))
+        {
+            if let Some(record) = state
+                .records
+                .get(&(tenant, source, ordinal))
+                .filter(|record| super::payload::eligible(current, current, record, key, payload_digest, now))
+            {
+                return Ok(Some(record.clone()));
+            }
+        }
+        if current.config.dedupe != crawlx_core::archive::ArchiveDedupe::Tenant {
+            return Ok(None);
+        }
+        let candidate = state
+            .published_payloads
+            .get(&tenant)
+            .and_then(|rows| super::payload::candidate(rows, current, key, payload_digest, now));
+        Ok(candidate.and_then(|(source, ordinal)| {
+            let owner = state.exports.get(&(tenant, source))?;
+            let record = state.records.get(&(tenant, source, ordinal))?;
+            super::payload::eligible(current, owner, record, key, payload_digest, now).then(|| record.clone())
+        }))
+    }
+
     async fn publish(
         &self,
         tenant: TenantId,
@@ -353,14 +623,18 @@ impl ArchiveRepo for MemoryStore {
             .ok_or(StoreError::LeaseLost)?;
         writer(row, fence, now)?;
         publish_bounds(row, manifest)?;
+        state.payload_sources_live(row, now)?;
+        if !state.sources_live(row, now) {
+            return Err(invalid("sensitive archive source revoked or changed"));
+        }
         let expected = if row.config.format == crawlx_core::archive::ArchiveFormat::Warc {
             "application/warc"
         } else {
             "application/wacz+zip"
         };
-        state.artifact(row, artifact, 1, expected, now)?;
+        state.artifact(row, artifact, 1, expected, now, row.custody)?;
         if let Some(index) = index {
-            state.artifact(row, index, 1, "application/cdxj", now)?;
+            state.artifact(row, index, 1, "application/cdxj", now, row.custody)?;
         }
         if (row.config.format == crawlx_core::archive::ArchiveFormat::Warc) != index.is_some() {
             return Err(invalid("archive index does not match export format"));
@@ -373,6 +647,7 @@ impl ArchiveRepo for MemoryStore {
         row.index = index.cloned();
         row.manifest = Some(manifest.clone());
         row.state = ArchiveExportState::Published;
+        state.publish_payloads(tenant, export);
         Ok(())
     }
 
@@ -392,10 +667,11 @@ impl ArchiveRepo for MemoryStore {
                 *owner == tenant
                     && history.key == *key
                     && (history.etag.is_some() || history.last_modified.is_some())
-                    && state
-                        .exports
-                        .get(&(*owner, *export))
-                        .is_some_and(|row| live(row, now) && row.state == ArchiveExportState::Published)
+                    && state.exports.get(&(*owner, *export)).is_some_and(|row| {
+                        live(row, now)
+                            && row.state == ArchiveExportState::Published
+                            && row.custody.sensitivity == crawlx_core::repo::Sensitivity::Content
+                    })
                     && state.records.contains_key(&(*owner, *export, *ordinal))
             })
             .max_by_key(|(_, history)| history.captured_at)
@@ -436,6 +712,7 @@ impl ArchiveRepo for MemoryStore {
             row.tenant == tenant
                 && live(row, now)
                 && row.state == ArchiveExportState::Published
+                && state.sources_live(row, now)
                 && (row.artifact.as_ref() == Some(artifact)
                     || row.index.as_ref() == Some(artifact)
                     || state
@@ -570,6 +847,7 @@ impl ArchiveRepo for MemoryStore {
         writer(row, fence, now)?;
         row.state = ArchiveExportState::Failed;
         row.failure = Some(failure);
+        state.unindex_payloads(tenant, export);
         Ok(())
     }
     async fn traffic_keyset(

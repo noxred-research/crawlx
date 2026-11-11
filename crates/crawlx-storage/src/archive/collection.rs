@@ -6,6 +6,7 @@
 use super::{
     cdxj,
     resolver::{Catalog, RecordLocation, ResolvedPayload},
+    staging::StagedFile,
     wacz, warc, ArchiveError, Limits,
 };
 use crawlx_core::TenantId;
@@ -139,11 +140,11 @@ pub(crate) fn open_confined_regular_at(root: &File, relative: &str) -> std::io::
     Ok(file)
 }
 #[cfg(target_os = "linux")]
-fn confined_file(root: &Path, relative: &str) -> Result<File, ArchiveError> {
-    open_confined_regular(root, relative).map_err(ArchiveError::Io)
+fn confined_file(root: &Path, relative: &str, limits: Limits) -> Result<File, ArchiveError> {
+    super::publication::open_complete_at(&open_confined_root(root)?, relative, limits)
 }
 #[cfg(not(target_os = "linux"))]
-fn confined_file(_root: &Path, _relative: &str) -> Result<File, ArchiveError> {
+fn confined_file(_root: &Path, _relative: &str, _limits: Limits) -> Result<File, ArchiveError> {
     Err(ArchiveError::CapabilityUnavailable(
         "root_confined_dependency_requires_linux_openat2",
     ))
@@ -178,7 +179,7 @@ impl ApprovedLocalDependency {
         if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(ArchiveError::Invalid("dependency requires an exact SHA-256 pin"));
         }
-        let mut file = confined_file(root, relative)?;
+        let mut file = confined_file(root, relative, limits)?;
         let (hash, seal) = file_hash(&mut file, limits.total_bytes)?;
         if !hash[7..].eq_ignore_ascii_case(expected) {
             return Err(ArchiveError::Invalid("dependency file fixity mismatch"));
@@ -357,7 +358,9 @@ impl ArchiveCollection {
             ));
         }
         let budget = Self::primary_budget(tenant, &dependencies, limits)?;
-        let mut primary = regular_primary(primary)?;
+        let mut primary_limits = limits;
+        primary_limits.total_bytes = budget;
+        let mut primary = regular_primary(primary, primary_limits)?;
         check_native_tenant(&mut primary, tenant, limits)?;
         let (hash, seal) = file_hash(&mut primary, budget)?;
         Self::build(primary, hash, seal, tenant, dependencies, limits)
@@ -654,17 +657,13 @@ impl ArchiveCollection {
 
     /// Build a self-contained WACZ with every physical dependency member and regenerated indexes.
     ///
-    /// The caller supplies private retention-approved scratch storage and atomically publishes the
-    /// returned completed output. Physical WARC members remain intact; no chronological event is
-    /// deduplicated. Plain WARC records gain independent gzip framing without rewriting their bytes.
+    /// The caller atomically publishes the completed output. All temporary sources are anonymous.
+    /// Physical WARC members remain intact; no chronological event is deduplicated.
+    /// Plain WARC records gain independent gzip framing without rewriting their bytes.
     ///
     /// # Errors
     /// Refuses unapproved content, missing tenant authority, limits, source mutation or I/O failures.
-    pub fn write_closed_wacz<W: Write + Seek>(
-        &mut self,
-        output: W,
-        scratch: &Path,
-    ) -> Result<W, ArchiveError> {
+    pub fn write_closed_wacz<W: Write + Seek>(&mut self, output: W) -> Result<W, ArchiveError> {
         if !self.retention_approved() {
             return Err(ArchiveError::CapabilityUnavailable(
                 "dependency_content_not_retention_approved",
@@ -673,12 +672,12 @@ impl ArchiveCollection {
         let tenant = self.tenant.ok_or(ArchiveError::Invalid(
             "closed dependency import requires tenant authority",
         ))?;
-        let warc_path = scratch.join("data.warc.gz");
-        let index_path = scratch.join("index.cdxj");
-        let pages_path = scratch.join("pages.jsonl");
-        let closure_path = scratch.join("dependency-closure.json");
-        let mut data = File::create(&warc_path)?;
-        let mut pages = File::create(&pages_path)?;
+        let mut data_file = StagedFile::new()?;
+        let mut pages_file = StagedFile::new()?;
+        let mut index_file = StagedFile::new()?;
+        let mut closure_file = StagedFile::new()?;
+        let mut data = data_file.file_mut();
+        let mut pages = pages_file.file_mut();
         pages.write_all(b"{\"format\":\"json-pages-1.0\",\"id\":\"pages\",\"title\":\"Imported closed archive resources\"}\n")?;
         let mut sorter = cdxj::Sorter::new()?;
         let records = self.records();
@@ -730,9 +729,9 @@ impl ArchiveCollection {
         }
         data.flush()?;
         pages.flush()?;
-        sorter.finish(&mut File::create(&index_path)?)?;
+        sorter.finish(index_file.file_mut())?;
         serde_json::to_writer(
-            File::create(&closure_path)?,
+            closure_file.file_mut(),
             &serde_json::json!({"schemaVersion":1,"tenant":tenant,
             "complete":false,"sources":self.sources.iter().map(|source| serde_json::json!({"hash":source.hash,"bytes":source.bytes})).collect::<Vec<_>>(),
             "omissions":["source_package_metadata_not_copied","original_capture_completeness_unproven"],"networkAccess":false}),
@@ -745,10 +744,13 @@ impl ArchiveCollection {
         wacz::write(
             output,
             &[
-                ("archive/data.warc.gz".into(), warc_path),
-                ("indexes/index.cdxj".into(), index_path),
-                ("pages/pages.jsonl".into(), pages_path),
-                ("crawlx/dependency-closure.json".into(), closure_path),
+                ("archive/data.warc.gz".into(), data_file.path().to_owned()),
+                ("indexes/index.cdxj".into(), index_file.path().to_owned()),
+                ("pages/pages.jsonl".into(), pages_file.path().to_owned()),
+                (
+                    "crawlx/dependency-closure.json".into(),
+                    closure_file.path().to_owned(),
+                ),
             ],
             &warc::date(created),
             self.limits,
@@ -778,23 +780,12 @@ fn copy_member<R: Read + Seek, W: Write>(
     Ok(())
 }
 
-#[cfg(unix)]
-fn regular_primary(path: &Path) -> Result<File, ArchiveError> {
-    use rustix::fs::{open, Mode, OFlags};
-    let fd = open(
-        path,
-        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|error| ArchiveError::Io(std::io::Error::from(error)))?;
-    let file = File::from(fd);
-    if !file.metadata()?.is_file() {
-        return Err(ArchiveError::Invalid("primary archive is not a regular file"));
-    }
-    Ok(file)
+#[cfg(target_os = "linux")]
+fn regular_primary(path: &Path, limits: Limits) -> Result<File, ArchiveError> {
+    super::publication::open_complete_file(path, limits)
 }
-#[cfg(not(unix))]
-fn regular_primary(_path: &Path) -> Result<File, ArchiveError> {
+#[cfg(not(target_os = "linux"))]
+fn regular_primary(_path: &Path, _limits: Limits) -> Result<File, ArchiveError> {
     Err(ArchiveError::CapabilityUnavailable(
         "safe_regular_archive_file_authority_unavailable",
     ))

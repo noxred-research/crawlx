@@ -5,8 +5,8 @@
 //! before the session acts again, so the stored `interactions.*` counters equal the journal
 //! counts once the run is recovered and finished (`crawlx_bench::trail` `counter_mismatch`).
 //!
-//! * `a_recovered_session_re_derives_*`: the dead holder's journal rows are written directly
-//!   (T2 committed, nothing counted), on the in-memory store and on PostgreSQL.
+//! * `a_recovered_session_re_derives_*`: the dead holder's journal rows and one completed
+//!   browser URL are written directly (committed, nothing counted), on memory and PostgreSQL.
 //! * `a_kill_between_t2_and_the_counter_flush_*` (`--features chaos`): a real worker is
 //!   killed at the `after_outcome_before_counter_flush` failpoint, the same window the
 //!   SIGKILL drill of `crawlx-cli/tests/chaos.rs` hits.
@@ -227,7 +227,7 @@ fn outcome(status: ActionStatus) -> OutcomeRecord {
     }
 }
 
-/// The previous holder claimed the session, committed T2 for `outcomes`, journaled one more
+/// The previous holder published a browser URL, committed T2 for `outcomes`, journaled one more
 /// intent and died: none of it reached `crawl_runs.counters`.
 async fn dead_holder(stores: &Stores, run: CrawlRunId, outcomes: &[ActionStatus]) -> SessionId {
     let scheduler = Scheduler::new(Arc::clone(&stores.leases));
@@ -237,6 +237,30 @@ async fn dead_holder(stores: &Stores, run: CrawlRunId, outcomes: &[ActionStatus]
         .unwrap()
         .unwrap();
     let session = lease.session.id;
+    stores
+        .runs
+        .set_status(run, RunStatus::Running, None)
+        .await
+        .unwrap();
+    let url = testkit::canonical_url("https://example.test/committed-before-kill");
+    stores.frontier.discover(run, &url, 1, None, None).await.unwrap();
+    let (entry, fence) = stores
+        .frontier
+        .lease_batch_fenced(run, lease.worker, 1)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    stores
+        .frontier
+        .complete_fenced(
+            entry.id,
+            fence,
+            crawlx_core::repo::FrontierStatus::Succeeded,
+            None,
+        )
+        .await
+        .unwrap();
     let cluster = StateClusterId::new();
     let epoch = ObservationEpoch {
         navigation_seq: 1,
@@ -280,6 +304,19 @@ async fn assert_counters_match_the_journal(stores: &Stores, run: CrawlRunId) {
         "interactions.unknown_outcome: {stored:?} vs {derived:?}"
     );
     assert!(stored.interactions.invariants_hold(), "{stored:?}");
+    let succeeded = stores
+        .frontier
+        .list(run)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|entry| entry.status == crawlx_core::repo::FrontierStatus::Succeeded)
+        .count();
+    assert_eq!(
+        stored.urls.succeeded,
+        u64::try_from(succeeded).unwrap(),
+        "browser URL counters must include the dead holder's committed row"
+    );
 }
 
 async fn recovered_session_re_derives_its_counters(backing: Backing) {

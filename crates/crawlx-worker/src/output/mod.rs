@@ -7,7 +7,7 @@
 //! * [`dsl`] – the `-mdc/-fdc` condition language over the JSONL record.
 //! * [`store_fields`] – per-host wordlists.
 //! * [`jsonl`] – one request/response record per page.
-//! * [`stored`] – `-sr/-srd` raw request/response files and their `index.txt`.
+//! * [`stored`] – labelled `-sr/-srd` diagnostic exchanges, fidelity facts and append-only index.
 //! * [`text_file`] – the `-o FILE` writer and the `-ncb` naming rule.
 //! * [`errlog`] – the `-elog` error log.
 //! * [`Exporter`] – ties them together: text (one line per field/template value) or JSONL.
@@ -103,7 +103,7 @@ pub struct ExportStats {
 pub struct PageText {
     /// The response body.
     pub body: Option<String>,
-    /// The raw response text (status line, headers, blank line, body; `PageContent::raw`).
+    /// Compatibility raw response text; this is not an attestation of original wire bytes.
     pub raw: Option<String>,
 }
 
@@ -244,6 +244,11 @@ impl Exporter {
         let mut record = Record::from_page(page, body);
         if let Some(response) = record.response.as_mut() {
             response.raw = text.raw;
+            if response.raw.is_some() {
+                if let Some(fidelity) = &mut record.fidelity {
+                    fidelity.response_raw.availability = stored::Availability::Available;
+                }
+            }
         }
         if self.knowledge_base {
             record.attach_knowledgebase(page);
@@ -267,40 +272,49 @@ impl Exporter {
         if let Some(response) = record.response.as_mut() {
             if !self.emit_body() {
                 response.body = None;
+                if let Some(fidelity) = &mut record.fidelity {
+                    fidelity.omit("response.body");
+                }
             }
             if self.omit_raw {
                 response.raw = None;
+                if let Some(fidelity) = &mut record.fidelity {
+                    fidelity.omit("response.raw");
+                }
             }
         }
         if self.omit_raw {
             if let Some(request) = record.request.as_mut() {
                 request.raw = None;
+                if let Some(fidelity) = &mut record.fidelity {
+                    fidelity.omit("request.raw");
+                }
+            }
+        }
+        if self.omit_body {
+            if let Some(request) = &mut record.request {
+                request.body = None;
+                if let Some(fidelity) = &mut record.fidelity {
+                    fidelity.omit("request.body");
+                }
             }
         }
         record.exclude_fields(&self.exclude_fields);
     }
 
-    /// Write the raw request/response of `record` (`-sr`) and set
-    /// `response.stored_response_path`. Returns whether a file was written.
+    /// Write the labelled diagnostic exchange (`-sr`) without replacing an earlier export.
+    /// Set `response.stored_response_path`. Returns whether a file was written.
     fn store_response(&self, url: &Url, record: &mut Record) -> Result<bool, OutputError> {
         let Some(stored) = &self.stored_responses else {
             return Ok(false);
         };
-        let Some(response) = record.response.as_mut() else {
+        if record.response.is_none() {
             return Ok(false);
-        };
-        let default_request = Request::default();
-        let request = record.request.as_ref().unwrap_or(&default_request);
-        let request_raw = request
-            .raw
-            .clone()
-            .unwrap_or_else(|| stored::synthesize_request(url, request));
-        let response_raw = response
-            .raw
-            .clone()
-            .unwrap_or_else(|| stored::synthesize_response(response));
-        let path = stored.store(url, response.status_code, &request_raw, &response_raw)?;
-        response.stored_response_path = Some(path.to_string_lossy().into_owned());
+        }
+        let path = stored.store_record(url, record)?;
+        if let Some(response) = record.response.as_mut() {
+            response.stored_response_path = Some(path.to_string_lossy().into_owned());
+        }
         Ok(true)
     }
 
@@ -890,10 +904,10 @@ mod tests {
         let path = v["response"]["stored_response_path"].as_str().unwrap();
         assert!(std::path::Path::new(path).is_absolute());
         let file = std::fs::read_to_string(path).unwrap();
-        assert!(
-            file.starts_with("https://e.com/p\n\n\nGET /p HTTP/1.1\r\n\r\n\n\nHTTP/1.1 200 OK"),
-            "{file}"
-        );
+        assert!(file.starts_with("https://e.com/p\n\n\n# request:"), "{file}");
+        assert!(file.contains("representation=Unknown"), "{file}");
+        assert!(file.contains("GET /p HTTP/1.1\r\n\r\n"), "{file}");
+        assert!(file.contains("HTTP/1.1 200 OK"), "{file}");
         assert!(file.contains("hello"));
         assert!(
             v["response"].get("body").is_none(),
@@ -906,5 +920,132 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn fidelity_survives_payload_omission_and_field_projection() {
+        let p = page(
+            "https://e.com/p",
+            json!({
+                "request": {"body": "supplied request", "raw": "supplied request diagnostic"},
+                "output_fidelity": {
+                    "response_body": {"representation": "decoded_text", "binary_lossy": true, "truncated": true},
+                    "response_raw": {"representation": "reconstructed", "redacted": true, "binary_lossy": true, "truncated": true}
+                }
+            }),
+        );
+        let exp = Exporter {
+            format: ExportFormat::Jsonl,
+            include_body: true,
+            ..Exporter::default()
+        };
+        let text = PageText::default()
+            .with_body("\u{fffd}")
+            .with_raw("diagnostic prefix");
+        let full = serde_json::to_value(exp.record_with(&p, text.clone()).unwrap()).unwrap();
+        assert_eq!(
+            full["fidelity"]["response_body"]["representation"],
+            "decoded_text"
+        );
+        assert_eq!(full["fidelity"]["response_raw"]["binary_lossy"], true);
+        assert_eq!(full["fidelity"]["response_raw"]["truncated"], true);
+        let omitted = Exporter {
+            omit_body: true,
+            omit_raw: true,
+            ..exp
+        };
+        let value = serde_json::to_value(omitted.record_with(&p, text.clone()).unwrap()).unwrap();
+        for part in ["request", "response"] {
+            assert!(value[part].get("body").is_none());
+            assert!(value[part].get("raw").is_none());
+            for field in ["body", "raw"] {
+                assert_eq!(
+                    value["fidelity"][format!("{part}_{field}")]["availability"],
+                    "omitted"
+                );
+            }
+        }
+        assert_eq!(value["fidelity"]["response_raw"]["truncated"], true);
+        let excluded = Exporter {
+            exclude_fields: vec!["raw".to_owned(), "body".to_owned(), "status_code".to_owned()],
+            ..omitted
+        };
+        let value = serde_json::to_value(excluded.record_with(&p, text).unwrap()).unwrap();
+        assert!(value["response"].get("status_code").is_none());
+        assert!(value["fidelity"]["omitted_fields"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("status_code")));
+    }
+
+    #[test]
+    fn available_empty_unavailable_and_policy_omitted_are_distinct_end_to_end() {
+        let mut p = page("https://e.com/no-status", json!({}));
+        p.status = 0;
+        let exp = Exporter {
+            format: ExportFormat::Jsonl,
+            include_body: true,
+            ..Exporter::default()
+        };
+        let unavailable = serde_json::to_value(exp.record(&p, None).unwrap()).unwrap();
+        assert!(unavailable["response"].get("status_code").is_none());
+        assert!(unavailable["response"].get("body").is_none());
+        assert_eq!(
+            unavailable["fidelity"]["response_body"]["availability"],
+            "unavailable"
+        );
+        assert!(unavailable["fidelity"]["response_body"]["truncated"].is_null());
+        let empty = serde_json::to_value(exp.record(&p, Some(String::new())).unwrap()).unwrap();
+        assert_eq!(empty["response"]["body"], "");
+        assert_eq!(empty["fidelity"]["response_body"]["availability"], "available");
+        let omitted = Exporter {
+            omit_body: true,
+            ..exp
+        };
+        let value = serde_json::to_value(omitted.record(&p, None).unwrap()).unwrap();
+        assert!(value["response"].get("body").is_none());
+        assert_eq!(value["fidelity"]["response_body"]["availability"], "omitted");
+    }
+
+    #[test]
+    fn repeated_stored_export_keeps_payload_and_fidelity_before_jsonl_omission() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = page(
+            "https://e.com/p",
+            json!({
+                "output_fidelity": {
+                    "response_body": {"representation": "decoded_text", "truncated": true, "binary_lossy": true}
+                }
+            }),
+        );
+        let exp = Exporter {
+            format: ExportFormat::Jsonl,
+            stored_responses: Some(StoredResponses::new(dir.path(), false).unwrap()),
+            omit_body: true,
+            omit_raw: true,
+            ..Exporter::default()
+        };
+        let mut paths = Vec::new();
+        for body in ["first prefix", "second prefix"] {
+            let mut out = Vec::new();
+            exp.export_pages_with([&p], |_| PageText::default().with_body(body), &mut out)
+                .unwrap();
+            let value: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(value["fidelity"]["response_body"]["availability"], "omitted");
+            let path = value["response"]["stored_response_path"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let file = std::fs::read_to_string(&path).unwrap();
+            assert!(file.contains(body));
+            assert!(file.contains("representation=Reconstructed"));
+            assert!(file.contains("truncated=true"));
+            assert!(file.contains("binary_lossy=true"));
+            paths.push(path);
+        }
+        assert_ne!(paths[0], paths[1]);
+        assert!(std::fs::read_to_string(&paths[0])
+            .unwrap()
+            .contains("first prefix"));
     }
 }

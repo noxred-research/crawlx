@@ -4,6 +4,8 @@
 use crawlx_core::extraction::{
     ExtractionPolicyV1, ParserPipelineV1, PipelineRouteV1, PipelineStageV1, StageStatusV1, PIPELINE_FORMATS,
 };
+use crawlx_core::hash::Digest;
+use crawlx_extract::decode::{DecodeOptions, EncodingSource};
 use crawlx_extract::parse::{supported_formats, FormatKind, ParseFormat};
 use crawlx_extract::pipeline::{
     ParserPipeline, PipelineContent, PipelineError, PipelineInput, PipelineOutput,
@@ -377,6 +379,14 @@ fn utf16_markup_is_decoded_and_invalid_utf8_is_reported() {
         output.stage(PipelineStageV1::DecodeInput).unwrap().status,
         StageStatusV1::Completed
     );
+    let PipelineContent::Page(document) = &output.content else {
+        panic!("page route expected");
+    };
+    assert!(document.decode.is_none());
+    assert_eq!(
+        document.raw_html_digest,
+        Digest::of("crawlx.extract.raw_html.v1", &utf16)
+    );
 
     let mut lossy = PAGE.as_bytes().to_vec();
     lossy.splice(lossy.len() - 20..lossy.len() - 20, [0xFF, 0xFE, 0xFD]);
@@ -388,6 +398,169 @@ fn utf16_markup_is_decoded_and_invalid_utf8_is_reported() {
         )
         .unwrap();
     assert!(output.warnings.iter().any(|w| w.contains("replaced")));
+}
+
+#[test]
+fn declared_page_charset_preserves_text_report_and_original_digest() {
+    let source = b"<html><head><title>Caf\xe9 notice</title></head><body>\
+        <p>The caf\xe9 opens daily for neighbors, serving warm drinks beside the harbor.</p>\
+        </body></html>";
+    let page_url = url();
+    for options in [
+        ExtractOptions {
+            decode: Some(DecodeOptions::with_charset("windows-1252")),
+            ..ExtractOptions::default()
+        },
+        ExtractOptions {
+            decode: Some(DecodeOptions::default()),
+            content_type: Some("text/html; charset=ISO-8859-1".to_owned()),
+            ..ExtractOptions::default()
+        },
+    ] {
+        let output = pipeline()
+            .run(
+                PipelineInput::new(source)
+                    .with_content_type("text/html")
+                    .with_page_url(&page_url)
+                    .with_page_options(&options),
+            )
+            .unwrap();
+        assert_eq!(output.title(), Some("Café notice"));
+        assert!(output.text().contains("café opens daily"), "{}", output.text());
+        assert!(output.warnings.is_empty());
+        assert_eq!(
+            output.stage(PipelineStageV1::DecodeInput).unwrap().status,
+            StageStatusV1::Completed
+        );
+        let PipelineContent::Page(document) = output.content else {
+            panic!("page route expected");
+        };
+        let report = document.decode.as_ref().unwrap();
+        assert_eq!(report.encoding, "windows-1252");
+        assert_eq!(report.source, EncodingSource::Declared);
+        assert_eq!(report.bom_len, 0);
+        assert_eq!(report.issue_count, 0);
+        assert_eq!(
+            document.raw_html_digest,
+            Digest::of("crawlx.extract.raw_html.v1", source)
+        );
+    }
+}
+
+#[test]
+fn page_bom_survives_decoding_and_wins_over_declared_charset() {
+    let source = "<html><head><title>Café notice</title></head><body>\
+        <p>The café opens daily for neighbors, serving warm drinks beside the harbor.</p>\
+        </body></html>";
+    let mut utf8 = vec![0xEF, 0xBB, 0xBF];
+    utf8.extend_from_slice(source.as_bytes());
+    let mut utf16 = vec![0xFF, 0xFE];
+    for unit in source.encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    let options = ExtractOptions {
+        decode: Some(DecodeOptions::with_charset("windows-1252")),
+        content: Some(ExtractionPolicyV1::default()),
+        ..ExtractOptions::default()
+    };
+    let project = |value: &str| value.contains("café").then(|| value.replace("café", "tea room"));
+    let page_url = url();
+    for (bytes, encoding, bom_len) in [(utf8, "UTF-8", 3), (utf16, "UTF-16LE", 2)] {
+        let output = pipeline()
+            .run(
+                PipelineInput::new(&bytes)
+                    .with_content_type("text/html")
+                    .with_page_url(&page_url)
+                    .with_page_options(&options)
+                    .with_projection(&project),
+            )
+            .unwrap();
+        assert!(
+            output.text().contains("tea room opens daily"),
+            "{}",
+            output.text()
+        );
+        assert!(output.warnings.is_empty());
+        let PipelineContent::Page(document) = output.content else {
+            panic!("page route expected");
+        };
+        let report = document.decode.as_ref().unwrap();
+        assert_eq!(report.encoding, encoding);
+        assert_eq!(report.source, EncodingSource::Bom);
+        assert_eq!(report.bom_len, bom_len);
+        assert_eq!(report.issue_count, 0);
+        assert!(report.declaration_conflict);
+        assert_eq!(
+            document.raw_html_digest,
+            Digest::of("crawlx.extract.raw_html.v1", &bytes)
+        );
+        assert_ne!(
+            document.raw_html_digest,
+            Digest::of("crawlx.extract.raw_html.v1", source.as_bytes())
+        );
+    }
+}
+
+#[test]
+fn declared_charset_applies_before_pipeline_depth_check() {
+    let source = format!(
+        "<html><body>{}deep content{}</body></html>",
+        "<div>".repeat(30),
+        "</div>".repeat(30)
+    );
+    let bytes: Vec<u8> = source.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let options = ExtractOptions {
+        decode: Some(DecodeOptions::with_charset("UTF-16LE")),
+        ..ExtractOptions::default()
+    };
+    let page_url = url();
+    let input = PipelineInput::new(&bytes)
+        .with_content_type("text/html")
+        .with_page_url(&page_url)
+        .with_page_options(&options);
+    assert_limit(
+        limited(|spec| spec.limits.max_depth = 10).run(input).unwrap_err(),
+        "depth",
+    );
+    let output = pipeline().run(input).unwrap();
+    assert!(output.text().contains("deep content"));
+}
+
+#[test]
+fn malformed_page_bytes_keep_original_diagnostic_offsets() {
+    let prefix = b"<html><body><p>Visible text before ";
+    let mut bytes = prefix.to_vec();
+    bytes.push(0xFF);
+    bytes.extend_from_slice(b" and after one malformed byte in the original source.</p></body></html>");
+    let options = ExtractOptions {
+        decode: Some(DecodeOptions::default()),
+        ..ExtractOptions::default()
+    };
+    let page_url = url();
+    let output = pipeline()
+        .run(
+            PipelineInput::new(&bytes)
+                .with_content_type("text/html")
+                .with_page_url(&page_url)
+                .with_page_options(&options),
+        )
+        .unwrap();
+    assert!(output.text().contains("before \u{FFFD} and after"));
+    assert_eq!(output.warnings.len(), 1);
+    let PipelineContent::Page(document) = output.content else {
+        panic!("page route expected");
+    };
+    let report = document.decode.as_ref().unwrap();
+    assert_eq!(report.encoding, "UTF-8");
+    assert_eq!(report.source, EncodingSource::Default);
+    assert_eq!(report.bom_len, 0);
+    assert_eq!(report.issue_count, 1);
+    assert_eq!(report.issues[0].offset, prefix.len());
+    assert_eq!(report.issues[0].length, 1);
+    assert_eq!(
+        document.raw_html_digest,
+        Digest::of("crawlx.extract.raw_html.v1", &bytes)
+    );
 }
 
 #[test]

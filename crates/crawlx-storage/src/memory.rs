@@ -7,6 +7,12 @@
 //! not a performance model. Time comes from an injected [`Clock`], so tests drive
 //! lease expiry with `ManualClock`.
 //!
+//! ZDR HEAD events and receipts keep only opaque custody pointers. Observation
+//! bytes and receipt digests share the configured delivery buffer's first-insert TTL;
+//! reads fail closed after expiry, custody loss, or authorization revocation.
+//! Live authorization comes from the API's shared records or a local run's admitted
+//! source. Backend writers own the purge barrier through cancellation and rollback.
+//!
 //! [`InMemoryJournal`] is a thin `ActionJournal`-only handle over a store, for
 //! tests that only care about the T1/T2 journal.
 
@@ -50,6 +56,8 @@ use std::time::Duration;
 
 #[path = "adaptive_selectors.rs"]
 pub mod adaptive_selectors;
+#[path = "feed_finalization.rs"]
+mod feed_finalization;
 #[path = "request_memory.rs"]
 mod request_memory;
 
@@ -65,6 +73,8 @@ struct SessionRow {
 #[derive(Clone)]
 struct FrontierRow {
     e: FrontierEntry,
+    // Set only by the fenced session-observation transaction; never inferred from status.
+    observed: bool,
     key: Digest,
     strategy_score: u32,
     owner: Option<WorkerId>,
@@ -140,6 +150,8 @@ pub struct MemoryNetworkEpoch {
 #[derive(Default)]
 struct Inner {
     checkpoint_keys: Option<Arc<dyn CheckpointKeys>>,
+    pending_purges: BTreeMap<CrawlRunId, PendingMemoryPurge>,
+    head_deliveries: BTreeMap<CrawlRunId, Arc<crate::DeliveryBuffer>>,
     runs: HashMap<CrawlRunId, CrawlRun>,
     replay_specs: HashMap<CrawlRunId, serde_json::Value>,
     idempotency: HashMap<(TenantId, String), (CrawlRunId, Digest)>,
@@ -171,6 +183,32 @@ struct Inner {
     next_dataset_action: i64,
 }
 
+/// Current authorization authority for memory HEAD disclosure and replay.
+///
+/// Implementations must read their live record source on every call, validate the
+/// admitted immutable body binding, and never retain a repository cycle.
+#[async_trait]
+pub trait HeadResponseAuthorizer: Send + Sync {
+    /// Authorize the run's currently bound record at disclosure time.
+    ///
+    /// # Errors
+    /// Returns access denial for missing, changed, revoked, unverified or inactive
+    /// records, or the live source's storage error.
+    async fn authorize(
+        &self,
+        run: CrawlRunId,
+        tenant: TenantId,
+        record: crawlx_core::AuthorizationRecordId,
+        now: Timestamp,
+    ) -> Result<(), StoreError>;
+}
+
+#[derive(Default)]
+struct HeadAuthorities {
+    default: Option<Arc<dyn HeadResponseAuthorizer>>,
+    runs: BTreeMap<CrawlRunId, Arc<dyn HeadResponseAuthorizer>>,
+}
+
 /// All repositories in process memory.
 pub struct MemoryStore {
     inner: Mutex<Inner>,
@@ -179,6 +217,8 @@ pub struct MemoryStore {
     url_ttl: Duration,
     admission: Mutex<AdmissionMode>,
     dataset_delivery: Mutex<Option<Arc<crate::DeliveryBuffer>>>,
+    head_custody: Arc<tokio::sync::RwLock<()>>,
+    head_authorities: Mutex<HeadAuthorities>,
     pub(crate) archives: Mutex<crate::archive_catalog::ArchiveState>,
     pub(crate) worker_registry: Mutex<crate::admin::WorkerRegistryState>,
 }
@@ -217,6 +257,8 @@ impl MemoryStore {
             url_ttl: DEFAULT_URL_BATCH_TTL,
             admission: Mutex::new(AdmissionMode::Open),
             dataset_delivery: Mutex::new(None),
+            head_custody: Arc::new(tokio::sync::RwLock::new(())),
+            head_authorities: Mutex::new(HeadAuthorities::default()),
             archives: Mutex::new(crate::archive_catalog::ArchiveState::default()),
             worker_registry: Mutex::new(crate::admin::WorkerRegistryState::default()),
         }
@@ -247,6 +289,125 @@ impl MemoryStore {
     /// Attach the same volatile authority used by the artifact sink.
     pub fn set_dataset_delivery(&self, buffer: Arc<crate::DeliveryBuffer>) {
         *self.dataset_delivery.lock() = Some(buffer);
+    }
+
+    /// Attach the live API authorization authority, preferred over local sources.
+    pub fn set_head_response_authorizer(&self, authority: Arc<dyn HeadResponseAuthorizer>) {
+        self.head_authorities.lock().default = Some(authority);
+    }
+
+    /// Attach a local run's live source and immutable admission binding.
+    ///
+    /// The authority must not own this store, directly or through another repository.
+    /// The first admitted binding wins across recovery and re-admission.
+    pub fn set_run_head_response_authorizer(
+        &self,
+        run: CrawlRunId,
+        authority: Arc<dyn HeadResponseAuthorizer>,
+    ) {
+        self.head_authorities.lock().runs.entry(run).or_insert(authority);
+    }
+
+    async fn check_head_authority(&self, run: CrawlRunId) -> Result<(), StoreError> {
+        let (tenant, record) = {
+            let g = self.inner.lock();
+            if g.pending_purges.contains_key(&run) {
+                return Err(head_unavailable());
+            }
+            let owner = g.runs.get(&run).ok_or_else(head_unavailable)?;
+            if crate::tenant::current().is_some_and(|tenant| tenant != owner.tenant)
+                || owner.terminal_reason == Some(TerminalReason::AuthorizationRevoked)
+            {
+                return Err(StoreError::AccessDenied("HEAD response authority revoked".into()));
+            }
+            (owner.tenant, owner.config.safety.authorization_record_ref)
+        };
+        if let Some(record) = record {
+            let authority = {
+                let sources = self.head_authorities.lock();
+                sources
+                    .default
+                    .as_ref()
+                    .or_else(|| sources.runs.get(&run))
+                    .cloned()
+            }
+            .ok_or_else(|| {
+                StoreError::AccessDenied("HEAD response authorization source unavailable".into())
+            })?;
+            authority.authorize(run, tenant, record, self.clock.now()).await?;
+            let g = self.inner.lock();
+            if g.pending_purges.contains_key(&run) {
+                return Err(head_unavailable());
+            }
+            let owner = g.runs.get(&run).ok_or_else(head_unavailable)?;
+            if owner.tenant != tenant
+                || owner.config.safety.authorization_record_ref != Some(record)
+                || owner.terminal_reason == Some(TerminalReason::AuthorizationRevoked)
+            {
+                return Err(StoreError::AccessDenied("HEAD response authority changed".into()));
+            }
+        }
+        Ok(())
+    }
+
+    async fn read_head_custody(
+        &self,
+        run: CrawlRunId,
+        custody: &HeadEventCustody,
+    ) -> Result<HeadVolatilePayload<serde_json::Value>, StoreError> {
+        self.check_head_authority(run).await?;
+        let buffer = {
+            let g = self.inner.lock();
+            if g.pending_purges.contains_key(&run) {
+                return Err(head_unavailable());
+            }
+            let owner = g.runs.get(&run).ok_or_else(head_unavailable)?;
+            head_source_live(owner, self.clock.now())?;
+            if custody.tenant != owner.tenant {
+                return Err(head_unavailable());
+            }
+            g.head_deliveries
+                .get(&run)
+                .cloned()
+                .ok_or_else(head_unavailable)?
+        };
+        if custody.expires_at <= self.clock.now() {
+            buffer.ack(custody.tenant, run, custody.page).await?;
+            return Err(head_unavailable());
+        }
+        if buffer
+            .content_deadline(custody.tenant, run, custody.page, custody.artifact)
+            .await?
+            != Some(custody.expires_at)
+        {
+            return Err(head_unavailable());
+        }
+        let blob = buffer
+            .find(custody.tenant, run, custody.artifact)
+            .await?
+            .ok_or_else(head_unavailable)?;
+        if Digest::of(crate::artifacts::DIGEST_DOMAIN, &blob.bytes) != blob.artifact.digest {
+            return Err(head_unavailable());
+        }
+        let payload = serde_json::from_slice(&blob.bytes).map_err(|_| head_unavailable())?;
+        self.check_head_authority(run).await?;
+        let expired = {
+            let g = self.inner.lock();
+            if g.pending_purges.contains_key(&run) {
+                return Err(head_unavailable());
+            }
+            let owner = g.runs.get(&run).ok_or_else(head_unavailable)?;
+            head_source_live(owner, self.clock.now())?;
+            if owner.tenant != custody.tenant {
+                return Err(head_unavailable());
+            }
+            custody.expires_at <= self.clock.now()
+        };
+        if expired {
+            buffer.ack(custody.tenant, run, custody.page).await?;
+            return Err(head_unavailable());
+        }
+        Ok(payload)
     }
 
     async fn durable_run(&self, run: &CrawlRun) -> Result<CrawlRun, StoreError> {
@@ -562,10 +723,56 @@ impl MemoryStore {
 
     /// Erasure: delete every row of `run` (the in-memory mirror of `RetentionSweeper::purge_run`).
     /// Returns the number of rows removed.
-    pub fn purge_run(&self, run: CrawlRunId) -> u64 {
+    ///
+    /// HEAD visibility is revoked before volatile erasure begins. Failed erasure keeps
+    /// its tenant/custody cursor so retry cannot mistake an incomplete purge for success.
+    ///
+    /// # Errors
+    /// Returns delivery backend errors without removing the retry cursor.
+    pub async fn purge_run(&self, run: CrawlRunId) -> Result<u64, StoreError> {
+        let (tenant, delivery, event_rows) = {
+            let mut g = self.inner.lock();
+            if !g.pending_purges.contains_key(&run) {
+                let Some(owner) = g.runs.get(&run) else {
+                    return Ok(0);
+                };
+                let tenant = owner.tenant;
+                if crate::tenant::current().is_some_and(|current| current != tenant) {
+                    return Err(StoreError::AccessDenied("run purge tenant mismatch".into()));
+                }
+                let event_rows = g.events.remove(&run).map_or(0, |events| events.len() as u64);
+                let delivery = g
+                    .head_deliveries
+                    .get(&run)
+                    .cloned()
+                    .or_else(|| self.dataset_delivery.lock().clone());
+                g.pending_purges.insert(
+                    run,
+                    PendingMemoryPurge {
+                        tenant,
+                        delivery,
+                        event_rows,
+                    },
+                );
+            }
+            let pending = &g.pending_purges[&run];
+            if crate::tenant::current().is_some_and(|current| current != pending.tenant) {
+                return Err(StoreError::AccessDenied("run purge tenant mismatch".into()));
+            }
+            (pending.tenant, pending.delivery.clone(), pending.event_rows)
+        };
+        // Await staged HEAD rollback before erasing bytes. No synchronous mutex is held.
+        let _custody = self.head_custody.write().await;
+        if !self.inner.lock().pending_purges.contains_key(&run) {
+            return Ok(0);
+        }
+        let erased = match delivery {
+            Some(buffer) => buffer.purge_run(tenant, run).await?,
+            None => 0,
+        };
         self.archives.lock().purge_run(run);
         let mut g = self.inner.lock();
-        let mut n = 0u64;
+        let mut n = erased.saturating_add(event_rows);
         let doomed_actions: Vec<ActionId> = g
             .actions
             .iter()
@@ -632,7 +839,11 @@ impl MemoryStore {
         g.idempotency.retain(|_, (r, _)| *r != run);
         g.replay_specs.remove(&run);
         n += u64::from(g.runs.remove(&run).is_some());
-        n
+        g.pending_purges.remove(&run);
+        g.head_deliveries.remove(&run);
+        g.requests.purge_head_receipts(run);
+        self.head_authorities.lock().runs.remove(&run);
+        Ok(n)
     }
 }
 
@@ -646,6 +857,47 @@ fn push_event(g: &mut Inner, run: CrawlRunId, kind: &str, payload: serde_json::V
         at,
     });
     seq
+}
+
+struct PendingMemoryPurge {
+    tenant: TenantId,
+    delivery: Option<Arc<crate::DeliveryBuffer>>,
+    event_rows: u64,
+}
+
+fn head_unavailable() -> StoreError {
+    StoreError::RetentionDenied("HEAD response content expired or unavailable".into())
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HeadEventCustody {
+    tenant: TenantId,
+    page: i64,
+    artifact: crawlx_core::ArtifactId,
+    expires_at: Timestamp,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HeadVolatilePayload<T> {
+    receipt: Digest,
+    observation: T,
+}
+
+fn head_source_live(run: &CrawlRun, now: Timestamp) -> Result<(), StoreError> {
+    if crate::tenant::current().is_some_and(|tenant| tenant != run.tenant)
+        || run.terminal_reason == Some(crawlx_core::counters::TerminalReason::AuthorizationRevoked)
+    {
+        return Err(StoreError::AccessDenied("HEAD response authority revoked".into()));
+    }
+    if run.config.retention.mode != RetentionMode::Zdr
+        && run.config.retention.days != 0
+        && run.created_at + ChronoDuration::days(i64::from(run.config.retention.days)) <= now
+    {
+        return Err(head_unavailable());
+    }
+    Ok(())
 }
 
 fn ensure_ledger<'a>(
@@ -1021,6 +1273,13 @@ impl FrontierRepo for MemoryStore {
     ) -> Result<Vec<crawlx_core::orchestration::RequestMetadataV1>, StoreError> {
         self.request_metadata_page(run, after, limit).await
     }
+    async fn request_methods(
+        &self,
+        run: CrawlRunId,
+        ids: &[i64],
+    ) -> Result<BTreeMap<i64, String>, StoreError> {
+        self.request_methods_bulk(run, ids).await
+    }
     async fn retry_fenced(&self, id: i64, fence: i64, not_before: Timestamp) -> Result<bool, StoreError> {
         self.request_retry(id, fence, not_before).await
     }
@@ -1134,6 +1393,7 @@ impl FrontierRepo for MemoryStore {
                 attempts: 0,
                 discovered_from: from,
             },
+            observed: false,
             key: url.key,
             strategy_score: crawlx_core::priority::priority_depth(&url.url, u32::from(depth), true),
             owner: None,
@@ -1155,6 +1415,9 @@ impl FrontierRepo for MemoryStore {
         let ttl = chrono_dur(self.url_ttl);
         let mut g = self.inner.lock();
         let admitted = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+        if admitted.config.mode == crawlx_core::CrawlMode::Dynamic {
+            return Ok(Vec::new());
+        }
         if !self.acquisition_worker_ready(run, worker, admitted.config.acquisition.as_ref(), now)? {
             return Ok(Vec::new());
         }
@@ -1171,6 +1434,7 @@ impl FrontierRepo for MemoryStore {
         for (index, row) in g.frontier.iter().enumerate() {
             if row.e.run != run
                 || row.e.status != FrontierStatus::Pending
+                || row.observed
                 || row.next_attempt_at > now
                 || row.e.attempts == u16::MAX
             {
@@ -1201,6 +1465,54 @@ impl FrontierRepo for MemoryStore {
             out.push((f.e.clone(), token));
         }
         Ok(out)
+    }
+
+    async fn lease_one_fenced(
+        &self,
+        run: CrawlRunId,
+        worker: WorkerId,
+        id: i64,
+    ) -> Result<Option<(FrontierEntry, i64)>, StoreError> {
+        let now = self.clock.now();
+        let mut g = self.inner.lock();
+        let admitted = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+        if !matches!(admitted.status, RunStatus::Queued | RunStatus::Running)
+            || admitted.config.mode == crawlx_core::CrawlMode::Dynamic
+            || admitted.started_at.unwrap_or(admitted.created_at)
+                + ChronoDuration::seconds(i64::from(admitted.config.limits.duration_seconds))
+                <= now
+            || admitted
+                .config
+                .orchestration
+                .as_ref()
+                .is_some_and(|cfg| cfg.queue.batch_size == 0)
+            || !self.acquisition_worker_ready(run, worker, admitted.config.acquisition.as_ref(), now)?
+            || !self.worker_data_ready(run, worker, &admitted.config, now)?
+        {
+            return Ok(None);
+        }
+        let Some(index) = g.frontier.iter().position(|row| {
+            row.e.id == id
+                && row.e.run == run
+                && row.e.status == FrontierStatus::Pending
+                && !row.observed
+                && row.next_attempt_at <= now
+                && row.e.attempts < u16::MAX
+        }) else {
+            return Ok(None);
+        };
+        let token = g
+            .fence
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Conflict("lease fence overflow".into()))?;
+        g.fence = token;
+        let row = &mut g.frontier[index];
+        row.e.status = FrontierStatus::Leased;
+        row.e.attempts += 1;
+        row.owner = Some(worker);
+        row.token = Some(token);
+        row.expires = Some(now + chrono_dur(self.url_ttl));
+        Ok(Some((row.e.clone(), token)))
     }
 
     async fn complete(
@@ -1265,34 +1577,49 @@ impl FrontierRepo for MemoryStore {
     }
 
     async fn pending_count(&self, run: CrawlRunId) -> Result<u64, StoreError> {
-        Ok(self
-            .inner
-            .lock()
-            .frontier
+        let g = self.inner.lock();
+        if g.runs
+            .get(&run)
+            .is_some_and(|run| run.config.mode == crawlx_core::CrawlMode::Dynamic)
+        {
+            return Ok(0);
+        }
+        Ok(g.frontier
             .iter()
-            .filter(|f| f.e.run == run && f.e.status == FrontierStatus::Pending)
+            .filter(|f| f.e.run == run && !f.observed && f.e.status == FrontierStatus::Pending)
             .count() as u64)
     }
 
     async fn open_count(&self, run: CrawlRunId) -> Result<u64, StoreError> {
-        Ok(self
-            .inner
-            .lock()
-            .frontier
+        let g = self.inner.lock();
+        if g.runs
+            .get(&run)
+            .is_some_and(|run| run.config.mode == crawlx_core::CrawlMode::Dynamic)
+        {
+            return Ok(0);
+        }
+        Ok(g.frontier
             .iter()
             .filter(|f| {
-                f.e.run == run && matches!(f.e.status, FrontierStatus::Pending | FrontierStatus::Leased)
+                f.e.run == run
+                    && !f.observed
+                    && matches!(f.e.status, FrontierStatus::Pending | FrontierStatus::Leased)
             })
             .count() as u64)
     }
 
     async fn state_counts(&self, run: CrawlRunId) -> Result<FrontierStateCounts, StoreError> {
+        let g = self.inner.lock();
+        if g.runs
+            .get(&run)
+            .is_some_and(|run| run.config.mode == crawlx_core::CrawlMode::Dynamic)
+        {
+            return Ok(FrontierStateCounts::default());
+        }
         Ok(FrontierStateCounts::tally(
-            self.inner
-                .lock()
-                .frontier
+            g.frontier
                 .iter()
-                .filter(|f| f.e.run == run)
+                .filter(|f| f.e.run == run && !f.observed)
                 .map(|f| &f.e),
         ))
     }
@@ -1363,6 +1690,89 @@ impl PageRepo for MemoryStore {
     }
 
     async fn list(&self, run: CrawlRunId) -> Result<Vec<PageRecord>, StoreError> {
+        let (dynamic, observed) = {
+            let g = self.inner.lock();
+            (
+                g.runs
+                    .get(&run)
+                    .is_some_and(|record| record.config.mode == crawlx_core::CrawlMode::Dynamic),
+                g.frontier
+                    .iter()
+                    .filter(|row| row.e.run == run && row.observed)
+                    .map(|row| row.e.id)
+                    .collect::<std::collections::BTreeSet<_>>(),
+            )
+        };
+        if dynamic || !observed.is_empty() {
+            let projected = {
+                let g = self.inner.lock();
+                g.pages
+                    .iter()
+                    .filter(|page| !dynamic && page.run == run && !observed.contains(&page.frontier_id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            let volatile = {
+                let g = self.inner.lock();
+                let source = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+                if crate::tenant::current().is_some_and(|tenant| tenant != source.tenant) {
+                    return Err(StoreError::AccessDenied("page capture tenant mismatch".into()));
+                }
+                (source.config.retention.mode == RetentionMode::Zdr).then(|| {
+                    (
+                        source.tenant,
+                        g.requests
+                            .observed_pages
+                            .range((run, 0)..=(run, i64::MAX))
+                            .map(|((_, id), _)| *id)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            };
+            if let Some((tenant, ids)) = volatile {
+                let buffer = self.dataset_delivery.lock().clone().ok_or_else(|| {
+                    StoreError::RetentionDenied("required ephemeral zdr buffer is unavailable".into())
+                })?;
+                let mut pages = Vec::with_capacity(ids.len());
+                for id in ids {
+                    if let Some(entry) = buffer.get(tenant, run, id).await? {
+                        if let Some(blob) = entry.blobs.get("page_record") {
+                            let page: PageRecord = serde_json::from_slice(&blob.bytes)?;
+                            if page.run != run || page.frontier_id != id {
+                                return Err(StoreError::Serialization("zdr page scope mismatch".into()));
+                            }
+                            pages.push(page);
+                        }
+                    }
+                }
+                for page in &mut pages {
+                    page.mark_late_xhr_unattributed();
+                }
+                pages.extend(projected);
+                pages.sort_by_key(|page| (page.fetched_at, page.frontier_id));
+                return Ok(pages);
+            }
+            let mut pages = Vec::new();
+            let mut after = 0;
+            loop {
+                let batch = self.committed_page_keyset(run, after, 64).await?;
+                let Some(last) = batch.last() else {
+                    break;
+                };
+                after = last.frontier_id;
+                pages.extend(
+                    batch
+                        .into_iter()
+                        .filter(|page| dynamic || observed.contains(&page.frontier_id)),
+                );
+            }
+            for page in &mut pages {
+                page.mark_late_xhr_unattributed();
+            }
+            pages.extend(projected);
+            pages.sort_by_key(|page| (page.fetched_at, page.frontier_id));
+            return Ok(pages);
+        }
         let mut v: Vec<PageRecord> = self
             .inner
             .lock()
@@ -1747,10 +2157,47 @@ impl EventRepo for MemoryStore {
         if !g.runs.contains_key(&run) {
             return Err(nf("crawl_run", run));
         }
+        if g.pending_purges.contains_key(&run) {
+            return Err(head_unavailable());
+        }
+        if kind == "head_response" {
+            return Err(StoreError::AccessDenied(
+                "HEAD response requires a fenced request commit".into(),
+            ));
+        }
         Ok(push_event(&mut g, run, kind, payload, now))
     }
 
     async fn list_after(
+        &self,
+        run: CrawlRunId,
+        after_seq: u64,
+        limit: u32,
+    ) -> Result<Vec<RunEvent>, StoreError> {
+        let mut events = self.list_metadata_after(run, after_seq, limit).await?;
+        for event in &mut events {
+            if event.kind != "head_response" {
+                continue;
+            }
+            self.check_head_authority(run).await?;
+            let custody = {
+                let g = self.inner.lock();
+                if g.pending_purges.contains_key(&run) {
+                    return Err(head_unavailable());
+                }
+                let owner = g.runs.get(&run).ok_or_else(head_unavailable)?;
+                head_source_live(owner, self.clock.now())?;
+                if owner.config.retention.mode != RetentionMode::Zdr {
+                    continue;
+                }
+                <HeadEventCustody as serde::Deserialize>::deserialize(&event.payload["headCustody"])?
+            };
+            event.payload = self.read_head_custody(run, &custody).await?.observation;
+        }
+        Ok(events)
+    }
+
+    async fn list_metadata_after(
         &self,
         run: CrawlRunId,
         after_seq: u64,
@@ -2477,10 +2924,14 @@ impl LeaseRepo for MemoryStore {
                 if f.e.attempts >= max_attempts {
                     f.e.status = FrontierStatus::Failed;
                     f.e.denial_reason = Some("lease_expired".to_owned());
-                    out.failed += 1;
+                    if !f.observed {
+                        out.failed += 1;
+                    }
                 } else {
                     f.e.status = FrontierStatus::Pending;
-                    out.requeued += 1;
+                    if !f.observed {
+                        out.requeued += 1;
+                    }
                 }
             }
         }
@@ -2692,3 +3143,181 @@ impl IdentityAliasRepo for MemoryStore {
 
 #[path = "dataset_memory.rs"]
 mod dataset_memory;
+
+#[cfg(test)]
+mod exact_frontier_lease_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use crate::testkit::{canonical_url, crawl_run, create_crawl};
+    use crawlx_core::time::ManualClock;
+
+    async fn fixture() -> (Arc<MemoryStore>, ManualClock, CrawlRun, [i64; 2]) {
+        let clock = ManualClock::new(chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap());
+        let store = Arc::new(MemoryStore::with_clock(Arc::new(clock.clone())));
+        let mut run = crawl_run(TenantId::new(), create_crawl("https://example.test/", &[], 1));
+        run.created_at = clock.now();
+        store.create(&run, None).await.unwrap();
+        let mut ids = [0; 2];
+        for (slot, path) in ids.iter_mut().zip(["requested", "untouched"]) {
+            *slot = store
+                .discover(
+                    run.id,
+                    &canonical_url(&format!("https://example.test/{path}")),
+                    0,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap()
+                .1
+                .unwrap();
+        }
+        (store, clock, run, ids)
+    }
+
+    fn snapshot(store: &MemoryStore, id: i64) -> FrontierRow {
+        store
+            .inner
+            .lock()
+            .frontier
+            .iter()
+            .find(|row| row.e.id == id)
+            .unwrap()
+            .clone()
+    }
+
+    fn assert_unchanged(before: &FrontierRow, after: &FrontierRow) {
+        assert_eq!(after.e, before.e);
+        assert_eq!(after.owner, before.owner);
+        assert_eq!(after.token, before.token);
+        assert_eq!(after.expires, before.expires);
+        assert_eq!(after.next_attempt_at, before.next_attempt_at);
+        assert_eq!(after.key, before.key);
+        assert_eq!(after.strategy_score, before.strategy_score);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn exact_claim_race_has_one_winner_and_never_touches_another_row() {
+        let (store, clock, run, [id, other]) = fixture().await;
+        let before = snapshot(&store, other);
+        let fence_before = store.inner.lock().fence;
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..2 {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            let run = run.id;
+            tasks.spawn(async move {
+                let worker = WorkerId::new();
+                barrier.wait().await;
+                (worker, store.lease_one_fenced(run, worker, id).await.unwrap())
+            });
+        }
+        barrier.wait().await;
+        let mut winners = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            let (worker, claim) = result.unwrap();
+            if let Some(claim) = claim {
+                winners.push((worker, claim));
+            }
+        }
+        assert_eq!(winners.len(), 1);
+        let (worker, (entry, token)) = &winners[0];
+        assert_eq!(
+            (entry.id, entry.status, entry.attempts),
+            (id, FrontierStatus::Leased, 1)
+        );
+        assert_eq!(*token, fence_before + 1);
+        let claimed = snapshot(&store, id);
+        assert_eq!(claimed.owner, Some(*worker));
+        assert_eq!(claimed.token, Some(*token));
+        assert_eq!(claimed.expires, Some(clock.now() + chrono_dur(store.url_ttl)));
+        assert_unchanged(&before, &snapshot(&store, other));
+        assert_eq!(store.inner.lock().fence, *token);
+    }
+
+    #[tokio::test]
+    async fn exact_claim_refuses_ineligible_rows_and_non_live_runs_without_side_effects() {
+        let (store, clock, run, [id, other]) = fixture().await;
+        let worker = WorkerId::new();
+        let untouched = snapshot(&store, other);
+        let fence_before = store.inner.lock().fence;
+        for status in [
+            FrontierStatus::Leased,
+            FrontierStatus::Succeeded,
+            FrontierStatus::Failed,
+            FrontierStatus::Abandoned,
+            FrontierStatus::Unreachable,
+            FrontierStatus::PolicyBlocked,
+            FrontierStatus::RobotsBlocked,
+        ] {
+            store
+                .inner
+                .lock()
+                .frontier
+                .iter_mut()
+                .find(|row| row.e.id == id)
+                .unwrap()
+                .e
+                .status = status;
+            let before = snapshot(&store, id);
+            assert!(store
+                .lease_one_fenced(run.id, worker, id)
+                .await
+                .unwrap()
+                .is_none());
+            assert_unchanged(&before, &snapshot(&store, id));
+        }
+        {
+            let mut g = store.inner.lock();
+            let row = g.frontier.iter_mut().find(|row| row.e.id == id).unwrap();
+            row.e.status = FrontierStatus::Pending;
+            row.next_attempt_at = clock.now() + ChronoDuration::seconds(10);
+        }
+        let before = snapshot(&store, id);
+        assert!(store
+            .lease_one_fenced(run.id, worker, id)
+            .await
+            .unwrap()
+            .is_none());
+        assert_unchanged(&before, &snapshot(&store, id));
+        clock.advance_ms(10_000);
+        for status in [
+            RunStatus::Paused,
+            RunStatus::Completed,
+            RunStatus::Failed,
+            RunStatus::Cancelled,
+        ] {
+            store.inner.lock().runs.get_mut(&run.id).unwrap().status = status;
+            assert!(store
+                .lease_one_fenced(run.id, worker, id)
+                .await
+                .unwrap()
+                .is_none());
+            assert_unchanged(&before, &snapshot(&store, id));
+        }
+        store.inner.lock().runs.get_mut(&run.id).unwrap().status = RunStatus::Running;
+        assert!(store
+            .lease_one_fenced(run.id, worker, i64::MAX)
+            .await
+            .unwrap()
+            .is_none());
+        let foreign = crawl_run(TenantId::new(), run.config.clone());
+        store.create(&foreign, None).await.unwrap();
+        assert!(store
+            .lease_one_fenced(foreign.id, worker, id)
+            .await
+            .unwrap()
+            .is_none());
+        clock.advance_ms(i64::from(run.config.limits.duration_seconds).saturating_mul(1000));
+        assert!(store
+            .lease_one_fenced(run.id, worker, id)
+            .await
+            .unwrap()
+            .is_none());
+        assert_unchanged(&before, &snapshot(&store, id));
+        assert_unchanged(&untouched, &snapshot(&store, other));
+        assert_eq!(store.inner.lock().fence, fence_before);
+    }
+}

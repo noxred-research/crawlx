@@ -183,6 +183,12 @@ pub struct Document {
     /// Surface-discovery endpoints (`ExtractOptions::discover_endpoints`).
     #[serde(default)]
     pub discovered_endpoints: Vec<DiscoveredEndpoint>,
+    /// Bounded unresolved request expressions found on the same shared DOM.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub discovery_unresolved: Vec<crate::endpoints::UnresolvedEndpoint>,
+    /// Unresolved expressions counted beyond the report cap.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub discovery_unresolved_dropped: usize,
     /// Versioned article metadata. Content/PII, never unrestricted structural telemetry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub article: Option<crawlx_core::extraction::DocumentEnvelopeV1>,
@@ -209,4 +215,11 @@ pub struct Document {
     /// [`ExtractOptions::markup`] was set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markup: Option<crate::decode::MarkupRecord>,
+    /// Runtime-only cache observations. Record only after successful page commit; dropping is inert.
+    #[serde(skip)]
+    pub dedupe_commit: Option<crate::DedupeCommit>,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }

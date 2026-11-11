@@ -178,6 +178,11 @@ async fn static_mode_never_launches_a_browser() {
     assert_eq!(report.status, RunStatus::Completed);
     assert_eq!(report.browser_launches, 0);
     assert!(report.sessions.is_empty(), "{:?}", report.sessions);
+    assert_eq!(report.http_coordinators.len(), 1);
+    let coordinator = &report.http_coordinators[0];
+    assert_eq!(coordinator.kind, crawlx_core::repo::SessionKind::HttpCoordinator);
+    assert_eq!(coordinator.status, crawlx_core::repo::SessionStatus::Completed);
+    assert!(coordinator.browser.is_none());
     assert_eq!(report.counters.interactions.attempted, 0);
     assert_eq!(
         report.egress,
@@ -197,6 +202,12 @@ async fn static_mode_never_launches_a_browser() {
     assert_eq!(report.status, RunStatus::Completed);
     assert_eq!(report.browser_launches, 0);
     assert_eq!(backend.contexts_created(), 0);
+    assert!(report.sessions.is_empty());
+    assert_eq!(report.http_coordinators.len(), 1);
+    let coordinator = &report.http_coordinators[0];
+    assert_eq!(coordinator.kind, crawlx_core::repo::SessionKind::HttpCoordinator);
+    assert_eq!(coordinator.status, crawlx_core::repo::SessionStatus::Completed);
+    assert!(coordinator.browser.is_none());
     assert!(report.counters.urls.succeeded >= 4, "{:?}", report.counters);
 }
 
@@ -245,12 +256,26 @@ async fn dynamic_mode_never_fetches_over_the_http_plane() {
     assert_eq!(report.status, RunStatus::Completed);
     assert!(!report.sessions.is_empty());
     assert!(report.browser_launches >= 1);
-    // no URL-plane row exists, so none transitioned through the HTTP fetcher ...
-    assert!(stores.frontier.list(report.run_id).await.unwrap().is_empty());
-    assert_eq!(report.counters.urls.attempted, 0, "{:?}", report.counters.urls);
-    assert_eq!(report.counters.urls.succeeded, 0);
-    assert!(report.pages.is_empty());
-    // ... and the origin never saw a plain HTTP request
+    // Browser output retains observed-only custody rows, never HTTP-plane work.
+    let rows = stores.frontier.list(report.run_id).await.unwrap();
+    assert!(
+        !rows.is_empty(),
+        "settled browser pages retain observation custody"
+    );
+    for row in &rows {
+        let request = stores.frontier.get_request(report.run_id, row.id).await.unwrap();
+        assert!(request.envelope.metadata.contains_key("observed_epoch"));
+        assert_eq!(row.status, FrontierStatus::Succeeded);
+    }
+    assert_eq!(
+        stores.frontier.state_counts(report.run_id).await.unwrap(),
+        crawlx_core::repo::FrontierStateCounts::default()
+    );
+    assert_eq!(report.counters.urls, crawlx_core::counters::Counters::default());
+    assert!(
+        !report.pages.is_empty(),
+        "settled browser documents remain page output"
+    );
     assert_eq!(hits.load(Ordering::SeqCst), 0);
 }
 

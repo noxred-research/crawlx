@@ -3,7 +3,7 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[path = "../common/authorization.rs"]
-mod authorization_fixture;
+pub(super) mod authorization_fixture;
 
 use axum::extract::State;
 use axum::http::header;

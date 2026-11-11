@@ -166,6 +166,10 @@ pub struct ContextConfig {
     pub response_bodies: crate::config::ResponseBodies,
     /// Receives bounded bodies before they enter any persistent queue.
     pub response_body_sink: Option<Arc<dyn ResponseBodySink>>,
+    /// Policy authority for opt-in browser evidence and authorized attachments.
+    pub browser_capture_sink: Option<Arc<dyn crate::browser_capture::BrowserCaptureSink>>,
+    /// Explicit response/diagnostic projection bounds; disabled by default.
+    pub browser_evidence: crate::browser_capture::BrowserEvidenceConfig,
     /// Explicit opt-in solver credentials, resolved immediately before context construction.
     pub captcha: Option<crate::captcha::CaptchaCredentials>,
     /// Stops an in-flight solver request when the owning crawl is cancelled.
@@ -201,6 +205,8 @@ impl ContextConfig {
             navigation_guard: None,
             response_bodies: crate::config::ResponseBodies::MetadataOnly,
             response_body_sink: None,
+            browser_capture_sink: None,
+            browser_evidence: crate::browser_capture::BrowserEvidenceConfig::default(),
             captcha: None,
             captcha_cancel: tokio_util::sync::CancellationToken::new(),
             captcha_secrets: crate::captcha::CaptchaSecrets::default(),
@@ -241,6 +247,9 @@ pub struct ProfileSpec {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum BrowserError {
+    /// Browser evidence failed source privacy, retention or artifact policy.
+    #[error("browser capture policy failed")]
+    CapturePolicy(#[source] crate::StoreError),
     /// Shared admission failed before the browser effect was sent.
     #[error("origin admission failed: {0}")]
     OriginAdmission(#[source] crate::StoreError),
@@ -332,6 +341,7 @@ impl crate::error::Classify for BrowserError {
     fn class(&self) -> crate::error::ErrorClass {
         use crate::error::ErrorClass;
         match self {
+            Self::CapturePolicy(error) => crate::error::Classify::class(error),
             Self::OriginAdmission(error) => crate::error::Classify::class(error),
             Self::Launch(_) | Self::Navigation(_) | Self::TargetCrashed | Self::TargetClosed => {
                 ErrorClass::Retryable

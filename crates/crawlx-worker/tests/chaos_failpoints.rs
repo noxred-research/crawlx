@@ -153,7 +153,12 @@ async fn assert_journal_invariants(store: &MemoryStore, r: &Rig) {
 /// rig for further assertions.
 async fn crash_and_recover(point: Point) -> Rig {
     chaos::configure(&format!("{}=panic", point.name));
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
     let bundle = r
         .handle
@@ -295,7 +300,12 @@ async fn cancellation_after_intent_closes_the_row_without_dispatching() {
     let _serial = SERIAL.lock().await;
     chaos::reset();
     chaos::configure(&format!("{}=sleep(1000)", chaos::AFTER_INTENT_BEFORE_PERFORM));
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake, false, SafetyProfile::ReadOnly).await;
     let bundle = r
         .handle
@@ -336,7 +346,12 @@ async fn reconcile_without_markers_in_another_cluster_is_indeterminate_and_never
     let _serial = SERIAL.lock().await;
     chaos::reset();
     chaos::configure(&format!("{}=panic", chaos::AFTER_PERFORM_BEFORE_OUTCOME));
-    let fake = Arc::new(FakeBackend::new(site()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
     let bundle = r
         .handle
@@ -414,7 +429,12 @@ async fn random_point_kills_keep_the_journal_invariants() {
         } else {
             // `off`: the action completes normally
             chaos::configure("");
-            let fake = Arc::new(FakeBackend::new(site()));
+            let fake = Arc::new(
+                FakeBackend::builder()
+                    .script(site())
+                    .clock(Arc::new(crawlx_core::SystemClock))
+                    .build(),
+            );
             let r = rig_with(fake.clone(), fake.clone(), false, SafetyProfile::ReadOnly).await;
             let bundle = r
                 .handle

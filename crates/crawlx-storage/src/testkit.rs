@@ -90,6 +90,7 @@ pub fn sessions(run: CrawlRunId, n_roles: u16, runs: u16) -> Vec<CrawlSession> {
             out.push(CrawlSession {
                 id: SessionId::new(),
                 run,
+                kind: crawlx_core::repo::SessionKind::Browser,
                 role: PrincipalId(format!("role{role}")),
                 run_index,
                 schedule_slot: u32::from(run_index - 1) * u32::from(n_roles) + u32::from(role),

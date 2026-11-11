@@ -136,7 +136,12 @@ async fn run(
     crawl: CreateCrawl,
 ) -> (RunReport, Arc<FakeBackend>, Arc<MemoryStore>, Stores) {
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(script));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
     let report = run_local_with(
@@ -223,7 +228,12 @@ async fn replay_restores_recorded_login_once_and_stops_on_login_denial() {
         stores.with_authorization_source(Arc::new(crawlx_worker::StaticAuthorizationSource::new(record)));
     let source = run_local_with(
         LocalRun::new(crawl, cfg(dir.path()))
-            .with_backend(Arc::new(FakeBackend::new(login_site(true))))
+            .with_backend(Arc::new(
+                FakeBackend::builder()
+                    .script(login_site(true))
+                    .clock(Arc::new(crawlx_core::SystemClock))
+                    .build(),
+            ))
             .with_stores(stores.clone())
             .with_secrets(Arc::new(FixedSecrets)),
     )
@@ -434,16 +444,29 @@ async fn attach_mode_is_admitted_only_for_test_profiles() {
             crawl(CrawlMode::Dynamic, SafetyProfile::ReadOnly, |_| {}),
             worker.clone(),
         )
-        .with_backend(Arc::new(FakeBackend::new(site.clone()))),
+        .with_backend(Arc::new(
+            FakeBackend::builder()
+                .script(site.clone())
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
     )
     .await;
     assert!(matches!(denied, Err(WorkerError::PolicyDenied(_))), "{denied:?}");
     let report = run_local_with(
         LocalRun::new(
-            crawl(CrawlMode::Dynamic, SafetyProfile::TestEnvironment, |_| {}),
+            crawl(CrawlMode::Dynamic, SafetyProfile::TestEnvironment, |crawl| {
+                // Attach requires a live verified record even without credential-bearing roles.
+                crawl.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
+            }),
             worker,
         )
-        .with_backend(Arc::new(FakeBackend::new(site))),
+        .with_backend(Arc::new(
+            FakeBackend::builder()
+                .script(site)
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
     )
     .await
     .unwrap();
@@ -456,9 +479,12 @@ async fn attach_mode_is_admitted_only_for_test_profiles() {
             crawl(CrawlMode::Dynamic, SafetyProfile::TestEnvironment, |_| {}),
             plain,
         )
-        .with_backend(Arc::new(FakeBackend::new(
-            FakeScript::new().page(FakePage::new("https://example.test/")),
-        ))),
+        .with_backend(Arc::new(
+            FakeBackend::builder()
+                .script(FakeScript::new().page(FakePage::new("https://example.test/")))
+                .clock(Arc::new(crawlx_core::SystemClock))
+                .build(),
+        )),
     )
     .await;
     assert!(matches!(err, Err(WorkerError::Config(_))), "{err:?}");

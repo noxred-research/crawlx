@@ -13,8 +13,9 @@ use crawlx_core::{
     extraction::{DiscoveryIntentV1, DiscoveryPurposeV1},
     hash::Digest,
     selectors::{
-        FieldCardinalityV1, FieldExtractionV1, FieldOutcomeV1, FieldQualityV1, FieldSourceV1,
-        FieldTransformV1, ItemFieldV1, ItemLoaderV1, ItemOutcomeV1, ReadMoreBaseV1, SelectorV1, MAX_SELECTED,
+        FieldCardinalityV1, FieldExtractionV1, FieldOutcomeV1, FieldProcessorOutcomeV1, FieldProvenanceV1,
+        FieldQualityV1, FieldSelectionV1, FieldSourceKindV1, FieldSourceV1, FieldTransformV1, ItemFieldV1,
+        ItemLoaderV1, ItemOutcomeV1, ReadMoreBaseV1, SelectorV1, MAX_SELECTED,
     },
 };
 use regex::Regex;
@@ -39,6 +40,8 @@ struct Field {
     selectors: Vec<CompiledSelector>,
     /// One entry per transform; present for `regex` and `builtin` transforms.
     regexes: Vec<Option<TransformRegex>>,
+    /// Compiled input processor expressions, in the same order as the recipe.
+    input_regexes: Vec<Option<TransformRegex>>,
     source_selector: Option<CompiledSelector>,
     children: Vec<Field>,
 }
@@ -81,6 +84,11 @@ fn compile_fields(
                 .iter()
                 .map(compile_transform_regex)
                 .collect::<Result<Vec<_>, SelectorError>>()?;
+            let input_regexes = rule
+                .input_processors
+                .iter()
+                .map(compile_transform_regex)
+                .collect::<Result<Vec<_>, SelectorError>>()?;
             let source_selector = match &rule.source {
                 Some(
                     FieldSourceV1::NextSibling {
@@ -98,6 +106,7 @@ fn compile_fields(
                 selectors,
                 regexes,
                 source_selector,
+                input_regexes,
                 children: compile_fields(&rule.fields, namespaces, next_id)?,
             })
         })
@@ -220,10 +229,16 @@ impl CompiledItemLoader {
         let mut item = Map::new();
         for field in fields {
             let origin = self.resolve_source(field, context, doc, run)?;
+            let mut provenance =
+                FieldProvenanceV1::new(FieldSourceKindV1::from_source(field.rule.source.as_ref()));
+            provenance.selections = (0..field.selectors.len())
+                .map(|index| FieldSelectionV1::new(index, 0))
+                .collect();
             let mut nodes = Vec::new();
             let mut scalars = Vec::new();
             if let Some(origin) = origin {
-                for selector in &field.selectors {
+                for (index, selector) in field.selectors.iter().enumerate() {
+                    let before = nodes.len().saturating_add(scalars.len());
                     match doc.evaluate_in(selector, origin, &self.namespaces)? {
                         XPathValue::Nodes(n) => {
                             doc.charge(n.len())?;
@@ -238,6 +253,8 @@ impl CompiledItemLoader {
                             scalars.push(Value::Number(n));
                         }
                     }
+                    provenance.selections[index].matches =
+                        nodes.len().saturating_add(scalars.len()).saturating_sub(before);
                 }
             }
             let levels = usize::try_from(nodes.len().checked_ilog2().unwrap_or(0))
@@ -321,7 +338,20 @@ impl CompiledItemLoader {
                 }
                 values.extend(scalars);
             }
-            let (quality, value) = if values.is_empty() {
+            provenance.selected_values = values.len();
+            let input_valid = values.is_empty()
+                || process_values(
+                    &mut values,
+                    &field.rule.input_processors,
+                    &field.input_regexes,
+                    &mut provenance.input_processors,
+                    run,
+                    doc,
+                )?;
+            let (quality, value) = if !input_valid {
+                run.valid = false;
+                (FieldQualityV1::MalformedTransform, None)
+            } else if values.is_empty() {
                 if let Some(default) = &field.rule.default {
                     let bytes = crawlx_core::selectors::bounded_json_len(default, 65_536)?;
                     doc.charge(bytes)?;
@@ -343,13 +373,14 @@ impl CompiledItemLoader {
                 run.valid = false;
                 (FieldQualityV1::CardinalityMismatch, None)
             } else {
-                let mut malformed = false;
-                for (transform, regex) in field.rule.transforms.iter().zip(&field.regexes) {
-                    if !transform_values(&mut values, transform, regex.as_ref(), run.base, doc)? {
-                        malformed = true;
-                        break;
-                    }
-                }
+                let malformed = !process_values(
+                    &mut values,
+                    &field.rule.transforms,
+                    &field.regexes,
+                    &mut provenance.output_processors,
+                    run,
+                    doc,
+                )?;
                 let one = matches!(field.rule.cardinality, FieldCardinalityV1::One);
                 if malformed || (one && values.is_empty()) {
                     run.valid = false;
@@ -377,6 +408,11 @@ impl CompiledItemLoader {
                 item.insert(field.rule.name.clone(), value.clone());
             }
             let mut outcome = FieldOutcomeV1::new(field.rule.name.clone(), quality, value);
+            let bytes =
+                crawlx_core::selectors::bounded_json_len(&provenance, crawlx_core::selectors::MAX_OPERATIONS)
+                    .map_err(|_| SelectorError::Budget("item provenance bytes"))?;
+            doc.charge(bytes)?;
+            outcome.provenance = Some(provenance);
             if matches!(quality, FieldQualityV1::Selected) {
                 outcome.groups = groups;
             }
@@ -518,6 +554,35 @@ pub fn select_read_more(
     }
     Ok(output)
 }
+/// Execute one bounded processor list, retaining only the executed prefix and value counts.
+fn process_values(
+    values: &mut Vec<Value>,
+    processors: &[FieldTransformV1],
+    regexes: &[Option<TransformRegex>],
+    evidence: &mut Vec<FieldProcessorOutcomeV1>,
+    run: &Run<'_>,
+    doc: &mut SelectorDocument<'_>,
+) -> Result<bool, SelectorError> {
+    for (index, (processor, regex)) in processors.iter().zip(regexes).enumerate() {
+        doc.charge(1)?;
+        let input_values = values.len();
+        let accepted = transform_values(values, processor, regex.as_ref(), run.base, doc)?;
+        if values.len() > MAX_SELECTED {
+            return Err(SelectorError::Budget("processed item values"));
+        }
+        evidence.push(FieldProcessorOutcomeV1::new(
+            index,
+            processor.processor_kind(),
+            input_values,
+            accepted.then_some(values.len()),
+        ));
+        if !accepted {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn transform_values(
     values: &mut Vec<Value>,
     transform: &FieldTransformV1,

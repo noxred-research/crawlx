@@ -872,11 +872,7 @@ fn translate_option(
             t.translated(key, target, n.is_some(), "native combined per-origin and global budgets apply together; no upstream precedence override disables another limit");
         }
         "strategy" => {
-            let strategy = match value.as_str() {
-                Some("breadth-first") => Some(crate::config::CrawlStrategy::BreadthFirst),
-                Some("depth-first") => Some(crate::config::CrawlStrategy::DepthFirst),
-                _ => None,
-            };
+            let strategy = crate::config::CrawlStrategy::deserialize(value).ok();
             if let (Some(strategy), Some(crawl)) = (strategy, &mut t.crawl) { crawl.scope.strategy = strategy; }
             t.translated(key, "scope.strategy", strategy.is_some(), "native durable frontier ordering and ties; not Go callback scheduling or source priority-score equivalence");
         }
@@ -892,6 +888,25 @@ fn translate_option(
         "requests_params" | "top_image_settings" | "date_params" => {
             t.unavailable(key, ImportStateV1::DecisionNeeded, "source object has nested semantics without a complete native equivalence contract; every nested field is reported and conversion fails");
         }
+        "article_memo" | "disable_category_cache" => {
+            if let (Some(enabled), Some(crawl)) = (boolean, &mut t.crawl) {
+                let policy = crawl.scope.discovery.get_or_insert_with(SourceDiscoveryPolicyV1::default);
+                if canonical == "article_memo" { policy.article_memo.enabled = enabled; }
+                else { policy.category_cache.enabled = !enabled; }
+            }
+            let target = if canonical == "article_memo" { "scope.discovery.articleMemo.enabled" } else { "scope.discovery.categoryCache.enabled" };
+            t.translated(key, target, boolean.is_some(), "tenant/run/source/role/policy-scoped native metadata; current destination admission remains authoritative; category expiry uses worker clock and ZDR metadata stays volatile");
+        }
+        "max_file_memo" => {
+            let maximum = number(value, 1, u64::from(crate::dataset::memo::MAX_MEMO_ENTRIES)).and_then(|value| u32::try_from(value).ok());
+            if let (Some(maximum), Some(crawl)) = (maximum, &mut t.crawl) {
+                crawl.scope.discovery.get_or_insert_with(SourceDiscoveryPolicyV1::default).article_memo.max_entries = maximum;
+            }
+            t.translated(key, "scope.discovery.articleMemo.maxEntries", maximum.is_some(), "bounded hash-only per-run capacity across all scopes; deterministic oldest-record eviction; no temporary memo files");
+        }
+        "legacy_category_cache" | "clean_memo_cache" => {
+            t.unavailable(key, ImportStateV1::Rejected, "legacy cache selection and imperative cache-clean operations are not configuration; use native categoryCache.enabled or authenticated DELETE /v1/crawls/{id}/source-memo explicitly");
+        }
         "source_mode" => {
             use crate::discovery::{DiscoveryModeV1, DiscoverySourceV1, SourceDiscoveryPolicyV1};
             let sources = match key {
@@ -905,9 +920,8 @@ fn translate_option(
             if let (Some(sources), Some(crawl)) = (sources, &mut t.crawl) {
                 if valid {
                     crawl.scope.sources = sources;
-                    let mut policy = SourceDiscoveryPolicyV1::default();
+                    let policy = crawl.scope.discovery.get_or_insert_with(SourceDiscoveryPolicyV1::default);
                     if key == "probe" { policy.mode = DiscoveryModeV1::Probe; }
-                    crawl.scope.discovery = Some(policy);
                 }
             }
             t.translated(key, "scope.sources", valid, "explicit bounded native source stages; no hidden search-provider fallback, guessed paths, or external connectors; multiple discovery mode flags are rejected");
@@ -1055,7 +1069,8 @@ pub fn option_features(source: ExtractionSourceV1, key: &str) -> &'static [&'sta
             "min_word_count" | "min_sent_count" | "MIN_WORD_COUNT" | "MIN_SENT_COUNT" => &["NA-15"],
             "max_title" | "MAX_TITLE" | "title" => &["NA-05"],
             "max_authors" | "MAX_AUTHORS" | "authors" => &["NA-06"],
-            "max_file_memo" | "MAX_FILE_MEMO" | "memorize_articles" | "memoize_articles" => &["NA-26"],
+            "max_file_memo" | "MAX_FILE_MEMO" | "memorize_articles" | "memoize_articles"
+            | "clean_memo_cache" => &["NA-26"],
             "disable_category_cache" | "use_cached_categories" => &["NA-27"],
             "clean_article_html" => &["NA-11"],
             "http_success_only" | "allow_binary_content" | "ignored_content_types_defaults" => &["NA-30"],
@@ -1220,12 +1235,13 @@ const NEWS_ARTICLE_LIBRARY: &[(&str, &str)] = &[
     ("max_authors", "unavailable"),
     ("max_summary", "max_summary"),
     ("max_summary_sent", "max_summary_sent"),
-    ("max_file_memo", "unavailable"),
+    ("max_file_memo", "max_file_memo"),
     ("top_image_settings", "top_image_settings"),
-    ("memorize_articles", "unavailable"),
-    ("memoize_articles", "unavailable"),
-    ("disable_category_cache", "unavailable"),
-    ("use_cached_categories", "unavailable"),
+    ("memorize_articles", "article_memo"),
+    ("memoize_articles", "article_memo"),
+    ("disable_category_cache", "disable_category_cache"),
+    ("use_cached_categories", "legacy_category_cache"),
+    ("clean_memo_cache", "clean_memo_cache"),
     ("fetch_images", "fetch_images"),
     ("follow_meta_refresh", "follow_meta_refresh"),
     ("allow_private_hosts", "private_hosts"),
@@ -1272,7 +1288,7 @@ const NEWS_ARTICLE_LIBRARY: &[(&str, &str)] = &[
     ("MAX_AUTHORS", "unavailable"),
     ("MAX_SUMMARY", "max_summary"),
     ("MAX_SUMMARY_SENT", "max_summary_sent"),
-    ("MAX_FILE_MEMO", "unavailable"),
+    ("MAX_FILE_MEMO", "max_file_memo"),
 ];
 const NEWS_ARTICLE_CLI: &[(&str, &str)] = &[
     ("url", "url"),
@@ -1537,6 +1553,36 @@ mod tests {
         serde_json::from_value(json!({"version":1,"source":source,"sourceVersion":source.release(),"dialect":dialect,"options":{key:"https://fixture.test/story"}})).unwrap()
     }
     #[test]
+    fn scoped_memo_options_and_cache_disable_map_without_legacy_fallback() {
+        for alias in ["memorize_articles", "memoize_articles"] {
+            let mut input = manifest(ExtractionSourceV1::NewsArticle, ExtractionDialectV1::Library);
+            input.options.insert(alias.into(), json!(true));
+            input.options.insert("max_file_memo".into(), json!(2));
+            input.options.insert("disable_category_cache".into(), json!(true));
+            let (report, crawl) = inspect_manifest(&input).unwrap();
+            assert!(report.convertible);
+            let policy = crawl.unwrap().scope.discovery.unwrap();
+            assert!(policy.article_memo.enabled);
+            assert_eq!(policy.article_memo.max_entries, 2);
+            assert!(!policy.category_cache.enabled);
+            assert_eq!(policy.category_cache.ttl_seconds, 86_400);
+        }
+        for (key, value) in [
+            ("max_file_memo", json!(0)),
+            ("max_file_memo", json!(100_001)),
+            ("memorize_articles", json!("yes")),
+            ("use_cached_categories", json!(false)),
+            ("use_cached_categories", json!(true)),
+            ("clean_memo_cache", json!(true)),
+        ] {
+            let mut input = manifest(ExtractionSourceV1::NewsArticle, ExtractionDialectV1::Library);
+            input.options.insert(key.into(), value);
+            let (report, crawl) = inspect_manifest(&input).unwrap();
+            assert!(!report.convertible, "{key}");
+            assert!(crawl.is_none());
+        }
+    }
+    #[test]
     fn author_exclusion_import_rejects_invalid_bounds_without_echoing_values() {
         let mut input = manifest(ExtractionSourceV1::PrecisionText, ExtractionDialectV1::Library);
         for names in [json!(["Émilie Durand", "Alex Example"]), json!([])] {
@@ -1679,11 +1725,49 @@ mod tests {
         let (report, crawl) = inspect_manifest(&m).unwrap();
         assert!(report.convertible);
         let crawl = crawl.unwrap();
+        assert_eq!(crawl.scope.strategy, crate::config::CrawlStrategy::BreadthFirst);
         assert_eq!(crawl.fetch.timeout_ms, 30_000);
         assert_eq!(crawl.fetch.max_response_bytes, 20_000_000);
         assert!(!crawl.fetch.skip_tls_verification);
         m.options.insert("DOWNLOAD_TIMEOUT".into(), json!(u64::MAX));
         assert!(!inspect_manifest(&m).unwrap().0.convertible);
+    }
+    #[test]
+    fn crawl_order_defaults_and_explicit_aliases_survive_import() {
+        for source in [
+            ExtractionSourceV1::PrecisionText,
+            ExtractionSourceV1::NewsArticle,
+            ExtractionSourceV1::SurfaceFlags,
+        ] {
+            let dialect = if source == ExtractionSourceV1::SurfaceFlags {
+                ExtractionDialectV1::Cli
+            } else {
+                ExtractionDialectV1::Library
+            };
+            let (_, crawl) = inspect_manifest(&manifest(source, dialect)).unwrap();
+            assert_eq!(
+                crawl.unwrap().scope.strategy,
+                crate::config::CrawlStrategy::BreadthFirst
+            );
+        }
+        for (aliases, expected) in [
+            (
+                ["bfs", "breadth_first", "breadth-first"],
+                crate::config::CrawlStrategy::BreadthFirst,
+            ),
+            (
+                ["dfs", "depth_first", "depth-first"],
+                crate::config::CrawlStrategy::DepthFirst,
+            ),
+        ] {
+            for alias in aliases {
+                let mut input = manifest(ExtractionSourceV1::SurfaceFlags, ExtractionDialectV1::Cli);
+                input.options.insert("strategy".into(), json!(alias));
+                let (report, crawl) = inspect_manifest(&input).unwrap();
+                assert!(report.convertible, "{alias}");
+                assert_eq!(crawl.unwrap().scope.strategy, expected, "{alias}");
+            }
+        }
     }
     #[test]
     fn news_article_settings_preserve_native_bounds_and_disable_unavailable_side_effects() {

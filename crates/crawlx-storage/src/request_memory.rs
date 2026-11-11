@@ -3,6 +3,7 @@ use super::*;
 use crawlx_core::acquisition::{AcquisitionAllowanceV1, AcquisitionUsageV1};
 use crawlx_core::orchestration::*;
 use crawlx_core::request::{RequestEnvelopeV1, RequestIdentityV1};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Default)]
 pub(super) struct RequestState {
@@ -17,6 +18,109 @@ pub(super) struct RequestState {
     producers: BTreeMap<CrawlRunId, (u64, bool)>,
     cursors: BTreeMap<(CrawlRunId, String), LoaderCursorV1>,
     receipts: BTreeMap<(CrawlRunId, Digest), (Digest, RequestBatchReceiptV1)>,
+    head_receipts: BTreeMap<(CrawlRunId, i64), HeadReceipt>,
+    pub(super) observed_pages: BTreeMap<(CrawlRunId, i64), HeadEventCustody>,
+    content_registry: crate::digest_registry::RegistryState,
+}
+
+impl RequestState {
+    pub(super) fn purge_head_receipts(&mut self, run: CrawlRunId) {
+        self.head_receipts.retain(|(owner, _), _| *owner != run);
+        self.observed_pages.retain(|(owner, _), _| *owner != run);
+        self.content_registry.purge_run(run);
+    }
+}
+
+#[derive(Clone)]
+enum HeadReceipt {
+    Retained(Digest),
+    Volatile(HeadEventCustody),
+}
+
+/// The writer owns the purge barrier until publication or physical rollback.
+/// Dropping the caller closes `decision`, so cancellation cannot strand a late write.
+struct HeadStaging {
+    decision: tokio::sync::oneshot::Sender<bool>,
+    task: tokio::task::JoinHandle<Result<(), StoreError>>,
+}
+
+impl HeadStaging {
+    async fn start(
+        guard: tokio::sync::OwnedRwLockWriteGuard<()>,
+        buffer: Arc<crate::DeliveryBuffer>,
+        tenant: TenantId,
+        run: CrawlRunId,
+        page: i64,
+        bytes: Vec<u8>,
+    ) -> Result<(HeadEventCustody, Self), StoreError> {
+        Self::start_named(guard, buffer, tenant, run, page, bytes, "_head_response").await
+    }
+
+    async fn start_named(
+        guard: tokio::sync::OwnedRwLockWriteGuard<()>,
+        buffer: Arc<crate::DeliveryBuffer>,
+        tenant: TenantId,
+        run: CrawlRunId,
+        page: i64,
+        bytes: Vec<u8>,
+        field: &'static str,
+    ) -> Result<(HeadEventCustody, Self), StoreError> {
+        let (ready, receive) = tokio::sync::oneshot::channel();
+        let (decision, publication) = tokio::sync::oneshot::channel();
+        // One owned write permit bounds staging tasks and makes purge await the
+        // real backend writer, including spawn_blocking work after caller cancellation.
+        let task = tokio::spawn(async move {
+            let _guard = guard;
+            let staged = async {
+                let artifact = buffer
+                    .insert(tenant, run, page, field, "application/json", &bytes)
+                    .await?;
+                let expires_at = buffer
+                    .content_deadline(tenant, run, page, artifact.id)
+                    .await?
+                    .ok_or_else(head_unavailable)?;
+                Ok::<_, StoreError>(HeadEventCustody {
+                    tenant,
+                    page,
+                    artifact: artifact.id,
+                    expires_at,
+                })
+            }
+            .await;
+            drop(bytes);
+            match staged {
+                Ok(custody) => {
+                    let published = ready.send(Ok(custody)).is_ok() && publication.await.unwrap_or(false);
+                    if !published {
+                        buffer.ack(tenant, run, page).await?;
+                    }
+                }
+                Err(error) => {
+                    let error = buffer.ack(tenant, run, page).await.err().unwrap_or(error);
+                    let _closed = ready.send(Err(error));
+                }
+            }
+            Ok(())
+        });
+        let staged = receive
+            .await
+            .unwrap_or_else(|_| Err(StoreError::Backend("HEAD staging task stopped".into())));
+        match staged {
+            Ok(custody) => Ok((custody, Self { decision, task })),
+            Err(error) => {
+                task.await
+                    .map_err(|error| StoreError::Backend(error.to_string()))??;
+                Err(error)
+            }
+        }
+    }
+
+    async fn finish(self, published: bool) -> Result<(), StoreError> {
+        let _closed = self.decision.send(published);
+        self.task
+            .await
+            .map_err(|error| StoreError::Backend(error.to_string()))?
+    }
 }
 
 #[derive(Clone)]
@@ -101,6 +205,7 @@ pub(super) fn append(
     batch: &RequestBatchV1,
     now: Timestamp,
     recrawl: bool,
+    observed_timing: Option<(Timestamp, Timestamp)>,
 ) -> Result<RequestBatchReceiptV1, StoreError> {
     batch.validate()?;
     let digest = Digest::of_value("crawlx/request-batch/v1", batch)
@@ -118,12 +223,18 @@ pub(super) fn append(
             ))
         };
     }
+    let (admitted_at, deadline) = observed_timing.unwrap_or_else(|| {
+        (
+            now,
+            run.started_at.unwrap_or(run.created_at)
+                + ChronoDuration::seconds(i64::from(run.config.limits.duration_seconds)),
+        )
+    });
     if !matches!(
         run.status,
         RunStatus::Queued | RunStatus::Running | RunStatus::Paused
-    ) || run.started_at.unwrap_or(run.created_at)
-        + ChronoDuration::seconds(i64::from(run.config.limits.duration_seconds))
-        <= now
+    ) || admitted_at >= deadline
+        || admitted_at > now
     {
         return Err(StoreError::AccessDenied("run no longer admits requests".into()));
     }
@@ -145,7 +256,8 @@ pub(super) fn append(
         .get(&batch.run)
         .copied()
         .unwrap_or((1, false));
-    if batch.producer_epoch != epoch || (sealed && batch.parent_fence.is_none()) {
+    if batch.producer_epoch != epoch || (sealed && batch.parent_fence.is_none() && observed_timing.is_none())
+    {
         return Err(StoreError::Conflict("producer epoch closed or stale".into()));
     }
     if let Some((id, fence)) = batch.parent_fence {
@@ -163,6 +275,11 @@ pub(super) fn append(
     let mut keys = std::collections::BTreeSet::new();
     let mut bytes = 0_u64;
     for envelope in &batch.requests {
+        if observed_timing.is_none() && envelope.metadata.contains_key("observed_epoch") {
+            return Err(StoreError::AccessDenied(
+                "observation requires session transaction".into(),
+            ));
+        }
         if envelope.revisit_generation != 0 && !recrawl {
             return Err(StoreError::AccessDenied(
                 "revisit requires recrawl transaction".into(),
@@ -230,6 +347,7 @@ pub(super) fn append(
                 attempts: 0,
                 discovered_from: envelope.parent,
             },
+            observed: observed_timing.is_some(),
             key: identity.key,
             strategy_score: crawlx_core::priority::priority_depth(
                 &envelope.url.url,
@@ -299,7 +417,7 @@ impl MemoryStore {
         &self,
         batch: RequestBatchV1,
     ) -> Result<RequestBatchReceiptV1, StoreError> {
-        append(&mut self.inner.lock(), &batch, self.clock.now(), false)
+        append(&mut self.inner.lock(), &batch, self.clock.now(), false, None)
     }
     pub(super) async fn request_page(
         &self,
@@ -347,6 +465,41 @@ impl MemoryStore {
                 )
             })
             .collect())
+    }
+    pub(super) async fn request_methods_bulk(
+        &self,
+        run: CrawlRunId,
+        ids: &[i64],
+    ) -> Result<BTreeMap<i64, String>, StoreError> {
+        if ids.len() > 1000 {
+            return Err(StoreError::Conflict("invalid request method batch limit".into()));
+        }
+        if ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let g = self.inner.lock();
+        let owner = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+        if crate::tenant::current().is_some_and(|tenant| tenant != owner.tenant) {
+            return Err(StoreError::AccessDenied("request method tenant mismatch".into()));
+        }
+        let expected: BTreeSet<i64> = ids.iter().copied().collect();
+        let mut methods = BTreeMap::new();
+        for row in g
+            .frontier
+            .iter()
+            .filter(|row| row.e.run == run && expected.contains(&row.e.id))
+        {
+            let method = g
+                .requests
+                .envelopes
+                .get(&row.e.id)
+                .map_or("GET", |(envelope, _, _)| envelope.method.as_str());
+            methods.insert(row.e.id, method.to_owned());
+        }
+        if let Some(id) = expected.iter().find(|id| !methods.contains_key(*id)) {
+            return Err(nf("frontier row", id));
+        }
+        Ok(methods)
     }
     pub(super) async fn request_retry(
         &self,
@@ -665,9 +818,17 @@ impl MemoryStore {
     pub(super) async fn request_activity(&self, run: CrawlRunId) -> Result<FrontierActivityV1, StoreError> {
         let g = self.inner.lock();
         let now = self.clock.now();
+        let url_work = g
+            .runs
+            .get(&run)
+            .is_none_or(|run| run.config.mode != crawlx_core::CrawlMode::Dynamic);
         let mut pending = false;
         let mut leased = false;
-        for row in g.frontier.iter().filter(|row| row.e.run == run) {
+        for row in g
+            .frontier
+            .iter()
+            .filter(|row| url_work && row.e.run == run && !row.observed)
+        {
             match row.e.status {
                 FrontierStatus::Pending if row.next_attempt_at <= now => {
                     return Ok(FrontierActivityV1::Ready)
@@ -714,157 +875,851 @@ impl MemoryStore {
     }
 }
 
-#[async_trait]
-impl RequestCommitRepo for MemoryStore {
-    async fn commit_fenced(&self, commit: RequestCommitV1) -> Result<(), StoreError> {
-        self.validate_dataset_results(commit.run, &commit.accepted, &commit.state_deltas, &commit.outbox)
-            .await?;
-        let now = self.clock.now();
-        let mut g = self.inner.lock();
-        if !live_parent(&g, commit.run, commit.request_id, commit.fence, now) {
-            return Err(StoreError::LeaseLost);
-        }
-        let parent_index = g
+fn observed_session(
+    g: &Inner,
+    lease: &crawlx_core::custody::CustodyLease,
+    now: Timestamp,
+) -> Result<String, StoreError> {
+    use crawlx_core::custody::CustodySource;
+    lease.check_local_cancellation()?;
+    let CustodySource::Session(id) = lease.source else {
+        return Err(StoreError::LeaseLost);
+    };
+    let run = g.runs.get(&lease.run).ok_or(StoreError::LeaseLost)?;
+    let session = g.sessions.get(&id).ok_or(StoreError::LeaseLost)?;
+    if run.tenant != lease.tenant
+        || crate::tenant::current().is_some_and(|tenant| tenant != lease.tenant)
+        || run.status.is_terminal()
+        || g.pending_purges.contains_key(&lease.run)
+        || crate::codec::expiry(run.created_at, u32::from(run.config.retention.days))
+            .is_some_and(|deadline| deadline <= now)
+        || session.s.run != lease.run
+        || session.owner != Some(lease.worker)
+        || session.token != Some(lease.fence)
+        || session.expires.is_none_or(|expires| expires <= now)
+        || !matches!(
+            session.s.status,
+            SessionStatus::Running | SessionStatus::Recovering
+        )
+    {
+        return Err(StoreError::LeaseLost);
+    }
+    Ok(session.s.role.0.clone())
+}
+
+fn check_observed_commit(
+    g: &Inner,
+    commit: &RequestCommitV1,
+    now: Timestamp,
+) -> Result<Option<String>, StoreError> {
+    let Some(stored) = g.requests.envelopes.get(&commit.request_id) else {
+        return if commit.observation.is_some() {
+            Err(StoreError::LeaseLost)
+        } else {
+            Ok(None)
+        };
+    };
+    let marker = stored.0.metadata.get("observed_epoch");
+    let Some((lease, epoch)) = &commit.observation else {
+        return if marker.is_some() {
+            Err(StoreError::LeaseLost)
+        } else {
+            Ok(None)
+        };
+    };
+    let principal = observed_session(g, lease, now)?;
+    let proposal = ObservedRequestV1::from_staged(lease.clone(), *epoch, stored.0.clone())?;
+    let batch = proposal.batch_id(&principal)?;
+    if lease.run != commit.run
+        || g.requests.principals.get(&commit.request_id) != Some(&principal)
+        || marker != Some(&serde_json::to_value(batch)?)
+        || !g
+            .requests
+            .receipts
+            .get(&(commit.run, batch))
+            .is_some_and(|(_, receipt)| receipt.inserted == [commit.request_id])
+        || !g
             .frontier
             .iter()
-            .position(|row| row.e.id == commit.request_id)
-            .ok_or(StoreError::LeaseLost)?;
-        if matches!(commit.status, FrontierStatus::Pending | FrontierStatus::Leased)
-            || commit.reason.as_deref().is_some_and(|reason| {
-                reason.len() > 128
-                    || !reason
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':'))
-            })
+            .any(|row| row.e.id == commit.request_id && row.observed && row.owner == Some(lease.worker))
+        || commit.head_response.is_some()
+    {
+        return Err(StoreError::LeaseLost);
+    }
+    Ok(Some(principal))
+}
+
+impl MemoryStore {
+    async fn append_observation(
+        &self,
+        mut request: ObservedRequestV1,
+    ) -> Result<ObservedAppendV1, StoreError> {
+        let run = <Self as RunRepo>::get(self, request.lease.run).await?;
+        let (deadline, _) = crate::session_binding::budget_clock_deadline(self, &run, None).await?;
+        let now = self.clock.now();
+        let mut g = self.inner.lock();
+        let principal = observed_session(&g, &request.lease, now)?;
+        if request.acquired_at < run.started_at.unwrap_or(run.created_at)
+            || request.acquired_at >= deadline
+            || request.acquired_at > now
         {
-            return Err(StoreError::Conflict("invalid request disposition".into()));
+            return Err(StoreError::AccessDenied(
+                "observation acquired outside exploration deadline".into(),
+            ));
         }
-        let version = g
+        let (batch_id, key) = request.prepare(&principal)?;
+        if let Some((_, receipt)) = g.requests.receipts.get(&(request.lease.run, batch_id)) {
+            let request_id = *receipt.inserted.first().ok_or(StoreError::LeaseLost)?;
+            let generation = g
+                .requests
+                .envelopes
+                .get(&request_id)
+                .ok_or(StoreError::LeaseLost)?
+                .1
+                .revisit_generation;
+            return Ok(ObservedAppendV1::Duplicate {
+                request_id,
+                revisit_generation: generation,
+            });
+        }
+        let cap = g
+            .runs
+            .get(&request.lease.run)
+            .ok_or(StoreError::LeaseLost)?
+            .config
+            .dynamic
+            .max_page_revisits;
+        let latest = g
+            .requests
+            .identities
+            .range((request.lease.run, key, 0)..=(request.lease.run, key, u32::MAX))
+            .next_back()
+            .map(|((_, _, generation), _)| *generation);
+        let generation = match latest {
+            Some(generation) if generation >= u32::from(cap.min(128)) => {
+                return Ok(ObservedAppendV1::CapReached)
+            }
+            Some(generation) => generation
+                .checked_add(1)
+                .ok_or_else(|| StoreError::Conflict("revisit generation overflow".into()))?,
+            None => 0,
+        };
+        request.envelope.revisit_generation = generation;
+        let mut batch = RequestBatchV1::new(
+            request.lease.tenant,
+            request.lease.run,
+            principal,
+            batch_id,
+            vec![request.envelope],
+        );
+        batch.producer_epoch = g
+            .requests
+            .producers
+            .get(&batch.run)
+            .map_or(1, |(epoch, _)| *epoch);
+        let receipt = append(&mut g, &batch, now, true, Some((request.acquired_at, deadline)))?;
+        let request_id = *receipt.inserted.first().ok_or(StoreError::LeaseLost)?;
+        Ok(ObservedAppendV1::Appended {
+            request_id,
+            revisit_generation: generation,
+        })
+    }
+}
+
+#[async_trait]
+impl RequestCommitRepo for MemoryStore {
+    async fn append_observed_fenced(
+        &self,
+        request: ObservedRequestV1,
+    ) -> Result<ObservedAppendV1, StoreError> {
+        self.append_observation(request).await
+    }
+    async fn lease_observed_fenced(
+        &self,
+        lease: &crawlx_core::custody::CustodyLease,
+        epoch: crawlx_core::ObservationEpoch,
+        request_id: i64,
+    ) -> Result<Option<(FrontierEntry, i64)>, StoreError> {
+        let now = self.clock.now();
+        let mut g = self.inner.lock();
+        let principal = observed_session(&g, lease, now)?;
+        let stored = g
             .requests
             .envelopes
-            .get(&commit.request_id)
-            .map_or(1, |(_, _, version)| *version);
-        if version != commit.expected_state_version {
-            return Err(StoreError::Conflict("request state version changed".into()));
+            .get(&request_id)
+            .ok_or(StoreError::LeaseLost)?;
+        let proposal = ObservedRequestV1::from_staged(lease.clone(), epoch, stored.0.clone())?;
+        let batch = proposal.batch_id(&principal)?;
+        if g.requests.principals.get(&request_id) != Some(&principal)
+            || stored.0.metadata.get("observed_epoch") != Some(&serde_json::to_value(batch)?)
+            || !g
+                .requests
+                .receipts
+                .get(&(lease.run, batch))
+                .is_some_and(|(_, receipt)| receipt.inserted == [request_id])
+        {
+            return Err(StoreError::LeaseLost);
         }
-        let run = g
-            .runs
-            .get(&commit.run)
-            .ok_or_else(|| nf("crawl run", commit.run))?;
-        if crate::tenant::current().is_some_and(|tenant| tenant != run.tenant) {
-            return Err(StoreError::AccessDenied("request result tenant mismatch".into()));
-        }
-        if let Some(page) = &commit.page {
-            if page.run != commit.run
-                || page.frontier_id != commit.request_id
-                || page.url.key != g.frontier[parent_index].e.url.key
-                || commit.status != FrontierStatus::Succeeded
-            {
-                return Err(StoreError::Conflict("result page authority mismatch".into()));
+        let Some(index) = g.frontier.iter().position(|row| {
+            row.e.id == request_id
+                && row.e.run == lease.run
+                && row.observed
+                && row.e.status == FrontierStatus::Pending
+                && row.next_attempt_at <= now
+                && row.e.attempts < u16::MAX
+        }) else {
+            return Ok(None);
+        };
+        let token = g
+            .fence
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Conflict("lease fence overflow".into()))?;
+        g.fence = token;
+        let row = &mut g.frontier[index];
+        row.e.status = FrontierStatus::Leased;
+        row.e.attempts += 1;
+        row.owner = Some(lease.worker);
+        row.token = Some(token);
+        row.expires = Some(now + chrono_dur(self.url_ttl));
+        Ok(Some((row.e.clone(), token)))
+    }
+    async fn commit_observed_fenced(
+        &self,
+        mut commit: RequestCommitV1,
+        lease: crawlx_core::custody::CustodyLease,
+        epoch: crawlx_core::ObservationEpoch,
+    ) -> Result<ObservedCommitV1, StoreError> {
+        commit.observation = Some((lease, epoch));
+        self.commit_fenced(commit).await?;
+        Ok(ObservedCommitV1::Committed)
+    }
+    async fn begin_feed_finalization(
+        &self,
+        run: CrawlRunId,
+        reason: Option<TerminalReason>,
+    ) -> Result<Option<TerminalReason>, StoreError> {
+        self.begin_feed_finalization_owned(run, reason).await
+    }
+    async fn stage_feed_batches(
+        &self,
+        run: CrawlRunId,
+        batches: &[crawlx_core::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError> {
+        self.stage_feed_batches_owned(run, batches).await
+    }
+    async fn staged_feed_batch(
+        &self,
+        run: CrawlRunId,
+        feed: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<crawlx_core::dataset::DeliveryBatchV1>, StoreError> {
+        self.staged_feed_batch_owned(run, feed, idempotency_key).await
+    }
+    async fn finalize_run_feeds(
+        &self,
+        run: CrawlRunId,
+        status: RunStatus,
+        reason: TerminalReason,
+        batches: &[crawlx_core::dataset::DeliveryBatchV1],
+    ) -> Result<(), StoreError> {
+        self.finalize_run_feeds_owned(run, status, reason, batches).await
+    }
+    async fn commit_fenced(&self, mut commit: RequestCommitV1) -> Result<(), StoreError> {
+        // Serialize hash arbitration across staging I/O without holding the state lock over await.
+        let _digest_gate = if commit.content_dedupe.is_some() {
+            let gate = Arc::clone(&self.inner.lock().requests.content_registry.gate);
+            Some(gate.lock_owned().await)
+        } else {
+            None
+        };
+        if commit.content_dedupe.is_some() {
+            let g = self.inner.lock();
+            let run = g.runs.get(&commit.run).ok_or(StoreError::LeaseLost)?;
+            crate::digest_registry::check_source(run, self.clock.now())?;
+            crate::digest_registry::validate_commit(&commit, run.tenant)?;
+            let claim = commit.content_dedupe.as_ref().ok_or(StoreError::LeaseLost)?;
+            let outcome = g
+                .requests
+                .content_registry
+                .prepare(claim, commit.request_id, self.clock.now());
+            // Duplicate evidence is final already. Canonical storage time is assigned only in
+            // the publication lock below; volatile readers obtain it from the hash-only receipt.
+            if outcome.is_duplicate() {
+                crate::digest_registry::apply_outcome(&mut commit, &outcome);
             }
-            if run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
+        }
+        self.validate_dataset_results(commit.run, &commit.accepted, &commit.state_deltas, &commit.outbox)
+            .await?;
+        let head_receipt = commit.head_response_receipt()?;
+        let observed_page = if commit.observation.is_some() && commit.page.is_some() {
+            let mut g = self.inner.lock();
+            check_observed_commit(&g, &commit, self.clock.now())?;
+            let run = g.runs.get(&commit.run).ok_or(StoreError::LeaseLost)?;
+            if run.config.retention.mode == RetentionMode::Zdr {
+                if !live_parent(&g, commit.run, commit.request_id, commit.fence, self.clock.now()) {
+                    return Err(StoreError::LeaseLost);
+                }
+                let buffer = self.dataset_delivery.lock().clone().ok_or_else(|| {
+                    StoreError::RetentionDenied("observed page requires volatile storage".into())
+                })?;
+                let tenant = run.tenant;
+                if g.head_deliveries
+                    .get(&commit.run)
+                    .is_some_and(|prior| !Arc::ptr_eq(prior, &buffer))
+                {
+                    return Err(head_unavailable());
+                }
+                g.head_deliveries
+                    .entry(commit.run)
+                    .or_insert_with(|| Arc::clone(&buffer));
+                Some((
+                    buffer,
+                    tenant,
+                    serde_json::to_vec(commit.page.as_ref().ok_or(StoreError::LeaseLost)?)?,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let (observed_custody, observed_staging) = if let Some((buffer, tenant, bytes)) = observed_page {
+            let (custody, staging) = HeadStaging::start_named(
+                Arc::clone(&self.head_custody).write_owned().await,
+                buffer,
+                tenant,
+                commit.run,
+                commit.request_id,
+                bytes,
+                "page_record",
+            )
+            .await?;
+            (Some(custody), Some(staging))
+        } else {
+            (None, None)
+        };
+        // Serialize HEAD publication and replay so duplicate commits cannot stage
+        // a second receipt or renew custody while the first commit awaits I/O.
+        let mut custody_guard = if head_receipt.is_some() {
+            Some(Arc::clone(&self.head_custody).write_owned().await)
+        } else {
+            None
+        };
+        if let Some(receipt) = head_receipt {
+            self.check_head_authority(commit.run).await?;
+            let stored = {
+                let g = self.inner.lock();
+                if g.pending_purges.contains_key(&commit.run) {
+                    return Err(head_unavailable());
+                }
+                let run = g
+                    .runs
+                    .get(&commit.run)
+                    .ok_or_else(|| nf("crawl run", commit.run))?;
+                if crate::tenant::current().is_some_and(|tenant| tenant != run.tenant)
+                    || run.terminal_reason == Some(TerminalReason::AuthorizationRevoked)
+                {
+                    return Err(StoreError::AccessDenied("HEAD response authority revoked".into()));
+                }
+                let tenant = <TenantId as serde::Deserialize>::deserialize(
+                    &commit.head_response.as_ref().ok_or(StoreError::LeaseLost)?["acquisition"]["tenant"],
+                )?;
+                if tenant != run.tenant {
+                    return Err(StoreError::AccessDenied("HEAD response tenant mismatch".into()));
+                }
+                g.requests
+                    .head_receipts
+                    .get(&(commit.run, commit.request_id))
+                    .cloned()
+            };
+            if let Some(stored) = stored {
+                let stored = match stored {
+                    HeadReceipt::Retained(digest) => digest,
+                    HeadReceipt::Volatile(custody) => {
+                        self.read_head_custody(commit.run, &custody).await?.receipt
+                    }
+                };
+                return if stored == receipt {
+                    Ok(())
+                } else {
+                    Err(StoreError::Conflict("HEAD response receipt changed".into()))
+                };
+            }
+        }
+        let volatile_head = head_receipt.is_some()
+            && self
+                .inner
+                .lock()
+                .runs
+                .get(&commit.run)
+                .is_some_and(|run| run.config.retention.mode == RetentionMode::Zdr);
+        let head_bytes = if volatile_head {
+            commit
+                .head_response
+                .as_ref()
+                .zip(head_receipt)
+                .map(|(observation, receipt)| {
+                    serde_json::to_vec(&HeadVolatilePayload { receipt, observation })
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let custody = if head_receipt.is_some() {
+            let mut g = self.inner.lock();
+            if g.pending_purges.contains_key(&commit.run) {
+                return Err(head_unavailable());
+            }
+            let run = g
+                .runs
+                .get(&commit.run)
+                .ok_or_else(|| nf("crawl run", commit.run))?;
+            let tenant = run.tenant;
+            let acquisition_tenant = <TenantId as serde::Deserialize>::deserialize(
+                &commit.head_response.as_ref().ok_or(StoreError::LeaseLost)?["acquisition"]["tenant"],
+            )?;
+            if acquisition_tenant != tenant
+                || crate::tenant::current().is_some_and(|current| current != tenant)
+            {
+                return Err(StoreError::AccessDenied("HEAD response tenant mismatch".into()));
+            }
+            if run.status.is_terminal() {
+                return Err(StoreError::AccessDenied("HEAD response run is terminal".into()));
+            }
+            if !live_parent(&g, commit.run, commit.request_id, commit.fence, self.clock.now()) {
+                return Err(StoreError::LeaseLost);
+            }
+            let (queued, identity, version) = g
+                .requests
+                .envelopes
+                .get(&commit.request_id)
+                .ok_or(StoreError::LeaseLost)?;
+            if queued.method != "HEAD" {
+                return Err(StoreError::Conflict(
+                    "HEAD response queued method mismatch".into(),
+                ));
+            }
+            let acquisition = &commit.head_response.as_ref().ok_or(StoreError::LeaseLost)?["acquisition"];
+            // URL evidence may redact path/query secrets; exact authority comes from the queue key.
+            let requested_url = <url::Url as serde::Deserialize>::deserialize(&acquisition["requestedUrl"])?;
+            if !matches!(requested_url.scheme(), "http" | "https")
+                || requested_url.origin() != queued.url.url.origin()
+                || <Digest as serde::Deserialize>::deserialize(&acquisition["requestDigest"])? != identity.key
+            {
+                return Err(StoreError::Conflict(
+                    "HEAD response request identity mismatch".into(),
+                ));
+            }
+            if *version != commit.expected_state_version {
+                return Err(StoreError::Conflict("request state version changed".into()));
+            }
+            if run.config.retention.mode == crawlx_core::config::RetentionMode::Zdr {
+                let buffer = self.dataset_delivery.lock().clone().ok_or_else(|| {
+                    StoreError::RetentionDenied("HEAD response requires volatile storage".into())
+                })?;
+                let limits = buffer.limits();
+                if !buffer.is_enabled()
+                    || head_bytes
+                        .as_ref()
+                        .is_none_or(|bytes| bytes.len() > limits.max_bytes)
+                    || limits.max_entries == 0
+                {
+                    return Err(StoreError::RetentionDenied(
+                        "HEAD response exceeds volatile capacity".into(),
+                    ));
+                }
+                if g.head_deliveries
+                    .get(&commit.run)
+                    .is_some_and(|prior| !Arc::ptr_eq(prior, &buffer))
+                {
+                    return Err(head_unavailable());
+                }
+                // Pin only after deterministic admission. Once I/O starts, retain its
+                // owner even on cancellation or unknown failure so purge can erase orphans.
+                g.head_deliveries
+                    .entry(commit.run)
+                    .or_insert_with(|| Arc::clone(&buffer));
+                g.next_dataset_action = g
+                    .next_dataset_action
+                    .checked_add(1)
+                    .ok_or_else(|| StoreError::RetentionDenied("HEAD response namespace exhausted".into()))?;
+                Some((
+                    buffer,
+                    tenant,
+                    crate::dataset::action_page(g.next_dataset_action)?,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // Stage in existing scoped custody, never in the event vector. Publication below
+        // rechecks the fence and all transaction conditions without holding a lock over await.
+        let (staged, staging) = if let Some((buffer, tenant, page)) = &custody {
+            let (staged, staging) = HeadStaging::start(
+                custody_guard.take().ok_or_else(head_unavailable)?,
+                Arc::clone(buffer),
+                *tenant,
+                commit.run,
+                *page,
+                head_bytes.ok_or_else(head_unavailable)?,
+            )
+            .await?;
+            (Some(staged), Some(staging))
+        } else {
+            (None, None)
+        };
+        if head_receipt.is_some() {
+            if let Err(error) = self.check_head_authority(commit.run).await {
+                if let Some(staging) = staging {
+                    staging.finish(false).await?;
+                }
+                return Err(error);
+            }
+        }
+        let mut published = false;
+        let result = (|| {
+            let now = self.clock.now();
+            let mut g = self.inner.lock();
+            if g.pending_purges.contains_key(&commit.run) {
+                return Err(head_unavailable());
+            }
+            let run = g
+                .runs
+                .get(&commit.run)
+                .ok_or_else(|| nf("crawl run", commit.run))?;
+            if crate::tenant::current().is_some_and(|tenant| tenant != run.tenant) {
+                return Err(StoreError::AccessDenied("request result tenant mismatch".into()));
+            }
+            if head_receipt.is_some() && run.status.is_terminal() {
+                return Err(StoreError::AccessDenied("HEAD response run is terminal".into()));
+            }
+            if !live_parent(&g, commit.run, commit.request_id, commit.fence, now) {
+                return Err(StoreError::LeaseLost);
+            }
+            let observed_principal = check_observed_commit(&g, &commit, now)?;
+            if head_receipt.is_some() {
+                let queued = &g
+                    .requests
+                    .envelopes
+                    .get(&commit.request_id)
+                    .ok_or(StoreError::LeaseLost)?
+                    .0;
+                if queued.method != "HEAD" {
+                    return Err(StoreError::Conflict(
+                        "HEAD response queued method mismatch".into(),
+                    ));
+                }
+            }
+            let parent_index = g
+                .frontier
+                .iter()
+                .position(|row| row.e.id == commit.request_id)
+                .ok_or(StoreError::LeaseLost)?;
+            if matches!(commit.status, FrontierStatus::Pending | FrontierStatus::Leased)
+                || commit.reason.as_deref().is_some_and(|reason| {
+                    reason.len() > 128
+                        || !reason
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':'))
+                })
+            {
+                return Err(StoreError::Conflict("invalid request disposition".into()));
+            }
+            let version = g
+                .requests
+                .envelopes
+                .get(&commit.request_id)
+                .map_or(1, |(_, _, version)| *version);
+            if version != commit.expected_state_version {
+                return Err(StoreError::Conflict("request state version changed".into()));
+            }
+            let run = g
+                .runs
+                .get(&commit.run)
+                .ok_or_else(|| nf("crawl run", commit.run))?;
+            if crate::tenant::current().is_some_and(|tenant| tenant != run.tenant) {
+                return Err(StoreError::AccessDenied("request result tenant mismatch".into()));
+            }
+            if observed_custody
+                .as_ref()
+                .is_some_and(|custody| custody.expires_at <= now)
+            {
+                return Err(head_unavailable());
+            }
+            if head_receipt.is_some()
+                && run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
                 && run.config.retention.days != 0
                 && run.created_at + ChronoDuration::days(i64::from(run.config.retention.days)) <= now
             {
                 return Err(StoreError::RetentionDenied(
-                    "committed page source expired".into(),
+                    "committed HEAD source expired".into(),
                 ));
             }
-        }
-        let retained = run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr;
-        let dataset = crate::dataset::prepare_memory(
-            &g.dataset,
-            run,
-            commit.request_id,
-            &commit.accepted,
-            &commit.state_deltas,
-            &commit.outbox,
-            now,
-        )?;
-        let mut children = commit.children;
-        if let Some(batch) = &children {
-            if batch.run != commit.run
-                || batch.parent_fence != Some((commit.request_id, commit.fence))
-                || batch
-                    .requests
-                    .iter()
-                    .any(|request| request.revisit_generation != 0)
-            {
-                return Err(StoreError::Conflict("result child authority mismatch".into()));
+            if staged.as_ref().is_some_and(|custody| custody.expires_at <= now) {
+                return Err(head_unavailable());
             }
-        }
-        if commit.status == FrontierStatus::Succeeded {
-            if let Some(policy) = run
-                .config
-                .orchestration
-                .as_ref()
-                .and_then(|cfg| cfg.recrawl.as_ref())
-            {
-                let current = g
-                    .requests
-                    .envelopes
-                    .get(&commit.request_id)
-                    .map(|(envelope, _, _)| envelope.clone())
-                    .or_else(|| {
-                        g.frontier
-                            .iter()
-                            .find(|row| row.e.id == commit.request_id)
-                            .map(|row| {
-                                RequestEnvelopeV1::get(row.e.url.clone(), row.e.depth, row.e.discovered_from)
-                            })
-                    })
-                    .ok_or_else(|| nf("frontier row", commit.request_id))?;
-                let deadline = run.started_at.unwrap_or(run.created_at)
-                    + ChronoDuration::seconds(i64::from(run.config.limits.duration_seconds));
-                if let Some(next) = policy.next_visit(&current, commit.request_id, now, deadline)? {
-                    let principal = g
-                        .requests
-                        .principals
-                        .get(&commit.request_id)
-                        .cloned()
-                        .unwrap_or_else(|| "anonymous".into());
-                    let batch = children.get_or_insert_with(|| {
-                        let mut batch = RequestBatchV1::new(
-                            run.tenant,
-                            run.id,
-                            principal,
-                            Digest::of("crawlx/recrawl-batch/v1", &commit.request_id.to_be_bytes()),
-                            Vec::new(),
-                        );
-                        batch.parent_fence = Some((commit.request_id, commit.fence));
-                        batch
-                    });
-                    batch.requests.push(next);
+            if let Some(page) = &commit.page {
+                if page.run != commit.run
+                    || page.frontier_id != commit.request_id
+                    || page.url.key != g.frontier[parent_index].e.url.key
+                    || commit.status != FrontierStatus::Succeeded
+                {
+                    return Err(StoreError::Conflict("result page authority mismatch".into()));
+                }
+                if run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr
+                    && run.config.retention.days != 0
+                    && run.created_at + ChronoDuration::days(i64::from(run.config.retention.days)) <= now
+                {
+                    return Err(StoreError::RetentionDenied(
+                        "committed page source expired".into(),
+                    ));
                 }
             }
-        }
-        if let Some(batch) = &children {
-            append(&mut g, batch, now, true)?;
-        }
-        crate::dataset::apply_prepared(&mut g.dataset, dataset);
-        if let Some(page) = commit.page {
-            // The latest projection and history own independent lifetimes. Clone once here,
-            // never in producers or while moving the result through the commit contract.
-            match g
-                .pages
-                .iter_mut()
-                .find(|p| p.run == page.run && p.url.key == page.url.key)
-            {
-                Some(latest) => latest.clone_from(&page),
-                None => g.pages.push(page.clone()),
+            let retained = run.config.retention.mode != crawlx_core::config::RetentionMode::Zdr;
+            crate::digest_registry::validate_commit(&commit, run.tenant)?;
+            let digest_outcome = commit
+                .content_dedupe
+                .as_ref()
+                .map(|claim| g.requests.content_registry.prepare(claim, commit.request_id, now));
+            if let Some(outcome) = &digest_outcome {
+                crate::digest_registry::apply_outcome(&mut commit, outcome);
             }
-            if retained {
-                g.page_captures.insert((page.run, page.frontier_id), page);
+            let dataset = crate::dataset::prepare_memory(
+                &g.dataset,
+                run,
+                commit.request_id,
+                &commit.accepted,
+                &commit.state_deltas,
+                &commit.outbox,
+                now,
+            )?;
+            let mut children = commit.children.take();
+            if let Some(batch) = &children {
+                if batch.run != commit.run
+                    || batch.parent_fence != Some((commit.request_id, commit.fence))
+                    || batch
+                        .requests
+                        .iter()
+                        .any(|request| request.revisit_generation != 0)
+                {
+                    return Err(StoreError::Conflict("result child authority mismatch".into()));
+                }
             }
+            if commit.status == FrontierStatus::Succeeded && observed_principal.is_none() {
+                if let Some(policy) = run
+                    .config
+                    .orchestration
+                    .as_ref()
+                    .and_then(|cfg| cfg.recrawl.as_ref())
+                {
+                    let current = g
+                        .requests
+                        .envelopes
+                        .get(&commit.request_id)
+                        .map(|(envelope, _, _)| envelope.clone())
+                        .or_else(|| {
+                            g.frontier
+                                .iter()
+                                .find(|row| row.e.id == commit.request_id)
+                                .map(|row| {
+                                    RequestEnvelopeV1::get(
+                                        row.e.url.clone(),
+                                        row.e.depth,
+                                        row.e.discovered_from,
+                                    )
+                                })
+                        })
+                        .ok_or_else(|| nf("frontier row", commit.request_id))?;
+                    let deadline = run.started_at.unwrap_or(run.created_at)
+                        + ChronoDuration::seconds(i64::from(run.config.limits.duration_seconds));
+                    if let Some(next) = policy.next_visit(&current, commit.request_id, now, deadline)? {
+                        let principal = g
+                            .requests
+                            .principals
+                            .get(&commit.request_id)
+                            .cloned()
+                            .unwrap_or_else(|| "anonymous".into());
+                        let batch = children.get_or_insert_with(|| {
+                            let mut batch = RequestBatchV1::new(
+                                run.tenant,
+                                run.id,
+                                principal,
+                                Digest::of("crawlx/recrawl-batch/v1", &commit.request_id.to_be_bytes()),
+                                Vec::new(),
+                            );
+                            batch.parent_fence = Some((commit.request_id, commit.fence));
+                            batch
+                        });
+                        batch.requests.push(next);
+                    }
+                }
+            }
+            if let Some(batch) = &children {
+                append(&mut g, batch, now, true, None)?;
+            }
+            if let Some((claim, outcome)) = commit.content_dedupe.as_ref().zip(digest_outcome.as_ref()) {
+                g.requests
+                    .content_registry
+                    .apply(claim, commit.request_id, outcome.clone());
+            }
+            crate::dataset::apply_prepared(&mut g.dataset, dataset);
+            if let Some(page) = commit.page {
+                // The latest projection and history own independent lifetimes. Clone once here,
+                // never in producers or while moving the result through the commit contract.
+                if observed_custody.is_none()
+                    && !digest_outcome
+                        .as_ref()
+                        .is_some_and(|outcome| outcome.is_duplicate())
+                {
+                    let same_role = g.pages.iter().position(|prior| {
+                        prior.run == page.run
+                            && prior.url.key == page.url.key
+                            && observed_principal.as_ref().is_none_or(|role| {
+                                g.requests
+                                    .principals
+                                    .get(&prior.frontier_id)
+                                    .map_or("anonymous", String::as_str)
+                                    == role
+                            })
+                    });
+                    match same_role {
+                        Some(index) if observed_principal.is_none() => g.pages[index].clone_from(&page),
+                        Some(_) => {}
+                        None => g.pages.push(page.clone()),
+                    }
+                }
+                if let Some(custody) = &observed_custody {
+                    g.requests
+                        .observed_pages
+                        .insert((page.run, page.frontier_id), custody.clone());
+                }
+                if retained {
+                    g.page_captures.insert((page.run, page.frontier_id), page);
+                }
+            }
+            if let Some(payload) = commit.head_response {
+                push_event(
+                    &mut g,
+                    commit.run,
+                    "head_response",
+                    staged
+                        .as_ref()
+                        .map_or(payload, |custody| serde_json::json!({"headCustody": custody})),
+                    now,
+                );
+                published = true;
+            }
+            if let Some(receipt) = head_receipt {
+                g.requests.head_receipts.insert(
+                    (commit.run, commit.request_id),
+                    staged.map_or(HeadReceipt::Retained(receipt), HeadReceipt::Volatile),
+                );
+            }
+            if let Some((_, _, state_version)) = g.requests.envelopes.get_mut(&commit.request_id) {
+                *state_version = version.saturating_add(1);
+            }
+            let row = &mut g.frontier[parent_index];
+            row.e.status = commit.status;
+            row.e.denial_reason = commit.reason;
+            row.owner = None;
+            row.expires = None;
+            Ok(())
+        })();
+        if let Some(staging) = staging {
+            staging.finish(published).await?;
         }
-        if let Some((_, _, state_version)) = g.requests.envelopes.get_mut(&commit.request_id) {
-            *state_version = version.saturating_add(1);
+        if let Some(staging) = observed_staging {
+            staging.finish(result.is_ok()).await?;
         }
-        let row = &mut g.frontier[parent_index];
-        row.e.status = commit.status;
-        row.e.denial_reason = commit.reason;
-        row.owner = None;
-        row.expires = None;
-        Ok(())
+        result
+    }
+}
+
+#[async_trait]
+impl crawlx_core::digest_registry::DigestRegistryRepo for MemoryStore {
+    async fn digest_outcome(
+        &self,
+        run: CrawlRunId,
+        frontier_id: i64,
+    ) -> Result<Option<crawlx_core::digest_registry::DigestOutcomeV1>, StoreError> {
+        let g = self.inner.lock();
+        if g.pending_purges.contains_key(&run) {
+            return Err(head_unavailable());
+        }
+        let source = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+        crate::digest_registry::check_source(source, self.clock.now())?;
+        Ok(g.requests.content_registry.outcome(run, frontier_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+    use std::future::{poll_fn, Future};
+    use std::task::Poll;
+
+    #[tokio::test]
+    async fn cancelled_filesystem_staging_keeps_purge_barrier_until_writer_rollback() {
+        let root = tempfile::tempdir().unwrap();
+        let now = Timestamp::from_timestamp(1_700_000_000, 0).unwrap();
+        let clock = Arc::new(crawlx_core::time::ManualClock::new(now));
+        let buffer = Arc::new(
+            crate::DeliveryBuffer::open_fs(root.path(), clock.clone(), crate::BufferLimits::default())
+                .await
+                .unwrap(),
+        );
+        let store = Arc::new(MemoryStore::with_clock(clock));
+        let tenant = TenantId::new();
+        let run = crate::testkit::crawl_run(
+            tenant,
+            crate::testkit::create_crawl("https://example.test/", &[], 1),
+        );
+        let run_id = run.id;
+        {
+            let mut g = store.inner.lock();
+            g.runs.insert(run_id, run);
+            g.head_deliveries.insert(run_id, Arc::clone(&buffer));
+        }
+        // Hold the real filesystem writer behind its OS lock, not a mocked future.
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join("zdr/.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        let guard = Arc::clone(&store.head_custody).write_owned().await;
+        let mut staging = Box::pin(HeadStaging::start(
+            guard,
+            Arc::clone(&buffer),
+            tenant,
+            run_id,
+            -7,
+            br#"{"receipt":"test","observation":{}}"#.to_vec(),
+        ));
+        // Poll through task submission before cancelling the owning commit future.
+        poll_fn(|cx| {
+            assert!(staging.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        tokio::task::yield_now().await;
+        drop(staging);
+        assert!(store.head_custody.try_write().is_err());
+        let purging = {
+            let store = Arc::clone(&store);
+            tokio::spawn(async move { store.purge_run(run_id).await })
+        };
+        tokio::task::yield_now().await;
+        assert!(store.inner.lock().pending_purges.contains_key(&run_id));
+        assert!(!purging.is_finished());
+        lock.unlock().unwrap();
+        purging.await.unwrap().unwrap();
+        assert!(!store.inner.lock().runs.contains_key(&run_id));
+        assert!(buffer.get(tenant, run_id, -7).await.unwrap().is_none());
+        assert!(buffer.is_empty().await.unwrap());
     }
 }

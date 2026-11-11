@@ -3,6 +3,23 @@
 //! Content is written through the existing artifact sink before committing these references.
 //! Request completion composes accepted items, state CAS and outbox insertion in one transaction.
 
+/// Bounded JSON imports using existing artifact custody and request authority.
+#[path = "dataset_import.rs"]
+pub mod import;
+
+/// Tenant-scoped source seen ledger and retention-bound category cache.
+#[path = "dataset_memo.rs"]
+pub mod memo;
+
+/// Bounded, non-executable feed selection and format policies.
+#[path = "dataset_feed_policy.rs"]
+pub mod feed_policy;
+pub use feed_policy::FeedFinalizationOutcomeV1;
+pub use feed_policy::{
+    feed_key_component, EmptyFeedPolicyV1, FeedBatchingV1, FeedItemFilterV1, FeedParametersV1,
+    FeedPredicateV1,
+};
+
 use crate::repo::Sensitivity;
 use crate::{ArtifactRef, CrawlRunId, StoreError, Timestamp, WorkerId};
 use async_trait::async_trait;
@@ -112,6 +129,13 @@ impl DatasetConfigV1 {
             validate_identifier(&feed.id)?;
             validate_identifier(&feed.destination)?;
             validate_identifier(&feed.serializer)?;
+            feed.item_filter.validate()?;
+            feed.parameters.validate(&feed.serializer)?;
+            if feed.serializer == "tei" && feed.empty_policy == EmptyFeedPolicyV1::Emit {
+                return Err(StoreError::Conflict(
+                    "TEI requires at least one accepted document; empty policy must be skip".into(),
+                ));
+            }
             if !names.insert(&feed.id)
                 || !self.stores.iter().any(|s| s.name == feed.source)
                 || feed.max_batch_items == 0
@@ -131,6 +155,10 @@ impl DatasetConfigV1 {
                 .ok_or_else(|| StoreError::Conflict("undeclared feed source".into()))?;
             let compatible = match source.schema_version.as_str() {
                 "document_item_v1" => matches!(feed.serializer.as_str(), "json" | "jsonl" | "csv" | "xml"),
+                "json_object_v1" => {
+                    feed.batching == FeedBatchingV1::Terminal
+                        && matches!(feed.serializer.as_str(), "json" | "jsonl" | "csv" | "xml")
+                }
                 "document_v1" => matches!(
                     feed.serializer.as_str(),
                     "json" | "jsonl" | "csv" | "xml" | "tei" | "text" | "markdown" | "html" | "search_json"
@@ -207,6 +235,22 @@ pub struct KvDeclarationV1 {
     pub max_bytes: u64,
 }
 
+/// Fixed, non-executable post-processing applied after plaintext privacy approval.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FeedCompressionV1 {
+    /// Preserve the serializer's approved bytes.
+    #[default]
+    None,
+    /// Deterministic gzip framing with a zero modification time.
+    Gzip,
+    /// Bzip2 with a fixed bounded block size.
+    Bzip2,
+    /// XZ framing with a fixed bounded LZMA2 dictionary.
+    Xz,
+}
+
 /// Immutable serializer and operator-approved destination binding.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -220,6 +264,21 @@ pub struct FeedDeclarationV1 {
     pub serializer: String,
     /// Serializer implementation contract version.
     pub serializer_version: u16,
+    /// Fixed compression codec; omitted declarations preserve uncompressed delivery.
+    #[serde(default)]
+    pub compression: FeedCompressionV1,
+    /// Selection over privacy-approved item fields.
+    #[serde(default)]
+    pub item_filter: FeedItemFilterV1,
+    /// Bounded format-specific options, never destination configuration.
+    #[serde(default)]
+    pub parameters: FeedParametersV1,
+    /// Policy for a terminal feed with no selected output.
+    #[serde(default)]
+    pub empty_policy: EmptyFeedPolicyV1,
+    /// Explicit timing policy. A size cap alone never delays per-request delivery.
+    #[serde(default)]
+    pub batching: FeedBatchingV1,
     /// Operator registry identifier, never a target-supplied URL or path.
     pub destination: String,
     /// Maximum records in one immutable delivery.
@@ -290,6 +349,9 @@ pub struct AcceptedItemV1 {
     pub sensitivity: Sensitivity,
     /// Deadline bounded by run and original content expiry.
     pub expires_at: Option<Timestamp>,
+    /// Approved uncompressed single-record renditions for explicit terminal batching.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub feed_fragments: Vec<DeliveryBatchV1>,
 }
 
 impl AcceptedItemV1 {
@@ -314,6 +376,7 @@ impl AcceptedItemV1 {
             size_bytes,
             sensitivity: Sensitivity::Content,
             expires_at,
+            feed_fragments: Vec::new(),
         }
     }
 }
@@ -405,13 +468,15 @@ impl KvValueV1 {
     }
 }
 
-/// Source range proposed before commit or fixed after its atomic ordinal allocation.
+/// Immutable accepted-item interval, or explicit zero-record terminal feed source.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum DeliveryRangeV1 {
     /// Resolve this request's newly accepted item range inside the same transaction.
     AcceptedRequest,
+    /// Zero records. This source exists only in the terminal run transaction.
+    Empty,
     /// Already committed immutable keyset interval.
     Committed {
         /// First included ordinal.
@@ -421,7 +486,7 @@ pub enum DeliveryRangeV1 {
     },
 }
 
-/// Immutable delivery batch, inserted only with its accepted source commit.
+/// Immutable delivery batch, inserted with accepted-item authority or terminal run finalization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[non_exhaustive]
@@ -434,7 +499,7 @@ pub struct DeliveryBatchV1 {
     pub content: DatasetContentV1,
     /// Exact byte length.
     pub size_bytes: u64,
-    /// Atomic source allocation; durable manifests always contain a committed range.
+    /// Atomic source allocation. Published manifests have a committed range or explicit empty source.
     pub range: DeliveryRangeV1,
     /// Delivery deadline, never later than volatile content expiry.
     pub expires_at: Timestamp,
@@ -561,7 +626,7 @@ pub trait KvRepo: Send + Sync {
 /// Durable leased delivery intents, sharing existing database/clock authorities.
 #[async_trait]
 pub trait DeliveryOutboxRepo: Send + Sync {
-    /// List runs with due deliveries or receipt cleanup, including terminal runs.
+    /// List due deliveries, receipt cleanup and unfinished feed finalizations, including terminal runs.
     ///
     /// # Errors
     /// Returns invalid-bound or repository authority errors.

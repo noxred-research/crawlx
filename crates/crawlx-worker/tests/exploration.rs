@@ -82,7 +82,12 @@ fn dynamic_crawl(mutate: impl FnOnce(&mut CreateCrawl)) -> CreateCrawl {
 
 async fn run(script: FakeScript, crawl: CreateCrawl) -> (RunReport, Arc<FakeBackend>, Arc<MemoryStore>) {
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(script));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
     let report = run_local_with(
@@ -415,7 +420,12 @@ async fn a_role_with_a_credential_logs_in_before_exploring() {
             &[("home", "Dashboard", "/home")],
         ));
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(script));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let crawl = dynamic_crawl(|c| {
         c.safety.authorization_record_ref = Some(crawlx_core::AuthorizationRecordId::new());
         c.roles = vec![Role {
@@ -466,7 +476,12 @@ async fn an_unresolvable_credential_fails_the_role_not_the_process() {
     });
     let report = common::authorization::run_authorized_local_with(
         LocalRun::new(crawl, cfg(dir.path()))
-            .with_backend(Arc::new(FakeBackend::new(script)))
+            .with_backend(Arc::new(
+                FakeBackend::builder()
+                    .script(script)
+                    .clock(Arc::new(crawlx_core::SystemClock))
+                    .build(),
+            ))
             .with_secrets(Arc::new(FixedSecrets)),
     )
     .await

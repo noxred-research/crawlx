@@ -20,6 +20,133 @@ pub const META_REFRESH_RUNTIME_REVISION: u8 = 2;
 #[error("invalid acquisition policy: {0}")]
 pub struct AcquisitionPolicyError(pub &'static str);
 
+/// Core-only declaration of an optional HEAD request before a static GET.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct HeadPreflight {
+    /// Declared response length ceiling, 1..=64 MiB; absence uses the GET body limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_content_length: Option<u64>,
+    /// Accepted MIME types, at most 16; empty accepts any MIME type.
+    pub content_types: Vec<String>,
+}
+
+impl HeadPreflight {
+    /// Check finite length and MIME allow-list bounds.
+    ///
+    /// # Errors
+    /// Rejects a zero or excessive length ceiling, or malformed or excessive MIME types.
+    pub fn validate(&self) -> Result<(), AcquisitionPolicyError> {
+        if self
+            .max_content_length
+            .is_some_and(|limit| !(1..=67_108_864).contains(&limit))
+            || self.content_types.len() > 16
+            || self.content_types.iter().any(|mime| !valid_declared_mime(mime))
+        {
+            return Err(AcquisitionPolicyError("fetch preflight bounds or content types"));
+        }
+        Ok(())
+    }
+}
+
+/// Explicit HTTP status overrides, kept sorted for deterministic serialization.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct HttpErrorStatuses {
+    /// Statuses delivered without ordinary retry handling.
+    pub allow: std::collections::BTreeSet<u16>,
+    /// Statuses refused before extraction.
+    pub deny: std::collections::BTreeSet<u16>,
+}
+
+impl HttpErrorStatuses {
+    /// Check the finite HTTP status domain and disjoint allow/deny sets.
+    ///
+    /// # Errors
+    /// Rejects statuses outside 100..=599 or a status present in both sets.
+    pub fn validate(&self) -> Result<(), AcquisitionPolicyError> {
+        if self
+            .allow
+            .iter()
+            .chain(&self.deny)
+            .any(|status| !(100..=599).contains(status))
+            || !self.allow.is_disjoint(&self.deny)
+        {
+            return Err(AcquisitionPolicyError(
+                "fetch declaration status bounds or conflict",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Core-only response overrides; encoding support is checked by the fetch plane before traffic.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ResponseDeclaration {
+    /// Effective MIME type, at most 100 ASCII bytes and without parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    /// Text encoding label, 1..=128 printable ASCII bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub charset: Option<String>,
+    /// Explicit status allow/deny sets; empty sets preserve ordinary handling.
+    pub statuses: HttpErrorStatuses,
+}
+
+impl ResponseDeclaration {
+    /// Check bounded MIME, encoding-label syntax and HTTP status overrides.
+    ///
+    /// # Errors
+    /// Rejects malformed MIME types, empty or excessive encoding labels, control bytes or invalid statuses.
+    pub fn validate(&self) -> Result<(), AcquisitionPolicyError> {
+        if self
+            .content_type
+            .as_deref()
+            .is_some_and(|mime| !valid_declared_mime(mime))
+        {
+            return Err(AcquisitionPolicyError("fetch declaration content type"));
+        }
+        if self.charset.as_deref().is_some_and(|label| {
+            label.trim().is_empty()
+                || label.len() > 128
+                || !label.bytes().all(|byte| byte.is_ascii_graphic() || byte == b' ')
+        }) {
+            return Err(AcquisitionPolicyError("fetch declaration charset bounds"));
+        }
+        self.statuses.validate()
+    }
+}
+
+/// Action when the response exceeds a configured body limit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum OversizePolicy {
+    /// Return the bounded prefix and mark the response truncated.
+    #[default]
+    Truncate,
+    /// Refuse the response rather than extracting a partial body.
+    Refuse,
+}
+
+fn valid_declared_mime(mime: &str) -> bool {
+    let token = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b'!' | b'#' | b'$' | b'&' | b'-' | b'^' | b'_' | b'.' | b'+')
+            })
+    };
+    mime.len() <= 100
+        && mime
+            .split_once('/')
+            .is_some_and(|(kind, subtype)| token(kind) && token(subtype))
+}
+
 /// Explicit opt-in policy. Absence preserves existing facade behavior.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]

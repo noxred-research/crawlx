@@ -150,6 +150,7 @@ async fn snapshot(
     store_available: Option<bool>,
 ) -> PressureSnapshotV1 {
     let mut pressure = PressureSnapshotV1::default();
+    pressure.event_loop_lag_ms = Some(event_loop_lag_ms().await);
     pressure.cpu_active = count(cpu.active());
     pressure.cpu_waiting = count(cpu.queue_depth());
     pressure.queue_permille = Some(ratio(
@@ -176,15 +177,7 @@ async fn snapshot(
             tokio::fs::read_to_string("/sys/fs/cgroup/memory.max"),
             tokio::fs::read_to_string("/proc/self/status"),
         );
-        pressure.rss_bytes = status.ok().and_then(|status| {
-            let line = status.lines().find_map(|line| line.strip_prefix("VmRSS:"))?;
-            let mut parts = line.split_whitespace();
-            let kib = parts.next()?.parse::<u64>().ok()?;
-            if parts.next()? != "kB" {
-                return None;
-            }
-            kib.checked_mul(1024)
-        });
+        pressure.rss_bytes = status.ok().as_deref().and_then(rss_from_status);
         pressure.memory_limit_bytes = limit
             .ok()
             .and_then(|limit| limit.trim().parse::<u64>().ok())
@@ -196,6 +189,73 @@ async fn snapshot(
         });
     }
     pressure
+}
+
+/// Constant-size process observations around one admitted task, not allocation attribution.
+pub(crate) struct TaskResourceSample {
+    started: Instant,
+    rss_before: Option<u64>,
+}
+
+impl TaskResourceSample {
+    pub(crate) async fn start() -> Self {
+        Self {
+            started: Instant::now(),
+            rss_before: process_rss_bytes().await,
+        }
+    }
+
+    pub(crate) async fn finish(self, frontier: i64, succeeded: bool) -> serde_json::Value {
+        let rss_after = process_rss_bytes().await;
+        serde_json::json!({
+            "version": 1,
+            "frontier_id": frontier,
+            "succeeded": succeeded,
+            "elapsed_ms": u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            "process_rss_before_bytes": self.rss_before,
+            "process_rss_after_bytes": rss_after,
+        })
+    }
+}
+
+async fn process_rss_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        tokio::fs::read_to_string("/proc/self/status")
+            .await
+            .ok()
+            .as_deref()
+            .and_then(rss_from_status)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rss_from_status(status: &str) -> Option<u64> {
+    let line = status.lines().find_map(|line| line.strip_prefix("VmRSS:"))?;
+    let mut parts = line.split_whitespace();
+    let kib = parts.next()?.parse::<u64>().ok()?;
+    if parts.next()? != "kB" || parts.next().is_some() {
+        return None;
+    }
+    kib.checked_mul(1024)
+}
+
+async fn event_loop_lag_ms() -> u32 {
+    // Probe an actual timer wakeup, not time between dispatch calls: long I/O and
+    // origin cooldowns do not themselves imply a stalled async runtime.
+    let deadline = Instant::now() + Duration::from_millis(1);
+    tokio::time::sleep_until(deadline).await;
+    u32::try_from(
+        Instant::now()
+            .saturating_duration_since(deadline)
+            .as_millis()
+            .min(60_000),
+    )
+    .unwrap_or(60_000)
 }
 fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
@@ -246,6 +306,48 @@ mod tests {
         assert_eq!(ratio(2, 1), 1000);
         assert_eq!(ratio(0, 0), 1000);
         assert_eq!(ratio(1, 4), 250);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn process_rss_requires_observed_units_and_checked_bytes() {
+        assert_eq!(rss_from_status("Name: crawlx\nVmRSS:\t123 kB\n"), Some(125_952));
+        assert_eq!(rss_from_status("VmRSS: 123 B\n"), None);
+        assert_eq!(rss_from_status("VmRSS: 123 kB extra\n"), None);
+        assert_eq!(rss_from_status("VmRSS: 18446744073709551615 kB\n"), None);
+        assert_eq!(rss_from_status("Name: crawlx\n"), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn task_resources_record_elapsed_and_explicit_rss_observations() {
+        let sample = TaskResourceSample::start().await;
+        tokio::time::advance(Duration::from_millis(123)).await;
+        let record = sample.finish(7, false).await;
+        assert_eq!(record["frontier_id"], 7);
+        assert_eq!(record["succeeded"], false);
+        assert_eq!(record["elapsed_ms"], 123);
+        assert!(
+            record["process_rss_before_bytes"].is_null()
+                || record["process_rss_before_bytes"].as_u64().is_some()
+        );
+        assert!(
+            record["process_rss_after_bytes"].is_null()
+                || record["process_rss_after_bytes"].as_u64().is_some()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn timer_probe_records_wakeup_lag_and_caps_long_stalls() {
+        for (advance, expected) in [(1, 0), (101, 100), (70_000, 60_000)] {
+            let mut probe = Box::pin(event_loop_lag_ms());
+            tokio::select! {
+                biased;
+                _ = &mut probe => panic!("timer must be pending before its deadline"),
+                () = std::future::ready(()) => {}
+            }
+            tokio::time::advance(Duration::from_millis(advance)).await;
+            assert_eq!(probe.await, expected);
+        }
     }
 
     #[test]

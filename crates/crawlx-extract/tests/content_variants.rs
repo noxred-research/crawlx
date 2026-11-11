@@ -208,7 +208,13 @@ fn malformed_and_oversized_target_selectors_are_rejected() {
     for bad in ["p[", "div >", ":::", "p..lead"] {
         let err = extract(|o| o.target_elements = vec![bad.into()]).unwrap_err();
         assert!(
-            matches!(err, ExtractError::InvalidSelector { .. }),
+            matches!(
+                err,
+                ExtractError::Outputs(ContentOutputError::InvalidOption {
+                    name: "targetElements",
+                    reason: "invalid CSS element selector",
+                })
+            ),
             "{bad}: {err:?}"
         );
     }

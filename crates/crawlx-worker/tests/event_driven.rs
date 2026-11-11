@@ -31,7 +31,12 @@ fn menu_app() -> FakeScript {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_controls_an_action_revealed_are_tried_right_after_it() {
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(menu_app()));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(menu_app())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
         .await
         .unwrap();

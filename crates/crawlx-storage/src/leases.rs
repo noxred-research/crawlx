@@ -25,6 +25,7 @@ pub const RENDER_SESSION_SLOT_BASE: u32 = 1_000_000;
 
 pub(crate) fn validate_render_session(session: &CrawlSession) -> Result<(), StoreError> {
     if session.role.0 != "scrape"
+        || session.kind != crawlx_core::repo::SessionKind::Browser
         || session.schedule_slot < RENDER_SESSION_SLOT_BASE
         || session.run_index == 0
         || session.status != SessionStatus::Pending
@@ -489,7 +490,7 @@ impl LeaseRepo for Pg {
                error_code = CASE WHEN attempts >= $2 THEN 'lease_expired' ELSE error_code END, \
                finished_at = CASE WHEN attempts >= $2 THEN now() ELSE NULL END, \
                lease_owner = NULL, lease_expires_at = NULL \
-             WHERE status = 'leased' AND lease_expires_at < $1 RETURNING status",
+             WHERE status = 'leased' AND lease_expires_at < $1 RETURNING status,via",
         )
         .bind(now)
         .bind(crate::codec::conv::<u16, i16>(max_attempts, "max_attempts")?)
@@ -498,6 +499,9 @@ impl LeaseRepo for Pg {
         .map_err(db)?;
         let mut out = FrontierReap::default();
         for r in &rows {
+            if get::<String>(r, "via")? == "interaction" {
+                continue;
+            }
             if get::<String>(r, "status")? == "failed" {
                 out.failed += 1;
             } else {

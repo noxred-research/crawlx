@@ -336,6 +336,13 @@ pub enum SessionCommand {
         /// Reply.
         reply: oneshot::Sender<Result<PageOpResult, SessionError>>,
     },
+    /// Read document response metadata only while its settled DOM epoch still owns the page.
+    DocumentResponse {
+        /// Epoch of the immutable observation being extracted.
+        expected: ObservationEpoch,
+        /// Reply.
+        reply: oneshot::Sender<Result<PageOpResult, SessionError>>,
+    },
     /// Evaluate a CSS candidate filter in the page for `targets` (`dynamic.interactionSelector`,
     /// `dynamic.interactionExclude`): one admit/reject verdict per target, in order.
     CssFilter {
@@ -403,7 +410,7 @@ impl SessionCommand {
             Self::StorageDigest { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
-            Self::PageOp { reply, .. } => {
+            Self::PageOp { reply, .. } | Self::DocumentResponse { reply, .. } => {
                 let _ = reply.send(Err(error));
             }
             Self::CssFilter { reply, .. } => {
@@ -506,6 +513,8 @@ pub struct SessionConfig {
     pub article_language_detector: Option<crawlx_core::article_language::ArticleLanguageHandle>,
     /// Existing scheduler lease used only for fenced binding metadata updates.
     pub(crate) binding_owner: Option<(crawlx_storage::Pg, crawlx_storage::leases::SessionLease)>,
+    /// Shared generation pin; the registry remains its sole transport owner.
+    pub(crate) pool_pin: Option<Arc<crawlx_fetch::proxyx::PoolBinding>>,
     /// Local lease authority when no PostgreSQL binding repository is installed.
     pub(crate) local_lease_owner: Option<(
         Arc<dyn crawlx_storage::LeaseRepo>,
@@ -552,6 +561,7 @@ impl SessionConfig {
             extension_cpu: None,
             article_language_detector: None,
             binding_owner: None,
+            pool_pin: None,
             local_lease_owner: None,
             login_allowance: chrono::Duration::zero(),
             execution_deadline: None,
@@ -616,6 +626,7 @@ struct ActorExit {
     failure: Option<Arc<SessionError>>,
     cleanup: Option<Result<(), SessionError>>,
     shutdown_completed: bool,
+    retired_binding: Option<crawlx_core::session_binding::SessionBindingV1>,
 }
 
 /// Cloneable handle to a running actor.
@@ -653,6 +664,13 @@ impl SessionHandle {
     #[must_use]
     pub fn state(&self) -> SessionState {
         *self.state.borrow()
+    }
+
+    /// Exact retired generation retained only after confirmed resource cleanup.
+    /// This snapshot does not grant a lease or authorize replacement.
+    #[must_use]
+    pub fn retired_binding(&self) -> Option<crawlx_core::session_binding::SessionBindingV1> {
+        self.exit.lock().retired_binding.clone()
     }
 
     /// Free mailbox slots right now (`0` means the next send parks the sender:
@@ -898,6 +916,16 @@ impl SessionHandle {
             reply,
         })
         .await
+    }
+
+    /// Read response metadata associated with one immutable DOM observation.
+    ///
+    /// # Errors
+    /// Returns [`SessionError::ObservationEpochChanged`] when the page changed before
+    /// or during the actor-owned read, or the underlying session/browser error.
+    pub async fn document_response(&self, expected: ObservationEpoch) -> Result<PageOpResult, SessionError> {
+        self.call(|reply| SessionCommand::DocumentResponse { expected, reply })
+            .await
     }
 
     /// Judge `targets` against a CSS candidate filter in the page: `true` where an element is
@@ -1199,6 +1227,7 @@ impl SessionActor {
         }
         rx.close();
         if self.state != SessionState::Closed {
+            self.set_state(SessionState::Closing);
             let cleanup = self.close_context().await;
             if let Err(error) = &cleanup {
                 tracing::warn!(error = %error, "session resource cleanup failed");
@@ -1326,8 +1355,12 @@ impl SessionActor {
             pg.update_session_binding(lease, version, binding).await?;
         }
         if binding.state != crawlx_core::session_binding::BindingState::Leased {
-            return Err(SessionError::Other(
-                "session_unavailable: binding draining".into(),
+            return Err(SessionError::Binding(
+                crawlx_core::session_binding::SessionBindingError::Draining {
+                    reason: binding
+                        .retirement
+                        .ok_or(crawlx_core::session_binding::SessionBindingError::GenerationConflict)?,
+                },
             ));
         }
         Ok(())
@@ -1354,6 +1387,19 @@ impl SessionActor {
         Ok(())
     }
 
+    fn verify_pool_pin(&self) -> Result<(), SessionError> {
+        if let Some(pool) = &self.cfg.pool_pin {
+            let binding = self
+                .cfg
+                .context
+                .session_binding
+                .as_ref()
+                .ok_or(crawlx_core::session_binding::SessionBindingError::Unavailable)?;
+            pool.validate_session(binding)?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn verify_current_binding(&mut self) -> Result<(), SessionError> {
         if let Some((pg, lease)) = &self.cfg.binding_owner {
             let binding =
@@ -1375,7 +1421,7 @@ impl SessionActor {
         } else if let Some((leases, lease)) = &self.cfg.local_lease_owner {
             leases.heartbeat(lease).await?;
         }
-        Ok(())
+        self.verify_pool_pin()
     }
 
     fn command_deadline(&self) -> Option<Timestamp> {
@@ -1426,12 +1472,55 @@ impl SessionActor {
         let lease = self.lease.take()?;
         let context = std::mem::replace(&mut self.ctx, Box::new(ClosedContext));
         let state = self.state_tx.clone();
+        let terminal = final_cleanup || self.state != SessionState::Recovering;
+        let mut binding = terminal
+            .then(|| self.cfg.context.session_binding.clone())
+            .flatten();
+        let owner = self.cfg.binding_owner.clone();
+        let exit = Arc::clone(&self.exit);
+        let now = self.svc.clock.now();
         Some(
             self.svc
                 .supervisor
                 .spawn_for("session-cleanup", Some(self.cfg.session), async move {
+                    let draining: Result<(), SessionError> = async {
+                        if let Some(binding) = &mut binding {
+                            let version = binding.state_version;
+                            let reason = if binding.expires_at <= now {
+                                crawlx_core::session_binding::RetirementReason::Expired
+                            } else {
+                                crawlx_core::session_binding::RetirementReason::Replaced
+                            };
+                            binding.begin_drain(reason)?;
+                            if binding.state_version != version {
+                                if let Some((pg, lease)) = &owner {
+                                    pg.update_session_binding(lease, version, binding).await?;
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    .await;
                     let closed = tokio::time::timeout(Duration::from_secs(5), context.close()).await;
-                    let result = lease.release(matches!(closed, Ok(Ok(())))).await;
+                    let released = lease.release(matches!(closed, Ok(Ok(())))).await;
+                    let lifecycle: Result<(), SessionError> = async {
+                        draining?;
+                        if let Some(binding) = &mut binding {
+                            let version = binding.state_version;
+                            binding.finish_cleanup(released.is_ok())?;
+                            if let Some((pg, lease)) = &owner {
+                                pg.update_session_binding(lease, version, binding).await?;
+                            }
+                        }
+                        Ok(())
+                    }
+                    .await;
+                    let result = released.and(lifecycle);
+                    if result.is_ok() {
+                        exit.lock().retired_binding = binding.filter(|binding| {
+                            binding.state == crawlx_core::session_binding::BindingState::Retired
+                        });
+                    }
                     if final_cleanup {
                         if let Err(error) = &result {
                             tracing::warn!(error = %error, "cancelled actor resource cleanup failed");
@@ -1569,6 +1658,11 @@ impl SessionActor {
                 let r = self.note(r).await;
                 let _ = reply.send(r);
             }
+            SessionCommand::DocumentResponse { expected, reply } => {
+                let r = self.document_response(expected).await;
+                let r = self.note(r).await;
+                let _ = reply.send(r);
+            }
             SessionCommand::CssFilter {
                 filter,
                 targets,
@@ -1622,6 +1716,7 @@ impl SessionActor {
 
     /// A crash anywhere schedules the recovery ladder after the reply went out.
     async fn note<T>(&mut self, r: Result<T, SessionError>) -> Result<T, SessionError> {
+        self.verify_pool_pin()?;
         if matches!(
             &r,
             Err(SessionError::Browser(BrowserError::SessionExpired)
@@ -1648,6 +1743,7 @@ impl SessionActor {
     }
 
     fn accepts_owned_context(&self) -> Result<(), SessionError> {
+        self.verify_pool_pin()?;
         if let Some(binding) = &self.cfg.context.session_binding {
             binding
                 .eligible(
@@ -1712,6 +1808,7 @@ impl SessionActor {
         Metrics::global()
             .histogram(names::OBSERVATION_DURATION)
             .observe_duration(started.elapsed(), &[]);
+        self.verify_pool_pin()?;
         let bundle = observed?;
         self.last = Some(Arc::clone(&bundle));
         Ok(bundle)
@@ -1784,7 +1881,14 @@ impl SessionActor {
         }
         // Both original and changed navigation pass the same actor-owned context,
         // origin admission, robots/navigation guard and checked browser egress.
-        let mut r = self.ctx.navigate(replacement.as_ref().unwrap_or(url)).await?;
+        // Initial read navigation is not an admitted mutation pipeline. Cancellation
+        // drops its waiter; terminal cleanup still proves context/process death.
+        let mut r = tokio::select! {
+            biased;
+            () = self.cfg.origin_cancel.cancelled() => return Err(SessionError::Cancelled),
+            result = self.ctx.navigate(replacement.as_ref().unwrap_or(url)) => result?,
+        };
+        self.verify_pool_pin()?;
         // The checked context admitted this intent. Redirects change location, not handler identity.
         self.current_request_route = Some(route.clone());
         if let Some(chain) = &mut lifecycle {
@@ -1811,6 +1915,7 @@ impl SessionActor {
             }
         }
         self.reveal_lazy_content().await?;
+        self.verify_pool_pin()?;
         if self.cfg.traffic_export.is_some() {
             self.collect_traffic();
         }
@@ -2009,6 +2114,20 @@ impl SessionActor {
     async fn page_op(&mut self, op: PageOp) -> Result<PageOpResult, SessionError> {
         self.accepts_browser_commands()?;
         Ok(self.ctx.page_op(op).await?)
+    }
+
+    async fn document_response(&mut self, expected: ObservationEpoch) -> Result<PageOpResult, SessionError> {
+        self.accepts_browser_commands()?;
+        let current = self.ctx.current_epoch();
+        if current != expected {
+            return Err(SessionError::ObservationEpochChanged { expected, current });
+        }
+        let response = self.ctx.page_op(PageOp::DocumentResponse).await?;
+        let current = self.ctx.current_epoch();
+        if current != expected {
+            return Err(SessionError::ObservationEpochChanged { expected, current });
+        }
+        Ok(response)
     }
 
     /// Native typing of a credential (recorded-flow `fill` with a placeholder). Like `Login`,
@@ -2400,6 +2519,10 @@ impl SessionActor {
             .perform(a.browser_action().clone())
             .instrument(child::browser_mutation())
             .await;
+        if let Err(error) = self.verify_pool_pin() {
+            self.finish_unknown(id, lane, "proxy_session_pin_lost").await;
+            return Err(error);
+        }
         let receipt = match performed {
             Ok(r) => r,
             Err(e) if e.is_target_crash() => {
@@ -2439,6 +2562,10 @@ impl SessionActor {
             .settle(&mut *self.ctx, &settle)
             .instrument(quiescence.clone())
             .await;
+        if let Err(error) = self.verify_pool_pin() {
+            self.finish_unknown(id, lane, "proxy_session_pin_lost").await;
+            return Err(error);
+        }
         let settled = match settle_result {
             Ok(s) => {
                 quiescence.record("settle_timeout", s.settle_timeout);
@@ -2513,6 +2640,10 @@ impl SessionActor {
                 None
             }
         };
+        if let Err(error) = self.verify_pool_pin() {
+            self.finish_unknown(id, lane, "proxy_session_pin_lost").await;
+            return Err(error);
+        }
         let analyzed = match &after {
             Some(b) => {
                 let analyzed = self.analyzer.analyze(b).await;
@@ -2533,6 +2664,10 @@ impl SessionActor {
             error: None,
             robots_blocked: Vec::new(),
         };
+        if let Err(error) = self.verify_pool_pin() {
+            self.finish_unknown(id, lane, "proxy_session_pin_lost").await;
+            return Err(error);
+        }
         let mut outcome = self.finish(a, id, done, started).await?;
         outcome.after = after;
         Ok(outcome)
@@ -2787,6 +2922,7 @@ impl SessionActor {
         if let Some(candidate) = candidate {
             let (_, batch, feeds) = crate::extensions::store_candidate(
                 self.svc.artifacts.as_ref(),
+                &cpu,
                 &run,
                 page,
                 &candidate,
@@ -3242,6 +3378,47 @@ mod exit_tests {
     }
 
     #[tokio::test]
+    async fn confirmed_retired_snapshot_keeps_typed_retirement_cause() {
+        use crawlx_core::session_binding::{
+            RetirementReason, SessionBindingError, SessionBindingV1, SessionIdentityV1, SessionLimits,
+        };
+        let session = crawlx_storage::testkit::sessions(crawlx_core::CrawlRunId::new(), 1, 1).remove(0);
+        let digest = crawlx_core::hash::Digest::of("fixture", b"retired-snapshot");
+        let identity = SessionIdentityV1::new(
+            crawlx_core::TenantId::new(),
+            &session,
+            digest,
+            digest,
+            digest,
+            digest,
+            None,
+        );
+        let expiry = chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap();
+        let mut limits = SessionLimits::default();
+        limits.max_usage = 1;
+        let mut binding = SessionBindingV1::new(identity, 7, expiry);
+        binding
+            .record_use(true, expiry - chrono::Duration::seconds(1), limits)
+            .unwrap();
+        binding.finish_cleanup(true).unwrap();
+        let failure = Arc::new(SessionError::Binding(SessionBindingError::Draining {
+            reason: RetirementReason::UsageLimit,
+        }));
+        let handle = closed_handle(ActorExit {
+            failure: Some(Arc::clone(&failure)),
+            cleanup: Some(Ok(())),
+            retired_binding: Some(binding.clone()),
+            ..ActorExit::default()
+        });
+        assert_eq!(handle.retired_binding(), Some(binding));
+        let Err(SessionError::ActorStopped(actual)) = handle.shutdown(ShutdownReason::Completed).await else {
+            panic!("retirement cause was discarded after confirmed cleanup");
+        };
+        assert!(Arc::ptr_eq(&actual, &failure));
+        assert!(closed_handle(ActorExit::default()).retired_binding().is_none());
+    }
+
+    #[tokio::test]
     async fn successful_cached_cleanup_never_clears_binding_expiry_or_generic_actor_loss() {
         let gone = closed_handle(ActorExit {
             cleanup: Some(Ok(())),
@@ -3314,6 +3491,7 @@ mod exit_tests {
                 failure: Some(Arc::clone(&failure)),
                 cleanup: Some(Ok(())),
                 shutdown_completed: true,
+                retired_binding: None,
             });
             for result in [
                 Err::<(), _>(handle.closed_error()),
@@ -3325,5 +3503,78 @@ mod exit_tests {
                 assert!(Arc::ptr_eq(&actual, &failure));
             }
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn generation_profile_drift_fails_actor_command_with_terminal_pin_error() {
+        use crawlx_core::error::{Classify, ErrorClass};
+        use crawlx_core::session_binding::{SessionBindingV1, SessionIdentityV1};
+        use crawlx_fetch::proxyx::{PoolSelector, PoolTier, ProxyxRoute};
+
+        let fixture =
+            crate::run::login_lifecycle_tests::fixture_with_bounds(chrono::Duration::minutes(5), None, None)
+                .await;
+        fixture.handle.shutdown(ShutdownReason::Completed).await.unwrap();
+        let mut config = fixture.rc.session_config(&fixture.lease.session);
+        config.awaits_login = false;
+        let route = ProxyxRoute::new(
+            &"http://pool.fixture:8080".parse().unwrap(),
+            None,
+            crawlx_core::secret::SecretOr::secret("fixture-org-key".into()),
+            PoolSelector::default(),
+        )
+        .unwrap();
+        let digest = crawlx_core::hash::Digest::of("fixture", b"identity");
+        let identity = SessionIdentityV1::new(
+            fixture.rc.stores.tenant,
+            &fixture.lease.session,
+            digest,
+            digest,
+            route.egress_digest(PoolTier::Basic),
+            digest,
+            None,
+        );
+        let mut binding = SessionBindingV1::new(
+            identity,
+            fixture.lease.fencing_token,
+            fixture.rc.clock.now() + chrono::Duration::minutes(5),
+        );
+        config.pool_pin = Some(route.bind(PoolTier::Basic, &binding, None).unwrap());
+        binding.identity.profile = Some(digest);
+        config.context.session_binding = Some(binding);
+        config.local_lease_owner = Some((Arc::clone(&fixture.rc.stores.leases), fixture.lease.clone()));
+        let pooled = fixture
+            .rc
+            .pool
+            .acquire(config.context.clone(), false)
+            .await
+            .unwrap();
+        let handle = SessionActor::spawn(
+            config,
+            fixture.rc.services(),
+            Arc::clone(&fixture.analyzer),
+            7,
+            pooled,
+        )
+        .await
+        .unwrap();
+        let error = handle
+            .navigate(crawlx_core::request::RequestEnvelopeV1::get(
+                fixture.rc.seed_url().unwrap(),
+                0,
+                None,
+            ))
+            .await
+            .unwrap_err();
+        let root = match &error {
+            SessionError::ActorStopped(root) => root.as_ref(),
+            error => error,
+        };
+        assert!(matches!(
+            root,
+            SessionError::ProxyPin(crawlx_fetch::proxyx::ProxyxError::SessionUnavailable)
+        ));
+        assert_eq!(error.class(), ErrorClass::Terminal);
+        let _ = handle.shutdown(ShutdownReason::Completed).await;
     }
 }

@@ -42,7 +42,30 @@ async fn migration_0037_revokes_only_legacy_checkpoint_uses_and_sweeps_their_obj
     let tenant = TenantId::new();
     pg.ensure_tenant(tenant, "checkpoint cutover").await.unwrap();
     let run = crawl_run(tenant, create_crawl("https://example.test/", &[], 1));
-    pg.create(&run, None).await.unwrap();
+    // Seed the historical schema directly: today's RunRepo also writes columns
+    // introduced after migration 0036, which are deliberately absent here.
+    sqlx::query(
+        "INSERT INTO crawl_runs (run_id,tenant_id,mode,seed,safety_profile,policy_version, \
+         identity_version,state_algo_version,query_classifier_version,config,config_digest, \
+         retention_mode,retention_days,created_at,counters) \
+         VALUES ($1,$2,($3->>'mode')::crawl_mode,$4,($3->'safety'->>'profile')::safety_profile, \
+         $5,$6,$7,$8,$3,$9,($3->'retention'->>'mode')::retention_mode, \
+         ($3->'retention'->>'days')::int,$10,$11)",
+    )
+    .bind(run.id.0)
+    .bind(tenant.0)
+    .bind(serde_json::to_value(&run.config).unwrap())
+    .bind(i64::from_ne_bytes(run.seed.0.to_ne_bytes()))
+    .bind(i32::try_from(run.policy_version).unwrap())
+    .bind(i16::try_from(run.config.crawl.identity.version.decision_version()).unwrap())
+    .bind(i16::try_from(crawlx_core::state::StateSignature::VERSION).unwrap())
+    .bind(1_i16)
+    .bind(run.config_digest.0.as_slice())
+    .bind(run.created_at)
+    .bind(serde_json::to_value(run.counters).unwrap())
+    .execute(pg.pool())
+    .await
+    .unwrap();
     let sessions = sessions(run.id, 1, 2);
     pg.create_sessions(&sessions).await.unwrap();
     let now = pg.db_now().await.unwrap();

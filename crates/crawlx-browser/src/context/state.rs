@@ -25,6 +25,8 @@ pub const LONG_LIVED_AFTER: Duration = Duration::from_secs(10);
 /// Captured traffic is bounded; the oldest events are dropped first.
 pub const MAX_TRAFFIC_EVENTS: usize = 5000;
 const MAX_CONSOLE: usize = 500;
+/// Per-message retained console bytes; a page cannot fill the ring with unbounded strings.
+const MAX_CONSOLE_BYTES: usize = 4096;
 /// Refused navigations kept for the next drain; the oldest are dropped first.
 pub const MAX_BLOCKED_NAVIGATIONS: usize = 256;
 
@@ -178,6 +180,10 @@ pub struct Tab {
     pub crashed: bool,
     /// Console messages captured so far (bounded; `Standard` profile only).
     pub console: Vec<String>,
+    /// Messages evicted from the bounded console window.
+    pub console_dropped: u64,
+    /// At least one message was clipped before retention.
+    pub console_truncated: bool,
     /// Counters at the previous `observe` (for per-bundle deltas).
     pub counters_at_observe: Counters,
     /// Counters from the most recent read of the observer.
@@ -239,6 +245,8 @@ impl Tab {
             dialogs: Vec::new(),
             crashed: false,
             console: Vec::new(),
+            console_dropped: 0,
+            console_truncated: false,
             counters_at_observe: Counters::default(),
             counters: Counters::default(),
             drag_data: None,
@@ -463,6 +471,12 @@ pub struct State {
     /// Captured traffic, oldest first, bounded by `MAX_TRAFFIC_EVENTS`.
     pub traffic: Vec<TrafficEvent>,
     traffic_seq: u64,
+    /// Retain source response identities only when a capture policy sink is configured.
+    pub(super) capture_sources: bool,
+    /// Original response identities indexed by frame then URL, independent of traffic
+    /// drains. At most 128 entries; `None` means an ambiguous same-document response.
+    /// Present values contain `(session, request_id)`, never response bodies.
+    pub resource_requests: BTreeMap<String, BTreeMap<String, Option<(String, String)>>>,
     /// Body jobs whose events cannot be drained until the policy decision completes.
     pub pending_bodies: BTreeSet<u64>,
     /// Full capture was explicitly requested and has a policy sink.
@@ -636,6 +650,8 @@ impl State {
             active: String::new(),
             traffic: Vec::new(),
             traffic_seq: 0,
+            capture_sources: false,
+            resource_requests: BTreeMap::new(),
             pending_bodies: BTreeSet::new(),
             capture_full: false,
             capture_text: false,
@@ -979,31 +995,70 @@ impl State {
             "Inspector.targetCrashed" if !is_child => tab.crashed = true,
             "Input.dragIntercepted" => tab.drag_data = p.get("data").cloned(),
             "Runtime.consoleAPICalled" if console_capture => {
-                let args: Vec<String> = p
-                    .get("args")
-                    .and_then(Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .map(|x| {
-                                x.get("value")
-                                    .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
-                                    .or_else(|| {
-                                        x.get("description").and_then(Value::as_str).map(str::to_owned)
-                                    })
-                                    .unwrap_or_default()
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                tab.console
-                    .push(format!("{}: {}", str_of(p, "type"), args.join(" ")));
+                let (line, truncated) = console_line(p);
+                tab.console_truncated |= truncated;
+                tab.console.push(line);
                 if tab.console.len() > MAX_CONSOLE {
                     tab.console.remove(0);
+                    tab.console_dropped = tab.console_dropped.saturating_add(1);
                 }
             }
             "Network.requestWillBeSent" => {
                 let id = str_of(p, "requestId").to_owned();
                 let req = p.get("request").unwrap_or(&Value::Null);
+                // Network response buffers survive ordinary HTTP no-store directives;
+                // page resource caches need not. Retain identities only, never bodies.
+                let source_url = str_of(req, "url");
+                let source_frame = str_of(p, "frameId");
+                if self.capture_sources && !source_frame.is_empty() && source_frame.len() <= 1024 {
+                    if str_of(p, "type") == "Document" {
+                        // A new document owns a fresh response set for this frame only.
+                        self.resource_requests.remove(source_frame);
+                    }
+                    for (frame, requests) in &mut self.resource_requests {
+                        requests.retain(|url, identity| {
+                            identity.as_ref().is_none_or(|(owner, request)| {
+                                owner != session
+                                    || request != &id
+                                    || (frame == source_frame && url == source_url)
+                            })
+                        });
+                    }
+                    self.resource_requests.retain(|_, requests| !requests.is_empty());
+                    if !source_url.is_empty() && source_url.len() <= 8192 {
+                        let known = self
+                            .resource_requests
+                            .get(source_frame)
+                            .is_some_and(|requests| requests.contains_key(source_url));
+                        let count: usize = self.resource_requests.values().map(BTreeMap::len).sum();
+                        if count >= 128 && !known {
+                            if let Some(mut frame) = self.resource_requests.first_entry() {
+                                frame.get_mut().pop_first();
+                                if frame.get().is_empty() {
+                                    frame.remove();
+                                }
+                            }
+                        }
+                        let identity = if !id.is_empty() && id.len() <= 1024 && session.len() <= 1024 {
+                            Some((session.to_owned(), id.clone()))
+                        } else {
+                            None
+                        };
+                        let requests = self.resource_requests.entry(source_frame.to_owned()).or_default();
+                        match requests.entry(source_url.to_owned()) {
+                            std::collections::btree_map::Entry::Vacant(entry) => {
+                                entry.insert(identity);
+                            }
+                            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                                // Two responses for one displayed resource cannot be
+                                // disambiguated by its URL. Keep refusing until navigation.
+                                if entry.get() != &identity {
+                                    entry.insert(None);
+                                }
+                            }
+                        }
+                    }
+                }
                 if let Some(redirect) = p.get("redirectResponse") {
                     // the previous hop of this request id ended with a redirect
                     if let Some(prev) = tab.pending.remove(&id) {
@@ -1077,6 +1132,8 @@ impl State {
                         request_headers: {
                             let mut headers = redact_headers(controls, &headers_of(req.get("headers")));
                             headers.push(("x-crawlx-target-session".to_owned(), session.to_owned()));
+                            headers.push(("x-crawlx-resource-type".to_owned(), rtype.to_ascii_lowercase()));
+                            headers.push(("x-crawlx-page-url".to_owned(), egress::redact_url(&tab.url)));
                             let frame = str_of(p, "frameId");
                             if !frame.is_empty() {
                                 headers.push(("x-crawlx-frame-id".to_owned(), frame.to_owned()));
@@ -1326,6 +1383,45 @@ impl State {
             }
         }
     }
+}
+
+fn append_console(output: &mut String, text: &str) -> bool {
+    let mut end = text.len().min(MAX_CONSOLE_BYTES.saturating_sub(output.len()));
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    output.push_str(&text[..end]);
+    end < text.len()
+}
+
+fn console_line(parameters: &Value) -> (String, bool) {
+    let mut line = String::with_capacity(128);
+    let mut truncated = append_console(&mut line, str_of(parameters, "type"));
+    truncated |= append_console(&mut line, ": ");
+    if let Some(args) = parameters.get("args").and_then(Value::as_array) {
+        for (index, arg) in args.iter().enumerate() {
+            if line.len() == MAX_CONSOLE_BYTES {
+                truncated = true;
+                break;
+            }
+            if index != 0 {
+                truncated |= append_console(&mut line, " ");
+            }
+            if let Some(text) = arg
+                .get("value")
+                .and_then(Value::as_str)
+                .or_else(|| arg.get("description").and_then(Value::as_str))
+            {
+                truncated |= append_console(&mut line, text);
+            } else if let Some(value) = arg.get("value") {
+                // Scalar previews only; objects can carry arbitrarily large payloads.
+                if value.is_number() || value.is_boolean() || value.is_null() {
+                    truncated |= append_console(&mut line, &value.to_string());
+                }
+            }
+        }
+    }
+    (line, truncated)
 }
 
 #[cfg(test)]
@@ -1974,30 +2070,66 @@ mod tests {
     }
 
     #[test]
-    fn browser_closed_download_stays_recorded_until_policy_acknowledges_it() {
-        let (mut state, now) = state();
-        state
-            .graph
-            .on_target_created("download", Some("T1"), "about:blank", now);
-        state.handle_event(
-            &ev(
-                None,
-                "Browser.downloadWillBegin",
-                json!({"frameId": "download", "url": "http://p/report.csv"}),
-            ),
-            now,
-            Timestamp::default(),
-        );
-        state.handle_event(
-            &ev(None, "Target.targetDestroyed", json!({"targetId": "download"})),
-            now,
-            Timestamp::default(),
-        );
-        assert!(state.graph.closed_download("download"));
-        let tabs = state.graph.infos("T1");
-        assert!(tabs.iter().any(|t| t.download && t.url == "http://p/report.csv"));
-        state.remove_tab("download");
-        assert!(!state.graph.contains("download"));
+    fn browser_closed_download_survives_inflight_popup_setup_failure_until_policy_acknowledges_it() {
+        for attached in [false, true] {
+            let (mut state, now) = state();
+            let wall = Timestamp::default();
+            let url = "http://p/report.csv";
+            state.graph.on_target_created("same-url", Some("T1"), url, now);
+            state.handle_event(
+                &ev(
+                    None,
+                    "Target.targetCreated",
+                    json!({"targetInfo": {"targetId": "download", "type": "page", "url": "",
+                        "openerId": "T1", "browserContextId": "CTX"}}),
+                ),
+                now,
+                wall,
+            );
+            let frame = if attached { "download-frame" } else { "download" };
+            if attached {
+                state
+                    .tabs
+                    .insert("download".into(), Tab::new("download", "S2", frame, "", now));
+            }
+            // Chromium identifies the owning target before popup setup finishes, then
+            // detaches and destroys it while a setup command is still in flight.
+            state.handle_event(
+                &ev(
+                    None,
+                    "Browser.downloadWillBegin",
+                    json!({"frameId": frame, "url": url}),
+                ),
+                now,
+                wall,
+            );
+            for event in [
+                ev(
+                    None,
+                    "Target.detachedFromTarget",
+                    json!({"sessionId": "S2", "targetId": "download"}),
+                ),
+                ev(None, "Target.targetDestroyed", json!({"targetId": "download"})),
+            ] {
+                state.handle_event(&event, now, wall);
+            }
+            assert!(state.graph.closed_download("download"));
+            assert!(!state.attaching.contains("download"));
+            assert!(!state.tabs.contains_key("download"));
+            let tabs = state.graph.infos("T1");
+            assert!(tabs
+                .iter()
+                .any(|tab| tab.id.0 == "download" && tab.download && tab.url == url));
+            assert!(tabs.iter().any(|tab| tab.id.0 == "same-url" && !tab.download));
+            state.handle_event(
+                &ev(None, "Target.targetDestroyed", json!({"targetId": "same-url"})),
+                now,
+                wall,
+            );
+            assert!(!state.graph.contains("same-url"));
+            state.remove_tab("download");
+            assert!(!state.graph.contains("download"));
+        }
     }
 
     #[test]
@@ -2358,5 +2490,20 @@ mod tests {
         let kept = s.take_blocked_navigations();
         assert_eq!(kept.len(), MAX_BLOCKED_NAVIGATIONS);
         assert_eq!(kept[0].url, "http://a.test/p/10", "the oldest were dropped first");
+    }
+
+    #[test]
+    fn console_preview_bounds_utf8_and_ignores_object_payloads() {
+        let parameters = serde_json::json!({
+            "type": "log",
+            "args": [{"value": true}, {"value": {"oversized": "not serialized"}},
+                     {"value": "界".repeat(MAX_CONSOLE_BYTES)}],
+        });
+        let (line, truncated) = console_line(&parameters);
+        assert!(truncated);
+        assert!(line.starts_with("log: true  "));
+        assert!(line.len() <= MAX_CONSOLE_BYTES);
+        assert!(line.is_char_boundary(line.len()));
+        assert!(!line.contains("oversized"));
     }
 }

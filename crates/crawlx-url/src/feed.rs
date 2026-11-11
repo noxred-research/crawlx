@@ -77,6 +77,12 @@ pub enum FeedError {
     /// Malformed or forbidden sitemap representation.
     #[error("invalid sitemap source")]
     Sitemap(#[from] crate::error::UrlError),
+    /// Bounded row streaming or cursor validation failed.
+    #[error(transparent)]
+    Stream(#[from] crate::feed_stream::FeedStreamError),
+    /// Recoverable malformed row, retaining its typed cause.
+    #[error("malformed feed row")]
+    Row(#[source] crate::feed_stream::RowFault),
 }
 /// Parse an already acquired decoded body. Never resolves DNS or opens sockets.
 ///
@@ -99,6 +105,275 @@ pub fn parse_feed(
         Some(b'{') => parse_json(bytes, base, policy),
         Some(b'<') => parse_xml(bytes, base, policy),
         _ => Err(DiscoveryErrorV1::Protocol("unknown feed format".into()).into()),
+    }
+}
+
+/// One physical XML feed row. Malformed row content is distinct from structural failure.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct XmlFeedRow {
+    /// Position after the row, including malformed rows.
+    pub cursor: crate::feed_stream::StreamCursor,
+    /// Existing feed projection, preserving namespace, base, hints and media semantics.
+    pub document: Result<FeedDocument, FeedError>,
+}
+
+/// Bounded XML feed adapter driven by [`crate::feed_stream::FeedRowStream`].
+///
+/// Only one row is projected at a time. Source bytes are already approved and bounded by
+/// policy; cloning `B` should share those bytes. Dedupe belongs to the durable frontier,
+/// not a source-wide in-memory set. Feed-level pagination remains bounded to four links.
+#[must_use]
+pub struct XmlFeedStream<B> {
+    rows: crate::feed_stream::FeedRowStream<std::io::Cursor<B>>,
+    reader: NsReader<std::io::Cursor<B>>,
+    bytes: B,
+    buffer: Vec<u8>,
+    ancestors: Vec<BytesStart<'static>>,
+    bases: Vec<Option<Url>>,
+    base: Url,
+    policy: SourceDiscoveryPolicyV1,
+    next: Vec<Url>,
+    done: bool,
+    root_seen: bool,
+}
+
+impl<B: AsRef<[u8]> + Clone> XmlFeedStream<B> {
+    /// Open approved XML source bytes without collecting article rows.
+    ///
+    /// # Errors
+    /// Rejects unknown roots, invalid policy, source byte limits, DTDs and invalid templates.
+    pub fn new(bytes: B, base: Url, policy: SourceDiscoveryPolicyV1) -> Result<Self, FeedError> {
+        use crate::feed_stream::{FeedRowStream, FeedTemplate, StreamLimits, XmlField, XmlName, XmlTemplate};
+        policy.validate().map_err(|error| protocol(&error.to_string()))?;
+        if bytes.as_ref().len() > policy.max_feed_bytes {
+            return Err(DiscoveryErrorV1::Limit("feed_bytes").into());
+        }
+        let mut probe = NsReader::from_reader(bytes.as_ref());
+        let item = loop {
+            let (resolved, event) = probe.read_resolved_event()?;
+            match event {
+                Event::Start(element) | Event::Empty(element) => {
+                    break match (namespace(resolved)?, element.local_name().as_ref()) {
+                        (Namespace::None, "rss") => XmlName::local("item"),
+                        (Namespace::Rdf, "RDF") => XmlName::namespaced(RSS1, "item"),
+                        (Namespace::Atom, "feed") => XmlName::namespaced(ATOM, "entry"),
+                        _ => return Err(protocol("unsupported feed root namespace")),
+                    };
+                }
+                Event::DocType(_) => return Err(protocol("DTD and entity declarations are forbidden")),
+                Event::Eof => return Err(protocol("empty feed document")),
+                _ => {}
+            }
+        };
+        drop(probe);
+        // The row reader owns framing and bounds. Existing parse_feed owns article semantics.
+        let template = FeedTemplate::Xml(XmlTemplate::new(
+            item,
+            vec![XmlField::element("row", Vec::new())],
+        )?);
+        let limits = StreamLimits {
+            max_nesting: policy.max_nesting,
+            ..StreamLimits::default()
+        };
+        let rows = FeedRowStream::new(std::io::Cursor::new(bytes.clone()), &template, limits)?;
+        let mut reader = NsReader::from_reader(std::io::Cursor::new(bytes.clone()));
+        reader.config_mut().expand_empty_elements = true;
+        Ok(Self {
+            rows,
+            reader,
+            bytes,
+            buffer: Vec::new(),
+            ancestors: Vec::new(),
+            bases: Vec::new(),
+            base,
+            policy,
+            next: Vec::new(),
+            done: false,
+            root_seen: false,
+        })
+    }
+
+    /// Feed pagination collected while advancing the stream, including footer links.
+    #[must_use]
+    pub fn next_links(&self) -> &[Url] {
+        &self.next
+    }
+
+    /// Source framing statistics; row buffers do not grow with source cardinality.
+    #[must_use]
+    pub fn stats(&self) -> crate::feed_stream::StreamStats {
+        self.rows.stats()
+    }
+
+    fn fragment(&mut self, keep: bool) -> Result<Option<Vec<u8>>, FeedError> {
+        let mut row_start = None;
+        let mut row_depth = 0;
+        let mut prefix = Vec::new();
+        loop {
+            self.buffer.clear();
+            let before = self.reader.buffer_position();
+            let (resolved, event) = self.reader.read_resolved_event_into(&mut self.buffer)?;
+            let ns = namespace(resolved)?;
+            match event {
+                Event::DocType(_) => return Err(protocol("DTD and entity declarations are forbidden")),
+                Event::Start(element) => {
+                    if self.ancestors.len() >= self.policy.max_nesting {
+                        return Err(DiscoveryErrorV1::Limit("feed_nesting").into());
+                    }
+                    if self.ancestors.is_empty() {
+                        if self.root_seen {
+                            return Err(protocol("multiple feed roots"));
+                        }
+                        self.root_seen = true;
+                    }
+                    let article = matches!(
+                        (ns, element.local_name().as_ref()),
+                        (Namespace::None | Namespace::Rss1, "item") | (Namespace::Atom, "entry")
+                    );
+                    let inherited = self
+                        .bases
+                        .iter()
+                        .rev()
+                        .find_map(Option::as_ref)
+                        .unwrap_or(&self.base);
+                    let local_base = if row_start.is_none() && !article {
+                        for attribute in element.attributes() {
+                            attribute_text(&attribute.map_err(quick_xml::Error::from)?)?;
+                        }
+                        attr(&element, "xml:base")?
+                            .map(|value| {
+                                reference(inherited, &value).ok_or_else(|| protocol("invalid XML base URL"))
+                            })
+                            .transpose()?
+                    } else {
+                        None
+                    };
+                    let active_base = local_base.as_ref().unwrap_or(inherited);
+                    if article {
+                        if row_start.is_some() {
+                            return Err(protocol("nested feed entry"));
+                        }
+                        row_start =
+                            Some(usize::try_from(before).map_err(|_| protocol("feed offset overflow"))?);
+                        row_depth = self.ancestors.len();
+                        if keep {
+                            let mut writer = quick_xml::Writer::new(&mut prefix);
+                            for ancestor in &self.ancestors {
+                                writer
+                                    .write_event(Event::Start(ancestor.borrow()))
+                                    .map_err(quick_xml::Error::from)?;
+                            }
+                        }
+                    } else if row_start.is_none()
+                        && ns == Namespace::Atom
+                        && element.local_name().as_ref() == "link"
+                        && attr(&element, "rel")?.as_deref() == Some("next")
+                    {
+                        if let Some(url) =
+                            attr(&element, "href")?.and_then(|value| reference(active_base, &value))
+                        {
+                            unique_push(&mut self.next, url, 4);
+                        }
+                    }
+                    self.bases.push(local_base);
+                    self.ancestors.push(element.into_owned());
+                }
+                Event::End(_) => {
+                    if self.ancestors.pop().is_none() {
+                        return Err(protocol("unbalanced feed"));
+                    }
+                    self.bases.pop();
+                    if row_start.is_some() && self.ancestors.len() == row_depth {
+                        if !keep {
+                            return Ok(Some(Vec::new()));
+                        }
+                        let start = row_start.ok_or_else(|| protocol("missing feed row start"))?;
+                        let end = usize::try_from(self.reader.buffer_position())
+                            .map_err(|_| protocol("feed offset overflow"))?;
+                        prefix.extend_from_slice(
+                            self.bytes
+                                .as_ref()
+                                .get(start..end)
+                                .ok_or_else(|| protocol("feed row exceeds source"))?,
+                        );
+                        let mut writer = quick_xml::Writer::new(&mut prefix);
+                        for ancestor in self.ancestors.iter().rev() {
+                            writer
+                                .write_event(Event::End(ancestor.to_end()))
+                                .map_err(quick_xml::Error::from)?;
+                        }
+                        return Ok(Some(prefix));
+                    }
+                }
+                Event::Text(text) if self.ancestors.is_empty() && !text.trim().is_empty() => {
+                    return Err(protocol("text outside feed root"));
+                }
+                Event::GeneralRef(reference) if row_start.is_none() => {
+                    if reference.resolve_char_ref()?.is_none()
+                        && quick_xml::escape::resolve_xml_entity(&reference).is_none()
+                    {
+                        return Err(protocol("custom XML entities are forbidden"));
+                    }
+                }
+                Event::Eof => {
+                    if !self.ancestors.is_empty() {
+                        return Err(protocol("incomplete feed document"));
+                    }
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl<B: AsRef<[u8]> + Clone> Iterator for XmlFeedStream<B> {
+    type Item = Result<XmlFeedRow, FeedError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let result = match self.rows.next() {
+            Some(Ok(row)) => self
+                .fragment(matches!(&row.outcome, crate::feed_stream::RowOutcome::Row(_)))
+                .and_then(|fragment| {
+                    let fragment = fragment.ok_or_else(|| protocol("feed row framing mismatch"))?;
+                    if self.reader.buffer_position() != row.cursor.byte_offset {
+                        return Err(protocol("feed row cursor mismatch"));
+                    }
+                    let document = match row.outcome {
+                        crate::feed_stream::RowOutcome::Row(_) => {
+                            parse_feed(&fragment, &self.base, &self.policy).and_then(|document| {
+                                if document.entries.is_empty() {
+                                    Err(protocol("feed row lacks article URL"))
+                                } else {
+                                    Ok(document)
+                                }
+                            })
+                        }
+                        crate::feed_stream::RowOutcome::Malformed(fault) => Err(FeedError::Row(fault)),
+                    };
+                    Ok(XmlFeedRow {
+                        cursor: row.cursor,
+                        document,
+                    })
+                }),
+            Some(Err(error)) => Err(error.into()),
+            None => {
+                self.done = true;
+                return match self.fragment(false) {
+                    Ok(None) => None,
+                    Ok(Some(_)) => Some(Err(protocol("feed row framing mismatch"))),
+                    Err(error) => Some(Err(error)),
+                };
+            }
+        };
+        if result.is_err() {
+            self.done = true;
+        }
+        Some(result)
     }
 }
 fn protocol(reason: &str) -> FeedError {
@@ -773,6 +1048,102 @@ pub fn parse_connector(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn xml_row_adapter_preserves_namespaces_bases_hints_media_and_footer_pagination() {
+        for bytes in [
+            br#"<a:feed xmlns:a="http://www.w3.org/2005/Atom" xml:base="https://fixture.test/news/"><a:entry xml:base="2026/"><a:link rel="self" href="/feed/one"/><a:link type="text/html" href="story"/><a:link rel="enclosure" type="image/png" href="image"/><a:link rel="next" href="more"/><a:title>News &amp; facts</a:title><a:updated>2026-11-01</a:updated><a:author><a:name>Publisher</a:name></a:author></a:entry><a:link rel="next" href="feed?page=2"/></a:feed>"#.as_slice(),
+            br#"<r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><item><link>/story</link><title>Story</title></item></r:RDF>"#.as_slice(),
+            br#"<rss xmlns:m="http://search.yahoo.com/mrss/"><channel><item><link>/story</link><title>Story</title><source>Publisher</source><pubDate>2026-11-01</pubDate><m:thumbnail url="/image"/></item></channel></rss>"#.as_slice(),
+        ] {
+            let base = Url::parse("https://fixture.test/feed").unwrap();
+            let policy = SourceDiscoveryPolicyV1::default();
+            let expected = parse_feed(bytes, &base, &policy).unwrap();
+            let mut stream = XmlFeedStream::new(bytes, base, policy).unwrap();
+            let row = stream.next().unwrap().unwrap();
+            assert_eq!(row.cursor.row_index, 1);
+            assert_eq!(row.document.unwrap().entries, expected.entries);
+            assert!(stream.next().is_none());
+            assert_eq!(stream.next_links(), expected.next);
+        }
+    }
+
+    #[test]
+    fn xml_row_adapter_reports_bad_rows_without_losing_following_rows() {
+        let bytes = br#"<rss><channel><item><link>&undefined;</link></item><item><link>/ok</link></item></channel></rss>"#;
+        let mut stream = XmlFeedStream::new(
+            bytes.as_slice(),
+            Url::parse("https://fixture.test/feed").unwrap(),
+            SourceDiscoveryPolicyV1::default(),
+        )
+        .unwrap();
+        let bad = stream.next().unwrap().unwrap();
+        assert_eq!(bad.cursor.row_index, 1);
+        assert!(bad.document.is_err());
+        let good = stream.next().unwrap().unwrap();
+        assert_eq!(good.cursor.row_index, 2);
+        assert_eq!(
+            good.document.unwrap().entries[0].url.as_str(),
+            "https://fixture.test/ok"
+        );
+        assert!(stream.next().is_none());
+    }
+
+    #[test]
+    fn xml_row_adapter_bounds_oversize_rows_and_rejects_nested_or_broken_sources() {
+        let large = format!(
+            "<rss><channel><item><description>{}</description></item><item><link>/ok</link></item></channel></rss>",
+            "x".repeat(70 * 1024),
+        );
+        let mut stream = XmlFeedStream::new(
+            large.as_bytes(),
+            Url::parse("https://fixture.test/feed").unwrap(),
+            SourceDiscoveryPolicyV1::default(),
+        )
+        .unwrap();
+        // An oversize individual event is a structural limit, not a recoverable row.
+        assert!(matches!(stream.next(), Some(Err(FeedError::Stream(_)))));
+        assert!(stream.next().is_none());
+        for bytes in [
+            b"<rss><channel><item><item><link>/bad</link></item></item></channel></rss>".as_slice(),
+            b"<rss><channel><item><link>/bad</link></channel></rss>".as_slice(),
+        ] {
+            let mut stream = XmlFeedStream::new(
+                bytes,
+                Url::parse("https://fixture.test/feed").unwrap(),
+                SourceDiscoveryPolicyV1::default(),
+            )
+            .unwrap();
+            assert!(stream.next().unwrap().is_err());
+        }
+    }
+
+    #[test]
+    fn hundred_thousand_xml_rows_keep_only_one_projection_and_bounded_parser_buffers() {
+        use std::fmt::Write as _;
+        let mut bytes = String::from("<rss><channel>");
+        for index in 0..100_000 {
+            write!(bytes, "<item><link>/row/{index}</link></item>").unwrap();
+        }
+        bytes.push_str("</channel></rss>");
+        let mut policy = SourceDiscoveryPolicyV1::default();
+        policy.max_feed_bytes = 8 * 1024 * 1024;
+        let mut stream = XmlFeedStream::new(
+            bytes.as_bytes(),
+            Url::parse("https://fixture.test/feed").unwrap(),
+            policy,
+        )
+        .unwrap();
+        for index in 0..100_000_u64 {
+            let row = stream.next().unwrap().unwrap();
+            assert_eq!(row.cursor.row_index, index + 1);
+            let document = row.document.unwrap();
+            assert_eq!(document.entries.len(), 1);
+            assert_eq!(document.entries[0].url.path(), format!("/row/{index}"));
+        }
+        assert!(stream.next().is_none());
+        assert!(stream.stats().peak_buffered_bytes < 256 * 1024);
+    }
     fn parse(bytes: &[u8]) -> FeedDocument {
         parse_feed(
             bytes,

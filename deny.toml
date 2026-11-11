@@ -8,6 +8,12 @@ confidence-threshold = 0.8
 # Source-only workspace crates remain `publish = false`; AGPL-3.0-only is the project license.
 private = { ignore = true }
 
+# Reviewed permissive license for the pure-Rust bzip2 backend only; no global allowance.
+[[licenses.exceptions]]
+name = "libbz2-rs-sys"
+version = "=0.2.6"
+allow = ["bzip2-1.0.6"]
+
 [advisories]
 yanked = "deny"
 unmaintained = "workspace"

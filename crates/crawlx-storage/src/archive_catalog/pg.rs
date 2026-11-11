@@ -42,9 +42,9 @@ async fn save(tx: &mut Transaction<'_, Postgres>, export: &ArchiveExportV1) -> R
         ArchiveExportState::Deleted => "deleted",
         _ => return Err(invalid("unsupported archive state")),
     };
-    sqlx::query("UPDATE archive_exports SET state=$3,fence=$4,lease_until=$5,payload=$6 WHERE tenant_id=$1 AND export_id=$2")
+    sqlx::query("UPDATE archive_exports SET state=$3,fence=$4,lease_until=$5,payload=$6,expires_at=$7 WHERE tenant_id=$1 AND export_id=$2")
         .bind(export.tenant.0).bind(export.id).bind(state).bind(export.fence).bind(export.lease_until)
-        .bind(json(export)?).execute(&mut **tx).await.map_err(db)?;
+        .bind(json(export)?).bind(export.expires_at).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
 async fn artifact_exists(
@@ -54,11 +54,14 @@ async fn artifact_exists(
     minimum: u64,
     content_type: &str,
     now: Timestamp,
+    custody: crawlx_core::archive_catalog::ArchiveCustodyV1,
 ) -> Result<(), StoreError> {
-    let present: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM artifacts WHERE artifact_id=$1 AND run_id=$2 \
-        AND tenant_id=$3 AND content_digest=$4 AND sensitivity='content' AND size_bytes >= $5 \
-        AND (expires_at IS NULL OR expires_at>$6) AND deleted_at IS NULL AND content_type=$7)",
+    custody.validate(now)?;
+    let present: Option<Uuid> = sqlx::query_scalar(
+        "SELECT artifact_id FROM artifacts WHERE artifact_id=$1 AND run_id=$2 \
+        AND tenant_id=$3 AND content_digest=$4 AND sensitivity=$8::text::sensitivity_class AND size_bytes >= $5 \
+        AND (expires_at IS NULL OR expires_at>$6) AND deleted_at IS NULL AND content_type=$7 \
+        AND ($9::timestamptz IS NULL OR expires_at<=$9) FOR SHARE",
     )
     .bind(artifact.id.0)
     .bind(export.run.0)
@@ -67,11 +70,116 @@ async fn artifact_exists(
     .bind(number(minimum)?)
     .bind(now)
     .bind(content_type)
-    .fetch_one(&mut **tx)
+    .bind(custody.sensitivity.as_str())
+    .bind((custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive).then_some(custody.expires_at).flatten())
+    .fetch_optional(&mut **tx)
     .await
     .map_err(db)?;
-    if !present {
+    if present.is_none() {
         return Err(invalid("archive artifact is not committed and retained"));
+    }
+    Ok(())
+}
+
+async fn content_package(
+    tx: &mut Transaction<'_, Postgres>,
+    source: &ArchiveExportV1,
+    dependent: &ArchiveExportV1,
+    now: Timestamp,
+) -> Result<(), StoreError> {
+    if source.tenant != dependent.tenant
+        || !live(source, now)
+        || source.state != ArchiveExportState::Published
+        || source.custody.sensitivity != crawlx_core::repo::Sensitivity::Content
+        || super::expires_before(source.expires_at, dependent.expires_at)
+    {
+        return Err(invalid("archive dependency package authority is incompatible"));
+    }
+    let artifact = source
+        .artifact
+        .as_ref()
+        .ok_or_else(|| invalid("archive dependency package missing"))?;
+    let mime = if source.config.format == crawlx_core::archive::ArchiveFormat::Warc {
+        "application/warc"
+    } else {
+        "application/wacz+zip"
+    };
+    let present: Option<Uuid> = sqlx::query_scalar(
+        "SELECT artifact_id FROM artifacts WHERE artifact_id=$1 AND tenant_id=$2 AND run_id=$3 \
+         AND content_digest=$4 AND sensitivity='content' AND content_type=$5 AND size_bytes>0 \
+         AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at>$6) \
+         AND (expires_at IS NULL OR ($7::timestamptz IS NOT NULL AND expires_at>=$7)) FOR SHARE",
+    )
+    .bind(artifact.id.0)
+    .bind(source.tenant.0)
+    .bind(source.run.0)
+    .bind(artifact.digest.0.to_vec())
+    .bind(mime)
+    .bind(now)
+    .bind(dependent.expires_at)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db)?;
+    if present.is_none() {
+        return Err(invalid("archive dependency package authority changed"));
+    }
+    Ok(())
+}
+
+async fn source_exists(
+    tx: &mut Transaction<'_, Postgres>,
+    export: &ArchiveExportV1,
+    record: &ArchiveRecordV1,
+    now: Timestamp,
+) -> Result<(), StoreError> {
+    if record.custody.sensitivity != crawlx_core::repo::Sensitivity::Sensitive {
+        return Ok(());
+    }
+    record.custody.validate(now)?;
+    let source = record
+        .source_artifact
+        .as_ref()
+        .ok_or_else(|| invalid("sensitive archive source missing"))?;
+    let present: Option<Uuid> = sqlx::query_scalar(
+        "SELECT artifact_id FROM artifacts WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3 \
+         AND content_digest=$4 AND sensitivity='sensitive' AND expires_at=$5 AND expires_at>$6 \
+         AND deleted_at IS NULL AND content_type=$7 FOR SHARE",
+    )
+    .bind(export.tenant.0)
+    .bind(export.run.0)
+    .bind(source.id.0)
+    .bind(source.digest.0.to_vec())
+    .bind(record.custody.expires_at)
+    .bind(now)
+    .bind(&record.mime)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(db)?;
+    if present.is_none() {
+        return Err(invalid("sensitive archive source revoked or changed"));
+    }
+    Ok(())
+}
+
+async fn sources_live(
+    tx: &mut Transaction<'_, Postgres>,
+    export: &ArchiveExportV1,
+    now: Timestamp,
+) -> Result<(), StoreError> {
+    let valid: bool = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM archive_records r WHERE r.tenant_id=$1 AND r.export_id=$2 \
+         AND r.payload->'custody'->>'sensitivity'='sensitive') = \
+         (SELECT count(*) FROM (SELECT r.ordinal FROM archive_records r JOIN artifacts a \
+          ON a.artifact_id=(r.payload->'sourceArtifact'->>'id')::uuid \
+          WHERE r.tenant_id=$1 AND r.export_id=$2 AND r.payload->'custody'->>'sensitivity'='sensitive' \
+          AND a.tenant_id=$1 AND a.run_id=$3 AND a.sensitivity='sensitive' AND a.content_type=r.payload->>'mime' \
+          AND a.content_digest=decode(r.payload->'sourceArtifact'->>'digest','hex') \
+          AND a.expires_at=(r.payload->'custody'->>'expiresAt')::timestamptz \
+          AND a.expires_at>$4 AND a.deleted_at IS NULL FOR SHARE OF a) retained)",
+    ).bind(export.tenant.0).bind(export.id).bind(export.run.0).bind(now)
+        .fetch_one(&mut **tx).await.map_err(db)?;
+    if !valid {
+        return Err(invalid("sensitive archive source revoked or changed"));
     }
     Ok(())
 }
@@ -115,9 +223,32 @@ impl ArchiveRepo for Pg {
             .bind(export.tenant.0).bind(export.run.0).bind(export.id).bind(export.created_at)
             .bind(export.expires_at).bind(json(export)?).execute(&mut *tx).await.map_err(db)?;
         let existing = locked(&mut tx, export.tenant, export.id).await?;
+        if existing.state == ArchiveExportState::Deleted {
+            return Err(StoreError::RetentionDenied(
+                "archive export permanently erased".into(),
+            ));
+        }
         if json(&existing.config)? != json(&export.config)? {
             return Err(invalid("archive configuration changed during recovery"));
         }
+        tx.commit().await.map_err(db)
+    }
+
+    async fn narrow_custody(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        fence: i64,
+        custody: &crawlx_core::archive_catalog::ArchiveCustodyV1,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        scope(tenant)?;
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut row = locked(&mut tx, tenant, export).await?;
+        writer(&row, fence, now)?;
+        row.custody = super::narrowed(&row, *custody, now)?;
+        row.expires_at = row.custody.expires_at;
+        save(&mut tx, &row).await?;
         tx.commit().await.map_err(db)
     }
 
@@ -202,6 +333,7 @@ impl ArchiveRepo for Pg {
             .map_err(db)?;
         let mut export = locked(&mut tx, tenant, record.export).await?;
         writer(&export, fence, now)?;
+        source_exists(&mut tx, &export, record, now).await?;
         let existing: Option<serde_json::Value> = sqlx::query_scalar(
             "SELECT payload FROM archive_records WHERE tenant_id=$1 AND export_id=$2 AND ordinal=$3",
         )
@@ -213,11 +345,17 @@ impl ArchiveRepo for Pg {
         .map_err(db)?;
         if let Some(existing) = existing {
             let prior: ArchiveRecordV1 = decode(existing)?;
-            if prior.record_id != record.record_id
-                || prior.payload_digest != record.payload_digest
-                || prior.length != record.length
-                || prior.target != record.target
-            {
+            let prior_history: Option<serde_json::Value> = sqlx::query_scalar(
+                "SELECT payload FROM archive_history WHERE tenant_id=$1 AND export_id=$2 AND ordinal=$3",
+            )
+            .bind(tenant.0)
+            .bind(record.export)
+            .bind(number(record.ordinal)?)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?;
+            let prior_history: Option<ArchiveHistoryV1> = prior_history.map(decode).transpose()?;
+            if prior != *record || prior_history.as_ref() != history {
                 return Err(invalid("archive ordinal conflicts with committed shard"));
             }
             return Ok(());
@@ -233,9 +371,15 @@ impl ArchiveRepo for Pg {
                 .ok_or_else(|| invalid("archive member range overflow"))?,
             "application/warc",
             now,
+            record.custody,
         )
         .await?;
         if let Some(history) = history {
+            if record.custody.sensitivity != crawlx_core::repo::Sensitivity::Content {
+                return Err(invalid(
+                    "sensitive archive records cannot become validator history",
+                ));
+            }
             history_key(&history.key)?;
             if history.source.export != record.export
                 || history.source.ordinal != record.ordinal
@@ -248,6 +392,9 @@ impl ArchiveRepo for Pg {
             // Serialize against deletion and publication, so no source can disappear between
             // validation and dependency insertion. Only standalone baselines are eligible.
             let baseline = locked(&mut tx, tenant, source.export).await?;
+            if source.export != record.export {
+                content_package(&mut tx, &baseline, &export, now).await?;
+            }
             let prior: Option<serde_json::Value> = sqlx::query_scalar(
                 "SELECT payload FROM archive_records WHERE tenant_id=$1 AND export_id=$2 AND ordinal=$3",
             )
@@ -262,18 +409,23 @@ impl ArchiveRepo for Pg {
             let prior_history: Option<serde_json::Value> = sqlx::query_scalar("SELECT payload FROM archive_history WHERE tenant_id=$1 AND export_id=$2 AND ordinal=$3 LIMIT 1")
                 .bind(tenant.0).bind(source.export).bind(number(source.ordinal)?).fetch_optional(&mut *tx).await.map_err(db)?;
             let prior_history: Option<ArchiveHistoryV1> = prior_history.map(decode).transpose()?;
-            if source.export == record.export
-                || !live(&baseline, now)
-                || baseline.state != ArchiveExportState::Published
-                || super::expires_before(baseline.expires_at, export.expires_at)
-                || prior.dependency.is_some()
-                || prior.payload_digest != record.payload_digest
-                || history.is_none_or(|current| {
+            let payload_compatible = record.payload_key.as_ref().is_some_and(|key| {
+                super::payload::eligible(&export, &baseline, &prior, key, &record.payload_digest, now)
+                    && (source.export != record.export || source.ordinal < record.ordinal)
+            });
+            let validator_compatible = record.payload_key.is_none()
+                && source.export != record.export
+                && live(&baseline, now)
+                && baseline.state == ArchiveExportState::Published
+                && !super::expires_before(baseline.expires_at, export.expires_at)
+                && prior.dependency.is_none()
+                && prior.payload_digest == record.payload_digest
+                && history.is_some_and(|current| {
                     prior_history
                         .as_ref()
-                        .is_none_or(|prior| prior.key != current.key)
-                })
-            {
+                        .is_some_and(|prior| prior.key == current.key)
+                });
+            if !payload_compatible && !validator_compatible {
                 return Err(invalid("archive dependency is incompatible or not durable"));
             }
         }
@@ -290,6 +442,16 @@ impl ArchiveRepo for Pg {
             sqlx::query("INSERT INTO archive_history(tenant_id,identity_key,export_id,ordinal,captured_at,payload) VALUES($1,$2,$3,$4,$5,$6)")
                 .bind(tenant.0).bind(history_key(&history.key)?.0.to_vec()).bind(record.export).bind(number(record.ordinal)?)
                 .bind(history.captured_at).bind(json(history)?).execute(&mut *tx).await.map_err(db)?;
+        }
+        if let Some(key) = record.payload_key.as_ref().filter(|_| {
+            record.dependency.is_none()
+                && export.custody.sensitivity == crawlx_core::repo::Sensitivity::Content
+        }) {
+            sqlx::query("INSERT INTO archive_payload_sources(tenant_id,export_id,ordinal,payload_digest,identity_key,published,expires_at) VALUES($1,$2,$3,$4,$5,false,$6)")
+                .bind(tenant.0).bind(record.export).bind(number(record.ordinal)?)
+                .bind(&record.payload_digest).bind(key.variant.0.as_slice())
+                .bind(super::payload::deadline(&export, record))
+                .execute(&mut *tx).await.map_err(db)?;
         }
         export.records += 1;
         export.bytes += record.length;
@@ -326,6 +488,104 @@ impl ArchiveRepo for Pg {
         values.into_iter().map(decode).collect()
     }
 
+    async fn payload_source(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        key: &crawlx_core::archive_catalog::ArchivePayloadKeyV1,
+        payload_digest: &str,
+        now: Timestamp,
+    ) -> Result<Option<ArchiveRecordV1>, StoreError> {
+        scope(tenant)?;
+        let current: Option<(Option<Timestamp>, String, String)> = sqlx::query_as(
+            "SELECT expires_at,COALESCE(payload->'config'->>'dedupe','none'), \
+             COALESCE(payload->'custody'->>'sensitivity','content') FROM archive_exports \
+             WHERE tenant_id=$1 AND export_id=$2 AND state='recording' \
+             AND (expires_at IS NULL OR expires_at>$3)",
+        )
+        .bind(tenant.0)
+        .bind(export)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?;
+        let Some((expires_at, mode, sensitivity)) = current else {
+            return Ok(None);
+        };
+        if !matches!(mode.as_str(), "collection" | "tenant") {
+            return Ok(None);
+        }
+        let context = json(key)?;
+        let mut value: Option<serde_json::Value> = None;
+        if sensitivity == "content" {
+            value = sqlx::query_scalar(
+                "SELECT r.payload FROM archive_payload_sources p JOIN archive_records r \
+                 USING(tenant_id,export_id,ordinal) WHERE p.tenant_id=$1 AND p.export_id=$2 \
+                 AND p.payload_digest=$3 AND p.identity_key=$4 AND r.payload->'payloadKey'=$5 \
+                 AND r.payload->>'dependency' IS NULL ORDER BY p.ordinal LIMIT 1",
+            )
+            .bind(tenant.0)
+            .bind(export)
+            .bind(payload_digest)
+            .bind(key.variant.0.as_slice())
+            .bind(&context)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?;
+        }
+        if value.is_none()
+            && mode == "tenant"
+            && key.representation == crawlx_core::archive::ArchiveRepresentation::ProtocolResource
+        {
+            if let Some(expiry) = expires_at {
+                value = sqlx::query_scalar(
+                    "SELECT r.payload FROM archive_payload_sources p JOIN archive_records r \
+                     USING(tenant_id,export_id,ordinal) WHERE p.tenant_id=$1 \
+                     AND p.payload_digest=$2 AND p.identity_key=$3 AND p.published=true \
+                     AND p.expires_at>=$4 AND r.payload->'payloadKey'=$5 \
+                     AND r.payload->>'dependency' IS NULL \
+                     ORDER BY p.expires_at,p.export_id,p.ordinal LIMIT 1",
+                )
+                .bind(tenant.0)
+                .bind(payload_digest)
+                .bind(key.variant.0.as_slice())
+                .bind(expiry)
+                .bind(&context)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db)?;
+            }
+            if value.is_none() {
+                value = sqlx::query_scalar(
+                    "SELECT r.payload FROM archive_payload_sources p JOIN archive_records r \
+                     USING(tenant_id,export_id,ordinal) WHERE p.tenant_id=$1 \
+                     AND p.payload_digest=$2 AND p.identity_key=$3 AND p.published=true \
+                     AND p.expires_at IS NULL AND r.payload->'payloadKey'=$4 \
+                     AND r.payload->>'dependency' IS NULL ORDER BY p.export_id,p.ordinal LIMIT 1",
+                )
+                .bind(tenant.0)
+                .bind(payload_digest)
+                .bind(key.variant.0.as_slice())
+                .bind(&context)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db)?;
+            }
+        }
+        let record: Option<ArchiveRecordV1> = value.map(decode).transpose()?;
+        if record.as_ref().is_some_and(|record| {
+            !super::payload::key_matches(record, key)
+                || record.payload_key.as_ref() != Some(key)
+                || record.payload_digest != payload_digest
+                || record.dependency.is_some()
+                || record.custody.expires_at.is_some_and(|expiry| expiry <= now)
+                || super::expires_before(record.custody.expires_at, expires_at)
+        }) {
+            return Err(invalid("archive payload source index mismatch"));
+        }
+        Ok(record)
+    }
+
     async fn publish(
         &self,
         tenant: TenantId,
@@ -338,17 +598,36 @@ impl ArchiveRepo for Pg {
     ) -> Result<(), StoreError> {
         scope(tenant)?;
         let mut tx = self.pool.begin().await.map_err(db)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(tenant.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
         let mut row = locked(&mut tx, tenant, export).await?;
         writer(&row, fence, now)?;
         publish_bounds(&row, manifest)?;
+        sources_live(&mut tx, &row, now).await?;
+        let sources: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT source_export FROM archive_dependencies \
+             WHERE tenant_id=$1 AND export_id=$2 AND source_export<>$2 ORDER BY source_export",
+        )
+        .bind(tenant.0)
+        .bind(export)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?;
+        for source in sources {
+            let baseline = locked(&mut tx, tenant, source).await?;
+            content_package(&mut tx, &baseline, &row, now).await?;
+        }
         let expected = if row.config.format == crawlx_core::archive::ArchiveFormat::Warc {
             "application/warc"
         } else {
             "application/wacz+zip"
         };
-        artifact_exists(&mut tx, &row, artifact, 1, expected, now).await?;
+        artifact_exists(&mut tx, &row, artifact, 1, expected, now, row.custody).await?;
         if let Some(index) = index {
-            artifact_exists(&mut tx, &row, index, 1, "application/cdxj", now).await?;
+            artifact_exists(&mut tx, &row, index, 1, "application/cdxj", now, row.custody).await?;
         }
         if (row.config.format == crawlx_core::archive::ArchiveFormat::Warc) != index.is_some() {
             return Err(invalid("archive index does not match export format"));
@@ -371,6 +650,7 @@ impl ArchiveRepo for Pg {
         let value: Option<serde_json::Value> = sqlx::query_scalar("SELECT h.payload FROM archive_history h JOIN archive_exports e USING(tenant_id,export_id) \
             JOIN archive_records r USING(tenant_id,export_id,ordinal) WHERE h.tenant_id=$1 AND h.identity_key=$2 AND e.state='published' \
             AND (e.expires_at IS NULL OR e.expires_at>$3) \
+            AND COALESCE(e.payload->'custody'->>'sensitivity','content')='content' \
             AND (h.payload->>'etag' IS NOT NULL OR h.payload->>'lastModified' IS NOT NULL) \
             ORDER BY h.captured_at DESC,h.export_id DESC,h.ordinal DESC LIMIT 1")
             .bind(tenant.0).bind(history_key(key)?.0.to_vec()).bind(now).fetch_optional(&self.pool).await.map_err(db)?;
@@ -420,7 +700,13 @@ impl ArchiveRepo for Pg {
     ) -> Result<bool, StoreError> {
         scope(tenant)?;
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM archive_exports e WHERE e.tenant_id=$1 AND e.state='published' \
-            AND (e.expires_at IS NULL OR e.expires_at>$3) AND (e.payload->'artifact'->>'id'=$2 OR e.payload->'index'->>'id'=$2 \
+            AND (e.expires_at IS NULL OR e.expires_at>$3) \
+            AND NOT EXISTS(SELECT 1 FROM archive_records s WHERE s.tenant_id=e.tenant_id AND s.export_id=e.export_id \
+                AND s.payload->'custody'->>'sensitivity'='sensitive' AND NOT EXISTS(SELECT 1 FROM artifacts a \
+                    WHERE a.artifact_id=(s.payload->'sourceArtifact'->>'id')::uuid AND a.tenant_id=e.tenant_id AND a.run_id=e.run_id \
+                    AND a.sensitivity='sensitive' AND a.content_type=s.payload->>'mime' AND a.content_digest=decode(s.payload->'sourceArtifact'->>'digest','hex') \
+                    AND a.expires_at=(s.payload->'custody'->>'expiresAt')::timestamptz AND a.expires_at>$3 AND a.deleted_at IS NULL)) \
+            AND (e.payload->'artifact'->>'id'=$2 OR e.payload->'index'->>'id'=$2 \
             OR EXISTS(SELECT 1 FROM archive_records r WHERE r.tenant_id=e.tenant_id AND r.export_id=e.export_id AND r.artifact_id::text=$2)))")
             .bind(tenant.0).bind(artifact.id.to_string()).bind(now).fetch_one(&self.pool).await.map_err(db)
     }

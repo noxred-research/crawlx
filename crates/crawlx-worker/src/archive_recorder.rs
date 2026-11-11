@@ -14,15 +14,16 @@ use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
 use crawlx_core::repo::CrawlRun;
 use crawlx_core::{ArtifactRef, Clock};
-use crawlx_storage::archive::{cdxj, wacz, warc, ArchiveError, Limits};
+use crawlx_storage::archive::{cdxj, rollover, staging::StagedFile, wacz, warc, ArchiveError, Limits};
 use crawlx_telemetry::redact::Redactor;
-use std::fs::File;
-use std::io::{Seek as _, Write as _};
-use std::path::Path;
+use std::io::Write as _;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+mod binary;
+mod evidence;
 mod history;
+mod payload;
 mod resource;
 pub(crate) use history::{conditional_baseline, ArchiveBaseline};
 
@@ -220,18 +221,15 @@ async fn finalize_claimed(
     clock: Arc<dyn Clock>,
     cancel: &CancellationToken,
 ) -> Result<Finalization, WorkerError> {
-    let staging = tokio::task::spawn_blocking(tempfile::tempdir)
-        .await
-        .map_err(joined)??;
     let mut manifest = ArchiveManifestV1::available(run.tenant, run.id, run.created_at);
     let mut after = 0i64;
     let mut scanned = 0u32;
-    let mut committed_records = export.records;
+    // Replay the same selection and omissions after recovery, including records already committed.
+    let mut committed_records = 0u64;
     let mut recorder = resource::Recorder {
         stores,
         run,
         export,
-        root: staging.path(),
         clock: clock.as_ref(),
         cancel,
         committed_bytes: export.bytes,
@@ -352,6 +350,7 @@ async fn finalize_claimed(
                 .record(resource::ResourceInput {
                     ordinal,
                     source,
+                    capture: None,
                     target: &target,
                     mime,
                     facts,
@@ -359,8 +358,9 @@ async fn finalize_claimed(
                 })
                 .await?
             {
-                resource::RecordOutcome::Existing => {}
-                resource::RecordOutcome::Committed => committed_records = committed_records.saturating_add(1),
+                resource::RecordOutcome::Existing | resource::RecordOutcome::Committed => {
+                    committed_records = committed_records.saturating_add(1)
+                }
                 resource::RecordOutcome::Omitted(reason) => {
                     manifest.omissions.push(ArchiveOmissionV1::new(event, reason))
                 }
@@ -428,6 +428,7 @@ async fn finalize_claimed(
                 .record(resource::ResourceInput {
                     ordinal,
                     source,
+                    capture: None,
                     target: &target,
                     mime: "text/plain",
                     facts,
@@ -435,29 +436,33 @@ async fn finalize_claimed(
                 })
                 .await?
             {
-                resource::RecordOutcome::Existing => {}
-                resource::RecordOutcome::Committed => committed_records = committed_records.saturating_add(1),
+                resource::RecordOutcome::Existing | resource::RecordOutcome::Committed => {
+                    committed_records = committed_records.saturating_add(1)
+                }
                 resource::RecordOutcome::Omitted(reason) => {
                     manifest.omissions.push(ArchiveOmissionV1::new(event, reason))
                 }
             }
         }
     }
-    if let Err(error) = package(
-        stores,
-        export,
-        &mut manifest,
-        staging.path(),
-        Arc::clone(&clock),
-        cancel,
-    )
-    .await
-    {
+    evidence::record(&mut recorder, &mut manifest, &mut committed_records).await?;
+    let ArchiveReadV1::Available(current_export) =
+        stores.archives.get(run.tenant, export.id, clock.now()).await?
+    else {
+        return Err(WorkerError::Config(
+            "archive custody disappeared during finalization".into(),
+        ));
+    };
+    manifest.custody = current_export.custody;
+    if let Err(error) = package(stores, &current_export, &mut manifest, Arc::clone(&clock), cancel).await {
         if let WorkerError::Archive(reason) = &error {
-            let failure = if manifest.records == 0 {
-                crawlx_core::archive_catalog::ArchiveFailureV1::CaptureUnavailable
-            } else if matches!(reason, ArchiveError::Limit(_)) {
+            let failure = if matches!(
+                reason,
+                ArchiveError::Limit(_) | ArchiveError::RecordExceedsRollover { .. }
+            ) {
                 crawlx_core::archive_catalog::ArchiveFailureV1::LimitExceeded
+            } else if manifest.records == 0 {
+                crawlx_core::archive_catalog::ArchiveFailureV1::CaptureUnavailable
             } else {
                 crawlx_core::archive_catalog::ArchiveFailureV1::InvalidCapture
             };
@@ -473,32 +478,39 @@ async fn finalize_claimed(
 }
 
 struct PackageWriter {
-    warc: File,
-    pages: File,
-    facts: File,
+    warc: rollover::Writer,
+    pages: StagedFile,
+    facts: StagedFile,
     sorter: cdxj::Sorter,
+    has_revisits: bool,
 }
+
+struct PackageFiles {
+    archive: StagedFile,
+    index: Option<StagedFile>,
+}
+
 impl PackageWriter {
-    fn open(root: &Path) -> Result<Self, ArchiveError> {
-        let mut pages = File::create(root.join("pages.jsonl"))?;
-        pages.write_all(
+    fn open(rollover_bytes: Option<u64>, limits: Limits) -> Result<Self, ArchiveError> {
+        let mut pages = StagedFile::new()?;
+        pages.file_mut().write_all(
             b"{\"format\":\"json-pages-1.0\",\"id\":\"crawlx\",\"title\":\"Retained representations\"}\n",
         )?;
         Ok(Self {
-            warc: File::create(root.join("data.warc.gz"))?,
+            warc: rollover::Writer::new(rollover_bytes, limits)?,
             pages,
-            facts: File::create(root.join("capture-facts.jsonl"))?,
+            facts: StagedFile::new()?,
             sorter: cdxj::Sorter::new()?,
+            has_revisits: false,
         })
     }
-    fn append(&mut self, path: &Path, record: &ArchiveRecordV1, limits: Limits) -> Result<(), ArchiveError> {
-        let mut summaries = warc::inspect(File::open(path)?, true, limits)?;
-        if summaries.len() != 1 {
-            return Err(ArchiveError::Invalid("catalog shard must contain one resource"));
-        }
-        let mut summary = summaries
-            .pop()
-            .ok_or(ArchiveError::Invalid("catalog shard empty"))?;
+    fn append(
+        &mut self,
+        shard: &StagedFile,
+        record: &ArchiveRecordV1,
+        limits: Limits,
+    ) -> Result<(), ArchiveError> {
+        let mut summary = warc::inspect_shard(shard.reader()?, limits)?;
         if summary.id != record.record_id
             || summary.offset != record.offset
             || summary.length != record.length
@@ -507,82 +519,123 @@ impl PackageWriter {
         {
             return Err(ArchiveError::Invalid("committed shard catalog mismatch"));
         }
-        summary.offset = self.warc.stream_position()?;
-        let copied = std::io::copy(&mut File::open(path)?, &mut self.warc)?;
-        if copied != record.length || self.warc.stream_position()? > limits.total_bytes {
-            return Err(ArchiveError::Limit("committed WARC shard bytes"));
-        }
+        self.has_revisits |= summary.record_type == "revisit";
+        let filename = self.warc.append(&mut shard.reader()?, &mut summary)?;
         self.sorter
-            .push(cdxj::Entry::from_record(&summary, "data.warc.gz")?.line(&summary)?)?;
-        serde_json::to_writer(&mut self.facts, &record.facts)?;
-        self.facts.write_all(b"\n")?;
+            .push(cdxj::Entry::from_record(&summary, &filename)?.line(&summary)?)?;
+        serde_json::to_writer(self.facts.file_mut(), &record.facts)?;
+        self.facts.file_mut().write_all(b"\n")?;
         serde_json::to_writer(
-            &mut self.pages,
+            self.pages.file_mut(),
             &serde_json::json!({"id":record.record_id,
             "url":record.target,"ts":warc::date(record.facts.captured_at),"title":"Retained representation"}),
         )?;
-        self.pages.write_all(b"\n")?;
+        self.pages.file_mut().write_all(b"\n")?;
         Ok(())
     }
     fn finish(
         mut self,
-        root: &Path,
         manifest: &ArchiveManifestV1,
         format: ArchiveFormat,
         limits: Limits,
-    ) -> Result<std::path::PathBuf, ArchiveError> {
-        self.warc.sync_all()?;
-        self.pages.flush()?;
-        self.facts.flush()?;
-        self.sorter.finish(&mut File::create(root.join("index.cdxj"))?)?;
-        serde_json::to_writer(File::create(root.join("manifest.json"))?, manifest)?;
+    ) -> Result<PackageFiles, ArchiveError> {
+        let mut warc_files = self.warc.finish()?;
+        self.pages.file_mut().flush()?;
+        self.facts.file_mut().flush()?;
+        let mut index = StagedFile::new()?;
+        self.sorter.finish(index.file_mut())?;
+        let mut manifest_file = StagedFile::new()?;
+        serde_json::to_writer(manifest_file.file_mut(), manifest)?;
         if format == ArchiveFormat::Warc {
-            let package_bytes = self.warc.metadata()?.len();
-            let index_bytes = std::fs::metadata(root.join("index.cdxj"))?.len();
+            let archive = warc_files
+                .into_iter()
+                .next()
+                .ok_or(ArchiveError::Invalid("missing WARC file"))?
+                .1;
+            let package_bytes = archive.file().metadata()?.len();
+            let index_bytes = index.file().metadata()?.len();
             if package_bytes
                 .checked_add(index_bytes)
                 .is_none_or(|bytes| bytes > limits.total_bytes)
             {
                 return Err(ArchiveError::Limit("WARC plus adjacent index bytes"));
             }
-            return Ok(root.join("data.warc.gz"));
+            if self.has_revisits {
+                warc::inspect(archive.reader()?, true, limits)?;
+            }
+            return Ok(PackageFiles {
+                archive,
+                index: Some(index),
+            });
         }
-        let output = root.join("archive.wacz");
-        let files = [
-            ("archive/data.warc.gz".into(), root.join("data.warc.gz")),
-            ("indexes/index.cdxj".into(), root.join("index.cdxj")),
-            ("pages/pages.jsonl".into(), root.join("pages.jsonl")),
-            (
-                "metadata/capture-facts.jsonl".into(),
-                root.join("capture-facts.jsonl"),
-            ),
-            ("metadata/crawlx-manifest.json".into(), root.join("manifest.json")),
-        ];
-        let output_file = wacz::write(
-            File::create(&output)?,
-            &files,
-            &warc::date(manifest.created),
-            limits,
-        )?;
-        output_file.sync_all()?;
-        Ok(output)
+        warc_files.extend([
+            ("indexes/index.cdxj".into(), index),
+            ("pages/pages.jsonl".into(), self.pages),
+            ("metadata/capture-facts.jsonl".into(), self.facts),
+            ("metadata/crawlx-manifest.json".into(), manifest_file),
+        ]);
+        // Logical package names remain separate from trusted descriptor-only source paths.
+        let files = warc_files
+            .iter()
+            .map(|(name, source)| (name.clone(), source.path().to_owned()))
+            .collect::<Vec<_>>();
+        let mut archive = StagedFile::new()?;
+        wacz::write(archive.file_mut(), &files, &warc::date(manifest.created), limits)?;
+        archive.file().sync_all()?;
+        if self.has_revisits {
+            wacz::inspect(archive.reader()?, limits)?;
+        }
+        Ok(PackageFiles { archive, index: None })
     }
+}
+
+async fn append_record(
+    stores: &Stores,
+    export: &ArchiveExportV1,
+    source_run: crawlx_core::CrawlRunId,
+    record: ArchiveRecordV1,
+    mut writer: PackageWriter,
+) -> Result<PackageWriter, WorkerError> {
+    let shard = tokio::task::spawn_blocking(StagedFile::new)
+        .await
+        .map_err(joined)??;
+    stores
+        .artifacts
+        .copy_archive_with_custody(
+            export.tenant,
+            source_run,
+            &record.artifact,
+            &record.custody,
+            shard.path(),
+            export.config.max_record_bytes.saturating_add(131_072),
+        )
+        .await?;
+    let codec_limits = limits(export);
+    let writer = tokio::task::spawn_blocking(move || {
+        writer.append(&shard, &record, codec_limits)?;
+        Ok::<_, ArchiveError>(writer)
+    })
+    .await
+    .map_err(joined)?
+    .map_err(codec)?;
+    Ok(writer)
 }
 
 async fn package(
     stores: &Stores,
     export: &ArchiveExportV1,
     manifest: &mut ArchiveManifestV1,
-    root: &Path,
     clock: Arc<dyn Clock>,
     cancel: &CancellationToken,
 ) -> Result<(), WorkerError> {
-    let path = root.to_path_buf();
-    let mut writer = tokio::task::spawn_blocking(move || PackageWriter::open(&path))
+    let rollover_bytes = export.config.rollover_bytes;
+    let codec_limits = limits(export);
+    let mut writer = tokio::task::spawn_blocking(move || PackageWriter::open(rollover_bytes, codec_limits))
         .await
         .map_err(joined)?
         .map_err(codec)?;
     let mut after = None;
+    let mut included = std::collections::BTreeSet::new();
     loop {
         if cancel.is_cancelled() {
             return Err(stopped());
@@ -599,43 +652,38 @@ async fn package(
             break;
         };
         after = Some(record.ordinal);
-        let shard = root.join("committed.warc.gz");
-        stores
-            .artifacts
-            .copy_archive_content(
-                export.tenant,
-                export.run,
-                &record.artifact,
-                &shard,
-                export.config.max_record_bytes.saturating_add(131_072),
-            )
-            .await?;
-        let path = shard.clone();
-        let codec_limits = limits(export);
-        writer = tokio::task::spawn_blocking(move || {
-            writer.append(&path, &record, codec_limits)?;
-            Ok::<_, ArchiveError>(writer)
-        })
-        .await
-        .map_err(joined)?
-        .map_err(codec)?;
+        if let Some(dependency) = &record.dependency {
+            if dependency.export != export.id && included.insert((dependency.export, dependency.ordinal)) {
+                let Some((source_run, baseline)) =
+                    payload::dependency(stores, export, &record, clock.now()).await?
+                else {
+                    return Err(codec(ArchiveError::Invalid(
+                        "archive dependency closure unavailable",
+                    )));
+                };
+                writer = append_record(stores, export, source_run, baseline, writer).await?;
+                manifest.materialized_dependencies = manifest
+                    .materialized_dependencies
+                    .checked_add(1)
+                    .ok_or_else(|| WorkerError::Config("archive dependency count overflow".into()))?;
+            }
+        }
+        writer = append_record(stores, export, export.run, record, writer).await?;
         manifest.records = manifest
             .records
             .checked_add(1)
             .ok_or_else(|| WorkerError::Config("archive record count overflow".into()))?;
-        tokio::fs::remove_file(shard).await?;
     }
     if manifest.records == 0 {
         return Err(codec(ArchiveError::Invalid(
             "no approved retained archive resources",
         )));
     }
-    let path = root.to_path_buf();
     let final_manifest = manifest.clone();
     let format = export.config.format;
     let codec_limits = limits(export);
-    let final_path =
-        tokio::task::spawn_blocking(move || writer.finish(&path, &final_manifest, format, codec_limits))
+    let final_files =
+        tokio::task::spawn_blocking(move || writer.finish(&final_manifest, format, codec_limits))
             .await
             .map_err(joined)?
             .map_err(codec)?;
@@ -651,17 +699,18 @@ async fn package(
     let artifact: ArtifactRef = tokio::select! {
         biased;
         () = cancel.cancelled() => return Err(stopped()),
-        result = stores.artifacts.put_archive_file(export.run, content_type, &final_path, export.config.max_bytes) => result?,
+        result = stores.artifacts.put_archive_file_with_custody(export.run, content_type, final_files.archive.path(), export.config.max_bytes, &export.custody) => result?,
     };
-    let index = if format == ArchiveFormat::Warc {
+    let index = if let Some(index_file) = &final_files.index {
         Some(
             stores
                 .artifacts
-                .put_archive_file(
+                .put_archive_file_with_custody(
                     export.run,
                     "application/cdxj",
-                    &root.join("index.cdxj"),
+                    index_file.path(),
                     export.config.max_bytes,
+                    &export.custody,
                 )
                 .await?,
         )

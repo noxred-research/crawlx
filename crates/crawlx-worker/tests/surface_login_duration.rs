@@ -103,7 +103,12 @@ async fn run(duration_seconds: u32) -> (RunReport, Arc<FakeBackend>, Vec<serde_j
         login_plan: Some(SLOW_LOGIN.to_owned()),
         replica_base_url: None,
     }];
-    let backend = Arc::new(FakeBackend::new(site()));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(site())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store.clone(), dir.path()).await.unwrap();
     let mut authorization = common::authorization::verified_record(&crawl, stores.tenant);

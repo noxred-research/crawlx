@@ -77,6 +77,11 @@ impl WhoisRegistry {
             return Err(ProtocolError::Refused("WHOIS query"));
         }
         let run = async {
+            if let Some(scope) = &policy.record_scope {
+                scope
+                    .check_request(url)
+                    .map_err(|_| ProtocolError::Refused("WHOIS authorization"))?;
+            }
             let mut registry = url
                 .host_str()
                 .ok_or(ProtocolError::Refused("WHOIS registry required"))?
@@ -283,5 +288,61 @@ mod tests {
             Err(ProtocolError::Refused("WHOIS registry DNS"))
         ));
         task.await.unwrap();
+    }
+    #[tokio::test]
+    async fn referrals_and_response_bytes_never_exceed_registry_authority() {
+        for (response, max_referrals, max_bytes, expected) in [
+            (
+                b"refer: registry.test\r\n".as_slice(),
+                1,
+                4096,
+                "WHOIS referral loop",
+            ),
+            (
+                b"refer: registry.test\r\n".as_slice(),
+                0,
+                4096,
+                "WHOIS referral not approved or limit exceeded",
+            ),
+            (
+                b"refer: unknown.test\r\n".as_slice(),
+                1,
+                4096,
+                "WHOIS referral not approved or limit exceeded",
+            ),
+            (b"Domain: example.test\r\n".as_slice(), 1, 4, "limit"),
+        ] {
+            let (port, task) = fixture(response).await;
+            let registry = WhoisRegistry {
+                endpoints: BTreeMap::from([(
+                    "registry.test".to_owned(),
+                    WhoisEndpoint {
+                        host: "registry.test".to_owned(),
+                        port,
+                    },
+                )]),
+                max_referrals,
+            };
+            let mut policy = EgressPolicy::new(true);
+            policy.extra_allow.push("127.0.0.1/32".parse().unwrap());
+            policy.extra_ports.push(port);
+            let result = registry
+                .acquire(
+                    &Url::parse("whois://registry.test/example.test").unwrap(),
+                    max_bytes,
+                    Duration::from_secs(1),
+                    &CancellationToken::new(),
+                    &policy,
+                    &StaticResolver::new().with("registry.test", ["127.0.0.1".parse().unwrap()]),
+                    &Arc::new(OriginGovernor::new(GovernorConfig::default())),
+                )
+                .await;
+            if expected == "limit" {
+                assert!(matches!(result, Err(ProtocolError::Limit)));
+            } else {
+                assert!(matches!(result, Err(ProtocolError::Refused(reason)) if reason == expected));
+            }
+            task.await.unwrap();
+        }
     }
 }

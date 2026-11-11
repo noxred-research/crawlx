@@ -59,6 +59,7 @@ crawlx-policy = { path = "../crawlx-policy" }
 crawlx-state = { path = "../crawlx-state" }
 proptest.workspace = true
 criterion.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [[bench]]
 name = "journal"

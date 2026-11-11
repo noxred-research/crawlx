@@ -8,6 +8,144 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed: browser observation and URL-work isolation
+
+Dynamic page output records already-settled browser documents without adding navigation
+proposals for rendered controls. Trusted interactions, planner recovery and opt-in page-hook
+navigation retain their existing authority and traversal order.
+Observed publication rows remain visible in frontier audit listings, but URL workers never
+lease them and URL counters, queue status and resume statistics exclude them. Rendered
+pages and append-only revisits remain available without a second document fetch.
+Feed evidence chains preserve trusted artifact references after redacting source content.
+Sessions now persist an explicit browser or HTTP-coordinator kind. Local reports expose
+browser actors under `sessions` and HTTP custody coordinators under `http_coordinators`;
+static runs retain their coordinator lease without reporting a browser session.
+Context construction keeps large futures on the heap, and local orchestration uses an
+owned task boundary with inherited tenant and producer custody and abort-on-drop cleanup.
+Popup attachment failures leave graph cleanup to target-destruction events, preserving
+browser-closed download evidence until its diagnostic close is journaled.
+
+### Fixed: interaction counters at browser publication failures
+
+The worker counts returned action outcomes before publishing their settled browser pages.
+A deadline, cancellation or publication error after the journal commit no longer leaves
+`interactions.succeeded` one below the stored actions. Trail checks remain unchanged.
+
+### Fixed: terminal feed replay and canonical JSON Lines approval
+
+Terminal feed recovery reuses validated staged manifests instead of minting new sealed-artifact identities.
+JSON Lines approval checks every complete record with canonical article lineage and privacy rules while preserving exact bytes and full-stream registered-secret scanning.
+Terminal JSON Lines batching supplies record separators even when direct generic fragments have no trailing newline.
+The XZ codec produces valid empty-stream framing, reports correct codec memory accounting and reduces encoder stack use.
+
+### Added: crawl order aliases
+
+Crawl strategies accept `bfs` / `dfs` and hyphenated or underscored long names
+in CLI flags and native request/configuration files without changing canonical
+serialization. Breadth-first remains the native default; the explicit
+compatibility-defaults preset retains depth-first.
+Browser discovery queues now honor the selected order in active, observe-only
+and hybrid execution, using actual link depth rather than a fixed depth.
+
+### Added: anonymous archive staging and recoverable publication
+
+Archive members, index spills, packages and sensitive artifact sources stage through anonymous file descriptors, without named plaintext scratch files. Native bundle publication writes fixity manifests last, refuses incomplete bundles on every read path, and uses a private per-user journal for deterministic rollback or verified roll-forward after a crash. Single-file packages retain atomic publication.
+
+### Added: committed payload revisits and sensitive archive custody
+
+Opt-in collection or tenant archival deduplication preserves chronological captures while referencing only committed payloads in an exact security, representation and retention domain. Sensitive screenshot archives retain source-bound expiry and sensitive read scope across packages, shards, indexes and manifests. Revocation blocks publication and content access, and bounded retention cleanup erases invalid dependent exports. Portable migrations maintain deadline narrowing and the publication lookup index.
+
+### Added: signed native recipes and checked encrypted DNS
+
+Offline flow inspection/conversion reports every source step and refuses unsupported behavior. Operator-signed, digest-pinned recipes bind tenant approval and timing, then execute through the existing safety-checked action journal. Zero-data-retention refuses recipe provenance. Deployment configuration can select a bounded HTTPS DNS adapter with approved bootstrap pins, checked peer/address policy and no unchecked fallback.
+
+### Added: strict named sessions and generation-bound transport pins
+
+Named HTTP sessions lazily reuse only their owned cookies and connections under a real
+scheduler fence. Strict URL requests retain native scope, robots and shared budgets.
+Usage reservations survive cancellation, learned cookie secrets join run redaction, and
+lost jars cannot silently restart empty. ProxyX HTTP/browser generations share an observed
+pin with a durable route-keyed commitment; migration `0047` supplies all three SQL schemas.
+
+### Added: checked physical-target admission and runtime resource observations
+
+Checked host aliases, ports and proxy routes share a process-wide physical-address cap
+inside the existing origin authority. DNS TTL and seeded jitter decisions remain visible.
+Adaptive dispatch now measures async timer lag, and bounded task records distinguish
+elapsed time and observed process RSS from allocation attribution.
+
+### Fixed: confirmed session retirement and bounded final traffic drain
+
+Browser count, age and inactivity retirement drains active actors before owned shutdown.
+Explicit anonymous generation replacement requires cleanup, reconciled writes and the
+admitted finite rotation budget without extending expiry. Attached uncertain resources
+remain charged. Run teardown no longer waits on an unbounded flush before the exporter's
+configured drain deadline.
+
+### Added: resumable data-plane imports and scoped source memory
+
+`crawlx feed-import` streams bounded CSV/XML URL rows into authenticated frontier batches with a pinned durable cursor. `crawlx dataset-import` inspects safe exported JSON offline or applies it through an existing authorized request fence and typed artifact sink. Tenant/run/source/role/policy-scoped article memo and representation-bound category caching support explicit reset, exact worker-clock expiry and shared volatile zero-retention state.
+
+### Added: declarative feed selection and bounded terminal delivery
+
+Feeds support bounded scalar filters, CSV column order, JSON indentation, explicit terminal batching and empty-feed emission. Terminal source manifests remain distinct from accepted item ranges; source sealing, stable staging and atomic terminal status preserve crash-safe retry identity. Fixed gzip, bzip2 and xz codecs run after plaintext approval on the shared bounded CPU pool. Local/stdout/S3 and approved HTTP-family delivery keep their existing destination authority and duplicate semantics.
+
+### Added: ordered item processor evidence
+
+Versioned item loaders distinguish ordered input processors from output transforms. Field outcomes retain bounded value-free selector and processor evidence through privacy projection, including default, cardinality, transform and schema rejection outcomes.
+
+### Added: checked protocol acquisition and operational report pages
+
+Operator-registered anonymous passive FTP reads validate independent control and data peers, reject passive-address bounce, and enforce byte, reply and cancellation bounds. `crawlx protocol --probe` reports local configured capabilities without claiming live attestation. Authenticated crawl report inventory and bounded JSON/JSONL search project retained frontier, capture and event facts; absent instrumentation is explicitly distinguished from withheld sensitive content.
+
+### Added: metadata-only requests and bounded WACZ rollover
+
+Native request append/import accepts anonymous bodyless HEAD requests on static and hybrid HTTP queues without producing GET pages or items. Fenced receipts preserve volatile references without renewing their custody. Optional `rolloverBytes` and `--rollover-bytes` cap each encoded WARC file inside WACZ, never split a record, and preserve actual indexed ranges and package fixity.
+
+### Added: bounded browser evidence and retained capture
+
+Opt-in `capture.browser` exposes URL-filtered response projections, bounded network and console diagnostics, policy-retained MHTML/PDF, and separate initial/final text and screenshot evidence. Explicit downloads use bounded in-memory interception, validated filenames and typed artifact storage without exposing host paths. Zero-data-retention and source privacy checks fail closed.
+
+### Fixed: browser metric fixtures and exchange fidelity
+
+Real Chromium regressions exercise renderer crashes, connection loss and unmatched proxy-flow metrics. Capture conformance test names now match the browser CI selector. Exported exchanges label reconstructed representations and distinguish unavailable, omitted and truncated evidence instead of implying original wire fidelity.
+
+### Added: shared worker parser and extraction controls
+
+Worker page extraction, settled browser input, retained-body replay and uploaded parsing use the versioned parser pipeline. Native fetch controls expose bounded HEAD preflight, response declarations and oversize refusal. URL admission applies extraction URL exclusions before robots or target requests, retains bounded unresolved endpoint outcomes, and scopes content dedupe to the tenant and run. Scrape requests can select content outputs, decoding diagnostics and retained markup; parser-produced previews remain subject to worker admission and acquisition budgets.
+
+### Added: retained archive QA differences and bounded range replay
+
+Offline archive QA accepts `--diff-images` and retains bounded decoded-channel difference PNGs through the sensitive, tenant-scoped expiring artifact store. Missing evidence remains unevaluated. The isolated replay listener now serves authenticated single byte ranges with exact response digests, explicit unsatisfiable responses and no live-network fallback.
+
+### Added: streaming generic item export
+
+`crawlx dataset-export` streams bounded JSONL objects through the shared explicit-options serializers. JSON, JSONL, single-header CSV and single-root XML preserve declared field order and safe formula/control-character policies without retaining the full input. Article exports keep their existing contracts.
+
+### Fixed: strict key-value content types
+
+Versioned KV writes now validate HTTP media-type tokens and quoted parameters before committing content references. Malformed type/subtype or parameter values fail without mutating the current CAS version.
+
+### Fixed: consistent API coverage and fixture recall
+
+Run resources and cancellation events now use the same trusted-reachability coverage rows and key classifier as `/coverage`, instead of counting raw trusted executions. A trusted server-side `FixtureGroundTruthSource` can supply fixture-manifest controls and independent exercise evidence; the API computes deduplicated ground-truth recall for `/coverage` and the run summary. Ordinary runs retain `null` ground truth. Deterministic regressions cover the 19-discovered/17-trusted case, fixture eligibility, profile filtering and equality with the benchmark's server-ledger calculation.
+
+### Added: Chromium upgrade reports and release evidence transfer
+
+The candidate-browser CI job now generates an upgrade report from suite logs, golden differences, observed builds and artifact hashes, with explicit measurement gaps. Release checklists collect producer artifacts, mutation outcomes and raw flake histories; release tags also run the blocking checklist. Missing runtime, operational and paired-comparison evidence remains unmeasured and blocking.
+
+### Added: explicit compatibility defaults and offline curl conversion
+
+`crawlx serve --compat-mode strict|native_defaults` selects compatibility defaults; the flag wins over `CRAWLX_COMPAT_MODE`, including an explicit `strict`. `crawlx convert curl '<command>'` admits a single-URL GET request without network access and prints a redacted review template. Unsupported flags, command substitution, file-backed arguments and methods requiring a journal are refused. Interactive shell and viewer execution remain unavailable pending a product decision.
+
+### Fixed: contact classification and obfuscated labels
+
+Contact/message semantics now outrank incidental search words in submit labels or form metadata, preserving the sink requirement. Zero-width label characters are stripped instead of splitting words. Unit and adversarial benchmark regressions cover both behaviors.
+
+### Fixed: retention operations documentation and scheduled database regression
+
+Retention documentation now describes `crawlx admin sweep-retention --every`; the operations index and runbooks link the object-storage guide. A paused-clock PostgreSQL regression checks immediate and periodic sweep-loop mutations and cancellation with one isolated table.
+
 ### Fixed: bounded static-fetch futures and compatibility responses
 
 Static fetches now isolate transport and decoder state behind one heap allocation per fetch. URL dispatch also isolates each acquisition backend, so unused scrape and protocol state machines do not inflate static execution. These boundaries keep nested robots and page acquisition off the executor stack without increasing thread stack limits, with future-size regression tests. Static and hybrid URL-plane tasks retain their crawl tracing span. Compatibility crawl status returns a `next` link only when more stored results exist; clients poll the status route itself for new results. Change tracking also blanks iframe source values in truncated tags and handles quoted tag delimiters without changing unrelated attributes.

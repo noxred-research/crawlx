@@ -9,8 +9,8 @@
 //!   grammar and never repairs it.
 //! * [`ProxyxRoute`] is the operator's configuration of one tier: gateway URL, optional control
 //!   URL, the org key as a secret and a selector. [`ProxyxRoute::bind`] derives the sticky
-//!   identity of one crawl and returns a [`PoolBinding`].
-//! * A [`PoolBinding`] is the upstream of one crawl and tier. Its upstream speaks `CONNECT`
+//!   identity of one session generation and returns a [`PoolBinding`].
+//! * A [`PoolBinding`] is the upstream of one session generation and tier. Its upstream speaks `CONNECT`
 //!   only, because the gateway answers an absolute-form request with `405`: plain `http://`
 //!   targets are tunneled too. The connector reads `X-ProxyX-Pool-Session` and
 //!   `X-ProxyX-Exit-IP` from the `CONNECT` answer into a bounded [`TunnelLog`] and records a
@@ -37,7 +37,9 @@ pub use signals::{
 
 use crate::resolver::Resolver;
 use crate::upstream::UpstreamProxy;
+use crawlx_core::hash::Digest;
 use crawlx_core::secret::SecretOr;
+use crawlx_core::session_binding::{BindingState, SessionBindingV1, SessionIdentityV1};
 use crawlx_policy::egress::EgressPolicy;
 use http::{HeaderMap, StatusCode};
 use parking_lot::Mutex;
@@ -46,6 +48,19 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use url::Url;
+
+/// Durable pin comparison beneath the existing session lease and explicit generation.
+///
+/// Implementations receive only a route-keyed opaque digest, never the exit or gateway session.
+// `async_trait` keeps this authority object-safe so worker storage stays outside this crate.
+#[async_trait::async_trait]
+pub trait PoolPinAuthority: Send + Sync {
+    /// Bind the first observation or verify that it exactly matches the durable observation.
+    ///
+    /// # Errors
+    /// Refuses stale ownership, changed observations and storage failures without rotating identity.
+    async fn verify_or_bind(&self, pin: Digest) -> Result<(), ProxyxError>;
+}
 
 /// Port of the gateway's `CONNECT` listener when the URL names none.
 pub const DEFAULT_GATEWAY_PORT: u16 = 8080;
@@ -81,7 +96,7 @@ impl PoolTier {
 }
 
 /// A pool route or selection that cannot be used. Messages never contain the org key.
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ProxyxError {
     /// A selector field is outside the gateway's grammar.
@@ -107,6 +122,18 @@ pub enum ProxyxError {
     /// The org key is unusable.
     #[error("invalid pool org key: {0}")]
     OrgKey(&'static str),
+    /// The supplied session generation is absent, inactive or differs from the pinned identity.
+    #[error("session generation unavailable for proxy binding")]
+    SessionUnavailable,
+    /// The requested route or tier differs from the approved session egress identity.
+    #[error("proxy override requires explicit session replacement")]
+    EgressMismatch,
+    /// The gateway lost or changed the generation's pinned session or exit.
+    #[error("proxy session pin lost; explicit session replacement required")]
+    PinLost,
+    /// The durable pin authority failed; the error chain remains available without secret text.
+    #[error("proxy session pin authority unavailable")]
+    PinAuthority(#[source] Arc<crawlx_core::StoreError>),
 }
 
 impl ProxyxError {
@@ -143,11 +170,13 @@ fn endpoint(raw: &Url, default_port: u16, err: fn(&'static str) -> ProxyxError) 
 
 /// The operator's configuration of one tier. Cheap to clone; holds the org key as a secret.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct ProxyxRoute {
     gateway: Url,
     control: Option<Url>,
     org_key: SecretOr<String>,
     selector: PoolSelector,
+    route_digest: Digest,
 }
 
 impl fmt::Debug for ProxyxRoute {
@@ -183,9 +212,16 @@ impl ProxyxRoute {
                 "the key must be printable ASCII without spaces",
             ));
         }
-        selector.validate()?;
+        let selector_username = selector.username(None)?;
+        let gateway = endpoint(gateway, DEFAULT_GATEWAY_PORT, ProxyxError::Gateway)?;
+        let mut hash = blake3::Hasher::new_derive_key("crawlx/proxy-route/v1");
+        hash.update(&Digest::of("crawlx/proxy-org-key/v1", key.as_bytes()).0);
+        hash.update(gateway.as_str().as_bytes());
+        hash.update(&[0]);
+        hash.update(selector_username.as_bytes());
         Ok(Self {
-            gateway: endpoint(gateway, DEFAULT_GATEWAY_PORT, ProxyxError::Gateway)?,
+            route_digest: Digest(*hash.finalize().as_bytes()),
+            gateway,
             control: control
                 .map(|url| endpoint(url, DEFAULT_CONTROL_PORT, ProxyxError::Control))
                 .transpose()?,
@@ -224,24 +260,83 @@ impl ProxyxRoute {
         )
     }
 
-    /// The upstream of `crawl` (a crawl id or any stable key) on `tier`.
+    /// Approved route identity, including gateway scheme, normalized selector, org and tier.
     ///
-    /// With `report = Some((policy, resolver))`, a control URL and a running tokio runtime,
-    /// the binding also reports block signals; the policy and resolver are the run's and hold
-    /// the control host to the egress rules. `None` binds the tunnel side only (the browser
-    /// plane).
+    /// Construct this before the session identity. The sticky reference is then derived from
+    /// that immutable identity and generation, without a circular digest dependency.
+    #[must_use]
+    pub fn egress_digest(&self, tier: PoolTier) -> Digest {
+        Digest::keyed(
+            &self.route_digest.0,
+            "crawlx/proxy-tier/v1",
+            match tier {
+                PoolTier::Basic => b"basic",
+                PoolTier::Enhanced => b"enhanced",
+            },
+        )
+    }
+
+    /// Bind an already admitted session generation to its approved route.
+    ///
+    /// The caller owns lease eligibility and expiry checks. HTTP and browser callers must
+    /// share this binding; changing tier, profile or route requires explicit session replacement.
+    /// With reporting enabled, the reporter holds the control host to the same egress policy.
     ///
     /// # Errors
-    /// [`ProxyxError`] when the selector and the crawl's sticky id do not fit the username.
+    /// Returns a session error for inactive generations, egress mismatch for unapproved
+    /// overrides, or a selector error when sticky identity cannot be represented.
     pub fn bind(
         &self,
         tier: PoolTier,
-        crawl: &str,
+        session: &SessionBindingV1,
         report: Option<(Arc<EgressPolicy>, Arc<dyn Resolver>)>,
     ) -> Result<Arc<PoolBinding>, ProxyxError> {
-        let sid = self.selector.sticky_id(tier, crawl)?;
+        check_session(session)?;
+        if session.identity.egress != self.egress_digest(tier) {
+            return Err(ProxyxError::EgressMismatch);
+        }
+        let sid = self.selector.sticky_id(tier, session)?;
+        self.bind_upstream(
+            Some(sid),
+            Some((session.identity.clone(), session.generation)),
+            report,
+        )
+    }
+
+    /// Bind traffic that has no cookie session, principal or browser profile.
+    ///
+    /// This run-scoped route is for stateless URL work only. It cannot be reused as a strict
+    /// session binding. Session actors and named HTTP sessions must use [`Self::bind`].
+    ///
+    /// # Errors
+    /// Returns selector errors when the run's sticky id cannot fit the gateway grammar.
+    pub fn bind_run(
+        &self,
+        tier: PoolTier,
+        run: crawlx_core::CrawlRunId,
+        report: Option<(Arc<EgressPolicy>, Arc<dyn Resolver>)>,
+    ) -> Result<Arc<PoolBinding>, ProxyxError> {
+        self.bind_upstream(self.selector.run_sticky_id(tier, run)?, None, report)
+    }
+
+    fn bind_upstream(
+        &self,
+        sid: Option<String>,
+        session: Option<(SessionIdentityV1, u64)>,
+        report: Option<(Arc<EgressPolicy>, Arc<dyn Resolver>)>,
+    ) -> Result<Arc<PoolBinding>, ProxyxError> {
         let username = self.selector.username(sid.as_deref())?;
-        let log = Arc::new(TunnelLog::default());
+        let log = Arc::new(if session.is_some() {
+            TunnelLog::pinned(
+                Digest::of(
+                    "crawlx/proxy-observed-pin-key/v1",
+                    self.org_key.expose().as_bytes(),
+                )
+                .0,
+            )
+        } else {
+            TunnelLog::default()
+        });
         let upstream = UpstreamProxy::pool(&self.gateway, &username, self.org_key.expose(), Arc::clone(&log))
             .map_err(|_| ProxyxError::Gateway("the gateway URL cannot be used as a CONNECT proxy"))?;
         let reporter = match (&self.control, report, tokio::runtime::Handle::try_current()) {
@@ -261,19 +356,33 @@ impl ProxyxRoute {
             log,
             reporter,
             sid,
+            session,
             rotates_each: self.selector.rotates_each(),
             forbidden: Mutex::new(BTreeMap::new()),
         }))
     }
 }
 
-/// The upstream of one crawl and tier.
+fn check_session(session: &SessionBindingV1) -> Result<(), ProxyxError> {
+    if session.schema_version != 1
+        || session.generation == 0
+        || session.state != BindingState::Leased
+        || session.retirement.is_some()
+    {
+        return Err(ProxyxError::SessionUnavailable);
+    }
+    Ok(())
+}
+
+/// The approved upstream of one immutable session generation.
+#[non_exhaustive]
 pub struct PoolBinding {
     gateway: Url,
     upstream: UpstreamProxy,
     log: Arc<TunnelLog>,
     reporter: Option<BlockReporter>,
     sid: Option<String>,
+    session: Option<(SessionIdentityV1, u64)>,
     rotates_each: bool,
     /// Consecutive plain `403`s per target.
     forbidden: Mutex<BTreeMap<String, u8>>,
@@ -284,7 +393,7 @@ impl fmt::Debug for PoolBinding {
         f.debug_struct("PoolBinding")
             .field("gateway", &self.gateway.host_str())
             .field("sid", &self.sid)
-            .field("rotates_each", &self.rotates_each)
+            .field("session_bound", &self.session.is_some())
             .field("reports", &self.reporter.is_some())
             .finish_non_exhaustive()
     }
@@ -303,16 +412,46 @@ impl PoolBinding {
         &self.upstream
     }
 
-    /// The sticky key this crawl sends, `None` with `rotation = each`.
+    /// The opaque sticky key; absent only for stateless per-connection rotation.
     #[must_use]
     pub fn sid(&self) -> Option<&str> {
         self.sid.as_deref()
     }
 
-    /// Does every tunnel get its own identity (connection reuse must then be off)?
+    /// Whether this stateless route rotates per connection; always false for strict sessions.
     #[must_use]
     pub const fn rotates_each(&self) -> bool {
         self.rotates_each
+    }
+
+    /// Immutable generation identity, absent for stateless run routes.
+    #[must_use]
+    pub fn session_identity(&self) -> Option<(&SessionIdentityV1, u64)> {
+        self.session
+            .as_ref()
+            .map(|(identity, generation)| (identity, *generation))
+    }
+
+    /// Refuse reuse with a different profile, principal, route or generation.
+    ///
+    /// The session owner must still check the current lease fence and expiry before each use.
+    ///
+    /// # Errors
+    /// Returns unavailable on identity drift and pin lost after gateway identity loss.
+    pub fn validate_session(&self, session: &SessionBindingV1) -> Result<(), ProxyxError> {
+        check_session(session)?;
+        if self.session_identity() != Some((&session.identity, session.generation)) {
+            return Err(ProxyxError::SessionUnavailable);
+        }
+        self.log.ensure_pin()
+    }
+
+    /// Install durable observation verification before any tunnel opens.
+    ///
+    /// # Errors
+    /// Refuses stateless routes, repeated registration or registration after observation/loss.
+    pub fn set_pin_authority(&self, authority: Arc<dyn PoolPinAuthority>) -> Result<(), ProxyxError> {
+        self.log.set_pin_authority(authority)
     }
 
     /// The tunnels and refusals the gateway reported to this binding.
@@ -429,12 +568,33 @@ mod tests {
         Url::parse(s).unwrap()
     }
 
-    fn route(gateway: &str, selector: &str) -> Result<ProxyxRoute, ProxyxError> {
+    pub(super) fn route(gateway: &str, selector: &str) -> Result<ProxyxRoute, ProxyxError> {
         ProxyxRoute::new(
             &url(gateway),
             None,
             SecretOr::secret(KEY.to_owned()),
             PoolSelector::from_spec(selector).unwrap(),
+        )
+    }
+
+    pub(super) fn session(route: &ProxyxRoute, tier: PoolTier) -> SessionBindingV1 {
+        let digest = Digest::of("proxy-fixture", b"identity");
+        let identity = serde_json::from_value(serde_json::json!({
+            "tenant": "00000000-0000-0000-0000-000000000001",
+            "run": "00000000-0000-0000-0000-000000000002",
+            "principal": "reader",
+            "session": "00000000-0000-0000-0000-000000000003",
+            "acquisition": digest,
+            "backend_build": digest,
+            "egress": route.egress_digest(tier),
+            "identity_policy": digest,
+            "profile": null,
+        }))
+        .unwrap();
+        SessionBindingV1::new(
+            identity,
+            7,
+            chrono::DateTime::from_timestamp(2_000_000_000, 0).unwrap(),
         )
     }
 
@@ -493,29 +653,105 @@ mod tests {
         assert_eq!(r.identity(), "proxyx://pool.internal:8080?cc=fr");
     }
 
-    #[tokio::test]
-    async fn binding_derives_a_sticky_username_per_crawl_and_tier() {
+    #[test]
+    fn binding_derives_sticky_identity_per_generation_and_refuses_tier_drift() {
         let r = route("http://pool.internal", "kind=rotating,cc=fr").unwrap();
-        let a = r.bind(PoolTier::Basic, "run-1", None).unwrap();
-        let again = r.bind(PoolTier::Basic, "run-1", None).unwrap();
-        let other = r.bind(PoolTier::Basic, "run-2", None).unwrap();
-        let enhanced = r.bind(PoolTier::Enhanced, "run-1", None).unwrap();
-        assert_eq!(a.sid(), Some("cx_b_run_1"));
+        let mut session = session(&r, PoolTier::Basic);
+        session.identity.principal = crawlx_core::PrincipalId::anonymous();
+        let a = r.bind(PoolTier::Basic, &session, None).unwrap();
+        let again = r.bind(PoolTier::Basic, &session, None).unwrap();
         assert_eq!(a.sid(), again.sid());
-        assert_ne!(a.sid(), other.sid());
-        assert_eq!(enhanced.sid(), Some("cx_e_run_1"));
         assert!(!a.rotates_each());
-        let each = route("http://pool.internal", "rot=each").unwrap();
-        let b = each.bind(PoolTier::Basic, "run-1", None).unwrap();
-        assert_eq!(b.sid(), None);
-        assert!(b.rotates_each());
         assert!(a.signal_stats().is_none());
+        assert!(matches!(
+            r.bind(PoolTier::Enhanced, &session, None),
+            Err(ProxyxError::EgressMismatch)
+        ));
+        let mut retired = session.clone();
+        retired
+            .begin_drain(crawlx_core::session_binding::RetirementReason::Unhealthy)
+            .unwrap();
+        retired.finish_cleanup(true).unwrap();
+        assert!(r.bind(PoolTier::Basic, &retired, None).is_err());
+        let mut replacement_identity = session.identity.clone();
+        replacement_identity.egress = r.egress_digest(PoolTier::Enhanced);
+        assert!(retired
+            .replace(replacement_identity, true, retired.expires_at)
+            .is_err());
+        let replacement = retired
+            .replace(session.identity.clone(), true, retired.expires_at)
+            .unwrap();
+        let next = r.bind(PoolTier::Basic, &replacement, None).unwrap();
+        assert_ne!(
+            a.sid(),
+            next.sid(),
+            "an approved generation change requires a fresh sticky identity"
+        );
+        assert!(a.validate_session(&replacement).is_err());
+        let mut fresh = super::tests::session(&r, PoolTier::Enhanced);
+        fresh.identity.principal = crawlx_core::PrincipalId::anonymous();
+        fresh.identity.session =
+            serde_json::from_value(serde_json::json!("00000000-0000-0000-0000-000000000004")).unwrap();
+        fresh.lease_fence = 8;
+        let enhanced = r.bind(PoolTier::Enhanced, &fresh, None).unwrap();
+        assert_ne!(
+            next.sid(),
+            enhanced.sid(),
+            "a different tier requires an explicit new approved slot"
+        );
+        assert!(next.validate_session(&fresh).is_err());
+        let each = route("http://pool.internal", "rot=each").unwrap();
+        assert!(each
+            .bind(
+                PoolTier::Basic,
+                &super::tests::session(&each, PoolTier::Basic),
+                None
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn approved_route_digest_covers_normalized_selector_tier_gateway_scheme_and_org() {
+        let r = route("http://pool.internal", "cc=FR").unwrap();
+        let normalized = route("http://pool.internal:8080", "cc=fr").unwrap();
+        assert_eq!(
+            r.egress_digest(PoolTier::Basic),
+            normalized.egress_digest(PoolTier::Basic)
+        );
+        let session = session(&r, PoolTier::Basic);
+        for other in [
+            route("https://pool.internal:8080", "cc=fr").unwrap(),
+            route("http://different.internal", "cc=fr").unwrap(),
+            route("http://pool.internal", "cc=de").unwrap(),
+            ProxyxRoute::new(
+                &url("http://pool.internal"),
+                None,
+                SecretOr::secret("other-org-key".into()),
+                PoolSelector::from_spec("cc=fr").unwrap(),
+            )
+            .unwrap(),
+        ] {
+            assert!(matches!(
+                other.bind(PoolTier::Basic, &session, None),
+                Err(ProxyxError::EgressMismatch)
+            ));
+        }
+        let bound = r.bind(PoolTier::Basic, &session, None).unwrap();
+        let mut changed = session.clone();
+        changed.identity.profile = Some(Digest::of("fixture", b"other-profile"));
+        assert!(matches!(
+            bound.validate_session(&changed),
+            Err(ProxyxError::SessionUnavailable)
+        ));
+        assert!(bound.validate_session(&session).is_ok());
     }
 
     #[test]
     fn debug_never_prints_the_key_or_the_username() {
         let r = route("http://pool.internal", "kind=rotating").unwrap();
-        let b = r.bind(PoolTier::Basic, "run-1", None).unwrap();
+        let b = r
+            .bind(PoolTier::Basic, &session(&r, PoolTier::Basic), None)
+            .unwrap();
         let rendered = format!("{b:?} {:?}", b.upstream());
         assert!(!rendered.contains(KEY));
         assert!(!rendered.contains("px-kind"));
@@ -535,13 +771,16 @@ mod tests {
         let binding = r
             .bind(
                 PoolTier::Basic,
-                "run-1",
+                &session(&r, PoolTier::Basic),
                 Some((Arc::new(EgressPolicy::new(false)), resolver)),
             )
             .unwrap();
-        binding
-            .log
-            .opened("t.test", 443, Some(&"ab".repeat(16)), Some("203.0.113.9"));
+        rt.block_on(
+            binding
+                .log
+                .opened("t.test", 443, Some(&"ab".repeat(16)), Some("203.0.113.9")),
+        )
+        .unwrap();
         (binding, rt)
     }
 

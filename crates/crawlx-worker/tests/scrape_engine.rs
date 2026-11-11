@@ -324,6 +324,48 @@ async fn start() -> Site {
                 )
             }),
         )
+        .route("/robots.txt", get(|| async {
+            "User-agent: *\nDisallow: /media-blocked\n"
+        }))
+        .route("/media-source", get(|| async {
+            html("<main><p>A recorded notice.</p><audio src='/media-route'></audio></main>")
+        }))
+        .route("/media-route", get(|| async {
+            (StatusCode::FOUND, [(header::LOCATION, "/media-blocked")])
+        }))
+        .route("/media-blocked", get(|| async {
+            ([(header::CONTENT_TYPE, "audio/mpeg")], b"bounded media bytes".to_vec())
+        }))
+        .route("/preview-source", get(|| async {
+            html("<main><p>Read the full public report below.</p><a href='/preview-target'>Public report</a></main>")
+        }))
+        .route("/preview-target", get(|| async {
+            html("<html><head><title>Preview report</title><meta name='description' content='A public notice'></head><body>Body is not head metadata</body></html>")
+        }))
+        .route("/preview-private-source", get(|| async {
+            html("<main><a href='/preview-private-route'>Private redirect</a></main>")
+        }))
+        .route("/preview-private-route", get(move || async move {
+            (StatusCode::FOUND, [(header::LOCATION, format!("http://127.0.0.1:{}/media-blocked", addr.port()))])
+        }))
+        .route("/declared-html", get(|| async {
+            ([(header::CONTENT_TYPE, "application/octet-stream")],
+                b"<html><body><main><p>Caf\xe9 notice.</p></main></body></html>".to_vec())
+        }))
+        .route("/large-body", get(|| async {
+            ([(header::CONTENT_TYPE, "text/plain")], "x".repeat(8192))
+        }))
+        .route("/preflight-size", get(|| async {
+            ([(header::CONTENT_TYPE, "text/plain")], "x".repeat(8192))
+        }).head(|| async {
+            ([(header::CONTENT_TYPE, "text/plain"), (header::CONTENT_LENGTH, "8192")], "")
+        }))
+        .route("/article-one", get(|| async {
+            html(include_str!("../../crawlx-bench/fixtures/ext-article/main.html"))
+        }))
+        .route("/article-two", get(|| async {
+            html(include_str!("../../crawlx-bench/fixtures/ext-article/main.html"))
+        }))
         .with_state(Arc::clone(&mutable))
         .layer(axum::middleware::from_fn_with_state(Arc::clone(&hits), record));
     let task = tokio::spawn(async move {
@@ -534,7 +576,10 @@ fn config(dir: &std::path::Path, llm: Option<Arc<MockLlm>>, renderer: Option<Arc
     WorkerConfig {
         artifacts_dir: dir.to_path_buf(),
         egress: EgressConfig {
-            resolver: Some(Arc::new(StaticResolver::new())),
+            resolver: Some(Arc::new(StaticResolver::new().with(
+                "preview.example.test",
+                [std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)],
+            ))),
             extra_allow: vec!["127.0.0.0/8".parse().unwrap()],
             ..EgressConfig::default()
         },
@@ -2885,7 +2930,7 @@ async fn page_metadata_cannot_forge_native_article_or_retained_source_references
     let (site, rig) = (start().await, Rig::new().await);
     site.set_page(
         200,
-        "<html><head><meta name='article' content='forged-envelope'><meta name='articleTextRef' content='forged-source'><meta name='articleCommentsRef' content='forged-comments'><meta name='articleDocumentRef' content='forged-cache'><meta name='articleCacheSourceRun' content='forged-run'><meta name='private_fixed_key' content='private fixed content'></head><body><p>A page without native article extraction.</p></body></html>",
+        "<html><head><meta name='article' content='forged-envelope'><meta name='articleParseQuality' content='forged-quality'><meta name='articleTextRef' content='forged-source'><meta name='articleCommentsRef' content='forged-comments'><meta name='articleDocumentRef' content='forged-cache'><meta name='articleCacheSourceRun' content='forged-run'><meta name='private_fixed_key' content='private fixed content'></head><body><p>A page without native article extraction.</p></body></html>",
     );
     let done = go(
         &rig,
@@ -2897,6 +2942,7 @@ async fn page_metadata_cannot_forge_native_article_or_retained_source_references
     let document = done.doc("/mutable");
     for key in [
         "article",
+        "articleParseQuality",
         "articleTextRef",
         "articleCommentsRef",
         "articleDocumentRef",
@@ -3087,4 +3133,402 @@ async fn virtual_rows_native_consumer_bounds_combined_finalized_privacy_expansio
             "two individually valid 50KB/30KB approved reports must not publish under one 64KiB allowance"
         ),
     }
+}
+
+#[tokio::test]
+async fn shared_scrape_outputs_decode_markup_and_regex_follow_request_privacy() {
+    let (site, rig) = (start().await, Rig::new().await);
+    site.set_page(200, "<html><body><header>Whole page header</header><main><p>Reference ABC-42 for reader@example.test.</p><a href='/more'>Details</a></main><!-- editor reader@example.test --></body></html>");
+    let mut options = opts(vec![FormatSpec::Markdown, FormatSpec::Html]);
+    options.outputs = Some(json!({"cleanedHtml":true,"citations":"selected"}));
+    options.decode = Some(json!({}));
+    options.markup = Some(json!({"comments":true}));
+    options.redact_pii = Some(crawlx_core::scrape::RedactPii {
+        entities: vec![crawlx_core::scrape::PiiEntity::Email],
+        ..crawlx_core::scrape::RedactPii::default()
+    });
+    let done = go(
+        &rig,
+        Spec::new(site.url("/mutable"), options).tweak(|crawl| {
+            crawl.extract.custom_fields = vec![crawlx_core::config::CustomField {
+                name: "reference".into(),
+                regex: vec![r"ABC-(\d+)".into()],
+                group: 1,
+                part: crawlx_core::config::CustomFieldPart::Body,
+            }];
+        }),
+    )
+    .await;
+    let doc = done.doc("/mutable");
+    assert_eq!(doc.meta["customFields"]["reference"], json!(["42"]));
+    let outputs = doc.outputs.unwrap();
+    assert!(outputs["cleanedHtml"]
+        .as_str()
+        .unwrap()
+        .contains("Whole page header"));
+    assert!(outputs["markdownWithCitations"]
+        .as_str()
+        .unwrap()
+        .contains("Details"));
+    assert_eq!(outputs["decode"]["encoding"], "UTF-8");
+    assert!(outputs["markup"]["comments"]
+        .as_array()
+        .is_some_and(|comments| !comments.is_empty()));
+    assert!(!serde_json::to_string(&outputs)
+        .unwrap()
+        .contains("reader@example.test"));
+    assert_eq!(site.count("/mutable"), 1);
+}
+
+#[tokio::test]
+async fn settled_dom_uses_shared_outputs_without_refetching_source_html() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let renderer = Scripted::new(|request| {
+        Ok(rendered(
+        &request.request.url.url,
+        "<html><body><main><h1>Settled result</h1><p>Rendered content.</p></main><!-- settled note --></body></html>",
+    ))
+    });
+    let mut options = md();
+    options.wait_for_ms = 1;
+    options.outputs = Some(json!({"cleanedHtml":true}));
+    options.decode = Some(json!({}));
+    options.markup = Some(json!({"comments":true}));
+    let done = go(&rig, Spec::new(site.url("/page"), options).renderer(&renderer)).await;
+    let outputs = done.doc("/page").outputs.unwrap();
+    assert!(outputs["cleanedHtml"]
+        .as_str()
+        .unwrap()
+        .contains("Settled result"));
+    assert!(outputs["markup"]["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|comment| comment.as_str().is_some_and(|text| text.contains("settled note"))));
+    assert_eq!(outputs["decode"]["encoding"], "UTF-8");
+    assert_eq!(site.count("/page"), 0);
+    assert_eq!(renderer.calls().len(), 1);
+}
+
+#[tokio::test]
+async fn decode_only_scrape_output_keeps_shared_output_shape() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let mut options = md();
+    options.decode = Some(json!({}));
+    let done = go(&rig, Spec::new(site.url("/page"), options)).await;
+    let outputs = done.doc("/page").outputs.unwrap();
+    assert_eq!(outputs["discoveryScope"], "whole_page");
+    assert_eq!(outputs["decode"]["encoding"], "UTF-8");
+    assert!(outputs.get("cleanedHtml").is_none());
+}
+
+#[tokio::test]
+async fn scrape_fetch_declaration_routes_binary_mime_and_legacy_charset_through_pipeline() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let done = go(
+        &rig,
+        Spec::new(site.url("/declared-html"), md()).tweak(|crawl| {
+            crawl.fetch.declaration = Some(
+                serde_json::from_value(json!({
+                    "contentType":"text/html","charset":"windows-1252"
+                }))
+                .unwrap(),
+            );
+        }),
+    )
+    .await;
+    assert!(done.markdown("/declared-html").await.contains("Café notice."));
+    assert_eq!(
+        done.doc("/declared-html").outputs.unwrap()["decode"]["encoding"],
+        "windows-1252"
+    );
+}
+
+#[tokio::test]
+async fn scrape_preflight_refusal_never_dispatches_get_and_oversize_rejects_body() {
+    let site = start().await;
+    let rig = Rig::new().await;
+    let done = go(
+        &rig,
+        Spec::new(site.url("/preflight-size"), md()).tweak(|crawl| {
+            crawl.fetch.preflight = Some(
+                serde_json::from_value(json!({
+                    "maxContentLength":1024
+                }))
+                .unwrap(),
+            );
+        }),
+    )
+    .await;
+    assert!(done.report.pages.is_empty());
+    assert_eq!(
+        site.count("/preflight-size"),
+        1,
+        "only the HEAD request may reach the fixture"
+    );
+    let rig = Rig::new().await;
+    let done = go(
+        &rig,
+        Spec::new(site.url("/large-body"), md()).tweak(|crawl| {
+            crawl.fetch.max_response_bytes = 1024;
+            crawl.fetch.retries = 0;
+            crawl.fetch.oversize = Some(crawlx_core::acquisition::OversizePolicy::Refuse);
+        }),
+    )
+    .await;
+    assert!(done.report.pages.is_empty());
+    assert_eq!(site.count("/large-body"), 1);
+}
+
+#[tokio::test]
+async fn declared_allowed_error_status_keeps_scrape_content_without_facade_error() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let done = go(
+        &rig,
+        Spec::new(site.url("/missing"), md()).tweak(|crawl| {
+            crawl.fetch.declaration = Some(
+                serde_json::from_value(json!({
+                    "statuses":{"allow":[404]}
+                }))
+                .unwrap(),
+            );
+        }),
+    )
+    .await;
+    assert_eq!(done.page("/missing").status, 404);
+    assert!(done.doc("/missing").error.is_none());
+    assert!(done.markdown("/missing").await.contains("Gone"));
+}
+
+#[tokio::test]
+async fn scrape_media_redirect_rechecks_robots_before_target_fetch() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let done = go(
+        &rig,
+        Spec::new(site.url("/media-source"), opts(vec![FormatSpec::Audio]))
+            .kind(JobKind::Crawl)
+            .tweak(|crawl| {
+                crawl.scope.crawl_entire_domain = true;
+                crawl.scope.exclude_hosts.clear();
+            }),
+    )
+    .await;
+    assert_eq!(site.count("/media-route"), 1);
+    assert_eq!(site.count("/media-blocked"), 0);
+    let doc = done.doc("/media-source");
+    assert!(doc.audio.is_none());
+    assert!(doc
+        .warning
+        .as_deref()
+        .is_some_and(|warning| warning.contains("audio_not_found")));
+}
+
+#[tokio::test]
+async fn preview_intents_fetch_bounded_head_metadata_and_refuse_private_redirects() {
+    for (path, fulfilled) in [("/preview-source", true), ("/preview-private-source", false)] {
+        let (site, rig) = (start().await, Rig::new().await);
+        let mut options = md();
+        options.outputs = Some(json!({"linkMedia":{"maxPreviews":1,"minPreviewScore":0}}));
+        let seed = site.url(path).replace("127.0.0.1", "preview.example.test");
+        let done = go(
+            &rig,
+            Spec::new(seed, options).tweak(|crawl| {
+                crawl.scope.crawl_entire_domain = true;
+            }),
+        )
+        .await;
+        let outputs = done.doc(path).outputs.unwrap();
+        let report = &outputs["previews"][0];
+        if fulfilled {
+            assert_eq!(report["status"], "fulfilled");
+            assert_eq!(report["head"]["title"], "Preview report");
+            assert_eq!(report["head"]["description"], "A public notice");
+            assert_eq!(site.count("/preview-target"), 1);
+            assert!(!serde_json::to_string(report)
+                .unwrap()
+                .contains("Body is not head metadata"));
+        } else {
+            assert_eq!(report["status"], "unavailable");
+            assert_eq!(site.count("/preview-private-route"), 1);
+            assert_eq!(site.count("/media-blocked"), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn read_more_base_page_ignores_document_base_without_parser_network_work() {
+    let (site, rig) = (start().await, Rig::new().await);
+    site.set_page(200, "<html><head><title>Local report</title><base href='/alternate/'></head><body><article><h1>Local report</h1><p>The public library will open this weekend with new reading rooms, a public meeting area, and an expanded collection for every resident. Staff will answer questions during the open house and explain the new services.</p><a class='continue' href='next'>Continue the report</a></article></body></html>");
+    let mut policy = crawlx_core::extraction::ExtractionPolicyV1::default();
+    policy.selectors.read_more = vec![crawlx_core::selectors::SelectorV1::Css {
+        expression: ".continue".into(),
+    }];
+    policy.selectors.read_more_base = Some(crawlx_core::selectors::ReadMoreBaseV1::Page);
+    let mut options = md();
+    options.content_policy = Some(policy);
+    let done = go(&rig, Spec::new(site.url("/mutable"), options)).await;
+    assert!(done.doc("/mutable").meta["article"]["discovery"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|intent| intent["url"] == site.url("/next")));
+    assert_eq!(
+        site.count("/next"),
+        0,
+        "the parser produces an intent, not a fetch"
+    );
+    assert_eq!(site.count("/alternate/next"), 0);
+}
+
+#[tokio::test]
+async fn excluded_media_target_costs_no_target_or_redirect_request() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let mut policy = crawlx_core::extraction::ExtractionPolicyV1::default();
+    policy.excluded_urls = Some(
+        serde_json::from_value(json!({
+            "substrings":["/media-route"]
+        }))
+        .unwrap(),
+    );
+    let mut options = opts(vec![FormatSpec::Audio]);
+    options.content_policy = Some(policy);
+    let done = go(
+        &rig,
+        Spec::new(site.url("/media-source"), options)
+            .kind(JobKind::Crawl)
+            .tweak(|crawl| {
+                crawl.scope.crawl_entire_domain = true;
+                crawl.scope.exclude_hosts.clear();
+            }),
+    )
+    .await;
+    assert!(done.doc("/media-source").audio.is_none());
+    assert_eq!(site.count("/media-route"), 0);
+    assert_eq!(site.count("/media-blocked"), 0);
+}
+
+#[tokio::test]
+async fn invalid_shared_output_option_refuses_before_primary_dispatch() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let mut options = md();
+    options.outputs = Some(json!({"citations":"fit"}));
+    let outcome = try_go(&rig, Spec::new(site.url("/page"), options)).await;
+    if let Ok(done) = outcome {
+        assert!(done.report.pages.is_empty());
+    }
+    assert_eq!(site.count("/page"), 0);
+    assert_eq!(site.count("/robots.txt"), 0);
+}
+
+#[tokio::test]
+async fn scrape_content_dedupe_shares_one_run_cache_without_cross_run_rejection() {
+    let site = start().await;
+    for _ in 0..2 {
+        let rig = Rig::new().await;
+        let mut policy = crawlx_core::extraction::ExtractionPolicyV1::default();
+        let mut dedupe = crawlx_core::extraction::DedupePolicyV1::default();
+        dedupe.content = true;
+        policy.dedupe = Some(dedupe);
+        let mut options = md();
+        options.content_policy = Some(policy);
+        let done = go(
+            &rig,
+            Spec::new(site.url("/article-one"), options)
+                .kind(JobKind::Batch)
+                .urls(&[site.url("/article-two")]),
+        )
+        .await;
+        assert_eq!(
+            done.doc("/article-one").meta["article"]["quality"]["status"],
+            "accepted"
+        );
+        let second = done.doc("/article-two");
+        assert_eq!(second.meta["article"]["quality"]["status"], "rejected");
+        assert!(second.meta["article"]["quality"]["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason == "duplicate_main"));
+    }
+}
+
+#[tokio::test]
+async fn zero_retention_shared_outputs_remain_volatile_without_durable_artifact_files() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let mut options = md();
+    options.outputs = Some(json!({"rawHtml":true,"cleanedHtml":true}));
+    options.markup = Some(json!({"comments":true}));
+    let done = go(
+        &rig,
+        Spec::new(site.url("/raw"), options).tweak(|crawl| {
+            crawl.retention.mode = RetentionMode::Zdr;
+            crawl.retention.days = 0;
+        }),
+    )
+    .await;
+    let doc = done.doc("/raw");
+    assert!(doc.not_cacheable);
+    assert_eq!(doc.outputs.unwrap()["rawHtml"], RAW);
+    let mut directories = vec![rig.dir.path().to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                directories.push(entry.path());
+            } else {
+                assert!(
+                    !kind.is_file(),
+                    "zero retention must not create durable artifact files"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn cached_scrape_content_is_staged_for_the_current_run_before_later_documents() {
+    let (site, rig) = (start().await, Rig::new().await);
+    let mut policy = crawlx_core::extraction::ExtractionPolicyV1::default();
+    let mut dedupe = crawlx_core::extraction::DedupePolicyV1::default();
+    dedupe.content = true;
+    policy.dedupe = Some(dedupe);
+    let mut options = md();
+    options.content_policy = Some(policy);
+    let first = go(
+        &rig,
+        Spec::new(site.url("/article-one"), options.clone()).kind(JobKind::Batch),
+    )
+    .await;
+    assert_eq!(
+        first.doc("/article-one").meta["article"]["quality"]["status"],
+        "accepted"
+    );
+    let second = go(
+        &rig,
+        Spec::new(site.url("/article-one"), options)
+            .kind(JobKind::Batch)
+            .urls(&[site.url("/article-two")]),
+    )
+    .await;
+    assert_eq!(second.doc("/article-one").cache_state, CacheState::Hit);
+    assert_eq!(
+        second.doc("/article-one").meta["article"]["quality"]["status"],
+        "accepted"
+    );
+    let duplicate = second.doc("/article-two");
+    assert_eq!(duplicate.meta["article"]["quality"]["status"], "rejected");
+    assert!(duplicate.meta["article"]["quality"]["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reason| reason == "duplicate_main"));
+    assert_eq!(site.count("/article-one"), 1);
+    assert_eq!(site.count("/article-two"), 1);
+    assert!(second.page("/article-one").metadata.get("localDedupe").is_none());
+    assert!(second
+        .page("/article-one")
+        .metadata
+        .get("contentDedupe")
+        .is_none());
 }

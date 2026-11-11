@@ -221,7 +221,12 @@ async fn the_browser_plane_learns_sibling_slots_from_observed_states() {
     crawl.limits.states = 100;
     let report = run_local_with(
         LocalRun::new(crawl, config(dir.path()))
-            .with_backend(Arc::new(FakeBackend::new(user_app())))
+            .with_backend(Arc::new(
+                FakeBackend::builder()
+                    .script(user_app())
+                    .clock(Arc::new(crawlx_core::SystemClock))
+                    .build(),
+            ))
             .with_stores(stores.clone()),
     )
     .await

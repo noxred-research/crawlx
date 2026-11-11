@@ -52,7 +52,12 @@ async fn once_with_trace(
     action_trace: Option<Arc<crawlx_worker::action_trace::ActionTrace>>,
 ) -> (Vec<String>, Vec<(String, String)>) {
     let dir = tempfile::tempdir().unwrap();
-    let backend = Arc::new(FakeBackend::new(app()));
+    let backend = Arc::new(
+        FakeBackend::builder()
+            .script(app())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let store = Arc::new(MemoryStore::new());
     let stores = Stores::over_memory(store, dir.path()).await.unwrap();
     let cfg = WorkerConfig {

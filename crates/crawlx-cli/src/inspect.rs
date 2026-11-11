@@ -700,7 +700,12 @@ mod tests {
                     ..WorkerConfig::default()
                 },
             )
-            .with_backend(Arc::new(FakeBackend::new(script)))
+            .with_backend(Arc::new(
+                FakeBackend::builder()
+                    .script(script)
+                    .clock(Arc::new(SystemClock))
+                    .build(),
+            ))
             .with_stores(stores),
         ))
         .await

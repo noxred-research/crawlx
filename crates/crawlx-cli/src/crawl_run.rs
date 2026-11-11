@@ -125,6 +125,8 @@ pub(crate) async fn run(
     base.load_delivery_from_lookup(getenv).await?;
     base.traffic_export = TrafficExportConfig::from_env(getenv).context("traffic export")?;
     base.egress.lists = Some(egress_feed.lists());
+    base.egress.resolver_https =
+        crate::resolver_https_config::from_env(getenv, egress_feed.lists(), CancellationToken::new())?;
     if base.form_ai.is_some() && !first.extract.form_fill.enabled {
         bail!("the --ai-* flags answer form fields: add --automatic-form-fill (or --form-config)");
     }

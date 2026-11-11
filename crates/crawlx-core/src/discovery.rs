@@ -213,6 +213,10 @@ pub struct SourceDiscoveryPolicyV1 {
     /// ([`url_language_evidence`]); never proof of content language, never a filter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_language_hint: Option<String>,
+    /// Explicit bounded article repeat suppression, applied only after current admission.
+    pub article_memo: crate::dataset::memo::ArticleMemoPolicyV1,
+    /// Representation/role-scoped category proposals with worker-clock expiry.
+    pub category_cache: crate::dataset::memo::CategoryCachePolicyV1,
 }
 impl Default for SourceDiscoveryPolicyV1 {
     fn default() -> Self {
@@ -237,6 +241,8 @@ impl Default for SourceDiscoveryPolicyV1 {
             connectors: Vec::new(),
             url_list: None,
             url_language_hint: None,
+            article_memo: crate::dataset::memo::ArticleMemoPolicyV1::default(),
+            category_cache: crate::dataset::memo::CategoryCachePolicyV1::default(),
         }
     }
 }
@@ -256,6 +262,8 @@ impl SourceDiscoveryPolicyV1 {
             validate_language_hint(hint)?;
         }
         let valid = self.version == 1
+            && (1..=crate::dataset::memo::MAX_MEMO_ENTRIES).contains(&self.article_memo.max_entries)
+            && (1..=604_800).contains(&self.category_cache.ttl_seconds)
             && (1..=64).contains(&self.max_source_documents)
             && (1..=8_388_608).contains(&self.max_feed_bytes)
             && (1..=10_000).contains(&self.max_entries)

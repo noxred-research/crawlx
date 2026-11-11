@@ -738,6 +738,30 @@ fn verify_digest(expected: &str, bytes: &[u8]) -> Result<(), ArchiveError> {
     Ok(())
 }
 
+/// Validate one physical gzip resource/revisit shard before dependency-closed packaging.
+///
+/// This checks framing, member bounds and stored block fixity only. Revisit payload
+/// references remain unresolved here; publication must subsequently use [`inspect`]
+/// or the package reader over the complete local dependency closure.
+///
+/// # Errors
+/// Rejects malformed bytes, multiple members, segmented or unsupported shard types.
+pub fn inspect_shard<R: Read + Seek>(input: R, limits: Limits) -> Result<RecordSummary, ArchiveError> {
+    let mut records = scan(input, true, limits)?;
+    if records.len() != 1 {
+        return Err(ArchiveError::Invalid(
+            "archive shard must contain one physical member",
+        ));
+    }
+    let record = records
+        .pop()
+        .ok_or(ArchiveError::Invalid("archive shard empty"))?;
+    if !matches!(record.record_type.as_str(), "resource" | "revisit") || record.segment_number.is_some() {
+        return Err(ArchiveError::Invalid("unsupported archive shard type"));
+    }
+    Ok(record)
+}
+
 /// Validate a WARC stream and retain only bounded record descriptors.
 ///
 /// # Errors

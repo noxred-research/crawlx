@@ -1,6 +1,7 @@
 //! Operator-controlled protocols. No automatic native-network fallback exists.
 
 pub mod file;
+pub mod ftp;
 pub mod service;
 pub mod whois;
 

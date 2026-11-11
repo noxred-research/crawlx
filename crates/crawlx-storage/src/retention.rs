@@ -246,9 +246,18 @@ impl RetentionSweeper {
         let mut report = SweepReport::default();
         // Revoke dependency closure before deleting source content. Each object removal is
         // acknowledged separately, so cancellation leaves a resumable erasure cursor.
+        // Changed source authority revokes derived objects even before the old export deadline.
         let expired = sqlx::query(
             "SELECT e.tenant_id,e.export_id FROM archive_exports e \
-             WHERE (e.expires_at<=$1 AND e.state<>'deleted') OR (e.state='deleted' AND ( \
+             WHERE (e.state<>'deleted' AND (e.expires_at<=$1 OR EXISTS( \
+               SELECT 1 FROM archive_records s WHERE s.tenant_id=e.tenant_id AND s.export_id=e.export_id \
+               AND s.payload->'custody'->>'sensitivity'='sensitive' AND NOT EXISTS( \
+                 SELECT 1 FROM artifacts a WHERE a.artifact_id=(s.payload->'sourceArtifact'->>'id')::uuid \
+                 AND a.tenant_id=e.tenant_id AND a.run_id=e.run_id AND a.sensitivity='sensitive' \
+                 AND a.content_type=s.payload->>'mime' \
+                 AND a.content_digest=decode(s.payload->'sourceArtifact'->>'digest','hex') \
+                 AND a.expires_at=(s.payload->'custody'->>'expiresAt')::timestamptz \
+                 AND a.expires_at>$1 AND a.deleted_at IS NULL)))) OR (e.state='deleted' AND ( \
                e.payload->'artifact'<>'null'::jsonb OR e.payload->'index'<>'null'::jsonb OR \
                EXISTS(SELECT 1 FROM archive_records r WHERE r.tenant_id=e.tenant_id AND r.export_id=e.export_id))) \
              ORDER BY e.expires_at,e.export_id LIMIT 64",
@@ -351,6 +360,31 @@ impl RetentionSweeper {
         u64::try_from(rows.len()).map_err(|error| StoreError::Backend(error.to_string()))
     }
 
+    /// Close HEAD publication before physically erasing a run's objects.
+    ///
+    /// This update waits for fenced request transactions holding the run row.
+    /// Its committed terminal status then prevents later HEAD publication.
+    /// No pooled connection remains held during artifact erasure.
+    ///
+    /// # Errors
+    /// Returns [`StoreError::NotFound`] for a missing run, or a database error.
+    pub async fn begin_run_erasure(&self, run: CrawlRunId) -> Result<TenantId, StoreError> {
+        let tenant: Option<uuid::Uuid> = sqlx::query_scalar(
+            "UPDATE crawl_runs SET status=CASE \
+             WHEN status IN ('completed','failed','cancelled') THEN status ELSE 'cancelled' END, \
+             terminal_reason=COALESCE(terminal_reason,'cancelled'), \
+             finished_at=COALESCE(finished_at,clock_timestamp()) \
+             WHERE run_id=$1 RETURNING tenant_id",
+        )
+        .bind(run.0)
+        .fetch_optional(&self.pg.pool)
+        .await
+        .map_err(db)?;
+        tenant
+            .map(TenantId)
+            .ok_or_else(|| crate::error::not_found("crawl_run", run))
+    }
+
     /// Delete only the objects of `run` through the attached [`ArtifactReaper`] (RB-08 step 3:
     /// content first, rows afterwards). Returns the uses removed; `0` without a store.
     ///
@@ -358,16 +392,14 @@ impl RetentionSweeper {
     ///
     /// Returns an error if the artifact reaper fails.
     pub async fn purge_run_objects(&self, run: CrawlRunId) -> Result<u64, StoreError> {
-        let tenant: Option<uuid::Uuid> =
-            sqlx::query_scalar("SELECT tenant_id FROM crawl_runs WHERE run_id=$1")
-                .bind(run.0)
-                .fetch_optional(&self.pg.pool)
-                .await
-                .map_err(db)?;
-        let mut removed = match tenant {
-            Some(tenant) => self.purge_archives(TenantId(tenant), run.0).await?,
-            None => 0,
+        let (mut removed, tenant) = match self.begin_run_erasure(run).await {
+            Ok(tenant) => (self.purge_archives(tenant, run.0).await?, Some(tenant)),
+            Err(StoreError::NotFound { .. }) => (0, None),
+            Err(error) => return Err(error),
         };
+        if let (Some(buffer), Some(tenant)) = (&self.pg.delivery, tenant) {
+            removed = removed.saturating_add(buffer.purge_run(tenant, run).await?);
+        }
         if let Some(store) = &self.artifacts {
             removed = removed.saturating_add(store.purge_run(run).await?);
         }
@@ -400,14 +432,11 @@ impl RetentionSweeper {
     /// Returns [`StoreError::NotFound`] if `run` does not exist, or an error if the artifact
     /// reaper, a delete batch or the audit append fails.
     pub async fn purge_run(&self, run: CrawlRunId) -> Result<u64, StoreError> {
-        let tenant: Option<uuid::Uuid> =
-            sqlx::query_scalar("SELECT tenant_id FROM crawl_runs WHERE run_id = $1")
-                .bind(run.0)
-                .fetch_optional(&self.pg.pool)
-                .await
-                .map_err(db)?;
-        let tenant = tenant.ok_or_else(|| crate::error::not_found("crawl_run", run))?;
+        let tenant = self.begin_run_erasure(run).await?.0;
         self.purge_archives(TenantId(tenant), run.0).await?;
+        if let Some(buffer) = &self.pg.delivery {
+            buffer.purge_run(TenantId(tenant), run).await?;
+        }
         if let Some(store) = &self.artifacts {
             store.purge_run(run).await?;
         }

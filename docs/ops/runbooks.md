@@ -11,6 +11,9 @@ Dashboard names are the rows and panel titles of
 `crawlx-ops`). The commands, queries, metric names and configuration keys below exist in this
 repository; the on-call rota, paging backend and escalation timers are yours to define.
 
+For object-store configuration, supported profiles and deployment checks, see
+[object storage](object-storage.md) before diagnosing an outage or changing a backend.
+
 ## Severity scale
 
 The cards suggest a severity. Adapt the response targets to your organization.

@@ -5,6 +5,11 @@
 //!
 //! Runs that carry a compatibility-API scrape job (`CreateCrawl::scrape`, not a `map`) hand every
 //! page to the [`ScrapeEngine`]; `scrape_plane` holds that variant of the page loop.
+//!
+//! Dynamic sessions publish already-settled DOM through [`UrlPlaneRunner::record_browser_observation`].
+//! This output lane never repeats primary acquisition; each rendition commits under its exact
+//! frontier fence and originating session fence. Its receipt-only lease is separate from target
+//! dispatch admission, so a graceful worker drain can retain an observation it already acquired.
 
 #[path = "discovery.rs"]
 mod discovery;
@@ -82,6 +87,7 @@ pub(crate) struct NativeHopAdmission<'a> {
     runner: &'a UrlPlaneRunner,
     entry: &'a FrontierEntry,
     fence: i64,
+    session: Option<crawlx_core::session_binding::SessionBindingV1>,
 }
 impl<'a> NativeHopAdmission<'a> {
     fn new(runner: &'a UrlPlaneRunner, entry: &'a FrontierEntry) -> Result<Self, FetchError> {
@@ -91,7 +97,16 @@ impl<'a> NativeHopAdmission<'a> {
             .get(&entry.id)
             .copied()
             .ok_or(FetchError::AcquisitionCancelled)?;
-        Ok(NativeHopAdmission { runner, entry, fence })
+        Ok(NativeHopAdmission {
+            runner,
+            entry,
+            fence,
+            session: None,
+        })
+    }
+    fn with_session(mut self, session: Option<crawlx_core::session_binding::SessionBindingV1>) -> Self {
+        self.session = session;
+        self
     }
     async fn authority(&self) -> Result<(), FetchError> {
         let held = self.runner.held.lock().get(&self.entry.id).copied();
@@ -129,9 +144,12 @@ impl<'a> NativeHopAdmission<'a> {
         }
         Ok(())
     }
-    async fn scope(&self, url: &Url) -> Result<CanonicalUrl, FetchError> {
+    async fn scope(&self, url: &Url, allow_leaf: bool) -> Result<CanonicalUrl, FetchError> {
         self.authority().await?;
-        let canonical = self.runner.admit_native_scope(url, self.entry.depth).await?;
+        let canonical = self
+            .runner
+            .admit_native_scope(url, self.entry.depth, allow_leaf)
+            .await?;
         // Never authorize a normalized URL and then send a different query or path.
         if canonical.url != *url {
             return Err(FetchError::AcquisitionUnavailable);
@@ -148,11 +166,21 @@ impl crate::acquisition::HopAdmission for NativeHopAdmission<'_> {
         budget: &mut crate::acquisition::AcquisitionBudgetV1,
         cancel: &CancellationToken,
     ) -> Result<(), FetchError> {
-        let canonical = self.scope(url).await?;
+        let canonical = self.scope(url, options.method == http::Method::HEAD).await?;
         let decision = self
             .runner
             .robots
-            .decide_with_budget(&canonical.origin, &canonical.url, options, budget, cancel, self)
+            .decide_hop_with_budget(
+                crawlx_policy::robots::HopKind::Redirect,
+                &canonical.url,
+                options,
+                budget,
+                cancel,
+                &RobotsHopAdmission {
+                    parent: self,
+                    destination: &canonical.url,
+                },
+            )
             .await?;
         if !matches!(decision, RobotsDecision::Allowed) {
             return Err(FetchError::AcquisitionUnavailable);
@@ -163,13 +191,116 @@ impl crate::acquisition::HopAdmission for NativeHopAdmission<'_> {
     async fn check_authority(&self) -> Result<(), FetchError> {
         self.authority().await
     }
+
+    async fn check_scope(&self, url: &Url) -> Result<(), FetchError> {
+        self.authority().await?;
+        if self.runner.prefetch.check(url).is_some()
+            || !self.runner.scope.decide_protocol_resource(url).is_admitted()
+        {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        Ok(())
+    }
+
+    fn requires_checked_hops(&self) -> bool {
+        self.session.is_some()
+    }
+
+    async fn fetch_attempt(
+        &self,
+        fetcher: &Fetcher,
+        url: &Url,
+        options: &FetchOptions,
+    ) -> Result<FetchResponse, FetchError> {
+        match &self.session {
+            Some(binding) => {
+                let (sessions, authority) = self
+                    .runner
+                    .http_sessions
+                    .as_ref()
+                    .ok_or(FetchError::AcquisitionUnavailable)?;
+                sessions
+                    .fetch_once_with_authority(
+                        crate::http_sessions::DEFAULT_HTTP_SESSION,
+                        binding,
+                        url,
+                        options,
+                        &|| self.authority(),
+                        authority.as_ref(),
+                    )
+                    .await
+                    .map_err(|error| match error {
+                        crate::http_sessions::HttpSessionError::Fetch(error) => error,
+                        _ => FetchError::AcquisitionUnavailable,
+                    })
+            }
+            None => {
+                fetcher
+                    .fetch_once_with_authority(url, options, &|| self.authority())
+                    .await
+            }
+        }
+    }
 }
+
+/// A robots lookup may borrow only the exact origin already admitted for this hop.
+struct RobotsHopAdmission<'a, 'b> {
+    parent: &'a NativeHopAdmission<'b>,
+    destination: &'a Url,
+}
+
+#[async_trait::async_trait]
+impl crate::acquisition::HopAdmission for RobotsHopAdmission<'_, '_> {
+    async fn admit(
+        &self,
+        url: &Url,
+        options: &FetchOptions,
+        budget: &mut crate::acquisition::AcquisitionBudgetV1,
+        cancel: &CancellationToken,
+    ) -> Result<(), FetchError> {
+        self.parent.admit(url, options, budget, cancel).await
+    }
+
+    async fn check_authority(&self) -> Result<(), FetchError> {
+        self.parent.authority().await
+    }
+
+    async fn check_scope(&self, url: &Url) -> Result<(), FetchError> {
+        self.parent.authority().await?;
+        if self.parent.runner.prefetch.check(url).is_some()
+            || !self
+                .parent
+                .runner
+                .scope
+                .decide_robots_for_admitted_hop(url, self.destination)
+                .is_admitted()
+        {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        Ok(())
+    }
+
+    async fn fetch_attempt(
+        &self,
+        fetcher: &Fetcher,
+        url: &Url,
+        options: &FetchOptions,
+    ) -> Result<FetchResponse, FetchError> {
+        self.parent.fetch_attempt(fetcher, url, options).await
+    }
+}
+
 /// Sitemap documents fetched per run (index recursion bound).
 const MAX_SITEMAP_DOCUMENTS: usize = 64;
 /// Distinct tokens validated per run (each is one request to an operator-listed provider).
 const MAX_SECRET_VALIDATIONS: usize = 256;
 /// Response bytes read from a validation endpoint.
 const MAX_VALIDATION_BODY: usize = 64 * 1024;
+
+struct PendingUrl {
+    resume: ResumeEntry,
+    is_get: bool,
+}
 
 /// What the URL plane knows about its own progress, as [`ResumeState`] is built from it.
 #[derive(Default)]
@@ -179,7 +310,7 @@ struct ResumeLedger {
     /// Fetched by this run or an earlier one.
     visited: BTreeSet<String>,
     /// Admitted and not fetched yet, by frontier row id.
-    pending: BTreeMap<i64, ResumeEntry>,
+    pending: BTreeMap<i64, PendingUrl>,
 }
 
 /// Repositories the static plane writes.
@@ -191,6 +322,8 @@ pub struct UrlPlaneDeps {
     pub frontier: Arc<dyn FrontierRepo>,
     /// Atomic fenced request/item/state/outbox result transactions.
     pub request_commits: Arc<dyn crawlx_core::orchestration::RequestCommitRepo>,
+    /// Tenant/source/role/policy-scoped source metadata; ZDR stays volatile.
+    pub source_memo: Arc<dyn crawlx_core::dataset::memo::SourceMemoRepo>,
     /// URL batch lease renewal (`LeaseRepo::heartbeat_frontier`): the plane renews the rows it
     /// holds while a batch is in flight.
     pub leases: Arc<dyn LeaseRepo>,
@@ -495,13 +628,59 @@ pub(crate) fn headers_json(
     serde_json::json!(map)
 }
 
+/// Optional publication attached to one atomically completed request.
+#[derive(Default)]
+struct RequestPublication {
+    outbox: Vec<crawlx_core::dataset::DeliveryBatchV1>,
+    page: Option<PageRecord>,
+    head_response: Option<serde_json::Value>,
+    content_dedupe: Option<crawlx_core::digest_registry::ContentDedupeClaimV1>,
+    local_dedupe: Option<crawlx_extract::DedupeCommit>,
+}
+
+/// Bind an opted-in, privacy-finalized content digest to its actual run representation.
+///
+/// # Errors
+/// Refuses missing caller scope or an invalid content digest contract.
+pub(crate) fn content_dedupe_claim(
+    tenant: crawlx_core::TenantId,
+    run: CrawlRunId,
+    scope: Option<&crawlx_extract::DedupeHandle>,
+    document: &Document,
+) -> Result<Option<crawlx_core::digest_registry::ContentDedupeClaimV1>, WorkerError> {
+    let Some(article) = document.article.as_ref().filter(|article| {
+        article.quality.status == crawlx_core::extraction::QualityStatusV1::Accepted
+            && article.privacy_projection_version == Some(1)
+            && article
+                .dedupe
+                .as_ref()
+                .is_some_and(|dedupe| dedupe.content_sha256.is_some())
+    }) else {
+        return Ok(None);
+    };
+    let scope = scope.ok_or_else(|| StoreError::Unavailable("content dedupe scope unavailable".into()))?;
+    let representation = crawlx_core::hash::Digest::of_value(
+        "crawlx/content-dedupe-representation/v1",
+        &(scope.scope().tenant(), scope.scope().role()),
+    )
+    .map_err(|error| StoreError::Serialization(error.to_string()))?;
+    crawlx_core::digest_registry::ContentDedupeClaimV1::from_document(tenant, run, representation, article)
+        .map(Some)
+        .map_err(WorkerError::from)
+}
+
 /// Runs the static plane of one crawl.
 pub struct UrlPlaneRunner {
     run: CrawlRunId,
-    crawl: CreateCrawl,
+    // Builder steps move the runner; the request must not inflate every move and poll frame.
+    crawl: Box<CreateCrawl>,
     worker: WorkerId,
     deps: UrlPlaneDeps,
     fetcher: Arc<Fetcher>,
+    http_sessions: Option<(
+        Arc<crate::http_sessions::NamedHttpSessions>,
+        Arc<dyn crate::http_sessions::HttpSessionAuthority>,
+    )>,
     scope: ScopePolicy,
     canon: CanonicalizeOptions,
     /// Learns sibling route slots from admitted URLs into `canon.templater`.
@@ -511,6 +690,10 @@ pub struct UrlPlaneRunner {
     counters: RunCounters,
     budget: Mutex<Budget>,
     extract: ExtractOptions,
+    prefetch: crawlx_url::UrlExclusionFilter,
+    content_dedupe: Arc<std::sync::Mutex<crawlx_core::extraction::DedupeCache>>,
+    /// Durable workers publish digest claims; local workers commit staged cache admission.
+    durable_dedupe: bool,
     /// In-memory admission filter mirroring the durable frontier: canonical keys seen,
     /// URL-shape fingerprint budget, per-host page limit, exact-content dedupe.
     frontier: Mutex<Frontier>,
@@ -561,6 +744,528 @@ pub struct UrlPlaneRunner {
 }
 
 impl UrlPlaneRunner {
+    /// Publish one already-settled browser document without acquiring it again.
+    ///
+    /// Browser sessions retain interaction and dataset authority. This lane only parses
+    /// their immutable observation and stores page renditions under an observed-only row.
+    /// It never seeds URL work or charges HTTP-plane counters.
+    ///
+    /// # Errors
+    /// Returns extraction, retention, cancellation or exact URL-lease failures.
+    pub(crate) async fn record_browser_observation(
+        &self,
+        rc: &RunContext,
+        session: &crawlx_core::repo::CrawlSession,
+        request: &crawlx_core::request::RequestEnvelopeV1,
+        bundle: &crawlx_core::observation::ObservationBundle,
+        response: crawlx_core::page_op::PageOpResult,
+    ) -> Result<Vec<Url>, WorkerError> {
+        if self.crawl.mode != CrawlMode::Dynamic || rc.run != self.run {
+            return Err(WorkerError::Config(
+                "browser output requires its dynamic run".into(),
+            ));
+        }
+        let html = bundle
+            .html
+            .as_ref()
+            .ok_or_else(|| WorkerError::Config("settled browser document HTML unavailable".into()))?;
+        let (status, headers, content_type) = match response {
+            crawlx_core::page_op::PageOpResult::Response {
+                status,
+                headers,
+                content_type,
+            } => (status, headers, content_type),
+            _ => {
+                return Err(WorkerError::Config(
+                    "browser document response unavailable".into(),
+                ))
+            }
+        };
+        let run = self.deps.runs.get(self.run).await?;
+        if rc.hard_cancel.is_cancelled()
+            || run.status == RunStatus::Cancelled
+            || self.authorization_lost().await
+        {
+            return Err(StoreError::LeaseLost.into());
+        }
+        // Navigation already passed the browser guard. Re-evaluate output scope without
+        // adding another robots request on backends that deliberately model no guard.
+        let denial = match self.prefetch.check(&request.url.url) {
+            Some(reason) => Some(reason.code().to_owned()),
+            None => match self.scope.decide(&request.url, request.depth) {
+                ScopeVerdict::Denied(reason) => Some(denial_label(&reason)),
+                _ => None,
+            },
+        };
+        let discovery_only = self.discovery_only(&request.url, request.depth, None).is_some();
+        if denial.is_some() && !discovery_only {
+            return Ok(Vec::new());
+        }
+        if !self.scope.decide(&bundle.url, request.depth).is_admitted() && !discovery_only {
+            return Ok(Vec::new());
+        }
+        let mut options = self.extract.clone();
+        options.status = status.unwrap_or(0);
+        options.headers = headers.clone();
+        options.content_type = content_type.clone();
+        options
+            .language_detector
+            .clone_from(&rc.article_language_detector);
+        options.acquisition_validation = Some(crate::acquisition::context(
+            &self.crawl.acquisition.clone().unwrap_or_default(),
+            status,
+            false,
+        ));
+        if options
+            .content
+            .as_ref()
+            .is_some_and(|policy| policy.dedupe.is_some())
+        {
+            let representation = crawlx_core::hash::Digest::of_value(
+                "crawlx/browser-extraction-scope/v1",
+                &(&session.role, session.id),
+            )
+            .map_err(|error| WorkerError::Config(error.to_string()))?;
+            let (namespace, cache) = if self.durable_dedupe {
+                let epoch = crawlx_core::hash::Digest::of_value(
+                    "crawlx/browser-extraction-document/v1",
+                    &(session.id, bundle.url.key, bundle.epoch),
+                )
+                .map_err(|error| WorkerError::Config(error.to_string()))?;
+                (
+                    format!("{}:{}", self.run, epoch.to_hex()),
+                    Arc::new(std::sync::Mutex::new(crawlx_core::extraction::DedupeCache::new(
+                        65_536,
+                    )?)),
+                )
+            } else {
+                (self.run.to_string(), Arc::clone(&self.content_dedupe))
+            };
+            options.dedupe_cache = Some(crawlx_extract::DedupeHandle::new(
+                crawlx_core::extraction::DedupeScopeV1::new(
+                    &run.tenant.to_string(),
+                    &namespace,
+                    &representation.to_hex(),
+                )?,
+                cache,
+            ));
+        }
+        let dedupe_scope = options.dedupe_cache.clone();
+        let body = html.as_bytes().to_vec();
+        let base = bundle.url.url.clone();
+        let controls = rc.controls.clone();
+        let captcha = rc.captcha_secrets.clone();
+        let secrets_key = self.secrets_key;
+        let validate_tokens = self.validators.is_some();
+        let (mut document, secret_pairs) = self
+            .cpu_pool
+            .run(move || {
+                let secret_pairs: Vec<(SecretFinding, Option<SecretToken>)> = match secrets_key {
+                    Some(key) if validate_tokens => Extractor::detect_secret_tokens(
+                        &key,
+                        &options.headers,
+                        &String::from_utf8_lossy(&body),
+                    )
+                    .into_iter()
+                    .map(|(finding, token)| (finding, Some(token)))
+                    .collect(),
+                    Some(key) => {
+                        Extractor::detect_secrets(&key, &options.headers, &String::from_utf8_lossy(&body))
+                            .into_iter()
+                            .map(|finding| (finding, None))
+                            .collect()
+                    }
+                    None => Vec::new(),
+                };
+                let redactor = crawlx_core::secret::Redactor::new();
+                let projected = redactor.scrub_bytes(&body, controls.secret_values());
+                let text = String::from_utf8_lossy(&projected);
+                let projected = captcha.redact_if_present(&text).map_err(|_| {
+                    StoreError::RetentionDenied("browser DOM secret projection unavailable".into())
+                })?;
+                let document = crate::acquisition::extract_document_with_secrets(
+                    projected.as_bytes(),
+                    &base,
+                    &options,
+                    &controls,
+                    &captcha,
+                )?;
+                Ok::<_, WorkerError>((Box::new(document), secret_pairs))
+            })
+            .await
+            .map_err(WorkerError::BrowserExtractionTask)??;
+        let dedupe_commit = document.dedupe_commit.take();
+        let (secrets, tokens): (Vec<_>, Vec<_>) = secret_pairs.into_iter().unzip();
+        let mut links: BTreeMap<String, Url> = document
+            .links
+            .iter()
+            .filter_map(|link| Canonicalizer::canonicalize_url(&link.url, &self.canon).ok())
+            .map(|url| (url.url.to_string(), url.url))
+            .collect();
+        let mut hook_urls = Vec::new();
+        for (raw, source) in &bundle.discovered_urls {
+            let redactor = crawlx_core::secret::Redactor::new();
+            let projected = redactor.scrub_bytes(raw.as_bytes(), rc.controls.secret_values());
+            let projected = String::from_utf8_lossy(&projected);
+            let projected = rc.captcha_secrets.redact_if_present(&projected).map_err(|_| {
+                StoreError::RetentionDenied("browser URL secret projection unavailable".into())
+            })?;
+            if let Ok(url) = bundle.url.url.join(&projected) {
+                if matches!(url.scheme(), "http" | "https") {
+                    if let Ok(url) = Canonicalizer::canonicalize_url(&url, &self.canon) {
+                        hook_urls.push((url.url.to_string(), source.clone()));
+                        links.insert(url.url.to_string(), url.url);
+                    }
+                }
+            }
+        }
+        if discovery_only {
+            return Ok(links.into_values().collect());
+        }
+        let session_lease = crawlx_core::custody::current_producer()
+            .filter(|lease| {
+                lease.run == self.run
+                    && lease.tenant == run.tenant
+                    && lease.worker == self.worker
+                    && matches!(&lease.source, crawlx_core::custody::CustodySource::Session(id)
+                    if *id == session.id)
+            })
+            .ok_or(StoreError::LeaseLost)?;
+        let observed = self
+            .deps
+            .request_commits
+            .append_observed_fenced(crawlx_core::orchestration::ObservedRequestV1::new(
+                session_lease.clone(),
+                bundle.epoch,
+                request.clone(),
+                bundle.captured_at,
+            ))
+            .await?;
+        let (id, revisit_generation) = match observed {
+            crawlx_core::orchestration::ObservedAppendV1::Appended {
+                request_id,
+                revisit_generation,
+            } => (request_id, revisit_generation),
+            crawlx_core::orchestration::ObservedAppendV1::Duplicate {
+                request_id,
+                revisit_generation,
+            } => (request_id, revisit_generation),
+            crawlx_core::orchestration::ObservedAppendV1::CapReached => {
+                self.deps
+                    .events
+                    .append(
+                        self.run,
+                        "browser.page",
+                        serde_json::json!({
+                            "outcome": crawlx_core::orchestration::ObservedAppendV1::CapReached,
+                            "reason": "revisit_cap_reached",
+                            "sessionId": session.id,
+                            "url": request.url.url.as_str(),
+                            "epoch": bundle.epoch,
+                        }),
+                    )
+                    .await?;
+                return Ok(links.into_values().collect());
+            }
+            _ => return Err(StoreError::AccessDenied("unsupported observed append outcome".into()).into()),
+        };
+        let Some((entry, fence)) = self
+            .deps
+            .request_commits
+            .lease_observed_fenced(&session_lease, bundle.epoch, id)
+            .await?
+        else {
+            // A recovered session may replay an already-committed append receipt.
+            // Only immutable capture custody proves that this is completed output.
+            let committed = self
+                .deps
+                .pages
+                .committed_page_keyset(self.run, id.saturating_sub(1), 1)
+                .await?;
+            if committed
+                .first()
+                .is_some_and(|page| page.frontier_id == id && page.url.url == request.url.url)
+            {
+                return Ok(links.into_values().collect());
+            }
+            return Err(StoreError::LeaseLost.into());
+        };
+        let queued = self.deps.frontier.get_request(self.run, id).await?;
+        if entry.id != id
+            || entry.url.url != request.url.url
+            || queued.envelope.route != request.route
+            || queued.identity.revisit_generation != revisit_generation
+        {
+            self.deps.frontier.give_back(entry.id, fence).await?;
+            return Err(StoreError::Conflict("browser page lease identity mismatch".into()).into());
+        }
+        self.held.lock().insert(entry.id, fence);
+        // Preserve the session's caller-hard-stop and abort veto under this URL fence.
+        let mut producer = session_lease.clone();
+        producer.source = crawlx_core::custody::CustodySource::Url(entry.id);
+        producer.fence = fence;
+        let publication = async {
+            let validations = self.validate_secrets(&secrets, tokens).await;
+            let browser_build = self
+                .deps
+                .runs
+                .list_sessions(self.run)
+                .await?
+                .into_iter()
+                .find(|stored| stored.id == session.id)
+                .and_then(|stored| stored.browser);
+            let backend = browser_build.map_or_else(
+                || {
+                    crawlx_core::acquisition::BackendCapabilitiesV1::native_browser_unavailable(
+                        "browser_build_evidence_unavailable",
+                    )
+                },
+                crawlx_core::acquisition::BackendCapabilitiesV1::native_browser,
+            );
+            let mut primary = crawlx_core::acquisition::AcquisitionResultV1::new(
+                self.run,
+                run.tenant,
+                request.url.url.clone(),
+                queued.identity.key,
+                backend,
+            );
+            primary.representation = crawlx_core::acquisition::RepresentationV1::RenderedDom;
+            primary.session = Some(session.id);
+            primary.final_url = Some(bundle.url.url.clone());
+            primary.final_url_evidence = crawlx_core::acquisition::UrlEvidenceV1::Observed;
+            primary.target_status = status;
+            primary.content_type.clone_from(&content_type);
+            primary.transport_succeeded = status.is_some();
+            primary.extraction_succeeded = Some(true);
+            primary.decoded_bytes = u64::try_from(html.len()).unwrap_or(u64::MAX);
+            primary.validation = document
+                .validation
+                .clone()
+                .unwrap_or_else(crawlx_core::acquisition::ValidationOutcomeV1::indeterminate);
+            primary.backend.limitations.extend([
+                "browser_primary_dispatch_counts_unobserved".to_owned(),
+                "browser_wire_bytes_unobserved".to_owned(),
+                "decoded_allowance_counts_serialized_dom".to_owned(),
+            ]);
+            let mut record = PageRecord {
+                run: self.run,
+                frontier_id: entry.id,
+                url: request.url.clone(),
+                status: status.unwrap_or(0),
+                content_type,
+                content_digest: document.raw_html_digest,
+                title: None,
+                markdown: None,
+                html: None,
+                metadata: serde_json::json!({
+                    "final_url": bundle.url.url.as_str(),
+                    "response_headers": headers_json(&headers, &BTreeSet::new(), &rc.controls),
+                    "acquisition": primary,
+                }),
+                links: Vec::new(),
+                fetched_at: bundle.captured_at,
+                lane: TrustLane::Diagnostic,
+            };
+            self.fill_record(&mut record, &document, &bundle.url.url).await;
+            if !secrets.is_empty() {
+                let mut findings = serde_json::json!(secrets);
+                if let Some(items) = findings.as_array_mut() {
+                    for (item, validation) in items.iter_mut().zip(&validations) {
+                        if let Some(validation) = validation {
+                            item["validation"] = serde_json::json!(validation);
+                        }
+                    }
+                }
+                record.metadata["secrets"] = findings;
+            }
+            record.metadata["endpointDiscovery"] = serde_json::json!({
+                "unresolved": document.discovery_unresolved,
+                "unresolvedDropped": document.discovery_unresolved_dropped,
+            });
+            if self.crawl.extract.kb_endpoints {
+                record.metadata["endpoints"] = classify_endpoints(&document.discovered_endpoints);
+            }
+            let recorded: Vec<_> = document
+                .discovered_endpoints
+                .iter()
+                .filter(|endpoint| endpoint.method != http::Method::GET || endpoint.body.is_some())
+                .map(|endpoint| {
+                    serde_json::json!({
+                        "url": endpoint.url.as_str(),
+                        "method": endpoint.method.as_str(),
+                        "tag": endpoint.source.tag,
+                        "attribute": endpoint.source.attribute,
+                        "body": endpoint.body,
+                        "content_type": endpoint.content_type,
+                        "headers": endpoint.headers,
+                        "confidence": endpoint.confidence,
+                    })
+                })
+                .collect();
+            if !recorded.is_empty() {
+                record.metadata["discovered_endpoints"] = serde_json::json!(recorded);
+            }
+            record.metadata["browser"] = serde_json::json!({
+                "representation": "settled_rendered_dom",
+                "sessionId": session.id,
+                "role": session.role,
+                "epoch": bundle.epoch,
+                "settle": bundle.settle,
+                "statusAvailable": status.is_some(),
+                "route": request.route,
+                "revisitGeneration": revisit_generation,
+                "canonical": revisit_generation == 0,
+            });
+            // Hook evidence remains provenance, never action authority.
+            record.metadata["browser"]["discoveredUrls"] = serde_json::json!(hook_urls);
+            for link in links.keys() {
+                if !record.links.contains(link) {
+                    record.links.push(link.clone());
+                }
+            }
+            record.links.sort();
+            let has_previews = document
+                .outputs
+                .as_ref()
+                .and_then(|outputs| outputs.link_media.as_ref())
+                .is_some_and(|media| !media.previews.is_empty());
+            let has_article_hops = self.crawl.scope.discovery.is_some()
+                && document
+                    .article
+                    .as_ref()
+                    .is_some_and(|article| !article.discovery.is_empty());
+            if has_previews || has_article_hops {
+                let policy = self.crawl.acquisition.clone().unwrap_or_default();
+                let mut auxiliary = if self.crawl.acquisition.is_some() && !self.crawl.cache_only() {
+                    let allowance = self
+                        .deps
+                        .frontier
+                        .reserve_acquisition_fenced(self.run, entry.id, fence)
+                        .await?;
+                    crate::acquisition::AcquisitionBudgetV1::from_allowance(&policy, &allowance)?
+                } else {
+                    crate::acquisition::AcquisitionBudgetV1::new(&policy)?
+                };
+                let primary = record.metadata["acquisition"].clone();
+                Box::pin(self.follow_article_intents(
+                    &entry,
+                    &document,
+                    html.as_bytes(),
+                    &mut record,
+                    Some(&mut auxiliary),
+                    &rc.cancel,
+                ))
+                .await?;
+                // Auxiliary HTTP receipts never replace the settled browser representation.
+                record.metadata["acquisition"] = primary;
+                record.metadata["browser_auxiliary_budget"] = serde_json::json!(auxiliary.usage());
+                self.settle_native_allowance(&entry, Some(&auxiliary)).await?;
+            }
+            if self.crawl.extract.xhr {
+                let requests = rc.xhr.requests_for(&bundle.url.key);
+                if !requests.is_empty() {
+                    record.metadata["xhr_requests"] = serde_json::json!(requests);
+                }
+            }
+            rc.captcha_secrets
+                .redact_json(&mut record.metadata)
+                .map_err(|_| {
+                    StoreError::RetentionDenied("browser page secret projection unavailable".into())
+                })?;
+            if rc.hard_cancel.is_cancelled()
+                || self.authorization_lost().await
+                || self.held.lock().get(&entry.id).copied() != Some(fence)
+            {
+                return Err(WorkerError::Store(StoreError::LeaseLost));
+            }
+            let mut commit = crawlx_core::orchestration::RequestCommitV1::terminal(
+                self.run,
+                entry.id,
+                fence,
+                queued.state_version,
+                FrontierStatus::Succeeded,
+                None,
+            );
+            commit.page = Some(record);
+            if self.durable_dedupe {
+                commit.content_dedupe =
+                    content_dedupe_claim(run.tenant, self.run, dedupe_scope.as_ref(), &document)?;
+            }
+            match self
+                .deps
+                .request_commits
+                .commit_observed_fenced(commit, session_lease.clone(), bundle.epoch)
+                .await?
+            {
+                crawlx_core::orchestration::ObservedCommitV1::Committed => {}
+                _ => {
+                    return Err(StoreError::AccessDenied("unsupported observed commit outcome".into()).into())
+                }
+            }
+            if !self.durable_dedupe {
+                if let Some(commit) = dedupe_commit {
+                    commit.record();
+                }
+            }
+            let mut written = self.pages_written.lock();
+            *written = written.saturating_add(1);
+            Ok::<(), WorkerError>(())
+        };
+        let publication = crawlx_core::custody::with_producer(producer, Box::pin(publication));
+        let result = tokio::select! {
+            result = publication => result,
+            heartbeat = self.keep_browser_page_alive(entry.id, fence) => match heartbeat {
+                Ok(never) => match never {},
+                Err(error) => Err(error),
+            },
+        };
+        self.held.lock().remove(&entry.id);
+        if result.is_err() {
+            // Parsing never grants another browser acquisition. Return only this exact row.
+            let _ = self.deps.frontier.give_back(entry.id, fence).await;
+        }
+        result?;
+        Ok(links.into_values().collect())
+    }
+
+    /// Keep local browser auxiliary traffic on the same admitted governor and capture path.
+    pub(crate) fn rebind_browser_fetcher(&mut self, fetcher: Arc<Fetcher>, durable_dedupe: bool) {
+        self.robots = self.robots.with_fetcher(Arc::clone(&fetcher));
+        self.fetcher = fetcher;
+        self.durable_dedupe = durable_dedupe;
+    }
+
+    /// Select fenced registry authority instead of local two-phase cache admission.
+    #[must_use]
+    pub fn with_durable_dedupe(mut self, durable: bool) -> Self {
+        self.durable_dedupe = durable;
+        self
+    }
+
+    /// Renew only this publication's exact row; a lost fence cancels its auxiliary work.
+    async fn keep_browser_page_alive(
+        &self,
+        id: i64,
+        fence: i64,
+    ) -> Result<std::convert::Infallible, WorkerError> {
+        let period = lease_heartbeat_period(self.deps.leases.url_batch_ttl());
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let renewed = self
+                .deps
+                .leases
+                .heartbeat_frontier(self.worker, &[(id, fence)])
+                .await?;
+            if !renewed.contains(&id) {
+                return Err(StoreError::LeaseLost.into());
+            }
+        }
+    }
+}
+
+impl UrlPlaneRunner {
     /// New.
     ///
     /// # Errors
@@ -603,6 +1308,19 @@ impl UrlPlaneRunner {
             }
         }
         let scope = ScopePolicy::new(&crawl)?;
+        let exclusion = crawl
+            .extract
+            .content
+            .as_ref()
+            .and_then(|policy| policy.excluded_urls.as_ref())
+            .map(crawlx_url::UrlExclusionFilter::from_policy)
+            .transpose()
+            .map_err(|error| WorkerError::Config(error.to_string()))?
+            .unwrap_or_default();
+        let prefetch = exclusion;
+        let content_dedupe = Arc::new(std::sync::Mutex::new(crawlx_core::extraction::DedupeCache::new(
+            65_536,
+        )?));
         let budget = Budget::new(&crawl.limits, deps.clock.now())
             .with_max_pages_per_host(crawl.scope.max_pages_per_host);
         // one gate decides for this plane and, through `with_surface_services`, for the run's
@@ -617,7 +1335,7 @@ impl UrlPlaneRunner {
         }
         .validate()
         .map_err(|e| WorkerError::Config(e.to_string()))?;
-        let extract = ExtractOptions {
+        let mut extract = ExtractOptions {
             only_main_content: crawl.output.only_main_content,
             include_tags: crawl.output.include_tags.clone(),
             exclude_tags: crawl.output.exclude_tags.clone(),
@@ -629,6 +1347,18 @@ impl UrlPlaneRunner {
             content: crawl.extract.content.clone(),
             ..ExtractOptions::default()
         };
+        crate::acquisition::configure_extract(&mut extract, &crawl.extract)?;
+        if extract.decode.is_none() {
+            extract.decode = crawl
+                .fetch
+                .declaration
+                .as_ref()
+                .and_then(|policy| policy.charset.as_deref())
+                .map(crawlx_extract::decode::DecodeOptions::with_charset);
+        }
+        crate::acquisition::fetch_options(&crawl.fetch)
+            .declaration
+            .validate()?;
         let mut frontier = Frontier::new()
             .with_max_depth(u32::from(crawl.scope.max_discovery_depth))
             .with_strategy(crawl.scope.strategy)
@@ -654,7 +1384,8 @@ impl UrlPlaneRunner {
         let validators = (crawl.extract.detect_secrets && crawl.extract.validate_secrets)
             .then(|| Arc::new(SecretValidators::builtin()));
         let classifier = DynamicClassifier::new(&crawl.dynamic.always_browser_paths)?;
-        let scrape = ScrapeEngine::for_run(run, &crawl, &deps, Arc::clone(&fetcher));
+        let scrape = ScrapeEngine::for_run(run, &crawl, &deps, Arc::clone(&fetcher))
+            .map(|engine| engine.with_robots_gate(robots.clone()));
         let protocol_browser = if scrape.is_none()
             && crawl
                 .protocol
@@ -668,6 +1399,7 @@ impl UrlPlaneRunner {
                 crawlx_core::scrape::ScrapeOptions::default(),
             ));
             ScrapeEngine::for_run(run, &browser_crawl, &deps, Arc::clone(&fetcher))
+                .map(|engine| engine.with_robots_gate(robots.clone()))
         } else {
             None
         };
@@ -685,10 +1417,11 @@ impl UrlPlaneRunner {
             .map_err(|e| WorkerError::Config(e.to_string()))?;
         Ok(Self {
             run,
-            crawl,
+            crawl: Box::new(crawl),
             worker,
             deps,
             fetcher,
+            http_sessions: None,
             scope,
             routes: RouteLearner::new(Arc::clone(&canon.templater)),
             canon,
@@ -696,6 +1429,9 @@ impl UrlPlaneRunner {
             counters,
             budget: Mutex::new(budget),
             extract,
+            prefetch,
+            content_dedupe,
+            durable_dedupe: false,
             frontier: Mutex::new(frontier),
             similarity,
             secrets_key,
@@ -731,6 +1467,14 @@ impl UrlPlaneRunner {
     /// one. `None` leaves the plane unbound.
     #[must_use]
     pub fn with_authorization(mut self, guard: Option<Arc<AuthorizationGuard>>) -> Self {
+        self.scrape = self
+            .scrape
+            .take()
+            .map(|engine| engine.with_authorization(guard.clone()));
+        self.protocol_browser = self
+            .protocol_browser
+            .take()
+            .map(|engine| engine.with_authorization(guard.clone()));
         if let Some(guard) = guard {
             self.scope = self.scope.with_record_scope(guard.scope());
             self.authorization = Some(guard);
@@ -799,6 +1543,58 @@ impl UrlPlaneRunner {
         self
     }
 
+    /// Route strict HTTP generations through an already registered, fenced session manager.
+    /// The authority must verify the original live lease; request metadata never creates a jar.
+    #[must_use]
+    pub fn with_http_sessions(
+        mut self,
+        sessions: Arc<crate::http_sessions::NamedHttpSessions>,
+        authority: Arc<dyn crate::http_sessions::HttpSessionAuthority>,
+    ) -> Self {
+        self.set_http_sessions(sessions, authority);
+        self
+    }
+
+    /// Attach the coordinator's manager without moving its already-owned URL runner.
+    pub(crate) fn set_http_sessions(
+        &mut self,
+        sessions: Arc<crate::http_sessions::NamedHttpSessions>,
+        authority: Arc<dyn crate::http_sessions::HttpSessionAuthority>,
+    ) {
+        self.http_sessions = Some((sessions, authority));
+    }
+
+    async fn strict_http_binding(
+        &self,
+        queued: &crawlx_core::orchestration::QueuedRequestV1,
+    ) -> Result<Option<crawlx_core::session_binding::SessionBindingV1>, FetchError> {
+        let Some(generation) = queued.envelope.session_generation else {
+            return Ok(None);
+        };
+        let (sessions, authority) = self
+            .http_sessions
+            .as_ref()
+            .ok_or(FetchError::AcquisitionUnavailable)?;
+        let binding = sessions
+            .binding(crate::http_sessions::DEFAULT_HTTP_SESSION)
+            .map_err(|_| FetchError::AcquisitionUnavailable)?;
+        let run = self
+            .deps
+            .runs
+            .get_metadata(self.run)
+            .await
+            .map_err(FetchError::OriginAdmission)?;
+        if binding.generation != generation
+            || binding.identity.tenant != run.tenant
+            || binding.identity.run != self.run
+            || binding.identity.principal.0 != queued.principal
+        {
+            return Err(FetchError::AcquisitionUnavailable);
+        }
+        authority.verify(&binding).await?;
+        Ok(Some(binding))
+    }
+
     /// Share the run's route learner (what the browser plane feeds too) instead of a
     /// learner private to this runner.
     #[must_use]
@@ -814,6 +1610,8 @@ impl UrlPlaneRunner {
         self.traffic.clone_from(&rc.traffic_export);
         self.request_identity_key = rc.request_identity_key.clone();
         self.captcha_secrets = Some(rc.captcha_secrets.clone());
+        self.content_dedupe = Arc::clone(&rc.extract_dedupe);
+        self.durable_dedupe = rc.durable_dedupe;
         self.protocol_runtime = rc
             .protocol_registry
             .as_ref()
@@ -832,6 +1630,14 @@ impl UrlPlaneRunner {
         self.admission_browser = Some(rc.pool.clone());
         // the browser plane's navigations and this plane's frontier share one `robots.txt` cache
         self.robots = rc.robots.with_fetcher(Arc::clone(&self.fetcher));
+        self.scrape = self
+            .scrape
+            .take()
+            .map(|engine| engine.with_robots_gate(self.robots.clone()));
+        self.protocol_browser = self
+            .protocol_browser
+            .take()
+            .map(|engine| engine.with_robots_gate(self.robots.clone()));
         self.form_ai.clone_from(&rc.form_ai);
         if let (Some(operator), Some(_)) = (&rc.secret_validators, &self.validators) {
             self.validators = Some(Arc::clone(operator));
@@ -842,20 +1648,65 @@ impl UrlPlaneRunner {
     /// Continue a stopped run (the `-resume` compatibility flag): the URLs in `state.visited` are never
     /// fetched or discovered again, and [`Self::seed`] discovers `state.pending` at its
     /// depths instead of enumerating sitemaps and robots paths again.
-    pub fn seed_resume(&self, state: &ResumeState) {
+    ///
+    /// # Errors
+    /// Refuses an unsupported state version or a corrupt, oversized or foreign-tenant dedupe
+    /// snapshot before changing the frontier, ledger or shared extraction cache.
+    pub async fn seed_resume(&self, state: &ResumeState) -> Result<(), crate::surface::resume::ResumeError> {
+        use crate::surface::resume::{ResumeError, RESUME_VERSION};
+        if state.version != RESUME_VERSION {
+            return Err(ResumeError::Version { found: state.version });
+        }
+        if let Some(snapshot) = &state.dedupe {
+            let tenant = self.deps.runs.get(self.run).await?.tenant;
+            let mut cache = self
+                .content_dedupe
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let restored = crawlx_core::extraction::DedupeCache::restore(
+                snapshot,
+                cache.capacity(),
+                &tenant.to_string(),
+                &self.run.to_string(),
+            )?;
+            *cache = restored;
+        }
         let mut ledger = self.ledger.lock();
         ledger.carried.extend(state.visited.iter().cloned());
         ledger.visited.extend(state.visited.iter().cloned());
         drop(ledger);
         *self.resume_seed.lock() = Some(state.clone());
+        Ok(())
     }
 
-    /// What a later run needs to continue this one: every URL fetched so far (and every
-    /// one carried over by [`Self::seed_resume`]) and every admitted URL not yet fetched.
-    #[must_use]
-    pub fn resume_state(&self) -> ResumeState {
+    /// URL-only GET continuation: fetched/carried URLs and pending GET requests.
+    ///
+    /// Method-aware requests resume from durable frontier envelopes instead. This
+    /// projection omits HEAD rather than reconstructing it as GET.
+    ///
+    /// # Errors
+    /// Returns the source storage error when the authoritative current run cannot be read.
+    pub async fn resume_state(&self) -> Result<ResumeState, crate::surface::resume::ResumeError> {
+        let tenant = self.deps.runs.get(self.run).await?.tenant;
         let ledger = self.ledger.lock();
-        ResumeState::new(ledger.visited.iter().cloned(), ledger.pending.values().cloned())
+        let mut state = ResumeState::new(
+            ledger.visited.iter().cloned(),
+            ledger
+                .pending
+                .values()
+                .filter(|entry| entry.is_get)
+                .map(|entry| entry.resume.clone()),
+        );
+        drop(ledger);
+        let cache = self
+            .content_dedupe
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        // Empty caches need no tenant binding, preserving legacy URL-only resume behavior.
+        if !cache.is_empty() {
+            state.dedupe = Some(cache.snapshot(&tenant.to_string(), &self.run.to_string()));
+        }
+        Ok(state)
     }
 
     /// Pages written so far.
@@ -958,9 +1809,13 @@ impl UrlPlaneRunner {
             if ledger.pending.contains_key(&id) || ledger.visited.contains(url.url.as_str()) {
                 outcome = DiscoveryOutcome::Duplicate;
             } else {
-                ledger
-                    .pending
-                    .insert(id, ResumeEntry::new(url.url.to_string(), depth));
+                ledger.pending.insert(
+                    id,
+                    PendingUrl {
+                        resume: ResumeEntry::new(url.url.to_string(), depth),
+                        is_get: true,
+                    },
+                );
             }
         }
         let counted = match (outcome, counted_as) {
@@ -993,6 +1848,13 @@ impl UrlPlaneRunner {
         Option<DiscoveryOutcome>,
         &'static str,
     ) {
+        if let Some(reason) = self.prefetch.check(&url.url) {
+            return (
+                Some((FrontierStatus::PolicyBlocked, reason.code().into())),
+                None,
+                reason.code(),
+            );
+        }
         let known = {
             let ledger = self.ledger.lock();
             ledger.pending.len().saturating_add(ledger.visited.len())
@@ -1125,26 +1987,51 @@ impl UrlPlaneRunner {
         let row = self.deps.runs.get_metadata(self.run).await?;
         let mut budget = Budget::new(&self.crawl.limits, row.started_at.unwrap_or(row.created_at))
             .with_max_pages_per_host(self.crawl.scope.max_pages_per_host);
+        let seed = self.canonicalize(&self.crawl.seed_url).map(|(seed, _)| seed);
+        let mut seed_get_seen = false;
         loop {
             let after = existing.last().map_or(0, |entry| entry.id);
+            let ids: Vec<_> = existing.iter().map(|entry| entry.id).collect();
+            let methods = self.deps.frontier.request_methods(self.run, &ids).await?;
+            if methods.len() != ids.len() {
+                return Err(StoreError::Conflict("incomplete frontier method projection".into()).into());
+            }
             {
                 let mut f = self.frontier.lock();
                 let mut ledger = self.ledger.lock();
                 for e in existing {
+                    let is_get = methods.get(&e.id).is_some_and(|method| method == "GET");
+                    if is_get
+                        && seed.as_ref().is_some_and(|seed| seed.url == e.url.url)
+                        && !matches!(
+                            e.status,
+                            FrontierStatus::PolicyBlocked | FrontierStatus::RobotsBlocked
+                        )
+                    {
+                        seed_get_seen = true;
+                    }
                     match e.status {
                         FrontierStatus::Succeeded | FrontierStatus::Failed | FrontierStatus::Unreachable => {
                             let _ = budget.try_consume(BudgetKind::Urls, 1);
                             let _ = budget.try_consume_host(e.url.url.host_str().unwrap_or(""));
-                            ledger.visited.insert(e.url.url.to_string());
+                            if is_get {
+                                ledger.visited.insert(e.url.url.to_string());
+                            }
                         }
                         FrontierStatus::Pending | FrontierStatus::Leased | FrontierStatus::Abandoned => {
-                            ledger
-                                .pending
-                                .insert(e.id, ResumeEntry::new(e.url.url.to_string(), e.depth));
+                            ledger.pending.insert(
+                                e.id,
+                                PendingUrl {
+                                    resume: ResumeEntry::new(e.url.url.to_string(), e.depth),
+                                    is_get,
+                                },
+                            );
                         }
                         FrontierStatus::PolicyBlocked | FrontierStatus::RobotsBlocked => continue,
                     }
-                    if f.push(e.url, u32::from(e.depth), LinkSource::Body, None) == PushOutcome::Admitted {
+                    if is_get
+                        && f.push(e.url, u32::from(e.depth), LinkSource::Body, None) == PushOutcome::Admitted
+                    {
                         let _ = f.pop();
                     }
                 }
@@ -1156,14 +2043,7 @@ impl UrlPlaneRunner {
         }
         *self.budget.lock() = budget;
         // An API import may precede worker startup; it must not suppress the run's seed.
-        let seed_missing = self.canonicalize(&self.crawl.seed_url).is_some_and(|(seed, _)| {
-            let ledger = self.ledger.lock();
-            !ledger.visited.contains(seed.url.as_str())
-                && !ledger
-                    .pending
-                    .values()
-                    .any(|entry| entry.url == seed.url.as_str())
-        });
+        let seed_missing = seed.is_some() && !seed_get_seen;
         if seed_missing {
             self.seed().await?;
         }
@@ -1187,9 +2067,12 @@ impl UrlPlaneRunner {
             )));
         };
         let resumed = self.resume_seed.lock().take();
+        let seed_excluded = self.prefetch.check(&seed.url).is_some();
         self.discover(seed.clone(), 0, None, bearing, None).await?;
         self.seed_batch_urls().await?;
-        self.climb(&seed, 0, None, &seed.url).await?;
+        if !seed_excluded {
+            self.climb(&seed, 0, None, &seed.url).await?;
+        }
         if let Some(state) = resumed {
             // the stopped run already enumerated the sitemap and robots paths: every URL
             // they named is in its visited or pending list
@@ -1210,7 +2093,9 @@ impl UrlPlaneRunner {
             }
             return self.persist_counters().await;
         }
-        if self.crawl.cache_only() {
+        // A refused seed cannot authorize automatic requests for its origin's sources.
+        // Explicit batch and continuation URLs still pass their own admission gates above.
+        if self.crawl.cache_only() || seed_excluded {
             return self.persist_counters().await;
         }
         let known = &self.crawl.scope.known_files;
@@ -1300,6 +2185,7 @@ impl UrlPlaneRunner {
                     policy.max_feed_bytes,
                     &mut budget,
                     &CancellationToken::new(),
+                    crawlx_policy::robots::HopKind::Feed,
                 )
                 .await
             } else {
@@ -1546,7 +2432,23 @@ impl UrlPlaneRunner {
                 .await?;
             return Ok(());
         }
-        self.process_entry(entry, cancel).await
+        let resources = crate::runtime_admission::TaskResourceSample::start().await;
+        let result = self.process_entry(entry, cancel).await;
+        let observation = resources.finish(entry.id, result.is_ok()).await;
+        let recorded = self
+            .deps
+            .events
+            .append(self.run, "runtime.task", observation)
+            .await;
+        match result {
+            Err(error) => {
+                if let Err(recording) = recorded {
+                    tracing::warn!(error = %recording, "task resource observation could not be recorded");
+                }
+                Err(error)
+            }
+            Ok(()) => recorded.map(|_| ()).map_err(WorkerError::from),
+        }
     }
 
     /// Release a real 429 attempt while preserving durable effect/deadline charges.
@@ -1632,38 +2534,66 @@ impl UrlPlaneRunner {
     /// Complete `entry` on the durable frontier and keep the resume ledger in step: a URL
     /// that was fetched (succeeded, failed or unreachable) is visited, a blocked one is
     /// forgotten, an abandoned one stays pending for the next run.
-    async fn finish(
-        &self,
-        entry: &FrontierEntry,
+    fn finish<'a>(
+        &'a self,
+        entry: &'a FrontierEntry,
         status: FrontierStatus,
         reason: Option<String>,
-    ) -> Result<(), WorkerError> {
-        self.finish_with_results(entry, status, reason, Vec::new(), Vec::new(), (Vec::new(), None))
-            .await
+    ) -> impl Future<Output = Result<(), WorkerError>> + Send + 'a {
+        self.finish_with_results(
+            entry,
+            status,
+            reason,
+            Vec::new(),
+            Vec::new(),
+            RequestPublication::default(),
+        )
     }
 
     /// Atomically commit terminal request, accepted items and extension state.
-    async fn finish_with_results(
+    fn finish_with_results<'a>(
+        &'a self,
+        entry: &'a FrontierEntry,
+        status: FrontierStatus,
+        reason: Option<String>,
+        accepted: Vec<crawlx_core::dataset::AcceptedBatchV1>,
+        state_deltas: Vec<crawlx_core::dataset::KvCasV1>,
+        publication: RequestPublication,
+    ) -> impl Future<Output = Result<(), WorkerError>> + Send + 'a {
+        // Publication owns a large fenced transaction. Callers retain only its heap pin,
+        // including dispatch branches that never publish a result.
+        Box::pin(self.finish_with_results_inner(entry, status, reason, accepted, state_deltas, publication))
+    }
+
+    async fn finish_with_results_inner(
         &self,
         entry: &FrontierEntry,
         status: FrontierStatus,
         reason: Option<String>,
         accepted: Vec<crawlx_core::dataset::AcceptedBatchV1>,
         state_deltas: Vec<crawlx_core::dataset::KvCasV1>,
-        publication: (Vec<crawlx_core::dataset::DeliveryBatchV1>, Option<PageRecord>),
+        publication: RequestPublication,
     ) -> Result<(), WorkerError> {
-        let (outbox, page) = publication;
-        let (status, reason, accepted, state_deltas) =
-            if status == FrontierStatus::Succeeded && self.authorization_lost().await {
-                (
-                    FrontierStatus::PolicyBlocked,
-                    Some("authorization_revoked".into()),
-                    Vec::new(),
-                    Vec::new(),
-                )
-            } else {
-                (status, reason, accepted, state_deltas)
-            };
+        let RequestPublication {
+            outbox,
+            page,
+            head_response,
+            content_dedupe,
+            local_dedupe,
+        } = publication;
+        let (status, reason, accepted, state_deltas) = if (status == FrontierStatus::Succeeded
+            || head_response.is_some())
+            && self.authorization_lost().await
+        {
+            (
+                FrontierStatus::PolicyBlocked,
+                Some("authorization_revoked".into()),
+                Vec::new(),
+                Vec::new(),
+            )
+        } else {
+            (status, reason, accepted, state_deltas)
+        };
         let fence = *self.held.lock().get(&entry.id).ok_or(StoreError::LeaseLost)?;
         // Terminal rows never reopen. Retries preserve this version until the single commit.
         let mut commit = crawlx_core::orchestration::RequestCommitV1::terminal(
@@ -1672,18 +2602,31 @@ impl UrlPlaneRunner {
         commit.accepted = accepted;
         commit.state_deltas = state_deltas;
         commit.page = page.filter(|_| status == FrontierStatus::Succeeded);
+        commit.content_dedupe = content_dedupe.filter(|_| status == FrontierStatus::Succeeded);
         commit.outbox = if status == FrontierStatus::Succeeded {
             outbox
         } else {
             Vec::new()
         };
+        commit.head_response =
+            head_response.filter(|_| matches!(status, FrontierStatus::Succeeded | FrontierStatus::Failed));
         self.deps.request_commits.commit_fenced(commit).await?;
+        if status == FrontierStatus::Succeeded {
+            if let Some(local_dedupe) = local_dedupe {
+                local_dedupe.record();
+            }
+        }
         self.held.lock().remove(&entry.id);
         let mut ledger = self.ledger.lock();
         match status {
             FrontierStatus::Succeeded | FrontierStatus::Failed | FrontierStatus::Unreachable => {
-                ledger.pending.remove(&entry.id);
-                ledger.visited.insert(entry.url.url.to_string());
+                if ledger
+                    .pending
+                    .remove(&entry.id)
+                    .is_none_or(|pending| pending.is_get)
+                {
+                    ledger.visited.insert(entry.url.url.to_string());
+                }
             }
             FrontierStatus::PolicyBlocked | FrontierStatus::RobotsBlocked => {
                 ledger.pending.remove(&entry.id);
@@ -1810,10 +2753,13 @@ impl UrlPlaneRunner {
         let receipt = self.deps.frontier.append_batch(batch).await?;
         for id in receipt.inserted {
             let queued = self.deps.frontier.get_request(self.run, id).await?;
-            self.ledger
-                .lock()
-                .pending
-                .insert(id, ResumeEntry::new(queued.envelope.url.url.to_string(), depth));
+            self.ledger.lock().pending.insert(
+                id,
+                PendingUrl {
+                    resume: ResumeEntry::new(queued.envelope.url.url.to_string(), depth),
+                    is_get: queued.envelope.method == "GET",
+                },
+            );
             self.counters.discovery_with_reason(
                 Plane::Urls,
                 DiscoveryOutcome::Admitted,
@@ -1828,7 +2774,20 @@ impl UrlPlaneRunner {
         entry: &FrontierEntry,
         cancel: &CancellationToken,
     ) -> Result<(), WorkerError> {
+        if let Some(reason) = self.prefetch.check(&entry.url.url) {
+            return self
+                .finish(entry, FrontierStatus::PolicyBlocked, Some(reason.code().into()))
+                .await;
+        }
         let queued = self.deps.frontier.get_request(self.run, entry.id).await?;
+        self.ledger
+            .lock()
+            .pending
+            .entry(entry.id)
+            .or_insert_with(|| PendingUrl {
+                resume: ResumeEntry::new(entry.url.url.to_string(), entry.depth),
+                is_get: queued.envelope.method == "GET",
+            });
         if self
             .crawl
             .acquisition
@@ -1836,7 +2795,6 @@ impl UrlPlaneRunner {
             .is_some_and(|policy| policy.meta_refresh.is_some())
             && (queued.envelope.method != "GET"
                 || queued.envelope.body.is_some()
-                || queued.envelope.session_generation.is_some()
                 || queued.envelope.header_control.is_some())
         {
             return self
@@ -1867,9 +2825,10 @@ impl UrlPlaneRunner {
                 )
                 .await;
         }
-        if self
-            .discovery_only(&entry.url, entry.depth, entry.discovered_from)
-            .is_none()
+        if queued.envelope.method == "HEAD"
+            || self
+                .discovery_only(&entry.url, entry.depth, entry.discovered_from)
+                .is_none()
         {
             match self.scope.decide(&entry.url, entry.depth) {
                 ScopeVerdict::Denied(_) => {
@@ -1963,7 +2922,23 @@ impl UrlPlaneRunner {
                 .finish(entry, FrontierStatus::Failed, Some("extension_skipped".into()))
                 .await;
         }
-        if queued.principal != "anonymous" {
+        if queued.envelope.session_generation.is_some()
+            && (self.strict_http_binding(&queued).await.is_err()
+                || self.scrape.is_some()
+                || crate::protocol::select_route(&self.protocol_routes, &entry.url.url)
+                    .is_some_and(|route| route.backend != crawlx_core::protocol::ProtocolBackendV1::Http))
+        {
+            return self
+                .fail(
+                    entry,
+                    "session_unavailable",
+                    "session_unavailable",
+                    Attempt::Failed,
+                    serde_json::json!({"reason":"strict HTTP session generation or backend unavailable"}),
+                )
+                .await;
+        }
+        if queued.principal != "anonymous" && queued.envelope.session_generation.is_none() {
             return self
                 .fail(
                     entry,
@@ -1974,15 +2949,32 @@ impl UrlPlaneRunner {
                 )
                 .await;
         }
-        if queued.envelope.method != "GET"
+        if !matches!(queued.envelope.method.as_str(), "GET" | "HEAD")
             || queued.envelope.body.is_some()
             || queued.envelope.header_control.is_some()
-            || queued.envelope.session_generation.is_some()
         {
             return self.fail(entry, "unsupported_request_method", "unsupported_request_method", Attempt::Failed,
                 serde_json::json!({ "reason": "body-bearing requests require journalled action admission" })).await;
         }
-        let discovery = self.discovery_only(&entry.url, entry.depth, entry.discovered_from);
+        let method_head = queued.envelope.method == "HEAD";
+        if method_head
+            && (self.scrape.is_some()
+                || crate::protocol::select_route(&self.protocol_routes, &entry.url.url)
+                    .is_some_and(|route| route.backend != crawlx_core::protocol::ProtocolBackendV1::Http))
+        {
+            return self
+                .fail(
+                    entry,
+                    "request_backend_unavailable",
+                    "request_backend_unavailable",
+                    Attempt::Failed,
+                    serde_json::json!({"reason":"HEAD requires native HTTP acquisition"}),
+                )
+                .await;
+        }
+        let discovery = (!method_head)
+            .then(|| self.discovery_only(&entry.url, entry.depth, entry.discovered_from))
+            .flatten();
         if discovery.is_none() {
             // a fetch for discovery only is not a page: it spends neither the URL nor the host budget
             let _ = self.budget.lock().try_consume(BudgetKind::Urls, 1);
@@ -2120,6 +3112,12 @@ impl UrlPlaneRunner {
         .await
     }
 
+    // Construct a selected phase outside its caller's poll frame. Box::pin at the
+    // await site alone leaves the full future's construction temporary on that stack.
+    fn phase_future<F: Future>(make: impl FnOnce() -> F) -> std::pin::Pin<Box<F>> {
+        Box::pin(make())
+    }
+
     fn process_static_entry<'a>(
         &'a self,
         entry: &'a FrontierEntry,
@@ -2141,6 +3139,28 @@ impl UrlPlaneRunner {
         ))
     }
 
+    fn conditional_baseline<'a>(
+        &'a self,
+        queued: &'a crawlx_core::orchestration::QueuedRequestV1,
+        max_bytes: u64,
+    ) -> impl Future<Output = Result<Option<crate::archive_recorder::ArchiveBaseline>, WorkerError>> + Send + 'a
+    {
+        // Only conditional revisits need the full operational run snapshot. Keep that
+        // large return value and archive state out of every ordinary static poll frame.
+        Box::pin(async move {
+            let run = self.deps.runs.get(self.run).await?;
+            crate::archive_recorder::conditional_baseline(
+                self.deps.archives.as_ref(),
+                self.deps.artifacts.as_ref(),
+                &run,
+                queued,
+                self.deps.clock.now(),
+                max_bytes,
+            )
+            .await
+        })
+    }
+
     async fn process_static_entry_inner(
         &self,
         entry: &FrontierEntry,
@@ -2151,9 +3171,24 @@ impl UrlPlaneRunner {
         legacy_reserved_effects: Option<u32>,
     ) -> Result<(), WorkerError> {
         let cache_only = self.crawl.cache_only();
+        let method_head = queued.envelope.method == "HEAD";
+        let http_session_binding = self
+            .strict_http_binding(&queued)
+            .await
+            .map_err(|_| WorkerError::Config("session_unavailable".into()))?;
+        if http_session_binding.is_some() && cache_only {
+            return self.fail(entry, "session_cache_unavailable", "session_cache_unavailable", Attempt::Failed,
+                serde_json::json!({"reason":"live HTTP session cookie state cannot use an unbound retained response"})).await;
+        }
         let mut prepared_document = None;
         let mut acquisition_metadata = None;
-        let auxiliary_enabled = self.crawl.scope.discovery.is_some();
+        let auxiliary_enabled = self.crawl.scope.discovery.is_some()
+            || self
+                .extract
+                .outputs
+                .as_ref()
+                .and_then(|outputs| outputs.link_media.as_ref())
+                .is_some_and(|options| options.max_previews > 0);
         let selected_http_route = crate::protocol::select_route(&self.protocol_routes, &entry.url.url);
         let validator_mode = self
             .crawl
@@ -2164,15 +3199,25 @@ impl UrlPlaneRunner {
                 crawlx_core::orchestration::RecrawlValidatorModeV1::Disabled,
                 |policy| policy.validator_mode,
             );
-        let conditional_visit = queued.identity.revisit_generation > 0
+        let conditional_visit = !method_head
+            && queued.identity.revisit_generation > 0
             && validator_mode != crawlx_core::orchestration::RecrawlValidatorModeV1::Disabled;
         let mut acquisition_policy = self.crawl.acquisition.clone().or_else(|| {
-            (auxiliary_enabled
+            (method_head
+                || http_session_binding.is_some()
+                || auxiliary_enabled
                 || self.crawl.cache.is_some()
                 || selected_http_route.is_some()
                 || conditional_visit)
                 .then(crawlx_core::acquisition::AcquisitionPolicyV1::default)
         });
+        if (method_head || http_session_binding.is_some()) && self.crawl.acquisition.is_none() {
+            if let Some(policy) = acquisition_policy.as_mut() {
+                let effects = legacy_reserved_effects.unwrap_or(8);
+                policy.max_attempts = u8::try_from(effects.min(8)).unwrap_or(8);
+                policy.max_network_requests = policy.max_network_requests.min(effects);
+            }
+        }
         if let (Some(policy), Some(route)) = (acquisition_policy.as_mut(), selected_http_route) {
             policy.backend_ids = vec!["native_http".to_owned()];
             policy.fallback_backend_ids.clear();
@@ -2196,23 +3241,61 @@ impl UrlPlaneRunner {
         } else {
             None
         };
-        let mut primary_options = FetchOptions::default();
+        let mut primary_options = crate::acquisition::fetch_options(&self.crawl.fetch);
+        if method_head {
+            primary_options.method = http::Method::HEAD;
+        }
         if let Some(value) = queued.envelope.metadata.get("autothrottle_dont_adjust_delay") {
             primary_options.dont_adjust_delay = value.as_bool().ok_or_else(|| {
                 WorkerError::Config("autothrottle_dont_adjust_delay must be boolean".into())
             })?;
         }
-        if let Some(policy) = &self.crawl.scope.discovery {
-            if acquisition_policy
-                .as_ref()
-                .is_none_or(|policy| policy.meta_refresh.is_none())
+        if let Some(policy) = self.crawl.scope.discovery.as_ref().filter(|_| !method_head) {
+            if http_session_binding.is_none()
+                && acquisition_policy
+                    .as_ref()
+                    .is_none_or(|policy| policy.meta_refresh.is_none())
             {
                 primary_options.follow_redirects = false;
             }
             primary_options.max_body_bytes = Some(policy.max_feed_bytes);
         }
-        let run_row = self.deps.runs.get(self.run).await?;
-        let tenant = run_row.tenant;
+        let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
+        let mut scoped_extract = self.extract.clone();
+        if scoped_extract
+            .content
+            .as_ref()
+            .is_some_and(|policy| policy.dedupe.is_some())
+        {
+            let representation = crawlx_core::hash::Digest::of_value(
+                "crawlx/extraction-representation/v1",
+                &(
+                    queued.envelope.header_control.as_ref(),
+                    queued.envelope.session_generation,
+                ),
+            )
+            .map_err(|error| WorkerError::Config(error.to_string()))?;
+            let namespace = if self.durable_dedupe {
+                format!("{}:{}", self.run, entry.id)
+            } else {
+                self.run.to_string()
+            };
+            let scope = crawlx_core::extraction::DedupeScopeV1::new(
+                &tenant.to_string(),
+                &namespace,
+                &representation.to_hex(),
+            )?;
+            scoped_extract.dedupe_cache = Some(crawlx_extract::DedupeHandle::new(
+                scope,
+                if self.durable_dedupe {
+                    Arc::new(std::sync::Mutex::new(crawlx_core::extraction::DedupeCache::new(
+                        65_536,
+                    )?))
+                } else {
+                    Arc::clone(&self.content_dedupe)
+                },
+            ));
+        }
         let credential_identity = self
             .request_identity_key
             .as_ref()
@@ -2229,7 +3312,7 @@ impl UrlPlaneRunner {
         }
         let mut cached_source = None;
         let mut cached_response = None;
-        if self.crawl.retention.mode != RetentionMode::Zdr {
+        if http_session_binding.is_none() && !method_head && self.crawl.retention.mode != RetentionMode::Zdr {
             match crate::scrape::cache::lookup_native(
                 self.deps.pages.as_ref(),
                 self.deps.runs.as_ref(),
@@ -2301,15 +3384,7 @@ impl UrlPlaneRunner {
                 .as_ref()
                 .map_or(default_limit, |policy| policy.max_decoded_bytes)
                 .min(default_limit);
-            archive_baseline = crate::archive_recorder::conditional_baseline(
-                self.deps.archives.as_ref(),
-                self.deps.artifacts.as_ref(),
-                &run_row,
-                &queued,
-                self.deps.clock.now(),
-                max_bytes,
-            )
-            .await?;
+            archive_baseline = self.conditional_baseline(&queued, max_bytes).await?;
             if let Some(baseline) = &archive_baseline {
                 primary_options.validators = Some(baseline.validators.clone());
             } else if validator_mode == crawlx_core::orchestration::RecrawlValidatorModeV1::RequireHistory {
@@ -2332,10 +3407,11 @@ impl UrlPlaneRunner {
             (acquisition_policy.as_ref(), shared_acquisition_budget.as_mut())
         {
             let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
-            let mut extract = self.extract.clone();
+            let mut extract = scoped_extract.clone();
             extract.depth = u32::from(entry.depth);
-            let observe =
-                |url: &Url, fetched: &Result<FetchResponse, FetchError>| self.record_exchange(url, fetched);
+            let observe = |url: &Url, fetched: &Result<FetchResponse, FetchError>| {
+                self.record_exchange_method(&queued.envelope.method, url, fetched);
+            };
             match crate::acquisition::fetch_native(
                 &self.fetcher,
                 &entry.url.url,
@@ -2350,7 +3426,7 @@ impl UrlPlaneRunner {
                 &observe,
                 false,
                 self.captcha_secrets.as_ref(),
-                Some(&NativeHopAdmission::new(self, entry)?),
+                Some(&NativeHopAdmission::new(self, entry)?.with_session(http_session_binding.clone())),
             )
             .await
             {
@@ -2363,12 +3439,14 @@ impl UrlPlaneRunner {
             }
         } else {
             let fetched = self.fetch_legacy(entry, &primary_options, cancel).await;
-            self.record_exchange(&entry.url.url, &fetched);
+            self.record_exchange_method(&queued.envelope.method, &entry.url.url, &fetched);
             fetched
         };
         let fetched = match (fetched, shared_acquisition_budget.as_mut()) {
             (Ok(response), Some(budget))
-                if self.crawl.scope.discovery.is_some()
+                if !method_head
+                    && http_session_binding.is_none()
+                    && self.crawl.scope.discovery.is_some()
                     && !self.crawl.cache_only()
                     && response.status.is_redirection()
                     && self.fetcher.config().follow_redirects =>
@@ -2390,6 +3468,7 @@ impl UrlPlaneRunner {
                                 .unwrap_or(self.fetcher.config().max_body_bytes),
                             budget,
                             cancel,
+                            crawlx_policy::robots::HopKind::Redirect,
                         )
                         .await
                         .map(|mut final_response| {
@@ -2401,6 +3480,9 @@ impl UrlPlaneRunner {
             }
             (fetched, _) => fetched,
         };
+        // Transfer acquisition state into response processing instead of retaining its
+        // large future-construction temporary throughout response polling.
+        Self::phase_future(|| async move {
         let mut resp = match fetched {
             Ok(r) => r,
             Err(FetchError::EgressDenied(denied)) if denied.rule == DenyRule::AuthorizationScope => {
@@ -2467,7 +3549,19 @@ impl UrlPlaneRunner {
                 let fence = *self.held.lock().get(&entry.id).ok_or(StoreError::LeaseLost)?;
                 self.deps
                     .frontier
-                    .settle_effects_fenced(self.run, entry.id, fence, reserved, resp.attempts)
+                    .settle_effects_fenced(
+                        self.run,
+                        entry.id,
+                        fence,
+                        reserved,
+                        if method_head {
+                            shared_acquisition_budget
+                                .as_ref()
+                                .map_or(resp.attempts, |budget| budget.usage().network_requests_reserved)
+                        } else {
+                            resp.attempts
+                        },
+                    )
                     .await?;
             }
             let _ = lifecycle.finalize(false);
@@ -2478,7 +3572,7 @@ impl UrlPlaneRunner {
             crate::acquisition::http_metadata(self.run, tenant, &entry.url.url, &resp, &self.fetcher)
         });
         let mut accepted_not_modified = false;
-        if resp.not_modified() {
+        if !method_head && resp.not_modified() {
             let Some(baseline) = archive_baseline.take() else {
                 self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
                     .await?;
@@ -2532,6 +3626,7 @@ impl UrlPlaneRunner {
             let mut context =
                 crate::acquisition::context(&policy, Some(resp.status.as_u16()), resp.truncated);
             context.cached_body_available = accepted_not_modified;
+            context.method_head = method_head;
             let validation_headers = header_pairs(&resp.headers);
             acquisition_metadata.validation = crawlx_extract::validation::validate_acquisition(
                 &crawlx_extract::validation::ValidationInput {
@@ -2548,6 +3643,7 @@ impl UrlPlaneRunner {
             let mut context =
                 crate::acquisition::context(&policy, Some(resp.status.as_u16()), resp.truncated);
             context.cached_body_available = accepted_not_modified;
+            context.method_head = method_head;
             let headers = header_pairs(&resp.headers);
             acquisition_metadata.validation = crawlx_extract::validation::validate_acquisition(
                 &crawlx_extract::validation::ValidationInput {
@@ -2572,9 +3668,12 @@ impl UrlPlaneRunner {
         acquisition_metadata
             .bound()
             .map_err(|e| WorkerError::Config(e.to_string()))?;
-        if self.crawl.acquisition.as_ref().is_some_and(|policy| {
-            policy.validation.on_content_mismatch == crawlx_core::acquisition::ContentMismatchActionV1::Fail
-        }) && !acquisition_metadata.validation.content_accepted
+        if !method_head
+            && self.crawl.acquisition.as_ref().is_some_and(|policy| {
+                policy.validation.on_content_mismatch
+                    == crawlx_core::acquisition::ContentMismatchActionV1::Fail
+            })
+            && !acquisition_metadata.validation.content_accepted
         {
             self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
                 .await?;
@@ -2588,6 +3687,98 @@ impl UrlPlaneRunner {
                 )
                 .await;
         }
+        if method_head {
+            acquisition_metadata.request_digest = queued.identity.key;
+            let body_bytes =
+                u64::try_from(resp.body.len()).map_err(|_| FetchError::AcquisitionUnavailable)?;
+            if body_bytes != 0 {
+                return Err(FetchError::AcquisitionUnavailable.into());
+            }
+            self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
+                .await?;
+            if let Some(reserved) = legacy_reserved_effects {
+                let fence = *self.held.lock().get(&entry.id).ok_or(StoreError::LeaseLost)?;
+                self.deps
+                    .frontier
+                    .settle_effects_fenced(
+                        self.run,
+                        entry.id,
+                        fence,
+                        reserved,
+                        shared_acquisition_budget
+                            .as_ref()
+                            .map_or(resp.attempts, |budget| budget.usage().network_requests_reserved),
+                    )
+                    .await?;
+            }
+            let headers = header_pairs(&resp.headers);
+            let findings = self.detect_secrets(&headers, resp.content_type.as_deref(), &[]);
+            let flagged = findings
+                .iter()
+                .filter_map(|(finding, _)| match &finding.location {
+                    SecretLocation::Header { name } => Some(name.as_str()),
+                    SecretLocation::Body { .. } => None,
+                })
+                .collect();
+            let validation_failed = self.crawl.acquisition.as_ref().is_some_and(|policy| {
+                policy.validation.on_content_mismatch
+                    == crawlx_core::acquisition::ContentMismatchActionV1::Fail
+            }) && !acquisition_metadata.validation.content_accepted;
+            let success = (resp.status.is_success() || resp.not_modified()) && !validation_failed;
+            let redactor = crawlx_core::secret::Redactor::new();
+            let mut response_headers = headers_json(&headers, &flagged, &self.fetcher.config().controls);
+            if let Some(headers) = response_headers.as_object_mut() {
+                for (name, value) in headers {
+                    *value = redactor.redact_field(name, value.take());
+                }
+            }
+            let payload = serde_json::json!({
+                "requestId":entry.id, "method":"HEAD", "status":resp.status.as_u16(),
+                "bodyBytes":body_bytes,
+                "response_headers":response_headers,
+                "acquisition":acquisition_metadata,
+            });
+            let encoded =
+                serde_json::to_vec(&payload).map_err(|error| StoreError::Serialization(error.to_string()))?;
+            redactor.check_canonical(&encoded)?;
+            crate::capture::check_run_secrets(
+                &encoded,
+                &self.fetcher.config().controls,
+                self.captcha_secrets.as_ref(),
+            )?;
+            let _ = lifecycle.finalize(false);
+            self.finish_with_results(
+                entry,
+                if success {
+                    FrontierStatus::Succeeded
+                } else {
+                    FrontierStatus::Failed
+                },
+                Some(if validation_failed {
+                    "content_validation_failed".into()
+                } else {
+                    format!("http_{}", resp.status.as_u16())
+                }),
+                Vec::new(),
+                Vec::new(),
+                RequestPublication {
+                    head_response: Some(payload),
+                    ..RequestPublication::default()
+                },
+            )
+            .await?;
+            self.counters.attempt(
+                Plane::Urls,
+                if success {
+                    Attempt::Succeeded
+                } else {
+                    Attempt::Failed
+                },
+            );
+            // HEAD is an acquisition result, not a document. In particular, never
+            // replace the GET page projection or manufacture an empty article.
+            return Ok(());
+        }
         let code = resp.status.as_u16();
         let headers = header_pairs(&resp.headers);
         let leaf_only = matches!(
@@ -2595,14 +3786,16 @@ impl UrlPlaneRunner {
             ScopeVerdict::Admitted { leaf_only: true }
         );
         let expand = !leaf_only && self.crawl.scope.sitemap != SitemapMode::Only;
-        if !resp.status.is_success() && !accepted_not_modified {
+        let declared_allowed =
+            primary_options.declaration.statuses.verdict(code) == crawlx_fetch::StatusVerdict::Allow;
+        if !resp.status.is_success() && !accepted_not_modified && !declared_allowed {
             if resp.status.is_redirection()
                 && expand
                 && self.source_enabled(crawlx_core::discovery::DiscoverySourceV1::Html)
                 && self.crawl.scope.discovery.is_none()
             {
                 // a redirect that was not followed: its `Location` is still an endpoint
-                let endpoints = crawlx_extract::endpoints::discover_with(
+                let report = crawlx_extract::endpoints::discover_report(
                     &DiscoveryInput {
                         url: &resp.final_url,
                         status: code,
@@ -2617,7 +3810,7 @@ impl UrlPlaneRunner {
                     },
                 )
                 .map_err(|e| WorkerError::Config(e.to_string()))?;
-                self.expand_endpoints(entry, &resp.final_url, &[], endpoints)
+                self.expand_endpoints(entry, &resp.final_url, &[], report.endpoints)
                     .await?;
             }
             self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
@@ -2727,6 +3920,8 @@ impl UrlPlaneRunner {
         let mut page_type: Option<PageType> = None;
         let mut accepted_items = Vec::new();
         let mut extension_outbox = Vec::new();
+        let mut content_dedupe = None;
+        let mut local_dedupe = None;
         let endpoints: Vec<DiscoveredEndpoint> = if source_response {
             Vec::new()
         } else if is_html {
@@ -2741,7 +3936,7 @@ impl UrlPlaneRunner {
                     context.cached_body_available = accepted_not_modified;
                     context
                 }),
-                ..self.extract.clone()
+                ..scoped_extract.clone()
             };
             let body = resp.body.clone();
             let controls = self.fetcher.config().controls.clone();
@@ -2772,14 +3967,30 @@ impl UrlPlaneRunner {
                     .map_err(|e| WorkerError::Other(format!("extraction task failed: {e}")))?,
             };
             match extracted {
-                Ok(doc) => {
+                Ok(mut doc) => {
+                    if self.durable_dedupe {
+                        content_dedupe = content_dedupe_claim(
+                            tenant,
+                            self.run,
+                            scoped_extract.dedupe_cache.as_ref(),
+                            &doc,
+                        )?;
+                    } else {
+                        local_dedupe = doc.dedupe_commit.take();
+                    }
                     let pipeline = self.crawl.extensions.clone();
                     let label = queued.envelope.route.clone();
                     let token = cancel.clone();
                     let transformed = self
                         .cpu_pool
                         .run(move || {
-                            let result = if pipeline.configured() {
+                            let invalid_item = doc
+                                .item
+                                .as_ref()
+                                .is_some_and(|item| !item.valid || item.schema_valid == Some(false));
+                            let result = if invalid_item {
+                                Err(crawlx_core::extensions::ExtensionError::Rejected)
+                            } else if pipeline.configured() {
                                 if doc.validation.as_ref().is_some_and(|v| !v.content_accepted) {
                                     Err(crawlx_core::extensions::ExtensionError::Rejected)
                                 } else {
@@ -2805,6 +4016,9 @@ impl UrlPlaneRunner {
                         Err(crawlx_core::extensions::ExtensionError::Rejected) => {
                             record.metadata["extensions"] =
                                 serde_json::json!({"version":1,"outcome":"rejected"});
+                            record.metadata["itemPipeline"] = serde_json::json!({
+                                "accepted": 0, "rejected": 1, "reason": "extension_item_rejected",
+                            });
                             None
                         }
                         Err(_) => {
@@ -2822,19 +4036,29 @@ impl UrlPlaneRunner {
                         }
                     };
                     if let Some(candidate) = candidate {
-                        let run = self.deps.runs.get(self.run).await?;
-                        let extractor = doc.article.as_ref().map_or("unknown", |a| a.extractor.as_str());
-                        let (content, accepted, outbox) = crate::extensions::store_candidate(
-                            self.deps.artifacts.as_ref(),
-                            &run,
-                            entry.id,
-                            &candidate,
-                            extractor,
-                            &self.fetcher.config().controls,
-                            self.captcha_secrets.as_ref().ok_or_else(|| {
-                                StoreError::RetentionDenied("item dynamic-secret registry unavailable".into())
-                            })?,
-                        )
+                        record.metadata["itemPipeline"] = serde_json::json!({
+                            "accepted": 1, "rejected": 0,
+                        });
+                        // Keep the full run configuration off the ordinary acquisition poll stack.
+                        let (content, accepted, outbox) = Box::pin(async {
+                            let run = self.deps.runs.get(self.run).await?;
+                            let extractor = doc.article.as_ref().map_or("unknown", |a| a.extractor.as_str());
+                            crate::extensions::store_candidate(
+                                self.deps.artifacts.as_ref(),
+                                &self.cpu_pool,
+                                &run,
+                                entry.id,
+                                &candidate,
+                                extractor,
+                                &self.fetcher.config().controls,
+                                self.captcha_secrets.as_ref().ok_or_else(|| {
+                                    StoreError::RetentionDenied(
+                                        "item dynamic-secret registry unavailable".into(),
+                                    )
+                                })?,
+                            )
+                            .await
+                        })
                         .await?;
                         record.metadata["extensions"] = serde_json::json!({"version":1,"content":content,
                                 "pipeline":self.crawl.extensions.publication().map_err(|e| WorkerError::Config(e.to_string()))?});
@@ -2859,10 +4083,10 @@ impl UrlPlaneRunner {
                             .map_err(|e| WorkerError::Other(format!("validation metadata: {e}")))?;
                     }
                     if self.crawl.datasets.article_store()?.is_some() {
-                        let run = self.deps.runs.get(self.run).await?;
-                        let acquisition_accepted =
-                            doc.validation.as_ref().is_some_and(|v| v.content_accepted);
-                        let (returned, article_items, article_feeds) =
+                        let (returned, article_items, article_feeds) = Box::pin(async {
+                            let run = self.deps.runs.get(self.run).await?;
+                            let acquisition_accepted =
+                                doc.validation.as_ref().is_some_and(|v| v.content_accepted);
                             crate::delivery::prepare_article_acceptance(
                                 self.deps.artifacts.as_ref(),
                                 &self.cpu_pool,
@@ -2871,7 +4095,9 @@ impl UrlPlaneRunner {
                                 doc,
                                 acquisition_accepted,
                             )
-                            .await?;
+                            .await
+                        })
+                        .await?;
                         doc = returned;
                         accepted_items.extend(article_items);
                         extension_outbox.extend(article_feeds);
@@ -2890,6 +4116,7 @@ impl UrlPlaneRunner {
                     self.follow_article_intents(
                         entry,
                         &doc,
+                        &resp.body,
                         &mut record,
                         shared_acquisition_budget.as_mut(),
                         cancel,
@@ -2950,7 +4177,7 @@ impl UrlPlaneRunner {
                     &text
                 ));
             }
-            crawlx_extract::endpoints::discover_with(
+            let report = crawlx_extract::endpoints::discover_report(
                 &DiscoveryInput {
                     url: &resp.final_url,
                     status: code,
@@ -2964,7 +4191,12 @@ impl UrlPlaneRunner {
                     ..DiscoveryOptions::default()
                 },
             )
-            .map_err(|e| WorkerError::Config(e.to_string()))?
+            .map_err(|e| WorkerError::Config(e.to_string()))?;
+            record.metadata["endpointDiscovery"] = serde_json::json!({
+                "unresolved": report.unresolved,
+                "unresolvedDropped": report.unresolved_dropped,
+            });
+            report.endpoints
         };
         if !source_response {
             self.settle_native_allowance(entry, shared_acquisition_budget.as_ref())
@@ -3062,6 +4294,7 @@ impl UrlPlaneRunner {
             record.metadata["filtered_page_type"] = serde_json::json!(true);
         }
         if cached_source.is_none()
+            && http_session_binding.is_none()
             && self.crawl.cache.as_ref().is_some_and(|p| p.writes())
             && crate::scrape::cache::native_eligible(&self.crawl, credential_identity)
             && self.crawl.retention.mode != RetentionMode::Zdr
@@ -3124,7 +4357,13 @@ impl UrlPlaneRunner {
             reason,
             accepted_items,
             Vec::new(),
-            (extension_outbox, Some(record)),
+            RequestPublication {
+                outbox: extension_outbox,
+                page: Some(record),
+                content_dedupe,
+                local_dedupe,
+                ..RequestPublication::default()
+            },
         )
         .await?;
         *self.pages_written.lock() += 1;
@@ -3143,6 +4382,8 @@ impl UrlPlaneRunner {
         self.counters.attempt(Plane::Urls, Attempt::Succeeded);
         self.event("page", event).await;
         Ok(())
+        })
+        .await
     }
 
     /// Discover the redirect target of a fetched page (a page of its own), then its links and
@@ -3428,6 +4669,10 @@ impl UrlPlaneRunner {
     /// one for the final answer, or one with the error code when nothing answered. Robots,
     /// sitemap and secret-validation requests never come through here.
     fn record_exchange(&self, url: &Url, fetched: &Result<FetchResponse, FetchError>) {
+        self.record_exchange_method("GET", url, fetched);
+    }
+
+    fn record_exchange_method(&self, method: &str, url: &Url, fetched: &Result<FetchResponse, FetchError>) {
         let Some(exporter) = &self.traffic else {
             return;
         };
@@ -3436,22 +4681,25 @@ impl UrlPlaneRunner {
             Ok(resp) => {
                 for hop in &resp.hops {
                     exporter.record(
-                        Exchange::new("url", now, "GET", hop.url.as_str(), hop.status.as_u16())
+                        Exchange::new("url", now, method, hop.url.as_str(), hop.status.as_u16())
                             .with_request(self.request_headers(&hop.url), None)
                             .with_response(self.response_header_map(header_pairs(&hop.headers)), None),
                     );
                 }
-                let body =
-                    crawlx_extract::endpoints::textual::is_textual(resp.content_type.as_deref(), &resp.body)
-                        .then(|| String::from_utf8_lossy(&resp.body).into_owned());
+                let body = (method != "HEAD"
+                    && crawlx_extract::endpoints::textual::is_textual(
+                        resp.content_type.as_deref(),
+                        &resp.body,
+                    ))
+                .then(|| String::from_utf8_lossy(&resp.body).into_owned());
                 exporter.record(
-                    Exchange::new("url", now, "GET", resp.final_url.as_str(), resp.status.as_u16())
+                    Exchange::new("url", now, method, resp.final_url.as_str(), resp.status.as_u16())
                         .with_request(self.request_headers(&resp.final_url), None)
                         .with_response(self.response_header_map(header_pairs(&resp.headers)), body),
                 );
             }
             Err(e) => exporter.record(
-                Exchange::new("url", now, "GET", url.as_str(), 0)
+                Exchange::new("url", now, method, url.as_str(), 0)
                     .with_request(self.request_headers(url), None)
                     .with_error(e.code()),
             ),
@@ -3484,13 +4732,32 @@ impl UrlPlaneRunner {
         }
         record.metadata["content_length"] =
             serde_json::json!(u64::try_from(resp.body.len()).unwrap_or(u64::MAX));
+        // Exported bodies are text projections, not original encoded HTTP wire bytes.
+        record.metadata["output_fidelity"] = serde_json::json!({
+            "response_body": {
+                "representation": "decoded_text",
+                "truncated": resp.truncated
+            }
+        });
         if let Some(capture) = response_body_capture_metadata(resp) {
             record.metadata["response_body_capture"] = capture;
         }
         if self.crawl.output.capture_raw {
             request["raw"] = serde_json::json!(raw_request_text("GET", &record.url.url, &headers, None));
             let authority = NativeHopAdmission::new(self, entry)?;
-            let raw = self.raw_response(resp, flagged).await?;
+            let (raw, binary_lossy) = self.raw_response(resp, flagged).await?;
+            record.metadata["output_fidelity"]["request_raw"] = serde_json::json!({
+                "representation": "reconstructed",
+                "redacted": true,
+                "binary_lossy": false,
+                "truncated": false
+            });
+            record.metadata["output_fidelity"]["response_raw"] = serde_json::json!({
+                "representation": "reconstructed",
+                "redacted": true,
+                "binary_lossy": binary_lossy,
+                "truncated": resp.truncated
+            });
             if self.stop_requested(cancel) && !self.is_draining() {
                 return Err(FetchError::AcquisitionCancelled.into());
             }
@@ -3518,15 +4785,17 @@ impl UrlPlaneRunner {
         &self,
         resp: &FetchResponse,
         flagged: &BTreeSet<&str>,
-    ) -> Result<String, WorkerError> {
+    ) -> Result<(String, bool), WorkerError> {
         let controls = &self.fetcher.config().controls;
         let mut out = format!(
             "HTTP/1.1 {} {}\r\n",
             resp.status.as_u16(),
             resp.status.canonical_reason().unwrap_or("")
         );
+        let mut binary_lossy = false;
         for (name, value) in &resp.headers {
             let text = String::from_utf8_lossy(value.as_bytes());
+            binary_lossy |= matches!(&text, std::borrow::Cow::Owned(_));
             let hide = CREDENTIAL_HEADERS.contains(&name.as_str())
                 || flagged.contains(name.as_str())
                 || controls.echoes_secret(&text);
@@ -3552,6 +4821,7 @@ impl UrlPlaneRunner {
             .run(move || {
                 let redactor = crawlx_core::secret::Redactor::new();
                 let text = String::from_utf8_lossy(&body);
+                binary_lossy |= matches!(&text, std::borrow::Cow::Owned(_));
                 // Decode keys and values, and mask duplicate-member documents, before
                 // any textual replacement can change the standalone JSON grammar.
                 let json =
@@ -3577,7 +4847,7 @@ impl UrlPlaneRunner {
                 let projected = redactor.scrub(&scoped);
                 crate::capture::check_run_secrets(projected.as_bytes(), &controls, Some(&registry))?;
                 out.push_str(&projected);
-                Ok::<_, StoreError>(out)
+                Ok::<_, StoreError>((out, binary_lossy))
             })
             .await
             .map_err(WorkerError::RawCaptureTask)?
@@ -3677,6 +4947,11 @@ impl UrlPlaneRunner {
                 "fingerprint",
                 "request",
                 "acquisition",
+                "cache",
+                "cacheUnavailableReason",
+                "developmentReplay",
+                "itemPipeline",
+                "extensions",
             ] {
                 if let Some(v) = record.metadata.get(key) {
                     obj.insert(key.to_owned(), v.clone());
@@ -3694,6 +4969,16 @@ impl UrlPlaneRunner {
             }
         }
         record.metadata = meta;
+        if let Ok(pipeline) = crate::acquisition::parser_pipeline() {
+            record.metadata["parserPipeline"] = serde_json::json!({
+                "recordVersion": pipeline.record_version(),
+                "digest": pipeline.digest(),
+            });
+        }
+        record.metadata["endpointDiscovery"] = serde_json::json!({
+            "unresolved": doc.discovery_unresolved,
+            "unresolvedDropped": doc.discovery_unresolved_dropped,
+        });
         if let Some(article) = &doc.article {
             let mut content = Vec::new();
             let artifact = match crawlx_extract::serialize::write_article(
@@ -4213,6 +5498,120 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn head_refuses_selected_delegate_and_browser_routes_without_get_fallback() {
+        use crawlx_core::orchestration::RequestBatchV1;
+        use crawlx_core::request::RequestEnvelopeV1;
+
+        for mode in [CrawlMode::Static, CrawlMode::Hybrid] {
+            for backend in ["delegate", "browser"] {
+                let directory = tempfile::tempdir().unwrap();
+                let stores = crate::Stores::over_memory(
+                    Arc::new(crawlx_storage::MemoryStore::new()),
+                    directory.path(),
+                )
+                .await
+                .unwrap();
+                let target = Url::parse("https://head-route.invalid/head").unwrap();
+                let mut crawl = CreateCrawl::new(target);
+                crawl.mode = mode;
+                crawl.safety.respect_robots_txt = false;
+                crawl.protocol.routes.push(
+                    serde_json::from_value(serde_json::json!({
+                        "id": "required-head-route",
+                        "schemes": ["https"],
+                        "origin": null,
+                        "pathPattern": "^/head$",
+                        "schedulerMetadata": {},
+                        "backend": backend,
+                        "delegateId": (backend == "delegate").then_some("owned-head-service"),
+                        "requiredCapabilities": [],
+                        "maxBodyBytes": 1024,
+                        "maxElapsedMs": 1000,
+                        "policyRevision": "owned-v1"
+                    }))
+                    .unwrap(),
+                );
+                let run = crawlx_storage::testkit::crawl_run(stores.tenant, crawl.clone());
+                stores.runs.create(&run, None).await.unwrap();
+                let request = RequestEnvelopeV1::new(
+                    crawlx_storage::testkit::canonical_url("https://head-route.invalid/head"),
+                    "HEAD".into(),
+                    0,
+                    None,
+                );
+                stores
+                    .frontier
+                    .append_batch(RequestBatchV1::new(
+                        stores.tenant,
+                        run.id,
+                        "anonymous".into(),
+                        crawlx_core::hash::Digest::of("test/head-route", backend.as_bytes()),
+                        vec![request],
+                    ))
+                    .await
+                    .unwrap();
+                let worker = WorkerId::new();
+                let (entry, fence) = stores
+                    .frontier
+                    .lease_batch_fenced(run.id, worker, 1)
+                    .await
+                    .unwrap()
+                    .pop()
+                    .unwrap();
+                let fetcher = Arc::new(
+                    Fetcher::new(
+                        crawlx_fetch::FetchConfig::default(),
+                        Arc::new(crawlx_policy::EgressPolicy::default()),
+                        Arc::new(crawlx_fetch::StaticResolver::new()),
+                    )
+                    .unwrap(),
+                );
+                let runner = UrlPlaneRunner::new(
+                    run.id,
+                    crawl,
+                    worker,
+                    UrlPlaneDeps {
+                        runs: stores.runs.clone(),
+                        frontier: stores.frontier.clone(),
+                        request_commits: stores.request_commits.clone(),
+                        source_memo: stores.source_memo.clone(),
+                        leases: stores.leases.clone(),
+                        pages: stores.pages.clone(),
+                        events: stores.events.clone(),
+                        artifacts: stores.artifacts.clone(),
+                        archives: stores.archives.clone(),
+                        clock: Arc::new(crawlx_core::SystemClock),
+                    },
+                    fetcher,
+                    RunCounters::default(),
+                    CanonicalizeOptions::default(),
+                )
+                .unwrap();
+                runner.held.lock().insert(entry.id, fence);
+                runner
+                    .process_entry(&entry, &CancellationToken::new())
+                    .await
+                    .unwrap();
+                let queued = stores.frontier.get_request(run.id, entry.id).await.unwrap();
+                assert_eq!(queued.envelope.method, "HEAD");
+                assert_eq!(queued.entry.status, FrontierStatus::Failed);
+                assert_eq!(
+                    queued.entry.denial_reason.as_deref(),
+                    Some("request_backend_unavailable")
+                );
+                assert!(stores.pages.list(run.id).await.unwrap().is_empty());
+                assert!(stores
+                    .events
+                    .list_after(run.id, 0, 100)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .all(|event| event.kind != "head_response"));
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn dispatch_futures_remain_bounded() {
         let directory = tempfile::tempdir().unwrap();
         let stores =
@@ -4247,6 +5646,7 @@ mod tests {
                 runs: stores.runs.clone(),
                 frontier: stores.frontier.clone(),
                 request_commits: stores.request_commits.clone(),
+                source_memo: stores.source_memo.clone(),
                 leases: stores.leases.clone(),
                 pages: stores.pages.clone(),
                 events: stores.events.clone(),
@@ -4297,6 +5697,7 @@ mod tests {
             runs: stores.runs.clone(),
             frontier: stores.frontier.clone(),
             request_commits: stores.request_commits.clone(),
+            source_memo: stores.source_memo.clone(),
             leases: stores.leases.clone(),
             pages: stores.pages.clone(),
             events: stores.events.clone(),
@@ -4457,6 +5858,7 @@ mod tests {
             runs: stores.runs.clone(),
             frontier: stores.frontier.clone(),
             request_commits: stores.request_commits.clone(),
+            source_memo: stores.source_memo.clone(),
             leases: stores.leases.clone(),
             pages: stores.pages.clone(),
             events: stores.events.clone(),
@@ -4590,6 +5992,7 @@ mod tests {
                         runs: stores.runs.clone(),
                         frontier: stores.frontier.clone(),
                         request_commits: stores.request_commits.clone(),
+                        source_memo: stores.source_memo.clone(),
                         leases: stores.leases.clone(),
                         pages: stores.pages.clone(),
                         events: stores.events.clone(),

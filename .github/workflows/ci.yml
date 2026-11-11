@@ -15,6 +15,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   schedule:
     - cron: "0 2 * * *" # nightly
@@ -128,6 +129,8 @@ jobs:
       - run: ci/lint-chromiumoxide.sh
       - run: ci/provenance-check.sh
       - run: ci/shingle-scan.sh --self-test
+      - name: CI evidence report regressions
+        run: python3 -B -m unittest discover -s ci -p 'test_*_reports.py'
       # cargo-deny as a prebuilt, checksum-verified binary (install-action retries downloads);
       # the container-building action failed on a transient release-download error.
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
@@ -302,6 +305,13 @@ jobs:
         with:
           path: bench/out/flake-history.json
           key: flake-history-${{ github.run_id }}
+      - name: Retain unit flake evidence for the release checklist
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-evidence-unit
+          path: bench/out/flake-history.json
+          if-no-files-found: warn
       - name: Identity version gates (V2 names; dual-mode version pairs in memory and PostgreSQL)
         run: |
           cargo test -p crawlx-elements -- v2_
@@ -438,6 +448,13 @@ jobs:
         env:
           FLAKE_REPORT: target/debug/flake-report
         run: ci/flake-gate.sh record pr target/nextest/ci/junit.xml
+      - name: Retain browser flake evidence for the release checklist
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-evidence-browser
+          path: bench/out/flake-history.json
+          if-no-files-found: warn
       - name: CDP surface against the pinned build
         run: cargo test -p crawlx-browser --test cdp_surface
       - name: Golden trace on the pinned build must be clean
@@ -676,13 +693,46 @@ jobs:
           unzip -q chrome.zip -d "$RUNNER_TEMP"
           echo "CRAWLX_CHROMIUM_PATH=$RUNNER_TEMP/chrome-linux64/chrome" >> "$GITHUB_ENV"
       - name: CDP surface against Stable
-        run: cargo test -p crawlx-browser --test cdp_surface -- --nocapture
-      - name: Browser suite against Stable
+        id: cdp
+        shell: bash
+        if: ${{ !cancelled() }}
         run: |
-          cargo test -p crawlx-browser --test chromium -- --test-threads 1
-          cargo test -p crawlx-bench -- browser_ --test-threads 1
+          mkdir -p bench/out
+          cargo test -p crawlx-browser --test cdp_surface -- --nocapture 2>&1 | tee bench/out/chromium-next-cdp.log
+      - name: Browser suite against Stable
+        id: browser
+        shell: bash
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p bench/out
+          cargo test -p crawlx-browser --test chromium -- --test-threads 1 --nocapture 2>&1 | tee bench/out/chromium-next-browser.log
+          cargo test -p crawlx-bench -- browser_ --test-threads 1 --nocapture 2>&1 | tee -a bench/out/chromium-next-browser.log
       - name: Golden-trace comparison against Stable (pin-bump review artifact)
-        run: cargo test -p crawlx-bench --test golden_traces -- --nocapture
+        id: golden
+        shell: bash
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p bench/out
+          cargo test -p crawlx-bench --test golden_traces -- --nocapture 2>&1 | tee bench/out/chromium-next-golden.log
+      - name: Assemble artifact-backed Chromium upgrade report
+        if: always()
+        env:
+          CDP_OUTCOME: ${{ steps.cdp.outcome }}
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+          GOLDEN_OUTCOME: ${{ steps.golden.outcome }}
+        run: |
+          python3 -B ci/chromium-upgrade-report.py
+          cat bench/out/chromium-upgrade-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain upgrade report and its underlying evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chromium-upgrade-report
+          path: |
+            bench/out/chromium-upgrade-report.*
+            bench/out/chromium-next-*.log
+            bench/out/golden-trace-diff.*.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -882,7 +932,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     needs: [authorize, unit]
-    if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
+    if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
     permissions:
       contents: read
     continue-on-error: true
@@ -912,6 +962,13 @@ jobs:
           cargo mutants -p crawlx-url --no-shuffle -j 4 --output mutants-url || true
           ci/mutants-gate.sh --report-only mutants-policy/mutants.out
           ci/mutants-gate.sh --report-only mutants-url/mutants.out
+      - name: Retain actual safety mutation outcomes for the release checklist
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-evidence-mutants
+          path: mutants-safety/mutants.out/outcomes.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -996,6 +1053,13 @@ jobs:
           printf '%s\n' "$CRAWLX_GATE_KEYS" > "$RUNNER_TEMP/crawlx-gate-keys"
           export CRAWLX_GATE_KEYS_FILE="$RUNNER_TEMP/crawlx-gate-keys"
           cargo run -p crawlx-bench --bin gate -- g1 --report bench/out/g1-report.json --out gates/g1.passed
+      - name: Retain actual G1 measurements for the release checklist
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-evidence-g1
+          path: bench/out/g1-report.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -1088,13 +1152,13 @@ jobs:
             sbom/
             scan/
 
-  # Release-gate checklist computed from the evidence in bench/out (docs/ops/release-gates.md).
-  # On demand it blocks (an unmeasured or failing item exits 1); the weekly run only reports.
+  # Release-gate checklist consumes only this run's producer artifacts.
+  # Dispatch and release tags block on missing/failing evidence; weekly runs only report.
   release-checklist:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: authorize
-    if: needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
+    needs: [authorize, unit, browser, gate-g1, mutants]
+    if: always() && needs.authorize.outputs.ok == 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 0'))
     permissions:
       contents: read
     continue-on-error: ${{ github.event_name == 'schedule' }}
@@ -1106,7 +1170,20 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Download this run's release evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: release-evidence-*
+          path: ${{ runner.temp }}/release-inputs
+      - name: Transfer measured inputs and explain missing producers
+        if: ${{ !cancelled() }}
+        env:
+          RELEASE_JOBS: ${{ toJSON(needs) }}
+        run: |
+          python3 -B ci/release-evidence.py --artifacts "$RUNNER_TEMP/release-inputs"
+          cat bench/out/release-evidence.md >> "$GITHUB_STEP_SUMMARY"
       - name: Release-gate checklist
+        if: ${{ !cancelled() }}
         run: ci/release-gate.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -1115,6 +1192,8 @@ jobs:
           path: |
             bench/out/release-checklist.json
             bench/out/release-checklist.md
+            bench/out/release-evidence.json
+            bench/out/release-evidence.md
 
   # The one check the default-branch ruleset requires. A job skipped by `if:` counts as
   # passed for a required check, so the gated jobs themselves cannot be required: a pull

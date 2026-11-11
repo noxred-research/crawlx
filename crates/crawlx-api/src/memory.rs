@@ -1,6 +1,10 @@
 //! [`MemoryApiStore`]: the in-memory [`ApiStore`] used by tests, development
 //! and `database_url = None`. It reads actions and traffic from the shared
 //! [`MemoryStore`] so transitions and traffic reflect what the worker journaled.
+//!
+//! The shared authorization lifecycle and run body bindings also authorize HEAD response
+//! reads and publication in [`MemoryStore`]. Every check reads this store's current state,
+//! including for completed runs; dropping this store makes that authority unavailable.
 
 use crate::store::{
     without_lifecycle, ActionSummary, ApiStore, ApprovalDecision, ApprovalRecord, AuthorizationEntry,
@@ -18,12 +22,12 @@ use crawlx_core::{
     ApprovalId, AuthorizationRecordId, CrawlRunId, StateId, StoreError, TenantId, Timestamp, TransitionId,
 };
 use crawlx_policy::AuthorizationRecord;
-use crawlx_storage::memory::MemoryTransition;
+use crawlx_storage::memory::{HeadResponseAuthorizer, MemoryTransition};
 use crawlx_storage::{CoverageRow, MemoryStore, TenantEngine};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use uuid::Uuid;
 
 const IDEMPOTENCY_RETENTION_HOURS: i64 = 24;
@@ -93,9 +97,56 @@ struct Inner {
     deliveries: Vec<WebhookDelivery>,
 }
 
+struct MemoryHeadResponseAuthorizer {
+    inner: Weak<Mutex<Inner>>,
+}
+
+#[async_trait]
+impl HeadResponseAuthorizer for MemoryHeadResponseAuthorizer {
+    async fn authorize(
+        &self,
+        run: CrawlRunId,
+        tenant: TenantId,
+        record: AuthorizationRecordId,
+        now: Timestamp,
+    ) -> StoreResult<()> {
+        let inner = self.inner.upgrade().ok_or_else(|| {
+            StoreError::AccessDenied("HEAD response authorization source is unavailable".to_owned())
+        })?;
+        let inner = inner.lock();
+        let row = inner.authz.get(&record).ok_or_else(|| {
+            StoreError::AccessDenied("HEAD response authorization record is missing".to_owned())
+        })?;
+        if row.tenant != tenant
+            || row.record.tenant != tenant
+            || row.record.id != record
+            || row.record.valid_from > now
+            || row.record.valid_to <= now
+            || row.record.revoked_at.is_some()
+            || row.record.verified_at.is_none()
+        {
+            return Err(StoreError::AccessDenied(
+                "HEAD response authorization record is not active and verified".to_owned(),
+            ));
+        }
+        if let Some(bound) = inner.run_digests.get(&run) {
+            let current = row
+                .record
+                .body_digest()
+                .map_err(|e| StoreError::Serialization(e.to_string()))?;
+            if *bound != current {
+                return Err(StoreError::AccessDenied(
+                    "HEAD response authorization body binding changed".to_owned(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// In-memory [`ApiStore`].
 pub struct MemoryApiStore {
-    inner: Mutex<Inner>,
+    inner: Arc<Mutex<Inner>>,
     store: Arc<MemoryStore>,
 }
 
@@ -103,10 +154,11 @@ impl MemoryApiStore {
     /// Store over `store` (actions and traffic are read from it).
     #[must_use]
     pub fn new(store: Arc<MemoryStore>) -> Self {
-        Self {
-            inner: Mutex::new(Inner::default()),
-            store,
-        }
+        let inner = Arc::new(Mutex::new(Inner::default()));
+        store.set_head_response_authorizer(Arc::new(MemoryHeadResponseAuthorizer {
+            inner: Arc::downgrade(&inner),
+        }));
+        Self { inner, store }
     }
 
     /// Test/dev seeding: add a pending approval (the worker/safety kernel does this in production).
@@ -160,6 +212,7 @@ impl MemoryApiStore {
     }
 
     /// Erasure: drop everything this store holds about `run`.
+    #[must_use]
     pub fn purge_run(&self, run: CrawlRunId) -> u64 {
         let mut g = self.inner.lock();
         let mut n = 0u64;

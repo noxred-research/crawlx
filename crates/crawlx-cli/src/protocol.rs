@@ -109,24 +109,27 @@ pub async fn run(args: CorpusArgs, out: &mut dyn Write) -> anyhow::Result<ExitCo
 /// Invoke an explicitly registered isolated protocol service; unavailable services fail without fallback.
 #[derive(Debug, Args)]
 pub struct ProtocolArgs {
+    /// Report only local operator registrations; open no target or service sockets.
+    #[arg(long)]
+    pub probe: bool,
     /// Explicit target URL; no credentials may appear in URL userinfo.
-    #[arg(long)]
-    pub url: Url,
-    /// Operator-approved delegate key in CRAWLX_PROTOCOL_REGISTRY.
-    #[arg(long)]
-    pub delegate: String,
+    #[arg(long, required_unless_present = "probe")]
+    pub url: Option<Url>,
+    /// Operator-approved delegate key; native_ftp permits only registered anonymous file reads.
+    #[arg(long, required_unless_present = "probe")]
+    pub delegate: Option<String>,
     /// Operator-selected tenant; registry must explicitly approve this tenant.
-    #[arg(long)]
-    pub tenant: String,
+    #[arg(long, required_unless_present = "probe")]
+    pub tenant: Option<String>,
     /// Operator-selected run ownership.
-    #[arg(long)]
-    pub run: String,
+    #[arg(long, required_unless_present = "probe")]
+    pub run: Option<String>,
     /// Unique attempt identity. Reuse is refused by the active client/service nonce ledger.
-    #[arg(long)]
-    pub attempt: String,
+    #[arg(long, required_unless_present = "probe")]
+    pub attempt: Option<String>,
     /// Approved policy revision.
-    #[arg(long)]
-    pub policy_revision: String,
+    #[arg(long, required_unless_present = "probe")]
+    pub policy_revision: Option<String>,
     /// Explicit protocol ports approved by the operator, including passive data ports.
     #[arg(long, value_delimiter = ',', default_value = "21,22,43")]
     pub allow_ports: Vec<u16>,
@@ -143,41 +146,56 @@ pub struct ProtocolArgs {
 /// # Errors
 /// Refuses absent registry, tenant approval, malformed scope, unavailable capability and every protocol boundary failure.
 pub async fn acquire(args: ProtocolArgs, out: &mut dyn Write) -> anyhow::Result<ExitCode> {
+    let registry = crawlx_worker::protocol::ProtocolRegistry::from_operator_env().await?;
+    if args.probe {
+        serde_json::to_writer(
+            &mut *out,
+            &crawlx_worker::protocol::capability_report(registry.as_deref()),
+        )?;
+        out.write_all(b"\n")?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let url = args.url.context("protocol target required")?;
+    let delegate = args.delegate.context("protocol delegate required")?;
+    let attempt = args.attempt.context("protocol attempt required")?;
+    let policy_revision = args
+        .policy_revision
+        .context("protocol policy revision required")?;
     let deadline = tokio::time::Instant::now() + Duration::from_millis(u64::from(args.timeout_ms));
-    if !matches!(args.url.scheme(), "ftp" | "sftp" | "whois" | "http" | "https") {
+    if !matches!(url.scheme(), "ftp" | "sftp" | "whois" | "http" | "https") {
         bail!("protocol service requires an explicitly supported network scheme; use corpus for file");
     }
     if args.allow_ports.len() > 32 || args.allow_ports.contains(&0) {
         bail!("invalid approved protocol port set");
     }
-    if matches!(args.url.scheme(), "http" | "https") {
+    if matches!(url.scheme(), "http" | "https") {
         let proposed = crawlx_url::Canonicalizer::canonicalize_detailed(
-            args.url.as_str(),
-            &args.url,
+            url.as_str(),
+            &url,
             &crawlx_url::CanonicalizeOptions::default(),
         )?;
         if proposed.action_bearing {
             bail!("action-bearing URLs require native Session Actor admission");
         }
     }
-    let registry = crawlx_worker::protocol::ProtocolRegistry::from_operator_env()
-        .await?
-        .context("protocol capability unavailable: operator registry absent")?;
+    let registry = registry.context("protocol capability unavailable: operator registry absent")?;
     let tenant = args
         .tenant
+        .context("protocol tenant required")?
         .parse::<crawlx_core::TenantId>()
         .context("invalid tenant identity")?;
     let run = args
         .run
+        .context("protocol run required")?
         .parse::<crawlx_core::CrawlRunId>()
         .context("invalid run identity")?;
     let route: crawlx_core::protocol::ProtocolRouteV1 = serde_json::from_value(serde_json::json!({
-        "id":"operator-cli", "schemes":[args.url.scheme()], "origin":null, "pathPattern":null,
-        "schedulerMetadata":{}, "backend":"delegate", "delegateId":args.delegate,
+        "id":"operator-cli", "schemes":[url.scheme()], "origin":null, "pathPattern":null,
+        "schedulerMetadata":{}, "backend":"delegate", "delegateId":delegate,
         "requiredCapabilities":[], "maxBodyBytes":args.max_bytes, "maxElapsedMs":args.timeout_ms,
-        "policyRevision":args.policy_revision
+        "policyRevision":policy_revision
     }))?;
-    let crawl = crawlx_core::CreateCrawl::new(args.url.clone());
+    let crawl = crawlx_core::CreateCrawl::new(url.clone());
     let egress = crawlx_worker::config::EgressConfig {
         extra_ports: args.allow_ports,
         ..Default::default()
@@ -186,23 +204,14 @@ pub async fn acquire(args: ProtocolArgs, out: &mut dyn Write) -> anyhow::Result<
         crawlx_fetch::GovernorConfig::default(),
     ));
     let runtime = crawlx_worker::protocol::ProtocolRuntime::new(registry, &egress, &crawl, None, governor)?;
-    runtime.admit(std::slice::from_ref(&route), run, tenant, &args.url, true)?;
+    runtime.admit(std::slice::from_ref(&route), run, tenant, &url, true)?;
     let cancel = CancellationToken::new();
     let requests = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(64));
     let resource = runtime
-        .acquire(
-            &route,
-            &args.url,
-            run,
-            tenant,
-            &args.attempt,
-            true,
-            &requests,
-            &cancel,
-        )
+        .acquire(&route, &url, run, tenant, &attempt, true, &requests, &cancel)
         .await?;
-    let mut metadata = crawlx_worker::protocol::resource_metadata(&resource, &route, &args.url, run, tenant);
-    let base = resource.final_url.clone().unwrap_or(args.url);
+    let mut metadata = crawlx_worker::protocol::resource_metadata(&resource, &route, &url, run, tenant);
+    let base = resource.final_url.clone().unwrap_or(url);
     let mut context = crawlx_core::acquisition::ValidationContextV1::default();
     context.target_status = resource.target_status;
     context.transport_succeeded = true;

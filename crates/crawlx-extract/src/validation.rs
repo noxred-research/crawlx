@@ -41,8 +41,10 @@ pub fn compile_policy(policy: &ValidationPolicyV1) -> Result<Vec<Selector>, Acqu
 /// Classify response evidence with fixed precedence and stable signal identifiers.
 ///
 /// Truncation never proves selector absence. A contact CAPTCHA or an article discussing
-/// anti-bot software is not sufficient challenge evidence. Nonempty 304 requires an owned
-/// matching cache body; supplied HTML never gains invented target provenance.
+/// anti-bot software is not sufficient challenge evidence. HEAD never reads body/DOM evidence:
+/// configured body checks emit `body_expectations_unobserved_head`, not selector/text success.
+/// A GET 304 requires an owned matching cache body; HEAD 304 does not require or prove one.
+/// Supplied HTML never gains invented target provenance.
 #[must_use]
 pub fn validate_acquisition(input: &ValidationInput<'_>) -> ValidationOutcomeV1 {
     let ctx = input.context;
@@ -65,6 +67,9 @@ pub fn validate_acquisition(input: &ValidationInput<'_>) -> ValidationOutcomeV1 
         signal("body_truncated");
     }
     let status = ctx.target_status;
+    if ctx.method_head && status.is_none() {
+        signal("target_status_unavailable");
+    }
     let auth = matches!(status, Some(401 | 407));
     let limited = status == Some(429);
     let target_error = status.is_some_and(|s| s >= 400);
@@ -87,7 +92,7 @@ pub fn validate_acquisition(input: &ValidationInput<'_>) -> ValidationOutcomeV1 
     let mut expected_structure = false;
     let mut challenge_structure = false;
     let mut login_form = false;
-    if let Some(doc) = input.document {
+    if let Some(doc) = input.document.filter(|_| !ctx.method_head) {
         // Read text without a full-document String allocation. Script/style/template text is not content.
         for node in doc.tree.nodes() {
             if let Some(text) = node.value().as_text() {
@@ -124,7 +129,7 @@ pub fn validate_acquisition(input: &ValidationInput<'_>) -> ValidationOutcomeV1 
                 }
             }
         }
-    } else {
+    } else if !ctx.method_head {
         text_bytes = input
             .body
             .iter()
@@ -137,19 +142,24 @@ pub fn validate_acquisition(input: &ValidationInput<'_>) -> ValidationOutcomeV1 
     if challenge_structure {
         signal("challenge_structure_present");
     }
-    let missing_selector = match (&rules, input.document) {
-        (Ok(selectors), Some(doc)) => selectors
-            .iter()
-            .any(|selector| doc.select(selector).next().is_none()),
-        (Ok(selectors), None) => !selectors.is_empty(),
-        (Err(_), _) => false,
-    };
+    let missing_selector = !ctx.method_head
+        && match (&rules, input.document) {
+            (Ok(selectors), Some(doc)) => selectors
+                .iter()
+                .any(|selector| doc.select(selector).next().is_none()),
+            (Ok(selectors), None) => !selectors.is_empty(),
+            (Err(_), _) => false,
+        };
     if missing_selector {
         signal("required_selector_missing");
     }
-    let short_text = text_bytes < usize::try_from(ctx.policy.minimum_text_bytes).unwrap_or(usize::MAX);
+    let short_text =
+        !ctx.method_head && text_bytes < usize::try_from(ctx.policy.minimum_text_bytes).unwrap_or(usize::MAX);
     if short_text {
         signal("minimum_text_not_met");
+    }
+    if ctx.method_head && (ctx.policy.minimum_text_bytes > 0 || !ctx.policy.required_selectors.is_empty()) {
+        signal("body_expectations_unobserved_head");
     }
     let mime = input
         .content_type
@@ -172,11 +182,12 @@ pub fn validate_acquisition(input: &ValidationInput<'_>) -> ValidationOutcomeV1 
     }
     let bodyless =
         ctx.method_head || status == Some(204) || (status == Some(304) && ctx.cached_body_available);
-    let empty = input.body.iter().all(u8::is_ascii_whitespace);
+    let empty = !ctx.method_head && input.body.iter().all(u8::is_ascii_whitespace);
     if empty && !bodyless {
         signal("unexpected_empty_body");
     }
-    if status == Some(304) && !ctx.cached_body_available {
+    let missing_cached_body = status == Some(304) && !ctx.method_head && !ctx.cached_body_available;
+    if missing_cached_body {
         signal("matching_cached_body_unavailable");
     }
     let category = if ctx.policy_blocked {
@@ -195,7 +206,7 @@ pub fn validate_acquisition(input: &ValidationInput<'_>) -> ValidationOutcomeV1 
         Category::Challenge
     } else if target_error {
         Category::TargetError
-    } else if rules.is_err() || (status == Some(304) && !ctx.cached_body_available) {
+    } else if rules.is_err() || (ctx.method_head && status.is_none()) || missing_cached_body {
         Category::Indeterminate
     } else if wrong_mime {
         Category::ContentMismatch

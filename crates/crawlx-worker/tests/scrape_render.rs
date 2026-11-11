@@ -286,7 +286,10 @@ impl BrowserContext for OpsContext {
             other @ (PageOp::BeginVirtualRows(_)
             | PageOp::ReadVirtualRows
             | PageOp::VirtualRowsTarget
-            | PageOp::RestoreVirtualRows) => self.inner.page_op(other).await,
+            | PageOp::RestoreVirtualRows
+            | PageOp::Capture(_)
+            | PageOp::Download(_)
+            | PageOp::CaptureProjection) => self.inner.page_op(other).await,
         }
     }
 }
@@ -301,6 +304,14 @@ struct FakeRig {
 }
 
 async fn fake_rig(backend: Arc<dyn BrowserBackend>, profile: SafetyProfile) -> FakeRig {
+    Box::pin(fake_rig_with_recipe(backend, profile, None)).await
+}
+
+async fn fake_rig_with_recipe(
+    backend: Arc<dyn BrowserBackend>,
+    profile: SafetyProfile,
+    recipe: Option<crawlx_core::archive_behaviors::RecipeV1>,
+) -> FakeRig {
     let dir = tempfile::tempdir().unwrap();
     let stores = Stores::over_memory(Arc::new(MemoryStore::new()), dir.path())
         .await
@@ -309,6 +320,18 @@ async fn fake_rig(backend: Arc<dyn BrowserBackend>, profile: SafetyProfile) -> F
     // Scripted pages have no HTTP robots source. The owned fixture explicitly authorizes
     // the override instead of relying on a browser context without the run's guard.
     crawl.safety.respect_robots_txt = false;
+    if let Some(recipe) = &recipe {
+        let reference = crawlx_core::archive_behaviors::RecipeReferenceV1::for_recipe(recipe).unwrap();
+        let options = ScrapeOptions {
+            archive_behavior: Some(reference),
+            block_ads: false,
+            ..ScrapeOptions::default()
+        };
+        crawl.scrape = Some(crawlx_core::scrape::ScrapeJob::new(
+            crawlx_core::scrape::JobKind::Scrape,
+            options,
+        ));
+    }
     let mut record = authorization_fixture::verified_record(&crawl, stores.tenant);
     record.robots_override_acknowledged = true;
     let stores =
@@ -316,12 +339,25 @@ async fn fake_rig(backend: Arc<dyn BrowserBackend>, profile: SafetyProfile) -> F
     let run = create_run(&stores, &crawl).await;
     let cfg = WorkerConfig {
         artifacts_dir: dir.path().to_path_buf(),
+        archive_behaviors: recipe.map(|recipe| {
+            let digest = recipe.digest().unwrap();
+            let unsigned = serde_json::to_vec(&json!({
+                "schemaVersion": 1,
+                "recipes": [{
+                    "recipe": recipe, "digest": digest, "approvedTenants": [stores.tenant],
+                    "approvalId": "owned-fixture", "legalReviewApproved": true
+                }]
+            }))
+            .unwrap();
+            let signed = crawlx_worker::archive_behaviors::sign_registry_bytes(&unsigned, &[7; 32]).unwrap();
+            crawlx_worker::archive_behaviors::RecipeRegistry::from_bytes(&signed, &[7; 32]).unwrap()
+        }),
         ..WorkerConfig::default()
     };
     let authorization = authorization_fixture::admit(&stores, &run, &cfg).await;
     let cancel = CancellationToken::new();
     let rc = Arc::new(
-        RunContext::build(
+        Box::pin(RunContext::build(
             &run,
             &cfg,
             stores.clone(),
@@ -330,7 +366,7 @@ async fn fake_rig(backend: Arc<dyn BrowserBackend>, profile: SafetyProfile) -> F
             cancel.clone(),
             None,
             Some(authorization),
-        )
+        ))
         .await
         .unwrap(),
     );
@@ -359,7 +395,12 @@ fn lab_script() -> FakeScript {
 }
 
 async fn scripted(behavior: Behavior, profile: SafetyProfile) -> (FakeRig, Arc<FakeBackend>, Arc<Ops>) {
-    let fake = Arc::new(FakeBackend::new(lab_script()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(lab_script())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let ops = Ops::new(behavior);
     let backend = Arc::new(OpsBackend {
         fake: Arc::clone(&fake),
@@ -423,7 +464,12 @@ async fn admitted_handler_survives_replacement_redirect_and_settled_dom() {
     // Acquisition addresses the replacement URL, but the admitted response settles elsewhere.
     // Matching descriptors against the settled base would miss this route and select Skip.
     script.pages.insert(replacement.url.url.to_string(), page);
-    let fake = Arc::new(FakeBackend::new(script));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let backend = Arc::new(OpsBackend {
         fake: fake.clone(),
         ops: Ops::new(Behavior::default()),
@@ -710,7 +756,12 @@ async fn without_mobile_location_or_block_ads_nothing_is_emulated_or_blocked() {
 
 #[tokio::test]
 async fn a_context_that_cannot_emulate_makes_the_render_unavailable_and_still_releases() {
-    let fake = Arc::new(FakeBackend::new(lab_script()));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(lab_script())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let rig = fake_rig(
         Arc::clone(&fake) as Arc<dyn BrowserBackend>,
         SafetyProfile::ReadOnly,
@@ -1091,7 +1142,12 @@ async fn pages_of_other_origins_get_a_kernel_for_their_own_origin() {
                 ),
         )
         .page(FakePage::new("https://other.test/next").html("<html>next page</html>"));
-    let fake = Arc::new(FakeBackend::new(script));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(script)
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
     let backend = Arc::new(OpsBackend {
         fake: Arc::clone(&fake),
         ops: Ops::new(Behavior::default()),
@@ -1883,5 +1939,263 @@ async fn unsupported_virtual_rows_consumer_fails_without_http_or_script_fallback
         .lock()
         .iter()
         .any(|entry| entry == "page_op:evaluate_script"));
+    assert_released(&rig);
+}
+
+async fn recipe_fixture(
+    actions: Vec<ScrapeAction>,
+    profile: SafetyProfile,
+) -> (FakeRig, Arc<FakeBackend>, Arc<Ops>) {
+    use crawlx_core::archive_behaviors::{RecipeStepV1, RecipeV1};
+    let mut recipe = RecipeV1::new("owned-fixture".into(), 1);
+    recipe.initial_viewport = Some(crawlx_core::scrape::ScreenshotViewport {
+        width: 800,
+        height: 600,
+    });
+    recipe.steps = actions
+        .into_iter()
+        .enumerate()
+        .map(|(index, action)| RecipeStepV1::new(u32::try_from(index).unwrap(), action))
+        .collect();
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(lab_script())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
+    let ops = Ops::new(Behavior::default());
+    let backend = Arc::new(OpsBackend {
+        fake: Arc::clone(&fake),
+        ops: Arc::clone(&ops),
+    });
+    (
+        Box::pin(fake_rig_with_recipe(backend, profile, Some(recipe))).await,
+        fake,
+        ops,
+    )
+}
+
+async fn recipe_event(rig: &FakeRig) -> Value {
+    rig.stores
+        .events
+        .list_after(rig.rc.run, 0, 1_000)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|event| event.kind == "archive.recipe")
+        .unwrap()
+        .payload
+}
+
+#[tokio::test]
+async fn approved_recipe_uses_actor_native_input_with_private_values_and_exact_provenance() {
+    let (rig, fake, ops) = recipe_fixture(
+        vec![
+            ScrapeAction::Fill {
+                selector: "#q".into(),
+                text: "sk_fixture_recipe_secret_0123456789".into(),
+            },
+            ScrapeAction::Click {
+                selector: "#b1".into(),
+                all: false,
+            },
+        ],
+        SafetyProfile::TestEnvironment,
+    )
+    .await;
+    let options = &rig.rc.crawl.scrape.as_ref().unwrap().options;
+    render_lab(&rig, options).await.unwrap();
+    assert_eq!(
+        fake.context_handles().remove(0).performed(),
+        [ActionKind::Type, ActionKind::Click]
+    );
+    let rows = journal(&rig.stores, rig.rc.run).await;
+    assert!(rows
+        .iter()
+        .all(|(_, strategy, status)| strategy == EXPLICIT_ACTIONS_STRATEGY
+            && *status == ActionStatus::Succeeded));
+    let event = recipe_event(&rig).await;
+    assert_eq!(
+        event["recipeDigest"],
+        serde_json::to_value(options.archive_behavior.as_ref().unwrap().digest).unwrap()
+    );
+    assert_eq!(event["steps"][0]["disposition"], "completed");
+    assert_eq!(event["steps"][1]["disposition"], "completed");
+    assert_eq!(event["initialEmulationPhase"], "before_initial_navigation");
+    assert_eq!(ops.emulations.lock()[0].viewport, Some((800, 600)));
+    let trail = format!("{:?}", rig.stores.journal.list(rig.rc.run, None).await.unwrap());
+    assert!(!trail.contains("sk_fixture_recipe_secret_0123456789"));
+    assert!(!event.to_string().contains("sk_fixture_recipe_secret_0123456789"));
+    assert!(!event.to_string().contains("#q"));
+    assert_released(&rig);
+}
+
+#[tokio::test]
+async fn approved_recipe_stops_at_first_failed_step_and_records_remaining_steps_unrun() {
+    let (rig, fake, _) = recipe_fixture(
+        vec![
+            ScrapeAction::Wait {
+                milliseconds: Some(0),
+                selector: None,
+                state: SelectorState::Attached,
+            },
+            ScrapeAction::Click {
+                selector: "#absent".into(),
+                all: false,
+            },
+            ScrapeAction::Fill {
+                selector: "#q".into(),
+                text: "must-not-run".into(),
+            },
+        ],
+        SafetyProfile::TestEnvironment,
+    )
+    .await;
+    let error = render_lab(&rig, &rig.rc.crawl.scrape.as_ref().unwrap().options)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RenderError::Action { index: 1, .. }));
+    assert!(fake.context_handles().remove(0).performed().is_empty());
+    let event = recipe_event(&rig).await;
+    assert_eq!(event["steps"][0]["disposition"], "completed");
+    assert_eq!(event["steps"][1]["disposition"], "failed");
+    assert_eq!(event["steps"][2]["disposition"], "not_run");
+    assert_released(&rig);
+}
+
+#[tokio::test]
+async fn approved_recipe_cancel_stops_native_input_and_keeps_value_free_step_dispositions() {
+    let (rig, fake, ops) = recipe_fixture(
+        vec![
+            ScrapeAction::Wait {
+                milliseconds: None,
+                selector: Some("#hidden".into()),
+                state: SelectorState::Visible,
+            },
+            ScrapeAction::Fill {
+                selector: "#q".into(),
+                text: "must-not-run".into(),
+            },
+        ],
+        SafetyProfile::TestEnvironment,
+    )
+    .await;
+    let cancel = rig.cancel.clone();
+    let seen = Arc::clone(&ops);
+    let cancellation = tokio::spawn(async move {
+        for _ in 0..1_000 {
+            if !seen.wait_states.lock().is_empty() {
+                cancel.cancel();
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("recipe wait did not reach the Session Actor");
+    });
+    let error = render_lab(&rig, &rig.rc.crawl.scrape.as_ref().unwrap().options)
+        .await
+        .unwrap_err();
+    cancellation.await.unwrap();
+    assert!(matches!(error, RenderError::Cancelled));
+    assert_eq!(fake.open_contexts(), 0);
+    let event = recipe_event(&rig).await;
+    assert_eq!(event["steps"][0]["disposition"], "cancelled");
+    assert_eq!(event["steps"][1]["disposition"], "not_run");
+    assert!(!event.to_string().contains("must-not-run"));
+    assert_released(&rig);
+}
+
+#[tokio::test]
+async fn tenant_cannot_substitute_recipe_pin_before_browser_allocation() {
+    let (rig, fake, _) = recipe_fixture(Vec::new(), SafetyProfile::ReadOnly).await;
+    let mut options = rig.rc.crawl.scrape.as_ref().unwrap().options.clone();
+    options.archive_behavior.as_mut().unwrap().digest = crawlx_core::hash::Digest::of("fixture", b"tampered");
+    assert!(matches!(
+        render_lab(&rig, &options).await,
+        Err(RenderError::Unavailable(_))
+    ));
+    assert_eq!(fake.open_contexts(), 0);
+    assert!(rig
+        .stores
+        .runs
+        .list_sessions(rig.rc.run)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn approved_recipe_does_not_bypass_safety_kernel() {
+    let (rig, fake, _) = recipe_fixture(
+        vec![
+            ScrapeAction::Click {
+                selector: "#danger".into(),
+                all: false,
+            },
+            ScrapeAction::Fill {
+                selector: "#q".into(),
+                text: "must-not-run".into(),
+            },
+        ],
+        SafetyProfile::ReadOnly,
+    )
+    .await;
+    assert!(matches!(
+        render_lab(&rig, &rig.rc.crawl.scrape.as_ref().unwrap().options).await,
+        Err(RenderError::Action { index: 0, .. })
+    ));
+    assert!(fake.context_handles().remove(0).performed().is_empty());
+    let event = recipe_event(&rig).await;
+    assert_eq!(event["steps"][0]["disposition"], "failed");
+    assert_eq!(event["steps"][1]["disposition"], "not_run");
+    assert_released(&rig);
+}
+
+#[tokio::test]
+async fn recorded_recipe_preserves_disposition_of_initial_source_steps_and_native_input() {
+    use crawlx_core::archive_behaviors::{RecipeSourceV1, RecipeStepV1, RecipeV1};
+    let mut recipe = RecipeV1::new("owned-source".into(), 1);
+    let mut source = RecipeSourceV1::new(crawlx_core::hash::Digest::of("fixture-source", b"owned"));
+    source.step_count = 3;
+    source.initial_viewport_index = Some(0);
+    source.initial_navigation_index = Some(1);
+    recipe.source = Some(source);
+    recipe.entry_url = Some("https://example.test/".parse().unwrap());
+    recipe.initial_viewport = Some(crawlx_core::scrape::ScreenshotViewport {
+        width: 800,
+        height: 600,
+    });
+    recipe.steps.push(RecipeStepV1::new(
+        2,
+        ScrapeAction::Fill {
+            selector: "#q".into(),
+            text: "sk_fixture_source_secret_0123456789".into(),
+        },
+    ));
+    let fake = Arc::new(
+        FakeBackend::builder()
+            .script(lab_script())
+            .clock(Arc::new(crawlx_core::SystemClock))
+            .build(),
+    );
+    let backend = Arc::new(OpsBackend {
+        fake,
+        ops: Ops::new(Behavior::default()),
+    });
+    let rig = fake_rig_with_recipe(backend, SafetyProfile::TestEnvironment, Some(recipe)).await;
+    render_lab(&rig, &rig.rc.crawl.scrape.as_ref().unwrap().options)
+        .await
+        .unwrap();
+    let event = recipe_event(&rig).await;
+    let steps = event["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 3);
+    for (index, step) in steps.iter().enumerate() {
+        assert_eq!(step["sourceIndex"], u32::try_from(index).unwrap());
+        assert_eq!(step["disposition"], "completed");
+    }
+    assert_eq!(steps[0]["actualPhase"], "before_initial_navigation");
+    assert_eq!(steps[1]["actualPhase"], "initial_navigation");
+    assert_eq!(steps[2]["actualPhase"], "post_navigation");
+    assert!(!event.to_string().contains("sk_fixture_source_secret_0123456789"));
     assert_released(&rig);
 }

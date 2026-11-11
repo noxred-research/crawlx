@@ -29,7 +29,7 @@ use crawlx_core::{CrawlRunId, PrincipalId, SessionId, StoreError};
 use sqlx::postgres::PgRow;
 
 /// Column list for `crawl_sessions` rows read by [`session_from_row`] (alias `s`).
-pub(crate) const SESSION_COLS: &str = "s.session_id, s.run_id, s.role, s.run_index, s.schedule_slot, s.status, \
+pub(crate) const SESSION_COLS: &str = "s.session_id, s.run_id, s.session_kind, s.role, s.run_index, s.schedule_slot, s.status, \
     s.browser_build, s.cdp_revision, s.browser_user_agent, s.browser_pinned, s.launch_profile, s.console_capture, s.action_seq";
 
 pub(crate) fn session_from_row(r: &PgRow) -> Result<CrawlSession, StoreError> {
@@ -50,6 +50,7 @@ pub(crate) fn session_from_row(r: &PgRow) -> Result<CrawlSession, StoreError> {
     Ok(CrawlSession {
         id: SessionId(get(r, "session_id")?),
         run: CrawlRunId(get(r, "run_id")?),
+        kind: parse_label(&get::<String>(r, "session_kind")?)?,
         role: PrincipalId(get(r, "role")?),
         run_index: conv(get::<i32>(r, "run_index")?, "run_index")?,
         schedule_slot: conv(get::<i32>(r, "schedule_slot")?, "schedule_slot")?,

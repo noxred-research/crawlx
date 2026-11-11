@@ -7,17 +7,16 @@ use crawlx_core::archive_catalog::{ArchiveExportV1, ArchiveRecordV1};
 use crawlx_core::orchestration::QueuedRequestV1;
 use crawlx_core::repo::{CrawlRun, PageRecord};
 use crawlx_core::{ArtifactRef, Clock};
-use crawlx_storage::archive::{warc, ArchiveError};
+use crawlx_storage::archive::{staging::StagedFile, warc, ArchiveError};
 use crawlx_telemetry::redact::Redactor;
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::io::Cursor;
-use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct ResourceInput<'a> {
     pub ordinal: u64,
     pub source: Option<&'a ArtifactRef>,
+    pub capture: Option<&'a crawlx_core::browser_capture::CaptureArtifact>,
     pub target: &'a str,
     pub mime: &'a str,
     pub facts: ArchiveCaptureFactsV1,
@@ -34,7 +33,6 @@ pub(super) struct Recorder<'a> {
     pub stores: &'a Stores,
     pub run: &'a CrawlRun,
     pub export: &'a ArchiveExportV1,
-    pub root: &'a Path,
     pub clock: &'a dyn Clock,
     pub cancel: &'a CancellationToken,
     pub committed_bytes: u64,
@@ -67,10 +65,10 @@ impl Recorder<'_> {
                 "approved_retained_representation_unavailable",
             ));
         };
-        let body = match self
+        let source_custody = match self
             .stores
             .artifacts
-            .read_archive_content(
+            .archive_custody(
                 self.run.tenant,
                 self.run.id,
                 source,
@@ -78,6 +76,56 @@ impl Recorder<'_> {
             )
             .await
         {
+            Ok(custody) => custody,
+            Err(crawlx_core::StoreError::NotFound { .. } | crawlx_core::StoreError::RetentionDenied(_)) => {
+                return Ok(RecordOutcome::Omitted(
+                    "retained_body_missing_expired_or_disallowed",
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let binary = super::binary::approved(self.run, &input);
+        if source_custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive && !binary {
+            return Ok(RecordOutcome::Omitted(
+                "sensitive_capture_not_approved_for_archive",
+            ));
+        }
+        if binary && source_custody.sensitivity != crawlx_core::repo::Sensitivity::Sensitive {
+            return Ok(RecordOutcome::Omitted("screenshot_sensitive_custody_required"));
+        }
+        self.stores
+            .archives
+            .narrow_custody(
+                self.run.tenant,
+                self.export.id,
+                self.export.fence,
+                &source_custody,
+                self.clock.now(),
+            )
+            .await?;
+        let read = if binary {
+            self.stores
+                .artifacts
+                .read_archive_sensitive(
+                    self.run.tenant,
+                    self.run.id,
+                    source,
+                    &source_custody,
+                    self.export.config.max_record_bytes,
+                )
+                .await
+        } else {
+            self.stores
+                .artifacts
+                .read_archive_content(
+                    self.run.tenant,
+                    self.run.id,
+                    source,
+                    self.export.config.max_record_bytes,
+                )
+                .await
+        };
+        let body = match read {
             Ok(body) => body,
             Err(crawlx_core::StoreError::NotFound { .. } | crawlx_core::StoreError::RetentionDenied(_)) => {
                 return Ok(RecordOutcome::Omitted(
@@ -86,8 +134,23 @@ impl Recorder<'_> {
             }
             Err(error) => return Err(error.into()),
         };
+        let body = if binary {
+            let capture = input
+                .capture
+                .ok_or_else(|| WorkerError::Config("approved screenshot descriptor missing".into()))?;
+            let expected = (capture.bytes, capture.width, capture.height);
+            tokio::task::spawn_blocking(move || {
+                super::binary::validate_png(&body, expected.0, expected.1, expected.2)?;
+                Ok::<_, ArchiveError>(body)
+            })
+            .await
+            .map_err(joined)?
+            .map_err(codec)?
+        } else {
+            body
+        };
         // Retention custody alone is insufficient: fail closed before any chunk spool.
-        if !std::str::from_utf8(&body).is_ok_and(|text| Redactor::new().is_clean_text(text)) {
+        if !binary && !std::str::from_utf8(&body).is_ok_and(|text| Redactor::new().is_clean_text(text)) {
             return Ok(RecordOutcome::Omitted(
                 "body_privacy_or_binary_capability_unavailable",
             ));
@@ -95,7 +158,7 @@ impl Recorder<'_> {
         if input.mime.len() > 256 || input.mime.chars().any(char::is_control) {
             return Ok(RecordOutcome::Omitted("retained_media_type_unavailable"));
         }
-        if input.facts.body_state == "complete" {
+        if !binary && input.facts.body_state == "complete" {
             let expected = input
                 .history_source
                 .and_then(|(_, page)| page.metadata.pointer("/acquisition/decodedBytes"))
@@ -104,8 +167,27 @@ impl Recorder<'_> {
                 input.facts.body_state = "unknown".into();
             }
         }
-        let shard_path = self.root.join("pending.warc.gz");
-        let header = warc::RecordHeader {
+        let payload_key = input
+            .history_source
+            .map(|(request, page)| super::payload::key(self.run, request, page, &input.facts, input.mime))
+            .transpose()?
+            .flatten();
+        let baseline = if let Some(key) = &payload_key {
+            self.stores
+                .archives
+                .payload_source(
+                    self.run.tenant,
+                    self.export.id,
+                    key,
+                    &warc::digest(&body),
+                    self.clock.now(),
+                )
+                .await?
+                .filter(|source| source.export != self.export.id || source.ordinal < input.ordinal)
+        } else {
+            None
+        };
+        let mut header = warc::RecordHeader {
             payload_offset: 0,
             fields: BTreeMap::from([
                 ("WARC-Type".into(), "resource".into()),
@@ -119,21 +201,46 @@ impl Recorder<'_> {
                 ),
             ]),
         };
-        let path = shard_path.clone();
+        if let Some(source) = &baseline {
+            // wire-compat: the WARC 1.1 identical-payload profile resolves the stored source.
+            header.fields.insert("WARC-Type".into(), "revisit".into());
+            header.fields.insert(
+                "WARC-Profile".into(),
+                "http://netpreserve.org/warc/1.1/revisit/identical-payload-digest".into(),
+            );
+            header
+                .fields
+                .insert("WARC-Refers-To".into(), source.record_id.clone());
+            header
+                .fields
+                .insert("WARC-Refers-To-Target-URI".into(), source.target.clone());
+            header
+                .fields
+                .insert("WARC-Refers-To-Date".into(), warc::date(source.facts.captured_at));
+            header
+                .fields
+                .insert("WARC-Payload-Digest".into(), source.payload_digest.clone());
+        }
+        let body = if baseline.is_some() { Vec::new() } else { body };
         let mut codec_limits = limits(self.export);
         codec_limits.total_bytes = self.export.config.max_record_bytes.saturating_add(131_072);
         let stop = self.cancel.clone();
         // Move the sole body allocation into the writer. No duplicate full body buffer.
-        let summary = tokio::task::spawn_blocking(move || {
+        let (summary, shard) = tokio::task::spawn_blocking(move || {
             if stop.is_cancelled() {
                 return Err(ArchiveError::Invalid("archive cancelled"));
             }
             let length = u64::try_from(body.len()).map_err(|_| ArchiveError::Limit("record bytes"))?;
-            let mut output = File::create(path)?;
-            let summary =
-                warc::write_record(&mut output, &header, &mut Cursor::new(body), length, codec_limits)?;
-            output.sync_all()?;
-            Ok::<_, ArchiveError>(summary)
+            let mut output = StagedFile::new()?;
+            let summary = warc::write_record(
+                output.file_mut(),
+                &header,
+                &mut Cursor::new(body),
+                length,
+                codec_limits,
+            )?;
+            output.file().sync_all()?;
+            Ok::<_, ArchiveError>((summary, output))
         })
         .await
         .map_err(joined)?
@@ -146,17 +253,17 @@ impl Recorder<'_> {
             .checked_add(summary.length)
             .is_none_or(|bytes| bytes > self.export.config.max_bytes.saturating_sub(reserve))
         {
-            tokio::fs::remove_file(&shard_path).await?;
             return Ok(RecordOutcome::Omitted("remaining_encoded_archive_byte_budget"));
         }
+        crawlx_storage::chaos::pause("archive.before_shard_commit").await;
         let artifact = tokio::select! {
             biased;
             () = self.cancel.cancelled() => return Err(stopped()),
-            result = self.stores.artifacts.put_archive_file(self.run.id, "application/warc", &shard_path,
-                self.export.config.max_record_bytes.saturating_add(131_072)) => result?,
+            result = self.stores.artifacts.put_archive_file_with_custody(self.run.id, "application/warc", shard.path(),
+                self.export.config.max_record_bytes.saturating_add(131_072), &source_custody) => result?,
         };
         crawlx_storage::chaos::pause("archive.after_shard_commit").await;
-        let record = ArchiveRecordV1::resource(
+        let mut record = ArchiveRecordV1::resource(
             self.export.id,
             input.ordinal,
             summary.id,
@@ -168,6 +275,14 @@ impl Recorder<'_> {
             input.facts,
             input.mime.into(),
         );
+        record.custody = source_custody;
+        if source_custody.sensitivity == crawlx_core::repo::Sensitivity::Sensitive {
+            record.source_artifact = Some(source.clone());
+        }
+        record.payload_key = payload_key;
+        record.dependency = baseline.map(|source| {
+            crawlx_core::archive_catalog::ArchiveDependencyV1::new(source.export, source.ordinal)
+        });
         let history = input
             .history_source
             .map(|(request, page)| super::history::captured_history(self.run, request, page, &record))
@@ -187,7 +302,6 @@ impl Recorder<'_> {
             .committed_bytes
             .checked_add(record.length)
             .ok_or_else(|| WorkerError::Config("archive byte counter overflow".into()))?;
-        tokio::fs::remove_file(shard_path).await?;
         Ok(RecordOutcome::Committed)
     }
 }

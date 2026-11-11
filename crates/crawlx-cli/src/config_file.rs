@@ -337,10 +337,10 @@ mod tests {
         let ConfigLayer::Flags(args) = load(&p).unwrap() else {
             panic!("flags")
         };
-        assert_eq!(args.rate_limit, Some(50));
-        assert_eq!(args.crawl_scope, ["a", "b"]);
-        assert!(args.no_redirects);
-        assert_eq!(args.retries, None);
+        assert_eq!(args.url.rate_limit, Some(50));
+        assert_eq!(args.url.crawl_scope, ["a", "b"]);
+        assert!(args.url.no_redirects);
+        assert_eq!(args.url.retries, None);
         std::fs::write(&p, "rate-limitt: 50\n").unwrap();
         let err = load(&p).unwrap_err().to_string();
         assert!(err.contains("unknown key `rate-limitt`"), "{err}");

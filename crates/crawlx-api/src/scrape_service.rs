@@ -12,6 +12,7 @@ mod document;
 mod options;
 
 pub use document::{compat_document, credits_for, scrape_id};
+pub(crate) use options::validate_native_extraction;
 pub use options::{parse_scrape_options, parse_scrape_options_in, ParsedScrape};
 
 use crate::auth::Principal;
@@ -34,6 +35,7 @@ use crawlx_url::{CanonicalizeOptions, Canonicalizer};
 use crawlx_worker::scrape::cache;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::time::Duration;
 use tracing::Instrument as _;
 use url::Url;
@@ -720,7 +722,19 @@ async fn stored_scrape(
 /// SCRAPE_NO_CACHED_DATA` / `SCRAPE_LOCKDOWN_CACHE_MISS` for `minAge` / `lockdown` without a
 /// stored scrape; everything [`create_scrape_run`] and [`wait_for_run`] answer; the compat API
 /// failure of the page ([`failure_error`]) when the run produced none.
-pub(crate) async fn scrape_url(
+pub(crate) fn scrape_url<'a>(
+    state: &'a AppState,
+    principal: &'a Principal,
+    url: &'a Url,
+    parsed: &'a ParsedScrape,
+    base: &'a str,
+    warnings: &'a mut Vec<Warning>,
+) -> impl Future<Output = ApiResult<Scraped>> + Send + 'a {
+    // Keep the retained-cache and run-admission state machines out of every route's poll frame.
+    Box::pin(scrape_url_inner(state, principal, url, parsed, base, warnings))
+}
+
+async fn scrape_url_inner(
     state: &AppState,
     principal: &Principal,
     url: &Url,
@@ -857,4 +871,25 @@ pub async fn map_site(
     options: &Value,
 ) -> Result<Vec<MapEntry>, HttpError> {
     crate::routes::compat_map::map_links(state, &service_principal(tenant), url, options).await
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn scrape_crawl_omitted_strategy_defaults_to_breadth_first() {
+        let parsed = parse_scrape_options(&serde_json::Map::new(), "").unwrap();
+        for kind in [JobKind::Scrape, JobKind::Batch, JobKind::Crawl, JobKind::Map] {
+            let crawl =
+                scrape_crawl("https://fixture.example.test/".parse().unwrap(), kind, &parsed, 1).unwrap();
+            assert_eq!(
+                crawl.scope.strategy,
+                crawlx_core::config::CrawlStrategy::BreadthFirst
+            );
+            assert_eq!(crawl.scrape.as_ref().unwrap().kind, kind);
+        }
+    }
 }
