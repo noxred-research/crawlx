@@ -7,6 +7,9 @@
 
 use url::Url;
 
+/// Bounded discovery-cost queue policy.
+pub mod cost;
+
 /// Path segments that usually lead to more attack surface than an average page.
 const SURFACE_WORDS: [&str; 35] = [
     "admin",

@@ -796,7 +796,7 @@ fn apply_options(
             "flow" => flow(value, recipes, config, report, &path),
             "recipes" => recipe_references(value, config),
             "profile" => profile(value, profiles, context, config),
-            "proxy" => proxy(value, config),
+            "proxy" => proxy(value, config, report, &path),
             "lifecycle" => lifecycle_projection(value, lifecycle),
             "precedence" => if value.as_str() == Some("global-then-seed") {
                 Ok("CreateCrawl")
@@ -1506,7 +1506,19 @@ fn browser_queue(config: &mut CreateCrawl) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn proxy(value: &Value, config: &mut CreateCrawl) -> Result<&'static str, &'static str> {
+/// The `proxy` option: a bounded named registry, an explicit default and an ordered rule list.
+///
+/// Every rule is judged on its own row (`<option>.rules[i]`): a well-formed, safe rule becomes a
+/// native `fetch.proxyRules` entry in source order; a malformed one is `rejected`; one that asks
+/// for something the native plane never grants (a direct or alternate fallback, an unverified
+/// proxy transport) is `restricted`. Nothing is applied unless every rule converts, so a
+/// restricted rule can never leave a partial, weaker routing table behind.
+fn proxy(
+    value: &Value,
+    config: &mut CreateCrawl,
+    report: &mut Report,
+    path: &str,
+) -> Result<&'static str, &'static str> {
     let fields = object(value, &["named", "default", "rules"])?;
     let named = fields
         .get("named")
@@ -1518,12 +1530,13 @@ fn proxy(value: &Value, config: &mut CreateCrawl) -> Result<&'static str, &'stat
         .and_then(Value::as_str)
         .filter(|name| safe_id(name))
         .ok_or("explicit named proxy default required; no direct fallback")?;
-    if fields
-        .get("rules")
-        .is_some_and(|rules| rules.as_array().is_none_or(|rules| !rules.is_empty()))
-    {
-        return Err("ordered per-host proxy selection has no exact native shared fetch mapping");
-    }
+    let rules: &[Value] = match fields.get("rules") {
+        None => &[],
+        Some(rules) => rules
+            .as_array()
+            .filter(|rules| rules.len() <= crawlx_core::transport_policy::MAX_PROXY_RULES)
+            .ok_or("proxy rules are a bounded array")?,
+    };
     // Every named entry is checked, including unused entries; none may hide credentials.
     for (name, value) in named {
         let url = value
@@ -1545,8 +1558,94 @@ fn proxy(value: &Value, config: &mut CreateCrawl) -> Result<&'static str, &'stat
         .get(default)
         .and_then(Value::as_str)
         .ok_or("named proxy default absent")?;
-    config.fetch.proxy = Some(Url::parse(url).map_err(|_| "invalid proxy")?);
-    Ok("CreateCrawl.fetch.proxy; no direct fallback")
+    let default = Url::parse(url).map_err(|_| "invalid proxy")?;
+    let mut converted = Vec::with_capacity(rules.len());
+    let mut refused = false;
+    for (index, rule) in rules.iter().enumerate() {
+        match proxy_rule(rule, index, named) {
+            Ok(rule) => converted.push(rule),
+            Err((state, reason)) => {
+                report.add(format!("{path}.rules[{index}]"), "proxy", state, None, reason);
+                refused = true;
+            }
+        }
+    }
+    if refused {
+        return Err("a proxy rule is restricted or rejected; no routing table is applied");
+    }
+    // Native validation (names, host patterns, proxy shape) on a plain static probe, so the
+    // emitted rules are exactly what a normalized native configuration holds.
+    let mut probe = CreateCrawl::new(config.seed_url.clone());
+    probe.mode = CrawlMode::Static;
+    probe.dynamic.enabled = false;
+    probe.fetch.proxy_rules = converted;
+    probe
+        .normalize()
+        .map_err(|_| "proxy rules do not satisfy the native rule bounds")?;
+    let translated = !probe.fetch.proxy_rules.is_empty();
+    config.fetch.proxy = Some(default);
+    config.fetch.proxy_rules = probe.fetch.proxy_rules;
+    Ok(if translated {
+        "CreateCrawl.fetch.proxyRules and fetch.proxy; URL plane, first matching rule, no direct fallback"
+    } else {
+        "CreateCrawl.fetch.proxy; no direct fallback"
+    })
+}
+
+/// One neutral proxy rule: `{"name"?, "hosts": [pattern, ...], "proxy": <named proxy>,
+/// "fallback"?: "deny", "insecure"?: false}`. `Err` is the row state and its reason.
+fn proxy_rule(
+    value: &Value,
+    index: usize,
+    named: &Map<String, Value>,
+) -> Result<crawlx_core::transport_policy::ProxyRule, (&'static str, &'static str)> {
+    let rejected = |reason| ("rejected", reason);
+    let fields = object(value, &["name", "hosts", "proxy", "fallback", "insecure"]).map_err(rejected)?;
+    let hosts: Vec<String> = fields
+        .get("hosts")
+        .and_then(Value::as_array)
+        .and_then(|hosts| {
+            hosts
+                .iter()
+                .map(|host| host.as_str().map(str::to_owned))
+                .collect()
+        })
+        .ok_or(rejected("a rule needs a bounded list of host patterns"))?;
+    let target = fields
+        .get("proxy")
+        .and_then(Value::as_str)
+        .and_then(|name| named.get(name))
+        .and_then(Value::as_str)
+        .and_then(|text| Url::parse(text).ok())
+        .ok_or(rejected("a rule names a proxy of the registry"))?;
+    let name = match fields.get("name") {
+        None => format!("rule-{}", index + 1),
+        Some(name) => name
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(rejected("a rule name is text"))?,
+    };
+    match fields.get("fallback") {
+        None => {}
+        Some(fallback) if fallback.as_str() == Some("deny") => {}
+        Some(_) => {
+            return Err((
+                "restricted",
+                "a fallback to a direct or alternate route is never admitted; a selected rule fails closed",
+            ))
+        }
+    }
+    match fields.get("insecure") {
+        None | Some(Value::Bool(false)) => {}
+        Some(Value::Bool(true)) => {
+            return Err((
+                "restricted",
+                "an unverified proxy transport or skipped host-key check is restricted; it needs its own authorization",
+            ))
+        }
+        Some(_) => return Err(rejected("insecure is a boolean")),
+    }
+    Ok(crawlx_core::transport_policy::ProxyRule::new(name, hosts, target))
 }
 
 fn profile(
@@ -2115,6 +2214,121 @@ mod tests {
             .safety
             .authorization_record_ref
             .is_some());
+    }
+
+    fn proxy_options(rules: Value) -> Value {
+        json!({"proxy":{
+            "named":{"eu":"http://eu.proxy.test:3128","us":"socks5://us.proxy.test:1080"},
+            "default":"eu","rules":rules}})
+    }
+
+    fn states(converted: &Converted, needle: &str) -> Vec<(&'static str, &'static str)> {
+        converted
+            .report
+            .dispositions
+            .iter()
+            .filter(|row| row.path.contains(needle))
+            .map(|row| (row.state, row.inventory))
+            .collect()
+    }
+
+    #[test]
+    fn ordered_proxy_rules_convert_in_source_order_and_select_stably() {
+        let mut value = fixture("browser-yaml", "1.15.2");
+        value["options"] = proxy_options(json!([
+            {"name":"shop","hosts":["Shop.example.test","*.cdn.example.test"],"proxy":"us"},
+            {"hosts":["*.example.test"],"proxy":"eu","fallback":"deny"}
+        ]));
+        let converted = inspect_value(&value);
+        assert!(
+            converted.report.convertible,
+            "{:?}",
+            states(&converted, "options")
+        );
+        let config = &converted.native_proposals[0];
+        let rules = &config.fetch.proxy_rules;
+        assert_eq!(
+            rules.iter().map(|rule| rule.name.as_str()).collect::<Vec<_>>(),
+            ["shop", "rule-2"]
+        );
+        assert_eq!(rules[0].hosts, ["shop.example.test", "*.cdn.example.test"]);
+        assert_eq!(rules[0].proxy.as_str(), "socks5://us.proxy.test:1080");
+        assert_eq!(
+            config.fetch.proxy.as_ref().map(Url::as_str),
+            Some("http://eu.proxy.test:3128/")
+        );
+        // The first matching rule wins however often it is asked; unmatched hosts take the default.
+        let pick = |host| {
+            crawlx_core::transport_policy::select_proxy_rule(rules, host).map(|rule| rule.name.as_str())
+        };
+        for _ in 0..4 {
+            assert_eq!(pick("shop.example.test"), Some("shop"));
+            assert_eq!(pick("a.cdn.example.test"), Some("shop"));
+            assert_eq!(pick("www.example.test"), Some("rule-2"));
+            assert_eq!(pick("elsewhere.test"), None);
+        }
+        let mut native = config.clone();
+        native.normalize().unwrap();
+        assert_eq!(native.fetch.proxy_rules, *rules);
+        // The same manifest converts to the same table.
+        assert_eq!(
+            inspect_value(&value).native_proposals[0].fetch.proxy_rules,
+            *rules
+        );
+    }
+
+    #[test]
+    fn unsafe_proxy_rules_are_restricted_and_leave_no_partial_table() {
+        let unsafe_rules = [
+            json!({"name":"loose","hosts":["a.test"],"proxy":"us","fallback":"direct"}),
+            json!({"name":"skip","hosts":["a.test"],"proxy":"us","insecure":true}),
+        ];
+        for unsafe_rule in unsafe_rules {
+            let mut value = fixture("browser-yaml", "1.15.2");
+            value["options"] = proxy_options(json!([
+                {"name":"fine","hosts":["b.test"],"proxy":"eu"},
+                unsafe_rule
+            ]));
+            let converted = inspect(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(!converted.report.convertible);
+            let rows = states(&converted, "rules[");
+            // One restricted row per seed proposal, all at the offending rule, none for `fine`.
+            assert_eq!(rows.len(), converted.native_proposals.len(), "{rows:?}");
+            assert!(
+                rows.iter().all(|row| *row == ("restricted", "BTR-25")),
+                "{rows:?}"
+            );
+            for proposal in &converted.native_proposals {
+                assert!(proposal.fetch.proxy_rules.is_empty());
+                assert!(proposal.fetch.proxy.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_proxy_rules_are_rejected_not_restricted() {
+        for rule in [
+            json!({"hosts":["a.test"],"proxy":"missing"}),
+            json!({"hosts":[],"proxy":"eu"}),
+            json!({"hosts":["a.test"],"proxy":"eu","unknown":1}),
+            json!({"hosts":["not a host"],"proxy":"eu"}),
+        ] {
+            let mut value = fixture("browser-yaml", "1.15.2");
+            value["options"] = proxy_options(json!([rule]));
+            let converted = inspect(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(!converted.report.convertible);
+            assert!(
+                states(&converted, "options")
+                    .iter()
+                    .all(|(state, _)| *state == "rejected"),
+                "{:?}",
+                states(&converted, "options")
+            );
+            assert!(converted
+                .native_proposals
+                .iter()
+                .all(|p| p.fetch.proxy_rules.is_empty()));
+        }
     }
 
     #[test]

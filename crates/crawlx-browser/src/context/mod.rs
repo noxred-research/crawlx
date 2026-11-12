@@ -26,6 +26,7 @@ mod retained_capture;
 mod selector;
 pub mod state;
 mod storage;
+mod subresources;
 mod synthetic;
 mod xhr;
 
@@ -71,6 +72,9 @@ pub(crate) struct Ctl {
     pub owns_context: bool,
     pub notify: watch::Sender<u64>,
     downloads: Mutex<std::collections::BTreeMap<String, download::Intercept>>,
+    /// Block rules are installed, so every session pauses every request for the rule check
+    /// (`guard::fetch_patterns`).
+    rules_fetch: std::sync::atomic::AtomicBool,
 }
 
 /// Add `delta` live sessions to `crawlx.browser.sessions` and
@@ -207,6 +211,7 @@ impl CdpContext {
             browser_context_id: browser_context_id.clone(),
             notify,
             downloads: Mutex::new(std::collections::BTreeMap::new()),
+            rules_fetch: std::sync::atomic::AtomicBool::new(false),
         });
         let state = Arc::new(Mutex::new(
             State::new(
@@ -216,7 +221,8 @@ impl CdpContext {
             )
             .with_controls(ctl.config.request_controls.clone()),
         ));
-        state.lock().capture_sources = ctl.config.browser_capture_sink.is_some();
+        state.lock().capture_sources =
+            ctl.config.browser_capture_sink.is_some() || ctl.config.measure_subresources;
         state.lock().capture_full = ctl.config.response_bodies == crawlx_core::config::ResponseBodies::Full;
         state.lock().capture_text =
             ctl.config.response_bodies == crawlx_core::config::ResponseBodies::TextCapped;
@@ -1141,7 +1147,9 @@ async fn pump(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, mut rx: broadcast::Receiv
             // events of other contexts, which their own pumps answer. Answered off the pump: the
             // guard may need the network (a `robots.txt` fetch) and the pump must keep folding
             // events meanwhile
-            if ctl.config.navigation_guard.is_some() {
+            if ctl.config.navigation_guard.is_some()
+                || ctl.rules_fetch.load(std::sync::atomic::Ordering::Acquire)
+            {
                 tokio::spawn(crawlx_core::custody::inherit(guard::answer_paused(
                     Arc::clone(&ctl),
                     Arc::clone(&state),

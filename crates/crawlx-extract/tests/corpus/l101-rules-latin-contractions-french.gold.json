@@ -1,0 +1,33 @@
+{
+  "id": "l101-rules-latin-contractions-french",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "l'eau|est|claire|l'école|ouvre",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 5
+    },
+    {
+      "label": "token",
+      "start": 6,
+      "end": 9
+    },
+    {
+      "label": "token",
+      "start": 10,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 31
+    }
+  ]
+}

@@ -2,7 +2,8 @@
 //!
 //! Capacity permits hold PostgreSQL transactions until drop. A separate bounded
 //! pool carries lock waiters and held permits; a second two-connection pool handles
-//! short ticket/pacing transactions. Neither can exhaust the normal storage pool.
+//! short ticket/pacing transactions. Neither can exhaust the normal storage pool, and
+//! callers beyond either bound queue without a connection or a deadline.
 //! MariaDB does the same with row-lock slots ([`MariaOriginAdmission`]); SQLite holds
 //! capacity in process and persists pacing and cooldown ([`SqliteOriginAdmission`]).
 
@@ -19,24 +20,86 @@ use async_trait::async_trait;
 use crawlx_core::hash::Digest;
 use crawlx_core::origin::{is_physical_address_key, OriginAdmission, OriginPermit};
 use crawlx_core::{CrawlRunId, StoreError};
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{Executor, PgPool, Postgres, Transaction};
+use sqlx::{Executor, Pool, Postgres, Transaction};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+/// A private connection pool whose callers queue instead of timing out.
+///
+/// A pool's `acquire_timeout` also bounds the wait for a free connection, so a caller
+/// queued behind busy connections would fail with `PoolTimedOut`, although an admission
+/// caller beyond the bound must wait. The gate holds exactly as many slots as the pool has
+/// connections: a caller that holds a slot always finds a connection, and a caller without
+/// one waits with no connection and no deadline until another leaves or its future is
+/// dropped. The pool timeout then bounds only reaching the database, so a server that
+/// cannot be reached still fails the call.
+struct QueuedPool<DB: sqlx::Database> {
+    pool: Pool<DB>,
+    gate: Arc<Semaphore>,
+}
+
+impl<DB: sqlx::Database> Clone for QueuedPool<DB> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            gate: Arc::clone(&self.gate),
+        }
+    }
+}
+
+impl<DB: sqlx::Database> std::fmt::Debug for QueuedPool<DB> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueuedPool")
+            .field("pool", &self.pool)
+            .field("slots", &self.gate.available_permits())
+            .finish()
+    }
+}
+
+impl<DB: sqlx::Database> QueuedPool<DB> {
+    /// Gate `pool`, which must never hold more than `connections` connections.
+    fn new(pool: Pool<DB>, connections: u32) -> Self {
+        let slots =
+            usize::try_from(connections).map_or(Semaphore::MAX_PERMITS, |n| n.min(Semaphore::MAX_PERMITS));
+        Self {
+            pool,
+            gate: Arc::new(Semaphore::new(slots)),
+        }
+    }
+
+    /// Wait, without a deadline, for the right to use one connection of the pool. Hold the
+    /// slot for as long as the connection (or a statement on the pool) is in use.
+    async fn slot(&self) -> Result<OwnedSemaphorePermit, StoreError> {
+        Arc::clone(&self.gate).acquire_owned().await.map_err(closed)
+    }
+
+    /// A slot and the connection it entitles to. Declare the slot first, so it is released
+    /// after the connection.
+    async fn acquire(&self) -> Result<(OwnedSemaphorePermit, PoolConnection<DB>), StoreError> {
+        let slot = self.slot().await?;
+        let connection = self.pool.acquire().await.map_err(db)?;
+        Ok((slot, connection))
+    }
+}
+
 /// PostgreSQL origin capacity and start-spacing authority shared by all tenants.
 ///
 /// Clone this service rather than constructing it per request. Each instance uses
 /// at most `StoreConfig::max_connections` capacity connections (at least one), plus
-/// two metadata connections. Calls beyond that bound wait without a connection.
-/// Every worker accessing one application schema must use the same origin limit.
+/// two metadata connections. Calls beyond that bound queue without a connection or a
+/// deadline, and leave the queue when their future is dropped; the pool's acquire timeout
+/// applies only to reaching the database. Every worker accessing one application schema
+/// must use the same origin limit.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct PgOriginAdmission {
-    capacity: PgPool,
-    metadata: PgPool,
+    pg: Pg,
+    capacity: QueuedPool<Postgres>,
+    metadata: QueuedPool<Postgres>,
     limit: usize,
     run: Option<(CrawlRunId, usize)>,
 }
@@ -49,13 +112,18 @@ impl PgOriginAdmission {
     /// and closes its capacity connection, including a blocked advisory-lock wait.
     #[must_use]
     pub fn new(pg: Pg, limit: usize) -> Self {
+        let (connections, timeout) = (pg.config().max_connections, pg.config().acquire_timeout);
+        Self::connect(pg, limit, connections, timeout)
+    }
+
+    fn connect(pg: Pg, limit: usize, connections: u32, timeout: Duration) -> Self {
         let options = pg.pool().connect_options();
         let schema: Option<Arc<str>> = pg.config().schema.as_deref().map(Arc::from);
-        let pool = |max_connections, check_disconnect| {
+        let pool = |max_connections: u32, check_disconnect| {
             let schema = schema.clone();
-            PgPoolOptions::new()
+            let pool = PgPoolOptions::new()
                 .max_connections(max_connections)
-                .acquire_timeout(pg.config().acquire_timeout)
+                .acquire_timeout(timeout)
                 .test_before_acquire(pg.config().test_before_acquire)
                 .after_connect(move |conn, _| {
                     let schema = schema.clone();
@@ -74,14 +142,29 @@ impl PgOriginAdmission {
                         Ok(())
                     })
                 })
-                .connect_lazy_with((*options).clone())
+                .connect_lazy_with((*options).clone());
+            QueuedPool::new(pool, max_connections)
         };
         Self {
-            capacity: pool(pg.config().max_connections.max(1), true),
+            capacity: pool(connections.max(1), true),
             metadata: pool(2, false),
             limit: limit.max(1),
             run: None,
+            pg,
         }
+    }
+
+    /// Replace the capacity pool size (at least one connection) and the time a pool may take
+    /// to reach the database, which default to `StoreConfig::max_connections` and
+    /// `StoreConfig::acquire_timeout`. Queued callers never time out, whatever the size.
+    ///
+    /// Call this before the first acquisition: the earlier pools are dropped.
+    #[must_use]
+    pub fn with_connection_limits(self, max_connections: u32, acquire_timeout: Duration) -> Self {
+        let run = self.run;
+        let mut rebuilt = Self::connect(self.pg, self.limit, max_connections, acquire_timeout);
+        rebuilt.run = run;
+        rebuilt
     }
 
     /// Set the deployment limit while retaining the same bounded pools.
@@ -105,6 +188,7 @@ impl PgOriginAdmission {
     }
 
     async fn run_ticket(&self, run: CrawlRunId, origin: &str, limit: i64) -> Result<i64, StoreError> {
+        let _slot = self.metadata.slot().await?;
         let ticket: Option<i64> = sqlx::query_scalar(
             "INSERT INTO origin_leases (run_id, origin, admission_limit, admission_next_ticket) \
              VALUES ($1, $2, $3, 1 % $3) \
@@ -118,7 +202,7 @@ impl PgOriginAdmission {
         .bind(run.0)
         .bind(origin)
         .bind(limit)
-        .fetch_optional(&self.metadata)
+        .fetch_optional(&self.metadata.pool)
         .await
         .map_err(db)?;
         ticket
@@ -126,6 +210,7 @@ impl PgOriginAdmission {
     }
 
     async fn ticket(&self, origin: &str, limit: i64) -> Result<i64, StoreError> {
+        let _slot = self.metadata.slot().await?;
         // The counter wraps rather than overflowing. Cancellation can skip a slot
         // but cannot leave a ticket that another caller must explicitly release.
         let ticket: Option<i64> = sqlx::query_scalar(
@@ -138,7 +223,7 @@ impl PgOriginAdmission {
         )
         .bind(origin)
         .bind(limit)
-        .fetch_optional(&self.metadata)
+        .fetch_optional(&self.metadata.pool)
         .await
         .map_err(db)?;
         ticket.ok_or_else(|| {
@@ -147,7 +232,8 @@ impl PgOriginAdmission {
     }
 
     async fn try_start(&self, origin: &str, spacing_us: i64) -> Result<Option<Duration>, StoreError> {
-        let mut tx = self.metadata.begin().await.map_err(db)?;
+        let (_slot, connection) = self.metadata.acquire().await?;
+        let mut tx = Transaction::begin(connection, None).await.map_err(db)?;
         // Read the clock only after locking the row. Transaction-start time may
         // be stale after a lock wait and cannot authorize a new network start.
         sqlx::query("SELECT origin FROM origin_admission WHERE origin = $1 FOR UPDATE")
@@ -209,7 +295,7 @@ impl OriginAdmission for PgOriginAdmission {
     /// origin limit, or a limit cannot fit PostgreSQL's numeric columns.
     async fn reserve(&self, origin: &str) -> Result<Box<dyn OriginPermit>, StoreError> {
         let limit = conv(self.limit, "origin concurrency")?;
-        let mut connection = self.capacity.acquire().await.map_err(db)?;
+        let (slot, mut connection) = self.capacity.acquire().await?;
         // SQLx normally returns canceled queries to its pool after cleanup. A
         // blocking advisory wait must instead close, so cancellation cannot leave
         // an orphan lock waiter occupying admission capacity until its predecessor
@@ -234,19 +320,21 @@ impl OriginAdmission for PgOriginAdmission {
         lock_slot(&mut tx, &origin_digest, ticket).await?;
         Ok(Box::new(PgOriginPermit {
             _transaction: tx,
+            _slot: slot,
             store: self.clone(),
             origin: origin.to_owned(),
         }))
     }
 
     async fn cooldown_remaining(&self, origin: &str) -> Result<Duration, StoreError> {
+        let _slot = self.metadata.slot().await?;
         let value: Option<i64> = sqlx::query_scalar(
             "SELECT CASE WHEN cooldown_until='infinity'::timestamptz THEN -1 ELSE \
              GREATEST(0, CEIL(EXTRACT(EPOCH FROM (cooldown_until-clock_timestamp()))*1000000))::bigint \
              END FROM origin_admission WHERE origin=$1",
         )
         .bind(origin)
-        .fetch_optional(&self.metadata)
+        .fetch_optional(&self.metadata.pool)
         .await
         .map_err(db)?;
         match value {
@@ -268,6 +356,7 @@ impl OriginAdmission for PgOriginAdmission {
                 .saturating_add(u128::from(!minimum.subsec_nanos().is_multiple_of(1000))),
         )
         .ok();
+        let _slot = self.metadata.slot().await?;
         // Ensure the row exists before taking its feedback lock. Ticket allocation
         // is not needed: feedback does not consume capacity or advance start order.
         sqlx::query(
@@ -276,10 +365,10 @@ impl OriginAdmission for PgOriginAdmission {
         )
         .bind(origin)
         .bind(conv::<_, i64>(self.limit, "origin concurrency")?)
-        .execute(&self.metadata)
+        .execute(&self.metadata.pool)
         .await
         .map_err(db)?;
-        let mut tx = self.metadata.begin().await.map_err(db)?;
+        let mut tx = self.metadata.pool.begin().await.map_err(db)?;
         sqlx::query("SELECT origin FROM origin_admission WHERE origin = $1 FOR UPDATE")
             .bind(origin)
             .execute(&mut *tx)
@@ -354,6 +443,8 @@ struct PgOriginPermit {
     // SQLx rolls back on drop. The close-on-drop connection also prevents reuse
     // before PostgreSQL has released this transaction's advisory lock.
     _transaction: Transaction<'static, Postgres>,
+    // Declared after the transaction, so the capacity slot outlives its connection.
+    _slot: OwnedSemaphorePermit,
     store: PgOriginAdmission,
     origin: String,
 }
@@ -699,13 +790,16 @@ fn is_lock_wait_timeout(error: &StoreError) -> bool {
 /// per-origin ticket counter, so waiters of one origin queue on one row each and distinct
 /// origins never share a lock. A bounded dedicated pool carries lock waiters and held
 /// permits; a second two-connection pool handles the short ticket and pacing transactions,
-/// so neither can exhaust the normal storage pool. Waits are sliced
+/// so neither can exhaust the normal storage pool. Calls beyond either bound queue without
+/// a connection or a deadline and leave the queue when their future is dropped; the pool's
+/// acquire timeout applies only to reaching the database. Waits are sliced
 /// ([`SLOT_WAIT_SLICE_SECS`]): MariaDB cannot notice a vanished client while it is blocked.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct MariaOriginAdmission {
-    capacity: sqlx::MySqlPool,
-    metadata: sqlx::MySqlPool,
+    store: Store<MariaBackend>,
+    capacity: QueuedPool<sqlx::MySql>,
+    metadata: QueuedPool<sqlx::MySql>,
     limit: usize,
     run: Option<(CrawlRunId, usize)>,
 }
@@ -717,11 +811,16 @@ impl MariaOriginAdmission {
     /// callers. Dropping an acquisition future closes its capacity connection.
     #[must_use]
     pub fn new(store: &Store<MariaBackend>, limit: usize) -> Self {
+        let (connections, timeout) = (store.config().max_connections, store.config().acquire_timeout);
+        Self::connect(store, limit, connections, timeout)
+    }
+
+    fn connect(store: &Store<MariaBackend>, limit: usize, connections: u32, timeout: Duration) -> Self {
         let options = store.pool.connect_options();
         let pool = |max_connections: u32, wait: Option<u32>| {
-            sqlx::mysql::MySqlPoolOptions::new()
+            let pool = sqlx::mysql::MySqlPoolOptions::new()
                 .max_connections(max_connections)
-                .acquire_timeout(store.config().acquire_timeout)
+                .acquire_timeout(timeout)
                 .test_before_acquire(store.config().test_before_acquire)
                 .after_connect(move |conn, _| {
                     Box::pin(async move {
@@ -736,14 +835,28 @@ impl MariaOriginAdmission {
                         Ok(())
                     })
                 })
-                .connect_lazy_with((*options).clone())
+                .connect_lazy_with((*options).clone());
+            QueuedPool::new(pool, max_connections)
         };
         Self {
-            capacity: pool(store.config().max_connections.max(1), Some(SLOT_WAIT_SLICE_SECS)),
+            store: store.clone(),
+            capacity: pool(connections.max(1), Some(SLOT_WAIT_SLICE_SECS)),
             metadata: pool(2, None),
             limit: limit.max(1),
             run: None,
         }
+    }
+
+    /// Replace the capacity pool size (at least one connection) and the time a pool may take
+    /// to reach the database, which default to `StoreConfig::max_connections` and
+    /// `StoreConfig::acquire_timeout`. Queued callers never time out, whatever the size.
+    ///
+    /// Call this before the first acquisition: the earlier pools are dropped.
+    #[must_use]
+    pub fn with_connection_limits(self, max_connections: u32, acquire_timeout: Duration) -> Self {
+        let mut rebuilt = Self::connect(&self.store, self.limit, max_connections, acquire_timeout);
+        rebuilt.run = self.run;
+        rebuilt
     }
 
     /// Set the deployment limit while retaining the same bounded pools. All workers must
@@ -762,8 +875,47 @@ impl MariaOriginAdmission {
         self
     }
 
-    async fn metadata_tx(&self) -> Result<WriteTx<sqlx::MySql>, StoreError> {
-        Ok(WriteTx::new(self.metadata.begin().await.map_err(db)?, None))
+    /// A short metadata transaction and the pool slot it occupies; the slot, declared first by
+    /// the caller, is released after the transaction.
+    async fn metadata_tx(&self) -> Result<(OwnedSemaphorePermit, WriteTx<sqlx::MySql>), StoreError> {
+        let (slot, connection) = self.metadata.acquire().await?;
+        let tx = Transaction::begin(connection, None).await.map_err(db)?;
+        Ok((slot, WriteTx::new(tx, None)))
+    }
+
+    /// Create the row of the slot `name` unless it exists: a lock can only queue on a row.
+    /// This runs on the metadata pool, so the capacity connection holds nothing while it does.
+    ///
+    /// An existing row is only read. Writing it would wait behind the permit that holds its
+    /// lock, and the metadata connection it occupied meanwhile would starve every other
+    /// admission call, including the start of that very permit. Should the row appear and be
+    /// locked between the read and the write, the write gives up after a second and the read
+    /// repeats.
+    async fn ensure_slot_row(&self, name: &Digest) -> Result<(), StoreError> {
+        loop {
+            let (_slot, mut conn) = self.metadata.acquire().await?;
+            let exists = stmt!(MariaBackend, "SELECT 1 AS v FROM crawlx_locks WHERE name = $1")
+                .bytes(name.0.as_slice())
+                .fetch_optional(&mut *conn)
+                .await?
+                .is_some();
+            if exists {
+                return Ok(());
+            }
+            match stmt!(
+                MariaBackend,
+                "SET STATEMENT innodb_lock_wait_timeout = 1 FOR \
+                 INSERT INTO crawlx_locks (name) VALUES ($1) ON DUPLICATE KEY UPDATE name = name"
+            )
+            .bytes(name.0.as_slice())
+            .execute(&mut *conn)
+            .await
+            {
+                Ok(_) => return Ok(()),
+                Err(error) if is_lock_wait_timeout(&error) => {}
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// Take the row lock of the slot named by `digest` and `ticket` inside `tx`, waiting in
@@ -779,18 +931,7 @@ impl MariaOriginAdmission {
             "crawlx/origin-admission/slot/v1",
             &ticket.to_be_bytes(),
         );
-        {
-            // The row must exist for the lock to queue on it. It is created on the metadata
-            // pool so the capacity connection holds nothing while it does.
-            let mut conn = self.metadata.acquire().await.map_err(db)?;
-            stmt!(
-                MariaBackend,
-                "INSERT INTO crawlx_locks (name) VALUES ($1) ON DUPLICATE KEY UPDATE name = name"
-            )
-            .bytes(slot.0.as_slice())
-            .execute(&mut *conn)
-            .await?;
-        }
+        self.ensure_slot_row(&slot).await?;
         loop {
             match stmt!(
                 MariaBackend,
@@ -818,7 +959,7 @@ impl OriginAdmission for MariaOriginAdmission {
     /// a limit cannot fit the integer columns.
     async fn reserve(&self, origin: &str) -> Result<Box<dyn OriginPermit>, StoreError> {
         let limit: i64 = conv(self.limit, "origin concurrency")?;
-        let mut connection = self.capacity.acquire().await.map_err(db)?;
+        let (slot, mut connection) = self.capacity.acquire().await?;
         // A cancelled lock wait must close the connection instead of returning it to the
         // pool with a statement in flight.
         connection.close_on_drop();
@@ -827,9 +968,12 @@ impl OriginAdmission for MariaOriginAdmission {
         // A physical address is deployment capacity only: no run row, run slot or run limit.
         if let Some((run, run_limit)) = self.run.filter(|_| !is_physical_address_key(origin)) {
             let run_limit: i64 = conv(run_limit, "run origin concurrency")?;
-            let mut meta = self.metadata_tx().await?;
-            let ticket = run_ticket::<MariaBackend>(meta.conn(), run, origin, run_limit).await?;
-            meta.commit().await?;
+            let ticket = {
+                let (_meta_slot, mut meta) = self.metadata_tx().await?;
+                let ticket = run_ticket::<MariaBackend>(meta.conn(), run, origin, run_limit).await?;
+                meta.commit().await?;
+                ticket
+            };
             let run_digest = Digest::keyed(
                 &origin_digest.0,
                 "crawlx/origin-admission/run/v1",
@@ -837,19 +981,23 @@ impl OriginAdmission for MariaOriginAdmission {
             );
             self.lock_slot(&mut tx, &run_digest, ticket).await?;
         }
-        let mut meta = self.metadata_tx().await?;
-        let ticket = global_ticket::<MariaBackend>(meta.conn(), origin, limit).await?;
-        meta.commit().await?;
+        let ticket = {
+            let (_meta_slot, mut meta) = self.metadata_tx().await?;
+            let ticket = global_ticket::<MariaBackend>(meta.conn(), origin, limit).await?;
+            meta.commit().await?;
+            ticket
+        };
         self.lock_slot(&mut tx, &origin_digest, ticket).await?;
         Ok(Box::new(MariaOriginPermit {
             _transaction: tx,
+            _slot: slot,
             admission: self.clone(),
             origin: origin.to_owned(),
         }))
     }
 
     async fn cooldown_remaining(&self, origin: &str) -> Result<Duration, StoreError> {
-        let mut conn = self.metadata.acquire().await.map_err(db)?;
+        let (_slot, mut conn) = self.metadata.acquire().await?;
         cooldown_remaining_on::<MariaBackend>(&mut *conn, origin).await
     }
 
@@ -859,7 +1007,7 @@ impl OriginAdmission for MariaOriginAdmission {
         minimum: Duration,
         exponential: bool,
     ) -> Result<Duration, StoreError> {
-        let tx = self.metadata_tx().await?;
+        let (_slot, tx) = self.metadata_tx().await?;
         cooldown_on::<MariaBackend>(
             tx,
             origin,
@@ -876,6 +1024,8 @@ struct MariaOriginPermit {
     // Closing the connection (it is close-on-drop) rolls the transaction back and releases
     // the slot rows.
     _transaction: Transaction<'static, sqlx::MySql>,
+    // Declared after the transaction, so the capacity slot outlives its connection.
+    _slot: OwnedSemaphorePermit,
     admission: MariaOriginAdmission,
     origin: String,
 }
@@ -883,7 +1033,7 @@ struct MariaOriginPermit {
 #[async_trait]
 impl OriginPermit for MariaOriginPermit {
     async fn try_start(&mut self, spacing: Duration) -> Result<Option<Duration>, StoreError> {
-        let tx = self.admission.metadata_tx().await?;
+        let (_slot, tx) = self.admission.metadata_tx().await?;
         try_start_on::<MariaBackend>(
             tx,
             &self.origin,
@@ -1062,4 +1212,78 @@ pub(crate) fn origin_admission(database: &Database, limit: usize) -> Option<Arc<
     database
         .sqlite_store()
         .map(|store| Arc::new(SqliteOriginAdmission::new(store, limit)) as Arc<dyn OriginAdmission>)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
+    use sqlx::postgres::PgConnectOptions;
+    use tokio::time::timeout;
+
+    const UNREACHABLE_TIMEOUT: Duration = Duration::from_millis(300);
+
+    fn dead_postgres(connections: u32) -> QueuedPool<Postgres> {
+        let pool = PgPoolOptions::new()
+            .max_connections(connections)
+            .acquire_timeout(UNREACHABLE_TIMEOUT)
+            .connect_lazy_with(PgConnectOptions::new().host("127.0.0.1").port(1));
+        QueuedPool::new(pool, connections)
+    }
+
+    fn dead_mysql(connections: u32) -> QueuedPool<sqlx::MySql> {
+        let pool = MySqlPoolOptions::new()
+            .max_connections(connections)
+            .acquire_timeout(UNREACHABLE_TIMEOUT)
+            .connect_lazy_with(MySqlConnectOptions::new().host("127.0.0.1").port(1));
+        QueuedPool::new(pool, connections)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn callers_beyond_the_pool_queue_without_a_deadline_and_leave_by_dropping() {
+        let queue = dead_postgres(2);
+        let first = queue.slot().await.unwrap();
+        let second = queue.slot().await.unwrap();
+        let waiting = tokio::spawn({
+            let queue = queue.clone();
+            async move { queue.slot().await.map(drop) }
+        });
+        let abandoned = tokio::spawn({
+            let queue = queue.clone();
+            async move { queue.slot().await.map(drop) }
+        });
+        // far beyond any pool acquire timeout: the queued callers still wait
+        tokio::time::sleep(Duration::from_secs(3600)).await;
+        assert!(!waiting.is_finished() && !abandoned.is_finished());
+        abandoned.abort();
+        assert!(abandoned.await.unwrap_err().is_cancelled());
+        drop(first);
+        timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("a released slot admits the next caller")
+            .unwrap()
+            .unwrap();
+        drop(second);
+        // the abandoned caller took nothing with it
+        let _both = (queue.slot().await.unwrap(), queue.slot().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_server_fails_within_the_pool_timeout() {
+        let bound = Duration::from_secs(10);
+        let started = std::time::Instant::now();
+        assert!(timeout(bound, dead_postgres(2).acquire())
+            .await
+            .expect("postgres connect gives up")
+            .is_err());
+        assert!(timeout(bound, dead_mysql(2).acquire())
+            .await
+            .expect("mariadb connect gives up")
+            .is_err());
+        assert!(
+            started.elapsed() >= UNREACHABLE_TIMEOUT,
+            "the pool timeout still applies"
+        );
+    }
 }

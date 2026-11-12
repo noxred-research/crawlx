@@ -22,14 +22,16 @@ use crate::egress::{
     capture_headers, protocol_of, EgressOptions, EgressProxy, EgressProxyHandle, PROXY_ERROR_HEADER,
 };
 use crate::error::FetchError;
+use crate::error::TransportControlError;
 use crate::evidence::{BodyEvidence, FetchEvidence, EVIDENCE_HEADER};
 use crate::governor::{GlobalOriginCap, GovernorConfig, Origin, OriginGovernor};
 use crate::preflight::HeadPreflight;
 use crate::proxyx::{PoolBinding, PoolTunnel};
+use crate::realm::RealmAuth;
 use crate::redirect::{is_redirect, location, strip_credentials, Referrer, DEFAULT_MAX_REDIRECTS};
 use crate::resolver::{CheckedResolution, Resolver};
 use crate::retry::{is_retryable_status, parse_retry_after, RetryPolicy};
-use crate::tls::HttpClient;
+use crate::tls::{HttpClient, TlsIdentity};
 use bytes::Bytes;
 use crawlx_core::browser::ResponseBodySink;
 use crawlx_core::config::{Fetch, ResponseBodies};
@@ -39,6 +41,7 @@ use crawlx_core::request_controls::RequestControls;
 use crawlx_core::seed::CrawlSeed;
 use crawlx_core::tls::TlsImpersonation;
 use crawlx_core::traffic::{BodyDigest, ProxyFlow, ProxyFlowSource};
+use crawlx_core::transport_policy::ProxyRule;
 use crawlx_core::{ArtifactId, ArtifactRef};
 use crawlx_policy::egress::{DenyRule, EgressPolicy};
 use crawlx_telemetry::metrics::names;
@@ -119,6 +122,11 @@ pub struct FetchConfig {
     /// bomb ([`FetchError::BodyLimit`]). Zero selects [`DEFAULT_MAX_EXPANSION_RATIO`]; the
     /// ratio cannot be disabled.
     pub max_expansion_ratio: u32,
+    /// Ordered per-host proxy rules (`fetch.proxyRules`): the first rule matching a request's
+    /// host routes it through its own proxy, with the usual egress checks on the proxy host.
+    /// A selected rule never falls back to another rule or to a direct connection; a host
+    /// that matches no rule uses `proxy`. Not combinable with a pool route.
+    pub proxy_rules: Vec<ProxyRule>,
 }
 
 impl std::fmt::Debug for FetchConfig {
@@ -154,6 +162,7 @@ impl Default for FetchConfig {
             read_timeout: None,
             max_wire_bytes: None,
             max_expansion_ratio: DEFAULT_MAX_EXPANSION_RATIO,
+            proxy_rules: Vec::new(),
         }
     }
 }
@@ -205,6 +214,7 @@ impl FetchConfig {
         self.follow_redirects = fetch.follow_redirects;
         self.proxy.clone_from(&fetch.proxy);
         self.tls_impersonation = fetch.tls_impersonation;
+        self.proxy_rules.clone_from(&fetch.proxy_rules);
         self
     }
 
@@ -685,10 +695,31 @@ enum Hop {
     },
 }
 
+/// A proxy rule with the clients that serve it.
+struct RuleRoute {
+    rule: ProxyRule,
+    proxy: ProxyTarget,
+    client: HttpClient,
+    /// The same route with the TLS client identity, for `https` hosts it is scoped to.
+    identity_client: Option<HttpClient>,
+}
+
+/// The client and upstream one request leaves through.
+struct Route<'a> {
+    client: &'a HttpClient,
+    proxy: Option<&'a ProxyTarget>,
+}
+
 /// The HTTP plane.
 pub struct Fetcher {
     cfg: FetchConfig,
     client: HttpClient,
+    /// The base route's client when it must present the TLS client identity.
+    identity_client: Option<HttpClient>,
+    /// `fetch.proxyRules` in declaration order.
+    rules: Vec<RuleRoute>,
+    /// Learned realm protection spaces (`fetch.realmCredentials`).
+    realm: RealmAuth,
     pins: Arc<PinTable>,
     policy: Arc<EgressPolicy>,
     resolver: Arc<dyn Resolver>,
@@ -740,6 +771,27 @@ impl Fetcher {
         if let Some(selection) = &cfg.identity_profile {
             crate::identity_profile::validate_selection(selection, &cfg)?;
         }
+        let identity = cfg
+            .controls
+            .client_identity()
+            .map(TlsIdentity::new)
+            .transpose()
+            .map_err(|error| FetchError::ClientBuild(error.into()))?;
+        if identity.is_some() && cfg.identity_profile.is_some() {
+            return Err(FetchError::ClientBuild(
+                TransportControlError::Conflict("a coherent http identity profile").into(),
+            ));
+        }
+        if !cfg.proxy_rules.is_empty() && (cfg.pool.is_some() || cfg.identity_profile.is_some()) {
+            // A rule would route around the pool the operator bound, or split the coherent
+            // identity; neither is decided silently.
+            return Err(FetchError::ClientBuild(
+                TransportControlError::Conflict(
+                    "a pool route or a coherent http identity profile with proxy rules",
+                )
+                .into(),
+            ));
+        }
         let pins = Arc::new(PinTable::default());
         let proxy = cfg.proxy_target()?;
         // A pool route is served through one loopback adapter owned by this fetcher: both HTTP
@@ -754,54 +806,35 @@ impl Fetcher {
             None => None,
         };
         let control_headers = control_headers(&cfg.controls)?;
-        let client = if cfg.identity_profile.is_some()
-            || cfg.tls_impersonation == TlsImpersonation::Randomized
-        {
-            HttpClient::randomized(
-                &cfg,
-                Arc::clone(&pins),
-                Arc::clone(&policy),
-                Arc::clone(&resolver),
-                adapter.as_ref().map(EgressProxyHandle::addr),
-            )?
-        } else {
-            let mut builder = reqwest::Client::builder()
-                .user_agent(cfg.user_agent())
-                .redirect(reqwest::redirect::Policy::none())
-                .no_proxy()
-                .use_rustls_tls()
-                .dns_resolver(Arc::clone(&pins))
-                .connect_timeout(cfg.connect_timeout)
-                .timeout(cfg.request_timeout)
-                // Bodies are decoded by `codec`, under independent wire/decoded/ratio limits.
-                .no_gzip()
-                .no_brotli()
-                .tls_info(true)
-                .danger_accept_invalid_certs(cfg.controls.skip_tls_verification());
-            if let Some(read) = cfg.read_timeout {
-                builder = builder.read_timeout(read);
-            }
-            if let Some(adapter) = &adapter {
-                builder = builder.proxy(
-                    reqwest::Proxy::all(format!("http://{}", adapter.addr()))
-                        .map_err(|error| FetchError::ClientBuild(error.into()))?,
-                );
-                if cfg.pool.as_ref().is_some_and(|pool| pool.rotates_each()) {
-                    // every request opens its own tunnel, hence its own identity
-                    builder = builder.pool_max_idle_per_host(0);
-                }
-            } else if let Some(p) = &cfg.proxy {
-                // Environment proxies stay disabled; only the checked proxy is used.
-                builder = builder.proxy(
-                    reqwest::Proxy::all(p.clone()).map_err(|error| FetchError::ClientBuild(error.into()))?,
-                );
-            }
-            HttpClient::Rustls(
-                builder
-                    .build()
-                    .map_err(|error| FetchError::ClientBuild(error.into()))?,
-            )
+        let adapter_addr = adapter.as_ref().map(EgressProxyHandle::addr);
+        let build = |cfg: &FetchConfig, identity: Option<&TlsIdentity>, adapter: Option<SocketAddr>| {
+            Self::build_client(cfg, identity, &pins, &policy, &resolver, adapter)
         };
+        let client = build(&cfg, None, adapter_addr)?;
+        let identity_client = identity
+            .as_ref()
+            .map(|identity| build(&cfg, Some(identity), adapter_addr))
+            .transpose()?;
+        // One client per rule, built now so a bad rule fails the fetcher, not a later request.
+        let mut rules = Vec::with_capacity(cfg.proxy_rules.len());
+        for rule in &cfg.proxy_rules {
+            let mut rule_cfg = cfg.clone();
+            rule_cfg.proxy = Some(rule.proxy.clone());
+            rule_cfg.proxy_rules = Vec::new();
+            let target = rule_cfg.proxy_target()?.ok_or_else(|| FetchError::InvalidUrl {
+                url: rule.name.clone(),
+                reason: "proxy rule has no proxy",
+            })?;
+            rules.push(RuleRoute {
+                rule: rule.clone(),
+                proxy: target,
+                client: build(&rule_cfg, None, None)?,
+                identity_client: identity
+                    .as_ref()
+                    .map(|identity| build(&rule_cfg, Some(identity), None))
+                    .transpose()?,
+            });
+        }
         let governor = match &cfg.shared_governor {
             Some(governor) => Arc::clone(governor),
             None => {
@@ -815,9 +848,13 @@ impl Fetcher {
                 })
             }
         };
+        let realm = RealmAuth::new(cfg.controls.realm_credentials().len(), cfg.seed);
         Ok(Self {
             cfg,
             client,
+            identity_client,
+            rules,
+            realm,
             pins,
             policy,
             resolver,
@@ -832,6 +869,101 @@ impl Fetcher {
             enhanced: None,
             export_peer_certificate: false,
         })
+    }
+
+    /// One HTTP client for `cfg`'s route: its upstream `proxy` (or the pool `adapter`), and the
+    /// TLS client `identity` when the requests it serves must present one.
+    #[allow(
+        clippy::disallowed_types,
+        reason = "checked fetch adapter exclusively owns native client construction"
+    )]
+    fn build_client(
+        cfg: &FetchConfig,
+        identity: Option<&TlsIdentity>,
+        pins: &Arc<PinTable>,
+        policy: &Arc<EgressPolicy>,
+        resolver: &Arc<dyn Resolver>,
+        adapter: Option<SocketAddr>,
+    ) -> Result<HttpClient, FetchError> {
+        if cfg.identity_profile.is_some() || cfg.tls_impersonation == TlsImpersonation::Randomized {
+            return HttpClient::randomized(
+                cfg,
+                Arc::clone(pins),
+                Arc::clone(policy),
+                Arc::clone(resolver),
+                adapter,
+                identity,
+            );
+        }
+        let mut builder = reqwest::Client::builder()
+            .user_agent(cfg.user_agent())
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .use_rustls_tls()
+            .dns_resolver(Arc::clone(pins))
+            .connect_timeout(cfg.connect_timeout)
+            .timeout(cfg.request_timeout)
+            // Bodies are decoded by `codec`, under independent wire/decoded/ratio limits.
+            .no_gzip()
+            .no_brotli()
+            .tls_info(true)
+            .danger_accept_invalid_certs(cfg.controls.skip_tls_verification());
+        if let Some(identity) = identity {
+            builder = builder.identity(identity.rustls().clone());
+        }
+        if let Some(read) = cfg.read_timeout {
+            builder = builder.read_timeout(read);
+        }
+        if let Some(adapter) = adapter {
+            builder = builder.proxy(
+                reqwest::Proxy::all(format!("http://{adapter}"))
+                    .map_err(|error| FetchError::ClientBuild(error.into()))?,
+            );
+            if cfg.pool.as_ref().is_some_and(|pool| pool.rotates_each()) {
+                // every request opens its own tunnel, hence its own identity
+                builder = builder.pool_max_idle_per_host(0);
+            }
+        } else if let Some(p) = &cfg.proxy {
+            // Environment proxies stay disabled; only the checked proxy is used.
+            builder = builder.proxy(
+                reqwest::Proxy::all(p.clone()).map_err(|error| FetchError::ClientBuild(error.into()))?,
+            );
+        }
+        Ok(HttpClient::Rustls(
+            builder
+                .build()
+                .map_err(|error| FetchError::ClientBuild(error.into()))?,
+        ))
+    }
+
+    /// The route of a request to `url`: the first proxy rule whose host patterns match, in
+    /// declaration order, else the base route. A rule never falls back to another rule or to
+    /// a direct connection; the base route is used only when no rule matches at all.
+    fn route_for(&self, url: &Url) -> Route<'_> {
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        let presents_identity =
+            url.scheme() == "https" && self.cfg.controls.client_identity_for(&host).is_some();
+        match self.rules.iter().find(|route| route.rule.matches(&host)) {
+            Some(route) => {
+                tracing::debug!(rule = %route.rule.name, "proxy rule selected");
+                Route {
+                    client: route
+                        .identity_client
+                        .as_ref()
+                        .filter(|_| presents_identity)
+                        .unwrap_or(&route.client),
+                    proxy: Some(&route.proxy),
+                }
+            }
+            None => Route {
+                client: self
+                    .identity_client
+                    .as_ref()
+                    .filter(|_| presents_identity)
+                    .unwrap_or(&self.client),
+                proxy: self.proxy.as_ref(),
+            },
+        }
     }
 
     /// Attach the capped leaf certificate of every `https` response's own connection for
@@ -1314,6 +1446,8 @@ impl Fetcher {
             oversize: opts.oversize,
             declaration: &opts.declaration,
             write,
+            allowance: opts.request_allowance.as_deref(),
+            realm_allowed: std::sync::atomic::AtomicBool::new(!opts.suppress_credentials),
         };
         let max_redirects = opts.max_redirects.unwrap_or(self.cfg.max_redirects);
         let mut rng = self.cfg.seed.rng("fetch/retry", &[url.as_str().as_bytes()]);
@@ -1336,15 +1470,7 @@ impl Fetcher {
         }
 
         loop {
-            if let Some(allowance) = &opts.request_allowance {
-                allowance
-                    .try_update(
-                        std::sync::atomic::Ordering::AcqRel,
-                        std::sync::atomic::Ordering::Acquire,
-                        |remaining| remaining.checked_sub(1),
-                    )
-                    .map_err(|_| FetchError::AcquisitionAllowance)?;
-            }
+            charge_allowance(controls.allowance)?;
             let validators = if redirects.is_empty() {
                 opts.validators.as_ref()
             } else {
@@ -1378,6 +1504,11 @@ impl Fetcher {
                     let next = location(&current, &rh)?;
                     if Origin::from_url(&next) != Origin::from_url(&current) {
                         strip_credentials(&mut headers);
+                        // A hop to another origin, or an `https` to `http` downgrade, ends
+                        // realm credentials for the rest of the chain, even on a way back.
+                        controls
+                            .realm_allowed
+                            .store(false, std::sync::atomic::Ordering::Release);
                     }
                     redirects.push(current.to_string());
                     hops.push(FetchHop {
@@ -1504,9 +1635,10 @@ impl Fetcher {
     async fn dial_checked(
         &self,
         url: &Url,
+        via: Option<&ProxyTarget>,
     ) -> Result<(CheckedResolution, Option<(String, Vec<IpAddr>, bool)>), FetchError> {
         let target = self.resolve_checked(url).await?;
-        let proxy = match &self.proxy {
+        let proxy = match via {
             None => None,
             Some(p) => {
                 let (host, addrs) = self.resolve_host_checked(p.host.clone(), p.literal).await?;
@@ -1570,9 +1702,12 @@ impl Fetcher {
     {
         let origin = Origin::from_url(url);
         let mut attempt: u32 = 0;
+        let mut realm_tried = false;
+        let mut learned: Option<(usize, HeaderValue)> = None;
         loop {
             // Re-resolve and re-check on every attempt: the pin is only as fresh as the check.
-            let (target, proxy) = self.dial_checked(url).await?;
+            let route = self.route_for(url);
+            let (target, proxy) = self.dial_checked(url, route.proxy).await?;
             let (host, addrs, by_name) = match &proxy {
                 Some((host, addrs, by_name)) => (host.as_str(), addrs.as_slice(), *by_name),
                 None => (
@@ -1591,6 +1726,28 @@ impl Fetcher {
                 .or_insert(HeaderValue::from_static("gzip, deflate, br"));
             if suppress_credentials {
                 strip_credentials(&mut req_headers);
+            }
+            // Realm credentials: only on the origin and realm they name, only while the chain
+            // has not left that origin, and never over a caller's own `Authorization`.
+            let own_authorization = req_headers.contains_key(header::AUTHORIZATION);
+            let mut sent_realm = None;
+            if controls.realm_allowed.load(std::sync::atomic::Ordering::Acquire)
+                && !suppress_credentials
+                && !own_authorization
+            {
+                let credentials = self.cfg.controls.realm_credentials();
+                let chosen = if credentials.is_empty() {
+                    None
+                } else {
+                    // The answer to a challenge is used once; a retry takes the next count.
+                    learned
+                        .take()
+                        .or_else(|| self.realm.preemptive(credentials, url, method))
+                };
+                if let Some((index, value)) = chosen {
+                    req_headers.insert(header::AUTHORIZATION, value);
+                    sent_realm = Some(index);
+                }
             }
             if let Some(v) = validators {
                 v.apply(&mut req_headers);
@@ -1621,7 +1778,7 @@ impl Fetcher {
                 write.dispatched.store(true, std::sync::atomic::Ordering::Release);
             }
             let body = controls.write.map(|write| write.request.body.clone());
-            let resp = match self
+            let resp = match route
                 .client
                 .send(method.clone(), url.clone(), req_headers, body)
                 .await
@@ -1728,6 +1885,35 @@ impl Fetcher {
                 return Err(FetchError::StatusDenied {
                     status: status.as_u16(),
                 });
+            }
+            if status == StatusCode::UNAUTHORIZED {
+                // A refused credential is dropped from its protection space; a challenge for
+                // a different credential of this origin and realm earns exactly one retry.
+                if let Some(index) = sent_realm {
+                    self.realm.reject(index, url);
+                }
+                if !realm_tried
+                    && !own_authorization
+                    && controls.write.is_none()
+                    && controls.realm_allowed.load(std::sync::atomic::Ordering::Acquire)
+                {
+                    if let Some(answer) = self.realm.answer(
+                        self.cfg.controls.realm_credentials(),
+                        url,
+                        method,
+                        &resp_headers,
+                        sent_realm,
+                    ) {
+                        charge_allowance(controls.allowance)?;
+                        realm_tried = true;
+                        learned = Some(answer);
+                        self.emit_flow(flow, None);
+                        drop(resp);
+                        drop(permit);
+                        drop(guard);
+                        continue;
+                    }
+                }
             }
             if is_retryable_status(status.as_u16())
                 && attempt < max_retries
@@ -1884,6 +2070,26 @@ struct HopControls<'a> {
     oversize: OversizePolicy,
     declaration: &'a ResponseDeclaration,
     write: Option<&'a WriteContext<'a>>,
+    /// The parent acquisition's remaining network requests: a realm-credential retry is a new
+    /// request and is charged like a hop.
+    allowance: Option<&'a std::sync::atomic::AtomicU32>,
+    /// Realm credentials may still be offered: cleared for the rest of the chain once a hop
+    /// leaves the origin it started on.
+    realm_allowed: std::sync::atomic::AtomicBool,
+}
+
+/// Charge one network request to the parent acquisition's allowance, when it has one.
+fn charge_allowance(allowance: Option<&std::sync::atomic::AtomicU32>) -> Result<(), FetchError> {
+    if let Some(allowance) = allowance {
+        allowance
+            .try_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |remaining| remaining.checked_sub(1),
+            )
+            .map_err(|_| FetchError::AcquisitionAllowance)?;
+    }
+    Ok(())
 }
 
 /// Apply the declared MIME/encoding override to the effective `Content-Type`. Returns the

@@ -2134,6 +2134,166 @@ impl UrlPlaneRunner {
     }
 }
 
+/// What a live check of one seed candidate found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LiveCheck {
+    /// The server answered with a status from 200 to 399.
+    Alive,
+    /// It answered with another status.
+    Dead,
+    /// Scope, robots, authorization or egress refused the request; nothing was sent.
+    Refused,
+    /// The request was admitted but did not complete.
+    Failed,
+}
+
+/// Tally of one seeding pass, recorded as the `seed.sources` event.
+#[derive(Default)]
+struct SeedTally {
+    queued: u64,
+    duplicate: u64,
+    policy_blocked: u64,
+    robots_blocked: u64,
+    live_dead: u64,
+    live_refused: u64,
+    live_failed: u64,
+}
+
+impl UrlPlaneRunner {
+    /// Queue the candidates of `scope.seeding`'s recorded sources next to the seed.
+    ///
+    /// Parsing the fixtures touches no network. Each candidate then enters the frontier through
+    /// the ordinary discovery gate (scope, robots, authorization, the budget, dedupe), so a source
+    /// can only propose: a URL outside the crawl's scope or disallowed by robots is refused
+    /// exactly like a link to it would be. With `liveCheck: head` the candidate first gets one
+    /// `HEAD` request, made through the run's checked fetcher and its shared origin governor, and
+    /// only candidates that answer 200 to 399 are queued.
+    ///
+    /// # Errors
+    /// A fixture that is not what its kind says, a stop signal of the run, or a storage failure.
+    pub(super) async fn seed_from_sources(&self) -> Result<(), WorkerError> {
+        let Some(seeding) = &self.crawl.scope.seeding else {
+            return Ok(());
+        };
+        let max = usize::try_from(seeding.max_urls).unwrap_or(usize::MAX);
+        let set = crawlx_url::seed_sources::collect(&seeding.fixtures, &self.crawl.seed_url, max)
+            .map_err(|error| WorkerError::Config(error.to_string()))?;
+        let cancel = self.hard_cancel.clone().unwrap_or_default();
+        let mut tally = SeedTally::default();
+        for candidate in &set.candidates {
+            let Some((canonical, bearing)) = self.canonicalize(&candidate.url) else {
+                tally.policy_blocked += 1;
+                continue;
+            };
+            if seeding.live_check == crawlx_core::discovery::SeedLiveCheckV1::Head {
+                match self.live_check_head(&canonical.url, &cancel).await {
+                    LiveCheck::Alive => {}
+                    LiveCheck::Dead => {
+                        tally.live_dead += 1;
+                        continue;
+                    }
+                    LiveCheck::Refused => {
+                        tally.live_refused += 1;
+                        continue;
+                    }
+                    LiveCheck::Failed => {
+                        tally.live_failed += 1;
+                        continue;
+                    }
+                }
+            }
+            let source = RequestSource {
+                tag: "seed-source",
+                attribute: candidate.source.as_str(),
+                source: self.crawl.seed_url.to_string(),
+            };
+            match self.discover_listed(canonical, bearing, source).await? {
+                DiscoveryOutcome::Admitted => tally.queued += 1,
+                DiscoveryOutcome::Duplicate => tally.duplicate += 1,
+                DiscoveryOutcome::RobotsBlocked => tally.robots_blocked += 1,
+                _ => tally.policy_blocked += 1,
+            }
+        }
+        self.event(
+            "seed.sources",
+            serde_json::json!({
+                "fixtures": seeding.fixtures.len(),
+                "candidates": set.candidates.len(),
+                "duplicateSightings": set.duplicates,
+                "rejectedEntries": set.rejected,
+                "truncated": set.truncated,
+                "liveCheck": seeding.live_check,
+                "queued": tally.queued,
+                "alreadyKnown": tally.duplicate,
+                "policyBlocked": tally.policy_blocked,
+                "robotsBlocked": tally.robots_blocked,
+                "liveDead": tally.live_dead,
+                "liveRefused": tally.live_refused,
+                "liveFailed": tally.live_failed,
+            }),
+        )
+        .await;
+        Ok(())
+    }
+
+    /// One `HEAD` request to `url`, only after scope, robots and authorization admit it. It is
+    /// charged to its own bounded budget, goes through the run's fetcher (egress checks, the
+    /// shared origin governor) and follows no redirect: a redirect status is an answer, not a hop.
+    async fn live_check_head(&self, url: &Url, cancel: &CancellationToken) -> LiveCheck {
+        let authority = DiscoveryHopAdmission(self);
+        let Ok(mut budget) =
+            AcquisitionBudgetV1::new(&crawlx_core::acquisition::AcquisitionPolicyV1::default())
+        else {
+            return LiveCheck::Failed;
+        };
+        if crate::acquisition::HopAdmission::check_authority(&authority)
+            .await
+            .is_err()
+        {
+            return LiveCheck::Refused;
+        }
+        match self.admit_native_scope(url, 1, false).await {
+            Ok(canonical) if canonical.url == *url => {}
+            _ => return LiveCheck::Refused,
+        }
+        let mut options = crate::acquisition::fetch_options(&self.crawl.fetch);
+        options.method = http::Method::HEAD;
+        options.follow_redirects = false;
+        options.max_body_bytes = Some(1024);
+        match self
+            .robots
+            .decide_hop_with_budget(
+                crawlx_policy::robots::HopKind::Page,
+                url,
+                &options,
+                &mut budget,
+                cancel,
+                &authority,
+            )
+            .await
+        {
+            Ok(RobotsDecision::Allowed) => {}
+            Ok(_) => return LiveCheck::Refused,
+            Err(_) => return LiveCheck::Failed,
+        }
+        let fetched = Box::pin(crate::acquisition::fetch_budgeted_once(
+            &self.fetcher,
+            url,
+            &options,
+            &mut budget,
+            cancel,
+            &authority,
+        ))
+        .await;
+        self.record_exchange_method("HEAD", url, &fetched);
+        match fetched {
+            Ok(response) if (200..400).contains(&response.status.as_u16()) => LiveCheck::Alive,
+            Ok(_) => LiveCheck::Dead,
+            Err(_) => LiveCheck::Failed,
+        }
+    }
+}
+
 fn advertised_feed(link: &crawlx_url::RawLink) -> bool {
     if link.nofollow
         || !matches!(

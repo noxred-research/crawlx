@@ -6,10 +6,12 @@
 
 pub mod acquisition;
 pub mod action;
+pub mod adaptive;
 pub mod archive;
 pub mod archive_behaviors;
 pub mod archive_catalog;
 pub mod article_language;
+pub mod block_rules;
 pub mod browser;
 pub mod browser_capture;
 pub mod browser_download;
@@ -59,6 +61,7 @@ pub mod state;
 pub mod time;
 pub mod tls;
 pub mod traffic;
+pub mod transport_policy;
 pub mod url;
 pub mod url_graph;
 

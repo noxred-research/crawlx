@@ -1,17 +1,17 @@
 {
-  "id": "l103-rules-unsupported-thai-bird",
+  "id": "l137-rules-thai-market-day",
   "family": "language",
   "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
-  "expectedText": "นก|บิน|ขึ้น|ฟ้า|เด็ก|มอง|ดู",
+  "expectedText": "พ่อ|ไป|ตลาด|แม่|อยู่|บ้าน",
   "spans": [
     {
       "label": "token",
       "start": 0,
-      "end": 6
+      "end": 9
     },
     {
       "label": "token",
-      "start": 7,
+      "start": 10,
       "end": 16
     },
     {
@@ -32,12 +32,7 @@
     {
       "label": "token",
       "start": 53,
-      "end": 62
-    },
-    {
-      "label": "token",
-      "start": 63,
-      "end": 69
+      "end": 65
     }
   ]
 }

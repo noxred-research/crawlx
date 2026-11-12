@@ -21,6 +21,7 @@
 
 use super::{Ctl, State};
 use crate::cdp::{CdpEvent, CdpSession};
+use crawlx_core::block_rules::{BlockedResourceV1, RequestFacts};
 use crawlx_core::browser::{BlockedNavigation, BrowserError, NavigationGuard};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -38,6 +39,17 @@ const TIMEOUT_REASON: &str = "robots_unavailable";
 /// `Fetch.enable` patterns: document requests only, paused before they are sent.
 pub(crate) fn patterns() -> Value {
     json!([{ "resourceType": "Document", "requestStage": "Request" }])
+}
+
+/// `Fetch.enable` patterns of a session: what the navigation guard needs, widened to every
+/// request while block rules are installed. Empty: no pausing at all.
+pub(crate) fn fetch_patterns(ctl: &Ctl, rules: bool) -> Vec<Value> {
+    match ctl.config.navigation_guard.as_ref() {
+        Some(guard) if guard.intercepts_subresources() => vec![json!({ "requestStage": "Request" })],
+        _ if rules => vec![json!({ "requestStage": "Request" })],
+        Some(_) => vec![json!({ "resourceType": "Document", "requestStage": "Request" })],
+        None => Vec::new(),
+    }
 }
 
 /// The URL as the guard sees and the journal records it: no credentials, no fragment.
@@ -81,11 +93,20 @@ pub(crate) async fn answer_paused(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, ev: A
     if request_id.is_empty() {
         return;
     }
+    // A tab session owns the guard path; an out-of-process frame session only ever pauses for
+    // the block rules and is resumed unless they block the request.
     let (target_id, main_frame) = {
         let st = state.lock();
         match st.tabs.values().find(|t| t.session == session) {
-            Some(tab) => (tab.target_id.clone(), tab.main_frame.clone()),
-            None => return,
+            Some(tab) => (Some(tab.target_id.clone()), tab.main_frame.clone()),
+            None => match st
+                .tabs
+                .values()
+                .find(|t| t.frames.values().any(|f| f.session == session))
+            {
+                Some(tab) => (None, tab.main_frame.clone()),
+                None => return,
+            },
         }
     };
     let sess = CdpSession {
@@ -100,6 +121,46 @@ pub(crate) async fn answer_paused(ctl: Arc<Ctl>, state: Arc<Mutex<State>>, ev: A
             .await;
         return;
     }
+    if let Some(url) = ev
+        .params
+        .get("request")
+        .map(|request| text(request, "url"))
+        .filter(|url| !url.is_empty())
+    {
+        let blocked = {
+            let mut st = state.lock();
+            let rules = st.overrides.block_rules.clone();
+            rules.and_then(|rules| {
+                let facts = RequestFacts {
+                    url,
+                    document: text(&ev.params, "resourceType") == "Document",
+                    child_frame: text(&ev.params, "frameId") != main_frame,
+                };
+                let kind = rules.decide(&facts)?;
+                st.blocked_resources.push(BlockedResourceV1::new(
+                    crate::egress::redact_url(url),
+                    kind,
+                    text(&ev.params, "resourceType").to_owned(),
+                ));
+                Some(kind)
+            })
+        };
+        if blocked.is_some() {
+            let _ = sess
+                .send(
+                    "Fetch.failRequest",
+                    json!({ "requestId": request_id, "errorReason": "BlockedByClient" }),
+                )
+                .await;
+            return;
+        }
+    }
+    let Some(target_id) = target_id else {
+        let _ = sess
+            .send("Fetch.continueRequest", json!({ "requestId": request_id }))
+            .await;
+        return;
+    };
     let main_document =
         text(&ev.params, "resourceType") == "Document" && text(&ev.params, "frameId") == main_frame;
     let url = ev

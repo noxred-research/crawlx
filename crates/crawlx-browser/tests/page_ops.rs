@@ -8,6 +8,7 @@ use crawlx_browser::egress::REDACTED;
 use crawlx_browser::launch::find_executable;
 use crawlx_browser::{CdpContext, ChromiumBackend, LaunchConfig};
 use crawlx_core::action::{BrowserAction, Modifiers, PointerButton};
+use crawlx_core::block_rules::{BlockRuleKind, BlockRulesV1, BlockedResources};
 use crawlx_core::browser::{BrowserBackend, BrowserContext, BrowserError, ContextConfig};
 use crawlx_core::config::LaunchProfile;
 use crawlx_core::ids::SessionId;
@@ -119,6 +120,12 @@ const FORM_PAGE: &str = r#"<!doctype html><html><body>
 
 const DONE_PAGE: &str = r#"<!doctype html><html><body><div id="final">done</div></body></html>"#;
 
+const RULES_PAGE: &str = r#"<!doctype html><html><body>
+<img src="/blocked/a.svg"><img src="/allowed/b.svg"><img src="/allowed/Tracker.svg">
+<iframe src="/frame-doc"></iframe></body></html>"#;
+
+const FRAME_DOC: &str = r#"<!doctype html><html><body><img src="/allowed/inframe.svg"></body></html>"#;
+
 struct Route {
     status: &'static str,
     content_type: &'static str,
@@ -201,10 +208,14 @@ fn site(port: u16) -> BTreeMap<String, Route> {
     missing.status = "404 Not Found";
     let mut done = page(DONE_PAGE);
     done.headers = vec![("X-Hop", "done")];
-    BTreeMap::from([
+    let mut routes = BTreeMap::from([
         ("/img-page".to_owned(), page(IMG_PAGE)),
         ("/popup".to_owned(), page(POPUP)),
         ("/frame-host".to_owned(), page(&frame_host)),
+        ("/rules-page".to_owned(), page(RULES_PAGE)),
+        ("/frame-doc".to_owned(), page(FRAME_DOC)),
+        ("/allowed/Tracker.svg".to_owned(), image()),
+        ("/allowed/inframe.svg".to_owned(), image()),
         ("/frame".to_owned(), page(FRAME)),
         ("/blocked/a.svg".to_owned(), image()),
         ("/allowed/b.svg".to_owned(), image()),
@@ -231,7 +242,9 @@ fn site(port: u16) -> BTreeMap<String, Route> {
         ("/submit".to_owned(), redirect("303 See Other", "/hop", "submit")),
         ("/hop".to_owned(), redirect("302 Found", "/done", "hop")),
         ("/done".to_owned(), done),
-    ])
+    ]);
+    routes.extend(measured_routes());
+    routes
 }
 
 async fn serve() -> Server {
@@ -1441,4 +1454,303 @@ async fn virtual_rows_stale_spa_epoch_does_not_restore_into_new_view() {
     );
     Box::new(ctx).close().await.unwrap();
     backend.shutdown().await;
+}
+
+/// One blocked resource as `(rule kind, resource type, path)`.
+fn blocked_paths(blocked: &BlockedResources) -> Vec<(BlockRuleKind, String, String)> {
+    let mut out: Vec<_> = blocked
+        .resources
+        .iter()
+        .map(|r| {
+            let path = url::Url::parse(&r.url).unwrap().path().to_owned();
+            (r.kind, r.resource_type.clone(), path)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Drain until `want` resources were collected (blocked requests are logged as their pause is
+/// answered, which may trail the load event by a moment).
+async fn drain_blocked(ctx: &mut CdpContext, want: usize) -> BlockedResources {
+    let mut all = BlockedResources::default();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while all.resources.len() < want {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {want} blocked resources"
+        );
+        let PageOpResult::Blocked(part) = op(ctx, PageOp::DrainBlocked).await else {
+            panic!("DrainBlocked must answer Blocked");
+        };
+        for resource in part.resources {
+            all.push(resource);
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    all
+}
+
+async fn install_rules(ctx: &mut CdpContext, rules: BlockRulesV1) {
+    let PageOpResult::BlockInstalled(install) = op(ctx, PageOp::BlockRules(rules)).await else {
+        panic!("BlockRules must answer BlockInstalled");
+    };
+    assert!(install.sessions_applied >= 1);
+    assert_eq!(install.sessions_failed, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn url_frame_and_text_rules_block_exactly_their_resources_and_name_the_rule() {
+    let Some((_backend, mut ctx, server)) = start(LaunchProfile::Standard).await else {
+        return;
+    };
+    let mut rules = BlockRulesV1::default();
+    rules.urls = vec!["*/blocked/*".to_owned()];
+    rules.text = vec!["tracker".to_owned()];
+    rules.frames = vec!["*/frame-doc".to_owned()];
+    install_rules(&mut ctx, rules).await;
+
+    goto(&mut ctx, &server, "/rules-page").await;
+    let blocked = drain_blocked(&mut ctx, 3).await;
+    assert_eq!(
+        blocked_paths(&blocked),
+        vec![
+            (
+                BlockRuleKind::Url,
+                "Image".to_owned(),
+                "/blocked/a.svg".to_owned()
+            ),
+            (
+                BlockRuleKind::Frame,
+                "Document".to_owned(),
+                "/frame-doc".to_owned()
+            ),
+            (
+                BlockRuleKind::Text,
+                "Image".to_owned(),
+                "/allowed/Tracker.svg".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(blocked.dropped, 0);
+    // exactly the blocked resources never left the browser
+    assert_eq!(server.count("/blocked/a.svg"), 0);
+    assert_eq!(server.count("/allowed/Tracker.svg"), 0);
+    assert_eq!(server.count("/frame-doc"), 0);
+    assert_eq!(
+        server.count("/allowed/inframe.svg"),
+        0,
+        "the blocked frame never loaded"
+    );
+    assert_eq!(server.count("/allowed/b.svg"), 1);
+    // a drain hands each resource out once
+    assert!(drain_blocked(&mut ctx, 0).await.resources.is_empty());
+
+    // a frame rule never blocks the same URL as the page being visited
+    goto(&mut ctx, &server, "/frame-doc").await;
+    assert_eq!(server.count("/frame-doc"), 1);
+    assert_eq!(server.count("/allowed/inframe.svg"), 1);
+    assert!(drain_blocked(&mut ctx, 0).await.resources.is_empty());
+
+    // an empty rule list switches the pausing off and lets everything through again
+    install_rules(&mut ctx, BlockRulesV1::default()).await;
+    goto(&mut ctx, &server, "/rules-page").await;
+    assert_eq!(eval(&mut ctx, IMAGE_WIDTHS).await, json!([1, 1, 1]));
+    assert_eq!(server.count("/blocked/a.svg"), 1);
+    assert!(drain_blocked(&mut ctx, 0).await.resources.is_empty());
+    assert!(sent(&ctx, "Fetch.disable") >= 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn allow_only_blocks_everything_else_but_the_page_itself() {
+    let Some((_backend, mut ctx, server)) = start(LaunchProfile::Standard).await else {
+        return;
+    };
+    let mut rules = BlockRulesV1::default();
+    // the browser asks for a favicon on its own: it is a subresource like any other
+    rules.allow_only = vec![
+        "*/rules-page".to_owned(),
+        "*/allowed/*".to_owned(),
+        "*/favicon.ico".to_owned(),
+    ];
+    install_rules(&mut ctx, rules).await;
+
+    goto(&mut ctx, &server, "/rules-page").await;
+    let blocked = drain_blocked(&mut ctx, 2).await;
+    assert_eq!(
+        blocked_paths(&blocked),
+        vec![
+            (
+                BlockRuleKind::AllowOnly,
+                "Document".to_owned(),
+                "/frame-doc".to_owned()
+            ),
+            (
+                BlockRuleKind::AllowOnly,
+                "Image".to_owned(),
+                "/blocked/a.svg".to_owned()
+            ),
+        ]
+    );
+    assert_eq!(
+        server.count("/rules-page"),
+        1,
+        "the visited page itself is never blocked"
+    );
+    assert_eq!(server.count("/allowed/b.svg"), 1);
+    assert_eq!(server.count("/allowed/Tracker.svg"), 1);
+    assert_eq!(server.count("/blocked/a.svg"), 0);
+    assert_eq!(server.count("/frame-doc"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn block_rules_reach_out_of_process_frames_without_hanging_them() {
+    let Some((_backend, mut ctx, server)) = start(LaunchProfile::Standard).await else {
+        return;
+    };
+    let mut rules = BlockRulesV1::default();
+    rules.urls = vec!["*/blocked/*".to_owned()];
+    install_rules(&mut ctx, rules).await;
+    // `localhost` is another site than `127.0.0.1`: the iframe is its own renderer process
+    goto(&mut ctx, &server, "/frame-host").await;
+    let blocked = drain_blocked(&mut ctx, 1).await;
+    assert_eq!(
+        blocked_paths(&blocked),
+        vec![(
+            BlockRuleKind::Url,
+            "Image".to_owned(),
+            "/blocked/frame.svg".to_owned()
+        )]
+    );
+    eventually("the frame's allowed image", || {
+        server.count("/allowed/frame.svg") == 1
+    })
+    .await;
+    assert_eq!(server.count("/blocked/frame.svg"), 0);
+}
+
+/// Distinct bytes per resource, so a digest names one resource.
+fn measured_body(tag: &str) -> Vec<u8> {
+    format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><title>{tag}</title></svg>"#)
+        .into_bytes()
+}
+
+fn measured_routes() -> BTreeMap<String, Route> {
+    let mut routes = BTreeMap::new();
+    let mut add = |path: &str, content_type: &'static str, body: Vec<u8>| {
+        routes.insert(
+            path.to_owned(),
+            Route {
+                status: "200 OK",
+                content_type,
+                headers: Vec::new(),
+                body,
+            },
+        );
+    };
+    add(
+        "/measure-page",
+        "text/html; charset=utf-8",
+        br#"<!doctype html><html><head><link rel="stylesheet" href="/m/s.css"><script src="/m/x.js"></script></head>
+<body><img src="/m/b.svg"><img src="/m/a.svg#fragment"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></body></html>"#
+            .to_vec(),
+    );
+    add("/m/a.svg", "image/svg+xml", measured_body("a"));
+    add("/m/b.svg", "image/svg+xml", measured_body("b"));
+    add("/m/s.css", "text/css", b"body{margin:0}".to_vec());
+    add("/m/x.js", "text/javascript", b"window.measured = 1;".to_vec());
+    let images: String = (0..20)
+        .map(|n| format!(r#"<img src="/m/n{n:02}.svg">"#))
+        .collect();
+    add(
+        "/measure-many",
+        "text/html; charset=utf-8",
+        format!("<!doctype html><html><body>{images}</body></html>").into_bytes(),
+    );
+    for n in 0..20 {
+        add(
+            &format!("/m/n{n:02}.svg"),
+            "image/svg+xml",
+            measured_body(&format!("n{n}")),
+        );
+    }
+    routes
+}
+
+/// A launched browser, a context measuring subresources (or not) and a server with the
+/// measurement fixture; `None` when Chromium is absent.
+async fn start_measuring(measure: bool) -> Option<(ChromiumBackend, CdpContext, Server)> {
+    let backend = launch(LaunchProfile::Standard).await?;
+    let mut config = ContextConfig::new(SessionId::new());
+    config.measure_subresources = measure;
+    let ctx = backend.new_cdp_context(config).await.unwrap();
+    Some((backend, ctx, serve().await))
+}
+
+async fn subresources(ctx: &mut CdpContext) -> Vec<crawlx_core::page_op::MeasuredSubresource> {
+    match op(ctx, PageOp::MeasureSubresources).await {
+        PageOpResult::Subresources(items) => items,
+        other => panic!("MeasureSubresources must answer Subresources, got {other:?}"),
+    }
+}
+
+fn digest_of(body: &[u8]) -> Option<crawlx_core::hash::Digest> {
+    Some(crawlx_core::hash::Digest::of(
+        "crawlx/recrawl-subresource/v1",
+        body,
+    ))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subresources_are_listed_by_target_with_the_digest_of_the_received_bytes() {
+    let Some((_backend, mut ctx, server)) = start_measuring(true).await else {
+        return;
+    };
+    goto(&mut ctx, &server, "/measure-page").await;
+    let measured = subresources(&mut ctx).await;
+    let origin = format!("http://127.0.0.1:{}", server.port);
+    // sorted by target; the fragment is dropped; the inline data: image is part of the document
+    assert_eq!(
+        measured
+            .iter()
+            .map(|item| (item.target.clone(), item.digest))
+            .collect::<Vec<_>>(),
+        vec![
+            (format!("{origin}/m/a.svg"), digest_of(&measured_body("a"))),
+            (format!("{origin}/m/b.svg"), digest_of(&measured_body("b"))),
+            (format!("{origin}/m/s.css"), digest_of(b"body{margin:0}")),
+            (format!("{origin}/m/x.js"), digest_of(b"window.measured = 1;")),
+        ]
+    );
+    // a revisit of an unchanged page measures the same bytes
+    goto(&mut ctx, &server, "/measure-page").await;
+    assert_eq!(subresources(&mut ctx).await, measured);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_context_that_keeps_no_identities_lists_every_resource_unmeasured() {
+    let Some((_backend, mut ctx, server)) = start_measuring(false).await else {
+        return;
+    };
+    goto(&mut ctx, &server, "/measure-page").await;
+    let measured = subresources(&mut ctx).await;
+    assert_eq!(measured.len(), 4, "{measured:?}");
+    assert!(measured.iter().all(|item| item.digest.is_none()), "{measured:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn more_resources_than_a_baseline_holds_are_cut_off_visibly() {
+    let Some((_backend, mut ctx, server)) = start_measuring(true).await else {
+        return;
+    };
+    goto(&mut ctx, &server, "/measure-many").await;
+    let measured = subresources(&mut ctx).await;
+    let limit = crawlx_core::orchestration::MAX_RECRAWL_RESOURCES;
+    assert_eq!(measured.len(), limit + 1);
+    assert!(measured.windows(2).all(|pair| pair[0].target < pair[1].target));
+    assert!(measured[..limit].iter().all(|item| item.digest.is_some()));
+    assert_eq!(
+        measured[limit].digest, None,
+        "the entry past the bound is never measured"
+    );
 }

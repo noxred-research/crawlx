@@ -362,6 +362,19 @@ pub(crate) async fn assemble(
             dropped.push("video");
         }
     }
+    // What a browser render measured of the page's subresources; a recrawl compares them.
+    let measured: Option<Vec<crawlx_core::orchestration::RecrawlResourceV1>> = acq
+        .render
+        .as_ref()
+        .and_then(|render| render.subresources.as_ref())
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    crawlx_core::orchestration::RecrawlResourceV1::new(item.target.clone(), item.digest)
+                })
+                .collect()
+        });
     if let Some(render) = acq.render {
         if opts.wants("screenshot") {
             if let Some(shot) = &render.screenshot {
@@ -454,6 +467,9 @@ pub(crate) async fn assemble(
         "fingerprint": crawlx_url::fingerprint_url(&entry.url.url, None).0,
         "acquisition": acq.metadata,
     });
+    if let Some(resources) = &measured {
+        crawlx_core::orchestration::record_recrawl_resources(&mut metadata, resources);
+    }
     engine.redact_value(&mut metadata);
     // Root keys belong to ScrapeDocument, not to page-authored metadata. Arbitrary
     // content (including every metadata key) still takes the recursive scrub.

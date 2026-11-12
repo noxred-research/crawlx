@@ -11,6 +11,7 @@
 //! frontier fence and originating session fence. Its receipt-only lease is separate from target
 //! dispatch admission, so a graceful worker drain can retain an observation it already acquired.
 
+mod adaptive_plane;
 #[path = "discovery.rs"]
 mod discovery;
 mod dispatch_plane;
@@ -44,6 +45,7 @@ use crate::scrape::ScrapeEngine;
 use crate::surface::form_ai::FormAi;
 use crate::surface::resume::{ResumeEntry, ResumeState};
 use crate::surface::traffic_export::{Exchange, TrafficExporter};
+use adaptive_plane::{AdaptivePlane, HopContext, PageHops};
 use crawlx_core::config::{
     CrawlMode, KnownFile, OutputFormat, PageType, QueryPolicy, RetentionMode, SimilarityMode, SitemapMode,
 };
@@ -54,6 +56,7 @@ use crawlx_core::repo::{
     ArtifactStore, DiscoveryOutcome, EventRepo, FrontierEntry, FrontierRepo, FrontierStatus, PageRecord,
     PageRepo, RunRepo, Sensitivity,
 };
+use crawlx_core::request::hops::{HopKindV1, HopPathV1};
 use crawlx_core::secret::ArtifactSink;
 use crawlx_core::traffic::REDACTED_PLACEHOLDER;
 use crawlx_core::{CanonicalUrl, Clock, CrawlRunId, CreateCrawl, StoreError, TrustLane, WorkerId};
@@ -407,6 +410,9 @@ pub enum DynamicSignal {
     XhrHeavy,
     /// Many interactive controls relative to the amount of text (an application screen).
     InteractiveControlsHeavy,
+    /// The seeded render-predictor draw selected this page, which the heuristic called static,
+    /// for one exploration in the browser plane (paid for with an effect before it was fetched).
+    PredictorProbe,
 }
 
 impl DynamicSignal {
@@ -424,6 +430,7 @@ impl DynamicSignal {
             Self::HashRoutes => "hash_routes",
             Self::XhrHeavy => "xhr_heavy",
             Self::InteractiveControlsHeavy => "interactive_controls_heavy",
+            Self::PredictorProbe => "predictor_probe",
         }
     }
 }
@@ -792,6 +799,8 @@ pub struct UrlPlaneRunner {
     write_journal: Mutex<write_plane::WriteJournalScan>,
     /// The seed whose sitemap and `robots.txt` paths are discovered once its row is settled.
     deferred_known_files: Mutex<Option<known_files_plane::DeferredKnownFiles>>,
+    /// Render prediction, query-driven stop and queue-cost state; empty unless configured.
+    adaptive: AdaptivePlane,
 }
 
 impl UrlPlaneRunner {
@@ -1497,6 +1506,7 @@ impl UrlPlaneRunner {
         let validators = (crawl.extract.detect_secrets && crawl.extract.validate_secrets)
             .then(|| Arc::new(SecretValidators::builtin()));
         let classifier = DynamicClassifier::new(&crawl.dynamic.always_browser_paths)?;
+        let adaptive = AdaptivePlane::new(&crawl)?;
         let scrape = ScrapeEngine::for_run(run, &crawl, &deps, Arc::clone(&fetcher))
             .map(|engine| engine.with_robots_gate(robots.clone()));
         let protocol_browser = if scrape.is_none()
@@ -1587,6 +1597,7 @@ impl UrlPlaneRunner {
             started_at,
             write_journal: Mutex::new(write_plane::WriteJournalScan::default()),
             deferred_known_files: Mutex::new(None),
+            adaptive,
         })
     }
 
@@ -1961,7 +1972,18 @@ impl UrlPlaneRunner {
                 .discovery_with_reason(Plane::Urls, DiscoveryOutcome::Duplicate, "resume_visited");
             return Ok(DiscoveryOutcome::Duplicate);
         }
-        let (denial, counted_as, code) = self.discovery_admission(&url, depth, from, action_bearing).await;
+        let (denial, counted_as, code) = match proposal
+            .as_ref()
+            .and_then(|proposal| self.hop_denial(proposal, &url.url))
+        {
+            // a hop chain or repeated-segment trap is refused before robots is consulted
+            Some(hop) => (
+                Some((FrontierStatus::PolicyBlocked, hop.code().into())),
+                None,
+                hop.code(),
+            ),
+            None => self.discovery_admission(&url, depth, from, action_bearing).await,
+        };
         // Robots admission can await a response across the run deadline.
         if self.deps.clock.now() >= self.budget.lock().deadline() {
             return Err(StoreError::RunDeadlineReached);
@@ -2307,8 +2329,18 @@ impl UrlPlaneRunner {
         }
         self.discover_recipe_start().await?;
         self.seed_batch_urls().await?;
+        if resumed.is_none() {
+            // a resumed run already holds every URL its sources named, visited or pending
+            self.seed_from_sources().await?;
+        }
         if !seed_excluded {
-            self.climb(&seed, 0, None, &seed.url).await?;
+            let seed_path = HopPathV1::default();
+            let ctx = HopContext {
+                from: None,
+                depth: 0,
+                parent_path: &seed_path,
+            };
+            self.climb(&seed, &ctx, &seed.url).await?;
         }
         if let Some(state) = resumed {
             // the stopped run already enumerated the sitemap and robots paths: every URL
@@ -2374,7 +2406,7 @@ impl UrlPlaneRunner {
                 attribute: "path",
                 source: format!("{}/robots.txt", seed.origin),
             };
-            self.discover(canon, 1, None, bearing, Some(source)).await?;
+            self.discover_listed(canon, bearing, source).await?;
         }
         Ok(())
     }
@@ -2491,7 +2523,7 @@ impl UrlPlaneRunner {
                         |language| format!("{};hreflang={language}", seed.origin),
                     ),
                 };
-                self.discover(canon, 1, None, bearing, Some(source)).await?;
+                self.discover_listed(canon, bearing, source).await?;
             }
         }
         Ok(())
@@ -3410,12 +3442,32 @@ impl UrlPlaneRunner {
                 hops.saturating_mul(attempts)
             };
             let fence = *self.held.lock().get(&entry.id).ok_or(StoreError::LeaseLost)?;
-            match self
+            // A probe the seeded draw selected is paid for here, in the same escrow as the fetch.
+            let probe_effects = self.plan_probe(
+                entry,
+                self.probe_applicable(entry, method_head, discovery.is_some()),
+            );
+            let mut reserved = effects.saturating_add(probe_effects);
+            let mut reservation = self
                 .deps
                 .frontier
-                .reserve_effects_fenced(self.run, entry.id, fence, effects)
-                .await
-            {
+                .reserve_effects_fenced(self.run, entry.id, fence, reserved)
+                .await;
+            if probe_effects > 0 {
+                if matches!(reservation, Err(StoreError::Conflict(_))) {
+                    // the effect budget cannot pay for the probe: fetch without it
+                    self.settle_probe(entry.id, false);
+                    reserved = effects;
+                    reservation = self
+                        .deps
+                        .frontier
+                        .reserve_effects_fenced(self.run, entry.id, fence, reserved)
+                        .await;
+                } else if reservation.is_ok() {
+                    self.settle_probe(entry.id, true);
+                }
+            }
+            match reservation {
                 Ok(()) => {}
                 Err(StoreError::Conflict(_)) => return self
                     .fail(
@@ -3428,7 +3480,7 @@ impl UrlPlaneRunner {
                     .await,
                 Err(error) => return Err(error.into()),
             }
-            legacy_reserved_effects = Some(effects);
+            legacy_reserved_effects = Some(reserved);
         }
         if let Some(engine) = &self.scrape {
             // Each backend owns a separate acquisition state machine. Keep unused
@@ -4027,6 +4079,8 @@ impl UrlPlaneRunner {
                         },
                     )
                     .await?;
+                // the throttled attempt classified nothing: the refund returned the probe's effects too
+                self.adaptive.release_probe(entry.id);
             }
             // `defer_rate_limited` persists this attempt's receipts before releasing its fence.
             return self.defer_rate_limited(entry, &resp.final_url).await;
@@ -4384,6 +4438,9 @@ impl UrlPlaneRunner {
                 "tag": src.tag, "attribute": src.attribute, "source": src.source,
             });
         }
+        if let Some(hop) = self.hop_metadata(&queued.envelope) {
+            record.metadata["request"]["hop"] = hop;
+        }
         if cache_identity_unavailable && self.crawl.cache.is_some() {
             record.metadata["cacheUnavailableReason"] = serde_json::json!("request_identity_key_unavailable");
         }
@@ -4421,6 +4478,10 @@ impl UrlPlaneRunner {
         // Bounded anchor text by absolute URL, correlated only as a keyed handle in the graph.
         let mut link_anchors: BTreeMap<String, String> = BTreeMap::new();
         let mut page_type: Option<PageType> = None;
+        // Embeds and prerequisites this page names, when `scope.hops` follows them.
+        let mut typed_hops = PageHops::default();
+        // The kept page's text, held only for the query-driven stop policy.
+        let mut adaptive_text: Option<String> = None;
         // Admission of the extracted document, held until the row's terminal commit settles.
         let mut document_hold: Option<crawlx_core::parser_memory::BytePermit> = None;
         let mut accepted_items = Vec::new();
@@ -4750,14 +4811,22 @@ impl UrlPlaneRunner {
                         && crate::protocol::select_route(&self.protocol_routes, &entry.url.url).is_none()
                     {
                         let html = String::from_utf8_lossy(&resp.body);
-                        if let Some(signal) =
-                            self.classifier
-                                .classify(entry.url.url.path(), &html, doc.word_count)
-                        {
+                        let heuristic = self
+                            .classifier
+                            .classify(entry.url.url.path(), &html, doc.word_count);
+                        let (stored, predictor) = self.decide_render(entry, heuristic).await?;
+                        if let Some(signal) = stored {
                             record.metadata["dynamic_signal"] = serde_json::json!(signal.as_str());
+                        }
+                        if let Some(predictor) = predictor {
+                            record.metadata["dynamicPredictor"] = serde_json::json!(predictor);
                         }
                     }
                     links = doc.links.iter().map(|l| l.url.clone()).collect();
+                    typed_hops = self.typed_hops(&doc.source_hops);
+                    if self.adaptive.observes() {
+                        adaptive_text = Some(doc.text.clone());
+                    }
                     // Typed source relations keep their kind, tag and original-tree node. They are
                     // evidence only: embeds and prerequisites gain no authority, and a form action
                     // is recorded as a proposal, never submitted.
@@ -4872,7 +4941,7 @@ impl UrlPlaneRunner {
                 && self.crawl.scope.discovery.is_none()
                 && self.source_enabled(crawlx_core::discovery::DiscoverySourceV1::Html)
             {
-                self.follow_page(entry, &resp.final_url, &links, fetchable)
+                self.follow_page_typed(entry, &resp.final_url, &links, &typed_hops, fetchable)
                     .await?;
             }
             self.finish_discovery_only(entry, reason).await?;
@@ -5052,7 +5121,11 @@ impl UrlPlaneRunner {
             } else {
                 (&links, fetchable)
             };
-            self.follow_page(entry, &resp.final_url, generic, fetchable).await?;
+            // a reviewed recipe selects exactly which links become requests: no typed hop joins them
+            let no_hops = PageHops::default();
+            let typed = if recipe_html { &no_hops } else { &typed_hops };
+            self.follow_page_typed(entry, &resp.final_url, generic, typed, fetchable)
+                .await?;
         }
         let followed_recipe = self.follow_recipe_candidates(entry, &recipe_candidates).await?;
         if dedupe.is_none() && !filtered_type {
@@ -5097,18 +5170,38 @@ impl UrlPlaneRunner {
         }
         self.counters.attempt(Plane::Urls, Attempt::Succeeded);
         self.event("page", event).await;
+        if dedupe.is_none() && !filtered_type {
+            self.adaptive
+                .record_success(&entry.url.url.host_str().unwrap_or("").to_ascii_lowercase());
+            if let Some(text) = adaptive_text.take() {
+                self.observe_adaptive(entry, &text).await?;
+            }
+        }
         Ok(())
         })
         .await
     }
 
-    /// Discover the redirect target of a fetched page (a page of its own), then its links and
-    /// the fetchable `endpoints` it names.
+    /// [`Self::follow_page_typed`] for a page that names no embeds or prerequisites.
     async fn follow_page(
         &self,
         entry: &FrontierEntry,
         final_url: &Url,
         links: &[Url],
+        endpoints: Vec<DiscoveredEndpoint>,
+    ) -> Result<(), WorkerError> {
+        self.follow_page_typed(entry, final_url, links, &PageHops::default(), endpoints)
+            .await
+    }
+
+    /// Discover the redirect target of a fetched page (a page of its own), then its links, the
+    /// embeds and prerequisites it names and the fetchable `endpoints` it names.
+    async fn follow_page_typed(
+        &self,
+        entry: &FrontierEntry,
+        final_url: &Url,
+        links: &[Url],
+        typed: &PageHops,
         endpoints: Vec<DiscoveredEndpoint>,
     ) -> Result<(), WorkerError> {
         if *final_url != entry.url.url {
@@ -5118,17 +5211,18 @@ impl UrlPlaneRunner {
                     attribute: "location",
                     source: entry.url.url.to_string(),
                 };
-                self.discover(
-                    canon,
-                    entry.depth.saturating_add(1),
-                    Some(entry.id),
-                    bearing,
-                    Some(source),
-                )
-                .await?;
+                let parent_path = self.parent_hop_path(entry).await?;
+                let ctx = HopContext {
+                    from: Some(entry.id),
+                    depth: entry.depth.saturating_add(1),
+                    parent_path: &parent_path,
+                };
+                self.discover_hop(&ctx, canon, HopKindV1::Redirect, bearing, source)
+                    .await?;
             }
         }
-        self.expand_endpoints(entry, final_url, links, endpoints).await
+        self.expand_endpoints_typed(entry, final_url, links, typed, endpoints)
+            .await
     }
 
     /// Exact-content dedupe, then the content-similarity index.
@@ -5161,9 +5255,7 @@ impl UrlPlaneRunner {
         Ok(None)
     }
 
-    /// Discover the page's navigational links (document order), then every fetchable
-    /// endpoint not already among them: `Structural` always, JavaScript-mined ones
-    /// (`Regex` confidence, or the AST pass's `js` sources) only under `scope.jsEndpoints`.
+    /// [`Self::expand_endpoints_typed`] for a page that names no embeds or prerequisites.
     async fn expand_endpoints(
         &self,
         entry: &FrontierEntry,
@@ -5171,7 +5263,29 @@ impl UrlPlaneRunner {
         links: &[Url],
         endpoints: Vec<DiscoveredEndpoint>,
     ) -> Result<(), WorkerError> {
+        self.expand_endpoints_typed(entry, page_url, links, &PageHops::default(), endpoints)
+            .await
+    }
+
+    /// Discover the page's navigational links (document order), the embeds and prerequisites
+    /// `scope.hops` follows, then every fetchable
+    /// endpoint not already among them: `Structural` always, JavaScript-mined ones
+    /// (`Regex` confidence, or the AST pass's `js` sources) only under `scope.jsEndpoints`.
+    async fn expand_endpoints_typed(
+        &self,
+        entry: &FrontierEntry,
+        page_url: &Url,
+        links: &[Url],
+        typed: &PageHops,
+        endpoints: Vec<DiscoveredEndpoint>,
+    ) -> Result<(), WorkerError> {
         let depth = entry.depth.saturating_add(1);
+        let parent_path = self.parent_hop_path(entry).await?;
+        let ctx = HopContext {
+            from: Some(entry.id),
+            depth,
+            parent_path: &parent_path,
+        };
         for link in links {
             if !matches!(link.scheme(), "http" | "https") {
                 continue;
@@ -5184,9 +5298,23 @@ impl UrlPlaneRunner {
                 attribute: "href",
                 source: page_url.to_string(),
             };
-            self.discover(canon.clone(), depth, Some(entry.id), bearing, Some(source))
+            self.discover_hop(&ctx, canon.clone(), HopKindV1::Link, bearing, source)
                 .await?;
-            self.climb(&canon, depth, Some(entry.id), page_url).await?;
+            self.climb(&canon, &ctx, page_url).await?;
+        }
+        for (target, kind) in &typed.followed {
+            if !matches!(target.scheme(), "http" | "https") {
+                continue;
+            }
+            let Some((canon, bearing)) = self.canonicalize_discovered(target) else {
+                continue;
+            };
+            let source = RequestSource {
+                tag: kind.as_str(),
+                attribute: "src",
+                source: page_url.to_string(),
+            };
+            self.discover_hop(&ctx, canon, *kind, bearing, source).await?;
         }
         for e in endpoints {
             if links.contains(&e.url) || !matches!(e.url.scheme(), "http" | "https") {
@@ -5204,9 +5332,10 @@ impl UrlPlaneRunner {
                 attribute: e.source.attribute,
                 source: page_url.to_string(),
             };
-            self.discover(canon.clone(), depth, Some(entry.id), bearing, Some(source))
+            let kind = typed.kind_of(&e.url, e.source);
+            self.discover_hop(&ctx, canon.clone(), kind, bearing, source)
                 .await?;
-            self.climb(&canon, depth, Some(entry.id), page_url).await?;
+            self.climb(&canon, &ctx, page_url).await?;
         }
         Ok(())
     }
@@ -5217,11 +5346,10 @@ impl UrlPlaneRunner {
     async fn climb(
         &self,
         child: &CanonicalUrl,
-        depth: u16,
-        from: Option<i64>,
+        ctx: &HopContext<'_>,
         found_on: &Url,
     ) -> Result<(), WorkerError> {
-        if !self.crawl.scope.path_climb || !self.scope.decide(child, depth).is_admitted() {
+        if !self.crawl.scope.path_climb || !self.scope.decide(child, ctx.depth).is_admitted() {
             return Ok(());
         }
         for parent in parent_paths(&child.url) {
@@ -5233,7 +5361,8 @@ impl UrlPlaneRunner {
                 attribute: "path",
                 source: found_on.to_string(),
             };
-            self.discover(canon, depth, from, bearing, Some(source)).await?;
+            self.discover_hop(ctx, canon, HopKindV1::Link, bearing, source)
+                .await?;
         }
         Ok(())
     }
@@ -5939,6 +6068,7 @@ impl UrlPlaneRunner {
                 admission.replay(&record.decision)?;
             }
         }
+        self.load_adaptive_state().await?;
         let mut idle = run_control::IdleClock::new(self.kept_pages(), self.deps.clock.now());
         let (terminal, detail) = loop {
             if self.authorization_lost().await {
@@ -6002,6 +6132,9 @@ impl UrlPlaneRunner {
             if let Some(criterion) = self.stop_criterion(&mut idle) {
                 break (criterion.reason(), Some(criterion));
             }
+            if let Some(reason) = self.adaptive_stop_check().await {
+                break (reason, None);
+            }
             // Reserve worker-local stage capacity before taking any remote leases.
             // This lane creates no per-URL tasks and commits synchronously in lease order.
             // DFS and surface priority must reconsider children discovered by each response
@@ -6013,6 +6146,7 @@ impl UrlPlaneRunner {
             let limit = prefetch
                 .min(remaining.max(1))
                 .min(self.criteria_lease_cap())
+                .min(self.adaptive.lease_cap())
                 .min(admission.available(0))
                 .min(
                     self.crawl
@@ -6092,6 +6226,7 @@ impl UrlPlaneRunner {
             )
             .await;
         }
+        self.export_adaptive_state().await?;
         // A stop/deadline closes continuous input too; already accepted rows remain durable.
         self.deps.frontier.seal(self.run, 1).await?;
         self.persist_counters().await?;

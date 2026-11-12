@@ -243,6 +243,10 @@ pub struct ArchiveOmissionV1 {
     pub source_event: String,
     /// Machine-readable omission reason.
     pub reason: String,
+    /// Privacy-approved target of the omitted resource, under the same approval as a record
+    /// target; absent when the omission is not about one addressable resource.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 impl ArchiveOmissionV1 {
@@ -252,7 +256,15 @@ impl ArchiveOmissionV1 {
         Self {
             source_event: source_event.into(),
             reason: reason.into(),
+            target: None,
         }
+    }
+
+    /// Name the omitted resource's approved target.
+    #[must_use]
+    pub fn with_target(mut self, target: impl Into<String>) -> Self {
+        self.target = Some(target.into());
+        self
     }
 }
 

@@ -1,0 +1,43 @@
+{
+  "id": "l103-rules-thai-bird",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "นก|บิน|ขึ้น|ฟ้า|เด็ก|มอง|ดู",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 52
+    },
+    {
+      "label": "token",
+      "start": 53,
+      "end": 62
+    },
+    {
+      "label": "token",
+      "start": 63,
+      "end": 69
+    }
+  ]
+}

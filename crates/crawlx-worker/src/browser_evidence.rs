@@ -21,6 +21,8 @@ const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PIXELS: u64 = 16 * 1024 * 1024;
 pub(crate) const EVENT: &str = "browser.evidence";
+/// Run event kind of the resources the block rules blocked (`dynamic.blockRules`).
+pub(crate) const BLOCKED_EVENT: &str = "browser.blocked_resources";
 
 /// Observation boundary that produced a resource, not an inferred page lifecycle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,6 +355,45 @@ async fn capture(
     let payload = serde_json::to_value(event)
         .map_err(|_| StoreError::Serialization("browser evidence event encoding failed".into()))?;
     rc.stores.events.append(rc.run, EVENT, payload).await?;
+    Ok(())
+}
+
+/// What the block rules blocked in one session since its last drain, as the run event the archive
+/// turns into one omission per resource. Only redacted URLs and rule kinds, never bodies.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BlockedEvent {
+    pub version: u16,
+    pub session: crawlx_core::SessionId,
+    pub captured_at: crawlx_core::Timestamp,
+    pub blocked: crawlx_core::block_rules::BlockedResources,
+}
+
+/// Drain the session's blocked-resource log into one run event; nothing is written when the
+/// rules blocked nothing. A session that cannot answer the drain loses only that log.
+///
+/// # Errors
+/// Returns event persistence failures.
+pub(crate) async fn record_blocked(handle: &SessionHandle, rc: &RunContext) -> Result<(), WorkerError> {
+    if rc.crawl.dynamic.block_rules.is_none() {
+        return Ok(());
+    }
+    let blocked = match handle.page_op(PageOp::DrainBlocked).await {
+        Ok(PageOpResult::Blocked(blocked)) => blocked,
+        Ok(_) | Err(_) => return Ok(()),
+    };
+    if blocked.is_empty() {
+        return Ok(());
+    }
+    let event = BlockedEvent {
+        version: 1,
+        session: handle.session(),
+        captured_at: rc.clock.now(),
+        blocked,
+    };
+    let payload = serde_json::to_value(event)
+        .map_err(|_| StoreError::Serialization("blocked resource event encoding failed".into()))?;
+    rc.stores.events.append(rc.run, BLOCKED_EVENT, payload).await?;
     Ok(())
 }
 

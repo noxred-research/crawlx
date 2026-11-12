@@ -569,6 +569,11 @@ pub enum PageOp {
     /// Install a versioned block list (`Network.setBlockedURLs` with its patterns) on every
     /// tab and frame of the context, replacing the previous list.
     BlockResources(ResourceBlockSpec),
+    /// Install rule-based request blocking on every tab and frame of the context, replacing
+    /// the previous rules. Blocked requests are logged for [`PageOp::DrainBlocked`].
+    BlockRules(crate::block_rules::BlockRulesV1),
+    /// Hand out, and clear, the resources the installed block rules blocked since the last drain.
+    DrainBlocked,
     /// The main document serialized like [`PageOp::Html`] with shadow roots and readable
     /// iframes folded in, and the provenance of every frame. Read-only: the live DOM and
     /// the identity of its elements for actions stay as they are.
@@ -579,6 +584,11 @@ pub enum PageOp {
         /// Also read `navigator.geolocation` (waits at most a few seconds).
         probe_geolocation: bool,
     },
+    /// Measure the subresources the active tab's page loaded (images, stylesheets, scripts,
+    /// fonts): at most [`MAX_MEASURED_SUBRESOURCES`] in target order, each with the digest of
+    /// the response bytes the browser received. Read-only; needs
+    /// [`crate::ContextConfig::measure_subresources`].
+    MeasureSubresources,
     /// The response of the latest main-frame document navigation of the active tab (status,
     /// headers, media type), for callers that render a page and still report the HTTP facts.
     DocumentResponse,
@@ -652,10 +662,27 @@ impl PageOp {
             Self::WaitForSelector { .. } => "wait_for_selector",
             Self::ResolveAll { .. } => "resolve_all",
             Self::BlockResources(_) => "block_resources",
+            Self::BlockRules(_) => "block_rules",
+            Self::DrainBlocked => "drain_blocked",
             Self::FlattenedHtml(_) => "flattened_html",
             Self::MeasureDevice { .. } => "measure_device",
+            Self::MeasureSubresources => "measure_subresources",
         }
     }
+}
+
+/// Most subresources [`PageOp::MeasureSubresources`] reports. It exceeds the recrawl baseline
+/// bound by one, so a page with more subresources than a baseline can hold is visibly cut off.
+pub const MAX_MEASURED_SUBRESOURCES: usize = crate::orchestration::MAX_RECRAWL_RESOURCES + 1;
+
+/// One subresource of the page and, when its response could be read, the digest of its bytes.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MeasuredSubresource {
+    /// Privacy-approved target URL, without credentials or fragment.
+    pub target: String,
+    /// Digest of the response bytes; `None` when the browser no longer held them, the resource
+    /// failed, was too large to read or was withheld by privacy.
+    pub digest: Option<crate::hash::Digest>,
 }
 
 /// What a [`PageOp`] returned.
@@ -703,8 +730,12 @@ pub enum PageOpResult {
     },
     /// What installing a block list reached (`BlockResources`).
     BlockInstalled(BlockInstall),
+    /// The resources block rules blocked since the last drain (`DrainBlocked`).
+    Blocked(crate::block_rules::BlockedResources),
     /// The serialization with shadow roots and readable iframes folded in (`FlattenedHtml`).
     Flattened(FlattenedDocument),
     /// What the active tab's page reports about its device (`MeasureDevice`).
     Device(DeviceMeasurement),
+    /// The measured subresources, sorted by target (`MeasureSubresources`).
+    Subresources(Vec<MeasuredSubresource>),
 }

@@ -25,7 +25,7 @@ use crate::run::{build_kernel, RunContext};
 use actions::ActionRunner;
 use async_trait::async_trait;
 use crawlx_core::observation::{NavigationResult, QuiescencePolicy};
-use crawlx_core::page_op::{PageOp, PageOpResult, ShotSpec};
+use crawlx_core::page_op::{MeasuredSubresource, PageOp, PageOpResult, ShotSpec};
 use crawlx_core::parser_memory::AdmittedText;
 use crawlx_core::repo::{CrawlSession, SessionStatus};
 use crawlx_core::scrape::{
@@ -113,6 +113,9 @@ pub struct RenderedEvidence {
     pub truncated: bool,
     /// Block list, requested-versus-measured device and flattened frames of this render.
     pub browser_page: Option<BrowserPageReportV1>,
+    /// The subresources the page loaded with the digest of each response, measured only when
+    /// the run revisits pages (recrawl). `None` means nothing was measured.
+    pub subresources: Option<Vec<MeasuredSubresource>>,
 }
 
 /// A rendered page.
@@ -765,6 +768,16 @@ impl BrowserRenderer {
                 }
             }
         };
+        let subresources = if rc
+            .crawl
+            .orchestration
+            .as_ref()
+            .is_some_and(|orchestration| orchestration.recrawl.is_some())
+        {
+            measure_subresources(handle).await
+        } else {
+            None
+        };
         let truncated = allowance.is_some_and(|budget| html.len() > budget.max_decoded_bytes);
         let html = match allowance {
             Some(allowance) => charged::truncate_admitted(
@@ -827,9 +840,24 @@ impl BrowserRenderer {
                     };
                     (!report.is_empty()).then_some(report)
                 },
+                subresources,
                 backend: crawlx_core::acquisition::BackendCapabilitiesV1::native_browser(effective_build),
             }),
         })
+    }
+}
+
+/// What the page's subresources measured to. A browser context that cannot measure (the scripted
+/// fake) or fails to leaves the visit with no measurement; the recrawl then reports those
+/// resources unmeasured rather than complete.
+async fn measure_subresources(handle: &SessionHandle) -> Option<Vec<MeasuredSubresource>> {
+    match handle.page_op(PageOp::MeasureSubresources).await {
+        Ok(PageOpResult::Subresources(measured)) => Some(measured),
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(error = %error, "subresources were not measured");
+            None
+        }
     }
 }
 

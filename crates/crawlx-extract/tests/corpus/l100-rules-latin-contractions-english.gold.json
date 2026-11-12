@@ -1,33 +1,38 @@
 {
-  "id": "l101-rules-unsupported-contractions-french",
+  "id": "l100-rules-latin-contractions-english",
   "family": "language",
   "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
-  "expectedText": "l'eau|est|claire|l'école|ouvre",
+  "expectedText": "they|don't|wait|we'll|go|home",
   "spans": [
     {
       "label": "token",
       "start": 0,
-      "end": 5
+      "end": 4
     },
     {
       "label": "token",
-      "start": 6,
-      "end": 9
+      "start": 5,
+      "end": 10
     },
     {
       "label": "token",
-      "start": 10,
-      "end": 16
+      "start": 11,
+      "end": 15
     },
     {
       "label": "token",
-      "start": 17,
-      "end": 25
+      "start": 16,
+      "end": 21
     },
     {
       "label": "token",
-      "start": 26,
-      "end": 31
+      "start": 22,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 29
     }
   ]
 }

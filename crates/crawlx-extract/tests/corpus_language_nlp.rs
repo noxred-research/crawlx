@@ -54,6 +54,7 @@ use crawlx_core::extraction::{
 };
 use crawlx_core::hash::Digest;
 use crawlx_extract::{Document, ExtractOptions, Extractor};
+use icu_segmenter::{GraphemeClusterSegmenter, WordSegmenter};
 use serde_json::Value;
 use url::Url;
 
@@ -61,12 +62,14 @@ const RULES: &str = "unicode_rules_v1";
 const DICT: &str = "dictionary_uax29";
 
 /// Supported classes per tokenizer, each needing at least five documents.
-const SUPPORTED_CLASSES: [(&str, &str); 10] = [
+const SUPPORTED_CLASSES: [(&str, &str); 12] = [
     (RULES, "latin"),
     (RULES, "cyrillic"),
     (RULES, "greek"),
     (RULES, "abjad"),
     (RULES, "han_kana"),
+    (RULES, "thai"),
+    (RULES, "devanagari"),
     (DICT, "thai"),
     (DICT, "chinese"),
     (DICT, "japanese"),
@@ -78,26 +81,26 @@ const SUPPORTED_CLASSES: [(&str, &str); 10] = [
 const UNVERIFIED_CLASSES: [&str; 5] = [
     "dictionary tokenizer: Khmer, Lao and Burmese (no authored fixtures)",
     "dictionary tokenizer: Korean (space-delimited; no authored fixtures)",
-    "rules tokenizer: Indic scripts, Thai and Southeast Asian scripts without spaces (see unsupported classes)",
+    "rules tokenizer: Lao, Khmer and Burmese (dictionary-cut like Thai; no authored fixtures)",
     "language detection accuracy (needs the operator-supplied detector bundle, unavailable here)",
     "sentence boundaries of scripts without terminal punctuation (Thai)",
 ];
 
-/// Token-level segmentation floors, measured on this corpus (pinned unsupported classes
-/// included) and set just under the observed values; the worst rules case is an unsupported
-/// script. They describe this authored corpus only.
-const FLOOR_RULES_MACRO: f64 = 0.93;
-const FLOOR_RULES_PRECISION: f64 = 0.96;
-const FLOOR_RULES_RECALL: f64 = 0.97;
-const FLOOR_RULES_WORST: f64 = 0.0;
-const FLOOR_DICT_MACRO: f64 = 0.93;
-const FLOOR_DICT_PRECISION: f64 = 0.92;
-const FLOOR_DICT_RECALL: f64 = 0.92;
-const FLOOR_DICT_WORST: f64 = 0.63;
+/// Token-level segmentation floors, measured on this corpus (pinned divergences included) and
+/// set at or just under the observed values: every rules document is exact (all scores 1.0), so
+/// its floors are exact too. They describe this authored corpus only.
+const FLOOR_RULES_MACRO: f64 = 1.0;
+const FLOOR_RULES_PRECISION: f64 = 1.0;
+const FLOOR_RULES_RECALL: f64 = 1.0;
+const FLOOR_RULES_WORST: f64 = 1.0;
+const FLOOR_DICT_MACRO: f64 = 0.934;
+const FLOOR_DICT_PRECISION: f64 = 0.929;
+const FLOOR_DICT_RECALL: f64 = 0.926;
+const FLOOR_DICT_WORST: f64 = 0.639;
 
-const FLOOR_SENTENCE_MACRO: f64 = 0.84;
-const FLOOR_SENTENCE_PRECISION: f64 = 0.79;
-const FLOOR_SENTENCE_RECALL: f64 = 0.88;
+const FLOOR_SENTENCE_MACRO: f64 = 0.845;
+const FLOOR_SENTENCE_PRECISION: f64 = 0.799;
+const FLOOR_SENTENCE_RECALL: f64 = 0.892;
 const FLOOR_SENTENCE_WORST: f64 = 0.0;
 
 const ENGLISH_STOPWORDS: [&str; 26] = [
@@ -137,26 +140,75 @@ fn expected_tokenizer_version(case: &Case) -> String {
 }
 
 fn is_cjk(c: char) -> bool {
-    ('\u{3400}'..='\u{9fff}').contains(&c) || ('\u{3040}'..='\u{30ff}').contains(&c)
+    (('\u{3400}'..='\u{9fff}').contains(&c) || ('\u{3040}'..='\u{30ff}').contains(&c)) && c.is_alphanumeric()
 }
 
-/// The documented `unicode_rules_v1` word rule: alphanumeric runs, each Han or kana scalar alone.
+fn is_dictionary_script(c: char) -> bool {
+    matches!(c, '\u{0e00}'..='\u{0eff}' | '\u{1000}'..='\u{109f}' | '\u{1780}'..='\u{17ff}')
+}
+
+/// Words of one dictionary-script run, as the ICU dictionary segmenter cuts it.
+fn dictionary_words(run: &str, out: &mut Vec<String>) {
+    let segmenter = WordSegmenter::new_dictionary(Default::default());
+    let mut previous = 0;
+    for end in segmenter.segment_str(run) {
+        if end > previous {
+            out.push(run[previous..end].to_lowercase());
+        }
+        previous = end;
+    }
+}
+
+/// The documented `unicode_rules_v1` word rule, written independently of the extractor: runs of
+/// extended grapheme clusters that begin with an alphanumeric scalar (marks, vowel signs, virama,
+/// nukta and joiners stay in their word), with an apostrophe between two letters kept inside the
+/// word, each Han or kana scalar alone, and Thai, Lao, Myanmar and Khmer runs cut by the ICU
+/// dictionary.
 fn rules_tokens(text: &str) -> Vec<String> {
+    let clusters: Vec<&str> = {
+        let mut previous = 0;
+        GraphemeClusterSegmenter::new()
+            .segment_str(text)
+            .filter_map(|end| {
+                let cluster = &text[previous..end];
+                previous = end;
+                (!cluster.is_empty()).then_some(cluster)
+            })
+            .collect()
+    };
     let mut out = Vec::new();
     let mut run = String::new();
-    for c in text.chars().chain(std::iter::once(' ')) {
-        if c.is_alphanumeric() && !is_cjk(c) {
-            run.push(c);
+    let mut last_letter = false;
+    let flush = |run: &mut String, out: &mut Vec<String>| {
+        if run.is_empty() {
+            return;
+        }
+        if run.chars().any(is_dictionary_script) {
+            dictionary_words(run, out);
+        } else {
+            out.push(run.to_lowercase());
+        }
+        run.clear();
+    };
+    for (index, cluster) in clusters.iter().enumerate() {
+        let first = cluster.chars().next().unwrap();
+        let next_is_letter = clusters
+            .get(index + 1)
+            .and_then(|next| next.chars().next())
+            .is_some_and(|c| c.is_alphabetic() && !is_cjk(c));
+        let contraction =
+            matches!(*cluster, "'" | "\u{2019}") && !run.is_empty() && last_letter && next_is_letter;
+        if (first.is_alphanumeric() && !is_cjk(first)) || contraction {
+            run.push_str(cluster);
+            last_letter = first.is_alphabetic();
             continue;
         }
-        if !run.is_empty() {
-            out.push(run.to_lowercase());
-            run.clear();
-        }
-        if is_cjk(c) {
-            out.push(c.to_lowercase().collect());
+        flush(&mut run, &mut out);
+        if is_cjk(first) {
+            out.push(cluster.to_lowercase());
         }
     }
+    flush(&mut run, &mut out);
     out
 }
 
@@ -868,14 +920,9 @@ fn language_classes_and_unsupported_scripts_are_published() {
         .filter(|(_, (_, unsupported))| *unsupported > 0)
         .map(|((_, class), _)| class.as_str())
         .collect();
-    assert_eq!(
-        unsupported,
-        BTreeSet::from([
-            "unsupported_contractions",
-            "unsupported_devanagari",
-            "unsupported_katakana_middle_dot",
-            "unsupported_thai"
-        ])
+    assert!(
+        unsupported.is_empty(),
+        "documents still marked unsupported: {unsupported:?}"
     );
     // Every supported class holds only supported documents.
     for (tokenizer, class) in SUPPORTED_CLASSES {

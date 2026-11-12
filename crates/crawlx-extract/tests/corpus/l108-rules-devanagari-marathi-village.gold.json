@@ -1,0 +1,48 @@
+{
+  "id": "l108-rules-devanagari-marathi-village",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "माझे|घर|गावात|आहे|आम्ही|रोज|शाळेत|जातो",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 45
+    },
+    {
+      "label": "token",
+      "start": 46,
+      "end": 61
+    },
+    {
+      "label": "token",
+      "start": 62,
+      "end": 71
+    },
+    {
+      "label": "token",
+      "start": 72,
+      "end": 87
+    },
+    {
+      "label": "token",
+      "start": 88,
+      "end": 100
+    }
+  ]
+}

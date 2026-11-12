@@ -250,7 +250,10 @@ impl BrowserContext for OpsContext {
                 self.ops.emulations.lock().push(em);
                 Ok(PageOpResult::Done)
             }
-            PageOp::BlockUrls(_) | PageOp::BlockResources(_) => self.inner.page_op(op).await,
+            PageOp::BlockUrls(_)
+            | PageOp::BlockResources(_)
+            | PageOp::BlockRules(_)
+            | PageOp::DrainBlocked => self.inner.page_op(op).await,
             PageOp::DocumentResponse => Ok(PageOpResult::Response {
                 status: Some(200),
                 headers: vec![("content-type".to_owned(), "text/html".to_owned())],
@@ -301,7 +304,8 @@ impl BrowserContext for OpsContext {
             | PageOp::Download(_)
             | PageOp::CaptureProjection
             | PageOp::FlattenedHtml(_)
-            | PageOp::MeasureDevice { .. }) => self.inner.page_op(other).await,
+            | PageOp::MeasureDevice { .. }
+            | PageOp::MeasureSubresources) => self.inner.page_op(other).await,
         }
     }
 }

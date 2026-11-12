@@ -270,6 +270,15 @@ fn fetch_controls() -> Value {
     let statuses = json!({
         "type":"array","items":{"type":"integer","minimum":100,"maximum":599},"default":[]
     });
+    let reference = json!({
+        "type":"string","minLength":1,"maxLength":4096,"pattern":"^(env|file|vault|cloud-sm)://",
+        "description":"Credential reference resolved by the run's secret chain. A literal is refused."
+    });
+    let hosts = json!({
+        "type":"array","maxItems":16,
+        "items":{"type":"string","minLength":1,"maxLength":255,
+            "description":"`host` (exact) or `*.suffix` (any subdomain); lower-cased on admission."}
+    });
     json!({
         "type":"object",
         "properties":{
@@ -295,7 +304,174 @@ fn fetch_controls() -> Value {
             "identityProfile":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$",
                 "description":"Digest of the installed native HTTP identity profile. Requires URL-only static mode without custom TLS, User-Agent, headers, preflight, skip-TLS or acquisitionService."},
             "acquisitionService":{"type":["string","null"],"minLength":1,"maxLength":128,
-                "description":"Operator registry id of an approved HTML acquisition service, never an endpoint. Requires URL-only static mode without headers, cookies, User-Agent, proxy, preflight or skip-TLS, and couples acquisition.backendIds to [acquisition_service]."}
+                "description":"Operator registry id of an approved HTML acquisition service, never an endpoint. Requires URL-only static mode without headers, cookies, User-Agent, proxy, preflight or skip-TLS, and couples acquisition.backendIds to [acquisition_service]."},
+            "clientCertificate":{"anyOf":[{"type":"null"},{
+                "type":"object","additionalProperties":false,"required":["certificate","key"],
+                "description":"TLS client certificate presented by the URL plane to servers that request one, under one shared deadline for all references. The key never appears in logs, errors or results. Refused in dynamic mode, with an identity profile and with acquisitionService.",
+                "properties":{
+                    "certificate":{"allOf":[reference],"description":"Reference of the PEM certificate chain, leaf first."},
+                    "key":{"allOf":[reference],"description":"Reference of the unencrypted PKCS#8 PEM private key."},
+                    "hosts":{"allOf":[hosts],"default":[],
+                        "description":"Hosts the certificate is presented to. Empty scopes it to the seed's registrable domain."}
+                }
+            }]},
+            "realmCredentials":{"type":"array","maxItems":16,"default":[],
+                "description":"Credentials answered only to a challenge naming the exact origin and realm, never sent across a cross-origin redirect or an https to http downgrade. One per origin and realm.",
+                "items":{
+                    "type":"object","additionalProperties":false,"required":["origin","realm","credential"],
+                    "properties":{
+                        "origin":{"type":"string","format":"uri","pattern":"^https?://",
+                            "description":"`http(s)://host[:port]` without credentials, path, query or fragment."},
+                        "realm":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[ !#-\\[\\]-~]+$",
+                            "description":"Realm of the challenge, compared exactly."},
+                        "scheme":{"type":"string","enum":["basic","digest"],"default":"basic"},
+                        "credential":{"allOf":[reference],"description":"Reference resolving to `user:password`."}
+                    }
+                }},
+            "proxyRules":{"type":"array","maxItems":16,"default":[],
+                "description":"Ordered, named per-host proxy rules. The first matching rule routes the request; a selected rule never falls back to another rule or a direct connection, and a host no rule matches follows `proxy`. Not combinable with a pool route or an identity profile.",
+                "items":{
+                    "type":"object","additionalProperties":false,"required":["name","hosts","proxy"],
+                    "properties":{
+                        "name":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[a-z0-9_-]+$",
+                            "description":"Unique rule name."},
+                        "hosts":{"allOf":[hosts],"minItems":1},
+                        "proxy":{"type":"string","format":"uri","pattern":"^(https?|socks5h?)://",
+                            "description":"Proxy URL with a host and no credentials, path, query or fragment."}
+                    }
+                }}
+        }
+    })
+}
+
+fn adaptive_rendering() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,
+        "description":"A URL selected by a seeded draw is also probed in the browser plane, so a wrong static prediction is noticed. The draw depends only on the run seed, the predictor version and the URL; it is recorded with the page and replays identically.",
+        "properties":{
+            "predictorVersion":{"type":"integer","const":1,"default":1},
+            "probePerMille":{"type":"integer","minimum":0,"maximum":1000,"default":100,
+                "description":"Probability, in thousandths, that a URL is selected for a probe."},
+            "maxProbes":{"type":"integer","minimum":0,"maximum":100000,"default":16,
+                "description":"Most probes one worker pays for in a run."},
+            "probeEffects":{"type":"integer","minimum":1,"maximum":8,"default":1,
+                "description":"Effects one probe adds to its request's effect charge. A probe the budget cannot pay is denied and recorded."}
+        }
+    })
+}
+
+fn block_rules() -> Value {
+    let list = |description: &str| {
+        json!({
+            "type":"array","maxItems":64,"default":[],"description":description,
+            "items":{"type":"string","minLength":1,"maxLength":512,
+                "description":"Without control characters."}
+        })
+    };
+    json!({
+        "type":"object","additionalProperties":false,
+        "properties":{
+            "urls":list("`*`-wildcard patterns over the full request URL."),
+            "frames":list("`*`-wildcard patterns that apply only to documents loaded by a child frame."),
+            "text":list("Case-insensitive substrings of the request URL."),
+            "allowOnly":list("When non-empty, subresource and child-frame requests matching none of these `*`-wildcard patterns are blocked. The page being visited is governed by scope and robots policy.")
+        }
+    })
+}
+
+fn hop_policy() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,
+        "description":"Typed hop policy. Links are always followed; embeds and prerequisites only when asked for. The limits end calendar-style traps.",
+        "properties":{
+            "version":{"type":"integer","const":1,"default":1},
+            "followEmbeds":{"type":"boolean","default":false},
+            "followPrerequisites":{"type":"boolean","default":false},
+            "maxHops":{"type":"integer","minimum":1,"maximum":64,"default":32,
+                "description":"Longest hop path."},
+            "maxTransitiveHops":{"type":"integer","minimum":0,"maximum":64,"default":3,
+                "description":"Most embeds, prerequisites and redirects in a row."},
+            "maxRepeatedSegments":{"type":"integer","minimum":0,"maximum":255,"default":3,
+                "description":"Most times one path segment may repeat in a URL; 0 is off."}
+        }
+    })
+}
+
+fn queue_cost() -> Value {
+    let cost = |default: u64, description: &str| json!({"type":"integer","minimum":0,"maximum":65535,"default":default,"description":description});
+    json!({
+        "type":"object","additionalProperties":false,
+        "description":"Each discovered URL is queued with the explicit priority `base - cost`, so cheap URLs dequeue first. Ordering only: it never admits a URL.",
+        "properties":{
+            "version":{"type":"integer","const":1,"default":1},
+            "linkCost":cost(1, "Cost of each followed link in the hop path."),
+            "embedCost":cost(0, "Cost of each embedded resource."),
+            "prerequisiteCost":cost(0, "Cost of each prerequisite."),
+            "redirectCost":cost(0, "Cost of each redirect."),
+            "calendarPenalty":cost(4, "Cost per date-like token in the URL; 0 turns the rule off."),
+            "repeatPenalty":cost(2, "Cost per repetition of one path segment beyond the first."),
+            "successStep":{"type":"integer","minimum":0,"maximum":4294967295u64,"default":0,
+                "description":"Pages a host yields per success step; 0 turns the success rule off."},
+            "successPenalty":cost(1, "Cost added per completed success step of the URL's host."),
+            "maxCost":{"type":"integer","minimum":1,"maximum":32000,"default":1000,
+                "description":"Ceiling of the total cost."}
+        }
+    })
+}
+
+fn seed_sources() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["fixtures"],
+        "description":"Candidate URLs read from recorded documents and queued next to the seed at depth 1. A candidate is a proposal only: it passes scope, robots, authorization and the budget like any discovered link. Nothing is read from a network or a disk.",
+        "properties":{
+            "version":{"type":"integer","const":1,"default":1},
+            "fixtures":{"type":"array","minItems":1,"maxItems":8,"items":{
+                "type":"object","additionalProperties":false,"required":["kind","content"],
+                "properties":{
+                    "kind":{"type":"string","enum":[
+                        "archive_index","certificate_transparency","sitemap","robots","feed","homepage"
+                    ]},
+                    "content":{"type":"string","maxLength":1048576,"description":"The recorded document text."}
+                }
+            }},
+            "maxUrls":{"type":"integer","minimum":1,"maximum":100000,"default":1000,
+                "description":"Candidates kept after deduplication."},
+            "liveCheck":{"type":"string","enum":["off","head"],"default":"off",
+                "description":"`head` sends one HEAD request per admitted candidate through the checked fetcher and origin governor, follows no redirect, and queues it only on a status of 200 to 399."}
+        }
+    })
+}
+
+fn adaptive_stop() -> Value {
+    json!({
+        "type":"object","additionalProperties":false,"required":["query"],
+        "description":"Query-driven stop policy: the crawl ends at the first of maxPages evaluated pages, saturation (the average gain of the last `window` pages below minGainPermille) and the confidence target. A stop is a statement about gain on the fetched pages, never about exhaustive coverage.",
+        "properties":{
+            "version":{"type":"integer","const":1,"default":1},
+            "query":{"type":"string","minLength":1,"maxLength":512,"description":"The question; at least one term must survive normalization."},
+            "maxPages":{"type":"integer","minimum":1,"maximum":100000,"default":100},
+            "minPages":{"type":"integer","minimum":0,"maximum":100000,"default":3,
+                "description":"Pages evaluated before saturation may stop the crawl; at most maxPages."},
+            "window":{"type":"integer","minimum":1,"maximum":1000,"default":3},
+            "minGainPermille":{"type":"integer","minimum":0,"maximum":1000,"default":50},
+            "targetConfidencePermille":{"type":"integer","minimum":0,"maximum":950,"default":0,
+                "description":"Confidence, in thousandths, that stops the crawl; 0 is off. Confidence is capped below certainty."},
+            "maxVocabulary":{"type":"integer","minimum":16,"maximum":65536,"default":4096},
+            "import":{"anyOf":[{"type":"null"},{
+                "type":"object","additionalProperties":false,
+                "required":["version","queryDigest","pages","relevantPages","recentGains","termPages","vocabulary"],
+                "description":"State exported by an earlier run of the same query; the crawl continues from it. Terms and counts only, bound to the query by digest.",
+                "properties":{
+                    "version":{"type":"integer","const":1},
+                    "queryDigest":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                    "pages":{"type":"integer","minimum":0,"maximum":4294967295u64},
+                    "relevantPages":{"type":"integer","minimum":0,"maximum":4294967295u64},
+                    "recentGains":{"type":"array","items":{"type":"integer","minimum":0,"maximum":1000}},
+                    "termPages":{"type":"object","additionalProperties":{"type":"integer","minimum":0,"maximum":4294967295u64}},
+                    "vocabulary":{"type":"array","items":{"type":"string"}},
+                    "stopped":{"type":["string","null"],"enum":[null,"page_limit","saturated","confidence_target"]}
+                }
+            }],"default":null}
         }
     })
 }
@@ -337,7 +513,11 @@ fn create(schemas: &mut Schemas) -> Value {
                         "description":"Exact retained generation to restore. 0 creates the namespace and is refused when one exists; N >= 1 restores that generation or fails, never an empty profile. With saveChanges the run commits generation N + 1."}
                 },
                 "required":["name"]
-            }
+            },
+            "adaptive":{"anyOf":[{"type":"null"},adaptive_rendering()],"default":null,
+                "description":"Adaptive static/browser render prediction. Needs hybrid mode, orchestration limits and no native acquisition policy; every probe is charged to the request's effect budget."},
+            "blockRules":{"anyOf":[{"type":"null"},block_rules()],"default":null,
+                "description":"Rule-based request blocking of the browser plane. Every blocked resource is listed in the archive manifest as an omission naming its rule kind."}
         }
     }));
     properties.insert(
@@ -367,7 +547,10 @@ fn create(schemas: &mut Schemas) -> Value {
             "sources":{"type":"array","items":{"type":"string","enum":[
                 "html","feeds","sitemap","categories","conventional","news_search","trends_search","archive"
             ]},"default":[]},
-            "maxKnownUrls":{"type":"integer","minimum":1,"default":100000}
+            "maxKnownUrls":{"type":"integer","minimum":1,"default":100000},
+            "hops":{"anyOf":[{"type":"null"},hop_policy()],"default":null},
+            "queueCost":{"anyOf":[{"type":"null"},queue_cost()],"default":null},
+            "seeding":{"anyOf":[{"type":"null"},seed_sources()],"default":null}
         }
     }));
     properties.insert(
@@ -408,6 +591,10 @@ fn create(schemas: &mut Schemas) -> Value {
         }
     }));
     properties.insert("orchestration".into(), json!({"type":["object", "null"], "description":"Bounded queue, producer and recrawl policy; validated during admission."}));
+    properties.insert(
+        "adaptive".into(),
+        json!({"anyOf":[{"type":"null"},adaptive_stop()],"default":null}),
+    );
     properties.insert(
         "scrape".into(),
         json!({

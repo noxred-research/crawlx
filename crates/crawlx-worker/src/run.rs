@@ -1827,6 +1827,12 @@ impl RunContext {
         c.request_controls = self.controls.clone();
         c.response_bodies = self.crawl.capture.response_bodies;
         c.browser_evidence = self.crawl.capture.browser.clone();
+        // Recrawl completeness compares subresource digests, so only a run that revisits pays for them.
+        c.measure_subresources = self
+            .crawl
+            .orchestration
+            .as_ref()
+            .is_some_and(|orchestration| orchestration.recrawl.is_some());
         if c.browser_evidence.durable() {
             c.browser_capture_sink = Some(crate::browser_evidence::sink(self));
         }

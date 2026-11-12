@@ -2,13 +2,15 @@
 
 use super::{approved_target, codec, joined, json};
 use crate::WorkerError;
-use crawlx_core::archive::ArchiveRepresentation;
+use crawlx_core::archive::{ArchiveOmissionV1, ArchiveRepresentation};
 use crawlx_core::archive_catalog::{
     ArchiveDependencyV1, ArchiveExportState, ArchiveHistoryKeyV1, ArchiveHistoryV1, ArchiveReadV1,
     ArchiveRecordV1, ArchiveRepo,
 };
 use crawlx_core::hash::Digest;
-use crawlx_core::orchestration::QueuedRequestV1;
+use crawlx_core::orchestration::{
+    QueuedRequestV1, RecrawlBaselineV1, RecrawlCompletenessV1, RecrawlCoverageV1, RecrawlResourceStateV1,
+};
 use crawlx_core::repo::{ArtifactStore, CrawlRun, PageRecord};
 use crawlx_core::Timestamp;
 use crawlx_fetch::conditional::Validators;
@@ -185,6 +187,48 @@ pub(super) fn captured_history(
     );
     history.vary = vary;
     Ok(Some(history))
+}
+
+/// The facts a recrawl visit leaves unmeasured, as archive omissions: one per subresource that
+/// changed, appeared or was skipped or unmeasured, or a single document-only fact when no
+/// subresource is known at all. A visit without a baseline is not a recrawl and says nothing.
+/// An unchanged document with a changed or unmeasured image is therefore never silently complete.
+pub(super) fn recrawl_omissions(request: &QueuedRequestV1, page: &PageRecord) -> Vec<ArchiveOmissionV1> {
+    let Some(baseline) = RecrawlBaselineV1::from_envelope(&request.envelope) else {
+        return Vec::new();
+    };
+    let completeness = RecrawlCompletenessV1::for_visit(Some(&baseline), Some(page));
+    let event = format!("page:{}", page.frontier_id);
+    match completeness.coverage {
+        RecrawlCoverageV1::Complete => Vec::new(),
+        RecrawlCoverageV1::DocumentOnly => vec![ArchiveOmissionV1::new(
+            event,
+            "recrawl_subresources_not_measured_document_only",
+        )],
+        _ => {
+            let mut omissions: Vec<ArchiveOmissionV1> = completeness
+                .resources
+                .iter()
+                .enumerate()
+                .map(|(index, fact)| {
+                    let reason = match fact.state {
+                        RecrawlResourceStateV1::Changed => "recrawl_resource_changed",
+                        RecrawlResourceStateV1::Added => "recrawl_resource_added",
+                        _ => "recrawl_resource_not_measured",
+                    };
+                    let omission = ArchiveOmissionV1::new(format!("{event}:resource:{index}"), reason);
+                    match approved_target(&fact.target) {
+                        Ok(target) => omission.with_target(target),
+                        Err(_) => omission,
+                    }
+                })
+                .collect();
+            if completeness.truncated {
+                omissions.push(ArchiveOmissionV1::new(event, "recrawl_resource_list_truncated"));
+            }
+            omissions
+        }
+    }
 }
 
 /// Resolve a complete validator-compatible archived response without any live re-request.

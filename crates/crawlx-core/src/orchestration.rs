@@ -557,6 +557,224 @@ pub enum RecrawlChangeV1 {
     Unknown,
 }
 
+/// Most subresources a recrawl baseline remembers and a completeness report lists.
+pub const MAX_RECRAWL_RESOURCES: usize = 16;
+/// Longest subresource target in bytes. A longer one is not tracked and marks the report truncated.
+pub const MAX_RECRAWL_TARGET_BYTES: usize = 256;
+/// Where a visit's measured subresources sit in its page metadata:
+/// `{"recrawl": {"resources": [{"target": "...", "digest": "..."}]}}`. A `digest` of `null` is a
+/// resource the visit saw but could not measure. A page without this array measured none.
+pub const RECRAWL_RESOURCES_POINTER: &str = "/recrawl/resources";
+/// Metadata key under which a scheduled revisit carries what the previous visit established
+/// about the page's subresources ([`RecrawlCompletenessV1`]).
+pub const RECRAWL_COMPLETENESS_KEY: &str = "crawlx_recrawl_completeness_v1";
+
+/// One subresource of a page (image, stylesheet, script) and its last measured digest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct RecrawlResourceV1 {
+    /// Privacy-approved resource target.
+    pub target: String,
+    /// Digest of the approved representation; `None` when it could not be measured.
+    pub digest: Option<Digest>,
+}
+
+impl RecrawlResourceV1 {
+    /// A subresource and its digest; `None` for one the visit saw but could not measure.
+    #[must_use]
+    pub fn new(target: impl Into<String>, digest: Option<Digest>) -> Self {
+        Self {
+            target: target.into(),
+            digest,
+        }
+    }
+}
+
+/// Record the subresources a visit measured in its page `metadata`, where
+/// [`RECRAWL_RESOURCES_POINTER`] reads them back. At most `MAX_RECRAWL_RESOURCES * 4` are kept;
+/// the baseline of the next visit holds fewer and marks the cut as incomplete.
+pub fn record_recrawl_resources(metadata: &mut serde_json::Value, resources: &[RecrawlResourceV1]) {
+    let kept: Vec<&RecrawlResourceV1> = resources.iter().take(MAX_RECRAWL_RESOURCES * 4).collect();
+    metadata["recrawl"] = serde_json::json!({ "resources": kept });
+}
+
+/// How one subresource stands against the baseline after a recrawl visit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RecrawlResourceStateV1 {
+    /// Measured again with the baseline's digest.
+    Unchanged,
+    /// Measured again with another digest.
+    Changed,
+    /// Measured now, absent from the baseline.
+    Added,
+    /// The visit skipped it or could not measure it, so nothing is known about it.
+    Unmeasured,
+}
+
+/// A subresource that keeps a recrawl from being complete.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct RecrawlResourceFactV1 {
+    /// Privacy-approved resource target.
+    pub target: String,
+    /// Its state; never [`RecrawlResourceStateV1::Unchanged`].
+    pub state: RecrawlResourceStateV1,
+}
+
+/// Whether a recrawl visit covered the page's subresources.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RecrawlCoverageV1 {
+    /// The visit measured every known subresource and none changed.
+    Complete,
+    /// Some subresource changed, appeared or was skipped or unmeasured, or the list was cut off.
+    Incomplete,
+    /// Neither the baseline nor the visit knows any subresource: only the document was compared.
+    DocumentOnly,
+}
+
+/// What a recrawl visit established about the page's subresources. An unchanged document with a
+/// changed or unmeasured image is [`RecrawlCoverageV1::Incomplete`], never complete.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct RecrawlCompletenessV1 {
+    /// Coverage verdict.
+    pub coverage: RecrawlCoverageV1,
+    /// Changed, added, skipped and unmeasured subresources in target order, at most
+    /// [`MAX_RECRAWL_RESOURCES`] of the baseline plus as many added ones.
+    pub resources: Vec<RecrawlResourceFactV1>,
+    /// Some subresource was not tracked (too many or an over-long target); the report is never
+    /// complete then.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
+/// Subresources one visit measured, sorted and bounded.
+struct RecrawlMeasurement {
+    resources: std::collections::BTreeMap<String, Option<Digest>>,
+    truncated: bool,
+}
+
+impl RecrawlMeasurement {
+    /// The subresources recorded in `page`'s metadata; `None` when the visit measured none or the
+    /// array is malformed (a malformed measurement never counts as complete).
+    fn of(page: &crate::repo::PageRecord) -> Option<Self> {
+        let items = page.metadata.pointer(RECRAWL_RESOURCES_POINTER)?.as_array()?;
+        let mut truncated = items.len() > MAX_RECRAWL_RESOURCES * 4;
+        let mut resources = std::collections::BTreeMap::new();
+        for item in items.iter().take(MAX_RECRAWL_RESOURCES * 4) {
+            let resource = RecrawlResourceV1::deserialize(item).ok()?;
+            if resource.target.is_empty() || resource.target.len() > MAX_RECRAWL_TARGET_BYTES {
+                truncated = true;
+                continue;
+            }
+            match resources.entry(resource.target) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(resource.digest);
+                }
+                // the same target measured twice with different bytes is not a measurement
+                std::collections::btree_map::Entry::Occupied(mut slot) => {
+                    if *slot.get() != resource.digest {
+                        slot.insert(None);
+                    }
+                }
+            }
+        }
+        while resources.len() > MAX_RECRAWL_RESOURCES {
+            resources.pop_last();
+            truncated = true;
+        }
+        Some(Self { resources, truncated })
+    }
+
+    fn into_baseline(self) -> Vec<RecrawlResourceV1> {
+        self.resources
+            .into_iter()
+            .map(|(target, digest)| RecrawlResourceV1 { target, digest })
+            .collect()
+    }
+}
+
+impl RecrawlCompletenessV1 {
+    /// Compare a visit against the subresources `baseline` remembers, from the measurements the
+    /// visit recorded in its page metadata ([`RECRAWL_RESOURCES_POINTER`]). Pure and
+    /// deterministic; a visit without a page measured nothing.
+    #[must_use]
+    pub fn for_visit(baseline: Option<&RecrawlBaselineV1>, page: Option<&crate::repo::PageRecord>) -> Self {
+        let known = baseline.map_or(&[][..], |value| value.resources.as_slice());
+        Self::assess(known, page.and_then(RecrawlMeasurement::of))
+    }
+
+    fn assess(known: &[RecrawlResourceV1], measured: Option<RecrawlMeasurement>) -> Self {
+        let mut truncated = known.len() > MAX_RECRAWL_RESOURCES;
+        let known: std::collections::BTreeMap<&str, Option<Digest>> = known
+            .iter()
+            .take(MAX_RECRAWL_RESOURCES)
+            .map(|resource| (resource.target.as_str(), resource.digest))
+            .collect();
+        let Some(measured) = measured else {
+            // Nothing of the page but its document was measured.
+            if known.is_empty() && !truncated {
+                return Self {
+                    coverage: RecrawlCoverageV1::DocumentOnly,
+                    resources: Vec::new(),
+                    truncated,
+                };
+            }
+            return Self {
+                coverage: RecrawlCoverageV1::Incomplete,
+                resources: known
+                    .keys()
+                    .map(|target| RecrawlResourceFactV1 {
+                        target: (*target).to_owned(),
+                        state: RecrawlResourceStateV1::Unmeasured,
+                    })
+                    .collect(),
+                truncated,
+            };
+        };
+        truncated |= measured.truncated;
+        let mut listed = std::collections::BTreeMap::new();
+        for (target, before) in &known {
+            let state = match (before, measured.resources.get(*target)) {
+                (Some(before), Some(Some(now))) if before == now => continue,
+                (Some(_), Some(Some(_))) => RecrawlResourceStateV1::Changed,
+                _ => RecrawlResourceStateV1::Unmeasured,
+            };
+            listed.insert((*target).to_owned(), state);
+        }
+        for (target, now) in &measured.resources {
+            if !known.contains_key(target.as_str()) {
+                let state = if now.is_some() {
+                    RecrawlResourceStateV1::Added
+                } else {
+                    RecrawlResourceStateV1::Unmeasured
+                };
+                listed.insert(target.clone(), state);
+            }
+        }
+        let coverage = if listed.is_empty() && !truncated {
+            RecrawlCoverageV1::Complete
+        } else {
+            RecrawlCoverageV1::Incomplete
+        };
+        Self {
+            coverage,
+            resources: listed
+                .into_iter()
+                .map(|(target, state)| RecrawlResourceFactV1 { target, state })
+                .collect(),
+            truncated,
+        }
+    }
+}
+
 /// Injected approved archive/history baseline. This value grants no byte-read authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -573,6 +791,11 @@ pub struct RecrawlBaselineV1 {
     /// Consecutive actual failed acquisitions; unknown responses do not imply failure.
     #[serde(default)]
     pub consecutive_errors: u32,
+    /// Subresources the last visit measured, in target order; empty when none was. A visit that
+    /// measures none keeps the previous list, so those resources stay unmeasured, never
+    /// forgotten.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<RecrawlResourceV1>,
 }
 
 impl RecrawlBaselineV1 {
@@ -585,7 +808,16 @@ impl RecrawlBaselineV1 {
             interval_ms,
             change_rate_permille: 500,
             consecutive_errors: 0,
+            resources: Vec::new(),
         }
+    }
+
+    /// The baseline a scheduled revisit carries in its envelope metadata; `None` for a first
+    /// visit or a malformed value.
+    #[must_use]
+    pub fn from_envelope(envelope: &RequestEnvelopeV1) -> Option<Self> {
+        let value = envelope.metadata.get(RECRAWL_BASELINE_KEY)?;
+        Self::deserialize(value).ok()
     }
 }
 
@@ -604,6 +836,8 @@ pub struct RecrawlDecisionV1 {
     pub change_rate_permille: u16,
     /// Ascending scheduling key; the durable row ID remains the final dispatch tie-break.
     pub rank_key: (i64, i64),
+    /// What the visit established about the page's subresources.
+    pub completeness: RecrawlCompletenessV1,
 }
 
 const RECRAWL_BASELINE_KEY: &str = "crawlx_recrawl_baseline_v1";
@@ -640,12 +874,18 @@ impl RecrawlPolicyV1 {
         if baseline.is_some_and(|value| {
             value.observed_at > committed_at
                 || value.change_rate_permille > 1000
+                || value.resources.len() > MAX_RECRAWL_RESOURCES
                 || value.interval_ms < self.min_interval_ms
                 || value.interval_ms > self.max_interval_ms
         }) {
             return Err(StoreError::Conflict("invalid recrawl baseline bounds".into()));
         }
         let digest = commit.page.as_ref().map(|page| page.content_digest);
+        let measured = commit.page.as_ref().and_then(RecrawlMeasurement::of);
+        let completeness = RecrawlCompletenessV1::assess(
+            baseline.map_or(&[][..], |value| value.resources.as_slice()),
+            measured,
+        );
         let change = if matches!(
             commit.status,
             FrontierStatus::Failed | FrontierStatus::Unreachable
@@ -728,6 +968,14 @@ impl RecrawlPolicyV1 {
             interval_ms,
             change_rate_permille,
             consecutive_errors,
+            resources: if change == RecrawlChangeV1::Error {
+                baseline.map_or_else(Vec::new, |value| value.resources.clone())
+            } else {
+                commit.page.as_ref().and_then(RecrawlMeasurement::of).map_or_else(
+                    || baseline.map_or_else(Vec::new, |value| value.resources.clone()),
+                    RecrawlMeasurement::into_baseline,
+                )
+            },
         };
         request.metadata.insert(
             RECRAWL_BASELINE_KEY.into(),
@@ -737,6 +985,11 @@ impl RecrawlPolicyV1 {
         request
             .metadata
             .insert("crawlx_recrawl_rank_v1".into(), serde_json::json!(rank_key.0));
+        request.metadata.insert(
+            RECRAWL_COMPLETENESS_KEY.into(),
+            serde_json::to_value(&completeness)
+                .map_err(|_| StoreError::Conflict("recrawl completeness encoding failed".into()))?,
+        );
         request
             .validate()
             .map_err(|_| StoreError::Conflict("recrawl metadata limit exceeded".into()))?;
@@ -746,6 +999,7 @@ impl RecrawlPolicyV1 {
             interval_ms,
             change_rate_permille,
             rank_key,
+            completeness,
         }))
     }
 }
@@ -1962,5 +2216,278 @@ mod adaptive_schedule_tests {
         assert_eq!(second.change_rate_permille, 281);
         assert_eq!(second.request.revisit_generation, 2);
         assert_eq!(request().revisit_generation, 0);
+    }
+
+    fn resource(target: &str, bytes: &[u8]) -> RecrawlResourceV1 {
+        RecrawlResourceV1 {
+            target: target.into(),
+            digest: Some(Digest::of("schedule-test", bytes)),
+        }
+    }
+
+    /// A succeeded visit of the page whose document digest is `html` and whose subresource
+    /// measurements are `measured` (`None`: the visit measured none).
+    fn visit(html: Digest, measured: Option<serde_json::Value>) -> RequestCommitV1 {
+        let mut commit = commit(FrontierStatus::Succeeded, Some(html));
+        if let (Some(page), Some(resources)) = (commit.page.as_mut(), measured) {
+            page.metadata = serde_json::json!({ "recrawl": { "resources": resources } });
+        }
+        commit
+    }
+
+    fn baseline_with(html: Digest, resources: Vec<RecrawlResourceV1>) -> RecrawlBaselineV1 {
+        let mut baseline = RecrawlBaselineV1::new(Some(html), now(), 1000);
+        baseline.resources = resources;
+        baseline
+    }
+
+    fn decide(baseline: &RecrawlBaselineV1, commit: &RequestCommitV1) -> RecrawlDecisionV1 {
+        policy()
+            .next_visit_after_commit(&request(), commit, now(), policy().end_at, Some(baseline))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn fact(target: &str, state: RecrawlResourceStateV1) -> RecrawlResourceFactV1 {
+        RecrawlResourceFactV1 {
+            target: target.into(),
+            state,
+        }
+    }
+
+    #[test]
+    fn unchanged_html_with_a_changed_image_is_incomplete_and_lists_the_image() {
+        let html = Digest::of("schedule-test", b"html");
+        let baseline = baseline_with(
+            html,
+            vec![
+                resource("https://a.test/logo.png", b"v1"),
+                resource("https://a.test/site.css", b"c"),
+            ],
+        );
+        let commit = visit(
+            html,
+            Some(serde_json::json!([
+                { "target": "https://a.test/logo.png", "digest": resource("x", b"v2").digest },
+                { "target": "https://a.test/site.css", "digest": resource("x", b"c").digest },
+            ])),
+        );
+        let decision = decide(&baseline, &commit);
+        assert_eq!(decision.change, RecrawlChangeV1::Unchanged);
+        assert_eq!(decision.completeness.coverage, RecrawlCoverageV1::Incomplete);
+        assert_eq!(
+            decision.completeness.resources,
+            vec![fact("https://a.test/logo.png", RecrawlResourceStateV1::Changed)]
+        );
+        // the report and the new baseline travel with the next visit
+        assert_eq!(
+            decision.request.metadata[RECRAWL_COMPLETENESS_KEY]["coverage"],
+            "incomplete"
+        );
+        let next = RecrawlBaselineV1::from_envelope(&decision.request).unwrap();
+        assert_eq!(
+            next.resources,
+            vec![
+                resource("https://a.test/logo.png", b"v2"),
+                resource("https://a.test/site.css", b"c")
+            ]
+        );
+    }
+
+    #[test]
+    fn unchanged_html_with_unmeasured_or_skipped_images_is_incomplete() {
+        let html = Digest::of("schedule-test", b"html");
+        let baseline = baseline_with(
+            html,
+            vec![
+                resource("https://a.test/a.png", b"1"),
+                resource("https://a.test/b.png", b"2"),
+            ],
+        );
+        // the visit measured no subresource at all: every known one is skipped
+        let skipped = decide(&baseline, &visit(html, None));
+        assert_eq!(skipped.change, RecrawlChangeV1::Unchanged);
+        assert_eq!(skipped.completeness.coverage, RecrawlCoverageV1::Incomplete);
+        assert_eq!(
+            skipped.completeness.resources,
+            vec![
+                fact("https://a.test/a.png", RecrawlResourceStateV1::Unmeasured),
+                fact("https://a.test/b.png", RecrawlResourceStateV1::Unmeasured),
+            ]
+        );
+        // skipping keeps the old measurements instead of forgetting them
+        assert_eq!(
+            RecrawlBaselineV1::from_envelope(&skipped.request)
+                .unwrap()
+                .resources,
+            baseline.resources
+        );
+        // one image measured unchanged, one seen but with no digest, one missing from the visit
+        let partial = decide(
+            &baseline_with(
+                html,
+                vec![
+                    resource("https://a.test/a.png", b"1"),
+                    resource("https://a.test/b.png", b"2"),
+                    resource("https://a.test/c.png", b"3"),
+                ],
+            ),
+            &visit(
+                html,
+                Some(serde_json::json!([
+                    { "target": "https://a.test/a.png", "digest": resource("x", b"1").digest },
+                    { "target": "https://a.test/b.png", "digest": null },
+                ])),
+            ),
+        );
+        assert_eq!(partial.completeness.coverage, RecrawlCoverageV1::Incomplete);
+        assert_eq!(
+            partial.completeness.resources,
+            vec![
+                fact("https://a.test/b.png", RecrawlResourceStateV1::Unmeasured),
+                fact("https://a.test/c.png", RecrawlResourceStateV1::Unmeasured),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_a_fully_measured_unchanged_page_is_complete() {
+        let html = Digest::of("schedule-test", b"html");
+        let baseline = baseline_with(html, vec![resource("https://a.test/a.png", b"1")]);
+        let complete = decide(
+            &baseline,
+            &visit(
+                html,
+                Some(serde_json::json!([
+                    { "target": "https://a.test/a.png", "digest": resource("x", b"1").digest },
+                ])),
+            ),
+        );
+        assert_eq!(complete.completeness.coverage, RecrawlCoverageV1::Complete);
+        assert!(complete.completeness.resources.is_empty());
+        // a measured page that knew no images before is complete only while it still has none
+        let none = decide(
+            &baseline_with(html, Vec::new()),
+            &visit(html, Some(serde_json::json!([]))),
+        );
+        assert_eq!(none.completeness.coverage, RecrawlCoverageV1::Complete);
+        let added = decide(
+            &baseline_with(html, Vec::new()),
+            &visit(
+                html,
+                Some(serde_json::json!([
+                    { "target": "https://a.test/new.png", "digest": resource("x", b"n").digest },
+                ])),
+            ),
+        );
+        assert_eq!(added.completeness.coverage, RecrawlCoverageV1::Incomplete);
+        assert_eq!(
+            added.completeness.resources,
+            vec![fact("https://a.test/new.png", RecrawlResourceStateV1::Added)]
+        );
+    }
+
+    #[test]
+    fn a_document_only_comparison_is_not_reported_as_complete() {
+        let html = Digest::of("schedule-test", b"html");
+        let decision = decide(&baseline_with(html, Vec::new()), &visit(html, None));
+        assert_eq!(decision.change, RecrawlChangeV1::Unchanged);
+        assert_eq!(decision.completeness.coverage, RecrawlCoverageV1::DocumentOnly);
+        assert!(decision.completeness.resources.is_empty());
+        // a malformed measurement is no measurement
+        let malformed = decide(
+            &baseline_with(html, vec![resource("https://a.test/a.png", b"1")]),
+            &visit(html, Some(serde_json::json!([{ "target": 7 }]))),
+        );
+        assert_eq!(malformed.completeness.coverage, RecrawlCoverageV1::Incomplete);
+    }
+
+    #[test]
+    fn resources_a_visit_records_are_the_ones_the_next_visit_compares() {
+        let html = Digest::of("schedule-test", b"html");
+        let measured = [
+            resource("https://a.test/a.png", b"1"),
+            RecrawlResourceV1::new("https://a.test/b.png", None),
+        ];
+        let mut page_metadata = serde_json::json!({"final_url": "https://a.test/"});
+        record_recrawl_resources(&mut page_metadata, &measured);
+        assert_eq!(
+            page_metadata["final_url"], "https://a.test/",
+            "other metadata is kept"
+        );
+        let recorded = page_metadata.pointer(RECRAWL_RESOURCES_POINTER).unwrap().clone();
+        // what a visit records is exactly what its successor's baseline holds, an unmeasured one included
+        let page = visit(html, Some(recorded)).page.unwrap();
+        assert_eq!(RecrawlMeasurement::of(&page).unwrap().into_baseline(), measured,);
+        // an unchanged, fully measured revisit is complete; one changed image is not
+        let all = [
+            resource("https://a.test/a.png", b"1"),
+            resource("https://a.test/b.png", b"2"),
+        ];
+        let mut full = serde_json::json!({});
+        record_recrawl_resources(&mut full, &all);
+        let mut changed = serde_json::json!({});
+        record_recrawl_resources(
+            &mut changed,
+            &[all[0].clone(), resource("https://a.test/b.png", b"3")],
+        );
+        let known = baseline_with(html, all.to_vec());
+        let again = decide(
+            &known,
+            &visit(html, full.pointer(RECRAWL_RESOURCES_POINTER).cloned()),
+        );
+        assert_eq!(again.completeness.coverage, RecrawlCoverageV1::Complete);
+        let altered = decide(
+            &known,
+            &visit(html, changed.pointer(RECRAWL_RESOURCES_POINTER).cloned()),
+        );
+        assert_eq!(altered.completeness.coverage, RecrawlCoverageV1::Incomplete);
+        assert_eq!(
+            altered.completeness.resources,
+            [fact("https://a.test/b.png", RecrawlResourceStateV1::Changed)]
+        );
+        // no more than four times the baseline bound is recorded
+        let many: Vec<RecrawlResourceV1> = (0..MAX_RECRAWL_RESOURCES * 5)
+            .map(|n| resource(&format!("https://a.test/{n:03}.png"), b"x"))
+            .collect();
+        let mut capped = serde_json::json!({});
+        record_recrawl_resources(&mut capped, &many);
+        assert_eq!(
+            capped
+                .pointer(RECRAWL_RESOURCES_POINTER)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            MAX_RECRAWL_RESOURCES * 4
+        );
+    }
+
+    #[test]
+    fn oversized_resource_lists_are_cut_off_and_never_complete() {
+        let html = Digest::of("schedule-test", b"html");
+        let many: Vec<serde_json::Value> = (0..=MAX_RECRAWL_RESOURCES)
+            .map(|n| serde_json::json!({ "target": format!("https://a.test/{n:02}.png"), "digest": null }))
+            .collect();
+        let decision = decide(
+            &baseline_with(html, Vec::new()),
+            &visit(html, Some(serde_json::Value::Array(many))),
+        );
+        assert!(decision.completeness.truncated);
+        assert_eq!(decision.completeness.coverage, RecrawlCoverageV1::Incomplete);
+        assert_eq!(decision.completeness.resources.len(), MAX_RECRAWL_RESOURCES);
+        let mut oversized = baseline_with(html, Vec::new());
+        oversized.resources = (0..=MAX_RECRAWL_RESOURCES)
+            .map(|n| resource(&format!("https://a.test/{n:02}.png"), b"x"))
+            .collect();
+        assert!(policy()
+            .next_visit_after_commit(
+                &request(),
+                &visit(html, None),
+                now(),
+                policy().end_at,
+                Some(&oversized)
+            )
+            .is_err());
     }
 }

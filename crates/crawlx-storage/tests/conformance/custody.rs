@@ -82,6 +82,8 @@ conformance! { databases:
     recovery_seals_the_feeds_of_a_run_that_already_ended_under_the_claim,
     two_workers_contending_for_one_origin_never_exceed_the_admission_limit,
     physical_address_keys_cap_aliases_across_workers_and_carry_no_run_rows,
+    queued_admission_callers_wait_while_every_pool_connection_is_checked_out,
+    a_held_origin_slot_never_starves_its_own_start_through_the_admission_pools,
 }
 
 const DEADLINE: Duration = Duration::from_secs(20);
@@ -3246,4 +3248,115 @@ async fn physical_address_keys_cap_aliases_across_workers_and_carry_no_run_rows(
         .expect("the run limit does not apply to an address")
         .unwrap();
     assert_eq!(rows(wide_key).await, 0);
+}
+
+/// An admission service whose private pools are tiny and whose pool acquire timeout is short,
+/// so that "every connection is checked out" and "waiting longer than the pool timeout" are
+/// ordinary events. SQLite holds capacity in process and has no pool to shrink.
+fn tiny_pool_admission(rig: &Rig, limit: usize, connections: u32) -> Arc<dyn OriginAdmission> {
+    const POOL_TIMEOUT: Duration = Duration::from_secs(1);
+    let database = rig.database();
+    match database.kind() {
+        BackendKind::MariaDb => Arc::new(
+            MariaOriginAdmission::new(database.mariadb_store().unwrap(), limit)
+                .with_connection_limits(connections, POOL_TIMEOUT),
+        ),
+        BackendKind::Sqlite => Arc::new(SqliteOriginAdmission::new(
+            database.sqlite_store().unwrap(),
+            limit,
+        )),
+        _ => Arc::new(
+            PgOriginAdmission::new(database.postgres().unwrap().clone(), limit)
+                .with_connection_limits(connections, POOL_TIMEOUT),
+        ),
+    }
+}
+
+/// A caller beyond the admission bound waits, however long, and is admitted once capacity is
+/// free: the private pool being saturated by other admission work is not an error. Here every
+/// capacity connection is checked out by a held permit for longer than the pool's acquire
+/// timeout while more callers than connections queue behind them.
+async fn queued_admission_callers_wait_while_every_pool_connection_is_checked_out(rig: &Rig) {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    const LIMIT: usize = 2;
+    rig.migrate().await;
+    let origin = origin_name(rig, "queued");
+    let service = tiny_pool_admission(rig, LIMIT, 2);
+    let held = [
+        service.acquire(&origin, Duration::ZERO).await.unwrap(),
+        service.acquire(&origin, Duration::ZERO).await.unwrap(),
+    ];
+    let live = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let mut queued = Vec::new();
+    for _ in 0..5_usize {
+        let (service, origin) = (Arc::clone(&service), origin.clone());
+        let (live, peak) = (Arc::clone(&live), Arc::clone(&peak));
+        queued.push(tokio::spawn(async move {
+            let permit = service.acquire(&origin, Duration::ZERO).await.unwrap();
+            peak.fetch_max(live.fetch_add(1, SeqCst) + 1, SeqCst);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            live.fetch_sub(1, SeqCst);
+            drop(permit);
+        }));
+    }
+    // longer than the pool's one-second acquire timeout
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert!(
+        queued.iter().all(|task| !task.is_finished()),
+        "queued callers neither fail nor are admitted while the limit is held"
+    );
+    assert_eq!(live.load(SeqCst), 0);
+    // the queue, not the pool, is what a caller leaves by being dropped
+    drop(
+        timeout(
+            Duration::from_millis(100),
+            service.acquire(&origin, Duration::ZERO),
+        )
+        .await,
+    );
+    drop(held);
+    for task in queued {
+        timeout(DEADLINE, task)
+            .await
+            .expect("every queued caller is eventually admitted")
+            .unwrap();
+    }
+    assert_eq!(live.load(SeqCst), 0);
+    assert_eq!(
+        peak.load(SeqCst),
+        LIMIT,
+        "the queue drained two at a time, never more"
+    );
+}
+
+/// A permit that holds the only slot of an origin must still be able to start while other
+/// callers queue for that slot: waiting for a slot may not keep a metadata connection, or the
+/// holder's own pacing transaction starves behind the callers that wait for it.
+async fn a_held_origin_slot_never_starves_its_own_start_through_the_admission_pools(rig: &Rig) {
+    rig.migrate().await;
+    let origin = origin_name(rig, "starve");
+    let service = tiny_pool_admission(rig, 1, 8);
+    let mut holder = service.reserve(&origin).await.unwrap();
+    let mut queued = Vec::new();
+    for _ in 0..4_usize {
+        let (service, origin) = (Arc::clone(&service), origin.clone());
+        queued.push(tokio::spawn(async move {
+            drop(service.reserve(&origin).await.unwrap());
+        }));
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(queued.iter().all(|task| !task.is_finished()), "the slot is held");
+    // within the pool's one-second timeout, as every metadata statement is
+    timeout(Duration::from_millis(900), holder.start(Duration::ZERO))
+        .await
+        .expect("the holder starts while others wait for its slot")
+        .unwrap();
+    drop(holder);
+    for task in queued {
+        timeout(DEADLINE, task)
+            .await
+            .expect("every waiter is eventually admitted")
+            .unwrap();
+    }
 }

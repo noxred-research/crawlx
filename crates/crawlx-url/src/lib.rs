@@ -19,6 +19,7 @@ pub mod params;
 pub mod path_climb;
 pub mod route_template;
 pub mod scope;
+pub mod seed_sources;
 pub mod sitemap;
 pub mod url_exclusion;
 

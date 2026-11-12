@@ -1,38 +1,38 @@
 {
-  "id": "l100-rules-unsupported-contractions-english",
+  "id": "l105-rules-devanagari-market",
   "family": "language",
   "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
-  "expectedText": "they|don't|wait|we'll|go|home",
+  "expectedText": "हम|बाज़ार|गए|दुकान|खुली|थी",
   "spans": [
     {
       "label": "token",
       "start": 0,
-      "end": 4
+      "end": 6
     },
     {
       "label": "token",
-      "start": 5,
-      "end": 10
+      "start": 7,
+      "end": 25
     },
     {
       "label": "token",
-      "start": 11,
-      "end": 15
+      "start": 26,
+      "end": 32
     },
     {
       "label": "token",
-      "start": 16,
-      "end": 21
+      "start": 33,
+      "end": 48
     },
     {
       "label": "token",
-      "start": 22,
-      "end": 24
+      "start": 49,
+      "end": 61
     },
     {
       "label": "token",
-      "start": 25,
-      "end": 29
+      "start": 62,
+      "end": 68
     }
   ]
 }
