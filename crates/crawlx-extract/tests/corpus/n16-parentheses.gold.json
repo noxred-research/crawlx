@@ -1,0 +1,73 @@
+{
+  "id": "n16-parentheses",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The vote ended early (see the minutes).\n(The recount was brief.)\nResults follow tomorrow.\nthe=3\nvote=1\nended=1\nearly=1\nsee=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 39
+    },
+    {
+      "label": "sentence",
+      "start": 40,
+      "end": 64
+    },
+    {
+      "label": "sentence",
+      "start": 65,
+      "end": 89
+    },
+    {
+      "label": "keyword",
+      "start": 90,
+      "end": 93
+    },
+    {
+      "label": "score",
+      "start": 94,
+      "end": 95
+    },
+    {
+      "label": "keyword",
+      "start": 96,
+      "end": 100
+    },
+    {
+      "label": "score",
+      "start": 101,
+      "end": 102
+    },
+    {
+      "label": "keyword",
+      "start": 103,
+      "end": 108
+    },
+    {
+      "label": "score",
+      "start": 109,
+      "end": 110
+    },
+    {
+      "label": "keyword",
+      "start": 111,
+      "end": 116
+    },
+    {
+      "label": "score",
+      "start": 117,
+      "end": 118
+    },
+    {
+      "label": "keyword",
+      "start": 119,
+      "end": 122
+    },
+    {
+      "label": "score",
+      "start": 123,
+      "end": 124
+    }
+  ]
+}

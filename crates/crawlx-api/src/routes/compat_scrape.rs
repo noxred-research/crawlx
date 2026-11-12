@@ -13,6 +13,7 @@ use crate::resources::{expires_at, Warning};
 use crate::routes::compat::concurrency_limit;
 use crate::routes::crawls::{apply_verb, load_run, load_run_metadata, Verb};
 use crate::routes::pages::sorted_pages;
+use crate::routes::requests::discover_urls;
 use crate::scrape_service::{
     base_url, compat_document, create_scrape_run, credits_for, failure_index, first_page,
     parse_scrape_options_in, parse_target, record_run_usage, row_failure, run_failure, scrape_crawl,
@@ -28,10 +29,11 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::{Extension, Router};
 use chrono::Duration as ChronoDuration;
-use crawlx_core::config::{RetentionMode, Webhook};
+use crawlx_core::config::{RetentionMode, Webhook, MAX_BATCH_URLS};
 use crawlx_core::counters::RunStatus;
 use crawlx_core::repo::{CrawlRun, FrontierStatus};
 use crawlx_core::scrape::JobKind;
+use crawlx_core::CrawlRunId;
 use crawlx_policy::EgressPolicy;
 use serde_json::{json, Map, Value};
 use url::Url;
@@ -58,7 +60,7 @@ pub const OPERATIONS: &[Operation] = &[
         "post",
         "/compat/v2/batch/scrape",
         "compatBatchScrape",
-        "Start a batch scrape (urls, ignoreInvalidURLs, maxConcurrency, webhook, scrape options)",
+        "Start a batch scrape (urls, ignoreInvalidURLs, maxConcurrency, webhook, scrape options), or add urls to an unfinished one (appendToId)",
         "crawls:write",
         "200",
     ),
@@ -292,7 +294,13 @@ pub async fn scrape_status(
     }
 }
 
-const BATCH_KEYS: [&str; 4] = ["urls", "webhook", "maxConcurrency", "ignoreInvalidURLs"];
+const BATCH_KEYS: [&str; 5] = [
+    "urls",
+    "webhook",
+    "maxConcurrency",
+    "ignoreInvalidURLs",
+    "appendToId",
+];
 const WEBHOOK_EVENTS: [&str; 4] = ["started", "page", "completed", "failed"];
 
 /// A batch webhook: the delivery target plus headers and metadata compat echoes.
@@ -508,6 +516,36 @@ pub async fn batch_create(
                     "none of the URLs is valid",
                 ));
             }
+            let append_to = match obj.get("appendToId") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(id)) if id.parse::<uuid::Uuid>().is_ok() => Some(id.clone()),
+                Some(_) => {
+                    details.push(Detail::new(
+                        "/appendToId",
+                        "invalid_string",
+                        "appendToId must be the id of a batch scrape",
+                    ));
+                    None
+                }
+            };
+            if let Some(target) = append_to {
+                let parsed = match parse_scrape_options_in(obj, "", &BATCH_KEYS) {
+                    Ok(p) => Some(p),
+                    Err(d) => {
+                        details.extend(d);
+                        None
+                    }
+                };
+                let Some(parsed) = parsed.filter(|_| details.is_empty()) else {
+                    return Err(HttpError::bad_request(details));
+                };
+                let request = AppendRequest {
+                    urls: valid,
+                    invalid: ignore_invalid.then_some(invalid),
+                    warnings: append_warnings(obj, parsed.warnings),
+                };
+                return append_to_batch(&state, &principal, &base, &target, request).await;
+            }
             let max_concurrency = match obj.get("maxConcurrency") {
                 None | Some(Value::Null) => None,
                 Some(v) => match v.as_u64().filter(|n| *n >= 1) {
@@ -533,7 +571,11 @@ pub async fn batch_create(
             let Some(parsed) = parsed.filter(|_| details.is_empty()) else {
                 return Err(HttpError::bad_request(details));
             };
-            let mut crawl = scrape_crawl(valid[0].clone(), JobKind::Batch, &parsed, valid.len())
+            // the run's page budget leaves room for `appendToId`, up to the batch size cap or the
+            // plan's page ceiling, whichever is lower; it never shrinks below the URLs given
+            let plan_pages = usize::try_from(state.settings.tenant_limits.max_urls).unwrap_or(usize::MAX);
+            let limit = valid.len().max((MAX_BATCH_URLS + 1).min(plan_pages));
+            let mut crawl = scrape_crawl(valid[0].clone(), JobKind::Batch, &parsed, limit)
                 .map_err(HttpError::bad_request)?;
             if let Some(job) = crawl.scrape.as_mut() {
                 job.urls = valid[1..].to_vec();
@@ -565,6 +607,133 @@ pub async fn batch_create(
         },
     )
     .await
+}
+
+/// The warnings of an `appendToId` request: every option besides the URLs cannot apply, because
+/// the batch keeps the scrape options, webhook and concurrency ceiling it was created with.
+fn append_warnings(obj: &Map<String, Value>, mut warnings: Vec<Warning>) -> Vec<Warning> {
+    for key in obj.keys() {
+        if matches!(
+            key.as_str(),
+            "urls" | "ignoreInvalidURLs" | "appendToId" | "origin" | "integration"
+        ) {
+            continue;
+        }
+        let path = format!("/{key}");
+        if warnings.iter().any(|w| w.path == path) {
+            continue;
+        }
+        warnings.push(Warning::new(
+            "append_option_ignored",
+            &path,
+            "an appended batch keeps the options, webhook and concurrency ceiling it was created with",
+        ));
+    }
+    warnings
+}
+
+/// What `appendToId` adds to a batch.
+struct AppendRequest {
+    /// Valid URLs, deduplicated, in request order.
+    urls: Vec<Url>,
+    /// The rejected URL strings, when the request asked for them (`ignoreInvalidURLs`).
+    invalid: Option<Vec<String>>,
+    warnings: Vec<Warning>,
+}
+
+/// Longest an append waits for a queued batch to be seeded by its worker.
+const SEED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn batch_finished() -> HttpError {
+    HttpError::invalid_state("the batch already finished")
+}
+
+/// Wait until the worker has seeded `run`: a batch that has no frontier rows yet would treat rows
+/// added now as a resumed run and never seed its own URLs.
+async fn wait_until_seeded(state: &AppState, run: &CrawlRun) -> ApiResult<()> {
+    let deadline = tokio::time::Instant::now() + SEED_WAIT;
+    loop {
+        if !state.repos.frontier.page(run.id, 0, 1).await?.is_empty() {
+            return Ok(());
+        }
+        if state.repos.runs.get_metadata(run.id).await?.status.is_terminal() {
+            return Err(batch_finished());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(HttpError::invalid_state(
+                "the batch has not started yet; retry the append",
+            ));
+        }
+        tokio::select! {
+            () = tokio::time::sleep(std::time::Duration::from_millis(25)) => {}
+            () = state.shutdown.cancelled() => return Err(HttpError::unavailable()),
+        }
+    }
+}
+
+/// Add `request.urls` to the unfinished batch `target` of the caller. The URLs join the batch's
+/// own frontier, so they run under its concurrency ceiling, scope, politeness and retention, and
+/// repeating the request adds nothing: a URL the batch already holds is never a second row.
+async fn append_to_batch(
+    state: &AppState,
+    principal: &Principal,
+    base: &str,
+    target: &str,
+    request: AppendRequest,
+) -> ApiResult<Reply> {
+    let run = load_batch(state, principal, target).await?;
+    if run.status.is_terminal() {
+        return Err(batch_finished());
+    }
+    wait_until_seeded(state, &run).await?;
+    let capacity = usize::try_from(run.config.limits.urls).unwrap_or(usize::MAX);
+    let inserted = discover_urls(state, &run, &request.urls, capacity).await?;
+    // a batch that finished while the rows were added never runs them: refuse like a finished one
+    if !inserted.is_empty() && state.repos.runs.get_metadata(run.id).await?.status.is_terminal() {
+        for id in &inserted {
+            if let Err(error) = state
+                .repos
+                .frontier
+                .complete(
+                    *id,
+                    FrontierStatus::Abandoned,
+                    Some("append_after_finish".to_owned()),
+                )
+                .await
+            {
+                tracing::debug!(%error, run = %run.id, "stranded appended row left pending");
+            }
+        }
+        return Err(batch_finished());
+    }
+    let mut out = json!({
+        "success": true,
+        "id": run.id,
+        "url": format!("{base}/compat/v2/batch/scrape/{}", run.id),
+    });
+    if let Some(invalid) = request.invalid {
+        out["invalidURLs"] = json!(invalid);
+    }
+    Ok(Reply::new(StatusCode::OK, with_warnings(out, &request.warnings)).for_run(run.id))
+}
+
+/// `total` of a batch: the URLs it was created with, or every frontier row once an append added
+/// more.
+pub(crate) async fn live_batch_total(state: &AppState, run: CrawlRunId, created: usize) -> ApiResult<usize> {
+    let c = state.repos.frontier.state_counts(run).await?;
+    let rows = [
+        c.pending,
+        c.leased,
+        c.succeeded,
+        c.failed,
+        c.unreachable,
+        c.abandoned,
+        c.policy_blocked,
+        c.robots_blocked,
+    ]
+    .iter()
+    .fold(0_u64, |sum, n| sum.saturating_add(*n));
+    Ok(created.max(usize::try_from(rows).unwrap_or(usize::MAX)))
 }
 
 pub(crate) const fn batch_status_name(s: RunStatus) -> &'static str {
@@ -649,7 +818,7 @@ pub async fn batch_status(
         };
         (credits, u64::try_from(pages.len()).unwrap_or(u64::MAX))
     };
-    let total = run.batch_total;
+    let total = live_batch_total(&state, run.id, run.batch_total).await?;
     let window: Vec<_> = pages.iter().skip(skip).take(limit).collect();
     let mut data = Vec::with_capacity(window.len());
     if let Some(live) = &live {

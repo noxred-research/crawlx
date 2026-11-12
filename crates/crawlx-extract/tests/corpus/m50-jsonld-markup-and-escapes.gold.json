@@ -1,0 +1,23 @@
+{
+  "id": "m50-jsonld-markup-and-escapes",
+  "family": "meta_exact",
+  "note": "JSON escapes decode and markup-looking text in a JSON-LD string stays literal text; surrounding whitespace in a name collapses",
+  "expectedText": "title=Pier & Quay Repairs <i>Resume</i> Today\nauthors=Anselm Roe\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 45
+    },
+    {
+      "label": "authors",
+      "start": 54,
+      "end": 64
+    },
+    {
+      "label": "language",
+      "start": 74,
+      "end": 76
+    }
+  ]
+}

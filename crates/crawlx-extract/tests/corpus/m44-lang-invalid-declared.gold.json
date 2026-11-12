@@ -1,0 +1,13 @@
+{
+  "id": "m44-lang-invalid-declared",
+  "family": "meta_exact",
+  "note": "an html lang value that is not a language tag selects nothing: the evidence is kept, the field is uncertain and no language is invented",
+  "expectedText": "title=Harbour Lights Festival Announced",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 39
+    }
+  ]
+}

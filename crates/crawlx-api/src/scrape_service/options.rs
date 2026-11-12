@@ -25,10 +25,11 @@ const MAX_PROMPT_CHARS: usize = 10_000;
 
 /// Scrape option keys (compat v2 plus the v1 `extract` / `jsonOptions` aliases and the
 /// request-level `zeroDataRetention`).
-const SCRAPE_KEYS: [&str; 35] = [
+const SCRAPE_KEYS: [&str; 36] = [
     "formats",
     "onlyMainContent",
     "contentPolicy",
+    "clusters",
     "outputs",
     "decode",
     "markup",
@@ -401,6 +402,9 @@ pub fn parse_scrape_options_in(
                 );
             }
         }
+    }
+    if let Some(value) = obj.get("clusters").filter(|value| !value.is_null()) {
+        o.clusters = parse_clusters(&mut cx, value, o.content_policy.as_ref());
     }
     o.outputs = obj.get("outputs").filter(|value| !value.is_null()).cloned();
     o.decode = obj.get("decode").filter(|value| !value.is_null()).cloned();
@@ -970,6 +974,36 @@ fn parse_resource_blocking(cx: &mut Cx, v: &Value) -> Option<ResourceBlocking> {
     blocking.domains.sort();
     blocking.domains.dedup();
     (cx.details.len() == before).then_some(blocking)
+}
+
+/// `clusters`: a native cluster policy. The chunks it embeds come from `contentPolicy.chunks`, so
+/// a request without them is refused here instead of failing a page later.
+fn parse_clusters(
+    cx: &mut Cx,
+    value: &Value,
+    content: Option<&crawlx_core::extraction::ExtractionPolicyV1>,
+) -> Option<crawlx_core::extraction::ClusterPolicyV1> {
+    let at = cx.at("clusters");
+    let policy = match serde_json::from_value::<crawlx_core::extraction::ClusterPolicyV1>(value.clone()) {
+        Ok(policy) => policy,
+        Err(_) => {
+            cx.bad(at, "invalid_clusters", "invalid cluster policy or unknown field");
+            return None;
+        }
+    };
+    if let Err(error) = policy.validate() {
+        cx.bad(at, "invalid_clusters", error.to_string());
+        return None;
+    }
+    if !content.is_some_and(|policy| policy.chunks.is_some()) {
+        cx.bad(
+            at,
+            "invalid_clusters",
+            "clusters needs contentPolicy with chunks: the chunks are what gets embedded",
+        );
+        return None;
+    }
+    Some(policy)
 }
 
 /// `flatten`: `true` for shadow roots and frames, `false` for neither, or
@@ -2308,5 +2342,99 @@ mod tests {
             assert!(parse(&json!({"contentPolicy": policy})).is_err());
         }
         assert!(parse(&json!({})).unwrap().options.content_policy.is_none());
+    }
+    #[test]
+    fn regex_and_sentence_chunk_policies_are_admitted_and_catastrophic_patterns_are_refused() {
+        let parsed = parse(&json!({ "contentPolicy": {
+            "version": 1, "minMainChars": 1,
+            "chunks": { "strategy": { "kind": "regex", "pattern": "\\n\\s*\\n" } }
+        }}))
+        .unwrap();
+        let mut request = CreateCrawl::new(url::Url::parse("https://fixture.test/article").unwrap());
+        parsed.apply(&mut request, JobKind::Scrape).unwrap();
+        let document = crawlx_extract::Extractor::extract(
+            "<article><p>First paragraph of the story is right here.</p><p>Second paragraph follows it directly.</p></article>",
+            &request.seed_url,
+            &crawlx_extract::ExtractOptions {
+                content: request.extract.content.clone(),
+                ..crawlx_extract::ExtractOptions::default()
+            },
+        )
+        .unwrap();
+        let envelope = document.article.unwrap();
+        let chunks = envelope.chunks.unwrap();
+        assert_eq!(chunks.implementation, "native_regex_delimited_spans_v1");
+        assert_eq!(chunks.ranges.len(), 2);
+        for text in [&document.text] {
+            for range in &chunks.ranges {
+                assert!(text.is_char_boundary(range.start) && text.is_char_boundary(range.end));
+            }
+        }
+        let sentences = parse(&json!({ "contentPolicy": {
+            "chunks": { "strategy": { "kind": "sentences", "window": 2 } }
+        }}))
+        .unwrap();
+        assert!(sentences.options.content_policy.is_some());
+        for strategy in [
+            json!({ "kind": "regex", "pattern": "(a)\\1" }),
+            json!({ "kind": "regex", "pattern": "x(?=y)" }),
+            json!({ "kind": "regex", "pattern": "(" }),
+            json!({ "kind": "regex", "pattern": "a".repeat(513) }),
+            json!({ "kind": "regex" }),
+            json!({ "kind": "sentences", "window": 0 }),
+        ] {
+            let errors = parse(&json!({"contentPolicy": {"chunks": {"strategy": strategy}}})).unwrap_err();
+            assert!(
+                errors.iter().any(|d| d.code == "invalid_content_policy"),
+                "{errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn clusters_need_chunks_and_a_valid_policy_and_reach_the_typed_options() {
+        let chunks = json!({ "version": 1, "minMainChars": 1, "chunks": { "strategy": { "kind": "sentences", "window": 1 } } });
+        let parsed = parse(&json!({
+            "contentPolicy": chunks,
+            "clusters": { "clusters": 4, "maxVectors": 64, "maxIterations": 10 },
+        }))
+        .unwrap();
+        let policy = parsed.options.clusters.unwrap();
+        assert_eq!(
+            (policy.clusters, policy.max_vectors, policy.max_iterations),
+            (4, 64, 10)
+        );
+        assert!(parse(&json!({ "contentPolicy": chunks }))
+            .unwrap()
+            .options
+            .clusters
+            .is_none());
+        assert!(parse(&json!({ "contentPolicy": chunks, "clusters": null }))
+            .unwrap()
+            .options
+            .clusters
+            .is_none());
+        for bad in [
+            json!({ "clusters": 0 }),
+            json!({ "clusters": 65 }),
+            json!({ "maxVectors": 513 }),
+            json!({ "maxIterations": 0 }),
+            json!({ "version": 2 }),
+            json!({ "unknown": true }),
+        ] {
+            let errors = parse(&json!({ "contentPolicy": chunks, "clusters": bad })).unwrap_err();
+            assert!(
+                errors.iter().any(|d| d.code == "invalid_clusters"),
+                "{bad}: {errors:?}"
+            );
+        }
+        // the chunks are what gets embedded: a request without them is refused up front
+        for request in [
+            json!({ "clusters": {} }),
+            json!({ "contentPolicy": { "version": 1, "minMainChars": 1 }, "clusters": {} }),
+        ] {
+            let errors = parse(&request).unwrap_err();
+            assert!(errors.iter().any(|d| d.code == "invalid_clusters"), "{errors:?}");
+        }
     }
 }

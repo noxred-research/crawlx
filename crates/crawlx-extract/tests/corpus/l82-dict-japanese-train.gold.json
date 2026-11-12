@@ -1,0 +1,78 @@
+{
+  "id": "l82-dict-japanese-train",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "電車|は|八時|に|駅|を|出|ます|乗客|は|ホーム|で|待ち|ます",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 21
+    },
+    {
+      "label": "token",
+      "start": 22,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 33
+    },
+    {
+      "label": "token",
+      "start": 34,
+      "end": 40
+    },
+    {
+      "label": "token",
+      "start": 41,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 51
+    },
+    {
+      "label": "token",
+      "start": 52,
+      "end": 61
+    },
+    {
+      "label": "token",
+      "start": 62,
+      "end": 65
+    },
+    {
+      "label": "token",
+      "start": 66,
+      "end": 72
+    },
+    {
+      "label": "token",
+      "start": 73,
+      "end": 79
+    }
+  ]
+}

@@ -1,8 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! Authored extraction corpus: manifest digests, gold spans and measured per-family scores.
+//! Authored extraction corpus: manifest digests, gold spans and measured per-family scores for
+//! the article, boilerplate, metadata and link families (see `corpus_support` for the shared
+//! harness and the other `corpus_*.rs` family suites).
 //!
 //! Every file under `tests/corpus/` was written for this repository (license
-//! `authored-for-this-repo`); `manifest.json` lists each file with its SHA-256. Gold files hold
+//! `authored-for-this-repo`); the manifests list each file with its SHA-256. Gold files hold
 //! an `expectedText` and labeled UTF-8 byte spans into it:
 //!
 //! * `article_body`, `boilerplate`: `expectedText` is the visible page text in document order;
@@ -10,239 +12,23 @@
 //! * `metadata`: one `field=value` line per expected field; the span covers the value.
 //! * `link_discovery`: one expected absolute URL per line; every span is labeled `link`.
 //!
-//! Scores are token-level (see [`tokens`]) over the real extractor output. The floors below are
-//! measured on this corpus and set just under the observed values, so a regression fails the
-//! test while an unrelated change of unmeasured behavior does not. They describe this small
-//! authored corpus only; they are not benchmark claims.
+//! Scores are token-level (see `corpus_support::tokens`) over the real extractor output. The
+//! floors below are measured on this corpus and set just under the observed values, so a
+//! regression fails the test while an unrelated change of unmeasured behavior does not. They
+//! describe this authored corpus only; they are not benchmark claims.
+
+mod corpus_support;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
+use corpus_support::*;
 use crawlx_core::extraction::ExtractionPolicyV1;
 use crawlx_extract::{Document, ExtractOptions, Extractor};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use url::Url;
 
-const LICENSE: &str = "authored-for-this-repo";
+/// Families scored by this suite. Other families (`focus`, `comments`, language, NLP, selector,
+/// feed) have their own `corpus_*.rs` suites over the same manifests.
 const FAMILIES: [&str; 4] = ["article_body", "boilerplate", "metadata", "link_discovery"];
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Manifest {
-    version: u32,
-    rights: String,
-    cases: Vec<Entry>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Entry {
-    id: String,
-    family: String,
-    license: String,
-    page_url: String,
-    files: Files,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Files {
-    input: FileRef,
-    gold: FileRef,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FileRef {
-    path: String,
-    sha256: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Gold {
-    id: String,
-    family: String,
-    #[allow(dead_code)]
-    note: String,
-    expected_text: String,
-    spans: Vec<Span>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Span {
-    label: String,
-    start: usize,
-    end: usize,
-}
-
-fn corpus_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
-}
-
-fn read(relative: &str) -> Vec<u8> {
-    std::fs::read(corpus_dir().join(relative)).unwrap_or_else(|e| panic!("{relative}: {e}"))
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    Sha256::digest(bytes).iter().fold(String::new(), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
-}
-
-fn manifest() -> Manifest {
-    serde_json::from_slice(&read("manifest.json")).unwrap()
-}
-
-struct Case {
-    entry: Entry,
-    html: String,
-    gold: Gold,
-}
-
-fn cases() -> Vec<Case> {
-    manifest()
-        .cases
-        .into_iter()
-        .map(|entry| {
-            let html = String::from_utf8(read(&entry.files.input.path)).unwrap();
-            let gold: Gold = serde_json::from_slice(&read(&entry.files.gold.path)).unwrap();
-            Case { entry, html, gold }
-        })
-        .collect()
-}
-
-impl Gold {
-    fn text_of(&self, label: &str) -> Vec<&str> {
-        self.spans
-            .iter()
-            .filter(|span| span.label == label)
-            .map(|span| &self.expected_text[span.start..span.end])
-            .collect()
-    }
-}
-
-// ------------------------------------------------------------------------------------------
-// token-level scoring
-// ------------------------------------------------------------------------------------------
-
-fn is_cjk(c: char) -> bool {
-    matches!(c, '\u{3040}'..='\u{30FF}' | '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{AC00}'..='\u{D7AF}')
-}
-
-/// Lowercase alphanumeric runs; every Han, kana or Hangul character is a token of its own.
-fn tokens(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut run = String::new();
-    for c in text.chars() {
-        if is_cjk(c) {
-            if !run.is_empty() {
-                out.push(std::mem::take(&mut run));
-            }
-            out.push(c.to_string());
-        } else if c.is_alphanumeric() {
-            run.extend(c.to_lowercase());
-        } else if !run.is_empty() {
-            out.push(std::mem::take(&mut run));
-        }
-    }
-    if !run.is_empty() {
-        out.push(run);
-    }
-    out
-}
-
-type Bag = BTreeMap<String, usize>;
-
-fn bag<I: IntoIterator<Item = String>>(items: I) -> Bag {
-    let mut bag = Bag::new();
-    for item in items {
-        *bag.entry(item).or_default() += 1;
-    }
-    bag
-}
-
-fn size(bag: &Bag) -> usize {
-    bag.values().sum()
-}
-
-/// Multiset intersection size.
-fn overlap(a: &Bag, b: &Bag) -> usize {
-    a.iter()
-        .map(|(k, n)| (*n).min(b.get(k).copied().unwrap_or(0)))
-        .sum()
-}
-
-/// Multiset difference: counts of `a` not covered by `b`.
-fn minus(a: &Bag, b: &Bag) -> Bag {
-    a.iter()
-        .filter_map(|(k, n)| {
-            let rest = n.saturating_sub(b.get(k).copied().unwrap_or(0));
-            (rest > 0).then(|| (k.clone(), rest))
-        })
-        .collect()
-}
-
-/// True positives, predicted and gold counts.
-#[derive(Clone, Copy, Default, Debug)]
-struct Counts {
-    tp: usize,
-    predicted: usize,
-    gold: usize,
-}
-
-impl Counts {
-    #[allow(clippy::cast_precision_loss)]
-    fn ratio(n: usize, d: usize) -> f64 {
-        if d == 0 {
-            1.0
-        } else {
-            n as f64 / d as f64
-        }
-    }
-    fn precision(self) -> f64 {
-        Self::ratio(self.tp, self.predicted)
-    }
-    fn recall(self) -> f64 {
-        Self::ratio(self.tp, self.gold)
-    }
-    fn f1(self) -> f64 {
-        let (p, r) = (self.precision(), self.recall());
-        if p + r == 0.0 {
-            0.0
-        } else {
-            2.0 * p * r / (p + r)
-        }
-    }
-    fn add(self, other: Self) -> Self {
-        Self {
-            tp: self.tp + other.tp,
-            predicted: self.predicted + other.predicted,
-            gold: self.gold + other.gold,
-        }
-    }
-}
-
-/// Aggregate over cases: macro mean of case F1, micro F1 over summed counts, worst case.
-#[derive(Debug)]
-struct Family {
-    macro_f1: f64,
-    micro: Counts,
-    worst_f1: f64,
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn aggregate(per_case: &[Counts]) -> Family {
-    Family {
-        macro_f1: per_case.iter().map(|c| c.f1()).sum::<f64>() / per_case.len() as f64,
-        micro: per_case.iter().fold(Counts::default(), |acc, c| acc.add(*c)),
-        worst_f1: per_case.iter().map(|c| c.f1()).fold(1.0, f64::min),
-    }
-}
 
 // ------------------------------------------------------------------------------------------
 // extraction under test
@@ -358,17 +144,24 @@ fn link_counts(case: &Case, document: &Document) -> Counts {
 // tests
 // ------------------------------------------------------------------------------------------
 
+/// Plan minimum fixture counts per family, summed over every manifest.
+const MINIMUMS: [(&str, usize); 4] = [
+    ("article_body", 24),
+    ("boilerplate", 4),
+    ("metadata", 4),
+    ("link_discovery", 3),
+];
+
 #[test]
 fn manifest_lists_every_file_with_matching_sha256_and_authored_license() {
     let manifest = manifest();
     assert_eq!(manifest.version, 1);
     assert!(manifest.rights.contains("written for this repository"));
     let mut ids = BTreeSet::new();
-    let mut listed: BTreeSet<String> = BTreeSet::from(["manifest.json".to_owned()]);
+    let mut listed: BTreeSet<String> = manifest_files().into_iter().collect();
     for entry in &manifest.cases {
         assert!(ids.insert(entry.id.clone()), "duplicate id {}", entry.id);
         assert_eq!(entry.license, LICENSE, "{}", entry.id);
-        assert!(FAMILIES.contains(&entry.family.as_str()), "{}", entry.id);
         let page = Url::parse(&entry.page_url).unwrap();
         assert!(
             page.host_str().is_some_and(|h| h.ends_with(".test")),
@@ -395,20 +188,18 @@ fn manifest_lists_every_file_with_matching_sha256_and_authored_license() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     assert_eq!(on_disk, listed);
-    for (family, minimum) in [
-        ("article_body", 7),
-        ("boilerplate", 4),
-        ("metadata", 4),
-        ("link_discovery", 3),
-    ] {
+    for (family, minimum) in MINIMUMS {
         let count = manifest.cases.iter().filter(|c| c.family == family).count();
-        assert!(count >= minimum, "{family}: {count} cases");
+        assert!(
+            count >= minimum,
+            "{family}: {count} cases, plan minimum {minimum}"
+        );
     }
 }
 
 #[test]
 fn gold_spans_are_sorted_disjoint_utf8_byte_ranges_with_family_labels() {
-    for case in cases() {
+    for case in cases_of(&FAMILIES) {
         let Gold {
             expected_text, spans, ..
         } = &case.gold;
@@ -463,10 +254,7 @@ fn gold_spans_are_sorted_disjoint_utf8_byte_ranges_with_family_labels() {
 
 #[test]
 fn gold_text_of_text_families_is_visible_in_the_input_markup() {
-    for case in cases() {
-        if !matches!(case.entry.family.as_str(), "article_body" | "boilerplate") {
-            continue;
-        }
+    for case in cases_of(&["article_body", "boilerplate"]) {
         let parsed = scraper::Html::parse_document(&case.html);
         let body = scraper::Selector::parse("body").unwrap();
         let text = parsed
@@ -527,41 +315,6 @@ fn token_scoring_handles_scripts_duplicates_and_empty_sets() {
     assert!((half.precision() - 0.5).abs() < f64::EPSILON && (half.recall() - 1.0).abs() < f64::EPSILON);
 }
 
-struct Floors {
-    macro_f1: f64,
-    micro_precision: f64,
-    micro_recall: f64,
-    worst_case_f1: f64,
-}
-
-fn check(name: &str, family: &Family, floors: &Floors) {
-    eprintln!(
-        "{name}: macro_f1={:.4} micro_p={:.4} micro_r={:.4} worst_case_f1={:.4}",
-        family.macro_f1,
-        family.micro.precision(),
-        family.micro.recall(),
-        family.worst_f1
-    );
-    assert!(
-        family.macro_f1 >= floors.macro_f1,
-        "{name} macro F1 {:.4}",
-        family.macro_f1
-    );
-    assert!(
-        family.micro.precision() >= floors.micro_precision,
-        "{name} micro precision"
-    );
-    assert!(
-        family.micro.recall() >= floors.micro_recall,
-        "{name} micro recall"
-    );
-    assert!(
-        family.worst_f1 >= floors.worst_case_f1,
-        "{name} worst case F1 {:.4}",
-        family.worst_f1
-    );
-}
-
 fn scores() -> BTreeMap<&'static str, Family> {
     let all = cases();
     let mut out = BTreeMap::new();
@@ -594,28 +347,27 @@ fn scores() -> BTreeMap<&'static str, Family> {
 
 #[test]
 fn extractor_scores_meet_the_measured_per_family_floors() {
-    // Observed on this corpus: article_body macro F1 0.9932 (micro P 0.9851, R 1.0000, worst case
-    // 0.9752); boilerplate 0.7399 (P 1.0000, R 0.7945, worst 0.1714: inline advertisement blocks
-    // between article paragraphs are kept in the output); metadata 0.9808 (P 1.0000, R 0.9783,
-    // worst 0.9231); link_discovery 1.0000 everywhere. Floors sit just under those values.
+    // Plan gate for the article family: macro F1 >= 0.95 and no case below 0.90, with both micro
+    // precision and micro recall >= 0.98. The other families keep floors measured on this
+    // corpus, set just under the observed values.
     let scores = scores();
     for (name, floors) in [
         (
             "article_body",
             Floors {
-                macro_f1: 0.99,
+                macro_f1: 0.95,
                 micro_precision: 0.98,
-                micro_recall: 0.99,
-                worst_case_f1: 0.97,
+                micro_recall: 0.98,
+                worst_case_f1: 0.90,
             },
         ),
         (
             "boilerplate",
             Floors {
-                macro_f1: 0.73,
+                macro_f1: 0.99,
                 micro_precision: 0.99,
-                micro_recall: 0.79,
-                worst_case_f1: 0.17,
+                micro_recall: 0.99,
+                worst_case_f1: 0.98,
             },
         ),
         (

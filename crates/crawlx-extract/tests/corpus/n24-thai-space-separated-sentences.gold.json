@@ -1,0 +1,73 @@
+{
+  "id": "n24-thai-space-separated-sentences",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under dictionary_uax29",
+  "expectedText": "ฝนตกหนักมาก\nฉันไม่มีร่ม\nฉันจึงรอที่บ้าน\nฉัน=2\nฝน=1\nตก=1\nหนัก=1\nมาก=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 33
+    },
+    {
+      "label": "sentence",
+      "start": 34,
+      "end": 67
+    },
+    {
+      "label": "sentence",
+      "start": 68,
+      "end": 113
+    },
+    {
+      "label": "keyword",
+      "start": 114,
+      "end": 123
+    },
+    {
+      "label": "score",
+      "start": 124,
+      "end": 125
+    },
+    {
+      "label": "keyword",
+      "start": 126,
+      "end": 132
+    },
+    {
+      "label": "score",
+      "start": 133,
+      "end": 134
+    },
+    {
+      "label": "keyword",
+      "start": 135,
+      "end": 141
+    },
+    {
+      "label": "score",
+      "start": 142,
+      "end": 143
+    },
+    {
+      "label": "keyword",
+      "start": 144,
+      "end": 156
+    },
+    {
+      "label": "score",
+      "start": 157,
+      "end": 158
+    },
+    {
+      "label": "keyword",
+      "start": 159,
+      "end": 168
+    },
+    {
+      "label": "score",
+      "start": 169,
+      "end": 170
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "id": "c14-french-blog-short-comments",
+  "family": "comments",
+  "note": "French blog post with four very short comments",
+  "expectedText": "Carnet de sentiers Itinéraires Matériel Contact\nUne semaine de randonnée dans les Vosges\nNous avons passé sept jours sur les crêtes, de refuge en refuge, avec des sacs légers et un budget modeste. La météo a été clémente, sauf le troisième jour où la brume nous a surpris au col.\nLe meilleur moment reste la montée au lac du Forlet, tôt le matin, quand les premiers rayons éclairent l'eau et que personne d'autre n'est encore arrivé. Nous y avons pris le petit déjeuner.\nSi vous partez en septembre, réservez les refuges au moins un mois à l'avance, car les week-ends sont complets très vite.\nJeanne\nMagnifique !\nÉtienne\nMerci pour les conseils, on part en septembre.\nSolène\nQuel refuge recommandez-vous pour la deuxième nuit ?\nCarnet de sentiers\nCelui du Rotabac, la soupe y est excellente.\nMentions légales",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 49
+    },
+    {
+      "label": "body",
+      "start": 50,
+      "end": 91
+    },
+    {
+      "label": "body",
+      "start": 92,
+      "end": 292
+    },
+    {
+      "label": "body",
+      "start": 293,
+      "end": 488
+    },
+    {
+      "label": "body",
+      "start": 489,
+      "end": 613
+    },
+    {
+      "label": "comment",
+      "start": 614,
+      "end": 620
+    },
+    {
+      "label": "comment",
+      "start": 621,
+      "end": 633
+    },
+    {
+      "label": "comment",
+      "start": 634,
+      "end": 642
+    },
+    {
+      "label": "comment",
+      "start": 643,
+      "end": 689
+    },
+    {
+      "label": "comment",
+      "start": 690,
+      "end": 697
+    },
+    {
+      "label": "comment",
+      "start": 698,
+      "end": 751
+    },
+    {
+      "label": "comment",
+      "start": 752,
+      "end": 770
+    },
+    {
+      "label": "comment",
+      "start": 771,
+      "end": 815
+    },
+    {
+      "label": "boilerplate",
+      "start": 816,
+      "end": 833
+    }
+  ]
+}

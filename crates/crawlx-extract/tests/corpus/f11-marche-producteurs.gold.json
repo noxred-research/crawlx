@@ -1,0 +1,103 @@
+{
+  "id": "f11-marche-producteurs",
+  "family": "focus",
+  "note": "French local news with a read-also block, most-read list and legal footer",
+  "expectedText": "La Gazette du Val\nActualité Sports Culture Annonces S'abonner\nLe marché des producteurs change de place\nÀ partir du premier samedi d'avril, le marché des producteurs quittera la place de l'Église pour s'installer sur le parking de la salle des fêtes. La mairie a annoncé cette décision mardi, après plusieurs mois de discussions avec les commerçants.\nLa place de l'Église sera fermée à la circulation pour des travaux de pavage qui doivent durer jusqu'à la fin de l'été. Les trente-deux étals pourront être installés sans changement de plan, et l'électricité sera prévue pour les poissonniers.\nPlusieurs habitants regrettent le cadre historique du village, mais la fromagère Camille Dufresne se dit soulagée. Selon elle, le parking offre davantage de place pour les camionnettes et un accès plus simple pour les personnes âgées.\nUne navette gratuite reliera le centre bourg au nouvel emplacement de huit heures à treize heures.\nÀ lire aussi\nLa fête de la musique prépare son programme\nDouze groupes locaux sont attendus.\nLe collège ouvre une classe de théâtre\nLes inscriptions sont ouvertes.\nFermeture temporaire de la piscine\nUne fuite a été détectée mardi.\nLes plus lus\nLe boulanger prend sa retraite\nDéviation route de la forêt\nRésultats du concours de pétanque\nMentions légales Confidentialité Contact Publicité",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 17
+    },
+    {
+      "label": "boilerplate",
+      "start": 18,
+      "end": 62
+    },
+    {
+      "label": "body",
+      "start": 63,
+      "end": 105
+    },
+    {
+      "label": "body",
+      "start": 106,
+      "end": 360
+    },
+    {
+      "label": "body",
+      "start": 361,
+      "end": 615
+    },
+    {
+      "label": "body",
+      "start": 616,
+      "end": 855
+    },
+    {
+      "label": "body",
+      "start": 856,
+      "end": 955
+    },
+    {
+      "label": "boilerplate",
+      "start": 956,
+      "end": 969
+    },
+    {
+      "label": "boilerplate",
+      "start": 970,
+      "end": 1015
+    },
+    {
+      "label": "boilerplate",
+      "start": 1016,
+      "end": 1051
+    },
+    {
+      "label": "boilerplate",
+      "start": 1052,
+      "end": 1093
+    },
+    {
+      "label": "boilerplate",
+      "start": 1094,
+      "end": 1125
+    },
+    {
+      "label": "boilerplate",
+      "start": 1126,
+      "end": 1160
+    },
+    {
+      "label": "boilerplate",
+      "start": 1161,
+      "end": 1196
+    },
+    {
+      "label": "boilerplate",
+      "start": 1197,
+      "end": 1209
+    },
+    {
+      "label": "boilerplate",
+      "start": 1210,
+      "end": 1240
+    },
+    {
+      "label": "boilerplate",
+      "start": 1241,
+      "end": 1270
+    },
+    {
+      "label": "boilerplate",
+      "start": 1271,
+      "end": 1306
+    },
+    {
+      "label": "boilerplate",
+      "start": 1307,
+      "end": 1360
+    }
+  ]
+}

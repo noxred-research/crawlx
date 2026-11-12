@@ -1,0 +1,78 @@
+{
+  "id": "l95-dict-uax29-contractions",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "we|don't|wait|for|late|buses|it|is|3.14|o'clock|somewhere|so|we|walk",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "token",
+      "start": 3,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 13
+    },
+    {
+      "label": "token",
+      "start": 14,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 28
+    },
+    {
+      "label": "token",
+      "start": 29,
+      "end": 31
+    },
+    {
+      "label": "token",
+      "start": 32,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 60
+    },
+    {
+      "label": "token",
+      "start": 61,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 68
+    }
+  ]
+}

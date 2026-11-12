@@ -100,6 +100,13 @@ pub enum DenialReason {
     /// Outside the target of the run's authorization record: a hard bound that no
     /// `scope` setting widens.
     AuthorizationScope,
+    /// The URL is longer than `scope.maxUrlLength` bytes.
+    UrlTooLong {
+        /// Length of the URL in bytes.
+        len: usize,
+        /// Configured `scope.maxUrlLength`.
+        max: usize,
+    },
 }
 
 impl DenialReason {
@@ -120,6 +127,7 @@ impl DenialReason {
             Self::ExternalHomepage => "external_homepage",
             Self::HostPageLimit => "host_page_limit",
             Self::AuthorizationScope => "authorization_scope",
+            Self::UrlTooLong { .. } => "url_too_long",
         }
     }
 
@@ -423,6 +431,8 @@ pub struct ScopePolicy {
     urls: UrlPatterns,
     extensions: ExtensionFilter,
     max_depth: u16,
+    /// `scope.maxUrlLength`.
+    max_url_len: usize,
     leaf_out_of_scope: bool,
     fetch_leaves: bool,
     /// A compatibility API scrape job under `allowExternalLinks` never follows a link to the root page
@@ -460,6 +470,7 @@ impl ScopePolicy {
                 s.no_default_extension_filter,
             ),
             max_depth: s.max_discovery_depth,
+            max_url_len: usize::try_from(s.max_url_length).unwrap_or(usize::MAX),
             leaf_out_of_scope: s.allow_external_links || crawl.output.include_out_of_scope,
             fetch_leaves: s.allow_external_links,
             skip_external_homepages: s.allow_external_links && crawl.scrape.is_some(),
@@ -606,6 +617,12 @@ impl ScopePolicy {
             .is_some_and(|scope| scope.check_request(url).is_err())
         {
             return ScopeVerdict::Denied(DenialReason::AuthorizationScope);
+        }
+        if url.as_str().len() > self.max_url_len {
+            return ScopeVerdict::Denied(DenialReason::UrlTooLong {
+                len: url.as_str().len(),
+                max: self.max_url_len,
+            });
         }
         let host = url.host_str().unwrap_or("");
         if let Some(entry) = self.exclude_hosts.matches(host, resolved) {
@@ -1174,6 +1191,31 @@ mod tests {
         assert_eq!(off.max_pages_per_host(), Some(5));
         assert_eq!(DenialReason::HostPageLimit.as_str(), "host_page_limit");
         assert_eq!(DenialReason::HostScope.as_str(), "host_scope");
+    }
+
+    #[test]
+    fn over_long_url_is_denied_with_a_stable_code_before_other_rules() {
+        let p = ScopePolicy::new(&crawl("https://example.com/", |c| {
+            c.scope.crawl_entire_domain = true;
+            c.scope.max_url_length = 300;
+        }))
+        .unwrap();
+        let at_limit = format!(
+            "https://example.com/{}",
+            "a".repeat(300 - "https://example.com/".len())
+        );
+        assert!(p.decide(&cu(&at_limit), 1).is_admitted());
+        let over = format!("{at_limit}a");
+        assert_eq!(denied(&p.decide(&cu(&over), 1)), "url_too_long");
+        assert_eq!(
+            p.decide(&cu(&over), 1),
+            ScopeVerdict::Denied(DenialReason::UrlTooLong { len: 301, max: 300 })
+        );
+        // the length refusal comes first: a foreign host is not reported as external
+        assert_eq!(
+            denied(&p.decide(&cu(&format!("https://other.org/{}", "b".repeat(400))), 1)),
+            "url_too_long"
+        );
     }
 
     #[test]

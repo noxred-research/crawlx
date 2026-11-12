@@ -1,0 +1,58 @@
+{
+  "id": "s05-axis-ancestor",
+  "family": "selector",
+  "note": "ancestor axis: document-order result, proximity positions on a reverse axis, last() as the outermost ancestor",
+  "expectedText": "M-startS-startD-startdeepD-endS-endM-end\nM-startS-startD-startdeepD-endS-endM-end\nM-startS-startD-startdeepD-endS-endM-end\nS-startD-startdeepD-endS-end\nD-startdeepD-end\nD-startdeepD-end\nM-startS-startD-startdeepD-endS-endM-end\ns1\n5\nm",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 40
+    },
+    {
+      "label": "r1",
+      "start": 41,
+      "end": 81
+    },
+    {
+      "label": "r1",
+      "start": 82,
+      "end": 122
+    },
+    {
+      "label": "r1",
+      "start": 123,
+      "end": 151
+    },
+    {
+      "label": "r1",
+      "start": 152,
+      "end": 168
+    },
+    {
+      "label": "r2",
+      "start": 169,
+      "end": 185
+    },
+    {
+      "label": "r3",
+      "start": 186,
+      "end": 226
+    },
+    {
+      "label": "r4",
+      "start": 227,
+      "end": 229
+    },
+    {
+      "label": "r5",
+      "start": 230,
+      "end": 231
+    },
+    {
+      "label": "r7",
+      "start": 232,
+      "end": 233
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "m38-canonical-invalid-scheme-skipped",
+  "family": "meta_exact",
+  "note": "a canonical link with a non-web scheme is skipped, the next valid canonical link wins and the differing Open Graph URL is ignored",
+  "expectedText": "title=Why Ferries Should Be Slow\nlanguage=en\ncanonical=https://corpus.test/essays/slow-ferries",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 32
+    },
+    {
+      "label": "language",
+      "start": 42,
+      "end": 44
+    },
+    {
+      "label": "canonical",
+      "start": 55,
+      "end": 94
+    }
+  ]
+}

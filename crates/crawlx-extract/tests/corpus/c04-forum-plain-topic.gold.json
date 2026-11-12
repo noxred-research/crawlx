@@ -1,0 +1,88 @@
+{
+  "id": "c04-forum-plain-topic",
+  "family": "comments",
+  "note": "forum topic without structured data; every message is main content",
+  "expectedText": "Fixit Corner | New topic | Search | Account\nHome » Networking » Wireless network drops every evening\nWireless network drops every evening\nbrook_lane\nEvery evening around seven my wireless connection disappears for about ten minutes and then comes back by itself. The router is two years old and the cable is fine. Has anyone seen this before?\nnettle42\nCheck which channel the router is on. Seven in the evening is when everybody in a block of flats switches on their streaming boxes, and the crowded channels fall over.\nbrook_lane\nIt was on channel six, shared with at least nine other networks. I moved to channel one hundred and four and the drops have stopped.\nsolder_sam\nWorth marking as solved. Some routers pick a congested channel on every restart, so set it by hand.\nAlso check for firmware updates.\nSimilar topics\nRouter reboots by itself\nSlow upload on evenings\nRules Privacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 43
+    },
+    {
+      "label": "boilerplate",
+      "start": 44,
+      "end": 102
+    },
+    {
+      "label": "body",
+      "start": 103,
+      "end": 139
+    },
+    {
+      "label": "body",
+      "start": 140,
+      "end": 150
+    },
+    {
+      "label": "body",
+      "start": 151,
+      "end": 344
+    },
+    {
+      "label": "body",
+      "start": 345,
+      "end": 353
+    },
+    {
+      "label": "body",
+      "start": 354,
+      "end": 521
+    },
+    {
+      "label": "body",
+      "start": 522,
+      "end": 532
+    },
+    {
+      "label": "body",
+      "start": 533,
+      "end": 665
+    },
+    {
+      "label": "body",
+      "start": 666,
+      "end": 676
+    },
+    {
+      "label": "body",
+      "start": 677,
+      "end": 776
+    },
+    {
+      "label": "body",
+      "start": 777,
+      "end": 809
+    },
+    {
+      "label": "boilerplate",
+      "start": 810,
+      "end": 824
+    },
+    {
+      "label": "boilerplate",
+      "start": 825,
+      "end": 849
+    },
+    {
+      "label": "boilerplate",
+      "start": 850,
+      "end": 873
+    },
+    {
+      "label": "boilerplate",
+      "start": 874,
+      "end": 887
+    }
+  ]
+}

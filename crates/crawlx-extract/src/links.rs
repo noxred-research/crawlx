@@ -216,8 +216,8 @@ impl LinkExtractor {
         let opts = crate::ExtractOptions::default();
         crate::precheck(html, &opts)?;
         // declared before `doc`: released after the parsed tree is dropped
-        let _charge = crate::parse_budget::charge(html.len())?;
-        let doc = Html::parse_document(html);
+        let mut charge = crate::parse_budget::charge(html.len())?;
+        let doc = crate::dom::parse_document(&mut charge, html)?;
         crate::dom::check_limits(&doc, opts.max_nodes)?;
         let base = effective_base(&doc, page);
         Ok(extract_links(&doc, page, &base))

@@ -1,0 +1,18 @@
+{
+  "id": "d11-atom-alternate-types",
+  "family": "feed",
+  "note": "Atom alternates: only an HTML or XHTML alternate is a page, a PDF-only entry and a related-only entry produce nothing",
+  "expectedText": "https://news.corpus.test/docs/both\nhttps://news.corpus.test/docs/xhtml",
+  "spans": [
+    {
+      "label": "alternate",
+      "start": 0,
+      "end": 34
+    },
+    {
+      "label": "alternate",
+      "start": 35,
+      "end": 70
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "id": "c11-qa-comments-with-code-and-links",
+  "family": "comments",
+  "note": "question and accepted answer with code samples; comments carry a link",
+  "expectedText": "Terminal Tips Questions Unanswered Ask\nWhy does my cron job not run on the first of the month?\nI scheduled a backup script with the entry shown below, but it only runs when the first of the month also falls on a Monday. What is going wrong?\n0 3 1 * 1 /usr/local/bin/backup.sh\nShow us the output of your crontab listing, please. Nia, 2 days ago\nIt is the line above. I copied it exactly. Hugo, 2 days ago\nAccepted\nThe fifth field is the day of the week, and when both the day of the month and the day of the week are set, the job runs when either one matches. Remove the final number and use an asterisk instead.\n0 3 1 * * /usr/local/bin/backup.sh\nThat fixed it, thank you so much. The manual page does mention it but it is easy to miss. Hugo, 1 day ago\nSee also the notes at the scheduler manual about the either-or rule. Nia, 1 day ago\nHot questions\nRotating logs by size\nRun a script at boot\nPrivacy Help",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 38
+    },
+    {
+      "label": "body",
+      "start": 39,
+      "end": 94
+    },
+    {
+      "label": "body",
+      "start": 95,
+      "end": 240
+    },
+    {
+      "label": "body",
+      "start": 241,
+      "end": 275
+    },
+    {
+      "label": "comment",
+      "start": 276,
+      "end": 343
+    },
+    {
+      "label": "comment",
+      "start": 344,
+      "end": 403
+    },
+    {
+      "label": "boilerplate",
+      "start": 404,
+      "end": 412
+    },
+    {
+      "label": "body",
+      "start": 413,
+      "end": 611
+    },
+    {
+      "label": "body",
+      "start": 612,
+      "end": 646
+    },
+    {
+      "label": "comment",
+      "start": 647,
+      "end": 752
+    },
+    {
+      "label": "comment",
+      "start": 753,
+      "end": 836
+    },
+    {
+      "label": "boilerplate",
+      "start": 837,
+      "end": 850
+    },
+    {
+      "label": "boilerplate",
+      "start": 851,
+      "end": 872
+    },
+    {
+      "label": "boilerplate",
+      "start": 873,
+      "end": 893
+    },
+    {
+      "label": "boilerplate",
+      "start": 894,
+      "end": 906
+    }
+  ]
+}

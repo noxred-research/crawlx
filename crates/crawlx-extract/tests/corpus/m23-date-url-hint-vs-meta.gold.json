@@ -1,0 +1,28 @@
+{
+  "id": "m23-date-url-hint-vs-meta",
+  "family": "meta_exact",
+  "note": "a meta publication time outranks a conflicting calendar path in the page URL, which stays an alternative",
+  "expectedText": "title=Salt Pans Return to Production\nlanguage=en\npublished=2026-01-02\npublishedTimestamp=2026-01-02T00:10:00+00:00",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "language",
+      "start": 46,
+      "end": 48
+    },
+    {
+      "label": "published",
+      "start": 59,
+      "end": 69
+    },
+    {
+      "label": "publishedTimestamp",
+      "start": 89,
+      "end": 114
+    }
+  ]
+}

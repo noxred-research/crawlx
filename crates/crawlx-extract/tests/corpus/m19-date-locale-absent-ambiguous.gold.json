@@ -1,0 +1,18 @@
+{
+  "id": "m19-date-locale-absent-ambiguous",
+  "family": "meta_exact",
+  "note": "an ambiguous numeric date without a caller locale stays unknown: no date is selected, the evidence is kept and the field is uncertain",
+  "expectedText": "title=Footbridge Survey Starts Monday\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 37
+    },
+    {
+      "label": "language",
+      "start": 47,
+      "end": 49
+    }
+  ]
+}

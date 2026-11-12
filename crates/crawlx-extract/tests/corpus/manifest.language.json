@@ -1,0 +1,3851 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "l10-rules-latin-english-undeclared",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l10-rules-latin-english-undeclared",
+      "files": {
+        "input": {
+          "path": "l10-rules-latin-english-undeclared.html",
+          "sha256": "881e35c82522895bd63a760fce2c4323be52aeaceda5681027c72cafb5846acd"
+        },
+        "gold": {
+          "path": "l10-rules-latin-english-undeclared.gold.json",
+          "sha256": "24f137cbd10144d2e8ec36be5061ffaa76c6f3d412a04714e74e12e6e0eac973"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l100-rules-unsupported-contractions-english",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l100-rules-unsupported-contractions-english",
+      "files": {
+        "input": {
+          "path": "l100-rules-unsupported-contractions-english.html",
+          "sha256": "b8bbf1a219e95059c58bc78268c8505b2c7758d3c90702841c0a67a29a735bb3"
+        },
+        "gold": {
+          "path": "l100-rules-unsupported-contractions-english.gold.json",
+          "sha256": "45a3d3a6ec2c3c2dbd89a20704550c74992fd3054d340ae8700bcf4b164f7862"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "unsupported_contractions",
+        "supported": false,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "unicode_rules_v1 splits a contraction at every apostrophe; the gold keeps each contraction as one word",
+          "measured": {
+            "keywords": [
+              [
+                "they",
+                1
+              ],
+              [
+                "don",
+                1
+              ],
+              [
+                "t",
+                1
+              ],
+              [
+                "wait",
+                1
+              ],
+              [
+                "we",
+                1
+              ],
+              [
+                "ll",
+                1
+              ],
+              [
+                "go",
+                1
+              ],
+              [
+                "home",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l101-rules-unsupported-contractions-french",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l101-rules-unsupported-contractions-french",
+      "files": {
+        "input": {
+          "path": "l101-rules-unsupported-contractions-french.html",
+          "sha256": "da83a166c303e018259e816a3ed5bf2123d7acfcdccbfe8653b0a8c2a67706de"
+        },
+        "gold": {
+          "path": "l101-rules-unsupported-contractions-french.gold.json",
+          "sha256": "c59aa9e0953e39354c732f80db4e4696895e2a16b50a74e128d1e050357fafda"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "unsupported_contractions",
+        "supported": false,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "unicode_rules_v1 splits a contraction at every apostrophe; the gold keeps each contraction as one word",
+          "measured": {
+            "keywords": [
+              [
+                "l",
+                2
+              ],
+              [
+                "eau",
+                1
+              ],
+              [
+                "est",
+                1
+              ],
+              [
+                "claire",
+                1
+              ],
+              [
+                "école",
+                1
+              ],
+              [
+                "ouvre",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l102-rules-unsupported-thai-fish",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l102-rules-unsupported-thai-fish",
+      "files": {
+        "input": {
+          "path": "l102-rules-unsupported-thai-fish.html",
+          "sha256": "2ac4528a6bc42d4f23df68b4926f42ba6265a950a46d0b39c68d937b080a46d6"
+        },
+        "gold": {
+          "path": "l102-rules-unsupported-thai-fish.gold.json",
+          "sha256": "7ca9fb1ce51f875cd7519ae00c275cc2ae8f570e7cd190e9b08bff6f70825b24"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "unsupported_thai",
+        "supported": false,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "unicode_rules_v1 treats Thai vowel and tone marks as non-alphanumeric, so words fragment at every mark",
+          "measured": {
+            "keywords": [
+              [
+                "ปลาว",
+                1
+              ],
+              [
+                "ายน",
+                1
+              ],
+              [
+                "ำ",
+                1
+              ],
+              [
+                "แมวนอนบนเก",
+                1
+              ],
+              [
+                "าอี",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l103-rules-unsupported-thai-bird",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l103-rules-unsupported-thai-bird",
+      "files": {
+        "input": {
+          "path": "l103-rules-unsupported-thai-bird.html",
+          "sha256": "787c181019eece8e88bc1e4ad5271767796381c65934bfa2d796e4d44c04f0c5"
+        },
+        "gold": {
+          "path": "l103-rules-unsupported-thai-bird.gold.json",
+          "sha256": "f4a472826fa102d11da8e174eabd9782dc8e10b15407a31b9a8ace0d0b0a7a48"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "unsupported_thai",
+        "supported": false,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "unicode_rules_v1 treats Thai vowel and tone marks as non-alphanumeric, so words fragment at every mark",
+          "measured": {
+            "keywords": [
+              [
+                "นกบินขึ",
+                1
+              ],
+              [
+                "นฟ",
+                1
+              ],
+              [
+                "า",
+                1
+              ],
+              [
+                "เด",
+                1
+              ],
+              [
+                "กมองดู",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l104-rules-unsupported-devanagari-school",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l104-rules-unsupported-devanagari-school",
+      "files": {
+        "input": {
+          "path": "l104-rules-unsupported-devanagari-school.html",
+          "sha256": "8ebc373eabe8d4c8ed447786c3b53eccdaa2972ca2831a6f9e6374b65b3286b6"
+        },
+        "gold": {
+          "path": "l104-rules-unsupported-devanagari-school.gold.json",
+          "sha256": "6a717fefed712f7014badf0a70b5787f7fbc2ab12f1258710d1bd06eee69d13f"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "unsupported_devanagari",
+        "supported": false,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi",
+          "declared": "hi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "unicode_rules_v1 treats Devanagari vowel signs, virama and nukta as non-alphanumeric, so words fragment at every mark",
+          "measured": {
+            "keywords": [
+              [
+                "है",
+                2
+              ],
+              [
+                "मेरी",
+                1
+              ],
+              [
+                "बहन",
+                1
+              ],
+              [
+                "स",
+                1
+              ],
+              [
+                "कूल",
+                1
+              ],
+              [
+                "जाती",
+                1
+              ],
+              [
+                "वह",
+                1
+              ],
+              [
+                "किताब",
+                1
+              ],
+              [
+                "पढ",
+                1
+              ],
+              [
+                "ती",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l105-rules-unsupported-devanagari-market",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l105-rules-unsupported-devanagari-market",
+      "files": {
+        "input": {
+          "path": "l105-rules-unsupported-devanagari-market.html",
+          "sha256": "ec74627d064dd82a3de712c07b286554fb9b32197dfd12676a794ce338847705"
+        },
+        "gold": {
+          "path": "l105-rules-unsupported-devanagari-market.gold.json",
+          "sha256": "6d64474c836486f555e84cba051bd092f64bfd4497df082ab3f70e6698a5e243"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "unsupported_devanagari",
+        "supported": false,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi",
+          "declared": "hi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "unicode_rules_v1 treats Devanagari vowel signs, virama and nukta as non-alphanumeric, so words fragment at every mark",
+          "measured": {
+            "keywords": [
+              [
+                "हम",
+                1
+              ],
+              [
+                "बाज",
+                1
+              ],
+              [
+                "ार",
+                1
+              ],
+              [
+                "गए",
+                1
+              ],
+              [
+                "दुकान",
+                1
+              ],
+              [
+                "खुली",
+                1
+              ],
+              [
+                "थी",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l106-rules-unsupported-katakana-middle-dot",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l106-rules-unsupported-katakana-middle-dot",
+      "files": {
+        "input": {
+          "path": "l106-rules-unsupported-katakana-middle-dot.html",
+          "sha256": "2a9e6bf992e1456c9e25defdcafaa08694f5246277b5d544d596cf9b77fd3d0e"
+        },
+        "gold": {
+          "path": "l106-rules-unsupported-katakana-middle-dot.gold.json",
+          "sha256": "d7dea244a2391806583419101f59900c9948105c7cce47adb69768ee75010ba9"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "unsupported_katakana_middle_dot",
+        "supported": false,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja",
+          "declared": "ja",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "unicode_rules_v1 emits the katakana middle dot U+30FB as a token because it lies in the kana range",
+          "measured": {
+            "keywords": [
+              [
+                "ー",
+                2
+              ],
+              [
+                "コ",
+                1
+              ],
+              [
+                "ヒ",
+                1
+              ],
+              [
+                "・",
+                1
+              ],
+              [
+                "紅",
+                1
+              ],
+              [
+                "茶",
+                1
+              ],
+              [
+                "を",
+                1
+              ],
+              [
+                "注",
+                1
+              ],
+              [
+                "文",
+                1
+              ],
+              [
+                "し",
+                1
+              ],
+              [
+                "た",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l11-rules-latin-german",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l11-rules-latin-german",
+      "files": {
+        "input": {
+          "path": "l11-rules-latin-german.html",
+          "sha256": "51b83c763c94cf69dde5358f310b2726661bc02b220f9d27a59d3f72d1e6719a"
+        },
+        "gold": {
+          "path": "l11-rules-latin-german.gold.json",
+          "sha256": "365c41e1bccf028c8046b90e628823818e4d20a017638c0172af77f21b38d33e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "de",
+          "declared": "de",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "de"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l110-ambiguous-german-without-evidence",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l110-ambiguous-german-without-evidence",
+      "files": {
+        "input": {
+          "path": "l110-ambiguous-german-without-evidence.html",
+          "sha256": "05c12bf44d95881f5f5cf1da786cd76d5a682dbfcb907a35afe8690537a30cce"
+        },
+        "gold": {
+          "path": "l110-ambiguous-german-without-evidence.gold.json",
+          "sha256": "5a30d5c79d894339668ec9a705449ca08fd57dd58cd510d1c37d6d8991ec7a01"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "no_evidence",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l111-ambiguous-japanese-without-evidence",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l111-ambiguous-japanese-without-evidence",
+      "files": {
+        "input": {
+          "path": "l111-ambiguous-japanese-without-evidence.html",
+          "sha256": "40620690683ed31f46fdac236e7ab5a457c5f39b97793ed87981ab458095b454"
+        },
+        "gold": {
+          "path": "l111-ambiguous-japanese-without-evidence.gold.json",
+          "sha256": "8891b9e58caf64dfa22a89c73d094827a446246093f3e9db1b68036e4adaba77"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "no_evidence",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l112-mixed-german-text-declared-english",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l112-mixed-german-text-declared-english",
+      "files": {
+        "input": {
+          "path": "l112-mixed-german-text-declared-english.html",
+          "sha256": "c30631b8c8800757321fb6c073ddaa0a031efa9499587a82d37e7b13be33b49b"
+        },
+        "gold": {
+          "path": "l112-mixed-german-text-declared-english.gold.json",
+          "sha256": "b26a36444d53c807c4af12c007997a545f149454d6fef8bca87b2dd46bb0ae75"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "mixed",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "en",
+          "declared": "en",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "en"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l113-conflicting-declarations",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l113-conflicting-declarations",
+      "files": {
+        "input": {
+          "path": "l113-conflicting-declarations.html",
+          "sha256": "d7963be7ff6d625ad29754052528324ecbce64e120e23dbb05f8672a2b134f23"
+        },
+        "gold": {
+          "path": "l113-conflicting-declarations.gold.json",
+          "sha256": "a0e89dea1ee1e2853f993c0b561ac7f7bbcb7ece9c1d7fe6fe2c0e4f4034b668"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "conflict",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "fr",
+          "declared": "fr",
+          "uncertain": true,
+          "unavailable": false,
+          "evidence": [
+            [
+              "inLanguage",
+              "fr"
+            ],
+            [
+              "language",
+              "de"
+            ],
+            [
+              "og:locale",
+              "es_ES"
+            ],
+            [
+              "document_fallback",
+              "en"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l114-invalid-declaration",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l114-invalid-declaration",
+      "files": {
+        "input": {
+          "path": "l114-invalid-declaration.html",
+          "sha256": "ce1658dade20c9f08cb959106688d2843d945930bc48352215f8ba128515150f"
+        },
+        "gold": {
+          "path": "l114-invalid-declaration.gold.json",
+          "sha256": "e37ee0533f97079abf46fbe40265531cc4e0a1bb0b504cb45a5dc048d4b52bee"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "invalid",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": true,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "english"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l115-empty-declaration",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l115-empty-declaration",
+      "files": {
+        "input": {
+          "path": "l115-empty-declaration.html",
+          "sha256": "33daae8dcd5c2a5abcac8eab9a43c925fdd365438659d6c9b180e3eaa624d34b"
+        },
+        "gold": {
+          "path": "l115-empty-declaration.gold.json",
+          "sha256": "fb1adebb2689f66d5aaeabf4854c836b53ff5c2a167c6a8b8224952a3beb1e18"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "invalid",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l116-short-main-german",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l116-short-main-german",
+      "files": {
+        "input": {
+          "path": "l116-short-main-german.html",
+          "sha256": "09806e277b22cc7988792622f5a8d4651dee08007b47e62556383e5e7abad551"
+        },
+        "gold": {
+          "path": "l116-short-main-german.gold.json",
+          "sha256": "470ec222aedf8f8614146243e602dd7d5e2c6147d842b7ad116b33fbe77e4689"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "short",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "de",
+          "declared": "de",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "de"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l117-short-main-thai",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l117-short-main-thai",
+      "files": {
+        "input": {
+          "path": "l117-short-main-thai.html",
+          "sha256": "be84f35482cd08bf574eda9eccd8f85614d4cff75b53541334cde5dd8a980a75"
+        },
+        "gold": {
+          "path": "l117-short-main-thai.gold.json",
+          "sha256": "7f0c2a26751337d4c5f9ec10ec4fba0cb92cfebcd59f890c1c74eb3aadab4997"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "short",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l118-mixed-script-hindi-latin",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l118-mixed-script-hindi-latin",
+      "files": {
+        "input": {
+          "path": "l118-mixed-script-hindi-latin.html",
+          "sha256": "5b3d88e9fe61dcabe304a26b1698cc6726b9a831ab100ecd676ae3faf98f2034"
+        },
+        "gold": {
+          "path": "l118-mixed-script-hindi-latin.gold.json",
+          "sha256": "2927d6e156aaf5c2443df65a27bd9eba886589ff80e253521e0cceb99daf2fff"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "mixed",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi",
+          "declared": "hi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l119-mixed-german-french-paragraphs",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l119-mixed-german-french-paragraphs",
+      "files": {
+        "input": {
+          "path": "l119-mixed-german-french-paragraphs.html",
+          "sha256": "814a820512dcc249d514f56420942448e18d84c837cb28dd35260c32bb8712e2"
+        },
+        "gold": {
+          "path": "l119-mixed-german-french-paragraphs.gold.json",
+          "sha256": "0f31c277824a30b557c4e7fef5b045b23487d8737444c503fe593448065479ca"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "mixed",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "de",
+          "declared": "de",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "de"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l12-rules-latin-french-region",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l12-rules-latin-french-region",
+      "files": {
+        "input": {
+          "path": "l12-rules-latin-french-region.html",
+          "sha256": "e64408f5ff8a4ce0219e3fad3bee5b091cd97f2dcdc8c1a0cfeb195fb453be02"
+        },
+        "gold": {
+          "path": "l12-rules-latin-french-region.gold.json",
+          "sha256": "07d218720d754ee5dc9ebc3faffac01434257cd20a05c2f5a15261f75d0fa9f2"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "fr-fr",
+          "declared": "fr-fr",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "fr-FR"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l120-hreflang-alternates-are-not-declarations",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l120-hreflang-alternates-are-not-declarations",
+      "files": {
+        "input": {
+          "path": "l120-hreflang-alternates-are-not-declarations.html",
+          "sha256": "b3da3ab8683f367631c6556609a8be5ab1df03a41ca29a492ece08f1e1550499"
+        },
+        "gold": {
+          "path": "l120-hreflang-alternates-are-not-declarations.gold.json",
+          "sha256": "73daf2c757d12b08cb1bb47a7db5f523dd5ead9bc0022cf1d2a77028cc642506"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "no_evidence",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l121-http-equiv-content-language",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l121-http-equiv-content-language",
+      "files": {
+        "input": {
+          "path": "l121-http-equiv-content-language.html",
+          "sha256": "66ec5c8f6d01a76a61c9e26d969f90e81a136ef601dcd8cb2c2068c7fceb8985"
+        },
+        "gold": {
+          "path": "l121-http-equiv-content-language.gold.json",
+          "sha256": "b9fb23cc078fcb369600f7092cb9d1d9998a609fc78d0c7c7d7cc3bef7142ea1"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "declared",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "pt-pt",
+          "declared": "pt-pt",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "pt-PT"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l122-meta-language-conflicts-with-html-lang",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l122-meta-language-conflicts-with-html-lang",
+      "files": {
+        "input": {
+          "path": "l122-meta-language-conflicts-with-html-lang.html",
+          "sha256": "2045536e9f70efd0b1abdb225fdebe79e3fe4161332f445e23fed349897cb623"
+        },
+        "gold": {
+          "path": "l122-meta-language-conflicts-with-html-lang.gold.json",
+          "sha256": "fe163c74b5cc745f01691997e1c49e925db7b098e35468d1c7d37274241661a0"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "conflict",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "sv",
+          "declared": "sv",
+          "uncertain": true,
+          "unavailable": false,
+          "evidence": [
+            [
+              "language",
+              "sv"
+            ],
+            [
+              "document_fallback",
+              "nb"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l123-script-and-region-subtags",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l123-script-and-region-subtags",
+      "files": {
+        "input": {
+          "path": "l123-script-and-region-subtags.html",
+          "sha256": "0e7b6fd510b2cfbcaca65594b9e864eb77d56cd6bff99c22d415719cd708dff2"
+        },
+        "gold": {
+          "path": "l123-script-and-region-subtags.gold.json",
+          "sha256": "71dc94bb46d232c012de8f8cd4187c64a365a75a0330c11f82564b9af10a1722"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "declared",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh-hant-tw",
+          "declared": "zh-hant-tw",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh-Hant-TW"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l124-og-locale-only",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l124-og-locale-only",
+      "files": {
+        "input": {
+          "path": "l124-og-locale-only.html",
+          "sha256": "a6acb85e3c9b9a5ccbe41a12ff1b87a0a33019bfdea889ebfff60700fcc08ef7"
+        },
+        "gold": {
+          "path": "l124-og-locale-only.gold.json",
+          "sha256": "537786e5c792ce0aeedf3dc6b7f25bb0793ea2d3e5716a32ef067604f07f298e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "declared",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "es-es",
+          "declared": "es-es",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "og:locale",
+              "es_ES"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "a single og:locale declaration is reported twice (raw value and normalized document_fallback) and flagged uncertain",
+          "measured": {
+            "language": {
+              "evidence": [
+                [
+                  "og:locale",
+                  "es_ES"
+                ],
+                [
+                  "document_fallback",
+                  "es-ES"
+                ]
+              ],
+              "uncertain": true,
+              "value": "es-es"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "l13-rules-latin-spanish-region",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l13-rules-latin-spanish-region",
+      "files": {
+        "input": {
+          "path": "l13-rules-latin-spanish-region.html",
+          "sha256": "748a1d675e5d5eefaa367bf3dd44604e1663c7e7df8f39d7a968155551ed0225"
+        },
+        "gold": {
+          "path": "l13-rules-latin-spanish-region.gold.json",
+          "sha256": "f7e62f298149084f5ef7afb67c089e45314244139631eda7d6b29f82ff1d7e04"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "es-mx",
+          "declared": "es-mx",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "es-MX"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l130-detector-not-needed-when-declared",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l130-detector-not-needed-when-declared",
+      "files": {
+        "input": {
+          "path": "l130-detector-not-needed-when-declared.html",
+          "sha256": "731bbb284a29cab742fafaaf4593551b4826aa42c0337b53b8a435efe7e57579"
+        },
+        "gold": {
+          "path": "l130-detector-not-needed-when-declared.gold.json",
+          "sha256": "ef6b44da91aa7ecef262cd10fbecb40ece88da03ee2c8c046cd19c01a384c231"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "detector_not_needed",
+        "supported": true,
+        "mode": "declared_then_detect",
+        "language": {
+          "value": "de",
+          "declared": "de",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "de"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l131-detector-unavailable-without-evidence",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l131-detector-unavailable-without-evidence",
+      "files": {
+        "input": {
+          "path": "l131-detector-unavailable-without-evidence.html",
+          "sha256": "a9356bc091afedf8bfeebc522e47c0905626c922c7c430970282ef161e2224b1"
+        },
+        "gold": {
+          "path": "l131-detector-unavailable-without-evidence.gold.json",
+          "sha256": "069b5a5977caa71e4d13edbdbf410ae507c9dc1b4374509ceee586b4ecdfafe4"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "detector_unavailable",
+        "supported": true,
+        "mode": "declared_then_detect",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": true,
+          "unavailable": true,
+          "evidence": []
+        },
+        "qualityReasons": [
+          "model_unavailable"
+        ],
+        "qualityStatus": "unavailable"
+      }
+    },
+    {
+      "id": "l132-detector-required-never-fabricates",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l132-detector-required-never-fabricates",
+      "files": {
+        "input": {
+          "path": "l132-detector-required-never-fabricates.html",
+          "sha256": "2b8e85633811cee8bdec8cce756dfd7c96fa1e507bc9f7317f1e9dd59abc8168"
+        },
+        "gold": {
+          "path": "l132-detector-required-never-fabricates.gold.json",
+          "sha256": "dcf647889e1a89788b73e4be8ff8049ded101fbe654b4b925e6c39e6381592a6"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "detector_unavailable",
+        "supported": true,
+        "mode": "detect",
+        "language": {
+          "value": null,
+          "declared": "fr",
+          "uncertain": true,
+          "unavailable": true,
+          "evidence": [
+            [
+              "document_fallback",
+              "fr"
+            ]
+          ]
+        },
+        "qualityReasons": [
+          "model_unavailable"
+        ],
+        "qualityStatus": "unavailable"
+      }
+    },
+    {
+      "id": "l133-target-language-matches-region",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l133-target-language-matches-region",
+      "files": {
+        "input": {
+          "path": "l133-target-language-matches-region.html",
+          "sha256": "ce72b24c461d111235751038a5f0a419fc1b715c24dc61a9a009874630aaedc3"
+        },
+        "gold": {
+          "path": "l133-target-language-matches-region.gold.json",
+          "sha256": "6251abb2dd336b9430c2cc663bd06e735163b8d027925230601b708c41b37fb7"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "target",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "de-at",
+          "declared": "de-at",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "de-AT"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "targetLanguage": "de"
+      }
+    },
+    {
+      "id": "l134-target-language-mismatch",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l134-target-language-mismatch",
+      "files": {
+        "input": {
+          "path": "l134-target-language-mismatch.html",
+          "sha256": "2b8e85633811cee8bdec8cce756dfd7c96fa1e507bc9f7317f1e9dd59abc8168"
+        },
+        "gold": {
+          "path": "l134-target-language-mismatch.gold.json",
+          "sha256": "fec1bc2be5276e771d8fd6ed4548d557e3e262fe121fd1e2f0f1da99ddcab248"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "target",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "fr",
+          "declared": "fr",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "fr"
+            ]
+          ]
+        },
+        "qualityReasons": [
+          "language_mismatch"
+        ],
+        "qualityStatus": "rejected",
+        "targetLanguage": "de"
+      }
+    },
+    {
+      "id": "l135-target-language-without-evidence",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l135-target-language-without-evidence",
+      "files": {
+        "input": {
+          "path": "l135-target-language-without-evidence.html",
+          "sha256": "05c12bf44d95881f5f5cf1da786cd76d5a682dbfcb907a35afe8690537a30cce"
+        },
+        "gold": {
+          "path": "l135-target-language-without-evidence.gold.json",
+          "sha256": "698182962fed469933215bc9704455707fa6812a8b824b1907b792401b8a576c"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "target",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [
+          "language_unknown"
+        ],
+        "qualityStatus": "rejected",
+        "targetLanguage": "de"
+      }
+    },
+    {
+      "id": "l136-detector-needed-for-invalid-declaration",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l136-detector-needed-for-invalid-declaration",
+      "files": {
+        "input": {
+          "path": "l136-detector-needed-for-invalid-declaration.html",
+          "sha256": "4d1d9959812f2d952ba3504154a4f7682a686e95e637536b63583223300e5c27"
+        },
+        "gold": {
+          "path": "l136-detector-needed-for-invalid-declaration.gold.json",
+          "sha256": "0bd4da5065e90882258ce50b652173ce76d171b7c0db43791b42bf4fa57593a7"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "detector_unavailable",
+        "supported": true,
+        "mode": "declared_then_detect",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": true,
+          "unavailable": true,
+          "evidence": [
+            [
+              "document_fallback",
+              "english"
+            ]
+          ]
+        },
+        "qualityReasons": [
+          "model_unavailable"
+        ],
+        "qualityStatus": "unavailable"
+      }
+    },
+    {
+      "id": "l14-rules-latin-portuguese-underscore",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l14-rules-latin-portuguese-underscore",
+      "files": {
+        "input": {
+          "path": "l14-rules-latin-portuguese-underscore.html",
+          "sha256": "488550544b79526ba5defc6e06b25f3251fc1c60579897d2c18d297f9226ae08"
+        },
+        "gold": {
+          "path": "l14-rules-latin-portuguese-underscore.gold.json",
+          "sha256": "6f9fb9b16a0a5c505b5cdc4df3d6e29a474383bcef7c08b4bed6e456caab4435"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "pt-br",
+          "declared": "pt-br",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "pt_BR"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l15-rules-latin-italian",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l15-rules-latin-italian",
+      "files": {
+        "input": {
+          "path": "l15-rules-latin-italian.html",
+          "sha256": "e5991687497cdec6da7d52d36bae4207335a46135d8228c9b3fbe05dd3dd71ea"
+        },
+        "gold": {
+          "path": "l15-rules-latin-italian.gold.json",
+          "sha256": "ef2526721f001c2cfb4536023ebcb3f22b0c4c5371490286333dba125b3ae96c"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "it",
+          "declared": "it",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "it"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l16-rules-latin-polish",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l16-rules-latin-polish",
+      "files": {
+        "input": {
+          "path": "l16-rules-latin-polish.html",
+          "sha256": "d4317f743b6081c36d209540c83b86a380fea85a7e26f070677543f50d0e5ba2"
+        },
+        "gold": {
+          "path": "l16-rules-latin-polish.gold.json",
+          "sha256": "56835e98d103ab0e8721872c31ddd5d30e3f4e1bdff468f2553ba3e29b7d4f03"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "pl",
+          "declared": "pl",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "pl"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l17-rules-latin-turkish",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l17-rules-latin-turkish",
+      "files": {
+        "input": {
+          "path": "l17-rules-latin-turkish.html",
+          "sha256": "51fd9614a93fc6a41cdc8b05ff346d9d7c5bca6810174722c4590c48aeb8f711"
+        },
+        "gold": {
+          "path": "l17-rules-latin-turkish.gold.json",
+          "sha256": "787e1d2ec943920e7c6a0c20eac45156c1beac35b87f6b5a344b254ca031eb42"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "tr",
+          "declared": "tr",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "tr"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l18-rules-latin-vietnamese",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l18-rules-latin-vietnamese",
+      "files": {
+        "input": {
+          "path": "l18-rules-latin-vietnamese.html",
+          "sha256": "b72e543475d1ba2b2842e2039381292ee48cb3283bbff190fe48857becc845f0"
+        },
+        "gold": {
+          "path": "l18-rules-latin-vietnamese.gold.json",
+          "sha256": "78b6a7750f2653937e2868503bf13d23da10adbd352528b47ae69e83a640fb96"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "vi",
+          "declared": "vi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "vi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l20-rules-cyrillic-russian",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l20-rules-cyrillic-russian",
+      "files": {
+        "input": {
+          "path": "l20-rules-cyrillic-russian.html",
+          "sha256": "bfdaf00847e0432b70758e7f37e5cdb04732c7ed1c0fbcfba02dfa5b4ec5e85d"
+        },
+        "gold": {
+          "path": "l20-rules-cyrillic-russian.gold.json",
+          "sha256": "fdea9b8e8e2fbacab54d7e11fb80a7a241c5c1f52896d83cff53119466d9c6b1"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cyrillic",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ru",
+          "declared": "ru",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ru"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l21-rules-cyrillic-ukrainian",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l21-rules-cyrillic-ukrainian",
+      "files": {
+        "input": {
+          "path": "l21-rules-cyrillic-ukrainian.html",
+          "sha256": "c0a58c9ac820628d203141849dc6159b4f1f83a4a3fccc72efff6de486f2a132"
+        },
+        "gold": {
+          "path": "l21-rules-cyrillic-ukrainian.gold.json",
+          "sha256": "1ad802b16b25a18d7e0628d85bbf96d72425d9dc4a6b9aa354c92c13007f1869"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cyrillic",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "uk",
+          "declared": "uk",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "uk"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l22-rules-cyrillic-bulgarian",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l22-rules-cyrillic-bulgarian",
+      "files": {
+        "input": {
+          "path": "l22-rules-cyrillic-bulgarian.html",
+          "sha256": "f2e629f8fcce3af65bc3d681d4fe82dfea842eab2df77a0511062a1f353fd014"
+        },
+        "gold": {
+          "path": "l22-rules-cyrillic-bulgarian.gold.json",
+          "sha256": "95e6f812540de2f265b99080ded04fac7cd557633b9436cc460962e626bcf891"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cyrillic",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "bg-bg",
+          "declared": "bg-bg",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "bg-BG"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l23-rules-cyrillic-serbian",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l23-rules-cyrillic-serbian",
+      "files": {
+        "input": {
+          "path": "l23-rules-cyrillic-serbian.html",
+          "sha256": "28f49c681450ca8f94ec31ac0251c837a9691660103fb497f4f25f410ed6178e"
+        },
+        "gold": {
+          "path": "l23-rules-cyrillic-serbian.gold.json",
+          "sha256": "060f8d22b8a7b2eed7bf354cbddc82161c2a78b847609588c9d6e565eb09f74e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cyrillic",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "sr-cyrl",
+          "declared": "sr-cyrl",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "sr-Cyrl"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l24-rules-cyrillic-macedonian",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l24-rules-cyrillic-macedonian",
+      "files": {
+        "input": {
+          "path": "l24-rules-cyrillic-macedonian.html",
+          "sha256": "c0eb9d8eb12d5981deed16be1014f7d69879a185e9093ed0c7031e2d92962573"
+        },
+        "gold": {
+          "path": "l24-rules-cyrillic-macedonian.gold.json",
+          "sha256": "e8408a65a4d9867361971aaaa35542e9d67d390f4171ffe964a4d6ecc9a73509"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cyrillic",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "mk",
+          "declared": "mk",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "mk"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l30-rules-greek-harbor",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l30-rules-greek-harbor",
+      "files": {
+        "input": {
+          "path": "l30-rules-greek-harbor.html",
+          "sha256": "060c497cca6414529d6d3cf9916dd7df44ac580eaa8ab59c2e40f6574dc0742c"
+        },
+        "gold": {
+          "path": "l30-rules-greek-harbor.gold.json",
+          "sha256": "e660e54cd1e6134d4ace816b26eb6b188819b16a8ad863cc1788069f2c543f59"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "greek",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "el",
+          "declared": "el",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "el"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l31-rules-greek-bakery",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l31-rules-greek-bakery",
+      "files": {
+        "input": {
+          "path": "l31-rules-greek-bakery.html",
+          "sha256": "3121a967c3cfb9f8daa13d9074d633e9b04b3f819f7bfc9a832b29fea615da99"
+        },
+        "gold": {
+          "path": "l31-rules-greek-bakery.gold.json",
+          "sha256": "811eb9293249c5f8d82f6e22643ba5137795a51751f52bd2c79b678c6b7087ac"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "greek",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "el",
+          "declared": "el",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "el"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l32-rules-greek-library-region",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l32-rules-greek-library-region",
+      "files": {
+        "input": {
+          "path": "l32-rules-greek-library-region.html",
+          "sha256": "80e340b0f3405ee0bc7328052cadc75925e57e1f59af62dab4c56796477dd10a"
+        },
+        "gold": {
+          "path": "l32-rules-greek-library-region.gold.json",
+          "sha256": "8d26f8b6ba17cf1234e9dd3a457318ed682e1ed944fd459121c32fd6b9beefe9"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "greek",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "el-gr",
+          "declared": "el-gr",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "el-GR"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l33-rules-greek-capitals-final-sigma",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l33-rules-greek-capitals-final-sigma",
+      "files": {
+        "input": {
+          "path": "l33-rules-greek-capitals-final-sigma.html",
+          "sha256": "459f0927412769262ce0b757737bf2d2990322e186b7d8cddb786557339954c8"
+        },
+        "gold": {
+          "path": "l33-rules-greek-capitals-final-sigma.gold.json",
+          "sha256": "e830d540057f30f388c76e960fb9d568ae561cf574b22c32adbf9297f5e7a996"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "greek",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "el",
+          "declared": "el",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "el"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l34-rules-greek-diaeresis",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l34-rules-greek-diaeresis",
+      "files": {
+        "input": {
+          "path": "l34-rules-greek-diaeresis.html",
+          "sha256": "fa4f8d09eea7285452370e81211ab7cf68f25c8c75cfaca191995085a236769f"
+        },
+        "gold": {
+          "path": "l34-rules-greek-diaeresis.gold.json",
+          "sha256": "e8ef0157d2e212be61c1bef186a2ed180a0801ccde46a7dad556f1e03a06feb9"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "greek",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "el",
+          "declared": "el",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "el"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l40-rules-abjad-arabic-dawn",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l40-rules-abjad-arabic-dawn",
+      "files": {
+        "input": {
+          "path": "l40-rules-abjad-arabic-dawn.html",
+          "sha256": "28d9c90ece4bbb5831b7e0714837eaec1549eb3bbf49366576071d8b0543389b"
+        },
+        "gold": {
+          "path": "l40-rules-abjad-arabic-dawn.gold.json",
+          "sha256": "e2412a4790a42980c718a182752fee1acc7f23f56ad7988e4b10656f5738f47e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abjad",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ar",
+          "declared": "ar",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ar"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l41-rules-abjad-arabic-region",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l41-rules-abjad-arabic-region",
+      "files": {
+        "input": {
+          "path": "l41-rules-abjad-arabic-region.html",
+          "sha256": "96d12b441c68231b8e6e6e688ebbcd81d4dbfc1f3f8cfea52fafa363dbe5f2bb"
+        },
+        "gold": {
+          "path": "l41-rules-abjad-arabic-region.gold.json",
+          "sha256": "b69b66f9c9d58fbcf4183a3ca4e9bee3f178adae4e15cf5ebf13012c8d6d4f38"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abjad",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ar-eg",
+          "declared": "ar-eg",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ar-EG"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l42-rules-abjad-persian",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l42-rules-abjad-persian",
+      "files": {
+        "input": {
+          "path": "l42-rules-abjad-persian.html",
+          "sha256": "b62afd8e347e582c4286ca6a1077d40643373722acd99847f7d2f47f660a127d"
+        },
+        "gold": {
+          "path": "l42-rules-abjad-persian.gold.json",
+          "sha256": "ed1b0424ac936c153a7046a5ee33ae705f4a4e6bddfce487c5555960f878b082"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abjad",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "fa",
+          "declared": "fa",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "fa"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l43-rules-abjad-hebrew-train",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l43-rules-abjad-hebrew-train",
+      "files": {
+        "input": {
+          "path": "l43-rules-abjad-hebrew-train.html",
+          "sha256": "25a58545c652bbd75af37edabf058332277c4478b16d60559a5e53fccd9c1ee4"
+        },
+        "gold": {
+          "path": "l43-rules-abjad-hebrew-train.gold.json",
+          "sha256": "a68b63de99cdf37ee82958b4f62c6eae29f29aa256453ba82121553689bb73b4"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abjad",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "he",
+          "declared": "he",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "he"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l44-rules-abjad-hebrew-market",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l44-rules-abjad-hebrew-market",
+      "files": {
+        "input": {
+          "path": "l44-rules-abjad-hebrew-market.html",
+          "sha256": "c7cb9de169d0741327cfca1f524980e7f0e61d602349270716d1dbac96ad326d"
+        },
+        "gold": {
+          "path": "l44-rules-abjad-hebrew-market.gold.json",
+          "sha256": "2c0f0274443b158914e0b34189101963e3c3312d4427c05895000db488ec18aa"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abjad",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "he-il",
+          "declared": "he-il",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "he-IL"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l50-rules-han-chinese-simplified",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l50-rules-han-chinese-simplified",
+      "files": {
+        "input": {
+          "path": "l50-rules-han-chinese-simplified.html",
+          "sha256": "a08bce81c138c22d8c6c9c61c23aaf34db10dc34d0eb267bacf27251081fd7d2"
+        },
+        "gold": {
+          "path": "l50-rules-han-chinese-simplified.gold.json",
+          "sha256": "5ceea28598618d03be2cad5fb65d3f11051f2cb6f7d34183e86d23e996aa2a15"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "han_kana",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh-cn",
+          "declared": "zh-cn",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh-CN"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l51-rules-han-chinese-traditional",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l51-rules-han-chinese-traditional",
+      "files": {
+        "input": {
+          "path": "l51-rules-han-chinese-traditional.html",
+          "sha256": "1a2173e1261a7588d8343b9ca8cc6dc6813ccfbda79129597d445d569947afc7"
+        },
+        "gold": {
+          "path": "l51-rules-han-chinese-traditional.gold.json",
+          "sha256": "6321ef478040fa6c6bb4958a6b1abc19e684613e424f561f2d734cff793dd601"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "han_kana",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh-tw",
+          "declared": "zh-tw",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh-TW"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l52-rules-han-chinese-digits",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l52-rules-han-chinese-digits",
+      "files": {
+        "input": {
+          "path": "l52-rules-han-chinese-digits.html",
+          "sha256": "8f5057fd3153917262a360cdeb7870dc81e118730fa579922a6cb5477e0ea41b"
+        },
+        "gold": {
+          "path": "l52-rules-han-chinese-digits.gold.json",
+          "sha256": "ac0e51da4e45172aa516b5036725e432572406cb5dcf41169ebc05e4dd893fdd"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "han_kana",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh",
+          "declared": "zh",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l53-rules-kana-japanese-library",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l53-rules-kana-japanese-library",
+      "files": {
+        "input": {
+          "path": "l53-rules-kana-japanese-library.html",
+          "sha256": "e6d44c1f3e7051f4e8807fbbf428e642c8d941af148430b710aedb634830bd12"
+        },
+        "gold": {
+          "path": "l53-rules-kana-japanese-library.gold.json",
+          "sha256": "6e6a1ed21628573aa61737fccbfbf7bc9bc43dbf837ef448fdb8c92c41247292"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "han_kana",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja",
+          "declared": "ja",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l54-rules-kana-japanese-region",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l54-rules-kana-japanese-region",
+      "files": {
+        "input": {
+          "path": "l54-rules-kana-japanese-region.html",
+          "sha256": "ceda84c8b1a9b4e798aa44881560f5aa1aa82155865363586d80ef81b1eaf707"
+        },
+        "gold": {
+          "path": "l54-rules-kana-japanese-region.gold.json",
+          "sha256": "9e4cb9e2062efdba48fe84578a28ef2627b1589c31c5d2608c18352b4a54dd87"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "han_kana",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja-jp",
+          "declared": "ja-jp",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja-JP"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l60-dict-thai-rain",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l60-dict-thai-rain",
+      "files": {
+        "input": {
+          "path": "l60-dict-thai-rain.html",
+          "sha256": "fb697215f60caa3fb348e75ce9621054bb64deef613bfa80982a66660d053911"
+        },
+        "gold": {
+          "path": "l60-dict-thai-rain.gold.json",
+          "sha256": "e8c3dbc4327dde5ea6214e12de18cb6fdeb53f5c40a4bb437d00b2cacbee4f7c"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['ตก', 'มี', 'หนัก', 'ไม่'], produced-only tokens ['ตกหนัก', 'ไม่มี']",
+          "measured": {
+            "keywords": [
+              [
+                "ฉัน",
+                2
+              ],
+              [
+                "ฝน",
+                1
+              ],
+              [
+                "ตกหนัก",
+                1
+              ],
+              [
+                "มาก",
+                1
+              ],
+              [
+                "ไม่มี",
+                1
+              ],
+              [
+                "ร่ม",
+                1
+              ],
+              [
+                "จึง",
+                1
+              ],
+              [
+                "รอ",
+                1
+              ],
+              [
+                "ที่",
+                1
+              ],
+              [
+                "บ้าน",
+                1
+              ],
+              [
+                "แม่",
+                1
+              ],
+              [
+                "ทำ",
+                1
+              ],
+              [
+                "อาหาร",
+                1
+              ],
+              [
+                "ให้",
+                1
+              ],
+              [
+                "ลูก",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l61-dict-thai-market",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l61-dict-thai-market",
+      "files": {
+        "input": {
+          "path": "l61-dict-thai-market.html",
+          "sha256": "2a8b744b87832a41f010526b7b6135d8dd0393d83a2e36446fbc5c991cc335f7"
+        },
+        "gold": {
+          "path": "l61-dict-thai-market.gold.json",
+          "sha256": "cca981409ea498ef22fe882e03ff2bbe7e3f2f16db245813459c9043e34f6154"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['ผลไม้'], produced-only tokens ['ผล', 'ไม้']",
+          "measured": {
+            "keywords": [
+              [
+                "ลูก",
+                2
+              ],
+              [
+                "กิน",
+                1
+              ],
+              [
+                "ข้าว",
+                1
+              ],
+              [
+                "กับ",
+                1
+              ],
+              [
+                "ปลา",
+                1
+              ],
+              [
+                "พ่อ",
+                1
+              ],
+              [
+                "ดื่ม",
+                1
+              ],
+              [
+                "น้ำ",
+                1
+              ],
+              [
+                "เรา",
+                1
+              ],
+              [
+                "เดิน",
+                1
+              ],
+              [
+                "ไป",
+                1
+              ],
+              [
+                "ตลาด",
+                1
+              ],
+              [
+                "คน",
+                1
+              ],
+              [
+                "ขาย",
+                1
+              ],
+              [
+                "ผล",
+                1
+              ],
+              [
+                "ไม้",
+                1
+              ],
+              [
+                "ฉัน",
+                1
+              ],
+              [
+                "ซื้อ",
+                1
+              ],
+              [
+                "มะม่วง",
+                1
+              ],
+              [
+                "สอง",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l62-dict-thai-station",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l62-dict-thai-station",
+      "files": {
+        "input": {
+          "path": "l62-dict-thai-station.html",
+          "sha256": "caa35f652b85514eb1585c4110440af46891da0e352a7babac9959fd2baf3818"
+        },
+        "gold": {
+          "path": "l62-dict-thai-station.gold.json",
+          "sha256": "446c02665d67d9ccf47e5960e0da88819d7dabb9849aade93bd3b2f0dd3e3b0d"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th-th",
+          "declared": "th-th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th-TH"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['ชานชาลา', 'ห้องสมุด'], produced-only tokens ['ชาน', 'ชาลา', 'สมุด', 'ห้อง']",
+          "measured": {
+            "keywords": [
+              [
+                "ที่",
+                2
+              ],
+              [
+                "รถไฟ",
+                1
+              ],
+              [
+                "ออก",
+                1
+              ],
+              [
+                "จาก",
+                1
+              ],
+              [
+                "สถานี",
+                1
+              ],
+              [
+                "ตอน",
+                1
+              ],
+              [
+                "เช้า",
+                1
+              ],
+              [
+                "คน",
+                1
+              ],
+              [
+                "รอ",
+                1
+              ],
+              [
+                "อยู่",
+                1
+              ],
+              [
+                "ชาน",
+                1
+              ],
+              [
+                "ชาลา",
+                1
+              ],
+              [
+                "เด็ก",
+                1
+              ],
+              [
+                "อ่าน",
+                1
+              ],
+              [
+                "หนังสือ",
+                1
+              ],
+              [
+                "ห้อง",
+                1
+              ],
+              [
+                "สมุด",
+                1
+              ],
+              [
+                "ครู",
+                1
+              ],
+              [
+                "บอก",
+                1
+              ],
+              [
+                "ให้",
+                1
+              ],
+              [
+                "เงียบ",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l63-dict-thai-oranges",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l63-dict-thai-oranges",
+      "files": {
+        "input": {
+          "path": "l63-dict-thai-oranges.html",
+          "sha256": "16c5b0074e09fdfe316df410154ca66d846e8acb163c78919189e01e87bee3d7"
+        },
+        "gold": {
+          "path": "l63-dict-thai-oranges.gold.json",
+          "sha256": "633c439caf652872a3d2f75e7941d99cfb4eefeca485cfb0ae6474167d668e5b"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l64-dict-thai-elephant",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l64-dict-thai-elephant",
+      "files": {
+        "input": {
+          "path": "l64-dict-thai-elephant.html",
+          "sha256": "7f844f7f3ef0dc0dc74d8f79e8dd6867c99b6094a54e80b238bcfb11fd9a9add"
+        },
+        "gold": {
+          "path": "l64-dict-thai-elephant.gold.json",
+          "sha256": "1243dd8ddda0385172960a8489dd463ac082474b8f473fd82fdb9c93442ea9b3"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l70-dict-chinese-simplified-library",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l70-dict-chinese-simplified-library",
+      "files": {
+        "input": {
+          "path": "l70-dict-chinese-simplified-library.html",
+          "sha256": "f70ff57dbe0a0c04a1a9318d6557f746480b50e3c9ea9bca7a3bdad861fc00dd"
+        },
+        "gold": {
+          "path": "l70-dict-chinese-simplified-library.gold.json",
+          "sha256": "6e58f224dd8b036c46884eeaeb7db989c1946a6e4f1c248031dcf264b5333453"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "chinese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh-cn",
+          "declared": "zh-cn",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh-CN"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['书', '借', '图书馆'], produced-only tokens ['借书', '图书', '馆']",
+          "measured": {
+            "keywords": [
+              [
+                "今天",
+                1
+              ],
+              [
+                "我们",
+                1
+              ],
+              [
+                "去",
+                1
+              ],
+              [
+                "图书",
+                1
+              ],
+              [
+                "馆",
+                1
+              ],
+              [
+                "借书",
+                1
+              ],
+              [
+                "老师",
+                1
+              ],
+              [
+                "在",
+                1
+              ],
+              [
+                "教室",
+                1
+              ],
+              [
+                "里",
+                1
+              ],
+              [
+                "讲",
+                1
+              ],
+              [
+                "故事",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l71-dict-chinese-traditional-park",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l71-dict-chinese-traditional-park",
+      "files": {
+        "input": {
+          "path": "l71-dict-chinese-traditional-park.html",
+          "sha256": "bfeb396271cbd93b96e6e7da273572c55cffc9b50ffc3df0bd9689db4ce9a5f2"
+        },
+        "gold": {
+          "path": "l71-dict-chinese-traditional-park.gold.json",
+          "sha256": "b1e5ef9ef535fbd85ca964fb05d115eb7c18459a7e06c9698a93512c9fea4c16"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "chinese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh-tw",
+          "declared": "zh-tw",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh-TW"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['好', '很'], produced-only tokens ['很好']",
+          "measured": {
+            "keywords": [
+              [
+                "昨天",
+                1
+              ],
+              [
+                "我們",
+                1
+              ],
+              [
+                "在",
+                1
+              ],
+              [
+                "公園",
+                1
+              ],
+              [
+                "散步",
+                1
+              ],
+              [
+                "天氣",
+                1
+              ],
+              [
+                "很好",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l72-dict-chinese-spring",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l72-dict-chinese-spring",
+      "files": {
+        "input": {
+          "path": "l72-dict-chinese-spring.html",
+          "sha256": "af4f4ebb4f6c8594960e08a609f5f2c220cada7dc9d999dd0cd276a5fdaab346"
+        },
+        "gold": {
+          "path": "l72-dict-chinese-spring.gold.json",
+          "sha256": "9cfeda12686fa29db2b7b02193b176457687021a66600583f3085699bce7aa5c"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "chinese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh",
+          "declared": "zh",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['开', '很', '得', '河边', '花'], produced-only tokens ['得很', '河', '花开', '边']",
+          "measured": {
+            "keywords": [
+              [
+                "春天",
+                1
+              ],
+              [
+                "来",
+                1
+              ],
+              [
+                "了",
+                1
+              ],
+              [
+                "花开",
+                1
+              ],
+              [
+                "得很",
+                1
+              ],
+              [
+                "美",
+                1
+              ],
+              [
+                "孩子",
+                1
+              ],
+              [
+                "们",
+                1
+              ],
+              [
+                "在",
+                1
+              ],
+              [
+                "河",
+                1
+              ],
+              [
+                "边",
+                1
+              ],
+              [
+                "玩耍",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l73-dict-chinese-digits-latin",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l73-dict-chinese-digits-latin",
+      "files": {
+        "input": {
+          "path": "l73-dict-chinese-digits-latin.html",
+          "sha256": "8142c3e7b1435bc7faed10d3f2dc9d8287a911c6e8a846282ee46a78aea463d2"
+        },
+        "gold": {
+          "path": "l73-dict-chinese-digits-latin.gold.json",
+          "sha256": "030f418d5ffcf82f19d6cc841cecdd8fc369c3dc5015970eee67e6de40be2db8"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "chinese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh-hans",
+          "declared": "zh-hans",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh-Hans"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l74-dict-chinese-breakfast",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l74-dict-chinese-breakfast",
+      "files": {
+        "input": {
+          "path": "l74-dict-chinese-breakfast.html",
+          "sha256": "0b935559ce2431d3079d9fb3683539fa79568fce0f6864a169b216cf91227e79"
+        },
+        "gold": {
+          "path": "l74-dict-chinese-breakfast.gold.json",
+          "sha256": "65e1b92d6beea88cb74e59c0bae7e1065c8cbc19f58cb1f50c1ac4c5c05fda30"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "chinese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "zh",
+          "declared": "zh",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "zh"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['和', '香蕉'], produced-only tokens ['和香', '蕉']",
+          "measured": {
+            "keywords": [
+              [
+                "他",
+                1
+              ],
+              [
+                "每天",
+                1
+              ],
+              [
+                "早上",
+                1
+              ],
+              [
+                "喝",
+                1
+              ],
+              [
+                "牛奶",
+                1
+              ],
+              [
+                "妹妹",
+                1
+              ],
+              [
+                "喜欢",
+                1
+              ],
+              [
+                "吃",
+                1
+              ],
+              [
+                "苹果",
+                1
+              ],
+              [
+                "和香",
+                1
+              ],
+              [
+                "蕉",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l80-dict-japanese-exhibit",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l80-dict-japanese-exhibit",
+      "files": {
+        "input": {
+          "path": "l80-dict-japanese-exhibit.html",
+          "sha256": "f5fb2c6f4f5c65fb51474b25193e89c2e5d5e589de50b06f2a6211dac12e754b"
+        },
+        "gold": {
+          "path": "l80-dict-japanese-exhibit.gold.json",
+          "sha256": "0287bfb3da37c5042ae31332631aced4c2e42d23271746b8d57bfdaaa7777b48"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "japanese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja",
+          "declared": "ja",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['あり'], produced-only tokens ['ありま', 'す']",
+          "measured": {
+            "keywords": [
+              [
+                "市立",
+                1
+              ],
+              [
+                "図書館",
+                1
+              ],
+              [
+                "で",
+                1
+              ],
+              [
+                "展示",
+                1
+              ],
+              [
+                "が",
+                1
+              ],
+              [
+                "ありま",
+                1
+              ],
+              [
+                "す",
+                1
+              ],
+              [
+                "子供",
+                1
+              ],
+              [
+                "たち",
+                1
+              ],
+              [
+                "は",
+                1
+              ],
+              [
+                "紙",
+                1
+              ],
+              [
+                "の",
+                1
+              ],
+              [
+                "ランタン",
+                1
+              ],
+              [
+                "を",
+                1
+              ],
+              [
+                "見",
+                1
+              ],
+              [
+                "ます",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l81-dict-japanese-walk",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l81-dict-japanese-walk",
+      "files": {
+        "input": {
+          "path": "l81-dict-japanese-walk.html",
+          "sha256": "808d2bb78bc2d74702fe1d8e5418dbb79931af719dfa4dede7a86349eb11ddcf"
+        },
+        "gold": {
+          "path": "l81-dict-japanese-walk.gold.json",
+          "sha256": "fe0163799cdc0e257097bb3fc4788408b85eba6015601c91e9c913b2c6332d19"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "japanese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja",
+          "declared": "ja",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['し'], produced-only tokens ['しま', 'す']",
+          "measured": {
+            "keywords": [
+              [
+                "は",
+                2
+              ],
+              [
+                "公園",
+                2
+              ],
+              [
+                "私",
+                1
+              ],
+              [
+                "毎朝",
+                1
+              ],
+              [
+                "を",
+                1
+              ],
+              [
+                "散歩",
+                1
+              ],
+              [
+                "しま",
+                1
+              ],
+              [
+                "す",
+                1
+              ],
+              [
+                "犬",
+                1
+              ],
+              [
+                "で",
+                1
+              ],
+              [
+                "走り",
+                1
+              ],
+              [
+                "ます",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l82-dict-japanese-train",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l82-dict-japanese-train",
+      "files": {
+        "input": {
+          "path": "l82-dict-japanese-train.html",
+          "sha256": "fbc8975bc819c87fd85b0abab9f6d379b4ed9b89c98bd1b7b5154d8d425ab525"
+        },
+        "gold": {
+          "path": "l82-dict-japanese-train.gold.json",
+          "sha256": "07982907ab7dd96f7510895fda8a8532e7aab517ef37246609b1c1ceb5e3c504"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "japanese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja-jp",
+          "declared": "ja-jp",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja-JP"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l83-dict-japanese-kitchen",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l83-dict-japanese-kitchen",
+      "files": {
+        "input": {
+          "path": "l83-dict-japanese-kitchen.html",
+          "sha256": "dc615db17f66ba2cbf2e66d5d56f533efa0610c639d287059ba0f2ec1b526761"
+        },
+        "gold": {
+          "path": "l83-dict-japanese-kitchen.gold.json",
+          "sha256": "19c31745dafb77bd3a2181900d1abd78fc9f647257c1a7ab40b869fc0dd03214"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "japanese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja",
+          "declared": "ja",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l84-dict-japanese-weather",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l84-dict-japanese-weather",
+      "files": {
+        "input": {
+          "path": "l84-dict-japanese-weather.html",
+          "sha256": "4480be00d92fb30b7f92f31b329f0b66f3f5c155fa91e4448c6baf713db92413"
+        },
+        "gold": {
+          "path": "l84-dict-japanese-weather.gold.json",
+          "sha256": "9414ff766ef3f584639c912057c90314d427eed727bc2a9ae4b6d6082662af17"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "japanese",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ja",
+          "declared": "ja",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ja"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted",
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['て', '持っ'], produced-only tokens ['って', '持']",
+          "measured": {
+            "keywords": [
+              [
+                "明日",
+                1
+              ],
+              [
+                "は",
+                1
+              ],
+              [
+                "雨",
+                1
+              ],
+              [
+                "です",
+                1
+              ],
+              [
+                "傘",
+                1
+              ],
+              [
+                "を",
+                1
+              ],
+              [
+                "持",
+                1
+              ],
+              [
+                "って",
+                1
+              ],
+              [
+                "学校",
+                1
+              ],
+              [
+                "へ",
+                1
+              ],
+              [
+                "行き",
+                1
+              ],
+              [
+                "ます",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "l90-dict-devanagari-hindi-school",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l90-dict-devanagari-hindi-school",
+      "files": {
+        "input": {
+          "path": "l90-dict-devanagari-hindi-school.html",
+          "sha256": "47fc1566e2f28f979213eea8b14877e5fd3a7ac5ae5958df6a707048a690a92e"
+        },
+        "gold": {
+          "path": "l90-dict-devanagari-hindi-school.gold.json",
+          "sha256": "16ec76649a8dd3152ec29f2c45e52a8b252feecc0a46eca9ebfc42247db2463d"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi",
+          "declared": "hi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l91-dict-devanagari-hindi-rain",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l91-dict-devanagari-hindi-rain",
+      "files": {
+        "input": {
+          "path": "l91-dict-devanagari-hindi-rain.html",
+          "sha256": "b1c3ed89928a0d810b199d1ef09af4bce1683048691393db54351b99f75d801f"
+        },
+        "gold": {
+          "path": "l91-dict-devanagari-hindi-rain.gold.json",
+          "sha256": "7806fd1a8cff66e5e3c59c248859a138c8461f7e95eb31e1872b79ded93fdf23"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi-in",
+          "declared": "hi-in",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi-IN"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l92-dict-devanagari-hindi-lamp",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l92-dict-devanagari-hindi-lamp",
+      "files": {
+        "input": {
+          "path": "l92-dict-devanagari-hindi-lamp.html",
+          "sha256": "c235f82d03f268eb7fde47ee406bf5244d9f39f9e6220c795b7c9cfe92d2c852"
+        },
+        "gold": {
+          "path": "l92-dict-devanagari-hindi-lamp.gold.json",
+          "sha256": "b6ba8cc7b9a589ec7e651ef0ae3a1045c42e68eee712b409004c69cc876d0300"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi",
+          "declared": "hi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l93-dict-devanagari-marathi",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l93-dict-devanagari-marathi",
+      "files": {
+        "input": {
+          "path": "l93-dict-devanagari-marathi.html",
+          "sha256": "7295ae9757a8559fb4743a0c628c3a643f808eb21a91c8bdd4b4da6aa81f7c2a"
+        },
+        "gold": {
+          "path": "l93-dict-devanagari-marathi.gold.json",
+          "sha256": "f8411368eef9e7cea2494db189e17f717cf6f0a5455b8ade733a77bd9223131d"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "mr",
+          "declared": "mr",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "mr"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l94-dict-devanagari-nepali",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l94-dict-devanagari-nepali",
+      "files": {
+        "input": {
+          "path": "l94-dict-devanagari-nepali.html",
+          "sha256": "d9ef9fe20aefd24bc497442cdcc702d7c60fbe5fc322a401cf84a8b414593bc3"
+        },
+        "gold": {
+          "path": "l94-dict-devanagari-nepali.gold.json",
+          "sha256": "b7deff95e5cce20a37cc0b104fb959c63475da6b2fcd2c17ce77fc451fd56a71"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "ne",
+          "declared": "ne",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "ne"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l95-dict-uax29-contractions",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l95-dict-uax29-contractions",
+      "files": {
+        "input": {
+          "path": "l95-dict-uax29-contractions.html",
+          "sha256": "d825e1137f698551e0e9defd0bc248e9028498a0c0bcfcc5d84cd13efed35f1e"
+        },
+        "gold": {
+          "path": "l95-dict-uax29-contractions.gold.json",
+          "sha256": "9af319a1ee08c101e4fe549fcfa5bcb8f3bbe640442f1b71fb663b121510db9e"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "uax29_latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l96-dict-uax29-possessive-grouping",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l96-dict-uax29-possessive-grouping",
+      "files": {
+        "input": {
+          "path": "l96-dict-uax29-possessive-grouping.html",
+          "sha256": "8f5b010da3e34a260d64c9ac2db5e1547b5990318700fad035a245829bb5deb3"
+        },
+        "gold": {
+          "path": "l96-dict-uax29-possessive-grouping.gold.json",
+          "sha256": "e426ff6c19d08e2ecaf7534d6c200f56b54c5976e5331df78dc0179e002cb67b"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "uax29_latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l97-dict-uax29-underscores",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l97-dict-uax29-underscores",
+      "files": {
+        "input": {
+          "path": "l97-dict-uax29-underscores.html",
+          "sha256": "d8fd37bbd3d06e0538a36ab8c5d45960ca72a68779eaebc8b8da9942b6aa0526"
+        },
+        "gold": {
+          "path": "l97-dict-uax29-underscores.gold.json",
+          "sha256": "12db7008f6175924829b9cad7f9fd8e7e16fcf9d7b253d42d94884c81f076052"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "uax29_latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l98-dict-uax29-hyphen-splits",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l98-dict-uax29-hyphen-splits",
+      "files": {
+        "input": {
+          "path": "l98-dict-uax29-hyphen-splits.html",
+          "sha256": "af111cffeb72e8243518139871f485f91ea7a85d4a8fe85220efcf7a67318010"
+        },
+        "gold": {
+          "path": "l98-dict-uax29-hyphen-splits.gold.json",
+          "sha256": "32d117341d1f7835fb9beae21e7de2abe04a6de66cb0adeaef0f1bfb237cf598"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "uax29_latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l99-dict-uax29-typographic-apostrophe",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l99-dict-uax29-typographic-apostrophe",
+      "files": {
+        "input": {
+          "path": "l99-dict-uax29-typographic-apostrophe.html",
+          "sha256": "ccf3121d2f68e140de3a64a6427331c962088c15583bee01c3796a45ebd2ac1b"
+        },
+        "gold": {
+          "path": "l99-dict-uax29-typographic-apostrophe.gold.json",
+          "sha256": "724cac1714999187732f0dc45fe6fb9acbbf78983104aae281db006f92d8aed7"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "uax29_latin",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": null,
+          "declared": null,
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": []
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    }
+  ]
+}

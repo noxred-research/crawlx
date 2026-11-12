@@ -1,0 +1,38 @@
+{
+  "id": "m52-japanese-metadata",
+  "family": "meta_exact",
+  "note": "Japanese page: headline, author, publisher, language and a year-month-day date written with kanji separators",
+  "expectedText": "title=港の朝市が今週末から再開\nauthors=森田 澄子\npublisher=港町ニュース\nlanguage=ja\npublished=2026-05-03\ndescription=漁協が朝市の再開日を発表した。",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 42
+    },
+    {
+      "label": "authors",
+      "start": 51,
+      "end": 64
+    },
+    {
+      "label": "publisher",
+      "start": 75,
+      "end": 93
+    },
+    {
+      "label": "language",
+      "start": 103,
+      "end": 105
+    },
+    {
+      "label": "published",
+      "start": 116,
+      "end": 126
+    },
+    {
+      "label": "description",
+      "start": 139,
+      "end": 184
+    }
+  ]
+}

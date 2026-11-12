@@ -1,0 +1,18 @@
+{
+  "id": "d07-atom-basic-self-alternate",
+  "family": "feed",
+  "note": "Atom: the HTML alternate link is the page, self, edit and replies links are never pages, a link without rel defaults to alternate, the feed-level alternate is not an entry",
+  "expectedText": "https://news.corpus.test/quay/new-moorings\nhttps://news.corpus.test/quay/dredging",
+  "spans": [
+    {
+      "label": "alternate",
+      "start": 0,
+      "end": 42
+    },
+    {
+      "label": "alternate",
+      "start": 43,
+      "end": 81
+    }
+  ]
+}

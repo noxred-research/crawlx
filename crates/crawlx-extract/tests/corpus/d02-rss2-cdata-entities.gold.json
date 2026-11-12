@@ -1,0 +1,38 @@
+{
+  "id": "d02-rss2-cdata-entities",
+  "family": "feed",
+  "note": "RSS 2.0: CDATA link text, predefined and numeric character references, surrounding whitespace, characters that the URL parser percent-encodes",
+  "expectedText": "https://news.corpus.test/storm?id=12&view=full\nhttps://news.corpus.test/search?q=a&page=2\nhttps://news.corpus.test/caf%C3%A9/menu\nhttps://news.corpus.test/emoji/%F0%9F%9A%A2-ship\nhttps://news.corpus.test/padded\nhttps://news.corpus.test/lt%3Cgt%3Eq%22x",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 46
+    },
+    {
+      "label": "item",
+      "start": 47,
+      "end": 89
+    },
+    {
+      "label": "item",
+      "start": 90,
+      "end": 129
+    },
+    {
+      "label": "item",
+      "start": 130,
+      "end": 178
+    },
+    {
+      "label": "item",
+      "start": 179,
+      "end": 210
+    },
+    {
+      "label": "item",
+      "start": 211,
+      "end": 251
+    }
+  ]
+}

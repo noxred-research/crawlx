@@ -1,0 +1,83 @@
+{
+  "id": "l17-rules-latin-turkish",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "gemi|limandan|sabah|erken|kalktı|yolcular|güverteye|çıktı|çocuklar|martıları|izledi|ve|kaptan|düdüğü|çaldı",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "token",
+      "start": 5,
+      "end": 13
+    },
+    {
+      "label": "token",
+      "start": 14,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 33
+    },
+    {
+      "label": "token",
+      "start": 34,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 53
+    },
+    {
+      "label": "token",
+      "start": 54,
+      "end": 62
+    },
+    {
+      "label": "token",
+      "start": 63,
+      "end": 72
+    },
+    {
+      "label": "token",
+      "start": 73,
+      "end": 84
+    },
+    {
+      "label": "token",
+      "start": 85,
+      "end": 91
+    },
+    {
+      "label": "token",
+      "start": 92,
+      "end": 94
+    },
+    {
+      "label": "token",
+      "start": 95,
+      "end": 101
+    },
+    {
+      "label": "token",
+      "start": 102,
+      "end": 112
+    },
+    {
+      "label": "token",
+      "start": 113,
+      "end": 120
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "l84-dict-japanese-weather",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "明日|は|雨|です|傘|を|持っ|て|学校|へ|行き|ます",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 14
+    },
+    {
+      "label": "token",
+      "start": 15,
+      "end": 21
+    },
+    {
+      "label": "token",
+      "start": 22,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 40
+    },
+    {
+      "label": "token",
+      "start": 41,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 51
+    },
+    {
+      "label": "token",
+      "start": 52,
+      "end": 58
+    },
+    {
+      "label": "token",
+      "start": 59,
+      "end": 65
+    }
+  ]
+}

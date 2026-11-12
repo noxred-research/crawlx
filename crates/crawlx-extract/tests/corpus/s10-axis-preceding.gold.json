@@ -1,0 +1,43 @@
+{
+  "id": "s10-axis-preceding",
+  "family": "selector",
+  "note": "preceding axis: excludes ancestors, nearest-first positions, results in document order, head elements precede the body",
+  "expectedText": "Pan one\nPan two\nPan two\nPan onePan two\nSalt works\nPan onePan two\n2",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 7
+    },
+    {
+      "label": "r1",
+      "start": 8,
+      "end": 15
+    },
+    {
+      "label": "r2",
+      "start": 16,
+      "end": 23
+    },
+    {
+      "label": "r3",
+      "start": 24,
+      "end": 38
+    },
+    {
+      "label": "r4",
+      "start": 39,
+      "end": 49
+    },
+    {
+      "label": "r4",
+      "start": 50,
+      "end": 64
+    },
+    {
+      "label": "r5",
+      "start": 65,
+      "end": 66
+    }
+  ]
+}

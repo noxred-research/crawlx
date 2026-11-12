@@ -1,0 +1,23 @@
+{
+  "id": "d19-budget-json-exact",
+  "family": "feed",
+  "note": "JSON Feed entry budget of exactly the item count: not truncated",
+  "expectedText": "https://news.corpus.test/three/1\nhttps://news.corpus.test/three/2\nhttps://news.corpus.test/three/3",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 32
+    },
+    {
+      "label": "item",
+      "start": 33,
+      "end": 65
+    },
+    {
+      "label": "item",
+      "start": 66,
+      "end": 98
+    }
+  ]
+}

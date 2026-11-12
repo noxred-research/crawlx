@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Dockside Dispatch</title><link>https://news.corpus.test/</link><description>Harbor news</description>
+<item><title>Ferry timetable changes</title><link>https://news.corpus.test/2026/11/ferry-timetable</link><guid isPermaLink="false">dd-1001</guid><pubDate>Mon, 09 Nov 2026 07:30:00 GMT</pubDate><enclosure url="https://news.corpus.test/img/ferry.jpg" length="1200" type="image/jpeg"/></item>
+<item><title>Crane repairs finish early</title><link>/2026/11/crane-repairs</link><guid>dd-1002</guid><enclosure url="https://cdn.corpus.test/img/crane.jpg" length="800" type="image/jpeg"/></item>
+<item><title>Partner spotlight</title><link>https://partner.corpus.test/stories/spotlight</link></item>
+<item><title>Duplicate of the first</title><link>https://news.corpus.test/2026/11/ferry-timetable</link></item>
+<item><title>Fragment link</title><link>https://news.corpus.test/2026/11/fog-warning#comments</link></item>
+</channel></rss>

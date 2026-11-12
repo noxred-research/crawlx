@@ -1,0 +1,68 @@
+{
+  "id": "n05-abbreviation-dr-mr",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Dr. Okoye met Mr. Lindqvist at noon.\nThey reviewed the harvest map.\ndr=1\nokoye=1\nmet=1\nmr=1\nlindqvist=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 36
+    },
+    {
+      "label": "sentence",
+      "start": 37,
+      "end": 67
+    },
+    {
+      "label": "keyword",
+      "start": 68,
+      "end": 70
+    },
+    {
+      "label": "score",
+      "start": 71,
+      "end": 72
+    },
+    {
+      "label": "keyword",
+      "start": 73,
+      "end": 78
+    },
+    {
+      "label": "score",
+      "start": 79,
+      "end": 80
+    },
+    {
+      "label": "keyword",
+      "start": 81,
+      "end": 84
+    },
+    {
+      "label": "score",
+      "start": 85,
+      "end": 86
+    },
+    {
+      "label": "keyword",
+      "start": 87,
+      "end": 89
+    },
+    {
+      "label": "score",
+      "start": 90,
+      "end": 91
+    },
+    {
+      "label": "keyword",
+      "start": 92,
+      "end": 101
+    },
+    {
+      "label": "score",
+      "start": 102,
+      "end": 103
+    }
+  ]
+}

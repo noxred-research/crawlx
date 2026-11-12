@@ -1,0 +1,28 @@
+{
+  "id": "m12-graph-id-reference-publisher",
+  "family": "meta_exact",
+  "note": "author and publisher are @id references to sibling graph nodes; the sibling person and organization names are the page's author and publisher",
+  "expectedText": "title=Stone Bridge Reopens to Cyclists\nauthors=Ruth Calloway\npublisher=Fenwick Cooperative\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 38
+    },
+    {
+      "label": "authors",
+      "start": 47,
+      "end": 60
+    },
+    {
+      "label": "publisher",
+      "start": 71,
+      "end": 90
+    },
+    {
+      "label": "language",
+      "start": 100,
+      "end": 102
+    }
+  ]
+}

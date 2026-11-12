@@ -1,0 +1,33 @@
+{
+  "id": "d08-atom-xml-base",
+  "family": "feed",
+  "note": "Atom xml:base: feed-level base, relative entry bases stacked on it, a base on the link itself, absolute hrefs unaffected",
+  "expectedText": "https://news.corpus.test/journal/2026/launch\nhttps://news.corpus.test/2025/relaunch\nhttps://news.corpus.test/journal/plain\nhttps://news.corpus.test/abs/ignores-base\nhttps://news.corpus.test/link-base/inner",
+  "spans": [
+    {
+      "label": "alternate",
+      "start": 0,
+      "end": 44
+    },
+    {
+      "label": "alternate",
+      "start": 45,
+      "end": 83
+    },
+    {
+      "label": "alternate",
+      "start": 84,
+      "end": 122
+    },
+    {
+      "label": "alternate",
+      "start": 123,
+      "end": 164
+    },
+    {
+      "label": "alternate",
+      "start": 165,
+      "end": 205
+    }
+  ]
+}

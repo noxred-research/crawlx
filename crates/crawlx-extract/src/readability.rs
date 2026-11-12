@@ -44,7 +44,7 @@ const BLOCK_TAGS: &[&str] = &[
 ];
 
 /// Class/id segments (split on `-`, `_`, `.`) that mark non-content blocks.
-const NEGATIVE: &[&str] = &[
+pub(crate) const NEGATIVE: &[&str] = &[
     "nav",
     "navbar",
     "navigation",

@@ -1,0 +1,103 @@
+{
+  "id": "s49-limit-item-loader-shape",
+  "family": "selector",
+  "note": "one-over limits of the item loader contract: 64 fields, 16 selectors, 16 transforms, 16 input processors, 3 nested groups, 32 namespaces, 65536 default bytes, transform bounds",
+  "expectedText": "ok\nerror:Policy\nok\nerror:Policy\nok\nerror:Policy\nok\nerror:Policy\nok\nerror:Policy\nok\nerror:Policy\nok\nerror:Policy\nok\nerror:Policy\nerror:Policy\nok\nerror:Policy",
+  "spans": [
+    {
+      "label": "fields_64",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "fields_65",
+      "start": 3,
+      "end": 15
+    },
+    {
+      "label": "selectors_16",
+      "start": 16,
+      "end": 18
+    },
+    {
+      "label": "selectors_17",
+      "start": 19,
+      "end": 31
+    },
+    {
+      "label": "transforms_16",
+      "start": 32,
+      "end": 34
+    },
+    {
+      "label": "transforms_17",
+      "start": 35,
+      "end": 47
+    },
+    {
+      "label": "input_processors_16",
+      "start": 48,
+      "end": 50
+    },
+    {
+      "label": "input_processors_17",
+      "start": 51,
+      "end": 63
+    },
+    {
+      "label": "nesting_3",
+      "start": 64,
+      "end": 66
+    },
+    {
+      "label": "nesting_4",
+      "start": 67,
+      "end": 79
+    },
+    {
+      "label": "namespaces_32",
+      "start": 80,
+      "end": 82
+    },
+    {
+      "label": "namespaces_33",
+      "start": 83,
+      "end": 95
+    },
+    {
+      "label": "default_65536",
+      "start": 96,
+      "end": 98
+    },
+    {
+      "label": "default_65537",
+      "start": 99,
+      "end": 111
+    },
+    {
+      "label": "limit_10000",
+      "start": 112,
+      "end": 114
+    },
+    {
+      "label": "limit_10001",
+      "start": 115,
+      "end": 127
+    },
+    {
+      "label": "limit_0",
+      "start": 128,
+      "end": 140
+    },
+    {
+      "label": "separator_1024",
+      "start": 141,
+      "end": 143
+    },
+    {
+      "label": "separator_1025",
+      "start": 144,
+      "end": 156
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "m32-authors-by-and-plain",
+  "family": "meta_exact",
+  "note": "a plain byline paragraph reading By A and B with no author markup lists two authors",
+  "expectedText": "title=Ferry Cafe Wins Bread Prize\nauthors=Ana Ruiz; Tom Lee\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 33
+    },
+    {
+      "label": "authors",
+      "start": 42,
+      "end": 59
+    },
+    {
+      "label": "language",
+      "start": 69,
+      "end": 71
+    }
+  ]
+}

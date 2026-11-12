@@ -1,0 +1,73 @@
+{
+  "id": "n10-abbreviation-am-fig-decimal",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The bus leaves at 7 a.m. on weekdays.\nSee Fig. 2 for the route.\nTickets cost 4.50 euros.\nthe=2\nbus=1\nleaves=1\nat=1\na=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 37
+    },
+    {
+      "label": "sentence",
+      "start": 38,
+      "end": 63
+    },
+    {
+      "label": "sentence",
+      "start": 64,
+      "end": 88
+    },
+    {
+      "label": "keyword",
+      "start": 89,
+      "end": 92
+    },
+    {
+      "label": "score",
+      "start": 93,
+      "end": 94
+    },
+    {
+      "label": "keyword",
+      "start": 95,
+      "end": 98
+    },
+    {
+      "label": "score",
+      "start": 99,
+      "end": 100
+    },
+    {
+      "label": "keyword",
+      "start": 101,
+      "end": 107
+    },
+    {
+      "label": "score",
+      "start": 108,
+      "end": 109
+    },
+    {
+      "label": "keyword",
+      "start": 110,
+      "end": 112
+    },
+    {
+      "label": "score",
+      "start": 113,
+      "end": 114
+    },
+    {
+      "label": "keyword",
+      "start": 115,
+      "end": 116
+    },
+    {
+      "label": "score",
+      "start": 117,
+      "end": 118
+    }
+  ]
+}

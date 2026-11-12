@@ -1,0 +1,23 @@
+{
+  "id": "s39-limit-ast-nodes",
+  "family": "selector",
+  "note": "one-over limit: 512 syntax nodes compile, 513 fail; one-over for function arguments and for path steps",
+  "expectedText": "510\nerror:Budget(AST nodes)\nerror:Budget(AST nodes)",
+  "spans": [
+    {
+      "label": "f_ok",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "f_over",
+      "start": 4,
+      "end": 27
+    },
+    {
+      "label": "s_over",
+      "start": 28,
+      "end": 51
+    }
+  ]
+}

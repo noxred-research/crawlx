@@ -1,0 +1,118 @@
+{
+  "id": "s45-extension-functions-no-network",
+  "family": "selector",
+  "note": "no document or network resolution: external-document, extension and XPath 2 functions are typed errors, and the page references to a listening local socket cause no connection",
+  "expectedText": "{{probe}}/secret\n{{probe}}/doc.xml\n{{probe}}/frame\n{{probe}}/style.css\n{{probe}}/pixel.gif\n4\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:Syntax\nerror:Syntax\nerror:Syntax",
+  "spans": [
+    {
+      "label": "r01",
+      "start": 0,
+      "end": 16
+    },
+    {
+      "label": "r02",
+      "start": 17,
+      "end": 34
+    },
+    {
+      "label": "r03",
+      "start": 35,
+      "end": 50
+    },
+    {
+      "label": "r04",
+      "start": 51,
+      "end": 70
+    },
+    {
+      "label": "r05",
+      "start": 71,
+      "end": 90
+    },
+    {
+      "label": "r06",
+      "start": 91,
+      "end": 92
+    },
+    {
+      "label": "e01",
+      "start": 93,
+      "end": 118
+    },
+    {
+      "label": "e02",
+      "start": 119,
+      "end": 144
+    },
+    {
+      "label": "e03",
+      "start": 145,
+      "end": 170
+    },
+    {
+      "label": "e04",
+      "start": 171,
+      "end": 196
+    },
+    {
+      "label": "e05",
+      "start": 197,
+      "end": 222
+    },
+    {
+      "label": "e06",
+      "start": 223,
+      "end": 248
+    },
+    {
+      "label": "e07",
+      "start": 249,
+      "end": 274
+    },
+    {
+      "label": "e08",
+      "start": 275,
+      "end": 300
+    },
+    {
+      "label": "e09",
+      "start": 301,
+      "end": 326
+    },
+    {
+      "label": "e10",
+      "start": 327,
+      "end": 352
+    },
+    {
+      "label": "e11",
+      "start": 353,
+      "end": 378
+    },
+    {
+      "label": "e12",
+      "start": 379,
+      "end": 404
+    },
+    {
+      "label": "e13",
+      "start": 405,
+      "end": 430
+    },
+    {
+      "label": "e14",
+      "start": 431,
+      "end": 443
+    },
+    {
+      "label": "e15",
+      "start": 444,
+      "end": 456
+    },
+    {
+      "label": "e16",
+      "start": 457,
+      "end": 469
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "id": "a22-arabic-rtl",
+  "family": "article_body",
+  "note": "right-to-left Arabic article with navigation and footer in the same direction",
+  "expectedText": "الرئيسية\nأخبار المدينة\nثقافة\nاتصل بنا\nافتتاح مكتبة جديدة في حي النخيل\nافتتحت بلدية المدينة صباح الأحد مكتبة عامة جديدة في حي النخيل، وتضم المكتبة أكثر من عشرين ألف كتاب وقاعة هادئة للقراءة تتسع لمئة شخص.\nوقالت مديرة المكتبة سلمى الحارثي إن الفكرة بدأت قبل ثلاث سنوات عندما طلب السكان مكانا للدراسة بعد المدرسة، وإن المتطوعين ساعدوا في ترتيب الرفوف ونقل الكتب.\nوتفتح المكتبة أبوابها يوميا من الثامنة صباحا حتى التاسعة مساء، وهناك ركن خاص بالأطفال يقدم حكايات مسائية كل خميس.\nالأكثر قراءة\nموعد افتتاح الحديقة الجديدة\nتغيير في جدول الحافلات\nجميع الحقوق محفوظة لصحيفة الحي.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 16
+    },
+    {
+      "label": "boilerplate",
+      "start": 17,
+      "end": 42
+    },
+    {
+      "label": "boilerplate",
+      "start": 43,
+      "end": 53
+    },
+    {
+      "label": "boilerplate",
+      "start": 54,
+      "end": 69
+    },
+    {
+      "label": "body",
+      "start": 70,
+      "end": 127
+    },
+    {
+      "label": "body",
+      "start": 128,
+      "end": 370
+    },
+    {
+      "label": "body",
+      "start": 371,
+      "end": 655
+    },
+    {
+      "label": "body",
+      "start": 656,
+      "end": 863
+    },
+    {
+      "label": "boilerplate",
+      "start": 864,
+      "end": 887
+    },
+    {
+      "label": "boilerplate",
+      "start": 888,
+      "end": 939
+    },
+    {
+      "label": "boilerplate",
+      "start": 940,
+      "end": 981
+    },
+    {
+      "label": "boilerplate",
+      "start": 982,
+      "end": 1039
+    }
+  ]
+}

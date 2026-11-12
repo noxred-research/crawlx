@@ -1,0 +1,73 @@
+{
+  "id": "n04-paragraphs-without-terminals",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Opening hours for the reading room\nMonday to Friday from nine until five\nClosed on public holidays and during floods\nopening=1\nhours=1\nfor=1\nthe=1\nreading=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 34
+    },
+    {
+      "label": "sentence",
+      "start": 35,
+      "end": 72
+    },
+    {
+      "label": "sentence",
+      "start": 73,
+      "end": 116
+    },
+    {
+      "label": "keyword",
+      "start": 117,
+      "end": 124
+    },
+    {
+      "label": "score",
+      "start": 125,
+      "end": 126
+    },
+    {
+      "label": "keyword",
+      "start": 127,
+      "end": 132
+    },
+    {
+      "label": "score",
+      "start": 133,
+      "end": 134
+    },
+    {
+      "label": "keyword",
+      "start": 135,
+      "end": 138
+    },
+    {
+      "label": "score",
+      "start": 139,
+      "end": 140
+    },
+    {
+      "label": "keyword",
+      "start": 141,
+      "end": 144
+    },
+    {
+      "label": "score",
+      "start": 145,
+      "end": 146
+    },
+    {
+      "label": "keyword",
+      "start": 147,
+      "end": 154
+    },
+    {
+      "label": "score",
+      "start": 155,
+      "end": 156
+    }
+  ]
+}

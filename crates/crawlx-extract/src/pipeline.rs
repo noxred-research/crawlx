@@ -842,9 +842,10 @@ fn project_document(parsed: &mut ParsedDocument, project: &Projection<'_>) {
 /// Refuse markup nested deeper than `max_depth`. Same convention as the extractor's own
 /// ceiling: the document node is depth zero.
 fn check_depth(markup: &str, max_depth: u32) -> Result<(), PipelineError> {
-    let _charge =
+    let mut charge =
         parse_budget::charge(markup.len()).map_err(|e| PipelineError::Extract(ExtractError::from(e)))?;
-    let parsed = scraper::Html::parse_document(markup);
+    let parsed = crate::dom::parse_document(&mut charge, markup)
+        .map_err(|e| PipelineError::Extract(ExtractError::from(e)))?;
     let mut stack = vec![(parsed.tree.root(), 0u32)];
     while let Some((node, depth)) = stack.pop() {
         if depth > max_depth {

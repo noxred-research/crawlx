@@ -1,0 +1,73 @@
+{
+  "id": "a09-div-only",
+  "family": "article_body",
+  "note": "div and span markup only, no semantic elements and neutral class names",
+  "expectedText": "Quarry Courier\nTrades\nJobs\nSlate Roofers Train a New Generation\nIn a barn behind the old quarry office, eight apprentices are learning how to split slate by hand. The course, run by the valley trades guild, lasts fourteen weeks and ends with each student roofing a small shed.\nInstructor Hollis Draper says the skill almost vanished when machine-cut tiles became cheap. Now owners of old chapels and farmhouses are searching for people who can repair a roof without replacing it.\nStudents begin by learning to read the grain of the stone. A good splitter listens to the sound of the chisel, Draper explains, because a dull note means the block will break across the wrong line.\nApplications for the autumn course open on the first of June. The guild offers a small grant for tools, and past graduates have promised to lend their own ladders to new students.\nUpcoming workshops\nLime plaster basics\nDry stone walling\nQuarry Courier, printed monthly\nReport an error",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 14
+    },
+    {
+      "label": "boilerplate",
+      "start": 15,
+      "end": 21
+    },
+    {
+      "label": "boilerplate",
+      "start": 22,
+      "end": 26
+    },
+    {
+      "label": "body",
+      "start": 27,
+      "end": 63
+    },
+    {
+      "label": "body",
+      "start": 64,
+      "end": 276
+    },
+    {
+      "label": "body",
+      "start": 277,
+      "end": 479
+    },
+    {
+      "label": "body",
+      "start": 480,
+      "end": 677
+    },
+    {
+      "label": "body",
+      "start": 678,
+      "end": 857
+    },
+    {
+      "label": "boilerplate",
+      "start": 858,
+      "end": 876
+    },
+    {
+      "label": "boilerplate",
+      "start": 877,
+      "end": 896
+    },
+    {
+      "label": "boilerplate",
+      "start": 897,
+      "end": 914
+    },
+    {
+      "label": "boilerplate",
+      "start": 915,
+      "end": 946
+    },
+    {
+      "label": "boilerplate",
+      "start": 947,
+      "end": 962
+    }
+  ]
+}

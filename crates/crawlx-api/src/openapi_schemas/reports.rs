@@ -181,6 +181,21 @@ enum OperationalReportTerminalReason {
 
 #[derive(JsonSchema)]
 #[serde(rename_all = "snake_case")]
+enum OperationalReportTerminalDetail {
+    UrlsLimit,
+    ItemsLimit,
+    ErrorsLimit,
+    IdleTimeout,
+    Deadline,
+    DiskPressure,
+    RetriesExhausted,
+    ByteLimit,
+    SeedError,
+    ContentValidationFailed,
+}
+
+#[derive(JsonSchema)]
+#[serde(rename_all = "snake_case")]
 enum OperationalReportLane {
     TrustedUi,
     Diagnostic,
@@ -560,6 +575,8 @@ enum OperationalReportRow {
     Summary {
         status: OperationalReportRunStatus,
         terminal_reason: Option<OperationalReportTerminalReason>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminal_detail: Option<OperationalReportTerminalDetail>,
         counters: Box<OperationalReportPlanes>,
         created_at: OperationalReportTimestamp,
         started_at: Option<OperationalReportTimestamp>,

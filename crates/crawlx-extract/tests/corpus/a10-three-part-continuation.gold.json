@@ -1,0 +1,93 @@
+{
+  "id": "a10-three-part-continuation",
+  "family": "article_body",
+  "note": "story split across three sibling containers with a signup box and a pull-out between them",
+  "expectedText": "Eastgate Times\nTransport\nCouncil\nLetters\nWhy the Night Tram Was Saved\nThe last tram of the evening will keep running after all. The transport committee voted on Tuesday to keep the midnight service on line four, reversing a plan that would have ended it in January.\nCouncillor Beatriz Lund, who proposed the change, pointed to counts showing that nurses, bakers and kitchen staff make up most of the late passengers. Without the tram, many would face a walk of forty minutes.\nGet the Eastgate briefing\nFree every weekday at seven. Enter your address and we will send the day's headlines.\nEmail address\nSign up\nThe savings from ending the service had been estimated at ninety thousand euros a year. Auditors later found that estimate ignored the cost of extra night buses, which would have eaten most of the difference.\nOpponents argued that the line loses money after eleven. Supporters answered that a late tram also keeps the district safe and lets restaurants stay open, a benefit that never shows up in ticket sales.\nRead more: how the line four route was drawn\nWhat happens next\nDrivers will start a new rota in February, and the committee has asked staff to publish passenger counts every quarter so that residents can follow the results for themselves.\nEastgate Times. Letters to the editor are welcome.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 14
+    },
+    {
+      "label": "boilerplate",
+      "start": 15,
+      "end": 24
+    },
+    {
+      "label": "boilerplate",
+      "start": 25,
+      "end": 32
+    },
+    {
+      "label": "boilerplate",
+      "start": 33,
+      "end": 40
+    },
+    {
+      "label": "body",
+      "start": 41,
+      "end": 69
+    },
+    {
+      "label": "body",
+      "start": 70,
+      "end": 265
+    },
+    {
+      "label": "body",
+      "start": 266,
+      "end": 475
+    },
+    {
+      "label": "boilerplate",
+      "start": 476,
+      "end": 501
+    },
+    {
+      "label": "boilerplate",
+      "start": 502,
+      "end": 587
+    },
+    {
+      "label": "boilerplate",
+      "start": 588,
+      "end": 601
+    },
+    {
+      "label": "boilerplate",
+      "start": 602,
+      "end": 609
+    },
+    {
+      "label": "body",
+      "start": 610,
+      "end": 818
+    },
+    {
+      "label": "body",
+      "start": 819,
+      "end": 1020
+    },
+    {
+      "label": "boilerplate",
+      "start": 1021,
+      "end": 1065
+    },
+    {
+      "label": "body",
+      "start": 1066,
+      "end": 1083
+    },
+    {
+      "label": "body",
+      "start": 1084,
+      "end": 1259
+    },
+    {
+      "label": "boilerplate",
+      "start": 1260,
+      "end": 1310
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+ "version": "https://jsonfeed.org/version/1.1",
+ "title": "Lantern Weekly",
+ "home_page_url": "https://news.corpus.test/",
+ "feed_url": "https://news.corpus.test/feeds/d12-jsonfeed-1-1.json",
+ "next_url": "https://news.corpus.test/feeds/lantern.json?cursor=2",
+ "language": "en",
+ "items": [
+  {
+   "id": "1",
+   "url": "https://news.corpus.test/lantern/one",
+   "title": "One",
+   "date_published": "2026-11-01T08:00:00Z",
+   "image": "https://news.corpus.test/lantern/one.png",
+   "attachments": [
+    {
+     "url": "https://news.corpus.test/lantern/one-clip.mp4",
+     "mime_type": "video/mp4"
+    }
+   ]
+  },
+  {
+   "id": "2",
+   "url": "/lantern/two",
+   "title": "Two"
+  },
+  {
+   "id": "3",
+   "external_url": "https://partner.corpus.test/lantern/three",
+   "title": "Three, external"
+  },
+  {
+   "id": "4",
+   "external_url": "https://news.corpus.test/lantern/four-linked",
+   "url": "https://news.corpus.test/lantern/four-canonical"
+  },
+  {
+   "id": "5",
+   "title": "No url"
+  }
+ ]
+}

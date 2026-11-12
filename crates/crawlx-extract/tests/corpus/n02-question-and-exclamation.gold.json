@@ -1,0 +1,73 @@
+{
+  "id": "n02-question-and-exclamation",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Is the pond frozen?\nIt is!\nSkaters arrive at noon.\nis=2\nthe=1\npond=1\nfrozen=1\nit=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 19
+    },
+    {
+      "label": "sentence",
+      "start": 20,
+      "end": 26
+    },
+    {
+      "label": "sentence",
+      "start": 27,
+      "end": 50
+    },
+    {
+      "label": "keyword",
+      "start": 51,
+      "end": 53
+    },
+    {
+      "label": "score",
+      "start": 54,
+      "end": 55
+    },
+    {
+      "label": "keyword",
+      "start": 56,
+      "end": 59
+    },
+    {
+      "label": "score",
+      "start": 60,
+      "end": 61
+    },
+    {
+      "label": "keyword",
+      "start": 62,
+      "end": 66
+    },
+    {
+      "label": "score",
+      "start": 67,
+      "end": 68
+    },
+    {
+      "label": "keyword",
+      "start": 69,
+      "end": 75
+    },
+    {
+      "label": "score",
+      "start": 76,
+      "end": 77
+    },
+    {
+      "label": "keyword",
+      "start": 78,
+      "end": 80
+    },
+    {
+      "label": "score",
+      "start": 81,
+      "end": 82
+    }
+  ]
+}

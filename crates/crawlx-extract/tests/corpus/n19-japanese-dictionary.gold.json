@@ -1,0 +1,73 @@
+{
+  "id": "n19-japanese-dictionary",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under dictionary_uax29",
+  "expectedText": "漁師は魚を運びます。\n子供は貝を数えます。\n母は台所で待ちます。\nは=3\nます=3\nを=2\n漁師=1\n魚=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 30
+    },
+    {
+      "label": "sentence",
+      "start": 31,
+      "end": 61
+    },
+    {
+      "label": "sentence",
+      "start": 62,
+      "end": 92
+    },
+    {
+      "label": "keyword",
+      "start": 93,
+      "end": 96
+    },
+    {
+      "label": "score",
+      "start": 97,
+      "end": 98
+    },
+    {
+      "label": "keyword",
+      "start": 99,
+      "end": 105
+    },
+    {
+      "label": "score",
+      "start": 106,
+      "end": 107
+    },
+    {
+      "label": "keyword",
+      "start": 108,
+      "end": 111
+    },
+    {
+      "label": "score",
+      "start": 112,
+      "end": 113
+    },
+    {
+      "label": "keyword",
+      "start": 114,
+      "end": 120
+    },
+    {
+      "label": "score",
+      "start": 121,
+      "end": 122
+    },
+    {
+      "label": "keyword",
+      "start": 123,
+      "end": 126
+    },
+    {
+      "label": "score",
+      "start": 127,
+      "end": 128
+    }
+  ]
+}

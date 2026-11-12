@@ -1,0 +1,23 @@
+{
+  "id": "m14-graph-two-articles",
+  "family": "meta_exact",
+  "note": "a graph holds the page's article and a teaser for a second article: the first node wins and the second stays a raw alternative",
+  "expectedText": "title=Weir Gates Replaced Ahead of Spring Flood\nauthors=Yara Teixeira\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 47
+    },
+    {
+      "label": "authors",
+      "start": 56,
+      "end": 69
+    },
+    {
+      "label": "language",
+      "start": 79,
+      "end": 81
+    }
+  ]
+}

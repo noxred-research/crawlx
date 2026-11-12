@@ -1,0 +1,53 @@
+{
+  "id": "l94-dict-devanagari-nepali",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "हिजो|हामी|नदीको|किनारमा|घुम्न|गयौं|बच्चाहरूले|माछा|हेरे",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 79
+    },
+    {
+      "label": "token",
+      "start": 80,
+      "end": 92
+    },
+    {
+      "label": "token",
+      "start": 93,
+      "end": 123
+    },
+    {
+      "label": "token",
+      "start": 124,
+      "end": 136
+    },
+    {
+      "label": "token",
+      "start": 137,
+      "end": 149
+    }
+  ]
+}

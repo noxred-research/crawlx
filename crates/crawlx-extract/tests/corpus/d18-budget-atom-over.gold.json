@@ -1,0 +1,18 @@
+{
+  "id": "d18-budget-atom-over",
+  "family": "feed",
+  "note": "one over the entry budget for Atom: two entries kept, truncated",
+  "expectedText": "https://news.corpus.test/three/1\nhttps://news.corpus.test/three/2",
+  "spans": [
+    {
+      "label": "alternate",
+      "start": 0,
+      "end": 32
+    },
+    {
+      "label": "alternate",
+      "start": 33,
+      "end": 65
+    }
+  ]
+}

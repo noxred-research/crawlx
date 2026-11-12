@@ -1,0 +1,83 @@
+{
+  "id": "l44-rules-abjad-hebrew-market",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "השוק|נפתח|מוקדם|בכל|שבת|הסוחרים|מביאים|פירות|ולחם|הילדים|קונים|תפוזים|מתוקים|וחוזרים|הביתה",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 28
+    },
+    {
+      "label": "token",
+      "start": 29,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 70
+    },
+    {
+      "label": "token",
+      "start": 71,
+      "end": 81
+    },
+    {
+      "label": "token",
+      "start": 82,
+      "end": 90
+    },
+    {
+      "label": "token",
+      "start": 91,
+      "end": 103
+    },
+    {
+      "label": "token",
+      "start": 104,
+      "end": 114
+    },
+    {
+      "label": "token",
+      "start": 115,
+      "end": 127
+    },
+    {
+      "label": "token",
+      "start": 128,
+      "end": 140
+    },
+    {
+      "label": "token",
+      "start": 141,
+      "end": 155
+    },
+    {
+      "label": "token",
+      "start": 156,
+      "end": 166
+    }
+  ]
+}

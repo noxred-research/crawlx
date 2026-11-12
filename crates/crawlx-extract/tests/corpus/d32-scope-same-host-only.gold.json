@@ -1,0 +1,18 @@
+{
+  "id": "d32-scope-same-host-only",
+  "family": "feed",
+  "note": "scope with subdomains off: only the seed host is admitted, host case is normalized, a subdomain, a partner host and two look-alike hosts are denied",
+  "expectedText": "https://news.corpus.test/in/one\nhttps://news.corpus.test/in/four",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 31
+    },
+    {
+      "label": "item",
+      "start": 32,
+      "end": 64
+    }
+  ]
+}

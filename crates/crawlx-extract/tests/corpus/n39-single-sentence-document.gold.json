@@ -1,0 +1,43 @@
+{
+  "id": "n39-single-sentence-document",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 3 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "A brief note about the garden gate.\na=1\nbrief=1\nnote=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 35
+    },
+    {
+      "label": "keyword",
+      "start": 36,
+      "end": 37
+    },
+    {
+      "label": "score",
+      "start": 38,
+      "end": 39
+    },
+    {
+      "label": "keyword",
+      "start": 40,
+      "end": 45
+    },
+    {
+      "label": "score",
+      "start": 46,
+      "end": 47
+    },
+    {
+      "label": "keyword",
+      "start": 48,
+      "end": 52
+    },
+    {
+      "label": "score",
+      "start": 53,
+      "end": 54
+    }
+  ]
+}

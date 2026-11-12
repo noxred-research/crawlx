@@ -1,0 +1,53 @@
+{
+  "id": "d09-atom-pagination-loop",
+  "family": "feed",
+  "note": "Atom pagination across three documents: the last page links back to the first (a loop), a cross-origin next page is never requested, a repeated entry is admitted once",
+  "expectedText": "https://news.corpus.test/p/1\nhttps://news.corpus.test/p/2\nhttps://news.corpus.test/feeds/page2.xml\nhttps://news.corpus.test/feeds/page2.xml\nhttps://news.corpus.test/p/3\nhttps://news.corpus.test/feeds/page3.xml\nhttps://news.corpus.test/feeds/page3.xml\nhttps://news.corpus.test/p/4\nhttps://news.corpus.test/feeds/d09-atom-pagination-loop.xml",
+  "spans": [
+    {
+      "label": "alternate",
+      "start": 0,
+      "end": 28
+    },
+    {
+      "label": "alternate",
+      "start": 29,
+      "end": 57
+    },
+    {
+      "label": "next",
+      "start": 58,
+      "end": 98
+    },
+    {
+      "label": "request",
+      "start": 99,
+      "end": 139
+    },
+    {
+      "label": "alternate",
+      "start": 140,
+      "end": 168
+    },
+    {
+      "label": "next",
+      "start": 169,
+      "end": 209
+    },
+    {
+      "label": "request",
+      "start": 210,
+      "end": 250
+    },
+    {
+      "label": "alternate",
+      "start": 251,
+      "end": 279
+    },
+    {
+      "label": "next",
+      "start": 280,
+      "end": 339
+    }
+  ]
+}

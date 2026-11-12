@@ -1,0 +1,68 @@
+{
+  "id": "n38-long-sentence-word-cap",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The inventory lists bolts, nuts, washers, brackets, hinges, latches, clamps, rivets, pins, springs, bearings, gaskets, valves, fittings, couplers, adapters, plugs, caps, seals, rings, clips, anchors, screws, nails, tacks and staples for the winter shop.\nShort note.\nthe=2\ninventory=1\nlists=1\nbolts=1\nnuts=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 253
+    },
+    {
+      "label": "sentence",
+      "start": 254,
+      "end": 265
+    },
+    {
+      "label": "keyword",
+      "start": 266,
+      "end": 269
+    },
+    {
+      "label": "score",
+      "start": 270,
+      "end": 271
+    },
+    {
+      "label": "keyword",
+      "start": 272,
+      "end": 281
+    },
+    {
+      "label": "score",
+      "start": 282,
+      "end": 283
+    },
+    {
+      "label": "keyword",
+      "start": 284,
+      "end": 289
+    },
+    {
+      "label": "score",
+      "start": 290,
+      "end": 291
+    },
+    {
+      "label": "keyword",
+      "start": 292,
+      "end": 297
+    },
+    {
+      "label": "score",
+      "start": 298,
+      "end": 299
+    },
+    {
+      "label": "keyword",
+      "start": 300,
+      "end": 304
+    },
+    {
+      "label": "score",
+      "start": 305,
+      "end": 306
+    }
+  ]
+}

@@ -38,7 +38,11 @@ pub fn meta_refresh_target(bytes: &[u8], observed: &Url, max_bytes: u32) -> Opti
         return None;
     }
     let text = std::str::from_utf8(bytes).ok()?;
-    let html = Html::parse_document(text);
+    refresh_target(&Html::parse_document(text), observed)
+}
+
+/// The `<meta http-equiv=refresh>` destination of a parsed document, resolved against `observed`.
+fn refresh_target(html: &Html, observed: &Url) -> Option<Url> {
     let mut target = None;
     let mut matched = false;
     walk(html.tree.root(), |el| {
@@ -102,9 +106,13 @@ pub fn try_meta_refresh_target(
     if bytes.len() > usize::try_from(max_bytes).unwrap_or(usize::MAX) {
         return Ok(None);
     }
-    // held until the DOM inside `meta_refresh_target` has been dropped
-    let _charge = crate::parse_budget::charge(bytes.len())?;
-    Ok(meta_refresh_target(bytes, observed, max_bytes))
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Ok(None);
+    };
+    // held until the DOM has been dropped
+    let mut charge = crate::parse_budget::charge(bytes.len())?;
+    let html = crate::dom::parse_document(&mut charge, text)?;
+    Ok(refresh_target(&html, observed))
 }
 
 /// `<meta name=robots>` directives.

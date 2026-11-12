@@ -421,8 +421,8 @@ pub fn discover_report(
             }
         } else {
             // declared before `doc`: released after the parsed tree is dropped
-            let _charge = crate::parse_budget::charge(text.len())?;
-            let doc = Html::parse_document(&text);
+            let mut charge = crate::parse_budget::charge(text.len())?;
+            let doc = crate::dom::parse_document(&mut charge, &text)?;
             let base = effective_base(&doc, input.url);
             body::parse(
                 &doc,

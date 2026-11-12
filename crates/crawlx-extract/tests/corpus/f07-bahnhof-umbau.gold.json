@@ -1,0 +1,128 @@
+{
+  "id": "f07-bahnhof-umbau",
+  "family": "focus",
+  "note": "German news report with related teaser cards, a most-read list and legal footer links",
+  "expectedText": "Lindenauer Anzeiger\nLokales\nSport\nKultur\nKleinanzeigen\nAbo\nBahnhof Lindenau wird bis 2028 umgebaut\nDer Bahnhof Lindenau bekommt in den nächsten drei Jahren einen neuen Vorplatz, zwei zusätzliche Aufzüge und ein überdachtes Fahrradparkhaus mit Platz für achthundert Räder. Das haben die Stadt und die Bahn am Donnerstag gemeinsam bekannt gegeben.\nDie Arbeiten beginnen im Frühjahr mit dem Abriss des alten Kiosks. Während der Bauzeit bleibt der Zugang zu den Gleisen über die Nordseite erhalten, die Busse halten vorübergehend an der Kastanienstraße.\nOberbürgermeisterin Greta Haldmann sprach von einem lange überfälligen Schritt. Besonders für Menschen mit Kinderwagen oder Rollator sei der Bahnhof bisher kaum zu nutzen gewesen. Die Kosten von rund vierzehn Millionen Euro tragen Bund, Land und Stadt gemeinsam.\nIm Erdgeschoss des Empfangsgebäudes soll nach dem Umbau wieder ein Café einziehen. Wer es betreiben wird, steht noch nicht fest.\nAuch interessant\nStadtbibliothek verlängert Öffnungszeiten\nAb Oktober bis zwanzig Uhr geöffnet.\nMarktplatz bekommt neue Bäume\nDreißig Linden ersetzen die alten Ahorne.\nSchwimmbad bleibt im Winter offen\nDie Stadt übernimmt die Heizkosten.\nMeistgelesen\nStreit um Parkgebühren\nNeue Ampel am Ring\nSchulfest abgesagt\nImpressum Datenschutz AGB Kontakt Mediadaten\nLindenauer Anzeiger Verlag GmbH. Alle Rechte vorbehalten.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 19
+    },
+    {
+      "label": "boilerplate",
+      "start": 20,
+      "end": 27
+    },
+    {
+      "label": "boilerplate",
+      "start": 28,
+      "end": 33
+    },
+    {
+      "label": "boilerplate",
+      "start": 34,
+      "end": 40
+    },
+    {
+      "label": "boilerplate",
+      "start": 41,
+      "end": 54
+    },
+    {
+      "label": "boilerplate",
+      "start": 55,
+      "end": 58
+    },
+    {
+      "label": "body",
+      "start": 59,
+      "end": 98
+    },
+    {
+      "label": "body",
+      "start": 99,
+      "end": 351
+    },
+    {
+      "label": "body",
+      "start": 352,
+      "end": 560
+    },
+    {
+      "label": "body",
+      "start": 561,
+      "end": 827
+    },
+    {
+      "label": "body",
+      "start": 828,
+      "end": 958
+    },
+    {
+      "label": "boilerplate",
+      "start": 959,
+      "end": 975
+    },
+    {
+      "label": "boilerplate",
+      "start": 976,
+      "end": 1019
+    },
+    {
+      "label": "boilerplate",
+      "start": 1020,
+      "end": 1057
+    },
+    {
+      "label": "boilerplate",
+      "start": 1058,
+      "end": 1088
+    },
+    {
+      "label": "boilerplate",
+      "start": 1089,
+      "end": 1131
+    },
+    {
+      "label": "boilerplate",
+      "start": 1132,
+      "end": 1165
+    },
+    {
+      "label": "boilerplate",
+      "start": 1166,
+      "end": 1202
+    },
+    {
+      "label": "boilerplate",
+      "start": 1203,
+      "end": 1215
+    },
+    {
+      "label": "boilerplate",
+      "start": 1216,
+      "end": 1239
+    },
+    {
+      "label": "boilerplate",
+      "start": 1240,
+      "end": 1258
+    },
+    {
+      "label": "boilerplate",
+      "start": 1259,
+      "end": 1277
+    },
+    {
+      "label": "boilerplate",
+      "start": 1278,
+      "end": 1322
+    },
+    {
+      "label": "boilerplate",
+      "start": 1323,
+      "end": 1380
+    }
+  ]
+}

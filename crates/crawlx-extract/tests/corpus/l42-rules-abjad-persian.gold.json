@@ -1,0 +1,113 @@
+{
+  "id": "l42-rules-abjad-persian",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "قطار|ساعت|هشت|از|ایستگاه|حرکت|کرد|مسافران|روی|سکو|منتظر|ماندند|دختری|روزنامه|خواند|و|مسئول|قطار|بلیط|را|دید",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 44
+    },
+    {
+      "label": "token",
+      "start": 45,
+      "end": 53
+    },
+    {
+      "label": "token",
+      "start": 54,
+      "end": 60
+    },
+    {
+      "label": "token",
+      "start": 61,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 82
+    },
+    {
+      "label": "token",
+      "start": 83,
+      "end": 89
+    },
+    {
+      "label": "token",
+      "start": 90,
+      "end": 100
+    },
+    {
+      "label": "token",
+      "start": 101,
+      "end": 113
+    },
+    {
+      "label": "token",
+      "start": 114,
+      "end": 124
+    },
+    {
+      "label": "token",
+      "start": 125,
+      "end": 139
+    },
+    {
+      "label": "token",
+      "start": 140,
+      "end": 150
+    },
+    {
+      "label": "token",
+      "start": 151,
+      "end": 153
+    },
+    {
+      "label": "token",
+      "start": 154,
+      "end": 164
+    },
+    {
+      "label": "token",
+      "start": 165,
+      "end": 173
+    },
+    {
+      "label": "token",
+      "start": 174,
+      "end": 182
+    },
+    {
+      "label": "token",
+      "start": 183,
+      "end": 187
+    },
+    {
+      "label": "token",
+      "start": 188,
+      "end": 194
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "id": "c07-news-no-comment-section",
+  "family": "comments",
+  "note": "control page without any reader discussion",
+  "expectedText": "Seaview Ledger\nNews Sport Tide tables Contact\nHarbour Dredging Starts Next Month\nDredging of the inner harbour will begin on the fourth of June, the port authority said on Friday, ending a wait of eleven years for the channel to be cleared of silt.\nTwo barges will work in shifts from six in the morning until eight in the evening. Fishing boats will keep their usual berths, and the lifeboat slipway will stay open throughout.\nThe work is expected to take nine weeks and will remove around forty thousand cubic metres of sand and mud, which will be used to rebuild the dunes at Gull Point.\nReader discussion is not available on news reports.\nPrivacy Terms",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 14
+    },
+    {
+      "label": "boilerplate",
+      "start": 15,
+      "end": 45
+    },
+    {
+      "label": "body",
+      "start": 46,
+      "end": 80
+    },
+    {
+      "label": "body",
+      "start": 81,
+      "end": 248
+    },
+    {
+      "label": "body",
+      "start": 249,
+      "end": 427
+    },
+    {
+      "label": "body",
+      "start": 428,
+      "end": 590
+    },
+    {
+      "label": "boilerplate",
+      "start": 591,
+      "end": 642
+    },
+    {
+      "label": "boilerplate",
+      "start": 643,
+      "end": 656
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "m17-date-locale-en-gb",
+  "family": "meta_exact",
+  "note": "a visible numeric date with a day-first locale supplied by the caller",
+  "expectedText": "title=Allotment Waiting List Shrinks\nlanguage=en\npublished=2026-04-03",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "language",
+      "start": 46,
+      "end": 48
+    },
+    {
+      "label": "published",
+      "start": 59,
+      "end": 69
+    }
+  ]
+}

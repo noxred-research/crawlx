@@ -1,0 +1,18 @@
+{
+  "id": "d05-rdf-rss1-basic",
+  "family": "feed",
+  "note": "RDF / RSS 1.0: items sit beside the channel, the channel link and sequence entries are not pages, relative links resolve against the feed, cross-origin item is denied",
+  "expectedText": "https://news.corpus.test/orchard/frost\nhttps://news.corpus.test/orchard/harvest",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 38
+    },
+    {
+      "label": "item",
+      "start": 39,
+      "end": 79
+    }
+  ]
+}

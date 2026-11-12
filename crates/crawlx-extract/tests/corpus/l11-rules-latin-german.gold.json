@@ -1,0 +1,128 @@
+{
+  "id": "l11-rules-latin-german",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "der|bäcker|öffnet|um|sechs|uhr|frische|brötchen|liegen|auf|dem|tresen|die|kinder|holen|brötchen|für|das|frühstück|die|straße|bleibt|noch|leer",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 11
+    },
+    {
+      "label": "token",
+      "start": 12,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 28
+    },
+    {
+      "label": "token",
+      "start": 29,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 40
+    },
+    {
+      "label": "token",
+      "start": 41,
+      "end": 50
+    },
+    {
+      "label": "token",
+      "start": 51,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 61
+    },
+    {
+      "label": "token",
+      "start": 62,
+      "end": 65
+    },
+    {
+      "label": "token",
+      "start": 66,
+      "end": 72
+    },
+    {
+      "label": "token",
+      "start": 73,
+      "end": 76
+    },
+    {
+      "label": "token",
+      "start": 77,
+      "end": 83
+    },
+    {
+      "label": "token",
+      "start": 84,
+      "end": 89
+    },
+    {
+      "label": "token",
+      "start": 90,
+      "end": 99
+    },
+    {
+      "label": "token",
+      "start": 100,
+      "end": 104
+    },
+    {
+      "label": "token",
+      "start": 105,
+      "end": 108
+    },
+    {
+      "label": "token",
+      "start": 109,
+      "end": 120
+    },
+    {
+      "label": "token",
+      "start": 121,
+      "end": 124
+    },
+    {
+      "label": "token",
+      "start": 125,
+      "end": 132
+    },
+    {
+      "label": "token",
+      "start": 133,
+      "end": 139
+    },
+    {
+      "label": "token",
+      "start": 140,
+      "end": 144
+    },
+    {
+      "label": "token",
+      "start": 145,
+      "end": 149
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "d31-transport-decoded-feed",
+  "family": "feed",
+  "note": "the same feed after transport decoding parses normally",
+  "expectedText": "https://news.corpus.test/compressed/one\nhttps://news.corpus.test/compressed/two",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 39
+    },
+    {
+      "label": "item",
+      "start": 40,
+      "end": 79
+    }
+  ]
+}

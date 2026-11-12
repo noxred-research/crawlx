@@ -1,0 +1,48 @@
+{
+  "id": "n34-keyword-limit-with-all-ties",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 3 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Alder birch cedar.\nDogwood elm fir.\nalder=1\nbirch=1\ncedar=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 18
+    },
+    {
+      "label": "sentence",
+      "start": 19,
+      "end": 35
+    },
+    {
+      "label": "keyword",
+      "start": 36,
+      "end": 41
+    },
+    {
+      "label": "score",
+      "start": 42,
+      "end": 43
+    },
+    {
+      "label": "keyword",
+      "start": 44,
+      "end": 49
+    },
+    {
+      "label": "score",
+      "start": 50,
+      "end": 51
+    },
+    {
+      "label": "keyword",
+      "start": 52,
+      "end": 57
+    },
+    {
+      "label": "score",
+      "start": 58,
+      "end": 59
+    }
+  ]
+}

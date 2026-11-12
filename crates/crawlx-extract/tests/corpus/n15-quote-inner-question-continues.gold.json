@@ -1,0 +1,68 @@
+{
+  "id": "n15-quote-inner-question-continues",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "“Who left the gate open?” asked the farmer.\nNobody answered.\nthe=2\nwho=1\nleft=1\ngate=1\nopen=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 47
+    },
+    {
+      "label": "sentence",
+      "start": 48,
+      "end": 64
+    },
+    {
+      "label": "keyword",
+      "start": 65,
+      "end": 68
+    },
+    {
+      "label": "score",
+      "start": 69,
+      "end": 70
+    },
+    {
+      "label": "keyword",
+      "start": 71,
+      "end": 74
+    },
+    {
+      "label": "score",
+      "start": 75,
+      "end": 76
+    },
+    {
+      "label": "keyword",
+      "start": 77,
+      "end": 81
+    },
+    {
+      "label": "score",
+      "start": 82,
+      "end": 83
+    },
+    {
+      "label": "keyword",
+      "start": 84,
+      "end": 88
+    },
+    {
+      "label": "score",
+      "start": 89,
+      "end": 90
+    },
+    {
+      "label": "keyword",
+      "start": 91,
+      "end": 95
+    },
+    {
+      "label": "score",
+      "start": 96,
+      "end": 97
+    }
+  ]
+}

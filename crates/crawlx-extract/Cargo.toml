@@ -26,6 +26,7 @@ chrono-tz.workspace = true
 ego-tree.workspace = true
 encoding_rs.workspace = true
 icu_segmenter.workspace = true
+html5ever.workspace = true
 http.workspace = true
 image.workspace = true
 lopdf.workspace = true

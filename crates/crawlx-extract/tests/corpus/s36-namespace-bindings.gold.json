@@ -1,0 +1,53 @@
+{
+  "id": "s36-namespace-bindings",
+  "family": "selector",
+  "note": "namespaces: caller bindings select foreign elements, an unbound prefix is a typed error even inside a predicate, unprefixed names mean XHTML",
+  "expectedText": "40\n3\n3\nerror:Namespace\nerror:Namespace\n2\n\"svg\"\n20\nplain",
+  "spans": [
+    {
+      "label": "n1",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "n2",
+      "start": 3,
+      "end": 4
+    },
+    {
+      "label": "n3",
+      "start": 5,
+      "end": 6
+    },
+    {
+      "label": "n4",
+      "start": 7,
+      "end": 22
+    },
+    {
+      "label": "n5",
+      "start": 23,
+      "end": 38
+    },
+    {
+      "label": "n8",
+      "start": 39,
+      "end": 40
+    },
+    {
+      "label": "n10",
+      "start": 41,
+      "end": 46
+    },
+    {
+      "label": "n11",
+      "start": 47,
+      "end": 49
+    },
+    {
+      "label": "n12",
+      "start": 50,
+      "end": 55
+    }
+  ]
+}

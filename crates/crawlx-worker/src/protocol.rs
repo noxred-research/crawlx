@@ -102,7 +102,7 @@ impl ProtocolRegistry {
         if bytes.len() > 65_536 {
             return Err(WorkerError::Config("protocol registry byte cap".to_owned()));
         }
-        let file: RegistryFile = serde_json::from_slice(&bytes)
+        let mut file: RegistryFile = serde_json::from_slice(&bytes)
             .map_err(|_| WorkerError::Config("invalid protocol registry schema".to_owned()))?;
         if file.schema_version != 1
             || file.services.len() > 16
@@ -126,8 +126,12 @@ impl ProtocolRegistry {
         }) {
             return Err(WorkerError::Config("WHOIS registry bounds".to_owned()));
         }
-        if let Some(ftp) = &file.ftp {
+        if let Some(ftp) = &mut file.ftp {
             ftp.validate()
+                .map_err(|error| WorkerError::Config(error.to_string()))?;
+            // Secrets resolve once, by reference, and stay inside the registry.
+            ftp.resolve_credentials(resolver)
+                .await
                 .map_err(|error| WorkerError::Config(error.to_string()))?;
         }
         if file.services.contains_key("native_ftp")
@@ -317,6 +321,7 @@ impl ProtocolRuntime {
                 let registry = self.registry.ftp.as_ref().ok_or_else(|| {
                     WorkerError::Config("protocol capability unavailable: native FTP registration".to_owned())
                 })?;
+                let declares = |id: &str| route.required_capabilities.contains(id);
                 if route.schemes != ["ftp"]
                     || !route.required_capabilities.iter().all(|id| {
                         matches!(
@@ -326,8 +331,13 @@ impl ProtocolRuntime {
                                 | "cancellation"
                                 | "ftp_passive_pinned"
                                 | "ftp_anonymous_file"
+                                | "ftp_credential_login"
+                                | "ftp_bounded_recursion"
                         )
                     })
+                    // A declared capability must actually be configured, never assumed.
+                    || (declares("ftp_credential_login") && !registry.has_credentials())
+                    || (declares("ftp_bounded_recursion") && registry.recursion.is_none())
                     || !self.registry.approved_tenants.contains(&tenant.to_string())
                     || !registry.policy_digests.contains(&route.policy_revision)
                 {
@@ -339,6 +349,19 @@ impl ProtocolRuntime {
                     registry
                         .admit(target, &route.policy_revision)
                         .map_err(|error| WorkerError::Config(error.to_string()))?;
+                    // Logging in or walking a directory is an explicit per-route decision; an
+                    // anonymous-file route never silently becomes an authenticated one.
+                    let credentialed = registry.uses_credentials(target);
+                    if (credentialed && !declares("ftp_credential_login"))
+                        || (!credentialed && declares("ftp_credential_login"))
+                        || (credentialed && declares("ftp_anonymous_file"))
+                        || (crawlx_fetch::protocol::ftp::FtpRegistry::is_directory(target)
+                            && !declares("ftp_bounded_recursion"))
+                    {
+                        return Err(WorkerError::Config(
+                            "protocol capability unavailable: native FTP scope".to_owned(),
+                        ));
+                    }
                 }
                 continue;
             }
@@ -424,19 +447,22 @@ impl ProtocolRuntime {
             .try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
             .map_err(|_| ProtocolError::Limit)?;
         let resource = if route.delegate_id.as_deref() == Some("native_ftp") {
+            use crawlx_fetch::protocol::ftp::{FtpNetwork, FtpRequest};
             self.registry
                 .ftp
                 .as_ref()
                 .ok_or(ProtocolError::CapabilityUnavailable("native FTP registry"))?
                 .acquire(
-                    url,
-                    &route.policy_revision,
-                    route.max_body_bytes,
-                    std::time::Duration::from_millis(u64::from(route.max_elapsed_ms)),
+                    // The shared request allowance also bounds directory listings.
+                    &FtpRequest::new(
+                        url,
+                        &route.policy_revision,
+                        route.max_body_bytes,
+                        std::time::Duration::from_millis(u64::from(route.max_elapsed_ms)),
+                    )
+                    .with_max_requests(allowance),
+                    &FtpNetwork::new(&self.policy, self.resolver.as_ref(), &self.governor),
                     cancel,
-                    &self.policy,
-                    self.resolver.as_ref(),
-                    &self.governor,
                 )
                 .await?
         } else if route.delegate_id.as_deref() == Some("native_whois") {
@@ -511,7 +537,12 @@ pub fn resource_metadata(
     if route.delegate_id.as_deref() == Some("native_ftp") {
         backend.implementation = "crawlx-fetch/native-ftp".to_owned();
         backend.version = env!("CARGO_PKG_VERSION").to_owned();
-        backend.limitations[1] = "native_anonymous_ftp_file_without_http_status".to_owned();
+        backend.limitations[1] = if resource.build_digest == "native-ftp-credential-v1" {
+            "native_credentialed_ftp_without_http_status"
+        } else {
+            "native_anonymous_ftp_file_without_http_status"
+        }
+        .to_owned();
     }
     let mut result = AcquisitionResultV1::new(
         run,
@@ -579,19 +610,23 @@ pub fn capability_report(
                 Some(registration.build_digest.to_hex()),
             ));
         }
+        let mut ftp_capabilities = vec![
+            "bounded_body",
+            "cancellation",
+            "checked_egress",
+            "ftp_anonymous_file",
+            "ftp_passive_pinned",
+        ];
+        if let Some(ftp) = &registry.ftp {
+            if ftp.has_credentials() {
+                ftp_capabilities.push("ftp_credential_login");
+            }
+            if ftp.recursion.is_some() {
+                ftp_capabilities.push("ftp_bounded_recursion");
+            }
+        }
         for (id, scheme, enabled, capabilities) in [
-            (
-                "native_ftp",
-                "ftp",
-                registry.ftp.is_some(),
-                &[
-                    "bounded_body",
-                    "cancellation",
-                    "checked_egress",
-                    "ftp_anonymous_file",
-                    "ftp_passive_pinned",
-                ][..],
-            ),
+            ("native_ftp", "ftp", registry.ftp.is_some(), &ftp_capabilities[..]),
             (
                 "native_whois",
                 "whois",
@@ -621,3 +656,7 @@ mod tests;
 #[cfg(test)]
 #[path = "protocol_acquisition_tests.rs"]
 mod acquisition_tests;
+
+#[cfg(test)]
+#[path = "protocol_ftp_tests.rs"]
+mod ftp_tests;

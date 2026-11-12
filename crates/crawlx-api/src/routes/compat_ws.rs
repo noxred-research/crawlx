@@ -27,7 +27,9 @@ use crate::errors::{ApiResult, HttpError};
 use crate::openapi::Operation;
 use crate::resources::expires_at;
 use crate::routes::compat::{crawl_pages, crawl_total, facade_status, load_crawl};
-use crate::routes::compat_scrape::{batch_expires, batch_status_name, batch_total, load_batch};
+use crate::routes::compat_scrape::{
+    batch_expires, batch_status_name, batch_total, live_batch_total, load_batch,
+};
 use crate::routes::pages::sorted_pages;
 use crate::scrape_service::{base_url, compat_document, credits_for, record_run_usage};
 use crate::state::AppState;
@@ -136,7 +138,8 @@ impl Kind {
                 let credits = pages.iter().map(|p| credits_for(run, p)).sum();
                 let counts = Counts {
                     status: batch_status_name(run.status),
-                    total: u64::try_from(batch_total(run)).unwrap_or(u64::MAX),
+                    total: u64::try_from(live_batch_total(state, run.id, batch_total(run)).await?)
+                        .unwrap_or(u64::MAX),
                     completed: u64::try_from(pages.len()).unwrap_or(u64::MAX),
                     credits,
                     expires: Value::String(ts(batch_expires(run))),

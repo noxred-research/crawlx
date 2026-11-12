@@ -33,7 +33,7 @@ pub const EXTRACTION_CREDITS: u64 = 4;
 pub const MAX_PROMPT: usize = 10_000;
 
 /// Top-level keys the endpoint reads.
-const KNOWN: [&str; 13] = [
+const KNOWN: [&str; 14] = [
     "urls",
     "prompt",
     "schema",
@@ -41,6 +41,7 @@ const KNOWN: [&str; 13] = [
     "ignoreSitemap",
     "includeSubdomains",
     "showSources",
+    "urlTrace",
     "scrapeOptions",
     "ignoreInvalidURLs",
     "webhook",
@@ -68,6 +69,8 @@ pub struct ExtractRequest {
     pub include_subdomains: bool,
     /// Return `sources` in the status response.
     pub show_sources: bool,
+    /// Return `urlTrace` (every attempted page and its outcome) in the status response.
+    pub url_trace: bool,
     /// Scrape options per page (always includes `markdown`).
     pub scrape_options: Value,
     /// Job webhook.
@@ -126,6 +129,7 @@ pub fn parse(body: &Value) -> ApiResult<ExtractRequest> {
     let ignore_sitemap = b.boolean("ignoreSitemap").unwrap_or(false);
     let include_subdomains = b.boolean("includeSubdomains").unwrap_or(true);
     let show_sources = b.boolean("showSources").unwrap_or(false);
+    let url_trace = b.boolean("urlTrace").unwrap_or(false);
     let ignore_invalid = b.boolean("ignoreInvalidURLs").unwrap_or(true);
     let scrape_options = b.object("scrapeOptions");
     let webhook = match JobWebhook::parse(b.raw("webhook"), "/webhook", &["started", "completed", "failed"]) {
@@ -180,6 +184,7 @@ pub fn parse(body: &Value) -> ApiResult<ExtractRequest> {
         ignore_sitemap,
         include_subdomains,
         show_sources,
+        url_trace,
         scrape_options,
         webhook,
         warnings,
@@ -364,6 +369,85 @@ async fn extract_validated(
     Err("extraction failed".to_owned())
 }
 
+/// What one attempted page did: a `urlTrace` entry of the status response.
+///
+/// The entries follow the order of the attempts, which is the order of `urls` (a glob expands in
+/// the order the map tool returns its matches), then the web search hits. Nothing in the order
+/// depends on how long a page took.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UrlTrace {
+    /// The URL as the job attempted it.
+    url: String,
+    /// `scraped`, or `error` when the page could not be scraped.
+    status: &'static str,
+    /// Why the page could not be scraped.
+    error: Option<String>,
+    /// A note about a page that was scraped but gave nothing to read.
+    warning: Option<String>,
+    /// The URL the page ended at, when it had text for the model.
+    final_url: Option<String>,
+    /// The page was among those the model read.
+    used_in_completion: bool,
+}
+
+impl UrlTrace {
+    fn scraped(url: &str, final_url: Option<String>, warning: Option<String>) -> Self {
+        Self {
+            url: url.to_owned(),
+            status: "scraped",
+            error: None,
+            warning,
+            final_url,
+            used_in_completion: false,
+        }
+    }
+
+    fn failed(url: &str, error: String) -> Self {
+        Self {
+            url: url.to_owned(),
+            status: "error",
+            error: Some(error),
+            warning: None,
+            final_url: None,
+            used_in_completion: false,
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        let mut out = json!({
+            "url": self.url,
+            "status": self.status,
+            "usedInCompletion": self.used_in_completion,
+        });
+        if let Some(error) = &self.error {
+            out["error"] = json!(error);
+        }
+        if let Some(warning) = &self.warning {
+            out["warning"] = json!(warning);
+        }
+        out
+    }
+}
+
+/// Flag the trace entries whose page the model read (after any ranking cut pages).
+fn mark_used(trace: &mut [UrlTrace], docs: &[ExtractDocument]) {
+    for entry in trace {
+        entry.used_in_completion = entry
+            .final_url
+            .as_deref()
+            .is_some_and(|url| docs.iter().any(|d| d.url == url));
+    }
+}
+
+fn trace_json(trace: &[UrlTrace]) -> Value {
+    Value::Array(trace.iter().map(UrlTrace::to_json).collect())
+}
+
+/// The stored result of a job that failed: only the trace, and only when it was asked for.
+fn trace_result(req: &ExtractRequest, trace: &[UrlTrace]) -> Option<Value> {
+    (req.url_trace && !trace.is_empty()).then(|| json!({ "urlTrace": trace_json(trace) }))
+}
+
 struct Gathered {
     /// The pages the LLM reads (ranked and cut when an embedding model is configured).
     docs: Vec<ExtractDocument>,
@@ -374,6 +458,8 @@ struct Gathered {
     /// Credits of the web search (recorded on this job's ledger row).
     search_credits: u64,
     warnings: Vec<String>,
+    /// Every page the job attempted, in attempt order.
+    trace: Vec<UrlTrace>,
 }
 
 async fn gather(
@@ -427,29 +513,36 @@ async fn gather(
         .collect()
         .await;
     let mut docs = Vec::new();
+    let mut trace = Vec::new();
     for (url, r) in scraped {
         match r {
             Ok(page) => {
                 credits = credits.saturating_add(page.credits);
                 if page.markdown().trim().is_empty() {
                     warnings.push(format!("{url} had no text content"));
+                    trace.push(UrlTrace::scraped(&url, None, Some("no text content".to_owned())));
                 } else {
                     let final_url = Some(page.source_url())
                         .filter(|s| !s.is_empty())
                         .unwrap_or(&url)
                         .to_owned();
+                    trace.push(UrlTrace::scraped(&url, Some(final_url.clone()), None));
                     docs.push(ExtractDocument {
                         url: final_url,
                         markdown: page.markdown().to_owned(),
                     });
                 }
             }
-            Err(e) => warnings.push(format!("{url} could not be scraped: {e}")),
+            Err(e) => {
+                trace.push(UrlTrace::failed(&url, e.clone()));
+                warnings.push(format!("{url} could not be scraped: {e}"));
+            }
         }
     }
     Ok(Gathered {
         scraped: docs.len(),
         docs,
+        trace,
         credits,
         search_credits,
         warnings,
@@ -498,8 +591,10 @@ pub async fn run(
     )
     .await;
     let mut tokens = TokenUsage::default();
+    let mut trace: Vec<UrlTrace> = Vec::new();
     let result: Result<(Value, Gathered), Option<String>> = async {
         let mut gathered = gather(&state, tenant, &req, &cancel).await?;
+        trace = std::mem::take(&mut gathered.trace);
         if cancel.is_cancelled() {
             return Err(None);
         }
@@ -523,6 +618,7 @@ pub async fn run(
             gathered.docs = ranked.docs;
             gathered.warnings.extend(ranked.warnings);
         }
+        mark_used(&mut trace, &gathered.docs);
         let data = tokio::select! {
             r = extract_validated(&state, tenant, &gathered.docs, &req, &mut tokens) => r.map_err(Some)?,
             () = cancel.cancelled() => return Err(None),
@@ -542,13 +638,16 @@ pub async fn run(
             let mut warnings = req.warnings.clone();
             warnings.extend(g.warnings.clone());
             let credits = credits_base(&g);
-            let stored = json!({
+            let mut stored = json!({
                 "data": data,
                 "sources": sources,
                 "urls": urls,
                 "totalUrlsScraped": g.scraped,
                 "warnings": warnings,
             });
+            if req.url_trace {
+                stored["urlTrace"] = trace_json(&trace);
+            }
             jobs::finish(
                 &state,
                 tenant,
@@ -618,7 +717,7 @@ pub async fn run(
                 job,
                 Outcome {
                     status: JobStatus::Failed,
-                    result: None,
+                    result: trace_result(&req, &trace),
                     error: Some(message.clone()),
                     stop_reason: None,
                     tokens_used: tokens.total(),
@@ -669,6 +768,16 @@ pub fn status_json(job: &crawlx_storage::JobRecord, show_sources: bool) -> Value
     if show_sources {
         if let Some(s) = result.and_then(|r| r.get("sources")) {
             out.insert("sources".to_owned(), s.clone());
+        }
+    }
+    let wants_trace = job
+        .request
+        .get("urlTrace")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if wants_trace {
+        if let Some(t) = result.and_then(|r| r.get("urlTrace")) {
+            out.insert("urlTrace".to_owned(), t.clone());
         }
     }
     if let Some(e) = &job.error {

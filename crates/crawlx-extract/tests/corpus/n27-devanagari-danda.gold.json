@@ -1,0 +1,73 @@
+{
+  "id": "n27-devanagari-danda",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under dictionary_uax29",
+  "expectedText": "नदी के पास गाँव है।\nबच्चे वहाँ खेलते हैं॥\nशाम को सब लौटते हैं।\nहैं=2\nनदी=1\nके=1\nपास=1\nगाँव=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 49
+    },
+    {
+      "label": "sentence",
+      "start": 50,
+      "end": 107
+    },
+    {
+      "label": "sentence",
+      "start": 108,
+      "end": 160
+    },
+    {
+      "label": "keyword",
+      "start": 161,
+      "end": 170
+    },
+    {
+      "label": "score",
+      "start": 171,
+      "end": 172
+    },
+    {
+      "label": "keyword",
+      "start": 173,
+      "end": 182
+    },
+    {
+      "label": "score",
+      "start": 183,
+      "end": 184
+    },
+    {
+      "label": "keyword",
+      "start": 185,
+      "end": 191
+    },
+    {
+      "label": "score",
+      "start": 192,
+      "end": 193
+    },
+    {
+      "label": "keyword",
+      "start": 194,
+      "end": 203
+    },
+    {
+      "label": "score",
+      "start": 204,
+      "end": 205
+    },
+    {
+      "label": "keyword",
+      "start": 206,
+      "end": 218
+    },
+    {
+      "label": "score",
+      "start": 219,
+      "end": 220
+    }
+  ]
+}

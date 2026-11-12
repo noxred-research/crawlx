@@ -1,0 +1,68 @@
+{
+  "id": "n28-ties-first-occurrence-not-alphabetical",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 4 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Zebra mango.\nMango zebra.\nApple kiwi.\nKiwi apple.\nzebra=2\nmango=2\napple=2\nkiwi=2",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "sentence",
+      "start": 13,
+      "end": 25
+    },
+    {
+      "label": "sentence",
+      "start": 26,
+      "end": 37
+    },
+    {
+      "label": "sentence",
+      "start": 38,
+      "end": 49
+    },
+    {
+      "label": "keyword",
+      "start": 50,
+      "end": 55
+    },
+    {
+      "label": "score",
+      "start": 56,
+      "end": 57
+    },
+    {
+      "label": "keyword",
+      "start": 58,
+      "end": 63
+    },
+    {
+      "label": "score",
+      "start": 64,
+      "end": 65
+    },
+    {
+      "label": "keyword",
+      "start": 66,
+      "end": 71
+    },
+    {
+      "label": "score",
+      "start": 72,
+      "end": 73
+    },
+    {
+      "label": "keyword",
+      "start": 74,
+      "end": 78
+    },
+    {
+      "label": "score",
+      "start": 79,
+      "end": 80
+    }
+  ]
+}

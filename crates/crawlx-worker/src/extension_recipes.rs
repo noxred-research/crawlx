@@ -84,10 +84,14 @@ pub struct CompiledExtensionRecipe {
 }
 
 impl CompiledExtensionRecipe {
-    /// Compile reviewed native filters and safe actor actions once per run snapshot.
+    /// Compile reviewed native filters and safe actor actions once per run snapshot. A bounded
+    /// `actor_script` is already unrolled into the flat action list by the recipe's own
+    /// validation, so a refused script (loop over its cap, `EVAL`, unbound variable) never
+    /// yields a compiled recipe and the worker only ever sees the same finite steps.
     ///
     /// # Errors
-    /// Rejects schema, handlers, invalid selectors/regular expressions and action bounds.
+    /// Rejects schema, handlers, invalid selectors/regular expressions, refused scripts and
+    /// action bounds.
     pub fn new(spec: ExtensionRecipeV1) -> Result<Self, RecipeExecutionError> {
         let pin = spec.pin()?;
         let actor = spec.compile_actor()?;
@@ -268,11 +272,11 @@ impl CompiledExtensionRecipe {
         if !self.rules.iter().any(|r| r.source == RecipeSourceV1::Html) {
             return Ok(Vec::new());
         }
-        // The shared admission charge outlives the tree. This is the existing measured
-        // parser-admission boundary, not a claim of fallible tree allocation.
-        let _charge =
+        // The shared charge outlives the tree, which the metering sink builds under it.
+        let mut charge =
             crawlx_extract::parse_budget::charge(html.len()).map_err(crawlx_extract::ExtractError::from)?;
-        let document = scraper::Html::parse_document(html);
+        let document = crawlx_extract::dom::parse_document(&mut charge, html)
+            .map_err(crawlx_extract::ExtractError::from)?;
         crawlx_extract::dom::check_limits(&document, 100_000)?;
         let base = crawlx_extract::metadata::effective_base(&document, page);
         let mut output = Vec::new();

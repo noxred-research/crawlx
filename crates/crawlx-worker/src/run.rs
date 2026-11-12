@@ -29,7 +29,7 @@ use crawlx_core::browser::BrowserError;
 use crawlx_core::config::{
     CaptureBackend, CrawlMode, ExternalCommunication, LaunchProfile, SafetyProfile, TargetIsolation,
 };
-use crawlx_core::counters::{PlaneCounters, RunStatus, TerminalReason};
+use crawlx_core::counters::{PlaneCounters, RunStatus, TerminalDetail, TerminalReason};
 use crawlx_core::hash::Digest;
 use crawlx_core::observation::QuiescencePolicy;
 use crawlx_core::repo::{
@@ -362,6 +362,10 @@ pub struct RunReport {
     pub status: RunStatus,
     /// Terminal reason.
     pub terminal_reason: Option<TerminalReason>,
+    /// The concrete cause behind the terminal reason (the stop criterion that fired, or why a
+    /// drained run kept no page), when the URL plane named one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_detail: Option<TerminalDetail>,
     /// Counters.
     pub counters: PlaneCounters,
     /// Pages.
@@ -2885,6 +2889,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
     crate::acquisition::admit_runtime(&rc, &cfg, operator_backend, true).await?;
 
     let mut reasons = Vec::new();
+    let mut details: Vec<TerminalDetail> = Vec::new();
     let mut dynamic_requests: Vec<crawlx_core::request::RequestEnvelopeV1> = Vec::new();
     let mut url_resume: Option<ResumeState> = None;
     let crawl_span = spans::crawl_span(
@@ -2971,6 +2976,7 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
                 .map_err(|error| WorkerError::Other(format!("URL plane task failed: {error}")))??;
             url_resume = Some(resume_state).filter(|s| !s.is_finished());
             reasons.push(outcome.terminal);
+            details.extend(outcome.detail);
             dynamic_requests = outcome.dynamic_requests;
         }
         if dynamic && !run_cancel.is_cancelled() {
@@ -3032,23 +3038,24 @@ async fn run_local_inner(local: LocalRun) -> Result<RunReport, WorkerError> {
             }
         }
     }
+    // the detail of the plane that ended the run for the merged reason; the archive finalization
+    // may have turned the reason into a failure that no plane detail explains
+    let detail = details.iter().copied().find(|detail| detail.reason() == reason);
     stores.finish_run(run.id, reason, &rc.cpu_pool, rc.worker).await?;
     let mut report = build_report(&stores, run.id).await?;
     report.browser_launches = rc.pool.launches();
     report.resume = url_resume;
     report.diagnostics = rc.diagnostics.take();
-    let _ = stores
-        .events
-        .append(
-            run.id,
-            "completed",
-            serde_json::json!({
-                "status": report.status.as_str(),
-                "terminalReason": reason.as_str(),
-                "counters": report.counters,
-            }),
-        )
-        .await;
+    report.terminal_detail = detail;
+    let mut terminal_event = serde_json::json!({
+        "status": report.status.as_str(),
+        "terminalReason": reason.as_str(),
+        "counters": report.counters,
+    });
+    if let Some(detail) = detail {
+        terminal_event["terminalDetail"] = serde_json::Value::from(detail.as_str());
+    }
+    let _ = stores.events.append(run.id, "completed", terminal_event).await;
     rc.supervisor.shutdown().await;
     if let Some(p) = proxy {
         report.egress = EgressCapture {
@@ -3453,6 +3460,7 @@ pub async fn build_report(stores: &Stores, run: CrawlRunId) -> Result<RunReport,
         run_id: run,
         status: row.status,
         terminal_reason: row.terminal_reason,
+        terminal_detail: None,
         counters: row.counters,
         states: stores.states.list_states(run).await?,
         actions: stores.journal.list(run, None).await?,

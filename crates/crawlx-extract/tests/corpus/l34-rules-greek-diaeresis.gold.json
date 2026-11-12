@@ -1,0 +1,88 @@
+{
+  "id": "l34-rules-greek-diaeresis",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "το|παϊδάκι|ψήνεται|αργά|ο|μάγειρας|προσθέτει|λίγο|ρίγανη|τρεις|γάτες|περιμένουν|έξω|από|την|κουζίνα",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "token",
+      "start": 5,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 43
+    },
+    {
+      "label": "token",
+      "start": 44,
+      "end": 46
+    },
+    {
+      "label": "token",
+      "start": 47,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 82
+    },
+    {
+      "label": "token",
+      "start": 83,
+      "end": 91
+    },
+    {
+      "label": "token",
+      "start": 92,
+      "end": 104
+    },
+    {
+      "label": "token",
+      "start": 105,
+      "end": 115
+    },
+    {
+      "label": "token",
+      "start": 116,
+      "end": 126
+    },
+    {
+      "label": "token",
+      "start": 127,
+      "end": 147
+    },
+    {
+      "label": "token",
+      "start": 148,
+      "end": 154
+    },
+    {
+      "label": "token",
+      "start": 155,
+      "end": 161
+    },
+    {
+      "label": "token",
+      "start": 162,
+      "end": 168
+    },
+    {
+      "label": "token",
+      "start": 169,
+      "end": 183
+    }
+  ]
+}

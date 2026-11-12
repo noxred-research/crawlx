@@ -1,0 +1,103 @@
+{
+  "id": "l52-rules-han-chinese-digits",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "2026|年|春|天|來|了|花|開|得|很|美|孩|子|們|在|河|邊|玩|耍",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "token",
+      "start": 5,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 20
+    },
+    {
+      "label": "token",
+      "start": 21,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 28
+    },
+    {
+      "label": "token",
+      "start": 29,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 40
+    },
+    {
+      "label": "token",
+      "start": 41,
+      "end": 44
+    },
+    {
+      "label": "token",
+      "start": 45,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 52
+    },
+    {
+      "label": "token",
+      "start": 53,
+      "end": 56
+    },
+    {
+      "label": "token",
+      "start": 57,
+      "end": 60
+    },
+    {
+      "label": "token",
+      "start": 61,
+      "end": 64
+    },
+    {
+      "label": "token",
+      "start": 65,
+      "end": 68
+    },
+    {
+      "label": "token",
+      "start": 69,
+      "end": 72
+    },
+    {
+      "label": "token",
+      "start": 73,
+      "end": 76
+    }
+  ]
+}

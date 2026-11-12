@@ -1,0 +1,13 @@
+{
+  "id": "d27-rejected-malformed-xml",
+  "family": "feed",
+  "note": "mismatched end tags are a typed XML error",
+  "expectedText": "Xml",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 3
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "m10-title-jsonld-name-only",
+  "family": "meta_exact",
+  "note": "an article node with a name and no headline: the name is the JSON-LD title evidence and outranks the Open Graph title",
+  "expectedText": "title=Cellar Door Opens This Saturday\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 37
+    },
+    {
+      "label": "language",
+      "start": 47,
+      "end": 49
+    }
+  ]
+}

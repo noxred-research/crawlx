@@ -28,6 +28,16 @@ struct Block {
     heading: bool,
     fingerprint: crawlx_core::hash::Digest,
     complete: bool,
+    /// Text and link characters of the element that holds this block.
+    parent_text: usize,
+    parent_links: usize,
+}
+impl Block {
+    /// A short block inside a small container that is mostly links: a teaser card of a
+    /// related-stories or promotion strip, not article text.
+    fn card(&self) -> bool {
+        self.parent_text <= 400 && self.parent_links.saturating_mul(10) >= self.parent_text.saturating_mul(3)
+    }
 }
 /// Selection owns only winning content; alternatives borrow block indices.
 pub(crate) struct ArticleSelection {
@@ -46,11 +56,35 @@ fn hint(e: &Elem, words: &[&str]) -> bool {
             .any(|token| words.iter().any(|word| token.eq_ignore_ascii_case(word)))
     })
 }
-pub(crate) fn terminal(e: &Elem) -> bool {
-    matches!(
-        e.tag.as_str(),
-        "p" | "pre" | "blockquote" | "table" | "figure" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-    ) || (!e.child_elems().any(|c| {
+/// Class/id words that mark site chrome: the shared negative list of the whole-page cleaner,
+/// except the comment words, which have their own handling, plus recommendation and legal-notice
+/// words that only matter for article selection.
+fn chrome_hint(e: &Elem) -> bool {
+    const EXTRA: [&str; 11] = [
+        "carousel",
+        "trending",
+        "popular",
+        "ranking",
+        "reco",
+        "recommendations",
+        "teaser",
+        "legal",
+        "copyright",
+        "disclaimer",
+        "signup",
+    ];
+    [e.attr("class"), e.attr("id")].into_iter().flatten().any(|s| {
+        s.split(|c: char| !c.is_alphanumeric()).any(|token| {
+            EXTRA.iter().any(|word| token.eq_ignore_ascii_case(word))
+                || readability::NEGATIVE.iter().any(|word| {
+                    token.eq_ignore_ascii_case(word) && !matches!(*word, "comment" | "comments" | "disqus")
+                })
+        })
+    })
+}
+/// Does `e` have a child element that is itself block-level content?
+fn has_block_child(e: &Elem) -> bool {
+    e.child_elems().any(|c| {
         matches!(
             c.tag.as_str(),
             "div"
@@ -61,6 +95,8 @@ pub(crate) fn terminal(e: &Elem) -> bool {
                 | "pre"
                 | "blockquote"
                 | "table"
+                | "dl"
+                | "details"
                 | "ul"
                 | "ol"
                 | "li"
@@ -71,10 +107,42 @@ pub(crate) fn terminal(e: &Elem) -> bool {
                 | "h5"
                 | "h6"
         )
-    }) && matches!(
+    })
+}
+pub(crate) fn terminal(e: &Elem) -> bool {
+    matches!(
         e.tag.as_str(),
-        "div" | "section" | "article" | "main" | "li" | "body"
-    ))
+        "p" | "pre"
+            | "blockquote"
+            | "table"
+            | "figure"
+            | "dl"
+            | "details"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+    ) || (!has_block_child(e)
+        && matches!(
+            e.tag.as_str(),
+            "div" | "section" | "article" | "main" | "li" | "body"
+        ))
+}
+/// Does a table hold another table below it? Such a table is page layout, not data.
+fn contains_table(e: &Elem) -> bool {
+    e.child_elems().any(|c| c.tag == "table" || contains_table(c))
+}
+/// Block boundary of the article scan. A data table is one block, like any table elsewhere; a
+/// layout table (one that nests another table) and its cells are walked so the page's header,
+/// side and footer cells are judged as separate blocks.
+fn scan_terminal(e: &Elem) -> bool {
+    match e.tag.as_str() {
+        "table" => !contains_table(e),
+        "td" | "th" => !has_block_child(e),
+        _ => terminal(e),
+    }
 }
 /// Small authored English function-word list, not a downloaded language dictionary.
 pub(crate) fn english_stopword(token: &str) -> bool {
@@ -93,6 +161,8 @@ struct Context {
     comment: bool,
     chrome: bool,
     terminal: bool,
+    parent_text: usize,
+    parent_links: usize,
 }
 struct Scan<'a> {
     blocks: Vec<Block>,
@@ -118,22 +188,9 @@ impl Scan<'_> {
         let comment = !self.forum && (ctx.comment || hint(e, &["comment", "comments", "replies", "disqus"]));
         let chrome = ctx.chrome
             || matches!(e.tag.as_str(), "nav" | "aside" | "footer" | "dialog")
-            || hint(
-                e,
-                &[
-                    "sidebar",
-                    "navigation",
-                    "advert",
-                    "advertisement",
-                    "related",
-                    "recommended",
-                    "cookie",
-                    "subscribe",
-                    "share",
-                ],
-            )
+            || chrome_hint(e)
             || (e.tag == "header" && !main);
-        let is_terminal = terminal(e);
+        let is_terminal = scan_terminal(e);
         if !ctx.terminal && is_terminal {
             if self.blocks.len() >= self.policy.max_blocks {
                 self.partial = true;
@@ -155,6 +212,8 @@ impl Scan<'_> {
                 chrome,
                 chars,
                 links: e.stats.link_len,
+                parent_text: ctx.parent_text,
+                parent_links: ctx.parent_links,
                 punctuation: value
                     .chars()
                     .filter(|c| matches!(c, '.' | '!' | '?' | '。' | '！' | '？' | ',' | '，'))
@@ -180,6 +239,8 @@ impl Scan<'_> {
                     comment,
                     chrome,
                     terminal: ctx.terminal || is_terminal,
+                    parent_text: e.stats.text_len,
+                    parent_links: e.stats.link_len,
                 },
             );
         }
@@ -195,6 +256,7 @@ fn good(b: &Block, focus: ContentFocusV1) -> bool {
     };
     !b.chrome
         && !b.comment
+        && !b.card()
         && b.links.saturating_mul(4) <= b.chars.max(1)
         && ((b.main && (b.chars >= 20 || b.heading))
             || (b.chars >= threshold && (b.punctuation > 0 || b.stopwords >= 3)))
@@ -505,6 +567,14 @@ pub(crate) fn select(
                 (!b.chrome && !b.comment && b.chars > 0 && b.links.saturating_mul(2) < b.chars).then_some(i)
             })
             .collect();
+    }
+    // A heading with nothing after it labels content that was not selected (a related-stories or
+    // sponsor label whose cards were left out): drop trailing headings, but never a page that
+    // is nothing but headings.
+    if chosen.iter().any(|&i| !scan.blocks[i].heading) {
+        while chosen.last().is_some_and(|&i| scan.blocks[i].heading) {
+            chosen.pop();
+        }
     }
     let mut partial = scan.partial;
     let mut chars = 0usize;

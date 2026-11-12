@@ -1,0 +1,13 @@
+{
+  "id": "d28-rejected-blank-body",
+  "family": "feed",
+  "note": "a blank body is not a feed",
+  "expectedText": "Policy::Protocol(unknown feed format)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 37
+    }
+  ]
+}

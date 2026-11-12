@@ -1,0 +1,103 @@
+{
+  "id": "l32-rules-greek-library-region",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "η|βιβλιοθήκη|κλείνει|το|σάββατο|οι|μαθητές|επιστρέφουν|τα|βιβλία|ο|βιβλιοθηκάριος|γράφει|τα|ονόματά|τους|σε|ένα|τετράδιο",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "token",
+      "start": 3,
+      "end": 23
+    },
+    {
+      "label": "token",
+      "start": 24,
+      "end": 38
+    },
+    {
+      "label": "token",
+      "start": 39,
+      "end": 43
+    },
+    {
+      "label": "token",
+      "start": 44,
+      "end": 58
+    },
+    {
+      "label": "token",
+      "start": 59,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 78
+    },
+    {
+      "label": "token",
+      "start": 79,
+      "end": 101
+    },
+    {
+      "label": "token",
+      "start": 102,
+      "end": 106
+    },
+    {
+      "label": "token",
+      "start": 107,
+      "end": 119
+    },
+    {
+      "label": "token",
+      "start": 120,
+      "end": 122
+    },
+    {
+      "label": "token",
+      "start": 123,
+      "end": 151
+    },
+    {
+      "label": "token",
+      "start": 152,
+      "end": 164
+    },
+    {
+      "label": "token",
+      "start": 165,
+      "end": 169
+    },
+    {
+      "label": "token",
+      "start": 170,
+      "end": 184
+    },
+    {
+      "label": "token",
+      "start": 185,
+      "end": 193
+    },
+    {
+      "label": "token",
+      "start": 194,
+      "end": 198
+    },
+    {
+      "label": "token",
+      "start": 199,
+      "end": 205
+    },
+    {
+      "label": "token",
+      "start": 206,
+      "end": 222
+    }
+  ]
+}

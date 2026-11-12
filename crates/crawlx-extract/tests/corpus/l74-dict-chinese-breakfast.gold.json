@@ -1,0 +1,63 @@
+{
+  "id": "l74-dict-chinese-breakfast",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "他|每天|早上|喝|牛奶|妹妹|喜欢|吃|苹果|和|香蕉",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 21
+    },
+    {
+      "label": "token",
+      "start": 22,
+      "end": 28
+    },
+    {
+      "label": "token",
+      "start": 29,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 46
+    },
+    {
+      "label": "token",
+      "start": 47,
+      "end": 53
+    },
+    {
+      "label": "token",
+      "start": 54,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 64
+    }
+  ]
+}

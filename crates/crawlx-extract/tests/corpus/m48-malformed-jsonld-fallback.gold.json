@@ -1,0 +1,23 @@
+{
+  "id": "m48-malformed-jsonld-fallback",
+  "family": "meta_exact",
+  "note": "the first JSON-LD block is not valid JSON and contributes nothing; the second block and the title element supply the facts",
+  "expectedText": "title=Tram Line Gets Two New Stops\nlanguage=en\npublished=2026-08-12",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 34
+    },
+    {
+      "label": "language",
+      "start": 44,
+      "end": 46
+    },
+    {
+      "label": "published",
+      "start": 57,
+      "end": 67
+    }
+  ]
+}

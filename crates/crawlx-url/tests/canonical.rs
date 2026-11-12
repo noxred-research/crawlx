@@ -485,3 +485,40 @@ fn throughput() {
         n as f64 / secs
     );
 }
+
+#[test]
+fn scope_max_url_length_bounds_raw_and_resolved_urls() {
+    let scope = crawlx_core::config::Scope {
+        max_url_length: 300,
+        ..crawlx_core::config::Scope::default()
+    };
+    let opts = CanonicalizeOptions::from_scope(&scope, [0; 32]);
+    assert_eq!(opts.max_url_len, 300);
+    let at_limit = format!(
+        "https://example.com/{}",
+        "a".repeat(300 - "https://example.com/".len())
+    );
+    assert!(Canonicalizer::canonicalize(&at_limit, &base(), &opts).is_ok());
+    let over = format!("{at_limit}a");
+    assert!(matches!(
+        Canonicalizer::canonicalize(&over, &base(), &opts),
+        Err(UrlError::TooLong { len: 301, max: 300 })
+    ));
+    // a short relative link that resolves past the limit is refused as well
+    let deep_base = Url::parse(&format!("https://example.com/{}/", "d".repeat(280))).unwrap();
+    assert!(matches!(
+        Canonicalizer::canonicalize(&"x".repeat(40), &deep_base, &opts),
+        Err(UrlError::TooLong { .. })
+    ));
+    // an already parsed redirect target goes through the same bound
+    let parsed = Url::parse(&over).unwrap();
+    assert!(matches!(
+        Canonicalizer::canonicalize_url(&parsed, &opts),
+        Err(UrlError::TooLong { .. })
+    ));
+    // the default scope keeps the historical 8 KiB bound
+    assert_eq!(
+        CanonicalizeOptions::from_scope(&crawlx_core::config::Scope::default(), [0; 32]).max_url_len,
+        8192
+    );
+}

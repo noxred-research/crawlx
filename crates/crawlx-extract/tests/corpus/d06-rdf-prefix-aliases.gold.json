@@ -1,0 +1,18 @@
+{
+  "id": "d06-rdf-prefix-aliases",
+  "family": "feed",
+  "note": "RDF with prefixed names: namespaces are matched by URI, not by prefix text, and elements of a foreign namespace are never promoted to pages",
+  "expectedText": "https://news.corpus.test/alias/one\nhttps://news.corpus.test/alias/two",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 34
+    },
+    {
+      "label": "item",
+      "start": 35,
+      "end": 69
+    }
+  ]
+}

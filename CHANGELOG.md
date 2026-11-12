@@ -8,6 +8,71 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Added: URL-plane referrer policy, URL length cap and run stop criteria
+
+The static plane sends an outbound `Referer` under `fetch.referrerPolicy` (default
+`no-referrer`) with credentials, fragment and secret query parameters removed, and judges the
+policy again on every redirect hop. A link longer than `scope.maxUrlLength` (default 8192) is
+refused as policy-blocked `url_too_long` and never fetched. New run stop criteria
+`limits.items`, `limits.errors`, `limits.idleSeconds` and `limits.diskPressurePermille` end the
+run when the first one holds and seal its producers; the idle criterion reads the run clock. The
+`completed` event, the run report and the `summary` report carry `terminalDetail`
+(`urls_limit`, `items_limit`, `errors_limit`, `idle_timeout`, `deadline`, `disk_pressure`,
+`seed_error`, `content_validation_failed`, `byte_limit`, `retries_exhausted`). Discovery order is
+the seed, the seed page's links, sitemap entries, then `robots.txt` paths, so a `limits.urls`
+crawl keeps the seed's neighbours deterministically.
+
+### Added: batch append, extract URL trace and bounded actor scripts
+
+Batch scrape accepts `appendToId`: the URLs join the unfinished batch's own queue under its
+concurrency ceiling, repeating a request adds nothing, and an unknown, foreign or finished
+batch answers 404 or 409. The batch status `total` counts appended URLs. Extract jobs report
+`urlTrace` (opt-in), listing every attempted page, failed ones included, in a stable order.
+Extension recipes accept a bounded `actorScript` (variables, a capped `REPEAT`, a compile-time
+`IF`) that compiles to the existing actor actions. `EVAL`, direct `SET`, runtime conditions,
+loops over the cap and unbound variables are refused before any run; the result still needs
+registry approval and passes action admission per step.
+
+### Added: regex and sentence chunking, embedding clusters, image pipeline and a wider corpus
+
+Chunking can cut the final privacy-projected text at a regular expression or at Unicode
+sentence boundaries. Patterns are admitted in linear time: backreferences, look-around and
+over-large patterns are refused. The scrape option `clusters` groups those chunks by embedding
+similarity with a deterministic seeded k-means: it needs `contentPolicy.chunks` and the
+operator's embedding model (`intel.embeddings`), caps the vector count before any call, returns
+source-only ranges in `data.clusters`, and answers `503 embeddings_not_configured` (or fails the
+page as `llm_not_configured`) when no model is configured. Images have a per-scope pipeline:
+scoped frontier re-entry, full-decode validation, checksum, store-once dedupe, CPU and byte
+quotas, and optional thumbnails. The extraction corpus now holds the minimum fixture sets for
+the article, focus, comments, metadata, language, sentence, selector and feed families, with a
+gate per family; article selection improved on layout tables, recommendation strips and legal
+notices.
+
+### Changed: fallible HTML tree construction
+
+Parsing builds its tree through a metering sink that charges every allocation it sees to the
+parse-memory reservation before it happens, reserves node storage fallibly, and returns the
+typed parse-memory error (dropping the partial tree) instead of allocating past the
+reservation. An allocation the process itself refuses is a terminal refusal, not transient
+pressure. The ceiling test checks that the model never undercounts the measured peak. A
+vendored tree crate adds the fallible node-storage reservation. The tokenizer's and tree
+builder's own buffers stay covered by the measured allowance.
+
+### Added: FTP credentials, bounded recursion and passive-address checks
+
+Native FTP can log in with credentials resolved by reference at registry load
+(`credentialRefs`); secrets never appear in configuration, URLs, results, errors or logs, and a
+credentialed origin never falls back to anonymous access. A registration with `recursion`
+(`maxDepth`, `maxEntries`) admits directory targets, discovered with `MLSD` and bounded by
+depth, entries, bytes and the shared request allowance; routes declare `ftp_credential_login`
+and `ftp_bounded_recursion`. A passive reply naming any address other than the control peer is
+refused before a data socket opens.
+
+### Fixed: compatibility-key serve test port race
+
+The compatibility-key serve test retries on a fresh port only when another process took its
+port between selection and bind.
+
 ### Added: write requests with retained bodies
 
 Native request append now accepts admitted `POST`, `PUT`, `PATCH` and `DELETE` requests with

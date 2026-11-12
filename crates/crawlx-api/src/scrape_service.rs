@@ -756,6 +756,15 @@ async fn scrape_url_inner(
     {
         crate::intel::common::llm(state)?;
     }
+    if parsed.options.clusters.is_some()
+        && !parsed
+            .options
+            .cache
+            .as_ref()
+            .is_some_and(|p| p.development_replay)
+    {
+        crate::intel::common::embeddings(state)?;
+    }
     let o = &parsed.options;
     if let Some(page) = stored_scrape(state, principal.tenant, url, parsed).await? {
         let run = state.repos.runs.get(page.run).await?;

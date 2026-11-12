@@ -9,11 +9,11 @@
 
 use std::collections::HashSet;
 
-use scraper::Html;
 use url::Url;
 
 use crate::dom::{resolve, walk};
 use crate::metadata::effective_base;
+use crate::parse_budget::{ParseBudgetExhausted, ParseCharge};
 use crate::ExtractOptions;
 
 /// Most media references returned for one page.
@@ -178,14 +178,20 @@ impl Collector {
 
 /// Media references of `html` in document order, at most [`MAX_MEDIA_REFS`]. `base` is the page
 /// URL; `<base href>` in the document refines it. Input beyond the default extraction limits
-/// yields an empty list. The parse is not charged to [`crate::parse_budget`]: callers hold a
-/// [`crate::parse_budget::charge`] around this call.
-#[must_use]
-pub fn media_refs(html: &str, base: &Url) -> Vec<MediaRef> {
+/// yields an empty list. The DOM is built under `charge`, a [`crate::parse_budget::charge`] the
+/// caller holds until the result is no longer needed.
+///
+/// # Errors
+/// [`ParseBudgetExhausted`] when the process-wide parse-memory budget cannot hold the tree.
+pub fn media_refs(
+    charge: &mut ParseCharge,
+    html: &str,
+    base: &Url,
+) -> Result<Vec<MediaRef>, ParseBudgetExhausted> {
     if crate::precheck(html, &ExtractOptions::default()).is_err() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let doc = Html::parse_document(html);
+    let doc = crate::dom::parse_document(charge, html)?;
     let mut c = Collector {
         base: effective_base(&doc, base),
         out: Vec::new(),
@@ -263,11 +269,12 @@ pub fn media_refs(html: &str, base: &Url) -> Vec<MediaRef> {
         true
     });
     let Collector { out, dropped, .. } = c;
-    out.into_iter()
+    Ok(out
+        .into_iter()
         .enumerate()
         .filter(|(i, _)| !dropped.contains(i))
         .map(|(_, r)| r)
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
@@ -278,6 +285,11 @@ mod tests {
 
     fn base() -> Url {
         Url::parse("https://example.com/shows/ep1").unwrap()
+    }
+
+    fn refs_of(html: &str) -> Vec<MediaRef> {
+        let mut charge = crate::parse_budget::charge(html.len()).unwrap();
+        media_refs(&mut charge, html, &base()).unwrap()
     }
 
     fn urls(refs: &[MediaRef], kind: MediaKind) -> Vec<&str> {
@@ -312,7 +324,7 @@ mod tests {
 
     #[test]
     fn collects_media_elements_meta_links_and_extension_anchors_in_document_order() {
-        let refs = media_refs(PAGE, &base());
+        let refs = refs_of(PAGE);
         assert_eq!(
             urls(&refs, MediaKind::Audio),
             [
@@ -364,7 +376,7 @@ mod tests {
     fn base_href_refines_resolution_and_non_http_urls_are_dropped() {
         let html = r#"<head><base href="https://media.example.net/root/"></head>
             <audio src="a.mp3"></audio><audio src="data:audio/mpeg;base64,AAAA"></audio>"#;
-        let refs = media_refs(html, &base());
+        let refs = refs_of(html);
         assert_eq!(
             urls(&refs, MediaKind::Audio),
             ["https://media.example.net/root/a.mp3"]
@@ -409,7 +421,7 @@ mod tests {
         let many: String = (0..MAX_MEDIA_REFS + 50)
             .map(|i| format!("<audio src=\"/a/{i}.mp3\"></audio>"))
             .collect();
-        assert_eq!(media_refs(&many, &base()).len(), MAX_MEDIA_REFS);
-        assert!(media_refs("", &base()).is_empty());
+        assert_eq!(refs_of(&many).len(), MAX_MEDIA_REFS);
+        assert!(refs_of("").is_empty());
     }
 }

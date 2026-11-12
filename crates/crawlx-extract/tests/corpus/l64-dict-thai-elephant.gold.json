@@ -1,0 +1,68 @@
+{
+  "id": "l64-dict-thai-elephant",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "ช้าง|ตัว|ใหญ่|เดิน|ข้าม|แม่น้ำ|ลิง|นั่ง|บน|ต้นไม้|ริม|ทาง",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 61
+    },
+    {
+      "label": "token",
+      "start": 62,
+      "end": 80
+    },
+    {
+      "label": "token",
+      "start": 81,
+      "end": 90
+    },
+    {
+      "label": "token",
+      "start": 91,
+      "end": 103
+    },
+    {
+      "label": "token",
+      "start": 104,
+      "end": 110
+    },
+    {
+      "label": "token",
+      "start": 111,
+      "end": 129
+    },
+    {
+      "label": "token",
+      "start": 130,
+      "end": 139
+    },
+    {
+      "label": "token",
+      "start": 140,
+      "end": 149
+    }
+  ]
+}

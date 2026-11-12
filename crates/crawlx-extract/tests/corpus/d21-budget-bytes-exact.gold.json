@@ -1,0 +1,13 @@
+{
+  "id": "d21-budget-bytes-exact",
+  "family": "feed",
+  "note": "byte budget equal to the document length: accepted",
+  "expectedText": "https://news.corpus.test/size/one",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 33
+    }
+  ]
+}

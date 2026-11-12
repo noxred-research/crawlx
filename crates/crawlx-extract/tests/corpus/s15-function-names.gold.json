@@ -1,0 +1,53 @@
+{
+  "id": "s15-function-names",
+  "family": "selector",
+  "note": "name functions: local-name, name, namespace-uri on elements and attributes, empty node-set, document root",
+  "expectedText": "\"h2\"\n\"circle\"\n\"http://www.w3.org/2000/svg\"\n\"http://www.w3.org/1999/xhtml\"\n\"value\"\nnine\n1\n\"\"\n\"\"",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "r2",
+      "start": 5,
+      "end": 13
+    },
+    {
+      "label": "r3",
+      "start": 14,
+      "end": 42
+    },
+    {
+      "label": "r4",
+      "start": 43,
+      "end": 73
+    },
+    {
+      "label": "r5",
+      "start": 74,
+      "end": 81
+    },
+    {
+      "label": "r6",
+      "start": 82,
+      "end": 86
+    },
+    {
+      "label": "r7",
+      "start": 87,
+      "end": 88
+    },
+    {
+      "label": "r8",
+      "start": 89,
+      "end": 91
+    },
+    {
+      "label": "r9",
+      "start": 92,
+      "end": 94
+    }
+  ]
+}

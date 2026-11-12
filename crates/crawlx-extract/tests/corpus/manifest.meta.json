@@ -1,0 +1,1723 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "m05-title-og-card-title-h1",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/title-og-card-title-h1",
+      "files": {
+        "input": {
+          "path": "m05-title-og-card-title-h1.html",
+          "sha256": "c1b3043c47fd5f3c3ab5a41090529852fe3af54a498c36a1de8e4e2bab6e8e38"
+        },
+        "gold": {
+          "path": "m05-title-og-card-title-h1.gold.json",
+          "sha256": "b45a3ec49ec05fe18459b2bd803fbb3521e51497b3fa1344eedd82a2861246ae"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "og:title",
+                "Harbour Ferry Adds Evening Sailings"
+              ],
+              [
+                "twitter:title",
+                "Ferry Adds Evenings"
+              ],
+              [
+                "document_fallback",
+                "Harbour Ferry Adds Evening Sailings"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          },
+          "language": {
+            "evidence": [
+              [
+                "document_fallback",
+                "en"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m06-title-jsonld-headline-wins",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/title-jsonld-headline-wins",
+      "files": {
+        "input": {
+          "path": "m06-title-jsonld-headline-wins.html",
+          "sha256": "84ef9d8e7771cb9c6449cd2a007da3296994bc2ff7430133cab364aec5fa4e27"
+        },
+        "gold": {
+          "path": "m06-title-jsonld-headline-wins.gold.json",
+          "sha256": "f24e69db2c507497ab98076fb654046d917ee3929829637ed1313f6ef4d9f2c0"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "Lantern Festival Returns to Old Quay"
+              ],
+              [
+                "name",
+                "Lantern Festival 2026"
+              ],
+              [
+                "og:title",
+                "Lantern Festival Returns | Old Quay Times"
+              ],
+              [
+                "document_fallback",
+                "Lantern Festival Returns | Old Quay Times"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m07-title-card-only",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/title-card-only",
+      "files": {
+        "input": {
+          "path": "m07-title-card-only.html",
+          "sha256": "dfb70fa1e24390c0ccb90e085ea8b62c4b124ae9a97766c8051e21d055a41d0e"
+        },
+        "gold": {
+          "path": "m07-title-card-only.gold.json",
+          "sha256": "bc16394ebfcf4ea08c09816b3cc805059dbcd1f39a1edcf4f1e705f9eba1a985"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "twitter:title",
+                "Bakery Strike Ends After Three Days"
+              ],
+              [
+                "document_fallback",
+                "Bakery strike ends - Daily Crumb"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m08-title-element-suffix-kept",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/title-element-suffix-kept",
+      "files": {
+        "input": {
+          "path": "m08-title-element-suffix-kept.html",
+          "sha256": "5fc316d8dbf9c29fe043fbdb64aadea6f8ea46ccbd0bd4d653522f7f238d138f"
+        },
+        "gold": {
+          "path": "m08-title-element-suffix-kept.gold.json",
+          "sha256": "edbb059b218bd71978e383160ef23b56c8d8624add241692905e712f6c28d660"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "document_fallback",
+                "Ridge Trail Closed for Nesting Season - Hillside Courier"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "language": {
+            "evidence": [
+              [
+                "document_fallback",
+                "en"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m09-title-h1-only",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/title-h1-only",
+      "files": {
+        "input": {
+          "path": "m09-title-h1-only.html",
+          "sha256": "70c1ad3473ec2b0a7ede8901b4b231e843aa05cfdcfc889fd4a8b0369abb0ce6"
+        },
+        "gold": {
+          "path": "m09-title-h1-only.gold.json",
+          "sha256": "3bc00123b8ab5691fab15ab471e754f1bd56b0a16b427a348ba3ec82e56c387f"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "document_fallback",
+                "Greenhouse Tomatoes Ripen Early"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m10-title-jsonld-name-only",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/title-jsonld-name-only",
+      "files": {
+        "input": {
+          "path": "m10-title-jsonld-name-only.html",
+          "sha256": "96924a020b9ff89d8cc0a4e2d63b5a59d3a504ce5b03557656b54e39fa8ebde2"
+        },
+        "gold": {
+          "path": "m10-title-jsonld-name-only.gold.json",
+          "sha256": "477d456e7399e4a6c28e1ef1bb59dd6fb1da1b3bd26a6c61640c5d584a12e114"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "name",
+                "Cellar Door Opens This Saturday"
+              ],
+              [
+                "og:title",
+                "Cellar Door Opens Saturday"
+              ],
+              [
+                "document_fallback",
+                "Cellar Door Opens Saturday"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m11-graph-multi-typed-nodes",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/graph-multi-typed-nodes",
+      "files": {
+        "input": {
+          "path": "m11-graph-multi-typed-nodes.html",
+          "sha256": "8a324dada7ee56363322d6c40399a1067dfd474d25a49bb49cbd94fa3effe27d"
+        },
+        "gold": {
+          "path": "m11-graph-multi-typed-nodes.gold.json",
+          "sha256": "d39be8015b59033c00901a6805760e9104c58a66ba3d25d3bee34398542e1712"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "Seed Swap Draws a Record Crowd"
+              ],
+              [
+                "document_fallback",
+                "Seed Swap Draws a Record Crowd"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "authors": {
+            "evidence": [
+              [
+                "article.author",
+                "Ruth Calloway"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "publisher": {
+            "evidence": [
+              [
+                "publisher",
+                "Fenwick Cooperative"
+              ],
+              [
+                "og:site_name",
+                "Fenwick Notes"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          },
+          "language": {
+            "evidence": [
+              [
+                "inLanguage",
+                "en"
+              ],
+              [
+                "document_fallback",
+                "en-US"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          },
+          "published": {
+            "evidence": [
+              [
+                "datePublished",
+                "2026-03-21"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m12-graph-id-reference-publisher",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/graph-id-reference-publisher",
+      "files": {
+        "input": {
+          "path": "m12-graph-id-reference-publisher.html",
+          "sha256": "41d4ea37e49841c8c5e205ab20c4a9f2169f04b2eba01f04aa4df9212047f662"
+        },
+        "gold": {
+          "path": "m12-graph-id-reference-publisher.gold.json",
+          "sha256": "be0bb73d3fbd8b5c6339887a00b31b5da3d1184289d8c9afb03aaf1de66bbdcc"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "Stone Bridge Reopens to Cyclists"
+              ],
+              [
+                "document_fallback",
+                "Stone Bridge Reopens to Cyclists"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        },
+        "knownMiss": {
+          "authors": "graph @id references are not dereferenced",
+          "publisher": "graph @id references are not dereferenced"
+        }
+      }
+    },
+    {
+      "id": "m13-graph-main-entity-nested",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/graph-main-entity-nested",
+      "files": {
+        "input": {
+          "path": "m13-graph-main-entity-nested.html",
+          "sha256": "2454d9d63a5c6554ade1725615d7c5c7cc7932d2e121785309f568a5b311c5a9"
+        },
+        "gold": {
+          "path": "m13-graph-main-entity-nested.gold.json",
+          "sha256": "56689ab4b5fcb53ffd6fe131141bf22f5946bd617466759d9495ff05dd150072"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "Reef Survey Finds Early Recovery"
+              ],
+              [
+                "document_fallback",
+                "Reef Survey Finds Early Recovery"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "authors": {
+            "evidence": [
+              [
+                "article.author",
+                "Ibrahim Sorel"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "modified": {
+            "evidence": [
+              [
+                "dateModified",
+                "2026-02-02T10:00:00Z"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m14-graph-two-articles",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/graph-two-articles",
+      "files": {
+        "input": {
+          "path": "m14-graph-two-articles.html",
+          "sha256": "c55c52649d90728e5577e7e188aca85cab4acd4b695e136ab51111121c3377c9"
+        },
+        "gold": {
+          "path": "m14-graph-two-articles.gold.json",
+          "sha256": "5c61727e11c1aa342caeff55f6e8770d8376473f7043eb70047dc6ad01b17f50"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "Weir Gates Replaced Ahead of Spring Flood"
+              ],
+              [
+                "headline",
+                "Ten Walks Along the River"
+              ],
+              [
+                "og:title",
+                "Weir Gates Replaced Ahead of Spring Flood"
+              ],
+              [
+                "document_fallback",
+                "Weir Gates Replaced Ahead of Spring Flood"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          },
+          "authors": {
+            "evidence": [
+              [
+                "article.author",
+                "Yara Teixeira"
+              ],
+              [
+                "article.author",
+                "Colm Dwyer"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m15-date-jsonld-offset-vs-time",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-jsonld-offset-vs-time",
+      "files": {
+        "input": {
+          "path": "m15-date-jsonld-offset-vs-time.html",
+          "sha256": "b37037a715b43cd81bf51cd2fe69a21dda0cf14da791a932b2d7c0c62d5dd873"
+        },
+        "gold": {
+          "path": "m15-date-jsonld-offset-vs-time.gold.json",
+          "sha256": "9aa8551cbb8d2c6f9af1fd86919999cc54ac696df153dd9ff228da11742effbb"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "datePublished",
+                "2026-04-02T23:30:00-05:00"
+              ],
+              [
+                "visible_time",
+                "2026-04-03T04:30:00Z"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          },
+          "modified": {
+            "evidence": [
+              [
+                "dateModified",
+                "2026-04-03T08:10:00-05:00"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m16-date-meta-published-modified",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-meta-published-modified",
+      "files": {
+        "input": {
+          "path": "m16-date-meta-published-modified.html",
+          "sha256": "5af1f504d8d3000ff6f9b2c35a61c2e33f155e2ac3450c0d06071e1e7881ed71"
+        },
+        "gold": {
+          "path": "m16-date-meta-published-modified.gold.json",
+          "sha256": "a68005abd7e8eb43b7f5918620c83711b3f547cc85f29075aecb18b5ab543368"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "article:published_time",
+                "2026-01-09T07:00:00Z"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "modified": {
+            "evidence": [
+              [
+                "article:modified_time",
+                "2026-01-12T16:45:00+00:00"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m17-date-locale-en-gb",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-locale-en-gb",
+      "files": {
+        "input": {
+          "path": "m17-date-locale-en-gb.html",
+          "sha256": "c9d14cdc1b18161e49f5a7337385a1f6896f6ef1b41a698168b5ff7322cec859"
+        },
+        "gold": {
+          "path": "m17-date-locale-en-gb.gold.json",
+          "sha256": "ee2eff3949aafb2de24730ad7e3f3cd2f4c32f2b320c0894fc501306f5318216"
+        }
+      },
+      "params": {
+        "policy": {
+          "locale": "en-GB"
+        },
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "visible_time",
+                "03/04/2026"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m18-date-locale-en-us",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-locale-en-us",
+      "files": {
+        "input": {
+          "path": "m18-date-locale-en-us.html",
+          "sha256": "79f3f856672f168e8ab76ea677a9643c2cf4100c8ed2098af75573d554b00363"
+        },
+        "gold": {
+          "path": "m18-date-locale-en-us.gold.json",
+          "sha256": "6b0d0a77e1911b6654cc93176541eac31ecb0c0761e675e09edc8c5b4a69f904"
+        }
+      },
+      "params": {
+        "policy": {
+          "locale": "en-US"
+        },
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "visible_time",
+                "03/04/2026"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m19-date-locale-absent-ambiguous",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-locale-absent-ambiguous",
+      "files": {
+        "input": {
+          "path": "m19-date-locale-absent-ambiguous.html",
+          "sha256": "8f0714c5e64e458157f88fc5b4d38425cf79880e88db65399a009e47d1a6d755"
+        },
+        "gold": {
+          "path": "m19-date-locale-absent-ambiguous.gold.json",
+          "sha256": "6baa0a8633d52fe52cf2aa135b25b064b4f7dc1d5c5902d04eafebe65d3ba11e"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "visible_time",
+                "03/04/2026"
+              ]
+            ],
+            "winner": null,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m20-date-naive-with-timezone",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-naive-with-timezone",
+      "files": {
+        "input": {
+          "path": "m20-date-naive-with-timezone.html",
+          "sha256": "478daa4120c9f1cfc881fb79efd9e0978afd2ba83f809f3d95a8ecf70b29285f"
+        },
+        "gold": {
+          "path": "m20-date-naive-with-timezone.gold.json",
+          "sha256": "e31a265d11aa4faf7c26c8f1cc0f5c5272755b236463ba703633dbe5b4b544ac"
+        }
+      },
+      "params": {
+        "policy": {
+          "dateTimezone": "Asia/Tokyo"
+        },
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "article:published_time",
+                "2026-06-18T22:15:00"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m21-date-naive-no-timezone",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-naive-no-timezone",
+      "files": {
+        "input": {
+          "path": "m21-date-naive-no-timezone.html",
+          "sha256": "9e9e9ac075569f6887c5d81edff975ba0ca00d631d95815971098830833d5ee4"
+        },
+        "gold": {
+          "path": "m21-date-naive-no-timezone.gold.json",
+          "sha256": "7f314161fc5873627184ee0dcce4e5b62fcad64b9c8c3d831fa7767fef5dffbe"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "article:published_time",
+                "2026-06-18T22:15:00"
+              ]
+            ],
+            "winner": null,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m22-date-url-calendar-hint",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/2026/02/19/orchard-survey",
+      "files": {
+        "input": {
+          "path": "m22-date-url-calendar-hint.html",
+          "sha256": "0966dadd804f67d85599d69fa0ad0aa60f852178aa92b8b6ee2a664e682035b2"
+        },
+        "gold": {
+          "path": "m22-date-url-calendar-hint.gold.json",
+          "sha256": "b60e08fa6819873664a87d276c56a9515218f4e3596fdc0167a97736b0fbe3cb"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "url_calendar_hint",
+                "2026/02/19"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m23-date-url-hint-vs-meta",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/2025/12/30/salt-pans",
+      "files": {
+        "input": {
+          "path": "m23-date-url-hint-vs-meta.html",
+          "sha256": "6c43ed973f136eee019a51b1038b13e0a21c15f142f7b659740ee48561028705"
+        },
+        "gold": {
+          "path": "m23-date-url-hint-vs-meta.gold.json",
+          "sha256": "4f4b8ebf21d0526fb9ad00cc4233b150f19b19b7138a2ea61a1ccde5b0c52271"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "article:published_time",
+                "2026-01-02T00:10:00+00:00"
+              ],
+              [
+                "url_calendar_hint",
+                "2025/12/30"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m24-date-future-rejected",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-future-rejected",
+      "files": {
+        "input": {
+          "path": "m24-date-future-rejected.html",
+          "sha256": "6c4e6a04fe5596339bbe776db7270daecf3c48362f193a1eee8c80e0b2a3a800"
+        },
+        "gold": {
+          "path": "m24-date-future-rejected.gold.json",
+          "sha256": "e2adbbef7b9a710773eb699692a8f5a977adee215c8d5a6e8577eb6e2d2a092e"
+        }
+      },
+      "params": {
+        "policy": {
+          "referenceDate": "2026-03-01"
+        },
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "article:published_time",
+                "2026-09-30"
+              ],
+              [
+                "visible_time",
+                "2026-02-27"
+              ]
+            ],
+            "winner": 1,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m25-date-itemprop-time-elements",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-itemprop-time-elements",
+      "files": {
+        "input": {
+          "path": "m25-date-itemprop-time-elements.html",
+          "sha256": "4005d1412a5ee8c6ee5ea96315929ff87c7449a634609a5e8af2ee95c1c40a42"
+        },
+        "gold": {
+          "path": "m25-date-itemprop-time-elements.gold.json",
+          "sha256": "f6d2f8d640d2c66e8dbcde0f58e341f174c03a229d5202762f73d9ce47784729"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "visible_time",
+                "2026-07-01"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "modified": {
+            "evidence": [
+              [
+                "visible_time",
+                "2026-07-05"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m26-date-month-name-text",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-month-name-text",
+      "files": {
+        "input": {
+          "path": "m26-date-month-name-text.html",
+          "sha256": "b0732de3f23d91eb6f6ae7059796bb673368354f373726996778993318401b7d"
+        },
+        "gold": {
+          "path": "m26-date-month-name-text.gold.json",
+          "sha256": "5ce717e32331d090e61b79695a0055948c7b6ebf1d619290206ebac89da4f655"
+        }
+      },
+      "params": {
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "visible_time",
+                "14 March 2026"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m27-date-german-locale",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/date-german-locale",
+      "files": {
+        "input": {
+          "path": "m27-date-german-locale.html",
+          "sha256": "7752c63b85fff2871f338e7ea08b316a5bf039ed726cf3dae5b5148503100779"
+        },
+        "gold": {
+          "path": "m27-date-german-locale.gold.json",
+          "sha256": "36f3ac86356b2ac64eb26fe8e2682e7320b7c6d10906dbfb699315847fd75aaa"
+        }
+      },
+      "params": {
+        "policy": {
+          "locale": "de-DE"
+        },
+        "fields": {
+          "published": {
+            "evidence": [
+              [
+                "visible_time",
+                "4. März 2026"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "language": {
+            "evidence": [
+              [
+                "document_fallback",
+                "de"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m28-authors-jsonld-person-array",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/authors-jsonld-person-array",
+      "files": {
+        "input": {
+          "path": "m28-authors-jsonld-person-array.html",
+          "sha256": "43d4befeb22e85a9b5d5c0172cda902450fa304e624031d4628648cd2ede4f97"
+        },
+        "gold": {
+          "path": "m28-authors-jsonld-person-array.gold.json",
+          "sha256": "c588ed7c95383539a0fc58f4e01785e01ca4df300334bc1f36dc81b071734d62"
+        }
+      },
+      "params": {
+        "fields": {
+          "authors": {
+            "evidence": [
+              [
+                "article.author",
+                "Ilse Brandt"
+              ],
+              [
+                "article.author",
+                "Tomas Okoro"
+              ],
+              [
+                "article.author",
+                "Wen Zhao"
+              ],
+              [
+                "author",
+                "Staff Desk"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m29-authors-multiple-meta",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/authors-multiple-meta",
+      "files": {
+        "input": {
+          "path": "m29-authors-multiple-meta.html",
+          "sha256": "30d850ebbdffdd70cf43874482da71c3ee18525fd34edf511c7bdfa507db8fc1"
+        },
+        "gold": {
+          "path": "m29-authors-multiple-meta.gold.json",
+          "sha256": "ec8827d1ad6a19ce4d5865eaa80ffa4cf89f94661f9f49ea489be979aa9bea67"
+        }
+      },
+      "params": {
+        "fields": {
+          "authors": {
+            "evidence": [
+              [
+                "author",
+                "Dara Quinlan"
+              ],
+              [
+                "author",
+                "Joss Eriksen"
+              ],
+              [
+                "author",
+                "Mina Takeda"
+              ],
+              [
+                "author",
+                "Dara Quinlan"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m30-authors-visible-rel-itemprop",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/authors-visible-rel-itemprop",
+      "files": {
+        "input": {
+          "path": "m30-authors-visible-rel-itemprop.html",
+          "sha256": "cbedaaba49c8cf58d2837f1d643cacff4b615f94cfdca87e14e5246557fa062d"
+        },
+        "gold": {
+          "path": "m30-authors-visible-rel-itemprop.gold.json",
+          "sha256": "0b4df0381cf87229c2106f864182df41d396283454055f094fc767eaf2be5b62"
+        }
+      },
+      "params": {
+        "fields": {
+          "authors": {
+            "evidence": [
+              [
+                "visible_author",
+                "Hanne Ostby"
+              ],
+              [
+                "visible_author",
+                "Pavel Roth"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m31-authors-itemprop-nested-name",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/authors-itemprop-nested-name",
+      "files": {
+        "input": {
+          "path": "m31-authors-itemprop-nested-name.html",
+          "sha256": "2c108317af56e892b1d0b09cceb350545bf61beeef8305d0c2f75bb9e0dc415e"
+        },
+        "gold": {
+          "path": "m31-authors-itemprop-nested-name.gold.json",
+          "sha256": "a2ebd7d8d812b1a4143751b29b9dd79fb7367812df95296febcf28afc8afab79"
+        }
+      },
+      "params": {
+        "fields": {
+          "authors": {
+            "evidence": [
+              [
+                "visible_author",
+                "Corrie Lund"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m32-authors-by-and-plain",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/authors-by-and-plain",
+      "files": {
+        "input": {
+          "path": "m32-authors-by-and-plain.html",
+          "sha256": "0104544c0d83ce702b00ee6c24e99f4bb7677aa3ff0ab7aa8560d411679ceee4"
+        },
+        "gold": {
+          "path": "m32-authors-by-and-plain.gold.json",
+          "sha256": "9e1790ca2344a130d27b4951fd0c4a3bbcfe56bea4d839f18a37fdc30c0894f7"
+        }
+      },
+      "params": {
+        "knownMiss": {
+          "authors": "plain by-line text without author markup is not parsed"
+        }
+      }
+    },
+    {
+      "id": "m33-authors-by-and-rel-author",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/authors-by-and-rel-author",
+      "files": {
+        "input": {
+          "path": "m33-authors-by-and-rel-author.html",
+          "sha256": "b27b393213534c6394ce241f55e34031e1b86d48e65a312ef953b64ba6a856b8"
+        },
+        "gold": {
+          "path": "m33-authors-by-and-rel-author.gold.json",
+          "sha256": "1a0b7fd366f39e6000ba0acffba3d632372f62f77a97086a9fe0c07334c26b41"
+        }
+      },
+      "params": {
+        "knownMiss": {
+          "authors": "a single author element holding By A and B is not split"
+        }
+      }
+    },
+    {
+      "id": "m34-authors-three-way-conflict",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/authors-three-way-conflict",
+      "files": {
+        "input": {
+          "path": "m34-authors-three-way-conflict.html",
+          "sha256": "2adf6de766c4ecd2f0751ec4cff2297a95a384c9d5094351aa4401d1b9e60078"
+        },
+        "gold": {
+          "path": "m34-authors-three-way-conflict.gold.json",
+          "sha256": "8a189570db463c078396ca545808ca3f866f59744fd1a9e842914ee4cf94b01b"
+        }
+      },
+      "params": {
+        "fields": {
+          "authors": {
+            "evidence": [
+              [
+                "article.author",
+                "Gus Marlow"
+              ],
+              [
+                "author",
+                "Marlow, G."
+              ],
+              [
+                "visible_author",
+                "Gus Marlow"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m35-canonical-link-vs-ogurl",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/guides/pickling-basics?utm=feed",
+      "files": {
+        "input": {
+          "path": "m35-canonical-link-vs-ogurl.html",
+          "sha256": "3d4a1c9736b981e681d1e3a3df95ad5dd5b5940684b700076d3c8f57d12b1054"
+        },
+        "gold": {
+          "path": "m35-canonical-link-vs-ogurl.gold.json",
+          "sha256": "abb51133b38639fbaf7b44c948535c35f6dfed5aa497a15551b0c6ca39efe546"
+        }
+      }
+    },
+    {
+      "id": "m36-canonical-relative-base-href",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/p/17",
+      "files": {
+        "input": {
+          "path": "m36-canonical-relative-base-href.html",
+          "sha256": "3fdebf471c9ae0db24d5eaebfea9b5410da95371e0743bd717406edfd2495322"
+        },
+        "gold": {
+          "path": "m36-canonical-relative-base-href.gold.json",
+          "sha256": "8e573eda666e4fe0c4ef49598e63a758bb429ac24963931847779116c3db60aa"
+        }
+      }
+    },
+    {
+      "id": "m37-canonical-ogurl-only-relative",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/p/kelp?x=1",
+      "files": {
+        "input": {
+          "path": "m37-canonical-ogurl-only-relative.html",
+          "sha256": "a3343f46cb86152c6e4772fa4e8b2c8b2567bf38e96f9e23a77a4676f7550447"
+        },
+        "gold": {
+          "path": "m37-canonical-ogurl-only-relative.gold.json",
+          "sha256": "a4500363aaf855c717c0fa2b4d3a254f4f3231ac06e5c657e6fab044cbb38e1a"
+        }
+      }
+    },
+    {
+      "id": "m38-canonical-invalid-scheme-skipped",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/canonical-invalid-scheme-skipped",
+      "files": {
+        "input": {
+          "path": "m38-canonical-invalid-scheme-skipped.html",
+          "sha256": "fb8a2130417ff87d0282251fb9b34d66f0d64d06aef80012a0bb7f53fc52587a"
+        },
+        "gold": {
+          "path": "m38-canonical-invalid-scheme-skipped.gold.json",
+          "sha256": "31e6717c2145f98e565ad1243a2d0402eeba60bd738b662f849f0087b3efd50a"
+        }
+      }
+    },
+    {
+      "id": "m39-rights-copyright-and-license-anchor",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/rights-copyright-and-license-anchor",
+      "files": {
+        "input": {
+          "path": "m39-rights-copyright-and-license-anchor.html",
+          "sha256": "c45263f3ae3982d1ee6efcf2827e6b51db94142850a327bd7fe81427b1c46bdb"
+        },
+        "gold": {
+          "path": "m39-rights-copyright-and-license-anchor.gold.json",
+          "sha256": "0523f8ed5fe298b2cd7481e97f14bad144ff21826ca918278faa180f55158910"
+        }
+      }
+    },
+    {
+      "id": "m40-rights-dc-rights-precedence",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/rights-dc-rights-precedence",
+      "files": {
+        "input": {
+          "path": "m40-rights-dc-rights-precedence.html",
+          "sha256": "5e4bf26ae3824888a1581d2a3714dd055654573e21a5b8d7a929efc33824f10d"
+        },
+        "gold": {
+          "path": "m40-rights-dc-rights-precedence.gold.json",
+          "sha256": "f494efa476b0e937aeecdd4e4b00eb6ed64cabb14df367c67f3a09c28040bf0a"
+        }
+      }
+    },
+    {
+      "id": "m41-license-link-head-only",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/license-link-head-only",
+      "files": {
+        "input": {
+          "path": "m41-license-link-head-only.html",
+          "sha256": "010c56fffe3b56e79e62d199f26b30beacd6e9f5e753b04755abb6ec82f5bc1a"
+        },
+        "gold": {
+          "path": "m41-license-link-head-only.gold.json",
+          "sha256": "9fa95612ac01097d01575cbe60b8331746722cc1f8e9d7415ff687f7b4b8d89f"
+        }
+      },
+      "params": {
+        "knownMiss": {
+          "license": "link elements with rel=license are not surfaced"
+        }
+      }
+    },
+    {
+      "id": "m42-lang-conflict-og-html",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/lang-conflict-og-html",
+      "files": {
+        "input": {
+          "path": "m42-lang-conflict-og-html.html",
+          "sha256": "5bb05de1aa42a77dadbd5c341f3446f556bb950115f4d84d748d5f8c37b36c57"
+        },
+        "gold": {
+          "path": "m42-lang-conflict-og-html.gold.json",
+          "sha256": "6bfa50605ce6e24158cbb6a23ad547fe5eac272bf84df5ce47fe529bfe8ba66f"
+        }
+      },
+      "params": {
+        "fields": {
+          "language": {
+            "evidence": [
+              [
+                "og:locale",
+                "es_MX"
+              ],
+              [
+                "document_fallback",
+                "es"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m43-lang-jsonld-inlanguage-wins",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/lang-jsonld-inlanguage-wins",
+      "files": {
+        "input": {
+          "path": "m43-lang-jsonld-inlanguage-wins.html",
+          "sha256": "ab22a2f87625317f3e2f8252fe3b37b9abca5ca2fa39875b664ce67184e826b2"
+        },
+        "gold": {
+          "path": "m43-lang-jsonld-inlanguage-wins.gold.json",
+          "sha256": "62b1232727471043b25da072e8ec5816a011430d17392ed4d60c1f1ecb3200bb"
+        }
+      },
+      "params": {
+        "fields": {
+          "language": {
+            "evidence": [
+              [
+                "inLanguage",
+                "pt-BR"
+              ],
+              [
+                "og:locale",
+                "pt_BR"
+              ],
+              [
+                "document_fallback",
+                "en"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m44-lang-invalid-declared",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/lang-invalid-declared",
+      "files": {
+        "input": {
+          "path": "m44-lang-invalid-declared.html",
+          "sha256": "2eeb9fc3bd440f758e2a308fc46e648fd57746d36c7b63452496536399b80b40"
+        },
+        "gold": {
+          "path": "m44-lang-invalid-declared.gold.json",
+          "sha256": "62a73482d086b99bbc4d342a2c31f31582e8ad3fc7f7d61858f23f7b095711a6"
+        }
+      },
+      "params": {
+        "fields": {
+          "language": {
+            "evidence": [
+              [
+                "document_fallback",
+                "english"
+              ]
+            ],
+            "winner": null,
+            "uncertain": true
+          }
+        }
+      }
+    },
+    {
+      "id": "m45-lang-http-equiv-fallback",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/lang-http-equiv-fallback",
+      "files": {
+        "input": {
+          "path": "m45-lang-http-equiv-fallback.html",
+          "sha256": "8aacde9efa79df2bad9c3e85d6d3f93aaaf9107f8ef1f6a4705d527ebcaf84dd"
+        },
+        "gold": {
+          "path": "m45-lang-http-equiv-fallback.gold.json",
+          "sha256": "dd372dc730c2fdea9442e39eb0b1c5c11dcd9f824def571a7260f0152c2d9e80"
+        }
+      },
+      "params": {
+        "fields": {
+          "language": {
+            "evidence": [
+              [
+                "document_fallback",
+                "nl-NL"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m46-keywords-section-image",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/keywords-section-image",
+      "files": {
+        "input": {
+          "path": "m46-keywords-section-image.html",
+          "sha256": "e1096afbfc8c053e3a0374ec9388b8aea934c41461928273ec1cc5472c8b0dcf"
+        },
+        "gold": {
+          "path": "m46-keywords-section-image.gold.json",
+          "sha256": "70fd7c55fe3498d58c0ebc673397492908858f18c951c6c3c5c4655afe5552ac"
+        }
+      },
+      "params": {
+        "discovery": [
+          [
+            "image_reference",
+            "https://img.corpus.test/kelp/hero.jpg"
+          ],
+          [
+            "image_reference",
+            "https://img.corpus.test/kelp/square.jpg"
+          ],
+          [
+            "image_reference",
+            "https://img.corpus.test/kelp/farm.jpg"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "m47-image-relative-with-base",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/image-relative-with-base",
+      "files": {
+        "input": {
+          "path": "m47-image-relative-with-base.html",
+          "sha256": "86baf2dd2ea8f9b8217ab977e0bcb55c174a26e3d30cfbe0e2a4eea5e6cb2f7a"
+        },
+        "gold": {
+          "path": "m47-image-relative-with-base.gold.json",
+          "sha256": "0ff5e8eaffc60d8d1c1e3ba2a1831938aa4ea2680330dd01f59e9aa416bddae9"
+        }
+      },
+      "params": {
+        "discovery": [
+          [
+            "image_reference",
+            "https://media.corpus.test/set/covers/dock.png"
+          ],
+          [
+            "image_reference",
+            "https://media.corpus.test/inline/crane.png"
+          ],
+          [
+            "read_more_reference",
+            "https://media.corpus.test/set/part-2"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "m48-malformed-jsonld-fallback",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/malformed-jsonld-fallback",
+      "files": {
+        "input": {
+          "path": "m48-malformed-jsonld-fallback.html",
+          "sha256": "04579c4e98e9954cd5438c4677fc298ef15c0515836f86a39b1856174c549517"
+        },
+        "gold": {
+          "path": "m48-malformed-jsonld-fallback.gold.json",
+          "sha256": "ad05156a67603329bcea6648cfa13b338cf0c380c92b720131d97d680cb91e0a"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "Tram Line Gets Two New Stops"
+              ],
+              [
+                "document_fallback",
+                "Tram Line Gets Two New Stops | City Transit Notes"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          },
+          "published": {
+            "evidence": [
+              [
+                "datePublished",
+                "2026-08-12"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        },
+        "canaryAbsent": [
+          "CANARY-BROKEN"
+        ],
+        "jsonLdBlocks": 1
+      }
+    },
+    {
+      "id": "m49-script-canary-not-selected",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/script-canary-not-selected",
+      "files": {
+        "input": {
+          "path": "m49-script-canary-not-selected.html",
+          "sha256": "9c930887fc83c76f82c9a622650cd0dab79562f858a1b253afcabe2325aaba28"
+        },
+        "gold": {
+          "path": "m49-script-canary-not-selected.gold.json",
+          "sha256": "c3344595cc1e02afdcdaa5cb533ac49790a71ad75457d5a20e7e5fbfe42294b0"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "og:title",
+                "Beekeepers Count Winter Losses"
+              ],
+              [
+                "document_fallback",
+                "Beekeepers Count Winter Losses"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "authors": {
+            "evidence": [
+              [
+                "author",
+                "Lotte Haverkamp"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "published": {
+            "evidence": [
+              [
+                "article:published_time",
+                "2026-02-20"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        },
+        "canaryAbsent": [
+          "CANARY-"
+        ]
+      }
+    },
+    {
+      "id": "m50-jsonld-markup-and-escapes",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/jsonld-markup-and-escapes",
+      "files": {
+        "input": {
+          "path": "m50-jsonld-markup-and-escapes.html",
+          "sha256": "ba1ec42caca80e9c43edf12d5e0c00dab546a667f24b2959767fa4730f2132f1"
+        },
+        "gold": {
+          "path": "m50-jsonld-markup-and-escapes.gold.json",
+          "sha256": "2ffa63038839041d5f4a339f895797ca4c510679f115b70a67f69c377c55f40d"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "Pier & Quay Repairs <i>Resume</i> Today"
+              ],
+              [
+                "document_fallback",
+                "Pier and Quay repairs resume"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": true
+          },
+          "authors": {
+            "evidence": [
+              [
+                "article.author",
+                "Anselm Roe"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m51-entities-and-whitespace",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/entities-and-whitespace",
+      "files": {
+        "input": {
+          "path": "m51-entities-and-whitespace.html",
+          "sha256": "b6171fa0336b1f88fff925b822fdb0b700fbe01cc147b1cee9ba56603662c6a9"
+        },
+        "gold": {
+          "path": "m51-entities-and-whitespace.gold.json",
+          "sha256": "4a36c3c5f78660f4a93e3dbfb7e61b4c233c57c41624fc2fa0a9069e4ffcbf01"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "og:title",
+                "Fish & Chips Return"
+              ],
+              [
+                "document_fallback",
+                "Fish & Chips Return"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    },
+    {
+      "id": "m52-japanese-metadata",
+      "family": "meta_exact",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/japanese-metadata",
+      "files": {
+        "input": {
+          "path": "m52-japanese-metadata.html",
+          "sha256": "3b5c2c1b2fda5e8d543376b44e9e6ed2672183915debaefbaf9b005fd71c1868"
+        },
+        "gold": {
+          "path": "m52-japanese-metadata.gold.json",
+          "sha256": "43cd4e26b95efa15a8501f1b858abc53865a7b21a4dd33615346bcfdadd17eb6"
+        }
+      },
+      "params": {
+        "fields": {
+          "title": {
+            "evidence": [
+              [
+                "headline",
+                "港の朝市が今週末から再開"
+              ],
+              [
+                "document_fallback",
+                "港の朝市が今週末から再開"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "authors": {
+            "evidence": [
+              [
+                "article.author",
+                "森田 澄子"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "publisher": {
+            "evidence": [
+              [
+                "og:site_name",
+                "港町ニュース"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "published": {
+            "evidence": [
+              [
+                "visible_time",
+                "2026年5月3日"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          },
+          "language": {
+            "evidence": [
+              [
+                "document_fallback",
+                "ja"
+              ]
+            ],
+            "winner": 0,
+            "uncertain": false
+          }
+        }
+      }
+    }
+  ]
+}

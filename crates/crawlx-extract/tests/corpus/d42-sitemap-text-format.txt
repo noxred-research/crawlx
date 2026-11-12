@@ -1,0 +1,7 @@
+https://news.corpus.test/text/one
+   https://news.corpus.test/text/two   
+# comment line
+not a url
+ftp://news.corpus.test/text/three
+https://partner.corpus.test/text/four
+http://news.corpus.test/text/five

@@ -1,0 +1,73 @@
+{
+  "id": "n01-plain-three-sentences",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The lighthouse keeper climbs the stairs at dusk.\nHe lights the lamp and checks the glass.\nShips far offshore see the beam.\nthe=5\nlighthouse=1\nkeeper=1\nclimbs=1\nstairs=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 48
+    },
+    {
+      "label": "sentence",
+      "start": 49,
+      "end": 89
+    },
+    {
+      "label": "sentence",
+      "start": 90,
+      "end": 122
+    },
+    {
+      "label": "keyword",
+      "start": 123,
+      "end": 126
+    },
+    {
+      "label": "score",
+      "start": 127,
+      "end": 128
+    },
+    {
+      "label": "keyword",
+      "start": 129,
+      "end": 139
+    },
+    {
+      "label": "score",
+      "start": 140,
+      "end": 141
+    },
+    {
+      "label": "keyword",
+      "start": 142,
+      "end": 148
+    },
+    {
+      "label": "score",
+      "start": 149,
+      "end": 150
+    },
+    {
+      "label": "keyword",
+      "start": 151,
+      "end": 157
+    },
+    {
+      "label": "score",
+      "start": 158,
+      "end": 159
+    },
+    {
+      "label": "keyword",
+      "start": 160,
+      "end": 166
+    },
+    {
+      "label": "score",
+      "start": 167,
+      "end": 168
+    }
+  ]
+}

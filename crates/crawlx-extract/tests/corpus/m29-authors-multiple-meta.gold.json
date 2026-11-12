@@ -1,0 +1,23 @@
+{
+  "id": "m29-authors-multiple-meta",
+  "family": "meta_exact",
+  "note": "repeated author meta tags give the author list; a duplicated name is a single author but both tags stay in the evidence",
+  "expectedText": "title=Clock Tower Gets New Hands\nauthors=Dara Quinlan; Joss Eriksen; Mina Takeda\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 32
+    },
+    {
+      "label": "authors",
+      "start": 41,
+      "end": 80
+    },
+    {
+      "label": "language",
+      "start": 90,
+      "end": 92
+    }
+  ]
+}

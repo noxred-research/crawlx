@@ -606,7 +606,9 @@ mod tests {
 
     fn profile(html: &str, computed: Value) -> Value {
         let styles = ComputedStyles::from_value(computed).unwrap();
+        let mut charge = crate::parse_budget::charge(html.len()).unwrap();
         branding_computed(
+            &mut charge,
             &BrandingInput {
                 html,
                 base: &base(),
@@ -614,6 +616,7 @@ mod tests {
             },
             &styles,
         )
+        .unwrap()
     }
 
     #[test]
@@ -674,11 +677,16 @@ mod tests {
         let html = "<style>:root{--bg:#ffffff;--text:#111111;--link:#0000ff;--radius:2px}\
                     body{background:var(--bg);color:var(--text);font-family:Lato,sans-serif}\
                     a{color:#0000ff}.btn-primary{background:#00aa00;color:#000;border-radius:2px}</style>";
-        let plain = branding(&BrandingInput {
-            html,
-            base: &base(),
-            stylesheets: &[],
-        });
+        let mut charge = crate::parse_budget::charge(html.len()).unwrap();
+        let plain = branding(
+            &mut charge,
+            &BrandingInput {
+                html,
+                base: &base(),
+                stylesheets: &[],
+            },
+        )
+        .unwrap();
         assert_eq!(plain["colorScheme"], "light");
         assert_eq!(plain["colors"]["background"], "#FFFFFF");
         let b = profile(html, page());
@@ -738,7 +746,11 @@ mod tests {
             base: &base(),
             stylesheets: &[],
         };
-        assert_eq!(branding_computed(&input, &empty), branding(&input));
+        let mut charge = crate::parse_budget::charge(html.len()).unwrap();
+        assert_eq!(
+            branding_computed(&mut charge, &input, &empty).unwrap(),
+            branding(&mut charge, &input).unwrap()
+        );
     }
 
     #[test]

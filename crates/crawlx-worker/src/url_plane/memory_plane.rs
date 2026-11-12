@@ -4,14 +4,14 @@
 //! that reads it moves an [`AdmittedBytes`] in, so a cancelled await can never release the
 //! reservation while the detached closure still owns the bytes. Derived documents are reserved
 //! *before* the parse runs and travel with the closure's result until the row's terminal commit.
-//! This is admission, not fallible allocation: the existing parser stays infallible.
+//! This is byte admission; the parsed tree itself is charged by the extraction crate's metering sink.
 
 use super::*;
 use crawlx_core::parser_memory::{ByteAdmissionError, BytePermit};
 
 /// Output-side admission per decoded input byte for the extracted document and its transient
-/// sink copies. The parser's own measured peak is charged separately inside the extraction crate
-/// and the allocator stays infallible; this is admission accounting, not an allocation bound.
+/// sink copies. The parser's own measured peak is charged separately inside the extraction crate;
+/// this is admission accounting, not an allocation bound.
 const DERIVED_BYTES_PER_INPUT_BYTE: usize = 4;
 
 /// Shared bytes and the reservation that admitted them. Field order is drop order: the bytes

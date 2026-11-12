@@ -206,9 +206,9 @@ impl ScrapeEngine {
             let base = acq.final_url.clone();
             cpu.run(move || {
                 // the charge is held until the parsed DOM inside `media_refs` is dropped
-                let _charge = crawlx_extract::parse_budget::charge(html.len())
+                let mut charge = crawlx_extract::parse_budget::charge(html.len())
                     .map_err(|e| WorkerError::Extraction(e.into()))?;
-                Ok::<_, WorkerError>(media_refs(&html, &base))
+                media_refs(&mut charge, &html, &base).map_err(|e| WorkerError::Extraction(e.into()))
             })
             .await
             .map_err(|e| WorkerError::Other(format!("media discovery task failed: {e}")))??
@@ -477,11 +477,10 @@ mod tests {
 
     #[test]
     fn ranking_prefers_mp3_then_markup_and_caps_attempts() {
-        let refs = media_refs(
-            r#"<a href="/a.ogg">a</a><audio src="/b.opus"></audio><a href="/c.mp3">c</a>
-               <audio src="/d.m4a"></audio><audio src="/e.wav"></audio><a href="/f.mp4">f</a>"#,
-            &Url::parse("https://x.test/").unwrap(),
-        );
+        let page = r#"<a href="/a.ogg">a</a><audio src="/b.opus"></audio><a href="/c.mp3">c</a>
+               <audio src="/d.m4a"></audio><audio src="/e.wav"></audio><a href="/f.mp4">f</a>"#;
+        let mut charge = crawlx_extract::parse_budget::charge(page.len()).unwrap();
+        let refs = media_refs(&mut charge, page, &Url::parse("https://x.test/").unwrap()).unwrap();
         let got: Vec<&str> = ranked(&refs, MediaKind::Audio)
             .iter()
             .map(|r| r.url.path())

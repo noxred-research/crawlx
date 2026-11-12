@@ -1,0 +1,38 @@
+{
+  "id": "d51-sitemap-depth-exact",
+  "family": "feed",
+  "note": "nested sitemap indexes five levels deep (the maximum) are followed and their entries admitted",
+  "expectedText": "https://news.corpus.test/sitemaps/c1.xml\nhttps://news.corpus.test/sitemaps/c2.xml\nhttps://news.corpus.test/sitemaps/c3.xml\nhttps://news.corpus.test/sitemaps/c4.xml\nhttps://news.corpus.test/sitemaps/c5.xml\nhttps://news.corpus.test/deep/page",
+  "spans": [
+    {
+      "label": "request",
+      "start": 0,
+      "end": 40
+    },
+    {
+      "label": "request",
+      "start": 41,
+      "end": 81
+    },
+    {
+      "label": "request",
+      "start": 82,
+      "end": 122
+    },
+    {
+      "label": "request",
+      "start": 123,
+      "end": 163
+    },
+    {
+      "label": "request",
+      "start": 164,
+      "end": 204
+    },
+    {
+      "label": "page",
+      "start": 205,
+      "end": 239
+    }
+  ]
+}

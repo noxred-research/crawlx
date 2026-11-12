@@ -393,11 +393,13 @@ fn conditional_comments(doc: &Html, cx: &mut Ctx<'_>) {
         if !cx.embedded.admit(payload.len()) {
             continue;
         }
-        // Admission limits the infallible HTML parser; it does not make its allocator fallible.
-        let Ok(_charge) = crate::parse_budget::charge(payload.len()) else {
+        // A refused charge or a parse that outgrows it skips the comment, as before.
+        let Ok(mut charge) = crate::parse_budget::charge(payload.len()) else {
             continue;
         };
-        let fragment = Html::parse_fragment(payload);
+        let Ok(fragment) = crate::dom::parse_fragment(&mut charge, payload) else {
+            continue;
+        };
         let mode = cx.javascript_mode;
         cx.javascript_mode = JavascriptMode::Off;
         let start = cx.out.len();

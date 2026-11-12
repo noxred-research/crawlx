@@ -33,8 +33,9 @@ crates.io packages are not part of the initial distribution.
   retention ceiling; Redis secret TTL never extends.
 - **Retained browser profiles.** Structured encrypted cookie/web-storage custody is available
   under explicit operator approval; arbitrary browser directories remain unavailable.
-- **Fallible HTML parsing.** Parse memory is bounded by a measured ceiling and a process budget rather
-  than by fully fallible allocation.
+- **Parser internals.** The parsed tree is built fallibly under the parse-memory budget; the HTML
+  parser's own token and stack buffers are still bounded by a measured allowance, not by individually
+  fallible allocation.
 
 ## Browser plane
 

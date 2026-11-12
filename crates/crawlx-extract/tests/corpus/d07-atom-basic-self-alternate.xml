@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Quay Notes</title><link rel="self" href="https://news.corpus.test/feeds/atom.xml"/><link rel="alternate" type="text/html" href="https://news.corpus.test/quay/"/><id>urn:corpus:quay</id><updated>2026-11-08T12:00:00Z</updated>
+<entry><title>New moorings</title><link rel="self" href="https://news.corpus.test/feeds/atom/1"/><link rel="alternate" type="text/html" href="https://news.corpus.test/quay/new-moorings"/><link rel="edit" href="https://news.corpus.test/admin/edit/1"/><link rel="replies" href="https://news.corpus.test/quay/new-moorings/comments"/><id>urn:corpus:quay:1</id><published>2026-11-07T09:00:00Z</published><author><name>Imke Torvald</name></author></entry>
+<entry><title>Dredging schedule</title><link href="/quay/dredging"/><id>urn:corpus:quay:2</id></entry>
+<entry><title>Cross-origin mirror</title><link rel="alternate" href="https://mirror.corpus.test/quay/dredging"/></entry>
+</feed>

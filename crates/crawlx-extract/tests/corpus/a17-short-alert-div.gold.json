@@ -1,0 +1,78 @@
+{
+  "id": "a17-short-alert-div",
+  "family": "article_body",
+  "note": "three-sentence weather notice in div-only markup with a long link list",
+  "expectedText": "Coastwatch\nMaps\nMarine\nMountain\nAir quality\nAbout\nWind Warning for the Coast\nStrong westerly winds are expected along the coast from late afternoon. Gusts may reach ninety kilometres an hour on exposed headlands. Small boats should stay in harbour until the warning ends at midnight.\nLocal forecasts\nNorthern bay\nSouthern bay\nOuter islands\nInland valleys\nCoastwatch issues warnings on behalf of the regional weather office. Copyright notice and data policy.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 10
+    },
+    {
+      "label": "boilerplate",
+      "start": 11,
+      "end": 15
+    },
+    {
+      "label": "boilerplate",
+      "start": 16,
+      "end": 22
+    },
+    {
+      "label": "boilerplate",
+      "start": 23,
+      "end": 31
+    },
+    {
+      "label": "boilerplate",
+      "start": 32,
+      "end": 43
+    },
+    {
+      "label": "boilerplate",
+      "start": 44,
+      "end": 49
+    },
+    {
+      "label": "body",
+      "start": 50,
+      "end": 76
+    },
+    {
+      "label": "body",
+      "start": 77,
+      "end": 283
+    },
+    {
+      "label": "boilerplate",
+      "start": 284,
+      "end": 299
+    },
+    {
+      "label": "boilerplate",
+      "start": 300,
+      "end": 312
+    },
+    {
+      "label": "boilerplate",
+      "start": 313,
+      "end": 325
+    },
+    {
+      "label": "boilerplate",
+      "start": 326,
+      "end": 339
+    },
+    {
+      "label": "boilerplate",
+      "start": 340,
+      "end": 354
+    },
+    {
+      "label": "boilerplate",
+      "start": 355,
+      "end": 457
+    }
+  ]
+}

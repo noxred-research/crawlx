@@ -1,0 +1,153 @@
+{
+  "id": "l53-rules-kana-japanese-library",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "市|立|図|書|館|で|展|示|が|始|ま|っ|た|子|ど|も|た|ち|が|紙|の|ラ|ン|タ|ン|を|並|べ|た",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 7
+    },
+    {
+      "label": "token",
+      "start": 8,
+      "end": 11
+    },
+    {
+      "label": "token",
+      "start": 12,
+      "end": 15
+    },
+    {
+      "label": "token",
+      "start": 16,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 23
+    },
+    {
+      "label": "token",
+      "start": 24,
+      "end": 27
+    },
+    {
+      "label": "token",
+      "start": 28,
+      "end": 31
+    },
+    {
+      "label": "token",
+      "start": 32,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 43
+    },
+    {
+      "label": "token",
+      "start": 44,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 51
+    },
+    {
+      "label": "token",
+      "start": 52,
+      "end": 55
+    },
+    {
+      "label": "token",
+      "start": 56,
+      "end": 59
+    },
+    {
+      "label": "token",
+      "start": 60,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 67
+    },
+    {
+      "label": "token",
+      "start": 68,
+      "end": 71
+    },
+    {
+      "label": "token",
+      "start": 72,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 79
+    },
+    {
+      "label": "token",
+      "start": 80,
+      "end": 83
+    },
+    {
+      "label": "token",
+      "start": 84,
+      "end": 87
+    },
+    {
+      "label": "token",
+      "start": 88,
+      "end": 91
+    },
+    {
+      "label": "token",
+      "start": 92,
+      "end": 95
+    },
+    {
+      "label": "token",
+      "start": 96,
+      "end": 99
+    },
+    {
+      "label": "token",
+      "start": 100,
+      "end": 103
+    },
+    {
+      "label": "token",
+      "start": 104,
+      "end": 107
+    },
+    {
+      "label": "token",
+      "start": 108,
+      "end": 111
+    },
+    {
+      "label": "token",
+      "start": 112,
+      "end": 115
+    }
+  ]
+}

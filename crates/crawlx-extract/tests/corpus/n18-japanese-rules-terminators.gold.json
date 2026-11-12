@@ -1,0 +1,73 @@
+{
+  "id": "n18-japanese-rules-terminators",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "港の朝市は六時に始まる。\n魚屋が氷を運ぶ。\n子どもたちは貝を数える。\nは=2\nる=2\nを=2\n港=1\nの=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 36
+    },
+    {
+      "label": "sentence",
+      "start": 37,
+      "end": 61
+    },
+    {
+      "label": "sentence",
+      "start": 62,
+      "end": 98
+    },
+    {
+      "label": "keyword",
+      "start": 99,
+      "end": 102
+    },
+    {
+      "label": "score",
+      "start": 103,
+      "end": 104
+    },
+    {
+      "label": "keyword",
+      "start": 105,
+      "end": 108
+    },
+    {
+      "label": "score",
+      "start": 109,
+      "end": 110
+    },
+    {
+      "label": "keyword",
+      "start": 111,
+      "end": 114
+    },
+    {
+      "label": "score",
+      "start": 115,
+      "end": 116
+    },
+    {
+      "label": "keyword",
+      "start": 117,
+      "end": 120
+    },
+    {
+      "label": "score",
+      "start": 121,
+      "end": 122
+    },
+    {
+      "label": "keyword",
+      "start": 123,
+      "end": 126
+    },
+    {
+      "label": "score",
+      "start": 127,
+      "end": 128
+    }
+  ]
+}

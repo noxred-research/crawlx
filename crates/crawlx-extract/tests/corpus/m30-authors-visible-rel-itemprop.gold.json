@@ -1,0 +1,23 @@
+{
+  "id": "m30-authors-visible-rel-itemprop",
+  "family": "meta_exact",
+  "note": "no author metadata: a rel=author link and an itemprop author element are two visible authors, and a rel=author link element in the head contributes none",
+  "expectedText": "title=Rooftop Beehives Spread Across the Docks\nauthors=Hanne Ostby; Pavel Roth\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 46
+    },
+    {
+      "label": "authors",
+      "start": 55,
+      "end": 78
+    },
+    {
+      "label": "language",
+      "start": 88,
+      "end": 90
+    }
+  ]
+}

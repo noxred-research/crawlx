@@ -867,8 +867,8 @@ pub fn project_head(intent: &PreviewIntentV1, head_bytes: &[u8]) -> Result<HeadP
         .find("</head>")
         .map(|i| i + "</head>".len());
     let head = lowered_end.map_or(&*text, |end| &text[..end]);
-    let _charge = crate::parse_budget::charge(head.len())?;
-    let doc = Html::parse_document(head);
+    let mut charge = crate::parse_budget::charge(head.len())?;
+    let doc = crate::dom::parse_document(&mut charge, head)?;
     let base = effective_base(&doc, &intent.url);
     let info = crate::metadata::extract(&doc, &base);
     let md = &info.metadata;

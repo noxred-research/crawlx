@@ -1,0 +1,68 @@
+{
+  "id": "l33-rules-greek-capitals-final-sigma",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "οδος|σοφοκλεους|η|οδός|κλείνει|για|έργα|οι|οδηγοί|ακολουθούν|άλλο|δρόμο",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 56
+    },
+    {
+      "label": "token",
+      "start": 57,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 72
+    },
+    {
+      "label": "token",
+      "start": 73,
+      "end": 77
+    },
+    {
+      "label": "token",
+      "start": 78,
+      "end": 90
+    },
+    {
+      "label": "token",
+      "start": 91,
+      "end": 111
+    },
+    {
+      "label": "token",
+      "start": 112,
+      "end": 120
+    },
+    {
+      "label": "token",
+      "start": 121,
+      "end": 131
+    }
+  ]
+}

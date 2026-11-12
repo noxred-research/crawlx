@@ -1,0 +1,33 @@
+{
+  "id": "s34-item-regex-and-input-processors",
+  "family": "selector",
+  "note": "item loader regex transforms: capture group, all matches, no match on singular and many rules, input processors that drop values",
+  "expectedText": "code=2291\nrev=\"3\"\nnums=[\"2291\",\"3\"]\nnomatch_many=[]\nprices=[12.5,7]",
+  "spans": [
+    {
+      "label": "code",
+      "start": 0,
+      "end": 9
+    },
+    {
+      "label": "rev",
+      "start": 10,
+      "end": 17
+    },
+    {
+      "label": "nums",
+      "start": 18,
+      "end": 35
+    },
+    {
+      "label": "nomatch_many",
+      "start": 36,
+      "end": 51
+    },
+    {
+      "label": "prices",
+      "start": 52,
+      "end": 67
+    }
+  ]
+}

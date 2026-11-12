@@ -1,0 +1,33 @@
+{
+  "id": "d04-rss2-self-next-and-item-links",
+  "family": "feed",
+  "note": "RSS 2.0 with Atom link elements: the self link is never a page, channel next links are pagination, item next links are read-more, image enclosures are media, other relations are ignored",
+  "expectedText": "https://news.corpus.test/weather/gale\nhttps://news.corpus.test/weather/gale.png\nhttps://news.corpus.test/weather/calm\nhttps://news.corpus.test/weather/calm?part=2\nhttps://news.corpus.test/feeds/weather.xml?page=2",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 37
+    },
+    {
+      "label": "media",
+      "start": 38,
+      "end": 79
+    },
+    {
+      "label": "item",
+      "start": 80,
+      "end": 117
+    },
+    {
+      "label": "read_more",
+      "start": 118,
+      "end": 162
+    },
+    {
+      "label": "next",
+      "start": 163,
+      "end": 212
+    }
+  ]
+}

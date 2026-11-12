@@ -1,0 +1,18 @@
+{
+  "id": "m06-title-jsonld-headline-wins",
+  "family": "meta_exact",
+  "note": "JSON-LD headline outranks its own name, the Open Graph title and the title element",
+  "expectedText": "title=Lantern Festival Returns to Old Quay\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 42
+    },
+    {
+      "label": "language",
+      "start": 52,
+      "end": 54
+    }
+  ]
+}

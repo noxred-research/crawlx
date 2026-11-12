@@ -1,0 +1,48 @@
+{
+  "id": "s08-axis-preceding-sibling",
+  "family": "selector",
+  "note": "preceding-sibling axis: results in document order, positions count from the context node outwards",
+  "expectedText": "Moor\nFuel\nFuel\nMoor\nMoor\nFuel\nMoor\n3",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "r1",
+      "start": 5,
+      "end": 9
+    },
+    {
+      "label": "r2",
+      "start": 10,
+      "end": 14
+    },
+    {
+      "label": "r3",
+      "start": 15,
+      "end": 19
+    },
+    {
+      "label": "r4",
+      "start": 20,
+      "end": 24
+    },
+    {
+      "label": "r4",
+      "start": 25,
+      "end": 29
+    },
+    {
+      "label": "r5",
+      "start": 30,
+      "end": 34
+    },
+    {
+      "label": "r6",
+      "start": 35,
+      "end": 36
+    }
+  ]
+}

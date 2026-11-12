@@ -1,0 +1,138 @@
+{
+  "id": "s21-operators",
+  "family": "selector",
+  "note": "operators: union in document order, logical and relational operators on attributes, arithmetic precedence, node-set comparisons, division edge cases",
+  "expectedText": "alpha\ndelta\nalpha\ngamma\ndelta\nbeta\ngamma\nbeta\nalpha\ngamma\n7\n1\n-1\n3.5\nInfinity\n-Infinity\nNaN\n2\n5\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 5
+    },
+    {
+      "label": "r1",
+      "start": 6,
+      "end": 11
+    },
+    {
+      "label": "r2",
+      "start": 12,
+      "end": 17
+    },
+    {
+      "label": "r2",
+      "start": 18,
+      "end": 23
+    },
+    {
+      "label": "r2",
+      "start": 24,
+      "end": 29
+    },
+    {
+      "label": "r3",
+      "start": 30,
+      "end": 34
+    },
+    {
+      "label": "r3",
+      "start": 35,
+      "end": 40
+    },
+    {
+      "label": "r4",
+      "start": 41,
+      "end": 45
+    },
+    {
+      "label": "r5",
+      "start": 46,
+      "end": 51
+    },
+    {
+      "label": "r5",
+      "start": 52,
+      "end": 57
+    },
+    {
+      "label": "r6",
+      "start": 58,
+      "end": 59
+    },
+    {
+      "label": "r7",
+      "start": 60,
+      "end": 61
+    },
+    {
+      "label": "r8",
+      "start": 62,
+      "end": 64
+    },
+    {
+      "label": "r9",
+      "start": 65,
+      "end": 68
+    },
+    {
+      "label": "r10",
+      "start": 69,
+      "end": 77
+    },
+    {
+      "label": "r11",
+      "start": 78,
+      "end": 87
+    },
+    {
+      "label": "r12",
+      "start": 88,
+      "end": 91
+    },
+    {
+      "label": "r13",
+      "start": 92,
+      "end": 93
+    },
+    {
+      "label": "r14",
+      "start": 94,
+      "end": 95
+    },
+    {
+      "label": "r15",
+      "start": 96,
+      "end": 100
+    },
+    {
+      "label": "r16",
+      "start": 101,
+      "end": 105
+    },
+    {
+      "label": "r17",
+      "start": 106,
+      "end": 111
+    },
+    {
+      "label": "r18",
+      "start": 112,
+      "end": 116
+    },
+    {
+      "label": "r19",
+      "start": 117,
+      "end": 121
+    },
+    {
+      "label": "r20",
+      "start": 122,
+      "end": 126
+    },
+    {
+      "label": "r21",
+      "start": 127,
+      "end": 131
+    }
+  ]
+}

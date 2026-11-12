@@ -1,0 +1,28 @@
+{
+  "id": "s31-item-text-transforms",
+  "family": "selector",
+  "note": "item loader transforms run in order: trim, whitespace normalization, dedupe, join, clean (zero-width removal), limit, input processors",
+  "expectedText": "joined=\"Tide Table|tide table|Wind\"\ncleaned=\"Chart Plot\"\nlimited=[\"Tide Table\",\"tide table\"]\ndeduped=[\"Tide Table\",\"tide table\",\"Wind\"]",
+  "spans": [
+    {
+      "label": "joined",
+      "start": 0,
+      "end": 35
+    },
+    {
+      "label": "cleaned",
+      "start": 36,
+      "end": 56
+    },
+    {
+      "label": "limited",
+      "start": 57,
+      "end": 92
+    },
+    {
+      "label": "deduped",
+      "start": 93,
+      "end": 135
+    }
+  ]
+}

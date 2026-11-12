@@ -1,0 +1,73 @@
+{
+  "id": "n11-decimals-and-versions",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Version 2.5 shipped on Friday.\nLoad dropped by 3.2 percent.\nNobody complained.\nversion=1\nshipped=1\non=1\nfriday=1\nload=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 30
+    },
+    {
+      "label": "sentence",
+      "start": 31,
+      "end": 59
+    },
+    {
+      "label": "sentence",
+      "start": 60,
+      "end": 78
+    },
+    {
+      "label": "keyword",
+      "start": 79,
+      "end": 86
+    },
+    {
+      "label": "score",
+      "start": 87,
+      "end": 88
+    },
+    {
+      "label": "keyword",
+      "start": 89,
+      "end": 96
+    },
+    {
+      "label": "score",
+      "start": 97,
+      "end": 98
+    },
+    {
+      "label": "keyword",
+      "start": 99,
+      "end": 101
+    },
+    {
+      "label": "score",
+      "start": 102,
+      "end": 103
+    },
+    {
+      "label": "keyword",
+      "start": 104,
+      "end": 110
+    },
+    {
+      "label": "score",
+      "start": 111,
+      "end": 112
+    },
+    {
+      "label": "keyword",
+      "start": 113,
+      "end": 117
+    },
+    {
+      "label": "score",
+      "start": 118,
+      "end": 119
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "id": "a08-main-sections",
+  "family": "article_body",
+  "note": "main landmark without an article element, headed sections, byline and sidebar",
+  "expectedText": "Harbour Lantern\nNews\nGardens\nEvents\nAbout us\nHome\nGardens\nSeed swaps\nSeed Library Lends Heirloom Beans to Gardeners\nBy Marta Oyelaran, garden correspondent\nA card catalog that once held index cards for ship manifests now holds paper envelopes of beans, squash and sunflower seed, and anyone with a library card can borrow them.\nHow borrowing works\nMembers choose up to three envelopes at the front desk and sign a short pledge to grow the plants to maturity. In the autumn they return a spoonful of fresh seed, which volunteers dry, label and file back into the drawers.\nMost of the stock came from a retired orchard keeper named Ivo Penhallow, who spent forty years saving beans from the terraces above the harbour. His pole bean with purple pods is already the most requested variety.\nWhat comes back\nLast year the library recorded sixty returns, but volunteers say the number matters less than the stories attached to them. One borrower returned seed along with a handwritten note about the best way to cook the beans with smoked salt.\nThe library will hold a free swap evening in the reading hall on the first Friday of April, with tables for labelling, a short talk on drying seed and tea for everyone who comes.\nMost read\nFerry timetable changes in May\nPottery kiln fires up again\nDockside choir seeks singers\nHarbour Lantern is produced by volunteers. Contact the desk for corrections.\nPrivacy\nTerms",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "boilerplate",
+      "start": 16,
+      "end": 20
+    },
+    {
+      "label": "boilerplate",
+      "start": 21,
+      "end": 28
+    },
+    {
+      "label": "boilerplate",
+      "start": 29,
+      "end": 35
+    },
+    {
+      "label": "boilerplate",
+      "start": 36,
+      "end": 44
+    },
+    {
+      "label": "boilerplate",
+      "start": 45,
+      "end": 49
+    },
+    {
+      "label": "boilerplate",
+      "start": 50,
+      "end": 57
+    },
+    {
+      "label": "boilerplate",
+      "start": 58,
+      "end": 68
+    },
+    {
+      "label": "body",
+      "start": 69,
+      "end": 115
+    },
+    {
+      "label": "boilerplate",
+      "start": 116,
+      "end": 155
+    },
+    {
+      "label": "body",
+      "start": 156,
+      "end": 327
+    },
+    {
+      "label": "body",
+      "start": 328,
+      "end": 347
+    },
+    {
+      "label": "body",
+      "start": 348,
+      "end": 570
+    },
+    {
+      "label": "body",
+      "start": 571,
+      "end": 786
+    },
+    {
+      "label": "body",
+      "start": 787,
+      "end": 802
+    },
+    {
+      "label": "body",
+      "start": 803,
+      "end": 1038
+    },
+    {
+      "label": "body",
+      "start": 1039,
+      "end": 1217
+    },
+    {
+      "label": "boilerplate",
+      "start": 1218,
+      "end": 1227
+    },
+    {
+      "label": "boilerplate",
+      "start": 1228,
+      "end": 1258
+    },
+    {
+      "label": "boilerplate",
+      "start": 1259,
+      "end": 1286
+    },
+    {
+      "label": "boilerplate",
+      "start": 1287,
+      "end": 1315
+    },
+    {
+      "label": "boilerplate",
+      "start": 1316,
+      "end": 1392
+    },
+    {
+      "label": "boilerplate",
+      "start": 1393,
+      "end": 1400
+    },
+    {
+      "label": "boilerplate",
+      "start": 1401,
+      "end": 1406
+    }
+  ]
+}

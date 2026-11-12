@@ -5,7 +5,7 @@
 //! ([`DEFAULT_MAX_NODES`]) that `Extractor` enforces before parsing. For each case the test
 //! measures the peak live heap of
 //!
-//! 1. `scraper::Html::parse_document`,
+//! 1. `scraper::Html::parse_document` and the fallible tree sink `dom::parse_document`,
 //! 2. parse plus `dom::check_limits` (via the public `Extractor` limits),
 //! 3. `Extractor::extract_bytes` with legacy options,
 //! 4. `Extractor::extract_bytes` with the default article content policy, and
@@ -14,6 +14,11 @@
 //! and fails when any phase exceeds `input_len * PARSE_BYTES_PER_INPUT_BYTE`, the factor the
 //! worker charges against its process-wide parse-memory budget
 //! ([`crawlx_extract::parse_budget`]).
+//!
+//! The sink charges every allocation it sees (plus a model of the parser state it does not) to
+//! the reservation before it happens, so the test also checks that model: for every case the
+//! bytes the sink charged are at least its measured peak heap and at most the bytes admitted
+//! for the input, i.e. the sink never refuses a corpus shape and never undercounts one.
 //!
 //! The counting allocator wraps the system allocator and counts requested bytes, not allocator
 //! metadata or fragmentation; production uses mimalloc, whose size-class rounding is covered by
@@ -31,6 +36,7 @@
 )]
 
 use crawlx_extract::document::{DEFAULT_MAX_INPUT_BYTES, DEFAULT_MAX_NODES};
+use crawlx_extract::dom;
 use crawlx_extract::parse_budget::{charge_bytes, global, PARSE_BYTES_PER_INPUT_BYTE};
 use crawlx_extract::{ExtractError, ExtractOptions, Extractor};
 use peak_alloc::PeakAlloc;
@@ -306,6 +312,7 @@ fn parse_and_extract_stay_under_the_charged_ceiling() {
 
     let mut rows = Vec::new();
     let mut worst = ("", "", 0.0f64);
+    let mut least_coverage = f64::INFINITY;
     let mut failures = Vec::new();
     for (name, input) in corpus() {
         let len = input.len();
@@ -322,6 +329,12 @@ fn parse_and_extract_stay_under_the_charged_ceiling() {
         let text = || String::from_utf8_lossy(&input);
 
         let (parse, parse_net) = measure(|| Html::parse_document(&text()));
+        // the fallible sink: its peak heap and what its model charged for the same input
+        let mut sink_charge = global().try_charge_input(len).expect("unlimited budget");
+        let (sink_peak, _) =
+            measure(|| dom::parse_document(&mut sink_charge, &text()).expect("unlimited budget"));
+        let model = sink_charge.tree_bytes();
+        drop(sink_charge);
         let (parse_check, _) = measure(|| {
             let html = text();
             let doc = Html::parse_document(&html);
@@ -343,6 +356,7 @@ fn parse_and_extract_stay_under_the_charged_ceiling() {
         };
         let phases = [
             ("parse_document", parse, parse_net),
+            ("fallible_parse_document", sink_peak, 0),
             ("parse_and_check_limits", parse_check, 0),
             phase("extract_legacy", &legacy),
             phase("extract_content_policy", &content),
@@ -368,6 +382,27 @@ fn parse_and_extract_stay_under_the_charged_ceiling() {
                 json!({"peak_bytes": peak, "bytes_per_input_byte": ratio, "net_retained_bytes": net}),
             );
         }
+        let coverage = model as f64 / sink_peak as f64;
+        least_coverage = least_coverage.min(coverage);
+        if model < sink_peak {
+            failures.push(format!(
+                "{name}: the sink charged {model} B but its peak heap was {sink_peak} B ({coverage:.2}x): the model understates"
+            ));
+        }
+        if model > ceiling {
+            failures.push(format!(
+                "{name}: the sink charged {model} B, above the {ceiling} B admitted for the input"
+            ));
+        }
+        eprintln!(
+            "{name:<34} sink peak={:.2} model={:.2} model/peak={coverage:.2}",
+            sink_peak as f64 / len as f64,
+            model as f64 / len as f64,
+        );
+        cells.insert(
+            "fallible_parse_model".to_owned(),
+            json!({"model_bytes": model, "model_bytes_per_input_byte": model as f64 / len as f64, "model_over_peak": coverage}),
+        );
         eprintln!(
             "{name:<34} len={len:>9} parse={:.2} check={:.2} legacy={:.2} content={:.2} selectors={:.2} [{outcome}]",
             parse as f64 / len as f64,
@@ -381,7 +416,8 @@ fn parse_and_extract_stay_under_the_charged_ceiling() {
         );
     }
     eprintln!(
-        "worst: {} / {} = {:.2} bytes per input byte; charged factor {PARSE_BYTES_PER_INPUT_BYTE}",
+        "worst: {} / {} = {:.2} bytes per input byte; charged factor {PARSE_BYTES_PER_INPUT_BYTE}; \
+         least sink model / peak = {least_coverage:.2}",
         worst.0, worst.1, worst.2
     );
     if let Ok(path) = std::env::var("CRAWLX_PARSE_CEILING_REPORT") {
@@ -392,6 +428,7 @@ fn parse_and_extract_stay_under_the_charged_ceiling() {
             "max_nodes": MAX_LT,
             "worst_case": {"case": worst.0, "phase": worst.1, "bytes_per_input_byte": worst.2},
             "charged_factor": PARSE_BYTES_PER_INPUT_BYTE,
+            "least_sink_model_over_peak": least_coverage,
             "margin_over_worst_case": PARSE_BYTES_PER_INPUT_BYTE as f64 / worst.2 - 1.0,
             "cases": rows,
         });

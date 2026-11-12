@@ -316,6 +316,18 @@ fn config_json_body_supplies_the_seed_when_no_seed_is_given() {
     assert_eq!(request.limits.urls, 8);
 }
 
+fn accept(
+    index: &mut crawlx_url::content_similarity::Index,
+    body: &[u8],
+) -> crawlx_url::content_similarity::Accept {
+    let mut charge = crawlx_extract::parse_budget::charge(body.len()).unwrap();
+    index
+        .accept(body, |html| {
+            crawlx_extract::dom::parse_document(&mut charge, html)
+        })
+        .unwrap()
+}
+
 #[test]
 fn compat_similarity_enables_and_backend_are_independent_in_every_order() {
     use crawlx_core::config::SimilarityMode;
@@ -340,9 +352,9 @@ fn compat_similarity_enables_and_backend_are_independent_in_every_order() {
             let request = request_of(&flags);
             assert_eq!(request.scope.content_similarity.mode, mode, "{flags:?}");
             let mut index = Index::new(Config::from_request(&request.scope.content_similarity));
-            assert!(!index.accept(body).filtered, "{flags:?}");
+            assert!(!accept(&mut index, body).filtered, "{flags:?}");
             assert_eq!(
-                index.accept(body).filtered,
+                accept(&mut index, body).filtered,
                 mode != SimilarityMode::Off,
                 "{flags:?}"
             );
@@ -369,9 +381,9 @@ fn compat_similarity_enables_and_backend_are_independent_in_every_order() {
                 let request = request_of(&flags);
                 assert_eq!(request.scope.content_similarity.mode, mode, "{flags:?}");
                 let mut index = Index::new(Config::from_request(&request.scope.content_similarity));
-                assert!(!index.accept(body).filtered, "{flags:?}");
+                assert!(!accept(&mut index, body).filtered, "{flags:?}");
                 assert_eq!(
-                    index.accept(body).filtered,
+                    accept(&mut index, body).filtered,
                     mode != SimilarityMode::Off,
                     "{flags:?}"
                 );
@@ -384,9 +396,9 @@ fn compat_similarity_enables_and_backend_are_independent_in_every_order() {
     assert_eq!(request.scope.content_similarity.budget, 2);
     assert!(request.scope.disable_unique_filter);
     let mut index = Index::new(Config::from_request(&request.scope.content_similarity));
-    assert!(!index.accept(body).filtered);
-    assert!(!index.accept(body).filtered);
-    assert!(index.accept(body).filtered);
+    assert!(!accept(&mut index, body).filtered);
+    assert!(!accept(&mut index, body).filtered);
+    assert!(accept(&mut index, body).filtered);
 }
 
 #[test]

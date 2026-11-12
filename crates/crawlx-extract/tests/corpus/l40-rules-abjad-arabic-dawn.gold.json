@@ -1,0 +1,88 @@
+{
+  "id": "l40-rules-abjad-arabic-dawn",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "يفتح|السوق|أبوابه|عند|الفجر|يحمل|التجار|الفواكه|والخبز|يشتري|الأطفال|البرتقال|الحلو|ويعودون|إلى|البيت",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 50
+    },
+    {
+      "label": "token",
+      "start": 51,
+      "end": 59
+    },
+    {
+      "label": "token",
+      "start": 60,
+      "end": 72
+    },
+    {
+      "label": "token",
+      "start": 73,
+      "end": 87
+    },
+    {
+      "label": "token",
+      "start": 88,
+      "end": 100
+    },
+    {
+      "label": "token",
+      "start": 101,
+      "end": 111
+    },
+    {
+      "label": "token",
+      "start": 112,
+      "end": 126
+    },
+    {
+      "label": "token",
+      "start": 127,
+      "end": 143
+    },
+    {
+      "label": "token",
+      "start": 144,
+      "end": 154
+    },
+    {
+      "label": "token",
+      "start": 155,
+      "end": 169
+    },
+    {
+      "label": "token",
+      "start": 170,
+      "end": 176
+    },
+    {
+      "label": "token",
+      "start": 177,
+      "end": 187
+    }
+  ]
+}

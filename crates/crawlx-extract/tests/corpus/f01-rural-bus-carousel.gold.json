@@ -1,0 +1,198 @@
+{
+  "id": "f01-rural-bus-carousel",
+  "family": "focus",
+  "note": "semantic main article with a card carousel of linked teasers, a trending list and a link-dense footer",
+  "expectedText": "The Quarry Hill Courier\nFront page\nCounty\nFarming\nSchools\nLetters\nSubscribe\nHilltop Bus Route Returns After Nine Years\nResidents of the upland villages will be able to catch a bus to the market town again from the first Monday of June. The county transport office confirmed on Tuesday that route 14, withdrawn nine years ago because of low ridership, has been funded for a two year trial.\nThe service will run three times a day on weekdays and twice on Saturdays, starting at the old creamery in Upper Marlow and calling at six villages before reaching the market square. A single journey will cost a flat two pounds, and children travelling to school will ride free.\nHow the trial came about\nThe decision follows a petition signed by more than nine hundred people, many of them older residents who no longer drive. Parish councillor Ines Okafor said the loss of the route had left some households with no way to reach the pharmacy or the post office without paying for a taxi.\nTransport officers will count passengers every month. If an average of eleven people ride each journey by the end of the first winter, the route will be kept beyond the trial period. Otherwise the timetable will be reviewed and the stops may be reduced.\nTimetables will be posted at each stop and at the library from the middle of May.\nMore from the county\nTractor fair draws record crowd\nOrganisers counted four thousand visitors on Saturday.\nSchool roof repair delayed again\nGovernors blame a shortage of slate.\nMill bridge closed to heavy vehicles\nEngineers found cracks in two arches.\nVillage choir wins regional cup\nThirty singers travelled by minibus.\nMost read today\nBakery to close after sixty years\nHeron returns to the mill pond\nCouncil tax bills explained\nWeekend road closures\nAbout us\nOur team\nCareers\nAdvertise\nContact\nHelp centre\nTerms of use\nPrivacy\nCookie settings\nThe Quarry Hill Courier is published by Hilltop Local Media Limited.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 23
+    },
+    {
+      "label": "boilerplate",
+      "start": 24,
+      "end": 34
+    },
+    {
+      "label": "boilerplate",
+      "start": 35,
+      "end": 41
+    },
+    {
+      "label": "boilerplate",
+      "start": 42,
+      "end": 49
+    },
+    {
+      "label": "boilerplate",
+      "start": 50,
+      "end": 57
+    },
+    {
+      "label": "boilerplate",
+      "start": 58,
+      "end": 65
+    },
+    {
+      "label": "boilerplate",
+      "start": 66,
+      "end": 75
+    },
+    {
+      "label": "body",
+      "start": 76,
+      "end": 118
+    },
+    {
+      "label": "body",
+      "start": 119,
+      "end": 388
+    },
+    {
+      "label": "body",
+      "start": 389,
+      "end": 667
+    },
+    {
+      "label": "body",
+      "start": 668,
+      "end": 692
+    },
+    {
+      "label": "body",
+      "start": 693,
+      "end": 977
+    },
+    {
+      "label": "body",
+      "start": 978,
+      "end": 1231
+    },
+    {
+      "label": "body",
+      "start": 1232,
+      "end": 1313
+    },
+    {
+      "label": "boilerplate",
+      "start": 1314,
+      "end": 1334
+    },
+    {
+      "label": "boilerplate",
+      "start": 1335,
+      "end": 1366
+    },
+    {
+      "label": "boilerplate",
+      "start": 1367,
+      "end": 1421
+    },
+    {
+      "label": "boilerplate",
+      "start": 1422,
+      "end": 1454
+    },
+    {
+      "label": "boilerplate",
+      "start": 1455,
+      "end": 1491
+    },
+    {
+      "label": "boilerplate",
+      "start": 1492,
+      "end": 1528
+    },
+    {
+      "label": "boilerplate",
+      "start": 1529,
+      "end": 1566
+    },
+    {
+      "label": "boilerplate",
+      "start": 1567,
+      "end": 1598
+    },
+    {
+      "label": "boilerplate",
+      "start": 1599,
+      "end": 1635
+    },
+    {
+      "label": "boilerplate",
+      "start": 1636,
+      "end": 1651
+    },
+    {
+      "label": "boilerplate",
+      "start": 1652,
+      "end": 1685
+    },
+    {
+      "label": "boilerplate",
+      "start": 1686,
+      "end": 1716
+    },
+    {
+      "label": "boilerplate",
+      "start": 1717,
+      "end": 1744
+    },
+    {
+      "label": "boilerplate",
+      "start": 1745,
+      "end": 1766
+    },
+    {
+      "label": "boilerplate",
+      "start": 1767,
+      "end": 1775
+    },
+    {
+      "label": "boilerplate",
+      "start": 1776,
+      "end": 1784
+    },
+    {
+      "label": "boilerplate",
+      "start": 1785,
+      "end": 1792
+    },
+    {
+      "label": "boilerplate",
+      "start": 1793,
+      "end": 1802
+    },
+    {
+      "label": "boilerplate",
+      "start": 1803,
+      "end": 1810
+    },
+    {
+      "label": "boilerplate",
+      "start": 1811,
+      "end": 1822
+    },
+    {
+      "label": "boilerplate",
+      "start": 1823,
+      "end": 1835
+    },
+    {
+      "label": "boilerplate",
+      "start": 1836,
+      "end": 1843
+    },
+    {
+      "label": "boilerplate",
+      "start": 1844,
+      "end": 1859
+    },
+    {
+      "label": "boilerplate",
+      "start": 1860,
+      "end": 1928
+    }
+  ]
+}

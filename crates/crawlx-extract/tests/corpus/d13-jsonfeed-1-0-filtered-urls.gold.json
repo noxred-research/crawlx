@@ -1,0 +1,18 @@
+{
+  "id": "d13-jsonfeed-1-0-filtered-urls",
+  "family": "feed",
+  "note": "JSON Feed 1.0: fragment-only differences collapse, non-HTTP schemes and URLs with credentials are never proposed",
+  "expectedText": "https://news.corpus.test/ledger/a\nhttps://news.corpus.test/ledger/g",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 33
+    },
+    {
+      "label": "item",
+      "start": 34,
+      "end": 67
+    }
+  ]
+}

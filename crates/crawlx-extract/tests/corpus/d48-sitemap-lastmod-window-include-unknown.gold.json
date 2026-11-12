@@ -1,0 +1,33 @@
+{
+  "id": "d48-sitemap-lastmod-window-include-unknown",
+  "family": "feed",
+  "note": "the same window with the default for unknown hints: entries without a usable hint are kept",
+  "expectedText": "https://news.corpus.test/mod/summer\nhttps://news.corpus.test/mod/edge-high\nhttps://news.corpus.test/mod/unknown\nhttps://news.corpus.test/mod/garbled\nhttps://news.corpus.test/mod/edge-low",
+  "spans": [
+    {
+      "label": "page",
+      "start": 0,
+      "end": 35
+    },
+    {
+      "label": "page",
+      "start": 36,
+      "end": 74
+    },
+    {
+      "label": "page",
+      "start": 75,
+      "end": 111
+    },
+    {
+      "label": "page",
+      "start": 112,
+      "end": 148
+    },
+    {
+      "label": "page",
+      "start": 149,
+      "end": 186
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "m47-image-relative-with-base",
+  "family": "meta_exact",
+  "note": "relative image references resolve against the base element; a data URI image is not a reference and a rel=next link is a read-more proposal",
+  "expectedText": "title=Crane Driver Retires After Forty Years\nlanguage=en\nimage=https://media.corpus.test/set/covers/dock.png",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 44
+    },
+    {
+      "label": "language",
+      "start": 54,
+      "end": 56
+    },
+    {
+      "label": "image",
+      "start": 63,
+      "end": 108
+    }
+  ]
+}

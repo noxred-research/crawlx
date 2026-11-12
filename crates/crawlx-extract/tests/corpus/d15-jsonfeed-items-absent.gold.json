@@ -1,0 +1,13 @@
+{
+  "id": "d15-jsonfeed-items-absent",
+  "family": "feed",
+  "note": "JSON Feed without an items array is a typed protocol error",
+  "expectedText": "Policy::Protocol(JSON Feed items absent)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 40
+    }
+  ]
+}

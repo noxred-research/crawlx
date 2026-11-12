@@ -1,0 +1,93 @@
+{
+  "id": "l16-rules-latin-polish",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "pociąg|odjeżdża|z|dworca|o|ósmej|podróżni|czekają|na|peronie|dziewczynka|czyta|gazetę|a|konduktor|sprawdza|bilety",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 7
+    },
+    {
+      "label": "token",
+      "start": 8,
+      "end": 18
+    },
+    {
+      "label": "token",
+      "start": 19,
+      "end": 20
+    },
+    {
+      "label": "token",
+      "start": 21,
+      "end": 27
+    },
+    {
+      "label": "token",
+      "start": 28,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 56
+    },
+    {
+      "label": "token",
+      "start": 57,
+      "end": 59
+    },
+    {
+      "label": "token",
+      "start": 60,
+      "end": 67
+    },
+    {
+      "label": "token",
+      "start": 68,
+      "end": 79
+    },
+    {
+      "label": "token",
+      "start": 80,
+      "end": 85
+    },
+    {
+      "label": "token",
+      "start": 86,
+      "end": 93
+    },
+    {
+      "label": "token",
+      "start": 94,
+      "end": 95
+    },
+    {
+      "label": "token",
+      "start": 96,
+      "end": 105
+    },
+    {
+      "label": "token",
+      "start": 106,
+      "end": 114
+    },
+    {
+      "label": "token",
+      "start": 115,
+      "end": 121
+    }
+  ]
+}

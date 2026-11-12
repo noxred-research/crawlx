@@ -1,0 +1,108 @@
+{
+  "id": "l61-dict-thai-market",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "ลูก|กิน|ข้าว|กับ|ปลา|พ่อ|ดื่ม|น้ำ|เรา|เดิน|ไป|ตลาด|คน|ขาย|ผลไม้|ฉัน|ซื้อ|มะม่วง|สอง|ลูก",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 9
+    },
+    {
+      "label": "token",
+      "start": 10,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 52
+    },
+    {
+      "label": "token",
+      "start": 53,
+      "end": 62
+    },
+    {
+      "label": "token",
+      "start": 63,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 85
+    },
+    {
+      "label": "token",
+      "start": 86,
+      "end": 95
+    },
+    {
+      "label": "token",
+      "start": 96,
+      "end": 108
+    },
+    {
+      "label": "token",
+      "start": 109,
+      "end": 115
+    },
+    {
+      "label": "token",
+      "start": 116,
+      "end": 128
+    },
+    {
+      "label": "token",
+      "start": 129,
+      "end": 135
+    },
+    {
+      "label": "token",
+      "start": 136,
+      "end": 145
+    },
+    {
+      "label": "token",
+      "start": 146,
+      "end": 161
+    },
+    {
+      "label": "token",
+      "start": 162,
+      "end": 171
+    },
+    {
+      "label": "token",
+      "start": 172,
+      "end": 184
+    },
+    {
+      "label": "token",
+      "start": 185,
+      "end": 203
+    },
+    {
+      "label": "token",
+      "start": 204,
+      "end": 213
+    },
+    {
+      "label": "token",
+      "start": 214,
+      "end": 223
+    }
+  ]
+}

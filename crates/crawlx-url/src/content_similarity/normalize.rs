@@ -30,16 +30,20 @@ pub struct Document {
 }
 
 /// Extract comparable features from `body`; `None` when there is too little
-/// signal (fewer than [`MIN_TOKENS`] tokens).
-#[must_use]
-pub fn normalize(body: &[u8]) -> Option<Document> {
-    let text = extract_text(body);
+/// signal (fewer than [`MIN_TOKENS`] tokens). An HTML body is parsed by `parse`, so the caller
+/// decides how the tree is built and charged (the worker builds it under the parse-memory
+/// budget); a plain-text body never calls it.
+///
+/// # Errors
+/// The error `parse` returns for an HTML body.
+pub fn normalize<E>(body: &[u8], parse: impl FnOnce(&str) -> Result<Html, E>) -> Result<Option<Document>, E> {
+    let text = extract_text(body, parse)?;
     let tokens = tokenize(&text);
     if tokens.len() < MIN_TOKENS {
-        return None;
+        return Ok(None);
     }
     let shingles = shingles(&tokens, SHINGLE_SIZE);
-    Some(Document { tokens, shingles })
+    Ok(Some(Document { tokens, shingles }))
 }
 
 fn looks_html(trimmed: &[u8]) -> bool {
@@ -89,23 +93,25 @@ fn roots(doc: &Html) -> Vec<NodeRef<'_, Node>> {
 }
 
 /// Text of the body: the chosen root's text with chrome and code removed,
-/// or the raw body when it is not HTML.
-#[must_use]
-pub fn extract_text(body: &[u8]) -> String {
+/// or the raw body when it is not HTML. An HTML body is parsed by `parse`.
+///
+/// # Errors
+/// The error `parse` returns for an HTML body.
+pub fn extract_text<E>(body: &[u8], parse: impl FnOnce(&str) -> Result<Html, E>) -> Result<String, E> {
     let trimmed = String::from_utf8_lossy(body);
     let trimmed = trimmed.trim();
     if trimmed.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     if !looks_html(trimmed.as_bytes()) {
-        return trimmed.to_owned();
+        return Ok(trimmed.to_owned());
     }
-    let doc = Html::parse_document(trimmed);
+    let doc = parse(trimmed)?;
     let mut out = String::new();
     for root in roots(&doc) {
         collect_text(root, true, &mut out);
     }
-    out
+    Ok(out)
 }
 
 fn collect_text(node: ego_tree::NodeRef<'_, Node>, strip_chrome: bool, out: &mut String) {
@@ -142,6 +148,17 @@ pub fn shingles(tokens: &[String], n: usize) -> Vec<String> {
     tokens.windows(n).map(|w| w.join(" ")).collect()
 }
 
+/// Test-only [`normalize`] with the plain, uncharged `scraper` parse.
+#[cfg(test)]
+pub(crate) fn normalize_plain(body: &[u8]) -> Option<Document> {
+    match normalize(body, |html| {
+        Ok::<_, std::convert::Infallible>(Html::parse_document(html))
+    }) {
+        Ok(doc) => doc,
+        Err(never) => match never {},
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn html_page(nav: &str, main: &str) -> Vec<u8> {
     format!(
@@ -157,7 +174,7 @@ mod tests {
 
     #[test]
     fn strips_chrome_and_scripts() {
-        let doc = normalize(&html_page(
+        let doc = normalize_plain(&html_page(
             "Home About Contact Login",
             "Unique Product Alpha with rare widget terminology and packing details",
         ))
@@ -171,19 +188,19 @@ mod tests {
 
     #[test]
     fn plain_text_and_too_short() {
-        let doc = normalize(b"Alpha beta gamma delta epsilon zeta eta").unwrap();
+        let doc = normalize_plain(b"Alpha beta gamma delta epsilon zeta eta").unwrap();
         assert!(doc.tokens.len() >= MIN_TOKENS);
         assert_eq!(doc.shingles.len(), doc.tokens.len() - SHINGLE_SIZE + 1);
-        assert!(normalize(b"hi").is_none());
-        assert!(normalize(b"").is_none());
+        assert!(normalize_plain(b"hi").is_none());
+        assert!(normalize_plain(b"").is_none());
     }
 
     #[test]
     fn multi_article_without_main_uses_all_articles() {
         let a = b"<!doctype html><html><body>\n<article>Shared lead story about space telescopes and deep sky surveys with nebulae catalogs</article>\n<article>Unique page one second story about urban cycling cargo bikes commuting safety</article>\n</body></html>";
         let b = b"<!doctype html><html><body>\n<article>Shared lead story about space telescopes and deep sky surveys with nebulae catalogs</article>\n<article>Unique page two second story about sourdough baking hydration fermentation crumb</article>\n</body></html>";
-        let ja = normalize(a).unwrap().tokens.join(" ");
-        let jb = normalize(b).unwrap().tokens.join(" ");
+        let ja = normalize_plain(a).unwrap().tokens.join(" ");
+        let jb = normalize_plain(b).unwrap().tokens.join(" ");
         assert!(ja.contains("cycling"));
         assert!(jb.contains("sourdough"));
         assert_ne!(ja, jb);
@@ -192,11 +209,11 @@ mod tests {
     #[test]
     fn body_fallback_strips_nested_chrome_and_keeps_main_only() {
         let body = b"<html><body><header>Site Header Words</header><div><p>Body paragraph with several distinct words here</p><aside>Side note words</aside></div></body></html>";
-        let j = normalize(body).unwrap().tokens.join(" ");
+        let j = normalize_plain(body).unwrap().tokens.join(" ");
         assert!(j.contains("paragraph"));
         assert!(!j.contains("header") && !j.contains("side"));
         let with_main = b"<html><body><div>Outside the landmark text that is ignored</div><div role=main>Inside landmark alpha beta gamma delta epsilon</div></body></html>";
-        let j = normalize(with_main).unwrap().tokens.join(" ");
+        let j = normalize_plain(with_main).unwrap().tokens.join(" ");
         assert!(j.contains("inside") && !j.contains("outside"));
     }
 }

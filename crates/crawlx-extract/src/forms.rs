@@ -100,8 +100,8 @@ pub struct StaticForm {
 /// [`crate::ExtractError::ParseMemory`] when the process-wide parse-memory budget is exhausted.
 pub fn extract_str(html: &str, page: &Url) -> Result<Vec<StaticForm>, crate::ExtractError> {
     // declared before `doc`: released after the parsed tree is dropped
-    let _charge = crate::parse_budget::charge(html.len())?;
-    let doc = Html::parse_document(html);
+    let mut charge = crate::parse_budget::charge(html.len())?;
+    let doc = crate::dom::parse_document(&mut charge, html)?;
     let base = effective_base(&doc, page);
     Ok(extract(&doc, &base))
 }

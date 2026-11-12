@@ -1,0 +1,28 @@
+{
+  "id": "s48-limit-schema-depth",
+  "family": "selector",
+  "note": "one-over limit: a chain of 64 definitions and 511 combinator branches compile; one more of either is a typed budget error",
+  "expectedText": "ok\nerror:Budget(schema AST)\nok\nerror:Budget(schema AST)",
+  "spans": [
+    {
+      "label": "chain_64",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "chain_65",
+      "start": 3,
+      "end": 27
+    },
+    {
+      "label": "branches_511",
+      "start": 28,
+      "end": 30
+    },
+    {
+      "label": "branches_512",
+      "start": 31,
+      "end": 55
+    }
+  ]
+}

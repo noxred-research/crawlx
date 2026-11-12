@@ -1,0 +1,123 @@
+{
+  "id": "f13-bike-launch",
+  "family": "focus",
+  "note": "product announcement with a journal teaser block whose summaries are plain text, a call-to-action banner and footer columns",
+  "expectedText": "Greywheel Cycles\nBikes Parts Find a store Journal Basket\nIntroducing the Ashlar Commuter\nAfter two years of testing on cobbles, tram lines and wet leaves, we are releasing the Ashlar Commuter, a steel framed city bike built for people who ride every day and do not want to think about it.\nThe frame is made from heat treated steel tubing with internal cable routing, which keeps the lines clean and the cables out of the weather. A belt drive replaces the chain, so there is nothing to oil and nothing to stain a trouser leg.\nMudguards, a rear rack and dynamo lights are fitted as standard. The eight speed hub gearbox is sealed against rain, and the brakes are hydraulic discs that work the same in a downpour as on a dry day.\nThe Ashlar will be available in three sizes and two colours from the first of March. Pre-orders open today, and every bike ships with a free first service at any Greywheel store.\nMore from the journal\nHow we test frames on cobbles\nA look inside our shaking rig and the people who run it.\nWinter riding without the misery\nLayers, lights and tyre pressures for dark commutes.\nMeet the workshop team\nSix mechanics, one very large kettle.\nBook a test ride at your nearest store.\nFind a store\nHelp\nDelivery\nReturns\nAbout\nCareers\nPress\nGreywheel Cycles Ltd. Prices include tax.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 16
+    },
+    {
+      "label": "boilerplate",
+      "start": 17,
+      "end": 56
+    },
+    {
+      "label": "body",
+      "start": 57,
+      "end": 88
+    },
+    {
+      "label": "body",
+      "start": 89,
+      "end": 288
+    },
+    {
+      "label": "body",
+      "start": 289,
+      "end": 525
+    },
+    {
+      "label": "body",
+      "start": 526,
+      "end": 727
+    },
+    {
+      "label": "body",
+      "start": 728,
+      "end": 906
+    },
+    {
+      "label": "boilerplate",
+      "start": 907,
+      "end": 928
+    },
+    {
+      "label": "boilerplate",
+      "start": 929,
+      "end": 958
+    },
+    {
+      "label": "boilerplate",
+      "start": 959,
+      "end": 1015
+    },
+    {
+      "label": "boilerplate",
+      "start": 1016,
+      "end": 1048
+    },
+    {
+      "label": "boilerplate",
+      "start": 1049,
+      "end": 1101
+    },
+    {
+      "label": "boilerplate",
+      "start": 1102,
+      "end": 1124
+    },
+    {
+      "label": "boilerplate",
+      "start": 1125,
+      "end": 1162
+    },
+    {
+      "label": "boilerplate",
+      "start": 1163,
+      "end": 1202
+    },
+    {
+      "label": "boilerplate",
+      "start": 1203,
+      "end": 1215
+    },
+    {
+      "label": "boilerplate",
+      "start": 1216,
+      "end": 1220
+    },
+    {
+      "label": "boilerplate",
+      "start": 1221,
+      "end": 1229
+    },
+    {
+      "label": "boilerplate",
+      "start": 1230,
+      "end": 1237
+    },
+    {
+      "label": "boilerplate",
+      "start": 1238,
+      "end": 1243
+    },
+    {
+      "label": "boilerplate",
+      "start": 1244,
+      "end": 1251
+    },
+    {
+      "label": "boilerplate",
+      "start": 1252,
+      "end": 1257
+    },
+    {
+      "label": "boilerplate",
+      "start": 1258,
+      "end": 1299
+    }
+  ]
+}

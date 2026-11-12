@@ -1,0 +1,13 @@
+{
+  "id": "s33-item-malformed-transforms",
+  "family": "selector",
+  "note": "item loader: a rejected transform is a typed failure that never falls back to the default and never yields a value",
+  "expectedText": "ok=\"fine\"",
+  "spans": [
+    {
+      "label": "ok",
+      "start": 0,
+      "end": 9
+    }
+  ]
+}

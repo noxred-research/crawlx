@@ -1,0 +1,28 @@
+{
+  "id": "d43-sitemap-hreflang-variants",
+  "family": "feed",
+  "note": "sitemap alternates: only rel=alternate links in the XHTML namespace are language variants, each is still subject to scope, source order is kept without a hint",
+  "expectedText": "https://news.corpus.test/en/tides\nhttps://news.corpus.test/de/gezeiten\nhttps://news.corpus.test/fr/marees\nhttps://news.corpus.test/de/hafen",
+  "spans": [
+    {
+      "label": "page",
+      "start": 0,
+      "end": 33
+    },
+    {
+      "label": "variant",
+      "start": 34,
+      "end": 70
+    },
+    {
+      "label": "variant",
+      "start": 71,
+      "end": 105
+    },
+    {
+      "label": "page",
+      "start": 106,
+      "end": 139
+    }
+  ]
+}

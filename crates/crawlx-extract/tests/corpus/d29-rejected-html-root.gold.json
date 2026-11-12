@@ -1,0 +1,13 @@
+{
+  "id": "d29-rejected-html-root",
+  "family": "feed",
+  "note": "an HTML document is not a feed",
+  "expectedText": "Policy::Protocol(unsupported feed root namespace)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 49
+    }
+  ]
+}

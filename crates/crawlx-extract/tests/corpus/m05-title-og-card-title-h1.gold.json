@@ -1,0 +1,18 @@
+{
+  "id": "m05-title-og-card-title-h1",
+  "family": "meta_exact",
+  "note": "four competing title sources and no structured data; the Open Graph title outranks the card title, and the title element and h1 never win",
+  "expectedText": "title=Harbour Ferry Adds Evening Sailings\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 41
+    },
+    {
+      "label": "language",
+      "start": 51,
+      "end": 53
+    }
+  ]
+}

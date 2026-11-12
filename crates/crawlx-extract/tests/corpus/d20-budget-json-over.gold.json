@@ -1,0 +1,18 @@
+{
+  "id": "d20-budget-json-over",
+  "family": "feed",
+  "note": "one over the entry budget for JSON Feed: two items kept, truncated",
+  "expectedText": "https://news.corpus.test/three/1\nhttps://news.corpus.test/three/2",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 32
+    },
+    {
+      "label": "item",
+      "start": 33,
+      "end": 65
+    }
+  ]
+}

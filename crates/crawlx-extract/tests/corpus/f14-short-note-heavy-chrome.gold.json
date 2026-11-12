@@ -1,0 +1,163 @@
+{
+  "id": "f14-short-note-heavy-chrome",
+  "family": "focus",
+  "note": "three short paragraphs surrounded by far more navigation, promo, feed and ad text than article text",
+  "expectedText": "Free star chart for every new subscriber. Offer ends Sunday.\nStarlight Bulletin\nSky tonight Missions Gear Learn Events Shop\nTonight\nMoonrise 21:14\nVenus low in the west\nJupiter visible from dusk\nUpcoming events\nDark sky walk, Saturday\nTelescope clinic, Sunday\nLecture on comets, Thursday\nComet Tail Spotted Over the Northern Hills\nAmateur observers in the northern hills photographed the tail of a faint comet on Monday night, about two hours after sunset, low above the treeline.\nThe comet is not bright enough to see without binoculars, but long exposures show a pale tail more than three degrees long. Observers recommend a dark site and a clear view toward the north west.\nIt will fade over the coming week as it moves away from the sun.\nPocket Star Atlas\nForty maps for the cost of a coffee.\nRed observing torch\nKeeps your night vision intact.\nAlso this week\nProbe passes the outer asteroid belt\nObservatory seeks volunteer guides\nMeteor shower peaks on Friday\nNew photographs of a lunar crater\nTelescope mirror returns from polishing\nAdvertisement\nHand ground mirrors made in the valley workshop since 1952.\nThe monthly sky\nA star chart and observing tips, free in your inbox.\nSubscribe\nAbout Contact Privacy Terms Advertise",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 60
+    },
+    {
+      "label": "boilerplate",
+      "start": 61,
+      "end": 79
+    },
+    {
+      "label": "boilerplate",
+      "start": 80,
+      "end": 123
+    },
+    {
+      "label": "boilerplate",
+      "start": 124,
+      "end": 131
+    },
+    {
+      "label": "boilerplate",
+      "start": 132,
+      "end": 146
+    },
+    {
+      "label": "boilerplate",
+      "start": 147,
+      "end": 168
+    },
+    {
+      "label": "boilerplate",
+      "start": 169,
+      "end": 194
+    },
+    {
+      "label": "boilerplate",
+      "start": 195,
+      "end": 210
+    },
+    {
+      "label": "boilerplate",
+      "start": 211,
+      "end": 234
+    },
+    {
+      "label": "boilerplate",
+      "start": 235,
+      "end": 259
+    },
+    {
+      "label": "boilerplate",
+      "start": 260,
+      "end": 287
+    },
+    {
+      "label": "body",
+      "start": 288,
+      "end": 330
+    },
+    {
+      "label": "body",
+      "start": 331,
+      "end": 480
+    },
+    {
+      "label": "body",
+      "start": 481,
+      "end": 676
+    },
+    {
+      "label": "body",
+      "start": 677,
+      "end": 741
+    },
+    {
+      "label": "boilerplate",
+      "start": 742,
+      "end": 759
+    },
+    {
+      "label": "boilerplate",
+      "start": 760,
+      "end": 796
+    },
+    {
+      "label": "boilerplate",
+      "start": 797,
+      "end": 816
+    },
+    {
+      "label": "boilerplate",
+      "start": 817,
+      "end": 848
+    },
+    {
+      "label": "boilerplate",
+      "start": 849,
+      "end": 863
+    },
+    {
+      "label": "boilerplate",
+      "start": 864,
+      "end": 900
+    },
+    {
+      "label": "boilerplate",
+      "start": 901,
+      "end": 935
+    },
+    {
+      "label": "boilerplate",
+      "start": 936,
+      "end": 965
+    },
+    {
+      "label": "boilerplate",
+      "start": 966,
+      "end": 999
+    },
+    {
+      "label": "boilerplate",
+      "start": 1000,
+      "end": 1039
+    },
+    {
+      "label": "boilerplate",
+      "start": 1040,
+      "end": 1053
+    },
+    {
+      "label": "boilerplate",
+      "start": 1054,
+      "end": 1113
+    },
+    {
+      "label": "boilerplate",
+      "start": 1114,
+      "end": 1129
+    },
+    {
+      "label": "boilerplate",
+      "start": 1130,
+      "end": 1182
+    },
+    {
+      "label": "boilerplate",
+      "start": 1183,
+      "end": 1192
+    },
+    {
+      "label": "boilerplate",
+      "start": 1193,
+      "end": 1230
+    }
+  ]
+}

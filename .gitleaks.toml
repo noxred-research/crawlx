@@ -30,4 +30,6 @@ regexes = [
   '''^crawlx/(?:test|other)/v1$''',
   # Credential canary the archive wire-record test proves is dropped from records.
   '''^wire-secret-key-12345678$''',
+  # Tokenizer names recorded in the language and sentence corpus manifests, not credentials.
+  '''^(?:dictionary_uax29|unicode_rules_v1)$''',
 ]

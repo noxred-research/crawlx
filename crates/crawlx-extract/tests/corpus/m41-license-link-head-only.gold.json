@@ -1,0 +1,23 @@
+{
+  "id": "m41-license-link-head-only",
+  "family": "meta_exact",
+  "note": "a license link element in the head is the page's license",
+  "expectedText": "title=Reuse Terms for the Town Photo Archive\nlanguage=en\nlicense=https://licenses.corpus.test/reuse/2.0",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 44
+    },
+    {
+      "label": "language",
+      "start": 54,
+      "end": 56
+    },
+    {
+      "label": "license",
+      "start": 65,
+      "end": 103
+    }
+  ]
+}

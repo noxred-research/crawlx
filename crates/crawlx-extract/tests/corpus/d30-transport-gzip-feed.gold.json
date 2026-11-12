@@ -1,0 +1,13 @@
+{
+  "id": "d30-transport-gzip-feed",
+  "family": "feed",
+  "note": "the feed parser takes decoded bodies only: gzip bytes are a typed unknown-format error (transport decoding belongs to the caller)",
+  "expectedText": "Policy::Protocol(unknown feed format)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 37
+    }
+  ]
+}

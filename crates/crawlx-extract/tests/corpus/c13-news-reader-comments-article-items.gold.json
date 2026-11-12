@@ -1,0 +1,78 @@
+{
+  "id": "c13-news-reader-comments-article-items",
+  "family": "comments",
+  "note": "news story followed by reader comments marked up as article elements",
+  "expectedText": "Westshore Standard\nHome Coast Business Letters\nNew Ferry Terminal Opens at Gannet Quay\nThe new ferry terminal at Gannet Quay welcomed its first passengers on Thursday morning, replacing a wooden shelter that had served the island crossing since the nineteen sixties.\nThe building has a heated waiting hall, a ticket office, a small cafe and covered access to both vehicle decks. A level walkway means wheelchair users no longer need help to board.\nThe operator said the terminal cost nine million pounds and was paid for jointly by the island trust and a coastal regeneration fund. Crossings continue every ninety minutes.\nReader comments\nOttilie Brandt\nAbout time. I have stood in that old shelter in a gale more times than I care to count.\nRafferty Moon\nNine million pounds seems a lot for a waiting room. Has anyone seen the breakdown of costs?\nOttilie Brandt\nIt includes the new slipway and the drainage, Rafferty, so it is not only the building.\nPrivacy Contact",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 18
+    },
+    {
+      "label": "boilerplate",
+      "start": 19,
+      "end": 46
+    },
+    {
+      "label": "body",
+      "start": 47,
+      "end": 86
+    },
+    {
+      "label": "body",
+      "start": 87,
+      "end": 266
+    },
+    {
+      "label": "body",
+      "start": 267,
+      "end": 447
+    },
+    {
+      "label": "body",
+      "start": 448,
+      "end": 622
+    },
+    {
+      "label": "boilerplate",
+      "start": 623,
+      "end": 638
+    },
+    {
+      "label": "comment",
+      "start": 639,
+      "end": 653
+    },
+    {
+      "label": "comment",
+      "start": 654,
+      "end": 741
+    },
+    {
+      "label": "comment",
+      "start": 742,
+      "end": 755
+    },
+    {
+      "label": "comment",
+      "start": 756,
+      "end": 847
+    },
+    {
+      "label": "comment",
+      "start": 848,
+      "end": 862
+    },
+    {
+      "label": "comment",
+      "start": 863,
+      "end": 950
+    },
+    {
+      "label": "boilerplate",
+      "start": 951,
+      "end": 966
+    }
+  ]
+}

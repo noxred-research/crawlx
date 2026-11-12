@@ -1,0 +1,28 @@
+{
+  "id": "m20-date-naive-with-timezone",
+  "family": "meta_exact",
+  "note": "a local date-time without an offset resolves with the caller's IANA zone and keeps the zone's offset in the timestamp",
+  "expectedText": "title=Harvest Market Moves Indoors\nlanguage=en\npublished=2026-06-18\npublishedTimestamp=2026-06-18T22:15:00+09:00",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 34
+    },
+    {
+      "label": "language",
+      "start": 44,
+      "end": 46
+    },
+    {
+      "label": "published",
+      "start": 57,
+      "end": 67
+    },
+    {
+      "label": "publishedTimestamp",
+      "start": 87,
+      "end": 112
+    }
+  ]
+}

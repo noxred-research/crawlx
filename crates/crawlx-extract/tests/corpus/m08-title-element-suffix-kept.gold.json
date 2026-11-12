@@ -1,0 +1,18 @@
+{
+  "id": "m08-title-element-suffix-kept",
+  "family": "meta_exact",
+  "note": "no structured title exists: the title element is used verbatim, the site suffix is not stripped and the h1 is not preferred",
+  "expectedText": "title=Ridge Trail Closed for Nesting Season - Hillside Courier\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 62
+    },
+    {
+      "label": "language",
+      "start": 72,
+      "end": 74
+    }
+  ]
+}

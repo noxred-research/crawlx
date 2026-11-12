@@ -1,0 +1,23 @@
+{
+  "id": "m40-rights-dc-rights-precedence",
+  "family": "meta_exact",
+  "note": "a rights meta tag outranks a copyright meta tag that says something shorter",
+  "expectedText": "title=Salt Meadow Cooperative Reports Its Year\nlanguage=en\nrights=All rights reserved by Salt Meadow Cooperative",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 46
+    },
+    {
+      "label": "language",
+      "start": 56,
+      "end": 58
+    },
+    {
+      "label": "rights",
+      "start": 66,
+      "end": 112
+    }
+  ]
+}

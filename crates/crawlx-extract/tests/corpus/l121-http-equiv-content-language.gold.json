@@ -1,0 +1,58 @@
+{
+  "id": "l121-http-equiv-content-language",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "o|moleiro|mói|o|grão|a|farinha|espera|na|mesa",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 1
+    },
+    {
+      "label": "token",
+      "start": 2,
+      "end": 9
+    },
+    {
+      "label": "token",
+      "start": 10,
+      "end": 14
+    },
+    {
+      "label": "token",
+      "start": 15,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 47
+    }
+  ]
+}

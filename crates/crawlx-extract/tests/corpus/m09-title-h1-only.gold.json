@@ -1,0 +1,18 @@
+{
+  "id": "m09-title-h1-only",
+  "family": "meta_exact",
+  "note": "empty title element and no meta tags: the first h1 is the only title evidence",
+  "expectedText": "title=Greenhouse Tomatoes Ripen Early\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 37
+    },
+    {
+      "label": "language",
+      "start": 47,
+      "end": 49
+    }
+  ]
+}

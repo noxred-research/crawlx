@@ -1,0 +1,58 @@
+{
+  "id": "s27-css-projections",
+  "family": "selector",
+  "note": "css projections: ::text selects direct text nodes, ::attr(name) selects one attribute case-insensitively, lists mix both in document order",
+  "expectedText": "Mast\ncheck\n/m/1\n7\nMast\ncheck\n/m/1\nlight\n/m/1\nlight",
+  "spans": [
+    {
+      "label": "c1",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "c1",
+      "start": 5,
+      "end": 10
+    },
+    {
+      "label": "c2",
+      "start": 11,
+      "end": 15
+    },
+    {
+      "label": "c3",
+      "start": 16,
+      "end": 17
+    },
+    {
+      "label": "c4",
+      "start": 18,
+      "end": 22
+    },
+    {
+      "label": "c4",
+      "start": 23,
+      "end": 28
+    },
+    {
+      "label": "c4",
+      "start": 29,
+      "end": 33
+    },
+    {
+      "label": "c5",
+      "start": 34,
+      "end": 39
+    },
+    {
+      "label": "c7",
+      "start": 40,
+      "end": 44
+    },
+    {
+      "label": "c8",
+      "start": 45,
+      "end": 50
+    }
+  ]
+}

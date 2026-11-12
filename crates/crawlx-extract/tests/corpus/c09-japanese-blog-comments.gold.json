@@ -1,0 +1,68 @@
+{
+  "id": "c09-japanese-blog-comments",
+  "family": "comments",
+  "note": "Japanese blog post with three comments",
+  "expectedText": "山あいの暮らし日記 日記 レシピ このブログについて\n冬の朝市で見つけた野菜\n先週の日曜日、駅前の朝市で古い品種の大根を見つけました。形は不揃いですが、皮が薄く、煮ると驚くほど甘くなります。\n売っていたのは近くの農家の方で、種を毎年自分で採っているそうです。畑は雪の下でも大根が眠るので、収穫は一月まで続くと聞きました。\n家に帰ってさっそく、豚肉と一緒に二時間ほど煮込みました。味付けは醤油と少しの酒だけですが、大根の甘さが主役になります。\nはなこ\nその大根、私も去年買いました。おでんに入れると最高でした。\nミナト\n朝市は何時ごろに行けば残っていますか。いつも昼に着くので売り切れています。\n管理人\n八時前なら大丈夫です。人気の野菜は九時には無くなります。\nプライバシー",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 72
+    },
+    {
+      "label": "body",
+      "start": 73,
+      "end": 106
+    },
+    {
+      "label": "body",
+      "start": 107,
+      "end": 275
+    },
+    {
+      "label": "body",
+      "start": 276,
+      "end": 468
+    },
+    {
+      "label": "body",
+      "start": 469,
+      "end": 646
+    },
+    {
+      "label": "comment",
+      "start": 647,
+      "end": 656
+    },
+    {
+      "label": "comment",
+      "start": 657,
+      "end": 744
+    },
+    {
+      "label": "comment",
+      "start": 745,
+      "end": 754
+    },
+    {
+      "label": "comment",
+      "start": 755,
+      "end": 866
+    },
+    {
+      "label": "comment",
+      "start": 867,
+      "end": 876
+    },
+    {
+      "label": "comment",
+      "start": 877,
+      "end": 961
+    },
+    {
+      "label": "boilerplate",
+      "start": 962,
+      "end": 980
+    }
+  ]
+}

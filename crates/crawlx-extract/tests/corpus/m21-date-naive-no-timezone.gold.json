@@ -1,0 +1,18 @@
+{
+  "id": "m21-date-naive-no-timezone",
+  "family": "meta_exact",
+  "note": "a local date-time without an offset and no caller zone: the date is not invented, the evidence is kept and the field is uncertain",
+  "expectedText": "title=Harvest Market Reopens Outdoors\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 37
+    },
+    {
+      "label": "language",
+      "start": 47,
+      "end": 49
+    }
+  ]
+}

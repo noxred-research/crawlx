@@ -1,0 +1,38 @@
+{
+  "id": "l100-rules-unsupported-contractions-english",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "they|don't|wait|we'll|go|home",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "token",
+      "start": 5,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 15
+    },
+    {
+      "label": "token",
+      "start": 16,
+      "end": 21
+    },
+    {
+      "label": "token",
+      "start": 22,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 29
+    }
+  ]
+}

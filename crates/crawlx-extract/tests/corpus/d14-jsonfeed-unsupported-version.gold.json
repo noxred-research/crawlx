@@ -1,0 +1,13 @@
+{
+  "id": "d14-jsonfeed-unsupported-version",
+  "family": "feed",
+  "note": "JSON Feed with an unknown version is a typed protocol error, never an empty success",
+  "expectedText": "Policy::Protocol(unsupported JSON Feed version)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 47
+    }
+  ]
+}

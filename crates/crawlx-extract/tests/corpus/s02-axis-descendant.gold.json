@@ -1,0 +1,73 @@
+{
+  "id": "s02-axis-descendant",
+  "family": "selector",
+  "note": "descendant axis: nested paragraphs, wildcard, text nodes in document order, element count, empty result",
+  "expectedText": "one bold two\nthree\nBeta\nthree\nthree\nbold\nAlpha\none\nbold\ntwo\nBeta\nthree\n11",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "r1",
+      "start": 13,
+      "end": 18
+    },
+    {
+      "label": "r2",
+      "start": 19,
+      "end": 23
+    },
+    {
+      "label": "r2",
+      "start": 24,
+      "end": 29
+    },
+    {
+      "label": "r2",
+      "start": 30,
+      "end": 35
+    },
+    {
+      "label": "r3",
+      "start": 36,
+      "end": 40
+    },
+    {
+      "label": "r4",
+      "start": 41,
+      "end": 46
+    },
+    {
+      "label": "r4",
+      "start": 47,
+      "end": 50
+    },
+    {
+      "label": "r4",
+      "start": 51,
+      "end": 55
+    },
+    {
+      "label": "r4",
+      "start": 56,
+      "end": 59
+    },
+    {
+      "label": "r4",
+      "start": 60,
+      "end": 64
+    },
+    {
+      "label": "r4",
+      "start": 65,
+      "end": 70
+    },
+    {
+      "label": "r5",
+      "start": 71,
+      "end": 73
+    }
+  ]
+}

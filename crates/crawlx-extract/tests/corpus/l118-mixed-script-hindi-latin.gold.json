@@ -1,0 +1,33 @@
+{
+  "id": "l118-mixed-script-hindi-latin",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "यह|radio|चैनल|साफ|है",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 42
+    }
+  ]
+}

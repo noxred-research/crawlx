@@ -1,0 +1,1 @@
+<feed xmlns="http://www.w3.org/2005/Atom" xml:base="{{probe}}/"><entry><link href="relative-one"/></entry><entry><link href="https://news.corpus.test/probe/absolute"/></entry></feed>

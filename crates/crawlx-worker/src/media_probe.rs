@@ -146,6 +146,377 @@ pub fn inspect_header(bytes: &[u8], max_pixels: u64) -> Result<MediaDimensionsV1
     })
 }
 
+/// Per-scope image ingest: validate, checksum, de-duplicate and store downloaded images.
+///
+/// An image URL found on a page re-enters the frontier like any other discovered URL
+/// ([`crawlx_extract::images::frontier_candidates`] proposes it, the run's scope, robots and
+/// governor decide), and the bytes the checked fetcher returns arrive here. [`ImagePipeline`]
+/// never fetches anything itself.
+///
+/// * A full decode runs on the [`CpuPool`] under an [`ImagePolicy`] (byte, pixel and minimum-size
+///   limits, decoder memory capped from the pixel limit), so a corrupt, truncated or hostile image
+///   is refused before anything is written and costs one bounded pool slot.
+/// * Identical bytes under one [`ImageScope`] are stored once: later ingests return the first
+///   artifact with `deduplicated` set. Another scope stores its own copy, so one tenant's
+///   dedupe never exposes or removes another's content.
+/// * Stored bytes and image counts are limited per scope by [`ImageQuota`]; one over is refused
+///   and nothing is stored. A refused image charges nothing.
+/// * An optional deadline only shortens the artifact's normal retention.
+pub mod ingest {
+    use super::{ImagePolicy, ImageQuota};
+    use crate::runtime::CpuPool;
+    use bytes::Bytes;
+    use crawlx_core::repo::{ArtifactStore, Sensitivity};
+    use crawlx_core::{ArtifactRef, CrawlRunId, StoreError, TenantId, Timestamp};
+    use crawlx_extract::images::{inspect_image, ImageError, ImageFacts};
+    use parking_lot::Mutex;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use tokio::sync::OnceCell;
+    use url::Url;
+
+    /// The identity images are de-duplicated and counted under: one tenant's one run.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct ImageScope {
+        /// Owning tenant.
+        pub tenant: TenantId,
+        /// Run the images belong to.
+        pub run: CrawlRunId,
+    }
+
+    /// Map key of a scope: tenant and run identifiers.
+    type ScopeKey = ([u8; 16], [u8; 16]);
+
+    impl ImageScope {
+        /// The scope of `run` owned by `tenant`.
+        #[must_use]
+        pub const fn new(tenant: TenantId, run: CrawlRunId) -> Self {
+            Self { tenant, run }
+        }
+
+        fn key(&self) -> ScopeKey {
+            (
+                self.tenant.as_uuid().into_bytes(),
+                self.run.as_uuid().into_bytes(),
+            )
+        }
+    }
+
+    /// One downloaded image to ingest.
+    #[derive(Debug, Clone)]
+    #[non_exhaustive]
+    pub struct ImageIngest {
+        /// Scope the image is stored and de-duplicated under.
+        pub scope: ImageScope,
+        /// Where the bytes came from (after redirects); recorded, never fetched here.
+        pub source: Url,
+        /// The downloaded bytes.
+        pub bytes: Bytes,
+        /// Retention can only be shortened to this instant.
+        pub deadline: Option<Timestamp>,
+    }
+
+    impl ImageIngest {
+        /// An ingest of `bytes` fetched from `source` for `scope`.
+        #[must_use]
+        pub const fn new(scope: ImageScope, source: Url, bytes: Bytes) -> Self {
+            Self {
+                scope,
+                source,
+                bytes,
+                deadline: None,
+            }
+        }
+    }
+
+    /// A stored (or already stored) image.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct StoredImage {
+        /// Facts of the decoded image, including its checksum.
+        pub facts: ImageFacts,
+        /// The stored original.
+        pub artifact: ArtifactRef,
+        /// The stored PNG thumbnail when the policy asked for one.
+        pub thumbnail: Option<ArtifactRef>,
+    }
+
+    /// The outcome of one ingest.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct IngestedImage {
+        /// What is stored for these bytes in this scope.
+        pub stored: StoredImage,
+        /// These exact bytes were already stored in this scope; nothing was written.
+        pub deduplicated: bool,
+        /// Where this copy came from.
+        pub source: Url,
+    }
+
+    /// Why an image was not stored. Never carries image bytes.
+    #[derive(Debug, thiserror::Error)]
+    #[non_exhaustive]
+    pub enum ImageRefusal {
+        /// The image failed validation (corrupt, truncated, too big, too small, unsupported).
+        #[error(transparent)]
+        Image(#[from] ImageError),
+        /// The scope already holds the maximum number of images.
+        #[error("image count quota of {max} reached")]
+        TooManyImages {
+            /// Quota.
+            max: usize,
+        },
+        /// Storing the image would exceed the scope's byte quota.
+        #[error("image byte quota of {max} bytes would be exceeded")]
+        ByteQuota {
+            /// Quota.
+            max: u64,
+        },
+        /// The artifact store refused or failed the write.
+        #[error("image store failed: {0}")]
+        Store(#[from] StoreError),
+        /// The decode task did not complete (panic or shutdown).
+        #[error("image decode task failed")]
+        Task,
+    }
+
+    /// What a scope currently holds.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    #[non_exhaustive]
+    pub struct ScopeUsage {
+        /// Distinct images stored.
+        pub images: usize,
+        /// Bytes of originals and thumbnails stored.
+        pub bytes: u64,
+    }
+
+    #[derive(Default)]
+    struct Scope {
+        slots: BTreeMap<[u8; 32], Arc<OnceCell<StoredImage>>>,
+        usage: ScopeUsage,
+    }
+
+    /// See the module documentation.
+    pub struct ImagePipeline {
+        policy: ImagePolicy,
+        quota: ImageQuota,
+        scopes: Mutex<BTreeMap<ScopeKey, Scope>>,
+    }
+
+    impl std::fmt::Debug for ImagePipeline {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ImagePipeline")
+                .field("policy", &self.policy)
+                .field("quota", &self.quota)
+                .finish_non_exhaustive()
+        }
+    }
+
+    fn content_type(format: &str) -> &'static str {
+        match format {
+            "png" => "image/png",
+            "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "bmp" => "image/bmp",
+            "tiff" => "image/tiff",
+            _ => "application/octet-stream",
+        }
+    }
+
+    impl ImagePipeline {
+        /// A pipeline with `policy` limits per image and `quota` limits per scope.
+        ///
+        /// # Errors
+        /// [`ImageError::InvalidPolicy`] when the policy or quota is outside its hard ceilings.
+        pub fn new(policy: ImagePolicy, quota: ImageQuota) -> Result<Self, ImageError> {
+            policy.validate()?;
+            if quota.max_images == 0 || quota.max_scope_bytes == 0 {
+                return Err(ImageError::InvalidPolicy);
+            }
+            Ok(Self {
+                policy,
+                quota,
+                scopes: Mutex::new(BTreeMap::new()),
+            })
+        }
+
+        /// The distinct images and bytes `scope` holds.
+        #[must_use]
+        pub fn usage(&self, scope: &ImageScope) -> ScopeUsage {
+            self.scopes
+                .lock()
+                .get(&scope.key())
+                .map_or_else(ScopeUsage::default, |s| s.usage)
+        }
+
+        /// Validate, de-duplicate and store `request.bytes`.
+        ///
+        /// The byte ceiling is checked before any CPU is spent; the decode runs on `cpu`; a
+        /// refused image changes no counter. Concurrent ingests of identical bytes in one scope
+        /// store once.
+        ///
+        /// # Errors
+        /// [`ImageRefusal`] for a refused image, an exhausted quota or a store failure.
+        pub async fn ingest(
+            &self,
+            cpu: &CpuPool,
+            store: &dyn ArtifactStore,
+            request: &ImageIngest,
+        ) -> Result<IngestedImage, ImageRefusal> {
+            if request.bytes.len() > self.policy.max_bytes {
+                return Err(ImageError::TooLarge {
+                    len: request.bytes.len(),
+                    max: self.policy.max_bytes,
+                }
+                .into());
+            }
+            let (bytes, policy) = (request.bytes.clone(), self.policy);
+            let inspected = cpu
+                .run(move || inspect_image(&bytes, &policy))
+                .await
+                .map_err(|_| ImageRefusal::Task)??;
+            let key = request.scope.key();
+            let digest = inspected.facts.checksum.0;
+            let slot = {
+                let mut scopes = self.scopes.lock();
+                let scope = scopes.entry(key).or_default();
+                Arc::clone(scope.slots.entry(digest).or_default())
+            };
+            let mut wrote = false;
+            let stored = slot
+                .get_or_try_init(|| async {
+                    wrote = true;
+                    let reserved = self.reserve(
+                        key,
+                        inspected.facts.bytes,
+                        inspected.thumbnail.as_ref().map_or(0, Vec::len),
+                    )?;
+                    let written = self.write(store, request, &inspected).await;
+                    if written.is_err() {
+                        self.release(key, reserved);
+                    }
+                    written
+                })
+                .await;
+            let stored = match stored {
+                Ok(stored) => stored.clone(),
+                Err(error) => {
+                    // A failed first write leaves no empty slot behind to be mistaken for a hit.
+                    self.forget_if_empty(key, &digest);
+                    return Err(error);
+                }
+            };
+            Ok(IngestedImage {
+                stored,
+                deduplicated: !wrote,
+                source: request.source.clone(),
+            })
+        }
+
+        /// Reserve count and bytes for a new image, refusing one over either quota.
+        fn reserve(
+            &self,
+            key: ScopeKey,
+            original: usize,
+            thumbnail: usize,
+        ) -> Result<ScopeUsage, ImageRefusal> {
+            let added = u64::try_from(original.saturating_add(thumbnail)).unwrap_or(u64::MAX);
+            let mut scopes = self.scopes.lock();
+            let scope = scopes.entry(key).or_default();
+            if scope.usage.images >= self.quota.max_images {
+                return Err(ImageRefusal::TooManyImages {
+                    max: self.quota.max_images,
+                });
+            }
+            let total = scope.usage.bytes.checked_add(added);
+            if total.is_none_or(|t| t > self.quota.max_scope_bytes) {
+                return Err(ImageRefusal::ByteQuota {
+                    max: self.quota.max_scope_bytes,
+                });
+            }
+            let reserved = ScopeUsage {
+                images: 1,
+                bytes: added,
+            };
+            scope.usage.images = scope.usage.images.saturating_add(1);
+            scope.usage.bytes = scope.usage.bytes.saturating_add(added);
+            Ok(reserved)
+        }
+
+        fn release(&self, key: ScopeKey, reserved: ScopeUsage) {
+            if let Some(scope) = self.scopes.lock().get_mut(&key) {
+                scope.usage.images = scope.usage.images.saturating_sub(reserved.images);
+                scope.usage.bytes = scope.usage.bytes.saturating_sub(reserved.bytes);
+            }
+        }
+
+        fn forget_if_empty(&self, key: ScopeKey, digest: &[u8; 32]) {
+            if let Some(scope) = self.scopes.lock().get_mut(&key) {
+                if scope.slots.get(digest).is_some_and(|slot| slot.get().is_none()) {
+                    scope.slots.remove(digest);
+                }
+            }
+        }
+
+        async fn write(
+            &self,
+            store: &dyn ArtifactStore,
+            request: &ImageIngest,
+            inspected: &crawlx_extract::images::InspectedImage,
+        ) -> Result<StoredImage, ImageRefusal> {
+            let run = request.scope.run;
+            let kind = content_type(inspected.facts.format);
+            let artifact = match request.deadline {
+                Some(deadline) => {
+                    store
+                        .put_until(run, Sensitivity::Content, kind, &request.bytes, deadline)
+                        .await?
+                }
+                None => store.put(run, Sensitivity::Content, kind, &request.bytes).await?,
+            };
+            let thumbnail = match &inspected.thumbnail {
+                Some(png) => Some(match request.deadline {
+                    Some(deadline) => {
+                        store
+                            .put_until(run, Sensitivity::Content, "image/png", png, deadline)
+                            .await?
+                    }
+                    None => store.put(run, Sensitivity::Content, "image/png", png).await?,
+                }),
+                None => None,
+            };
+            Ok(StoredImage {
+                facts: inspected.facts.clone(),
+                artifact,
+                thumbnail,
+            })
+        }
+    }
+}
+
+pub use crawlx_extract::images::ImagePolicy;
+
+/// Per-scope limits of an [`ingest::ImagePipeline`]. One over either limit is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ImageQuota {
+    /// Most distinct images one scope may store.
+    pub max_images: usize,
+    /// Most bytes (originals and thumbnails) one scope may store.
+    pub max_scope_bytes: u64,
+}
+
+impl Default for ImageQuota {
+    fn default() -> Self {
+        Self {
+            max_images: 10_000,
+            max_scope_bytes: 1024 * 1024 * 1024,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

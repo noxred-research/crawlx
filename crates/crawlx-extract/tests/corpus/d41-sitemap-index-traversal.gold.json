@@ -1,0 +1,38 @@
+{
+  "id": "d41-sitemap-index-traversal",
+  "family": "feed",
+  "note": "sitemap index traversal: nested sitemaps are requested in order, the index that lists itself and the sitemap listed twice are requested once, the cross-origin nested sitemap is never requested",
+  "expectedText": "https://news.corpus.test/sitemaps/posts.xml\nhttps://news.corpus.test/posts/harbor-fees\nhttps://news.corpus.test/posts/ferry-routes\nhttps://news.corpus.test/sitemaps/pages.xml\nhttps://news.corpus.test/sitemaps/pages-2.xml\nhttps://news.corpus.test/pages/contact",
+  "spans": [
+    {
+      "label": "request",
+      "start": 0,
+      "end": 43
+    },
+    {
+      "label": "page",
+      "start": 44,
+      "end": 86
+    },
+    {
+      "label": "page",
+      "start": 87,
+      "end": 130
+    },
+    {
+      "label": "request",
+      "start": 131,
+      "end": 174
+    },
+    {
+      "label": "request",
+      "start": 175,
+      "end": 220
+    },
+    {
+      "label": "page",
+      "start": 221,
+      "end": 259
+    }
+  ]
+}

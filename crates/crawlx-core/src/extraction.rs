@@ -7,8 +7,19 @@ use crate::{hash::Digest, CoreError};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
+mod regex_admission;
+pub use regex_admission::{
+    admit_regex, RegexAdmissionError, MAX_REGEX_CAPTURE_GROUPS, MAX_REGEX_PATTERN_LEN,
+};
 mod chunks;
-pub use chunks::{WordChunkEnvelopeV1, WordChunkErrorV1, WordChunkPolicyV1, WordChunkStrategyV1};
+pub use chunks::{
+    ChunkPatternV1, WordChunkEnvelopeV1, WordChunkErrorV1, WordChunkPolicyV1, WordChunkStrategyV1,
+};
+mod cluster;
+pub use cluster::{
+    ClusterEnvelopeV1, ClusterErrorV1, ClusterPolicyV1, ClusterV1, MAX_CLUSTERS, MAX_CLUSTER_DIMENSIONS,
+    MAX_CLUSTER_ITERATIONS, MAX_CLUSTER_MODEL_LABEL, MAX_CLUSTER_VECTORS,
+};
 mod preview;
 pub use preview::{
     check_preview_target, PreviewIntentV1, PreviewPurposeV1, PreviewRefusalV1, DEFAULT_PREVIEW_HEAD_BYTES,

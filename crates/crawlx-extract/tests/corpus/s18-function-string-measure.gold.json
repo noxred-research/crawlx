@@ -1,0 +1,48 @@
+{
+  "id": "s18-function-string-measure",
+  "family": "selector",
+  "note": "string functions: string-length counts characters, normalize-space, translate with deletion, context-node defaults",
+  "expectedText": "10\n0\n\"Gate twelve\"\n\"berth_07\"\n\"AA\"\nGate twelve\nBERTH-07\nGate twelve",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "r2",
+      "start": 3,
+      "end": 4
+    },
+    {
+      "label": "r3",
+      "start": 5,
+      "end": 18
+    },
+    {
+      "label": "r4",
+      "start": 19,
+      "end": 29
+    },
+    {
+      "label": "r5",
+      "start": 30,
+      "end": 34
+    },
+    {
+      "label": "r6",
+      "start": 35,
+      "end": 46
+    },
+    {
+      "label": "r7",
+      "start": 47,
+      "end": 55
+    },
+    {
+      "label": "r8",
+      "start": 56,
+      "end": 67
+    }
+  ]
+}

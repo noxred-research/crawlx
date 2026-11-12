@@ -1,0 +1,98 @@
+{
+  "id": "l23-rules-cyrillic-serbian",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "воз|полази|са|станице|у|осам|сати|путници|чекају|на|перону|девојчица|чита|новине|а|кондуктер|проверава|карте",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 51
+    },
+    {
+      "label": "token",
+      "start": 52,
+      "end": 60
+    },
+    {
+      "label": "token",
+      "start": 61,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 88
+    },
+    {
+      "label": "token",
+      "start": 89,
+      "end": 93
+    },
+    {
+      "label": "token",
+      "start": 94,
+      "end": 106
+    },
+    {
+      "label": "token",
+      "start": 107,
+      "end": 125
+    },
+    {
+      "label": "token",
+      "start": 126,
+      "end": 134
+    },
+    {
+      "label": "token",
+      "start": 135,
+      "end": 147
+    },
+    {
+      "label": "token",
+      "start": 148,
+      "end": 150
+    },
+    {
+      "label": "token",
+      "start": 151,
+      "end": 169
+    },
+    {
+      "label": "token",
+      "start": 170,
+      "end": 188
+    },
+    {
+      "label": "token",
+      "start": 189,
+      "end": 199
+    }
+  ]
+}

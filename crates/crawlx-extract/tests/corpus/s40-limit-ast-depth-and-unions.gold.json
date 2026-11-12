@@ -1,0 +1,33 @@
+{
+  "id": "s40-limit-ast-depth-and-unions",
+  "family": "selector",
+  "note": "one-over limit: left-associative chains and huge unions stop at 64 operands before any evaluation",
+  "expectedText": "one\ntwo\nerror:Budget(AST depth)\n64\nerror:Budget(AST depth)",
+  "spans": [
+    {
+      "label": "u_ok",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "u_ok",
+      "start": 4,
+      "end": 7
+    },
+    {
+      "label": "u_over",
+      "start": 8,
+      "end": 31
+    },
+    {
+      "label": "a_ok",
+      "start": 32,
+      "end": 34
+    },
+    {
+      "label": "a_over",
+      "start": 35,
+      "end": 58
+    }
+  ]
+}

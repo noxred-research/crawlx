@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "a08-main-sections",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a08-main-sections",
+      "files": {
+        "input": {
+          "path": "a08-main-sections.html",
+          "sha256": "cccae8137c975e477a317190178fa65094763c087fe04d0c58837f0d690ddba3"
+        },
+        "gold": {
+          "path": "a08-main-sections.gold.json",
+          "sha256": "1e4daf87863673ca2523be4faee39789019fbbc738e4363bcecaecdb306c24d6"
+        }
+      }
+    },
+    {
+      "id": "a09-div-only",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a09-div-only",
+      "files": {
+        "input": {
+          "path": "a09-div-only.html",
+          "sha256": "ef59a30383c6d081a218bf0a4582fb02577aaa994fbe697ed207a0b4460bc1b6"
+        },
+        "gold": {
+          "path": "a09-div-only.gold.json",
+          "sha256": "696a2eaa86e918f2cc75d86d5871caeef4f76a60255f100941da2eb64b8567e2"
+        }
+      }
+    },
+    {
+      "id": "a10-three-part-continuation",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a10-three-part-continuation",
+      "files": {
+        "input": {
+          "path": "a10-three-part-continuation.html",
+          "sha256": "c93f9089ffe3ff0e354ae1f8e9d974057dc371ca32101f3169cf572b431502bd"
+        },
+        "gold": {
+          "path": "a10-three-part-continuation.gold.json",
+          "sha256": "ba5d10366a1a22b9e35b2e02a2b1e1d6da79578797099c0c5327b5a5309edae6"
+        }
+      }
+    },
+    {
+      "id": "a11-heavy-nested-chrome",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a11-heavy-nested-chrome",
+      "files": {
+        "input": {
+          "path": "a11-heavy-nested-chrome.html",
+          "sha256": "5af371a7cbabc0832bea2010b99447e35f255cd484d5c50fb5fd5422650804ef"
+        },
+        "gold": {
+          "path": "a11-heavy-nested-chrome.gold.json",
+          "sha256": "4bd5daf910a29fe04579cc6d8cd1c4be4f14f6ce02b221574264740dd9a5896d"
+        }
+      }
+    },
+    {
+      "id": "a12-figures-and-captions",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a12-figures-and-captions",
+      "files": {
+        "input": {
+          "path": "a12-figures-and-captions.html",
+          "sha256": "eb123ae8e51d5552cc3faedb0c752f285d5564c11e1491f915afa5b100cd7057"
+        },
+        "gold": {
+          "path": "a12-figures-and-captions.gold.json",
+          "sha256": "8c6589d72274dca66c07dd7f45c48ca85bf7a4f0dbb14f591ab549ae882933d9"
+        }
+      }
+    },
+    {
+      "id": "a13-code-table-quote",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a13-code-table-quote",
+      "files": {
+        "input": {
+          "path": "a13-code-table-quote.html",
+          "sha256": "66382e86b7149a3e8a9996a5b017b466282138420dbc3df253daee281f7ee2c0"
+        },
+        "gold": {
+          "path": "a13-code-table-quote.gold.json",
+          "sha256": "ec474880af0a6dfad1ca7fe7cb0305272e33762bd7e00fb4338e251a3da54c68"
+        }
+      }
+    },
+    {
+      "id": "a14-unclosed-and-stray-tags",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a14-unclosed-and-stray-tags",
+      "files": {
+        "input": {
+          "path": "a14-unclosed-and-stray-tags.html",
+          "sha256": "8bd38ca42e6965c7bd22a378ad06536f3eb7095fb85df188c6d18602f2144f26"
+        },
+        "gold": {
+          "path": "a14-unclosed-and-stray-tags.gold.json",
+          "sha256": "012014d38a4399198dee68c46201c0a95439cf23325aaae2efb6650ba2819a20"
+        }
+      }
+    },
+    {
+      "id": "a15-bad-nesting-and-bare-text",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a15-bad-nesting-and-bare-text",
+      "files": {
+        "input": {
+          "path": "a15-bad-nesting-and-bare-text.html",
+          "sha256": "dd92e466db92834e27ccd2fccaa7e4438f300ee5003220113b9246b17225c81e"
+        },
+        "gold": {
+          "path": "a15-bad-nesting-and-bare-text.gold.json",
+          "sha256": "c92a4da32572a650012397f6d668a2359e8b14b7214bd068aeeb7fe2130a4e5b"
+        }
+      }
+    },
+    {
+      "id": "a16-short-alert-road",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a16-short-alert-road",
+      "files": {
+        "input": {
+          "path": "a16-short-alert-road.html",
+          "sha256": "02de262b42d68a014f2822c4ad2e90a8407278d78ece92c7e80c0a2569559ccf"
+        },
+        "gold": {
+          "path": "a16-short-alert-road.gold.json",
+          "sha256": "2224fcf78946270f15e85a3a19b51a8051325e110201f7d39e1eb709e5181764"
+        }
+      }
+    },
+    {
+      "id": "a17-short-alert-div",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a17-short-alert-div",
+      "files": {
+        "input": {
+          "path": "a17-short-alert-div.html",
+          "sha256": "d815ba50450d8c38e00771fbf02590ef0293b02de17142e7fef829602e19170e"
+        },
+        "gold": {
+          "path": "a17-short-alert-div.gold.json",
+          "sha256": "cfd222e1255875de611299c7d2b8b0e6abc9a8e8fa7b52a44fb3350be9b69ffa"
+        }
+      }
+    },
+    {
+      "id": "a18-definitions-and-details",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a18-definitions-and-details",
+      "files": {
+        "input": {
+          "path": "a18-definitions-and-details.html",
+          "sha256": "e8e2acab7a94ced6e659df8af7574c3884d912cfb25938796a89a0479a6e1ac7"
+        },
+        "gold": {
+          "path": "a18-definitions-and-details.gold.json",
+          "sha256": "c37c33f55aba02272afffc37262c653e361b90bbf44b8a52d58a22ed39347ae5"
+        }
+      }
+    },
+    {
+      "id": "a19-second-page-of-three",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a19-second-page-of-three",
+      "files": {
+        "input": {
+          "path": "a19-second-page-of-three.html",
+          "sha256": "09c8f537879a0b3cf65be08f053212b798ca0bd079b8b0afa7eda05565389ab5"
+        },
+        "gold": {
+          "path": "a19-second-page-of-three.gold.json",
+          "sha256": "4aee885d85e5838e8fae2a980466c16522608bb6179cd2f04d7ab8e56066e8bd"
+        }
+      }
+    },
+    {
+      "id": "a20-mixed-languages",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a20-mixed-languages",
+      "files": {
+        "input": {
+          "path": "a20-mixed-languages.html",
+          "sha256": "cf66f91ca0bd1f1e3aa76105bd65fd43f0faca7d52e64951f61b49de2846e0e4"
+        },
+        "gold": {
+          "path": "a20-mixed-languages.gold.json",
+          "sha256": "796450580d98cf874f0d2696eae605e92d89c51fc9c821e883243712e274a26c"
+        }
+      }
+    },
+    {
+      "id": "a21-footnotes-and-inline-aside",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a21-footnotes-and-inline-aside",
+      "files": {
+        "input": {
+          "path": "a21-footnotes-and-inline-aside.html",
+          "sha256": "e1e637d86d1793a238ab7858676f76ef70ac6c05b48b79449732997a05b37b02"
+        },
+        "gold": {
+          "path": "a21-footnotes-and-inline-aside.gold.json",
+          "sha256": "99b730653aa966caa3bc6724954a872ff073b940f3ae69ab9f610b5b86e3bb51"
+        }
+      }
+    },
+    {
+      "id": "a22-arabic-rtl",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a22-arabic-rtl",
+      "files": {
+        "input": {
+          "path": "a22-arabic-rtl.html",
+          "sha256": "d94722e92701bb1662098d04c899dda85c5179616fdf137adf95e6e47075b0ce"
+        },
+        "gold": {
+          "path": "a22-arabic-rtl.gold.json",
+          "sha256": "d2c6fbba00761fa2773e2c34e44845e9ac8eabea8957d940900be3b178d609b9"
+        }
+      }
+    },
+    {
+      "id": "a23-long-numbered-list",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a23-long-numbered-list",
+      "files": {
+        "input": {
+          "path": "a23-long-numbered-list.html",
+          "sha256": "59e4c9a5146914b992ac041c9d0c0084f8651750f646d126f416832ff3397c8b"
+        },
+        "gold": {
+          "path": "a23-long-numbered-list.gold.json",
+          "sha256": "414a97cf3f0566d17416282a379956882ce1f20a1e9d366c31f16161542ab591"
+        }
+      }
+    },
+    {
+      "id": "a24-nested-layout-tables",
+      "family": "article_body",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/a24-nested-layout-tables",
+      "files": {
+        "input": {
+          "path": "a24-nested-layout-tables.html",
+          "sha256": "59cc9e5b7f8469d37ad0c3ce7c1eb37cc2700a6942ed91e7531ac76758f2b6b7"
+        },
+        "gold": {
+          "path": "a24-nested-layout-tables.gold.json",
+          "sha256": "860356e7186de803e6e3f1d0e7da227649aec4bb2d07e3a79ab09517137985c9"
+        }
+      }
+    }
+  ]
+}

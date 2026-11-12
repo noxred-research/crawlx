@@ -901,6 +901,117 @@ async fn extract_with_web_search_reads_found_pages_and_fails_cleanly_without_con
     );
 }
 
+#[tokio::test]
+async fn extract_url_trace_lists_every_attempted_page_in_a_stable_order() {
+    let t = Setup::new().llm(extract_llm()).build();
+    t.tools
+        .set_markdown("https://example.com/a", "Example Site is a blog.");
+    t.tools
+        .set_failure("https://example.com/b", ToolError::Failed("blocked".into()));
+    t.tools.set_markdown("https://example.com/c", "   ");
+    t.tools
+        .set_markdown("https://example.com/d", "Category: Technology.");
+    let urls = json!([
+        "https://example.com/d",
+        "https://example.com/b",
+        "https://example.com/a",
+        "https://example.com/c"
+    ]);
+    let run = |body: serde_json::Value| {
+        let t = &t;
+        async move {
+            let (s, v) = t.post("/extract", &body).await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+            t.finished(&format!("/extract/{}", v["id"].as_str().unwrap()))
+                .await
+        }
+    };
+    let done = run(json!({"urls": urls, "prompt": "Extract the site", "urlTrace": true})).await;
+    assert_eq!(done["status"], "completed", "{done}");
+    assert_eq!(
+        done["urlTrace"],
+        json!([
+            {"url": "https://example.com/d", "status": "scraped", "usedInCompletion": true},
+            {"url": "https://example.com/b", "status": "error", "error": "blocked", "usedInCompletion": false},
+            {"url": "https://example.com/a", "status": "scraped", "usedInCompletion": true},
+            {"url": "https://example.com/c", "status": "scraped", "warning": "no text content", "usedInCompletion": false},
+        ]),
+        "request order, failed and empty pages included: {done}"
+    );
+    let again = run(json!({"urls": urls, "prompt": "Extract the site", "urlTrace": true})).await;
+    assert_eq!(
+        again["urlTrace"], done["urlTrace"],
+        "the order does not change between runs"
+    );
+
+    let plain = run(json!({"urls": urls, "prompt": "Extract the site"})).await;
+    assert!(
+        plain.get("urlTrace").is_none(),
+        "only with urlTrace: true: {plain}"
+    );
+    let off = run(json!({"urls": urls, "prompt": "Extract the site", "urlTrace": false})).await;
+    assert!(off.get("urlTrace").is_none(), "{off}");
+    let (s, v) = t
+        .post(
+            "/extract",
+            &json!({"urls": urls, "prompt": "p", "urlTrace": "yes"}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+}
+
+#[tokio::test]
+async fn extract_url_trace_follows_glob_expansion_and_survives_a_failed_job() {
+    let t = Setup::new().llm(extract_llm()).build();
+    let link = |url: &str| MapLink {
+        url: url.into(),
+        title: None,
+        description: None,
+    };
+    t.tools.set_links(
+        "https://example.com",
+        vec![
+            link("https://example.com/z"),
+            link("https://example.com/m"),
+            link("https://other.example.com/x"),
+            link("https://example.com/a"),
+        ],
+    );
+    for page in ["z", "m", "a"] {
+        t.tools.set_failure(
+            &format!("https://example.com/{page}"),
+            ToolError::Failed(format!("down {page}")),
+        );
+    }
+    let (s, v) = t
+        .post(
+            "/extract",
+            &json!({"urls": ["https://example.com/*"], "prompt": "Extract", "urlTrace": true}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let failed = t
+        .finished(&format!("/extract/{}", v["id"].as_str().unwrap()))
+        .await;
+    assert_eq!(failed["status"], "failed", "{failed}");
+    assert!(
+        failed["error"]
+            .as_str()
+            .unwrap()
+            .contains("no page could be read"),
+        "{failed}"
+    );
+    assert_eq!(
+        failed["urlTrace"],
+        json!([
+            {"url": "https://example.com/z", "status": "error", "error": "down z", "usedInCompletion": false},
+            {"url": "https://example.com/m", "status": "error", "error": "down m", "usedInCompletion": false},
+            {"url": "https://example.com/a", "status": "error", "error": "down a", "usedInCompletion": false},
+        ]),
+        "glob matches keep the map tool's order and every failure is traced: {failed}"
+    );
+}
+
 // ---- team ---------------------------------------------------------------------------------------------
 
 #[tokio::test]

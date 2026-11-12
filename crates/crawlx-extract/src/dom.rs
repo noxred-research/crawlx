@@ -8,6 +8,12 @@
 //!
 //! Recursion depth is bounded by [`MAX_DEPTH`], which [`check_limits`] enforces
 //! before any recursive walk starts.
+//!
+//! The `scraper` tree itself is built by [`parse_document`] / [`parse_fragment`], which charge
+//! every allocation to a [`crate::parse_budget::ParseCharge`] before it happens and return a
+//! typed error instead of a partial tree when the charge is refused.
+
+mod sink;
 
 use std::collections::HashSet;
 
@@ -16,6 +22,8 @@ use scraper::{ElementRef, Html};
 use url::Url;
 
 use crate::ExtractError;
+
+pub use sink::{parse_document, parse_fragment, CHUNK_BYTES};
 
 /// Maximum element nesting depth (matches the browser tree-builder limit).
 pub const MAX_DEPTH: usize = 512;

@@ -1,0 +1,28 @@
+{
+  "id": "m35-canonical-link-vs-ogurl",
+  "family": "meta_exact",
+  "note": "a canonical link outranks a differing Open Graph URL and the tracked page URL",
+  "expectedText": "title=Pickling Basics\nlanguage=en\ncanonical=https://corpus.test/guides/pickling-basics\ndescription=A first guide to salt, vinegar and jars.",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 21
+    },
+    {
+      "label": "language",
+      "start": 31,
+      "end": 33
+    },
+    {
+      "label": "canonical",
+      "start": 44,
+      "end": 86
+    },
+    {
+      "label": "description",
+      "start": 99,
+      "end": 139
+    }
+  ]
+}

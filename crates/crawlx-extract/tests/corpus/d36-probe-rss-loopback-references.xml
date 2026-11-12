@@ -1,0 +1,5 @@
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+<atom:link rel="next" href="{{probe}}/feed?page=2"/>
+<item><link>{{probe}}/loopback/one</link><enclosure url="{{probe}}/pixel.gif" type="image/gif"/></item>
+<item><link>https://news.corpus.test/probe/two</link><enclosure url="{{probe}}/clip.mp4" type="video/mp4"/><atom:link rel="next" href="{{probe}}/more"/></item>
+</channel></rss>

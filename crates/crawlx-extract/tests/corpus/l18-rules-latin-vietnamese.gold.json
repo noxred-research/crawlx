@@ -1,0 +1,138 @@
+{
+  "id": "l18-rules-latin-vietnamese",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "buổi|sáng|chợ|nổi|mở|cửa|rất|sớm|người|bán|hàng|chèo|thuyền|chở|trái|cây|những|đứa|trẻ|đếm|quả|cam|và|chờ|khách|đến",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 18
+    },
+    {
+      "label": "token",
+      "start": 19,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 56
+    },
+    {
+      "label": "token",
+      "start": 57,
+      "end": 61
+    },
+    {
+      "label": "token",
+      "start": 62,
+      "end": 67
+    },
+    {
+      "label": "token",
+      "start": 68,
+      "end": 73
+    },
+    {
+      "label": "token",
+      "start": 74,
+      "end": 82
+    },
+    {
+      "label": "token",
+      "start": 83,
+      "end": 88
+    },
+    {
+      "label": "token",
+      "start": 89,
+      "end": 94
+    },
+    {
+      "label": "token",
+      "start": 95,
+      "end": 99
+    },
+    {
+      "label": "token",
+      "start": 100,
+      "end": 107
+    },
+    {
+      "label": "token",
+      "start": 108,
+      "end": 114
+    },
+    {
+      "label": "token",
+      "start": 115,
+      "end": 120
+    },
+    {
+      "label": "token",
+      "start": 121,
+      "end": 127
+    },
+    {
+      "label": "token",
+      "start": 128,
+      "end": 133
+    },
+    {
+      "label": "token",
+      "start": 134,
+      "end": 137
+    },
+    {
+      "label": "token",
+      "start": 138,
+      "end": 141
+    },
+    {
+      "label": "token",
+      "start": 142,
+      "end": 147
+    },
+    {
+      "label": "token",
+      "start": 148,
+      "end": 154
+    },
+    {
+      "label": "token",
+      "start": 155,
+      "end": 161
+    }
+  ]
+}

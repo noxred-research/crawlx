@@ -1,0 +1,38 @@
+{
+  "id": "s46-schema-cycles",
+  "family": "selector",
+  "note": "local schema references that loop, directly, through definitions, through nesting or through combinators, are rejected before any load; a shared non-cyclic definition is accepted",
+  "expectedText": "error:Schema(cyclic schema reference)\nerror:Schema(cyclic schema reference)\nerror:Schema(cyclic schema reference)\nerror:Schema(cyclic schema reference)\nerror:Schema(cyclic schema reference)\nok",
+  "spans": [
+    {
+      "label": "self_ref",
+      "start": 0,
+      "end": 37
+    },
+    {
+      "label": "def_loop",
+      "start": 38,
+      "end": 75
+    },
+    {
+      "label": "mutual",
+      "start": 76,
+      "end": 113
+    },
+    {
+      "label": "recursive_tree",
+      "start": 114,
+      "end": 151
+    },
+    {
+      "label": "through_allof",
+      "start": 152,
+      "end": 189
+    },
+    {
+      "label": "shared_definition",
+      "start": 190,
+      "end": 192
+    }
+  ]
+}

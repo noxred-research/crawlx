@@ -1,0 +1,43 @@
+{
+  "id": "l111-ambiguous-japanese-without-evidence",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "市場|は|朝|六時|に|開き|ます",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 14
+    },
+    {
+      "label": "token",
+      "start": 15,
+      "end": 21
+    },
+    {
+      "label": "token",
+      "start": 22,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 39
+    }
+  ]
+}

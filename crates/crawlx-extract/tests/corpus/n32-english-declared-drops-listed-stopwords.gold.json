@@ -1,0 +1,73 @@
+{
+  "id": "n32-english-declared-drops-listed-stopwords",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The mill grinds the grain and the miller sells the flour.\nFlour from the mill is sold in the market.\nThe miller and his sons carry the sacks.\nmill=2\nmiller=2\nflour=2\ngrinds=1\ngrain=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 57
+    },
+    {
+      "label": "sentence",
+      "start": 58,
+      "end": 100
+    },
+    {
+      "label": "sentence",
+      "start": 101,
+      "end": 141
+    },
+    {
+      "label": "keyword",
+      "start": 142,
+      "end": 146
+    },
+    {
+      "label": "score",
+      "start": 147,
+      "end": 148
+    },
+    {
+      "label": "keyword",
+      "start": 149,
+      "end": 155
+    },
+    {
+      "label": "score",
+      "start": 156,
+      "end": 157
+    },
+    {
+      "label": "keyword",
+      "start": 158,
+      "end": 163
+    },
+    {
+      "label": "score",
+      "start": 164,
+      "end": 165
+    },
+    {
+      "label": "keyword",
+      "start": 166,
+      "end": 172
+    },
+    {
+      "label": "score",
+      "start": 173,
+      "end": 174
+    },
+    {
+      "label": "keyword",
+      "start": 175,
+      "end": 180
+    },
+    {
+      "label": "score",
+      "start": 181,
+      "end": 182
+    }
+  ]
+}

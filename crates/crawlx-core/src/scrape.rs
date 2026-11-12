@@ -661,6 +661,11 @@ pub struct ScrapeOptions {
     /// serialized DOM, with per-frame origin provenance; forces the browser leg.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flatten: Option<crate::page_op::FlattenSpec>,
+    /// Native opt-in: group the chunks of the final extracted text by embedding similarity. It
+    /// needs `contentPolicy` with `chunks` (the units that get embedded) and an operator-configured
+    /// embedding model; without one the page fails as `llm_not_configured` before any fetch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clusters: Option<crate::extraction::ClusterPolicyV1>,
 }
 
 fn is_zero_u32(n: &u32) -> bool {
@@ -778,6 +783,7 @@ impl Default for ScrapeOptions {
             device_scale_milli: None,
             resource_blocking: None,
             flatten: None,
+            clusters: None,
         }
     }
 }
@@ -1310,6 +1316,9 @@ pub struct ScrapeDocument {
     /// that used none of these.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_page: Option<BrowserPageReportV1>,
+    /// `clusters` option: source-only embedding clusters over the chunks of the final text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clusters: Option<crate::extraction::ClusterEnvelopeV1>,
 }
 
 impl ScrapeDocument {
@@ -1363,6 +1372,7 @@ impl ScrapeDocument {
             prompt_injection_checked: false,
             pii_redacted: false,
             browser_page: None,
+            clusters: None,
         }
     }
 

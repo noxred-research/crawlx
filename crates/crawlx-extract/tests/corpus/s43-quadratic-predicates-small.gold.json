@@ -1,0 +1,18 @@
+{
+  "id": "s43-quadratic-predicates-small",
+  "family": "selector",
+  "note": "predicates that touch every earlier or every other node are quadratic; on a twenty-paragraph page they finish with exact results",
+  "expectedText": "10\n20",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "r2",
+      "start": 3,
+      "end": 5
+    }
+  ]
+}

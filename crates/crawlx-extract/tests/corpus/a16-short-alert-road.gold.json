@@ -1,0 +1,83 @@
+{
+  "id": "a16-short-alert-road",
+  "family": "article_body",
+  "note": "two-sentence service alert surrounded by navigation, other alerts and a footer",
+  "expectedText": "Cityline Alerts\nRoads\nWater\nTransit\nPower\nGet alerts by text\nElm Street Closed for Water Main Repair\nElm Street is closed between Harrow Road and the bus depot while crews repair a burst water main. The road is expected to reopen by six tomorrow morning.\nOther active alerts\nPlanned outage on Quay Lane, Thursday\nBus route 14 diverted near the stadium\nBoil notice lifted for Hillcrest\nCityline Alerts is run by the municipal information office. Call the help desk for urgent problems.\nAccessibility\nContact",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "boilerplate",
+      "start": 16,
+      "end": 21
+    },
+    {
+      "label": "boilerplate",
+      "start": 22,
+      "end": 27
+    },
+    {
+      "label": "boilerplate",
+      "start": 28,
+      "end": 35
+    },
+    {
+      "label": "boilerplate",
+      "start": 36,
+      "end": 41
+    },
+    {
+      "label": "boilerplate",
+      "start": 42,
+      "end": 60
+    },
+    {
+      "label": "body",
+      "start": 61,
+      "end": 100
+    },
+    {
+      "label": "body",
+      "start": 101,
+      "end": 254
+    },
+    {
+      "label": "boilerplate",
+      "start": 255,
+      "end": 274
+    },
+    {
+      "label": "boilerplate",
+      "start": 275,
+      "end": 312
+    },
+    {
+      "label": "boilerplate",
+      "start": 313,
+      "end": 351
+    },
+    {
+      "label": "boilerplate",
+      "start": 352,
+      "end": 384
+    },
+    {
+      "label": "boilerplate",
+      "start": 385,
+      "end": 484
+    },
+    {
+      "label": "boilerplate",
+      "start": 485,
+      "end": 498
+    },
+    {
+      "label": "boilerplate",
+      "start": 499,
+      "end": 506
+    }
+  ]
+}

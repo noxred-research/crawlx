@@ -1,0 +1,53 @@
+{
+  "id": "l99-dict-uax29-typographic-apostrophe",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "maria’s|boots|aren’t|dry|we’ll|wait|for|the|sun",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 9
+    },
+    {
+      "label": "token",
+      "start": 10,
+      "end": 15
+    },
+    {
+      "label": "token",
+      "start": 16,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 28
+    },
+    {
+      "label": "token",
+      "start": 29,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 45
+    },
+    {
+      "label": "token",
+      "start": 46,
+      "end": 49
+    },
+    {
+      "label": "token",
+      "start": 50,
+      "end": 53
+    }
+  ]
+}

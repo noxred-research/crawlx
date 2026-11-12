@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rotating Log Files Without Losing a Line</title>
+</head>
+<body>
+<nav class="topnav"><a href="/">Field Notes</a> <a href="/ops">Operations</a> <a href="/dev">Development</a> <a href="/rss">Feed</a></nav>
+<article>
+<h1>Rotating Log Files Without Losing a Line</h1>
+<p>A busy service writes thousands of lines a minute, and the usual advice to stop the process before rotating is not acceptable when the service must stay up. The safer approach is to rename the file and ask the writer to reopen it.</p>
+<pre><code>mv /var/log/app/service.log /var/log/app/service.log.1
+kill -HUP $(cat /run/app/service.pid)
+gzip /var/log/app/service.log.1</code></pre>
+<p>The script above renames first, so the writer keeps appending to the same open handle until it receives the signal. Only then does it switch to a fresh file, which means no line is written to a deleted file.</p>
+<table><caption>Lines lost during one hundred rotations</caption><thead><tr><th>Method</th><th>Lines lost</th><th>Pause in ms</th></tr></thead><tbody><tr><td>Copy and truncate</td><td>412</td><td>3</td></tr><tr><td>Rename and signal</td><td>0</td><td>1</td></tr><tr><td>Stop and restart</td><td>0</td><td>2800</td></tr></tbody></table>
+<blockquote><p>A log file is a promise that nothing important happened without being written down.</p><cite>Operations handbook, chapter nine</cite></blockquote>
+<p>Whatever method you pick, test it under load. The copy approach looks harmless on a quiet machine and only shows its losses when the service is writing at full speed.</p>
+</article>
+<aside class="subscribe">Subscribe to Field Notes for one short article every Friday.</aside>
+<footer>Field Notes is licensed for reuse with credit. Back to top.</footer>
+</body>
+</html>

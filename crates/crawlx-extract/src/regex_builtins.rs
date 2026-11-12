@@ -1,24 +1,23 @@
 //! Safe regex extraction: a versioned table of built-in pattern names plus custom patterns.
 //!
-//! Every pattern runs on the linear-time `regex` engine. [`compile_regex`] is the single
-//! admission gate: patterns with backreferences or look-around (which that engine cannot run
-//! without catastrophic backtracking) fail with a typed [`RegexError`] before anything is
-//! compiled, and compiled size, capture groups, input bytes and match counts are all bounded.
+//! Every pattern runs on the linear-time `regex` engine. [`compile_regex`] is the admission gate
+//! of this table (it delegates to the shared core gate): patterns with backreferences or
+//! look-around (which that engine cannot run without catastrophic backtracking) fail with a
+//! typed [`RegexError`] before anything is compiled, and compiled size, capture groups, input
+//! bytes and match counts are all bounded.
 //!
 //! Built-in names carry a version (`email.v1`). A bare name (`email`) resolves to the newest
 //! version that exists; a versioned name stays pinned when the table later grows a revision.
 
 use std::collections::BTreeMap;
 
-use regex::{Regex, RegexBuilder};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// Longest pattern accepted, in bytes.
-pub const MAX_PATTERN_LEN: usize = 512;
-/// Compiled-program size limit per pattern.
-const REGEX_SIZE_LIMIT: usize = 1 << 20;
+pub const MAX_PATTERN_LEN: usize = crawlx_core::extraction::MAX_REGEX_PATTERN_LEN;
 /// Most capture groups (including the whole match) in one pattern.
-pub const MAX_CAPTURE_GROUPS: usize = 33;
+pub const MAX_CAPTURE_GROUPS: usize = crawlx_core::extraction::MAX_REGEX_CAPTURE_GROUPS;
 /// Most patterns in one extraction request.
 pub const MAX_PATTERNS: usize = 32;
 /// Largest input scanned, in bytes.
@@ -269,34 +268,18 @@ pub fn builtin_names() -> Vec<String> {
 /// [`RegexError::Empty`], [`RegexError::TooLong`], [`RegexError::Backreference`],
 /// [`RegexError::Lookaround`], [`RegexError::Syntax`] or [`RegexError::TooComplex`].
 pub fn compile_regex(pattern: &str) -> Result<Regex, RegexError> {
-    use regex_syntax::ast::{parse::ParserBuilder, ErrorKind};
-    if pattern.is_empty() {
-        return Err(RegexError::Empty);
-    }
-    if pattern.len() > MAX_PATTERN_LEN {
-        return Err(RegexError::TooLong { len: pattern.len() });
-    }
-    if let Err(error) = ParserBuilder::new().nest_limit(64).build().parse(pattern) {
-        return Err(match error.kind() {
-            ErrorKind::UnsupportedBackreference => RegexError::Backreference,
-            ErrorKind::UnsupportedLookAround => RegexError::Lookaround,
-            ErrorKind::NestLimitExceeded(_) => RegexError::TooComplex,
-            other => RegexError::Syntax(other.to_string()),
-        });
-    }
-    let regex = RegexBuilder::new(pattern)
-        .size_limit(REGEX_SIZE_LIMIT)
-        .dfa_size_limit(REGEX_SIZE_LIMIT)
-        .nest_limit(64)
-        .build()
-        .map_err(|error| match error {
-            regex::Error::CompiledTooBig(_) => RegexError::TooComplex,
-            other => RegexError::Syntax(other.to_string()),
-        })?;
-    if regex.captures_len() > MAX_CAPTURE_GROUPS {
-        return Err(RegexError::TooComplex);
-    }
-    Ok(regex)
+    crawlx_core::extraction::admit_regex(pattern).map_err(|error| {
+        use crawlx_core::extraction::RegexAdmissionError as Admission;
+        match error {
+            Admission::Empty => RegexError::Empty,
+            Admission::TooLong { len } => RegexError::TooLong { len },
+            Admission::Backreference => RegexError::Backreference,
+            Admission::Lookaround => RegexError::Lookaround,
+            Admission::Syntax(message) => RegexError::Syntax(message),
+            // `TooComplex` and any future admission refusal share the complexity error.
+            _ => RegexError::TooComplex,
+        }
+    })
 }
 
 /// Serialized request for one pattern: a built-in name or a custom pattern.

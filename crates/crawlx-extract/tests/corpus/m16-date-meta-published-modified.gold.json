@@ -1,0 +1,38 @@
+{
+  "id": "m16-date-meta-published-modified",
+  "family": "meta_exact",
+  "note": "published and modified times come from meta tags in UTC; the timestamps are normalized to a numeric offset",
+  "expectedText": "title=Library Extends Weekend Hours\nlanguage=en\npublished=2026-01-09\npublishedTimestamp=2026-01-09T07:00:00+00:00\nmodified=2026-01-12\nmodifiedTimestamp=2026-01-12T16:45:00+00:00",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 35
+    },
+    {
+      "label": "language",
+      "start": 45,
+      "end": 47
+    },
+    {
+      "label": "published",
+      "start": 58,
+      "end": 68
+    },
+    {
+      "label": "publishedTimestamp",
+      "start": 88,
+      "end": 113
+    },
+    {
+      "label": "modified",
+      "start": 123,
+      "end": 133
+    },
+    {
+      "label": "modifiedTimestamp",
+      "start": 152,
+      "end": 177
+    }
+  ]
+}

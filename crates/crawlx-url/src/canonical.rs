@@ -87,6 +87,7 @@ impl CanonicalizeOptions {
             query_policy: scope.query_policy,
             classifier: Arc::new(ParamClassifier::new(&scope.query_overrides)),
             resource_key,
+            max_url_len: usize::try_from(scope.max_url_length).unwrap_or(usize::MAX),
             ..Self::default()
         }
     }
@@ -155,6 +156,12 @@ impl Canonicalizer {
     }
 
     fn canonicalize_parsed(mut u: Url, opts: &CanonicalizeOptions) -> Result<Canonicalized, UrlError> {
+        if u.as_str().len() > opts.max_url_len {
+            return Err(UrlError::TooLong {
+                len: u.as_str().len(),
+                max: opts.max_url_len,
+            });
+        }
         if !matches!(u.scheme(), "http" | "https") {
             return Err(UrlError::Scheme(u.scheme().to_owned()));
         }

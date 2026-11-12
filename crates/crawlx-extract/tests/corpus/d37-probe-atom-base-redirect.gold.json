@@ -1,0 +1,13 @@
+{
+  "id": "d37-probe-atom-base-redirect",
+  "family": "feed",
+  "note": "a feed base pointing at a loopback socket redirects relative references there; scope denies them and nothing connects",
+  "expectedText": "https://news.corpus.test/probe/absolute",
+  "spans": [
+    {
+      "label": "alternate",
+      "start": 0,
+      "end": 39
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "id": "l124-og-locale-only",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "el|molinero|muele|el|grano|la|harina|espera|en|la|mesa",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "token",
+      "start": 3,
+      "end": 11
+    },
+    {
+      "label": "token",
+      "start": 12,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 20
+    },
+    {
+      "label": "token",
+      "start": 21,
+      "end": 26
+    },
+    {
+      "label": "token",
+      "start": 27,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 43
+    },
+    {
+      "label": "token",
+      "start": 44,
+      "end": 46
+    },
+    {
+      "label": "token",
+      "start": 47,
+      "end": 49
+    },
+    {
+      "label": "token",
+      "start": 50,
+      "end": 54
+    }
+  ]
+}

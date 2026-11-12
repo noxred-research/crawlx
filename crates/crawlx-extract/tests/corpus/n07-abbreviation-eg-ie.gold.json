@@ -1,0 +1,73 @@
+{
+  "id": "n07-abbreviation-eg-ie",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Bring tools, e.g. a saw and a rope.\nBring water, i.e. two full bottles.\nWe leave at six.\nbring=2\ne=2\na=2\ntools=1\ng=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 35
+    },
+    {
+      "label": "sentence",
+      "start": 36,
+      "end": 71
+    },
+    {
+      "label": "sentence",
+      "start": 72,
+      "end": 88
+    },
+    {
+      "label": "keyword",
+      "start": 89,
+      "end": 94
+    },
+    {
+      "label": "score",
+      "start": 95,
+      "end": 96
+    },
+    {
+      "label": "keyword",
+      "start": 97,
+      "end": 98
+    },
+    {
+      "label": "score",
+      "start": 99,
+      "end": 100
+    },
+    {
+      "label": "keyword",
+      "start": 101,
+      "end": 102
+    },
+    {
+      "label": "score",
+      "start": 103,
+      "end": 104
+    },
+    {
+      "label": "keyword",
+      "start": 105,
+      "end": 110
+    },
+    {
+      "label": "score",
+      "start": 111,
+      "end": 112
+    },
+    {
+      "label": "keyword",
+      "start": 113,
+      "end": 114
+    },
+    {
+      "label": "score",
+      "start": 115,
+      "end": 116
+    }
+  ]
+}

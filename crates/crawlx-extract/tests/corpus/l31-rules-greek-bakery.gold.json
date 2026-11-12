@@ -1,0 +1,98 @@
+{
+  "id": "l31-rules-greek-bakery",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "ο|φούρνος|ανοίγει|νωρίς|το|πρωί|τα|παιδιά|αγοράζουν|ζεστό|ψωμί|η|γειτονιά|μυρίζει|φρέσκο|βούτυρο|και|κανέλα",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "token",
+      "start": 3,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 43
+    },
+    {
+      "label": "token",
+      "start": 44,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 62
+    },
+    {
+      "label": "token",
+      "start": 63,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 94
+    },
+    {
+      "label": "token",
+      "start": 95,
+      "end": 105
+    },
+    {
+      "label": "token",
+      "start": 106,
+      "end": 114
+    },
+    {
+      "label": "token",
+      "start": 115,
+      "end": 117
+    },
+    {
+      "label": "token",
+      "start": 118,
+      "end": 134
+    },
+    {
+      "label": "token",
+      "start": 135,
+      "end": 149
+    },
+    {
+      "label": "token",
+      "start": 150,
+      "end": 162
+    },
+    {
+      "label": "token",
+      "start": 163,
+      "end": 177
+    },
+    {
+      "label": "token",
+      "start": 178,
+      "end": 184
+    },
+    {
+      "label": "token",
+      "start": 185,
+      "end": 197
+    }
+  ]
+}

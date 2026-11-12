@@ -1,0 +1,8 @@
+<rss version="2.0"><channel>
+<item><link>https://news.corpus.test/in/one</link></item>
+<item><link>https://blog.news.corpus.test/in/two</link></item>
+<item><link>https://partner.corpus.test/out/three</link></item>
+<item><link>https://NEWS.CORPUS.TEST/in/four</link></item>
+<item><link>https://news.corpus.test.lookalike.test/out/five</link></item>
+<item><link>https://notnews.corpus.test/out/six</link></item>
+</channel></rss>

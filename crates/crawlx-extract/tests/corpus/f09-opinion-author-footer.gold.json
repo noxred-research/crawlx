@@ -1,0 +1,88 @@
+{
+  "id": "f09-opinion-author-footer",
+  "family": "focus",
+  "note": "opinion piece with section label, author note in the article footer and a read-next list",
+  "expectedText": "Mercer Street Review\nPolitics Culture Opinion Books Donate\nOpinion\nThe Quiet Case for Slower Streets\nA residential street is a strange kind of public room. People sleep above it, children learn to ride bicycles on it and neighbours meet on it by accident, yet we design it as if its only purpose were to let cars pass quickly to somewhere else.\nWhen a street is limited to twenty miles an hour, the arguments against the change tend to be about delay. In practice the difference is measured in seconds. A driver crossing a neighbourhood of a mile saves about forty-five seconds by travelling at thirty instead of twenty.\nThe benefits are less easy to count but easier to feel. Residents report that they let children play outside earlier, that conversations at the front gate become possible and that the noise of a passing car no longer startles the dog.\nNone of this needs a grand plan. A few painted lines, a handful of planters and a sign at each end are enough to change how a street behaves. The hard part is persuading the people who have never seen it work.\nNoor Albrecht is a transport planner and writes about streets and neighbourhoods. She lives in the north of the city and cycles to work.\nThe views expressed in this piece are the author's own.\nRead next\nThe case against the free car park\nWhat a lollipop lady knows\nCities are louder than they need to be\nMercer Street Review is an independent magazine supported by its readers.\nMasthead Submit a piece Privacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 20
+    },
+    {
+      "label": "boilerplate",
+      "start": 21,
+      "end": 58
+    },
+    {
+      "label": "boilerplate",
+      "start": 59,
+      "end": 66
+    },
+    {
+      "label": "body",
+      "start": 67,
+      "end": 100
+    },
+    {
+      "label": "body",
+      "start": 101,
+      "end": 344
+    },
+    {
+      "label": "body",
+      "start": 345,
+      "end": 620
+    },
+    {
+      "label": "body",
+      "start": 621,
+      "end": 855
+    },
+    {
+      "label": "body",
+      "start": 856,
+      "end": 1065
+    },
+    {
+      "label": "boilerplate",
+      "start": 1066,
+      "end": 1202
+    },
+    {
+      "label": "boilerplate",
+      "start": 1203,
+      "end": 1258
+    },
+    {
+      "label": "boilerplate",
+      "start": 1259,
+      "end": 1268
+    },
+    {
+      "label": "boilerplate",
+      "start": 1269,
+      "end": 1303
+    },
+    {
+      "label": "boilerplate",
+      "start": 1304,
+      "end": 1330
+    },
+    {
+      "label": "boilerplate",
+      "start": 1331,
+      "end": 1369
+    },
+    {
+      "label": "boilerplate",
+      "start": 1370,
+      "end": 1443
+    },
+    {
+      "label": "boilerplate",
+      "start": 1444,
+      "end": 1475
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "m45-lang-http-equiv-fallback",
+  "family": "meta_exact",
+  "note": "no html lang: the content-language http-equiv header is the only declaration",
+  "expectedText": "title=Fietsbrug over de Vaart geopend\nlanguage=nl-NL",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 37
+    },
+    {
+      "label": "language",
+      "start": 47,
+      "end": 52
+    }
+  ]
+}

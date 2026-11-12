@@ -1,0 +1,63 @@
+{
+  "id": "a12-figures-and-captions",
+  "family": "article_body",
+  "note": "article with two figures whose captions and credits belong to the story",
+  "expectedText": "Lowfield Review\nPhotography\nEssays\nThe Bridge Painters of Lowfield\nEvery spring a crew of six climbs the iron arches over the Lowfield canal with buckets, brushes and a thermos of tea. They have done the same work for longer than anyone can remember, and the bridge is never quite finished.\nTwo painters work from a hanging platform beneath the central arch. The scaffold is taken down every evening.\nForeman Dagny Holt says the colour is mixed on site from a recipe written in a notebook that goes back four decades. Green is always the base, but each year a little more blue goes in to match the sky above the canal.\nThe work begins at dawn, before the commuter trains start. By ten the crew is usually on the underside of the bridge, where the old rivets have to be scraped by hand before any paint can go on.\nThe foreman's notebook records every batch of paint since the nineteen-eighties, with notes about the weather on the day it was mixed.\nVisitors are welcome to watch from the towpath, and children often leave drawings of the bridge in a box that the crew keeps by the stairs.\nLowfield Review. Photographs by the staff.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "boilerplate",
+      "start": 16,
+      "end": 27
+    },
+    {
+      "label": "boilerplate",
+      "start": 28,
+      "end": 34
+    },
+    {
+      "label": "body",
+      "start": 35,
+      "end": 66
+    },
+    {
+      "label": "body",
+      "start": 67,
+      "end": 290
+    },
+    {
+      "label": "body",
+      "start": 291,
+      "end": 400
+    },
+    {
+      "label": "body",
+      "start": 401,
+      "end": 618
+    },
+    {
+      "label": "body",
+      "start": 619,
+      "end": 812
+    },
+    {
+      "label": "body",
+      "start": 813,
+      "end": 947
+    },
+    {
+      "label": "body",
+      "start": 948,
+      "end": 1087
+    },
+    {
+      "label": "boilerplate",
+      "start": 1088,
+      "end": 1130
+    }
+  ]
+}

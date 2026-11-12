@@ -1,0 +1,98 @@
+{
+  "id": "l10-rules-latin-english-undeclared",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "the|ferry|leaves|at|nine|passengers|queue|by|the|harbor|gate|late|arrivals|wait|for|the|noon|ferry",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 9
+    },
+    {
+      "label": "token",
+      "start": 10,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 44
+    },
+    {
+      "label": "token",
+      "start": 45,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 55
+    },
+    {
+      "label": "token",
+      "start": 56,
+      "end": 60
+    },
+    {
+      "label": "token",
+      "start": 61,
+      "end": 65
+    },
+    {
+      "label": "token",
+      "start": 66,
+      "end": 74
+    },
+    {
+      "label": "token",
+      "start": 75,
+      "end": 79
+    },
+    {
+      "label": "token",
+      "start": 80,
+      "end": 83
+    },
+    {
+      "label": "token",
+      "start": 84,
+      "end": 87
+    },
+    {
+      "label": "token",
+      "start": 88,
+      "end": 92
+    },
+    {
+      "label": "token",
+      "start": 93,
+      "end": 98
+    }
+  ]
+}

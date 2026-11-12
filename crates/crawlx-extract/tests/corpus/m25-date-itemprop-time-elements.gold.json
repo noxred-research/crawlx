@@ -1,0 +1,28 @@
+{
+  "id": "m25-date-itemprop-time-elements",
+  "family": "meta_exact",
+  "note": "published and modified time elements marked with microdata properties; an unmarked time element in the page footer outside the article is ignored",
+  "expectedText": "title=New Pump Track Opens by the Mill\nlanguage=en\npublished=2026-07-01\nmodified=2026-07-05",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 38
+    },
+    {
+      "label": "language",
+      "start": 48,
+      "end": 50
+    },
+    {
+      "label": "published",
+      "start": 61,
+      "end": 71
+    },
+    {
+      "label": "modified",
+      "start": 81,
+      "end": 91
+    }
+  ]
+}

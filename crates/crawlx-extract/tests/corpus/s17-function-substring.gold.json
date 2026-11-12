@@ -1,0 +1,53 @@
+{
+  "id": "s17-function-substring",
+  "family": "selector",
+  "note": "substring functions: before/after delimiters, rounding positions, zero and negative starts, infinite length, no match",
+  "expectedText": "\"2026\"\n\"11-09\"\n\"09\"\n\"Bay\"\n\"Port\"\n\"234\"\n\"12\"\n\"\"\n\"12345\"",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "r2",
+      "start": 7,
+      "end": 14
+    },
+    {
+      "label": "r3",
+      "start": 15,
+      "end": 19
+    },
+    {
+      "label": "r4",
+      "start": 20,
+      "end": 25
+    },
+    {
+      "label": "r5",
+      "start": 26,
+      "end": 32
+    },
+    {
+      "label": "r6",
+      "start": 33,
+      "end": 38
+    },
+    {
+      "label": "r7",
+      "start": 39,
+      "end": 43
+    },
+    {
+      "label": "r8",
+      "start": 44,
+      "end": 46
+    },
+    {
+      "label": "r9",
+      "start": 47,
+      "end": 54
+    }
+  ]
+}

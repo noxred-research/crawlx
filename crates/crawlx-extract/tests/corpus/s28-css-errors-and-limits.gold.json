@@ -1,0 +1,58 @@
+{
+  "id": "s28-css-errors-and-limits",
+  "family": "selector",
+  "note": "css failures are typed: syntax, unsupported pseudo-elements and invalid attribute names; the selector list holds at most 64 entries",
+  "expectedText": "error:Syntax\nerror:Syntax\nerror:Unsupported(pseudo-element other than ::text and ::attr(name))\nerror:Syntax\nerror:Syntax\nerror:Unsupported(pseudo-element other than ::text and ::attr(name))\nerror:Unsupported(pseudo-element other than ::text and ::attr(name))\nerror:Syntax\nonly\nerror:Budget(css selector list)",
+  "spans": [
+    {
+      "label": "c1",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "c2",
+      "start": 13,
+      "end": 25
+    },
+    {
+      "label": "c3",
+      "start": 26,
+      "end": 94
+    },
+    {
+      "label": "c4",
+      "start": 95,
+      "end": 107
+    },
+    {
+      "label": "c5",
+      "start": 108,
+      "end": 120
+    },
+    {
+      "label": "c6",
+      "start": 121,
+      "end": 189
+    },
+    {
+      "label": "c7",
+      "start": 190,
+      "end": 258
+    },
+    {
+      "label": "c8",
+      "start": 259,
+      "end": 271
+    },
+    {
+      "label": "c9",
+      "start": 272,
+      "end": 276
+    },
+    {
+      "label": "c10",
+      "start": 277,
+      "end": 308
+    }
+  ]
+}

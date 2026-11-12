@@ -1,0 +1,13 @@
+{
+  "id": "d38-rss2-byte-order-mark",
+  "family": "feed",
+  "note": "a leading byte-order mark is ignored",
+  "expectedText": "https://news.corpus.test/bom/one",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 32
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "m42-lang-conflict-og-html",
+  "family": "meta_exact",
+  "note": "an Open Graph locale with a region outranks a plain html lang; both stay as alternatives and the field is uncertain",
+  "expectedText": "title=Cosecha de aguacate adelantada\nlanguage=es-MX",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "language",
+      "start": 46,
+      "end": 51
+    }
+  ]
+}

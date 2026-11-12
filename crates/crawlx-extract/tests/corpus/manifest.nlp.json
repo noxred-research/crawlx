@@ -1,0 +1,1062 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "n01-plain-three-sentences",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n01-plain-three-sentences",
+      "files": {
+        "input": {
+          "path": "n01-plain-three-sentences.html",
+          "sha256": "1680d6d0f82e274dcd8160ce8c3630e489288b942903bdf147c9f5813fd50b5d"
+        },
+        "gold": {
+          "path": "n01-plain-three-sentences.gold.json",
+          "sha256": "a3776e84ce433de3d20eedb1d77c8ebd791820c1def4f400056fc147767cd08c"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "sentences",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n02-question-and-exclamation",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n02-question-and-exclamation",
+      "files": {
+        "input": {
+          "path": "n02-question-and-exclamation.html",
+          "sha256": "8e0d4feb2cc473f8ac78b36ca8a446bd165a18bde48c217a985d829e108cefde"
+        },
+        "gold": {
+          "path": "n02-question-and-exclamation.gold.json",
+          "sha256": "7db0aeefc9f0a388b9f58d921abca80882aa7fb024e22f827c9efd5b4483bdd7"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "sentences",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n03-ellipsis-and-mixed-marks",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n03-ellipsis-and-mixed-marks",
+      "files": {
+        "input": {
+          "path": "n03-ellipsis-and-mixed-marks.html",
+          "sha256": "7112ff887b8cc1be90c4192f53379edfadfa7a326a59071014e7405d09d3ae3f"
+        },
+        "gold": {
+          "path": "n03-ellipsis-and-mixed-marks.gold.json",
+          "sha256": "c966bda8b005dac2dc4713a86ede7d094bc78cc97fc044473b1a81106069a55a"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "sentences",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n04-paragraphs-without-terminals",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n04-paragraphs-without-terminals",
+      "files": {
+        "input": {
+          "path": "n04-paragraphs-without-terminals.html",
+          "sha256": "aafc10984500694e9378dfda50cb87e45d317d55b86ae788f6f090aa173ce749"
+        },
+        "gold": {
+          "path": "n04-paragraphs-without-terminals.gold.json",
+          "sha256": "f13e632de99ed38186d4750bbe36609dcaf7d089740fee8415d04771060e0f7e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "sentences",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n05-abbreviation-dr-mr",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n05-abbreviation-dr-mr",
+      "files": {
+        "input": {
+          "path": "n05-abbreviation-dr-mr.html",
+          "sha256": "31336f7df4c5b408f4df99da30a9dabd7cbd4a333e03f9dbdd72282e9da04500"
+        },
+        "gold": {
+          "path": "n05-abbreviation-dr-mr.gold.json",
+          "sha256": "9ff4f9d68f6e68f9c48ae2cbef14336240b83c08702fb138d21d99c882e4e791"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abbreviation",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n06-abbreviation-mrs-ms-prof",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n06-abbreviation-mrs-ms-prof",
+      "files": {
+        "input": {
+          "path": "n06-abbreviation-mrs-ms-prof.html",
+          "sha256": "237026497a8ff78a9b5ec0972870a1a85c660e0e1b5883a1c682983e0ae3e1cf"
+        },
+        "gold": {
+          "path": "n06-abbreviation-mrs-ms-prof.gold.json",
+          "sha256": "aa2e92d5c913d53f3634dbacef3ef68bca1cb2d6f4a109f87ae0a505c2335bf5"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abbreviation",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n07-abbreviation-eg-ie",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n07-abbreviation-eg-ie",
+      "files": {
+        "input": {
+          "path": "n07-abbreviation-eg-ie.html",
+          "sha256": "b631381e7ec111af326374df9d02b29f841fff885b09a678cf5c4db421925871"
+        },
+        "gold": {
+          "path": "n07-abbreviation-eg-ie.gold.json",
+          "sha256": "70e6f32baff4abf0d8d750e546f28171369682fac49f960f5fd98a04b2ac4ab7"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abbreviation",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3,
+        "knownDivergence": {
+          "reason": "the e.g. and i.e. entries only match after the last period, but the first period already ends the sentence",
+          "measured": {
+            "sentences": [
+              "Bring tools, e.",
+              "g.",
+              "a saw and a rope.",
+              "Bring water, i.",
+              "e.",
+              "two full bottles.",
+              "We leave at six."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n08-abbreviation-unlisted-inc-st",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n08-abbreviation-unlisted-inc-st",
+      "files": {
+        "input": {
+          "path": "n08-abbreviation-unlisted-inc-st.html",
+          "sha256": "08a8e893446358b1e6fed357059681421824fd434e9dc7ddf1615dcfa644aba6"
+        },
+        "gold": {
+          "path": "n08-abbreviation-unlisted-inc-st.gold.json",
+          "sha256": "9461e302bb78b9eb1a96dc7523757f678f2e9a5273312b9cda8b53730262159e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abbreviation",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2,
+        "knownDivergence": {
+          "reason": "abbreviations outside the fixed list (Inc., St.) end a sentence",
+          "measured": {
+            "sentences": [
+              "Harlan Rowe Inc.",
+              "hired Elena Voss on St.",
+              "Anselm Street.",
+              "She starts on Monday."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n09-abbreviation-unlisted-etc-us",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n09-abbreviation-unlisted-etc-us",
+      "files": {
+        "input": {
+          "path": "n09-abbreviation-unlisted-etc-us.html",
+          "sha256": "48a24a0abc8d89f63c02805740ec2946e06acbc243c3e16f69954d0d9fdd2821"
+        },
+        "gold": {
+          "path": "n09-abbreviation-unlisted-etc-us.gold.json",
+          "sha256": "f6fb2e7d12372f053c0871d29977d025acdc3aff02b785fd4de1aaefb3d608f7"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abbreviation",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2,
+        "knownDivergence": {
+          "reason": "abbreviations outside the fixed list (etc., U.S.) end a sentence",
+          "measured": {
+            "sentences": [
+              "Crates, bags, etc.",
+              "were stacked near the U.",
+              "S.",
+              "depot.",
+              "A clerk counted them twice."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n10-abbreviation-am-fig-decimal",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n10-abbreviation-am-fig-decimal",
+      "files": {
+        "input": {
+          "path": "n10-abbreviation-am-fig-decimal.html",
+          "sha256": "7c0e998d22d2e2f86b39e4490d645368bb5d9c49ac6ac447d09622ddfc91a4b4"
+        },
+        "gold": {
+          "path": "n10-abbreviation-am-fig-decimal.gold.json",
+          "sha256": "95397b7d95d6b5dd5551f0e462c5c3b851747adec942eaedf5770e5dad58b13b"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "abbreviation",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3,
+        "knownDivergence": {
+          "reason": "abbreviations outside the fixed list (a.m., Fig.) end a sentence",
+          "measured": {
+            "sentences": [
+              "The bus leaves at 7 a.",
+              "m.",
+              "on weekdays.",
+              "See Fig.",
+              "2 for the route.",
+              "Tickets cost 4.50 euros."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n11-decimals-and-versions",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n11-decimals-and-versions",
+      "files": {
+        "input": {
+          "path": "n11-decimals-and-versions.html",
+          "sha256": "976e5972c031ff7e835332a6910843e60a0ae13bf0f3a3d7c21fa3b86ea95c8f"
+        },
+        "gold": {
+          "path": "n11-decimals-and-versions.gold.json",
+          "sha256": "4e842f1e425b60a37ccf7b92d7766e318ee086bc836439f4247afbba750e6156"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "numbers",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n12-quote-closing-after-period",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n12-quote-closing-after-period",
+      "files": {
+        "input": {
+          "path": "n12-quote-closing-after-period.html",
+          "sha256": "f2072b8cdc2683bf8524a04239ded6980ac16cf04e161359a12f56b6b18de952"
+        },
+        "gold": {
+          "path": "n12-quote-closing-after-period.gold.json",
+          "sha256": "be797a120e33392e5fb091912297a0854942780dc3c288a01d52f82275a818c8"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "quote",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n13-quote-inner-exclamation-continues",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n13-quote-inner-exclamation-continues",
+      "files": {
+        "input": {
+          "path": "n13-quote-inner-exclamation-continues.html",
+          "sha256": "6390f3abfa7a755edb850c9f97eae18ef5331b1e702c38f88b40c6cd6ae89b80"
+        },
+        "gold": {
+          "path": "n13-quote-inner-exclamation-continues.gold.json",
+          "sha256": "e42a758bc861b202af3a540e04599fec5152655466a251d9a2812605462970dd"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "quote",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2,
+        "knownDivergence": {
+          "reason": "a sentence mark inside quotes ends the sentence even when the quote continues with a lowercase attribution",
+          "measured": {
+            "sentences": [
+              "\"Come here!\"",
+              "she called.",
+              "He did not move."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n14-curly-quotes",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n14-curly-quotes",
+      "files": {
+        "input": {
+          "path": "n14-curly-quotes.html",
+          "sha256": "60856e7929839f8ea212db9268c3e59a23119aba47fb13e00efd09a932b8a502"
+        },
+        "gold": {
+          "path": "n14-curly-quotes.gold.json",
+          "sha256": "d82bd43c5ffe38b10d806ecfda62e7421616f302622a57960c4fa895e7ea38d7"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "quote",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n15-quote-inner-question-continues",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n15-quote-inner-question-continues",
+      "files": {
+        "input": {
+          "path": "n15-quote-inner-question-continues.html",
+          "sha256": "26768a491b6be46a9eab9e97c8d853adc968a3036ab75c67f02c9475688f4c10"
+        },
+        "gold": {
+          "path": "n15-quote-inner-question-continues.gold.json",
+          "sha256": "33fe65be722820f6c2c8eaa63bb3b7579536412c75064bee79398308738b17ab"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "quote",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2,
+        "knownDivergence": {
+          "reason": "a sentence mark inside quotes ends the sentence even when the quote continues with a lowercase attribution",
+          "measured": {
+            "sentences": [
+              "“Who left the gate open?”",
+              "asked the farmer.",
+              "Nobody answered."
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n16-parentheses",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n16-parentheses",
+      "files": {
+        "input": {
+          "path": "n16-parentheses.html",
+          "sha256": "29200f433b9d3d67cd105f209df0386cd52af77e14ac9511f3ac12cac6638414"
+        },
+        "gold": {
+          "path": "n16-parentheses.gold.json",
+          "sha256": "63dea2b41760945fc62ab3cb72e1359bf3415b7a585e80312e83c0991d0c2162"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "quote",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n17-single-quotes",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n17-single-quotes",
+      "files": {
+        "input": {
+          "path": "n17-single-quotes.html",
+          "sha256": "4eb407b9ad6a5d719f41beac18301bbe38a29bbaa8794824f33489e30f26c1a9"
+        },
+        "gold": {
+          "path": "n17-single-quotes.gold.json",
+          "sha256": "6efb78faf040f951d1c9834c1381242feba6008d3709075ae2aaf61aba748eb1"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "quote",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n18-japanese-rules-terminators",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n18-japanese-rules-terminators",
+      "files": {
+        "input": {
+          "path": "n18-japanese-rules-terminators.html",
+          "sha256": "8533bc8792a19f1b486467fc362471c237e95eb0c322bcec946690abf30c9dbf"
+        },
+        "gold": {
+          "path": "n18-japanese-rules-terminators.gold.json",
+          "sha256": "044730a77e2b1a8651f14c955901289a3a4931504c9fd1c696240e480166023e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cjk",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n19-japanese-dictionary",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n19-japanese-dictionary",
+      "files": {
+        "input": {
+          "path": "n19-japanese-dictionary.html",
+          "sha256": "6f7c7406f2cb2bb0e3e17c94f7a360ef2ae1b34de9774cfa22a970456d91dbc6"
+        },
+        "gold": {
+          "path": "n19-japanese-dictionary.gold.json",
+          "sha256": "67adaa388c40da6a45ef2cfd277db58c240827445a4457d3c8d33a1ab213a233"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "cjk",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n20-chinese-rules-terminators",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n20-chinese-rules-terminators",
+      "files": {
+        "input": {
+          "path": "n20-chinese-rules-terminators.html",
+          "sha256": "589e96c29e523a3f81d87affb828a300bb63b108d98749f502b47b3e4824b55e"
+        },
+        "gold": {
+          "path": "n20-chinese-rules-terminators.gold.json",
+          "sha256": "2b323ca7a7b3c483e93a38f065b218de23d46a10f838f12166f2981f6c9ac0b6"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cjk",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n21-chinese-dictionary",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n21-chinese-dictionary",
+      "files": {
+        "input": {
+          "path": "n21-chinese-dictionary.html",
+          "sha256": "589e96c29e523a3f81d87affb828a300bb63b108d98749f502b47b3e4824b55e"
+        },
+        "gold": {
+          "path": "n21-chinese-dictionary.gold.json",
+          "sha256": "6724d855d27aae87cb8238e47d5c37b29f3c777b47c70d1909e0fea90a699259"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "cjk",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3,
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['很', '集市'], produced-only tokens ['市', '集']",
+          "measured": {
+            "keywords": [
+              [
+                "买",
+                2
+              ],
+              [
+                "今天",
+                1
+              ],
+              [
+                "的",
+                1
+              ],
+              [
+                "集",
+                1
+              ],
+              [
+                "市",
+                1
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n22-corner-brackets-closing-after-period",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n22-corner-brackets-closing-after-period",
+      "files": {
+        "input": {
+          "path": "n22-corner-brackets-closing-after-period.html",
+          "sha256": "1d7e3b8f9bf69646179c93259a1e15c67003aef3b4ea7e0b1a448a90482a8b73"
+        },
+        "gold": {
+          "path": "n22-corner-brackets-closing-after-period.gold.json",
+          "sha256": "29f23e1606e195c8f4408cb0405e3725eddb39caa8c667d52ac045a89e81bb32"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cjk",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n23-corner-brackets-inner-terminator",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n23-corner-brackets-inner-terminator",
+      "files": {
+        "input": {
+          "path": "n23-corner-brackets-inner-terminator.html",
+          "sha256": "349007e5f6f2f7b0b934c2262f1afa3f93402aecaacab0bda016d6b3cba733b6"
+        },
+        "gold": {
+          "path": "n23-corner-brackets-inner-terminator.gold.json",
+          "sha256": "2d205858325d335887434b1aeab08e25395a3671272e1cfc22c8efedf96813ea"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "cjk",
+        "keywords": 5,
+        "language": null,
+        "sentences": 1,
+        "knownDivergence": {
+          "reason": "a full stop inside corner brackets ends the sentence even when the quotation continues",
+          "measured": {
+            "sentences": [
+              "「待って。」",
+              "と母は言った。"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n24-thai-space-separated-sentences",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n24-thai-space-separated-sentences",
+      "files": {
+        "input": {
+          "path": "n24-thai-space-separated-sentences.html",
+          "sha256": "e7ae972568b238b263f2d79ea1c1b92a53f53b478d4137e26ff2d17a71aa45b3"
+        },
+        "gold": {
+          "path": "n24-thai-space-separated-sentences.gold.json",
+          "sha256": "977dcddbd6b3f22ff0fa8ca518835a28b5d1b0dfa82325db2fd9952626e7ea18"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "thai",
+        "keywords": 5,
+        "language": "th",
+        "sentences": 3,
+        "knownDivergence": {
+          "reason": "dictionary word boundaries differ from the word-level gold; gold-only tokens ['ตก', 'หนัก'], produced-only tokens ['ตกหนัก', 'ไม่มี']; Thai sentences are separated by spaces, not terminal punctuation, so the splitter finds one sentence",
+          "measured": {
+            "keywords": [
+              [
+                "ฉัน",
+                2
+              ],
+              [
+                "ฝน",
+                1
+              ],
+              [
+                "ตกหนัก",
+                1
+              ],
+              [
+                "มาก",
+                1
+              ],
+              [
+                "ไม่มี",
+                1
+              ]
+            ],
+            "sentences": [
+              "ฝนตกหนักมาก ฉันไม่มีร่ม ฉันจึงรอที่บ้าน"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "n25-thai-paragraph-sentences",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n25-thai-paragraph-sentences",
+      "files": {
+        "input": {
+          "path": "n25-thai-paragraph-sentences.html",
+          "sha256": "ffbdcdbf00d7821dd695584b370fefe2619058936d43d6b8c9791db7c579603a"
+        },
+        "gold": {
+          "path": "n25-thai-paragraph-sentences.gold.json",
+          "sha256": "80bf17eb7f1956f5fa3e092545c766de951c5569df6a192e7a18707891ea6132"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "thai",
+        "keywords": 5,
+        "language": "th",
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n26-arabic-question-mark",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n26-arabic-question-mark",
+      "files": {
+        "input": {
+          "path": "n26-arabic-question-mark.html",
+          "sha256": "db41175801b9cde1d5efdf43b7eb918f8cf00a3ef9f1c22ff86d2a5764f12dbe"
+        },
+        "gold": {
+          "path": "n26-arabic-question-mark.gold.json",
+          "sha256": "e0f50bbe63e2bdbf8453b3baff5400de07740af9be227ae921d07b3acd4da8ce"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "other_scripts",
+        "keywords": 5,
+        "language": "ar",
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n27-devanagari-danda",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n27-devanagari-danda",
+      "files": {
+        "input": {
+          "path": "n27-devanagari-danda.html",
+          "sha256": "32b81a546725f8218b391af332791caf17a75106b1c5d901e078cf3d6bbf9aff"
+        },
+        "gold": {
+          "path": "n27-devanagari-danda.gold.json",
+          "sha256": "62310a5ba39b005b30ce201bea66b5db5632b2d0b073617dfdde3f88bb235291"
+        }
+      },
+      "params": {
+        "tokenizer": "dictionary_uax29",
+        "class": "other_scripts",
+        "keywords": 5,
+        "language": "hi",
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n28-ties-first-occurrence-not-alphabetical",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n28-ties-first-occurrence-not-alphabetical",
+      "files": {
+        "input": {
+          "path": "n28-ties-first-occurrence-not-alphabetical.html",
+          "sha256": "a2f15bbbbc50cd89a1d940e13c8c6550366c35b718833d6b3972eee70bc21e5d"
+        },
+        "gold": {
+          "path": "n28-ties-first-occurrence-not-alphabetical.gold.json",
+          "sha256": "c3eabeec7783f62d12ea28722d6b053c234d96c725f8ea9087f0ecfc5bbfe7a6"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "ties",
+        "keywords": 4,
+        "language": null,
+        "sentences": 4
+      }
+    },
+    {
+      "id": "n29-ties-two-levels",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n29-ties-two-levels",
+      "files": {
+        "input": {
+          "path": "n29-ties-two-levels.html",
+          "sha256": "097b401ad1f6afd6364dfc9aa78cffdec6e32ac59d22621f774c7647cbff0f46"
+        },
+        "gold": {
+          "path": "n29-ties-two-levels.gold.json",
+          "sha256": "8d1761f1c61593c12e9f035384e341fa740a0f8cc2ffcf330c74dc3488523f7f"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "ties",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n30-case-folding-merges-counts",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n30-case-folding-merges-counts",
+      "files": {
+        "input": {
+          "path": "n30-case-folding-merges-counts.html",
+          "sha256": "9ec43b85d448c4c3a9a63bce36e5b4fe237d3b6941e1eaebc6183637f02257af"
+        },
+        "gold": {
+          "path": "n30-case-folding-merges-counts.gold.json",
+          "sha256": "7659e4a8222114fc5a0b35fda7eccd5f7ca6aaed438532bf42603a90327a8d0b"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "ties",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n31-numbers-are-not-keywords",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n31-numbers-are-not-keywords",
+      "files": {
+        "input": {
+          "path": "n31-numbers-are-not-keywords.html",
+          "sha256": "0e65200d3800ce69f4eed6236d733e39861f9d84ed536284863fa45812a5fb12"
+        },
+        "gold": {
+          "path": "n31-numbers-are-not-keywords.gold.json",
+          "sha256": "77819e80b8f10e17bd6d0968a95f17dfc832ee40690b541966840aca5736bcf2"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "ties",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n32-english-declared-drops-listed-stopwords",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n32-english-declared-drops-listed-stopwords",
+      "files": {
+        "input": {
+          "path": "n32-english-declared-drops-listed-stopwords.html",
+          "sha256": "12f2a9af7c52f99f00610eb78ad28d479613d72f3f7aaaabad7616db3a888e2d"
+        },
+        "gold": {
+          "path": "n32-english-declared-drops-listed-stopwords.gold.json",
+          "sha256": "6d4d30e2bcd742e71338235f2fb68c5da8cfe1bb1912a449c154527e542859d4"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "language_rules",
+        "keywords": 5,
+        "language": "en",
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n33-english-undeclared-keeps-function-words",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n33-english-undeclared-keeps-function-words",
+      "files": {
+        "input": {
+          "path": "n33-english-undeclared-keeps-function-words.html",
+          "sha256": "e3c9ec490f15920225f7ca16cf012af9635338e8ca12b7adb6e3f325badf4ebe"
+        },
+        "gold": {
+          "path": "n33-english-undeclared-keeps-function-words.gold.json",
+          "sha256": "21ac097f1b33e30987a9343f00ba8dbaa12ce18a29496d8348157024c61bdded"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "language_rules",
+        "keywords": 5,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n34-keyword-limit-with-all-ties",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n34-keyword-limit-with-all-ties",
+      "files": {
+        "input": {
+          "path": "n34-keyword-limit-with-all-ties.html",
+          "sha256": "f8db7b1846e781d0d0bfc87473ff8f4415432a59fa90ddb6a8bdf757ac16c864"
+        },
+        "gold": {
+          "path": "n34-keyword-limit-with-all-ties.gold.json",
+          "sha256": "21df9f50030efe53450fcc178a8b3222a6fd285c84ec52d2bb55e8474380f636"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "ties",
+        "keywords": 3,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n35-keywords-disabled-by-zero",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n35-keywords-disabled-by-zero",
+      "files": {
+        "input": {
+          "path": "n35-keywords-disabled-by-zero.html",
+          "sha256": "fdaaa41e223848baa22215cf2fb72f8962ecf1c9266273d8014027d7f26f6533"
+        },
+        "gold": {
+          "path": "n35-keywords-disabled-by-zero.gold.json",
+          "sha256": "c9e1b0fe9643d571bbc01eb2b3347d2e0aba67462c5ec84ce449464dc0565572"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "limits",
+        "keywords": 0,
+        "language": null,
+        "sentences": 3
+      }
+    },
+    {
+      "id": "n36-summary-ranking-ten-sentences",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n36-summary-ranking-ten-sentences",
+      "files": {
+        "input": {
+          "path": "n36-summary-ranking-ten-sentences.html",
+          "sha256": "49540cd1643283afbced558429324d06cf8b1ee280db26103eb1dfb3e47339b2"
+        },
+        "gold": {
+          "path": "n36-summary-ranking-ten-sentences.gold.json",
+          "sha256": "26168d16108d06def439d60aa53ed9d25218f1a9c0c9ac96ab39feb14c69d686"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "limits",
+        "keywords": 6,
+        "language": null,
+        "sentences": 10
+      }
+    },
+    {
+      "id": "n37-summary-title-overlap",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n37-summary-title-overlap",
+      "files": {
+        "input": {
+          "path": "n37-summary-title-overlap.html",
+          "sha256": "1805417b10799b5eabd0f5f7b980c13db43c9ffc669a93a03030e7b3ba8cc2b6"
+        },
+        "gold": {
+          "path": "n37-summary-title-overlap.gold.json",
+          "sha256": "e6ca445a04c2e6b3f557e112b69911c81d9431563b9657e55a219bffc8c2f8d4"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "limits",
+        "keywords": 4,
+        "language": null,
+        "sentences": 4
+      }
+    },
+    {
+      "id": "n38-long-sentence-word-cap",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n38-long-sentence-word-cap",
+      "files": {
+        "input": {
+          "path": "n38-long-sentence-word-cap.html",
+          "sha256": "992078d92ca378b90fd36025b3d96d1a3fbba26bbaef87ead23762976950e8e5"
+        },
+        "gold": {
+          "path": "n38-long-sentence-word-cap.gold.json",
+          "sha256": "8146ef015b967ae1ae71ba911ce60a67f379464ae102052e0097ecdcd685507d"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "limits",
+        "keywords": 5,
+        "language": null,
+        "sentences": 2
+      }
+    },
+    {
+      "id": "n39-single-sentence-document",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n39-single-sentence-document",
+      "files": {
+        "input": {
+          "path": "n39-single-sentence-document.html",
+          "sha256": "1ec8141f51909c83bfc31c1a66753bb4376b56ff247d90937351ddc8fe3425c9"
+        },
+        "gold": {
+          "path": "n39-single-sentence-document.gold.json",
+          "sha256": "c77c2d25d652df247f4ce0af0041a76489834b1d7f452ba7de6af60ae261d86e"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "limits",
+        "keywords": 3,
+        "language": null,
+        "sentences": 1
+      }
+    },
+    {
+      "id": "n40-repeated-phrase-document",
+      "family": "nlp",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/n40-repeated-phrase-document",
+      "files": {
+        "input": {
+          "path": "n40-repeated-phrase-document.html",
+          "sha256": "cd812b6ce12aadcd8abce0edc8c7c5f4ddb0acf81db99aea28a7d178c2a35ddf"
+        },
+        "gold": {
+          "path": "n40-repeated-phrase-document.gold.json",
+          "sha256": "b33810be792de31e683150131f8aaf584de867ebc557891e50e23e921fcb0da5"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "ties",
+        "keywords": 3,
+        "language": null,
+        "sentences": 3
+      }
+    }
+  ]
+}

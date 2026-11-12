@@ -1,0 +1,63 @@
+{
+  "id": "s22-predicates",
+  "family": "selector",
+  "note": "predicates: positional per parent, filtered node-set position, nested predicates, chained predicates, position with last",
+  "expectedText": "r2a\nr2b\nr2c\nr1b\nr2b\nr2b\nr3a\nr2ar2br2c\nr2ar2br2c\nr3a\nr3a",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "r1",
+      "start": 4,
+      "end": 7
+    },
+    {
+      "label": "r1",
+      "start": 8,
+      "end": 11
+    },
+    {
+      "label": "r2",
+      "start": 12,
+      "end": 15
+    },
+    {
+      "label": "r2",
+      "start": 16,
+      "end": 19
+    },
+    {
+      "label": "r3",
+      "start": 20,
+      "end": 23
+    },
+    {
+      "label": "r4",
+      "start": 24,
+      "end": 27
+    },
+    {
+      "label": "r5",
+      "start": 28,
+      "end": 37
+    },
+    {
+      "label": "r6",
+      "start": 38,
+      "end": 47
+    },
+    {
+      "label": "r7",
+      "start": 48,
+      "end": 51
+    },
+    {
+      "label": "r8",
+      "start": 52,
+      "end": 55
+    }
+  ]
+}

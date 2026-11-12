@@ -53,7 +53,7 @@ pub const fn hamming_distance(a: u64, b: u64) -> u32 {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use super::super::normalize::{html_page, normalize, shingles, tokenize};
+    use super::super::normalize::{html_page, normalize_plain, shingles, tokenize};
     use super::*;
 
     #[test]
@@ -85,8 +85,8 @@ mod tests {
                 &format!("Product {id} crimson Exclusive cotton shirt available in multiple sizes with free shipping worldwide today only"),
             )
         };
-        let a = normalize(&product(1)).unwrap();
-        let b = normalize(&product(2)).unwrap();
+        let a = normalize_plain(&product(1)).unwrap();
+        let b = normalize_plain(&product(2)).unwrap();
         assert!(hamming_distance(simhash64(&a.shingles), simhash64(&b.shingles)) <= 3);
     }
 }

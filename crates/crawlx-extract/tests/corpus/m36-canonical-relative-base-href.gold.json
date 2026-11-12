@@ -1,0 +1,23 @@
+{
+  "id": "m36-canonical-relative-base-href",
+  "family": "meta_exact",
+  "note": "a relative canonical link resolves against the base element, not the page URL",
+  "expectedText": "title=Notes From the Dune Walk\nlanguage=en\ncanonical=https://static.corpus.test/archive/2026/notes/dune-walk",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 30
+    },
+    {
+      "label": "language",
+      "start": 40,
+      "end": 42
+    },
+    {
+      "label": "canonical",
+      "start": 53,
+      "end": 108
+    }
+  ]
+}

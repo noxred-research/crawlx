@@ -123,7 +123,8 @@ pub struct ProtocolArgs {
     /// Explicit target URL; no credentials may appear in URL userinfo.
     #[arg(long, required_unless_present = "probe")]
     pub url: Option<Url>,
-    /// Operator-approved delegate key; native_ftp permits only registered anonymous file reads.
+    /// Operator-approved delegate key; native_ftp serves only registered origins: anonymous or
+    /// credential-reference file reads, and directory listings only where recursion is approved.
     #[arg(long, required_unless_present = "probe")]
     pub delegate: Option<String>,
     /// Operator-selected tenant; registry must explicitly approve this tenant.

@@ -1,0 +1,73 @@
+{
+  "id": "n33-english-undeclared-keeps-function-words",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The mill grinds the grain and the miller sells the flour.\nFlour from the mill is sold in the market.\nThe miller and his sons carry the sacks.\nthe=8\nmill=2\nand=2\nmiller=2\nflour=2",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 57
+    },
+    {
+      "label": "sentence",
+      "start": 58,
+      "end": 100
+    },
+    {
+      "label": "sentence",
+      "start": 101,
+      "end": 141
+    },
+    {
+      "label": "keyword",
+      "start": 142,
+      "end": 145
+    },
+    {
+      "label": "score",
+      "start": 146,
+      "end": 147
+    },
+    {
+      "label": "keyword",
+      "start": 148,
+      "end": 152
+    },
+    {
+      "label": "score",
+      "start": 153,
+      "end": 154
+    },
+    {
+      "label": "keyword",
+      "start": 155,
+      "end": 158
+    },
+    {
+      "label": "score",
+      "start": 159,
+      "end": 160
+    },
+    {
+      "label": "keyword",
+      "start": 161,
+      "end": 167
+    },
+    {
+      "label": "score",
+      "start": 168,
+      "end": 169
+    },
+    {
+      "label": "keyword",
+      "start": 170,
+      "end": 175
+    },
+    {
+      "label": "score",
+      "start": 176,
+      "end": 177
+    }
+  ]
+}

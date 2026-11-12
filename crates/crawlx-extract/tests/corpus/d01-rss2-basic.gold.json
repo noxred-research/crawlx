@@ -1,0 +1,28 @@
+{
+  "id": "d01-rss2-basic",
+  "family": "feed",
+  "note": "RSS 2.0: absolute and relative item links, duplicates collapse, fragments are dropped, an in-scope enclosure is media, cross-origin item and media are denied",
+  "expectedText": "https://news.corpus.test/2026/11/ferry-timetable\nhttps://news.corpus.test/img/ferry.jpg\nhttps://news.corpus.test/2026/11/crane-repairs\nhttps://news.corpus.test/2026/11/fog-warning",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 48
+    },
+    {
+      "label": "media",
+      "start": 49,
+      "end": 87
+    },
+    {
+      "label": "item",
+      "start": 88,
+      "end": 134
+    },
+    {
+      "label": "item",
+      "start": 135,
+      "end": 179
+    }
+  ]
+}

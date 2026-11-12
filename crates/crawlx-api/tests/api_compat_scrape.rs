@@ -947,6 +947,27 @@ async fn llm_formats_need_a_configured_llm_before_any_run_is_created() {
 }
 
 #[tokio::test]
+async fn clusters_need_chunks_and_an_embedding_model_before_any_run_is_created() {
+    let rig = Rig::start(RigConfig::default()).await;
+    let content = j!({ "version": 1, "minMainChars": 1, "chunks": { "strategy": { "kind": "sentences", "window": 1 } } });
+    // no embedding model: the typed unavailable error, and no page was requested
+    let (s, h, v) = scrape(
+        &rig,
+        j!({ "url": rig.url("/"), "contentPolicy": content, "clusters": { "clusters": 2 } }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert_compat_error(&v, "embeddings_not_configured");
+    assert!(h.get("retry-after").is_some());
+    assert_eq!(rig.site.hits("/"), 0);
+    // chunks are what gets embedded: without them the request is invalid, not unavailable
+    let (s, _, v) = scrape(&rig, j!({ "url": rig.url("/"), "clusters": {} })).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(rig.site.hits("/"), 0);
+    rig.stop().await;
+}
+
+#[tokio::test]
 async fn llm_formats_run_in_the_worker_and_are_priced() {
     let llm = llm_mock();
     let rig = Rig::start(RigConfig {
@@ -1490,7 +1511,11 @@ async fn batch_webhook_headers_metadata_and_events_are_stored_on_the_run() {
     assert_eq!(hook.events, vec!["page".to_owned(), "completed".to_owned()]);
     assert_eq!(run.config.politeness.max_concurrency, 2);
     assert_eq!(run.config.mode, CrawlMode::Static);
-    assert_eq!(run.config.limits.urls, 2);
+    assert_eq!(
+        run.config.limits.urls,
+        u32::try_from(crawlx_core::config::MAX_BATCH_URLS + 1).unwrap(),
+        "a batch's page budget leaves room for appendToId"
+    );
     let (_, _, resource) = rig.env.get(&format!("/v1/crawls/{}", run.id)).await;
     let text = resource.to_string();
     assert!(
@@ -2363,5 +2388,308 @@ async fn native_output_markup_and_citations_do_not_bypass_requested_pii_redactio
             .contains("output-person@example.test"),
         "{data}"
     );
+    rig.stop().await;
+}
+
+// ---- batch appendToId -------------------------------------------------------------------
+
+/// A fixture route (`/gate/{n}`) that holds each request for a while and records the most
+/// requests that were in flight at once.
+#[derive(Default)]
+struct Gate {
+    inflight: std::sync::atomic::AtomicUsize,
+    most: std::sync::atomic::AtomicUsize,
+    hits: std::sync::Mutex<std::collections::BTreeMap<String, usize>>,
+}
+
+impl Gate {
+    fn routes(self: &Arc<Self>, hold: Duration) -> axum::Router {
+        let gate = Arc::clone(self);
+        axum::Router::new().route(
+            "/gate/{n}",
+            axum::routing::get(move |axum::extract::Path(n): axum::extract::Path<String>| {
+                let gate = Arc::clone(&gate);
+                async move {
+                    use std::sync::atomic::Ordering::SeqCst;
+                    *gate.hits.lock().unwrap().entry(n.clone()).or_insert(0) += 1;
+                    let now = gate.inflight.fetch_add(1, SeqCst) + 1;
+                    gate.most.fetch_max(now, SeqCst);
+                    tokio::time::sleep(hold).await;
+                    gate.inflight.fetch_sub(1, SeqCst);
+                    axum::response::Html(format!(
+                        "<html><head><title>Gate {n}</title></head><body><main><h1>Gate {n}</h1><p>Words of page {n}.</p></main></body></html>"
+                    ))
+                }
+            }),
+        )
+    }
+
+    fn hits(&self, n: &str) -> usize {
+        self.hits.lock().unwrap().get(n).copied().unwrap_or(0)
+    }
+
+    fn most(&self) -> usize {
+        self.most.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+async fn until(what: &str, mut done: impl FnMut() -> bool) {
+    for _ in 0..400 {
+        if done() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("never happened: {what}");
+}
+
+fn gate_rig(gate: &Arc<Gate>, hold: Duration) -> RigConfig {
+    RigConfig {
+        site_routes: Some(gate.routes(hold)),
+        ..RigConfig::default()
+    }
+}
+
+#[tokio::test]
+async fn append_to_id_adds_urls_once_under_the_batch_ceiling() {
+    let gate = Arc::new(Gate::default());
+    let rig = Rig::start(gate_rig(&gate, Duration::from_millis(400))).await;
+    let (s, _, v) = batch(&rig, j!({ "urls": [rig.url("/gate/1")], "maxConcurrency": 1 })).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(
+        v.get("warnings").is_none(),
+        "no clamp warning for the append headroom: {v}"
+    );
+    let id = v["id"].as_str().unwrap().to_owned();
+    until("the first page is being fetched", || gate.hits("1") == 1).await;
+
+    let body = j!({
+        "appendToId": id,
+        "urls": [rig.url("/gate/2"), rig.url("/gate/3"), rig.url("/gate/1"), "not a url"],
+    });
+    let (s, _, a) = rig
+        .env
+        .post_with(
+            &format!("{V2}/batch/scrape"),
+            &[("Idempotency-Key", "append-1")],
+            &body,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{a}");
+    assert_eq!((a["success"].clone(), a["id"].clone()), (j!(true), j!(id)), "{a}");
+    assert_eq!(a["invalidURLs"], j!(["not a url"]));
+    assert!(
+        a["url"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("{V2}/batch/scrape/{id}")),
+        "{a}"
+    );
+
+    // the same request again, with its key and with a new one, adds nothing
+    let (s, _, replay) = rig
+        .env
+        .post_with(
+            &format!("{V2}/batch/scrape"),
+            &[("Idempotency-Key", "append-1")],
+            &body,
+        )
+        .await;
+    assert_eq!((s, replay), (StatusCode::OK, a.clone()));
+    let (s, _, again) = rig
+        .env
+        .post_with(
+            &format!("{V2}/batch/scrape"),
+            &[("Idempotency-Key", "append-2")],
+            &body,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{again}");
+    assert_eq!(again["id"], j!(id));
+
+    let done = wait_batch(&rig, &id, "completed").await;
+    assert_eq!(
+        (
+            done["total"].clone(),
+            done["completed"].clone(),
+            done["creditsUsed"].clone()
+        ),
+        (j!(3), j!(3), j!(3)),
+        "{done}"
+    );
+    let titles: std::collections::BTreeSet<&str> = done["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["metadata"]["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["Gate 1", "Gate 2", "Gate 3"].into_iter().collect());
+    for n in ["1", "2", "3"] {
+        assert_eq!(gate.hits(n), 1, "page {n} is scraped exactly once");
+    }
+    assert_eq!(
+        gate.most(),
+        1,
+        "appended pages share the batch's concurrency ceiling"
+    );
+    let (s, _, errors) = rig.env.get(&format!("{V2}/batch/scrape/{id}/errors")).await;
+    assert_eq!((s, errors["errors"].clone()), (StatusCode::OK, j!([])));
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn append_to_id_waits_for_a_queued_batch_to_start_and_warns_about_ignored_options() {
+    let gate = Arc::new(Gate::default());
+    let rig = Rig::start(RigConfig {
+        worker_start_delay: Some(Duration::from_millis(600)),
+        ..gate_rig(&gate, Duration::from_millis(10))
+    })
+    .await;
+    let (_, _, v) = batch(&rig, j!({ "urls": [rig.url("/gate/1")] })).await;
+    let id = v["id"].as_str().unwrap().to_owned();
+    let (s, _, a) = batch(
+        &rig,
+        j!({
+            "appendToId": id,
+            "urls": [rig.url("/gate/2")],
+            "formats": ["markdown"],
+            "maxConcurrency": 9,
+            "origin": "sdk",
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{a}");
+    let ignored: std::collections::BTreeSet<&str> = a["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["code"] == "append_option_ignored")
+        .map(|w| w["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ignored,
+        ["/formats", "/maxConcurrency"].into_iter().collect(),
+        "{a}"
+    );
+    let done = wait_batch(&rig, &id, "completed").await;
+    assert_eq!(
+        (done["total"].clone(), done["completed"].clone()),
+        (j!(2), j!(2)),
+        "{done}"
+    );
+    let run = RunRepo::get(rig.env.store.as_ref(), id.parse().unwrap())
+        .await
+        .unwrap();
+    assert_ne!(
+        run.config.politeness.max_concurrency, 9,
+        "an append never changes the ceiling of the batch"
+    );
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn append_to_id_refuses_unknown_foreign_non_batch_finished_and_malformed_targets() {
+    let gate = Arc::new(Gate::default());
+    let rig = Rig::start(gate_rig(&gate, Duration::from_millis(5))).await;
+    let urls = j!([rig.url("/gate/9")]);
+    let append = |id: String| j!({ "appendToId": id, "urls": urls });
+
+    let (s, _, v) = batch(&rig, append(uuid::Uuid::now_v7().to_string())).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+    assert_compat_error(&v, "not_found");
+
+    let (s, _, v) = batch(&rig, j!({ "appendToId": "nope", "urls": urls })).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["details"][0]["path"], "/appendToId");
+    let (s, _, v) = batch(&rig, j!({ "appendToId": 7, "urls": urls })).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+
+    // a scrape run is not a batch
+    let data = scrape_ok(&rig, j!({ "url": rig.url("/a") })).await;
+    let scrape_run = data["metadata"]["scrapeId"].as_str().unwrap().to_owned();
+    let (s, _, v) = batch(&rig, append(scrape_run)).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+
+    // a finished batch
+    let (_, _, v) = batch(&rig, j!({ "urls": [rig.url("/a")] })).await;
+    let finished = v["id"].as_str().unwrap().to_owned();
+    wait_batch(&rig, &finished, "completed").await;
+    let (s, _, v) = batch(&rig, append(finished.clone())).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_compat_error(&v, "invalid_state");
+    assert_eq!(gate.hits("9"), 0, "nothing was queued for a finished batch");
+
+    // a cancelled batch
+    let (_, _, v) = batch(&rig, j!({ "urls": [rig.url("/slow?i=1")], "timeout": 30000 })).await;
+    let cancelled = v["id"].as_str().unwrap().to_owned();
+    until("the slow page is being fetched", || rig.site.hits("/slow") == 1).await;
+    let (s, _, c) = rig.env.delete(&format!("{V2}/batch/scrape/{cancelled}")).await;
+    assert_eq!(s, StatusCode::OK, "{c}");
+    wait_batch(&rig, &cancelled, "cancelled").await;
+    let (s, _, v) = batch(&rig, append(cancelled)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+
+    // another tenant's batch looks unknown
+    let (_, _, v) = batch(&rig, j!({ "urls": [rig.url("/slow?i=2")], "timeout": 30000 })).await;
+    let running = v["id"].as_str().unwrap().to_owned();
+    let other = rig
+        .env
+        .key_for(
+            "other-tenant",
+            &[crawlx_api::Scope::CrawlsWrite, crawlx_api::Scope::CrawlsRead],
+        )
+        .await;
+    let (s, _, bytes) = rig
+        .env
+        .send(
+            Method::POST,
+            &format!("{V2}/batch/scrape"),
+            Some(&other),
+            &[],
+            Some(&append(running.clone())),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{}", json(&bytes));
+    // no valid URL is a validation error, like a new batch
+    let (s, _, v) = batch(&rig, j!({ "appendToId": running, "urls": ["nope"] })).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    rig.env.delete(&format!("{V2}/batch/scrape/{running}")).await;
+    rig.stop().await;
+}
+
+#[tokio::test]
+async fn append_to_id_never_exceeds_the_pages_a_batch_may_hold() {
+    let mut settings = crawlx_api::Settings::default();
+    settings.tenant_limits.max_urls = 3;
+    let rig = Rig::start(RigConfig {
+        settings: Some(settings),
+        ..RigConfig::default()
+    })
+    .await;
+    let (s, _, v) = batch(&rig, j!({ "urls": [rig.url("/slow?i=1")], "timeout": 30000 })).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v.get("warnings").is_none(), "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    until("the slow page is being fetched", || rig.site.hits("/slow") == 1).await;
+    let (s, _, v) = batch(
+        &rig,
+        j!({ "appendToId": id, "urls": [rig.url("/a"), rig.url("/b")] }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // the two held pages are repeated: still fine; one more page is not
+    let (s, _, v) = batch(
+        &rig,
+        j!({ "appendToId": id, "urls": [rig.url("/a"), rig.url("/b")] }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, _, v) = batch(&rig, j!({ "appendToId": id, "urls": [rig.url("/c")] })).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["details"][0]["path"], "/urls");
+    assert_eq!(v["details"][0]["code"], "too_big");
+    let (_, _, st) = rig.env.get(&format!("{V2}/batch/scrape/{id}")).await;
+    assert_eq!(st["total"], 3, "{st}");
+    rig.env.delete(&format!("{V2}/batch/scrape/{id}")).await;
     rig.stop().await;
 }

@@ -1,0 +1,68 @@
+{
+  "id": "s47-schema-remote-and-unsupported",
+  "family": "selector",
+  "note": "local-only schemas: remote, file and relative references, unpinned registry keys, missing pointers and unknown keywords are typed admission errors with no resolution attempted",
+  "expectedText": "error:Schema(remote schema references forbidden)\nerror:Schema(remote schema references forbidden)\nerror:Schema(remote schema references forbidden)\nerror:Schema(remote schema references forbidden)\nerror:Schema(missing pinned schema)\nerror:Schema(missing schema pointer)\nerror:Schema(only JSON pointer fragments supported)\nerror:Schema(unsupported schema keyword)\nerror:Schema(unsupported schema keyword)\nerror:Schema(unsupported schema keyword)\nerror:Schema(unknown schema type)\nok",
+  "spans": [
+    {
+      "label": "remote_https",
+      "start": 0,
+      "end": 48
+    },
+    {
+      "label": "remote_file",
+      "start": 49,
+      "end": 97
+    },
+    {
+      "label": "remote_loopback",
+      "start": 98,
+      "end": 146
+    },
+    {
+      "label": "relative_file",
+      "start": 147,
+      "end": 195
+    },
+    {
+      "label": "unpinned_registry",
+      "start": 196,
+      "end": 231
+    },
+    {
+      "label": "missing_pointer",
+      "start": 232,
+      "end": 268
+    },
+    {
+      "label": "named_anchor",
+      "start": 269,
+      "end": 320
+    },
+    {
+      "label": "unknown_keyword",
+      "start": 321,
+      "end": 361
+    },
+    {
+      "label": "dynamic_ref",
+      "start": 362,
+      "end": 402
+    },
+    {
+      "label": "id_keyword",
+      "start": 403,
+      "end": 443
+    },
+    {
+      "label": "bad_type",
+      "start": 444,
+      "end": 477
+    },
+    {
+      "label": "plain_object",
+      "start": 478,
+      "end": 480
+    }
+  ]
+}

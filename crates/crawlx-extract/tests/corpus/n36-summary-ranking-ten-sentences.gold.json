@@ -1,0 +1,118 @@
+{
+  "id": "n36-summary-ranking-ten-sentences",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 6 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The glacier survey began in March.\nCrews measured ice thickness at forty sites.\nWeather delayed two flights over the ridge.\nThe survey results show steady thinning.\nThinning is fastest near the southern edge.\nLocal guides reported fresh meltwater channels.\nThe crew packed camp on the final Friday.\nA second survey is planned for next year.\nFunding for the survey comes from regional councils.\nGlacier thinning matters to every valley below.\nthe=7\nsurvey=4\nthinning=3\nglacier=2\nis=2\nfor=2",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 34
+    },
+    {
+      "label": "sentence",
+      "start": 35,
+      "end": 79
+    },
+    {
+      "label": "sentence",
+      "start": 80,
+      "end": 123
+    },
+    {
+      "label": "sentence",
+      "start": 124,
+      "end": 164
+    },
+    {
+      "label": "sentence",
+      "start": 165,
+      "end": 208
+    },
+    {
+      "label": "sentence",
+      "start": 209,
+      "end": 256
+    },
+    {
+      "label": "sentence",
+      "start": 257,
+      "end": 298
+    },
+    {
+      "label": "sentence",
+      "start": 299,
+      "end": 340
+    },
+    {
+      "label": "sentence",
+      "start": 341,
+      "end": 393
+    },
+    {
+      "label": "sentence",
+      "start": 394,
+      "end": 441
+    },
+    {
+      "label": "keyword",
+      "start": 442,
+      "end": 445
+    },
+    {
+      "label": "score",
+      "start": 446,
+      "end": 447
+    },
+    {
+      "label": "keyword",
+      "start": 448,
+      "end": 454
+    },
+    {
+      "label": "score",
+      "start": 455,
+      "end": 456
+    },
+    {
+      "label": "keyword",
+      "start": 457,
+      "end": 465
+    },
+    {
+      "label": "score",
+      "start": 466,
+      "end": 467
+    },
+    {
+      "label": "keyword",
+      "start": 468,
+      "end": 475
+    },
+    {
+      "label": "score",
+      "start": 476,
+      "end": 477
+    },
+    {
+      "label": "keyword",
+      "start": 478,
+      "end": 480
+    },
+    {
+      "label": "score",
+      "start": 481,
+      "end": 482
+    },
+    {
+      "label": "keyword",
+      "start": 483,
+      "end": 486
+    },
+    {
+      "label": "score",
+      "start": 487,
+      "end": 488
+    }
+  ]
+}

@@ -141,6 +141,10 @@ Comparison across documents needs a `DedupeHandle` on `ExtractOptions` (library 
 
 Content dedupe never bypasses URL admission. A sibling of a non-root seed needs `scope.crawlEntireDomain` or matching `scope.includePaths` before its acquisition can be retained and marked `duplicate_main`. An extraction-excluded seed also suppresses automatic sitemap and robots-path discovery; it must not trigger those requests before its refusal.
 
+Discovery order: the seed, the links of the seed page in document order, then the sitemap entries, then the `robots.txt` paths. Under a `limits.urls` smaller than the site a crawl therefore keeps the seed page's own neighbours, the same pages on every run, and takes sitemap entries only with what is left.
+
+Run control: besides `limits.urls` and `limits.durationSeconds`, `limits.items` (pages kept), `limits.errors` (failed or unreachable fetches), `limits.idleSeconds` (no newly kept page) and `limits.diskPressurePermille` (artifact spool occupancy) end a run at the first criterion that holds. The run seals its producers and leases nothing more; the `completed` event and the `summary` report carry `terminalDetail` (`urls_limit`, `items_limit`, `errors_limit`, `idle_timeout`, `deadline`, `disk_pressure`). A run that drains with no page kept names why: `seed_error`, `content_validation_failed`, `byte_limit` or `retries_exhausted`. `fetch.referrerPolicy` (default `no-referrer`) sends the parent page as `Referer` with credentials, fragment and secret query parameters removed; `scope.maxUrlLength` (default 8192) refuses a longer link as policy-blocked `url_too_long`.
+
 Leased runs use `ContentDedupeClaimV1` in the request result transaction, not a local-cache checkpoint as shared authority. Both normalized title/body SHA-256 and the report's distinct main digest are required. The hash-only registry partitions claims by tenant, run, role/session representation, extractor, policy and normalization; the first successful commit owns the canonical frontier ID and storage record time. Later commits persist `duplicate_main` receipts and reject accepted-item, state-delta and outbox publication atomically while keeping acquisition and immutable rendition evidence. Failed transactions consume no claim. `DigestRegistryRepo::digest_outcome` reads the exact frontier receipt, including after a worker restart. Registry rows contain no text, URLs, role labels or artifact references, are permitted in ZDR, and are erased with the owning run. Pure parse quality remains separate from the final ingestion rejection; no rejected article artifact is fabricated from an earlier accepted serialization.
 
 
@@ -630,11 +634,23 @@ robots and checked-egress admission before acquisition.
 `crawlx protocol --probe` reports bounded local operator registrations without opening
 target or service sockets. `networkProbed` and `liveAttested` remain false: a configured
 capability is not proof of service health. With no registry, the delegate list is empty.
-The opt-in `native_ftp` registration supports anonymous passive file reads with checked
+The opt-in `native_ftp` registration supports passive file reads with checked
 control and data peers, finite reply/body/deadline bounds and cancellation. Target and
-passive ports require explicit approval. Authenticated transfer, directory recursion,
-persistent sessions and real encrypted-file-transfer interoperability remain unsupported
-or unverified; no direct-network fallback is enabled.
+passive ports require explicit approval. The data connection must reach the checked
+control peer: a passive reply naming any other address is refused before a data socket
+opens. An origin listed in the registration's `credentialRefs` (exact origin to
+`{"usernameRef","passwordRef"}`) logs in with secrets resolved once by reference at load;
+the values never appear in the file, URLs, results, errors or logs, an unresolved reference
+fails the load, and a credentialed origin never falls back to anonymous access. The control
+channel is plain FTP, so register only origins on a network the operator trusts for it. A
+registration with `recursion` (`maxDepth` 1-8, `maxEntries` 1-4096) also admits directory
+targets (trailing slash): the listing walks breadth-first with `MLSD`, returns in-scope
+files (and directories at the depth limit, unlisted) as sorted `children`, reports
+out-of-scope, special or unsafely named entries as `denied_children`, and fails whole on the
+entry, byte or shared request allowance. Routes must declare `ftp_credential_login` and
+`ftp_bounded_recursion` for the origins and targets that use them. Persistent sessions and
+real encrypted-file-transfer interoperability remain unsupported or unverified; no
+direct-network fallback is enabled.
 
 `GET /v1/crawls/{id}/reports` lists the 21 operational reports with their source, scope,
 supported filters, `notRecorded` and `withheld` fields and, for reports with measured
@@ -960,6 +976,18 @@ global deny predicates take precedence. Nested sitemaps and language alternates
 remain proposals requiring ordinary authorization, scope, robots, checked egress
 and acquisition budgets. Actor recipes additionally require operator-registry approval
 and execute through the safety kernel and action journal.
+
+Instead of `actorActions` a recipe may carry `actorScript`, a bounded line-oriented script
+(`LET`, `WAIT`, `CLICK`, `FILL`, `TYPE`, `PRESS`, `SCROLL`, `REPEAT n [AS name]`,
+`IF a == b` / `!=` with `ELSE`, closed by `END`; `${name}` inserts a variable). It is
+compiled when the recipe is validated, before any run exists: variables are constant
+strings, `REPEAT` (at most 20 iterations, 3 levels) is unrolled and `IF` compares two
+compile-time strings, so the result is the same flat list of at most 50 actions a
+hand-written recipe holds, with the same pin, registry approval and per-step admission;
+a denied step ends the sequence and no later iteration runs. `EVAL` and its synonyms, a
+direct value assignment (`SET`, a non-native interaction), conditions over page state,
+loops above the cap and unbound variables are refused with a line number and never an
+echo of the script text. `actorScript` and `actorActions` are mutually exclusive.
 
 Typed lifecycle results distinguish continue, annotations, skips and failures.
 Header policies run before body consumption. Error, skipped/failed, terminal,

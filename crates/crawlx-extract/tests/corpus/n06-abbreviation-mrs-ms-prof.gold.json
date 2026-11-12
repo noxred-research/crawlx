@@ -1,0 +1,68 @@
+{
+  "id": "n06-abbreviation-mrs-ms-prof",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Mrs. Aldana thanked Ms. Brandt and Prof. Haugen.\nThe talk began at once.\nmrs=1\naldana=1\nthanked=1\nms=1\nbrandt=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 48
+    },
+    {
+      "label": "sentence",
+      "start": 49,
+      "end": 72
+    },
+    {
+      "label": "keyword",
+      "start": 73,
+      "end": 76
+    },
+    {
+      "label": "score",
+      "start": 77,
+      "end": 78
+    },
+    {
+      "label": "keyword",
+      "start": 79,
+      "end": 85
+    },
+    {
+      "label": "score",
+      "start": 86,
+      "end": 87
+    },
+    {
+      "label": "keyword",
+      "start": 88,
+      "end": 95
+    },
+    {
+      "label": "score",
+      "start": 96,
+      "end": 97
+    },
+    {
+      "label": "keyword",
+      "start": 98,
+      "end": 100
+    },
+    {
+      "label": "score",
+      "start": 101,
+      "end": 102
+    },
+    {
+      "label": "keyword",
+      "start": 103,
+      "end": 109
+    },
+    {
+      "label": "score",
+      "start": 110,
+      "end": 111
+    }
+  ]
+}

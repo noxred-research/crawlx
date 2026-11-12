@@ -1,0 +1,13 @@
+{
+  "id": "d23-nesting-exact",
+  "family": "feed",
+  "note": "element nesting of exactly 32 levels is accepted",
+  "expectedText": "https://news.corpus.test/deep/one",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 33
+    }
+  ]
+}

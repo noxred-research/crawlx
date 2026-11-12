@@ -1,0 +1,63 @@
+{
+  "id": "n03-ellipsis-and-mixed-marks",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Wait...\nWhat?!\nNobody knows.\nwait=1\nwhat=1\nnobody=1\nknows=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 7
+    },
+    {
+      "label": "sentence",
+      "start": 8,
+      "end": 14
+    },
+    {
+      "label": "sentence",
+      "start": 15,
+      "end": 28
+    },
+    {
+      "label": "keyword",
+      "start": 29,
+      "end": 33
+    },
+    {
+      "label": "score",
+      "start": 34,
+      "end": 35
+    },
+    {
+      "label": "keyword",
+      "start": 36,
+      "end": 40
+    },
+    {
+      "label": "score",
+      "start": 41,
+      "end": 42
+    },
+    {
+      "label": "keyword",
+      "start": 43,
+      "end": 49
+    },
+    {
+      "label": "score",
+      "start": 50,
+      "end": 51
+    },
+    {
+      "label": "keyword",
+      "start": 52,
+      "end": 57
+    },
+    {
+      "label": "score",
+      "start": 58,
+      "end": 59
+    }
+  ]
+}

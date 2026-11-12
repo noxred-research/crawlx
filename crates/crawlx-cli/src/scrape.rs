@@ -631,9 +631,8 @@ async fn evaluate(
             }
             return Ok(Value::Array(values));
         }
-        let _charge = crawlx_extract::parse_budget::charge(html.len())?;
-        // Admission bounds parser memory. The underlying HTML parser is not allocation-fallible.
-        let dom = scraper::Html::parse_document(&html);
+        let mut charge = crawlx_extract::parse_budget::charge(html.len())?;
+        let dom = crawlx_extract::dom::parse_document(&mut charge, &html)?;
         let mut doc = SelectorDocument::with_operation_limit(&dom, MAX_WORK)?;
         let value = match rule {
             CompiledExtraction::Item(loader) => {

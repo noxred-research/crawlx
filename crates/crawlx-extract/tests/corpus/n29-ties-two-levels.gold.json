@@ -1,0 +1,73 @@
+{
+  "id": "n29-ties-two-levels",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Copper tin zinc.\nCopper tin lead.\nCopper nickel.\ncopper=3\ntin=2\nzinc=1\nlead=1\nnickel=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 16
+    },
+    {
+      "label": "sentence",
+      "start": 17,
+      "end": 33
+    },
+    {
+      "label": "sentence",
+      "start": 34,
+      "end": 48
+    },
+    {
+      "label": "keyword",
+      "start": 49,
+      "end": 55
+    },
+    {
+      "label": "score",
+      "start": 56,
+      "end": 57
+    },
+    {
+      "label": "keyword",
+      "start": 58,
+      "end": 61
+    },
+    {
+      "label": "score",
+      "start": 62,
+      "end": 63
+    },
+    {
+      "label": "keyword",
+      "start": 64,
+      "end": 68
+    },
+    {
+      "label": "score",
+      "start": 69,
+      "end": 70
+    },
+    {
+      "label": "keyword",
+      "start": 71,
+      "end": 75
+    },
+    {
+      "label": "score",
+      "start": 76,
+      "end": 77
+    },
+    {
+      "label": "keyword",
+      "start": 78,
+      "end": 84
+    },
+    {
+      "label": "score",
+      "start": 85,
+      "end": 86
+    }
+  ]
+}

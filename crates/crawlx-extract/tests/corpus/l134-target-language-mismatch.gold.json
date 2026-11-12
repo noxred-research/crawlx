@@ -1,0 +1,63 @@
+{
+  "id": "l134-target-language-mismatch",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "le|meunier|moud|le|grain|la|farine|attend|sur|la|table",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "token",
+      "start": 3,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 15
+    },
+    {
+      "label": "token",
+      "start": 16,
+      "end": 18
+    },
+    {
+      "label": "token",
+      "start": 19,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 27
+    },
+    {
+      "label": "token",
+      "start": 28,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 45
+    },
+    {
+      "label": "token",
+      "start": 46,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 54
+    }
+  ]
+}

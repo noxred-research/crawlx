@@ -1,0 +1,18 @@
+{
+  "id": "d53-sitemap-index-lastmod-does-not-prune",
+  "family": "feed",
+  "note": "the last-modified window applies to page entries only: an index entry outside the window is still requested, and its pages are then filtered individually",
+  "expectedText": "https://news.corpus.test/sitemaps/stale.xml\nhttps://news.corpus.test/stale/in-window",
+  "spans": [
+    {
+      "label": "request",
+      "start": 0,
+      "end": 43
+    },
+    {
+      "label": "page",
+      "start": 44,
+      "end": 84
+    }
+  ]
+}

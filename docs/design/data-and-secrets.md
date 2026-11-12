@@ -211,12 +211,16 @@ per input byte at the 16 MiB input cap) plus margin, and is enforced by the
 Decoded acquisition input, measured parser admission and transient output reservations
 share one process-wide byte budget. Owned permits move through blocking work and sink
 I/O; cancelling a waiter does not release bytes still owned by a running closure.
-The in-process HTML parser still uses measured admission, not allocator-level fallibility.
+The in-process HTML parser builds its tree through a metering sink that spends the admitted
+charge before each node and payload allocation and fails with the typed parse-memory error,
+dropping the partial tree, when the budget cannot grow; the tokenizer's and tree builder's own
+buffers are covered by a modelled allowance inside the per-byte factor.
 
 - A parse that does not fit right now fails as retryable (transient pressure); one larger than the
   whole budget fails terminally. At 4 GiB the largest HTML a worker parses is about 8 MiB.
-- Memory is bounded by this ceiling and the budget, not by fully fallible allocation: the parser can
-  still allocate during a parse.
+- Memory is bounded by this ceiling and the budget: the tree is charged allocation by allocation,
+  but the parser's own token strings, stacks and vectors are not individually fallible and rely on
+  the measured allowance.
 - Raise the budget together with the container memory limit.
 
 ## Chromium background traffic
@@ -271,5 +275,6 @@ neither artifact key providers are configured.
 ## Known limitations
 
 The retention sweeper is an operator-scheduled command. Background Chromium requests
-are contained but not prevented. In-process HTML parsing uses measured admission,
-not allocator-level fallibility; process isolation provides the separate hard-failure boundary.
+are contained but not prevented. In-process HTML parsing charges the tree it builds against the
+parse-memory budget but cannot make the parser's internal buffers fallible; process isolation
+provides the separate hard-failure boundary.

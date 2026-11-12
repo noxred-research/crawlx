@@ -1,0 +1,163 @@
+{
+  "id": "f04-reader-review-specs",
+  "family": "focus",
+  "note": "review with figure caption, specification table and pull quote, followed by related review cards and an ad slot",
+  "expectedText": "Circuit and Bench\nReviews Guides News Deals About\nLumen Slate 6 Review: A Reader That Gets Out of the Way\nThe Lumen Slate 6 with its fabric cover folded back.\nThe Lumen Slate 6 is a six inch e-ink reader with a frosted glass screen, a physical page-turn rocker and a battery that lasted five weeks in our daily test. It is not trying to do anything clever, and that is its strength.\nThe screen is sharp enough that serif text looks printed, and the front light warms smoothly toward amber in the evening. We read two novels in a dim bedroom without once noticing the backlight.\nSpecifications\nScreen\n6 inch, 300 ppi\nStorage\n16 GB\nBattery\n2000 mAh\nWeight\n172 g\nUsing it every day\nPage turns take a little under a quarter of a second, and a full refresh happens every ten pages by default. You can change that to every page if ghosting bothers you.\nIt is the first reader I have owned that I forgot about while reading.\nTransferring books is where the Slate shows its age. There is no wireless store, only a cable and a drag and drop folder, which suits us but may frustrate newcomers.\nVerdict\nIf you want a simple, durable reader for novels and long articles, the Slate 6 is an easy recommendation. If you read comics or technical manuals, look at a larger screen.\nRelated reviews\nLumen Slate 8 review\nA bigger page, a bigger price.\nInkwell Mini review\nPocket sized and surprisingly capable.\nBest reader cases\nSeven covers tested for a month.\nAdvertisement\nCircuit and Bench earns a small commission on some links. See our policy.\nEthics Contact Privacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 17
+    },
+    {
+      "label": "boilerplate",
+      "start": 18,
+      "end": 49
+    },
+    {
+      "label": "body",
+      "start": 50,
+      "end": 105
+    },
+    {
+      "label": "body",
+      "start": 106,
+      "end": 158
+    },
+    {
+      "label": "body",
+      "start": 159,
+      "end": 382
+    },
+    {
+      "label": "body",
+      "start": 383,
+      "end": 577
+    },
+    {
+      "label": "body",
+      "start": 578,
+      "end": 592
+    },
+    {
+      "label": "body",
+      "start": 593,
+      "end": 599
+    },
+    {
+      "label": "body",
+      "start": 600,
+      "end": 615
+    },
+    {
+      "label": "body",
+      "start": 616,
+      "end": 623
+    },
+    {
+      "label": "body",
+      "start": 624,
+      "end": 629
+    },
+    {
+      "label": "body",
+      "start": 630,
+      "end": 637
+    },
+    {
+      "label": "body",
+      "start": 638,
+      "end": 646
+    },
+    {
+      "label": "body",
+      "start": 647,
+      "end": 653
+    },
+    {
+      "label": "body",
+      "start": 654,
+      "end": 659
+    },
+    {
+      "label": "body",
+      "start": 660,
+      "end": 678
+    },
+    {
+      "label": "body",
+      "start": 679,
+      "end": 846
+    },
+    {
+      "label": "body",
+      "start": 847,
+      "end": 917
+    },
+    {
+      "label": "body",
+      "start": 918,
+      "end": 1083
+    },
+    {
+      "label": "body",
+      "start": 1084,
+      "end": 1091
+    },
+    {
+      "label": "body",
+      "start": 1092,
+      "end": 1263
+    },
+    {
+      "label": "boilerplate",
+      "start": 1264,
+      "end": 1279
+    },
+    {
+      "label": "boilerplate",
+      "start": 1280,
+      "end": 1300
+    },
+    {
+      "label": "boilerplate",
+      "start": 1301,
+      "end": 1331
+    },
+    {
+      "label": "boilerplate",
+      "start": 1332,
+      "end": 1351
+    },
+    {
+      "label": "boilerplate",
+      "start": 1352,
+      "end": 1390
+    },
+    {
+      "label": "boilerplate",
+      "start": 1391,
+      "end": 1408
+    },
+    {
+      "label": "boilerplate",
+      "start": 1409,
+      "end": 1441
+    },
+    {
+      "label": "boilerplate",
+      "start": 1442,
+      "end": 1455
+    },
+    {
+      "label": "boilerplate",
+      "start": 1456,
+      "end": 1529
+    },
+    {
+      "label": "boilerplate",
+      "start": 1530,
+      "end": 1552
+    }
+  ]
+}

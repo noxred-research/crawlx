@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel rdf:about="https://news.corpus.test/feeds/rdf.xml"><title>Orchard Report</title><link>https://news.corpus.test/orchard/</link><description>Fruit news</description><items><rdf:Seq><rdf:li rdf:resource="https://news.corpus.test/orchard/frost"/><rdf:li rdf:resource="https://news.corpus.test/orchard/harvest"/></rdf:Seq></items></channel>
+<item rdf:about="https://news.corpus.test/orchard/frost"><title>Frost nights</title><link>https://news.corpus.test/orchard/frost</link><dc:date>2026-10-30</dc:date></item>
+<item rdf:about="https://news.corpus.test/orchard/harvest"><title>Late harvest</title><link>/orchard/harvest</link></item>
+<item rdf:about="https://partner.corpus.test/pears"><title>Pears elsewhere</title><link>https://partner.corpus.test/pears</link></item>
+</rdf:RDF>

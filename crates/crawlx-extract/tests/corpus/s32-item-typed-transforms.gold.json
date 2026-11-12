@@ -1,0 +1,48 @@
+{
+  "id": "s32-item-typed-transforms",
+  "family": "selector",
+  "note": "item loader typed transforms: dates keep their precision, numbers parse as JSON numbers, URLs resolve against the page, built-in pattern, JSON parse",
+  "expectedText": "d1=\"2026-11-02\"\nd2=\"2026-11-02T08:30:00+01:00\"\nn1=1250\nn2=-3.5\nu1=\"https://corpus.test/harbor/maps/bay.html\"\nu2=\"https://cdn.corpus.test/x.png\"\nemails=[\"harbor@corpus.test\",\"dock@corpus.test\"]\ncfg={\"berths\":14,\"open\":true}",
+  "spans": [
+    {
+      "label": "d1",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "d2",
+      "start": 16,
+      "end": 46
+    },
+    {
+      "label": "n1",
+      "start": 47,
+      "end": 54
+    },
+    {
+      "label": "n2",
+      "start": 55,
+      "end": 62
+    },
+    {
+      "label": "u1",
+      "start": 63,
+      "end": 108
+    },
+    {
+      "label": "u2",
+      "start": 109,
+      "end": 143
+    },
+    {
+      "label": "emails",
+      "start": 144,
+      "end": 192
+    },
+    {
+      "label": "cfg",
+      "start": 193,
+      "end": 222
+    }
+  ]
+}

@@ -28,6 +28,20 @@ pub fn llm(state: &AppState) -> ApiResult<Arc<dyn LlmExtractor>> {
     })
 }
 
+/// Require the embedding model of the scrape `clusters` option.
+///
+/// # Errors
+/// `503 embeddings_not_configured` without `intel.embeddings` settings (or `CRAWLX_EMBEDDING_MODEL`).
+pub fn embeddings(state: &AppState) -> ApiResult<()> {
+    if state.embeddings.is_some() {
+        return Ok(());
+    }
+    Err(HttpError::backend_unavailable(
+        "embeddings_not_configured",
+        "no embedding model is configured; set intel.embeddings or CRAWLX_EMBEDDING_MODEL",
+    ))
+}
+
 /// The LLM of the extraction step (`/extract`) for `tenant` over `input_bytes` of page text: the
 /// extraction provider when `EXTRACTION_PROVIDER_*` routes the tenant to it (with the default LLM
 /// as the fallback), the default LLM otherwise.

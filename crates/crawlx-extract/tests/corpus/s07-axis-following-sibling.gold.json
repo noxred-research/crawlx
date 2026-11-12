@@ -1,0 +1,53 @@
+{
+  "id": "s07-axis-following-sibling",
+  "family": "selector",
+  "note": "following-sibling axis: filtered by name, first following sibling, union over several context nodes, empty tail",
+  "expectedText": "Brown algae\nSeaweed\nTide line\nSeaweed\nDulse\nBrown algae\nSeaweed\nDulse\n0",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 11
+    },
+    {
+      "label": "r1",
+      "start": 12,
+      "end": 19
+    },
+    {
+      "label": "r1",
+      "start": 20,
+      "end": 29
+    },
+    {
+      "label": "r2",
+      "start": 30,
+      "end": 37
+    },
+    {
+      "label": "r3",
+      "start": 38,
+      "end": 43
+    },
+    {
+      "label": "r4",
+      "start": 44,
+      "end": 55
+    },
+    {
+      "label": "r4",
+      "start": 56,
+      "end": 63
+    },
+    {
+      "label": "r5",
+      "start": 64,
+      "end": 69
+    },
+    {
+      "label": "r6",
+      "start": 70,
+      "end": 71
+    }
+  ]
+}

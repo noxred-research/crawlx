@@ -334,8 +334,8 @@ fn cdata_payload(comment: &str) -> Option<&str> {
 pub fn markup_text(html: &str, options: &MarkupOptions) -> Result<MarkupText, ExtractError> {
     crate::precheck(html, &ExtractOptions::default())?;
     // declared before `doc`: released after the parsed tree is dropped
-    let _charge = crate::parse_budget::charge(html.len())?;
-    let doc = Html::parse_document(html);
+    let mut charge = crate::parse_budget::charge(html.len())?;
+    let doc = crate::dom::parse_document(&mut charge, html)?;
     let mut raw = String::new();
     let mut comments = Vec::new();
     let mut cdata = Vec::new();

@@ -1,0 +1,38 @@
+{
+  "id": "d03-rss2-base-and-relative",
+  "family": "feed",
+  "note": "RSS 2.0 relative links: a base declared on the channel, a nearer base on an item, parent segments, root-relative, scheme-relative and query-only references",
+  "expectedText": "https://news.corpus.test/archive/2026/nov/ship-names\nhttps://news.corpus.test/archive/2025/dec/old-pier\nhttps://news.corpus.test/special/one\nhttps://news.corpus.test/root-relative\nhttps://news.corpus.test/scheme-relative\nhttps://news.corpus.test/archive/2026/?page=3",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 52
+    },
+    {
+      "label": "item",
+      "start": 53,
+      "end": 103
+    },
+    {
+      "label": "item",
+      "start": 104,
+      "end": 140
+    },
+    {
+      "label": "item",
+      "start": 141,
+      "end": 179
+    },
+    {
+      "label": "item",
+      "start": 180,
+      "end": 220
+    },
+    {
+      "label": "item",
+      "start": 221,
+      "end": 266
+    }
+  ]
+}

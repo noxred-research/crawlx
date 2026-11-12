@@ -1,0 +1,33 @@
+{
+  "id": "s29-item-cardinality-valid",
+  "family": "selector",
+  "note": "item loader: exactly-one required, optional missing without default, default value, many with dedupe, resolved link",
+  "expectedText": "title=\"Weathered oak oar\"\nprice=48.5\ntags=[\"wood\",\"marine\"]\nsource=\"unknown\"\nmore=\"https://corpus.test/oars/oak-2\"",
+  "spans": [
+    {
+      "label": "title",
+      "start": 0,
+      "end": 25
+    },
+    {
+      "label": "price",
+      "start": 26,
+      "end": 36
+    },
+    {
+      "label": "tags",
+      "start": 37,
+      "end": 59
+    },
+    {
+      "label": "source",
+      "start": 60,
+      "end": 76
+    },
+    {
+      "label": "more",
+      "start": 77,
+      "end": 114
+    }
+  ]
+}

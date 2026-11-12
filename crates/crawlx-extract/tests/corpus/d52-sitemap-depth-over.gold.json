@@ -1,0 +1,33 @@
+{
+  "id": "d52-sitemap-depth-over",
+  "family": "feed",
+  "note": "one level past the maximum nesting: the sixth-level sitemap is skipped, never requested, and counted",
+  "expectedText": "https://news.corpus.test/sitemaps/c1.xml\nhttps://news.corpus.test/sitemaps/c2.xml\nhttps://news.corpus.test/sitemaps/c3.xml\nhttps://news.corpus.test/sitemaps/c4.xml\nhttps://news.corpus.test/sitemaps/c5.xml",
+  "spans": [
+    {
+      "label": "request",
+      "start": 0,
+      "end": 40
+    },
+    {
+      "label": "request",
+      "start": 41,
+      "end": 81
+    },
+    {
+      "label": "request",
+      "start": 82,
+      "end": 122
+    },
+    {
+      "label": "request",
+      "start": 123,
+      "end": 163
+    },
+    {
+      "label": "request",
+      "start": 164,
+      "end": 204
+    }
+  ]
+}

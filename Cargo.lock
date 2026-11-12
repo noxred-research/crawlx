@@ -1842,6 +1842,7 @@ dependencies = [
  "rand 0.10.3",
  "rand_chacha 0.10.0",
  "regex",
+ "regex-syntax",
  "ring",
  "rustix 1.1.6",
  "serde",
@@ -1849,6 +1850,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "unicode-segmentation",
  "url",
  "uuid",
  "zeroize",
@@ -1890,6 +1892,7 @@ dependencies = [
  "criterion",
  "ego-tree",
  "encoding_rs",
+ "html5ever",
  "http",
  "icu_segmenter",
  "image",
@@ -2713,8 +2716,6 @@ dependencies = [
 [[package]]
 name = "ego-tree"
 version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bd50d24b1b75aa817bb0339cb9f2e0e664bdfab1e160a69a0fda9145b77fab2"
 
 [[package]]
 name = "either"

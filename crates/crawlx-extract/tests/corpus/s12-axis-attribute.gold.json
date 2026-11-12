@@ -1,0 +1,63 @@
+{
+  "id": "s12-axis-attribute",
+  "family": "selector",
+  "note": "attribute axis: abbreviated and explicit, wildcard across elements (the order of attributes inside one element is implementation-dependent in XPath 1.0 and not asserted), numeric comparison, empty attribute value, aggregate",
+  "expectedText": "/docs/start\n/docs/api\nStart here\n7\nn1\nn2\nn2\n1\n\"\"\n13\nn1",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 11
+    },
+    {
+      "label": "r1",
+      "start": 12,
+      "end": 21
+    },
+    {
+      "label": "r2",
+      "start": 22,
+      "end": 32
+    },
+    {
+      "label": "r3",
+      "start": 33,
+      "end": 34
+    },
+    {
+      "label": "r10",
+      "start": 35,
+      "end": 37
+    },
+    {
+      "label": "r10",
+      "start": 38,
+      "end": 40
+    },
+    {
+      "label": "r4",
+      "start": 41,
+      "end": 43
+    },
+    {
+      "label": "r5",
+      "start": 44,
+      "end": 45
+    },
+    {
+      "label": "r6",
+      "start": 46,
+      "end": 48
+    },
+    {
+      "label": "r8",
+      "start": 49,
+      "end": 51
+    },
+    {
+      "label": "r9",
+      "start": 52,
+      "end": 54
+    }
+  ]
+}

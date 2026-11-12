@@ -1,0 +1,28 @@
+{
+  "id": "s42-limit-selected-nodes",
+  "family": "selector",
+  "note": "one-over limit: a node set of 10000 is accepted and 10001 is a typed budget error; css on a document this size exceeds the operation budget",
+  "expectedText": "10000\nerror:Budget(selected nodes)\nerror:Budget(selected nodes)\nerror:Budget(operations)",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 5
+    },
+    {
+      "label": "r2",
+      "start": 6,
+      "end": 34
+    },
+    {
+      "label": "r3",
+      "start": 35,
+      "end": 63
+    },
+    {
+      "label": "r4",
+      "start": 64,
+      "end": 88
+    }
+  ]
+}

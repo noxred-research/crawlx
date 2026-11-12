@@ -14,11 +14,14 @@
 #[path = "discovery.rs"]
 mod discovery;
 mod dispatch_plane;
+mod known_files_plane;
 mod lifecycle_plane;
 pub(crate) mod memory_plane;
+mod policy_plane;
 mod projection_plane;
 mod protocol_plane;
 mod recipe_plane;
+mod run_control;
 mod scrape_plane;
 mod write_plane;
 
@@ -45,6 +48,7 @@ use crawlx_core::config::{
     CrawlMode, KnownFile, OutputFormat, PageType, QueryPolicy, RetentionMode, SimilarityMode, SitemapMode,
 };
 use crawlx_core::counters::RunStatus;
+use crawlx_core::counters::TerminalDetail;
 use crawlx_core::counters::TerminalReason;
 use crawlx_core::repo::{
     ArtifactStore, DiscoveryOutcome, EventRepo, FrontierEntry, FrontierRepo, FrontierStatus, PageRecord,
@@ -366,6 +370,9 @@ pub struct UrlPlaneDeps {
 pub struct UrlPlaneOutcome {
     /// Terminal.
     pub terminal: TerminalReason,
+    /// The concrete cause behind `terminal`, when one is known: the stop criterion that fired or
+    /// why a drained frontier kept no page.
+    pub detail: Option<TerminalDetail>,
     /// Pages written.
     pub pages_written: u64,
     /// Admitted client-rendered requests recovered from committed page evidence.
@@ -783,6 +790,8 @@ pub struct UrlPlaneRunner {
     started_at: crawlx_core::Timestamp,
     /// Write intents of earlier holders, learned incrementally from the run's event log.
     write_journal: Mutex<write_plane::WriteJournalScan>,
+    /// The seed whose sitemap and `robots.txt` paths are discovered once its row is settled.
+    deferred_known_files: Mutex<Option<known_files_plane::DeferredKnownFiles>>,
 }
 
 impl UrlPlaneRunner {
@@ -1577,6 +1586,7 @@ impl UrlPlaneRunner {
             source_dispatch: None,
             started_at,
             write_journal: Mutex::new(write_plane::WriteJournalScan::default()),
+            deferred_known_files: Mutex::new(None),
         })
     }
 
@@ -2186,7 +2196,9 @@ impl UrlPlaneRunner {
             });
         if existing.is_empty() {
             self.seed().await?;
-            if finite {
+            // Producers stay open while the seed's well-known files are still to be discovered:
+            // an open producer is never exhaustion, so no worker ends the run before them.
+            if finite && !self.known_files_deferred() {
                 self.deps.frontier.seal(self.run, 1).await?;
             }
             return Ok(());
@@ -2265,8 +2277,10 @@ impl UrlPlaneRunner {
         let seed_missing = seed.is_some() && !seed_get_seen;
         if seed_missing {
             self.seed().await?;
+        } else if let Some(seed) = &seed {
+            self.restore_known_files(seed).await?;
         }
-        if finite {
+        if finite && !self.known_files_deferred() {
             self.deps.frontier.seal(self.run, 1).await?;
         }
         Ok(())
@@ -2287,7 +2301,7 @@ impl UrlPlaneRunner {
         };
         let resumed = self.resume_seed.lock().take();
         let seed_excluded = self.prefetch.check(&seed.url).is_some();
-        self.discover(seed.clone(), 0, None, bearing, None).await?;
+        let seed_outcome = self.discover(seed.clone(), 0, None, bearing, None).await?;
         if self.initial_request_method == http::Method::HEAD {
             return self.persist_counters().await;
         }
@@ -2321,17 +2335,15 @@ impl UrlPlaneRunner {
         if self.crawl.cache_only() || seed_excluded {
             return self.persist_counters().await;
         }
-        let known = &self.crawl.scope.known_files;
-        if self.source_enabled(crawlx_core::discovery::DiscoverySourceV1::Sitemap)
-            && self.crawl.scope.discovery.is_none()
-            && self.crawl.scope.sitemap != SitemapMode::Skip
-            && known.contains(&KnownFile::Sitemap)
-        {
-            self.discover_sitemaps(&seed).await?;
+        if seed_outcome == DiscoveryOutcome::Admitted {
+            // The seed page's links come before the files' entries: they are discovered when the
+            // seed row is settled (`known_files_plane`).
+            if self.known_files_wanted() {
+                self.defer_known_files(seed);
+            }
+            return self.persist_counters().await;
         }
-        if known.contains(&KnownFile::RobotsPaths) {
-            self.discover_robots_paths(&seed).await?;
-        }
+        self.discover_known_files(&seed).await?;
         self.persist_counters().await
     }
 
@@ -2354,7 +2366,7 @@ impl UrlPlaneRunner {
             authorized,
         );
         for url in urls {
-            let Some((canon, bearing)) = self.canonicalize(&url) else {
+            let Some((canon, bearing)) = self.canonicalize_discovered(&url) else {
                 continue;
             };
             let source = RequestSource {
@@ -2464,7 +2476,7 @@ impl UrlPlaneRunner {
                 if !matches!(url.scheme(), "http" | "https") {
                     continue;
                 }
-                let Some((canon, bearing)) = self.canonicalize(&url) else {
+                let Some((canon, bearing)) = self.canonicalize_discovered(&url) else {
                     continue;
                 };
                 if !seen.insert(canon.key) {
@@ -3636,6 +3648,7 @@ impl UrlPlaneRunner {
         if method_head {
             primary_options.method = http::Method::HEAD;
         }
+        primary_options.referrer = self.referrer_for(entry).await?;
         if let Some(value) = queued.envelope.metadata.get("autothrottle_dont_adjust_delay") {
             primary_options.dont_adjust_delay = value.as_bool().ok_or_else(|| {
                 WorkerError::Config("autothrottle_dont_adjust_delay must be boolean".into())
@@ -5099,7 +5112,7 @@ impl UrlPlaneRunner {
         endpoints: Vec<DiscoveredEndpoint>,
     ) -> Result<(), WorkerError> {
         if *final_url != entry.url.url {
-            if let Some((canon, bearing)) = self.canonicalize(final_url) {
+            if let Some((canon, bearing)) = self.canonicalize_discovered(final_url) {
                 let source = RequestSource {
                     tag: "header",
                     attribute: "location",
@@ -5133,9 +5146,14 @@ impl UrlPlaneRunner {
         };
         // `accept` parses HTML; a refused charge is a typed error, never "accepted low signal".
         // Taken before the index lock and held until `accept` has dropped its DOM.
-        let _charge = crawlx_extract::parse_budget::charge(body.len())
+        let mut charge = crawlx_extract::parse_budget::charge(body.len())
             .map_err(|refused| WorkerError::Extraction(refused.into()))?;
-        let accept = index.lock().accept(body);
+        let accept = index
+            .lock()
+            .accept(body, |html| {
+                crawlx_extract::dom::parse_document(&mut charge, html)
+            })
+            .map_err(|refused| WorkerError::Extraction(refused.into()))?;
         if accept.filtered {
             self.frontier.lock().note_content_similar(key);
             return Ok(Some(Dedupe::Similar(accept.cluster_id)));
@@ -5158,7 +5176,7 @@ impl UrlPlaneRunner {
             if !matches!(link.scheme(), "http" | "https") {
                 continue;
             }
-            let Some((canon, bearing)) = self.canonicalize(link) else {
+            let Some((canon, bearing)) = self.canonicalize_discovered(link) else {
                 continue;
             };
             let source = RequestSource {
@@ -5178,7 +5196,7 @@ impl UrlPlaneRunner {
             if js_mined && !self.crawl.scope.js_endpoints {
                 continue;
             }
-            let Some((canon, bearing)) = self.canonicalize(&e.url) else {
+            let Some((canon, bearing)) = self.canonicalize_discovered(&e.url) else {
                 continue;
             };
             let source = RequestSource {
@@ -5921,17 +5939,18 @@ impl UrlPlaneRunner {
                 admission.replay(&record.decision)?;
             }
         }
-        let terminal = loop {
+        let mut idle = run_control::IdleClock::new(self.kept_pages(), self.deps.clock.now());
+        let (terminal, detail) = loop {
             if self.authorization_lost().await {
-                break TerminalReason::AuthorizationRevoked;
+                break (TerminalReason::AuthorizationRevoked, None);
             }
             if self.stop_requested(cancel) {
-                break TerminalReason::Cancelled;
+                break (TerminalReason::Cancelled, None);
             }
             let store_started = tokio::time::Instant::now();
             let run = self.deps.runs.get_metadata(self.run).await?;
             match run.status {
-                RunStatus::Cancelled => break TerminalReason::Cancelled,
+                RunStatus::Cancelled => break (TerminalReason::Cancelled, None),
                 RunStatus::Paused => {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
@@ -5940,29 +5959,48 @@ impl UrlPlaneRunner {
             }
             let store_latency = store_started.elapsed();
             self.observe_admission(&mut admission, store_latency).await?;
+            // The seed page's links are enqueued; now its origin's sitemap entries follow them.
+            match self.discover_known_files_when_due().await {
+                Ok(_) => {}
+                Err(WorkerError::Store(StoreError::RunDeadlineReached)) => {
+                    break (TerminalReason::DeadlineReached, Some(TerminalDetail::Deadline));
+                }
+                Err(error) => return Err(error),
+            }
             let pending = self.deps.frontier.pending_count(self.run).await?;
             Metrics::global().gauge(names::FRONTIER_DEPTH).set(
                 u32::try_from(pending).map_or(f64::MAX, f64::from),
                 &[("plane", Plane::Urls.as_str())],
             );
             if self.deps.clock.now() >= self.budget.lock().deadline() {
-                break TerminalReason::DeadlineReached;
+                break (TerminalReason::DeadlineReached, Some(TerminalDetail::Deadline));
             }
             // Remote leases, future eligibility and open producers are never exhaustion.
             if self.deps.frontier.activity(self.run).await?
                 == crawlx_core::orchestration::FrontierActivityV1::Terminal
             {
-                break TerminalReason::FrontierExhausted;
+                break (TerminalReason::FrontierExhausted, None);
             }
-            let (remaining, exhausted) = {
+            let (remaining, exhausted, exhausted_kind) = {
                 let b = self.budget.lock();
                 (
                     b.remaining(self.deps.clock.now()).urls,
                     b.exhausted(self.deps.clock.now()),
+                    b.exhausted_kind(),
                 )
             };
             if let Some(reason) = exhausted {
-                break reason;
+                let detail = match reason {
+                    TerminalReason::DeadlineReached => Some(TerminalDetail::Deadline),
+                    TerminalReason::LimitReached if exhausted_kind == Some(BudgetKind::Urls) => {
+                        Some(TerminalDetail::UrlsLimit)
+                    }
+                    _ => None,
+                };
+                break (reason, detail);
+            }
+            if let Some(criterion) = self.stop_criterion(&mut idle) {
+                break (criterion.reason(), Some(criterion));
             }
             // Reserve worker-local stage capacity before taking any remote leases.
             // This lane creates no per-URL tasks and commits synchronously in lease order.
@@ -5972,12 +6010,16 @@ impl UrlPlaneRunner {
                 crawlx_core::config::CrawlStrategy::BreadthFirst => BATCH,
                 _ => 1,
             };
-            let limit = prefetch.min(remaining.max(1)).min(admission.available(0)).min(
-                self.crawl
-                    .orchestration
-                    .as_ref()
-                    .map_or(BATCH, |config| config.queue.batch_size),
-            );
+            let limit = prefetch
+                .min(remaining.max(1))
+                .min(self.criteria_lease_cap())
+                .min(admission.available(0))
+                .min(
+                    self.crawl
+                        .orchestration
+                        .as_ref()
+                        .map_or(BATCH, |config| config.queue.batch_size),
+                );
             if limit == 0 {
                 tokio::select! {
                     () = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -6028,16 +6070,34 @@ impl UrlPlaneRunner {
             match processed {
                 // Storage closes the race between discovery's clock check and atomic append.
                 Err(WorkerError::Store(StoreError::RunDeadlineReached)) => {
-                    break TerminalReason::DeadlineReached;
+                    break (TerminalReason::DeadlineReached, Some(TerminalDetail::Deadline));
                 }
                 result => result?,
             }
         };
+        let detail = match detail {
+            None if terminal == TerminalReason::FrontierExhausted => self.drained_detail().await?,
+            other => other,
+        };
+        if let Some(detail) = detail {
+            // The durable record of why this plane stopped: both the local run and the leased
+            // workers write it, and the run report reads it back.
+            self.event(
+                "run.stopped",
+                serde_json::json!({
+                    "terminalReason": terminal.as_str(),
+                    "terminalDetail": detail.as_str(),
+                    "keptPages": self.kept_pages(),
+                }),
+            )
+            .await;
+        }
         // A stop/deadline closes continuous input too; already accepted rows remain durable.
         self.deps.frontier.seal(self.run, 1).await?;
         self.persist_counters().await?;
         Ok(UrlPlaneOutcome {
             terminal,
+            detail,
             pages_written: self.pages_written(),
             dynamic_requests: self.dynamic_start_requests().await?,
         })
@@ -6351,6 +6411,113 @@ mod tests {
             assert_eq!(rows.len(), 1, "expired discovery must not append child rows");
             assert_eq!(rows[0].url.url.path(), "/");
         }
+    }
+
+    /// The idle criterion reads the injected run clock: the site moves a manual clock, so the
+    /// stop does not depend on how fast the machine runs.
+    #[tokio::test]
+    async fn the_idle_limit_follows_the_injected_run_clock() {
+        use crawlx_core::time::ManualClock;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let now = "2026-11-11T00:00:00Z".parse().unwrap();
+        let clock = Arc::new(ManualClock::new(now));
+        let directory = tempfile::tempdir().unwrap();
+        let stores = crate::Stores::over_memory(
+            Arc::new(crawlx_storage::MemoryStore::with_clock(clock.clone())),
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let root_hits = hits.clone();
+        let failing_hits = hits.clone();
+        let failing_clock = clock.clone();
+        let links: String = (1..=6).map(|n| format!("<a href='/e{n}'>e{n}</a>")).collect();
+        let app = axum::Router::new()
+            .route(
+                "/",
+                axum::routing::get(move || {
+                    root_hits.fetch_add(1, Ordering::SeqCst);
+                    let page = format!("<html><title>Idle</title>{links}</html>");
+                    async move { ([(http::header::CONTENT_TYPE, "text/html")], page) }
+                }),
+            )
+            .fallback(move || {
+                failing_hits.fetch_add(1, Ordering::SeqCst);
+                failing_clock.advance_ms(600);
+                async { http::StatusCode::NOT_FOUND }
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut crawl = CreateCrawl::new(Url::parse(&format!("http://{address}/")).unwrap());
+        crawl.mode = CrawlMode::Static;
+        crawl.seed = Some(42);
+        crawl.limits.idle_seconds = 1;
+        crawl.safety.respect_robots_txt = false;
+        // one row per round: the idle clock is read between rounds
+        crawl.politeness.max_concurrency = 1;
+        crawl.politeness.delay_ms = 0;
+        crawl.scope.sitemap = crawlx_core::config::SitemapMode::Skip;
+        crawl.scope.known_files.clear();
+        let run_id = CrawlRunId::new();
+        let mut run = crawlx_storage::testkit::crawl_run(stores.tenant, crawl.clone());
+        run.id = run_id;
+        run.status = RunStatus::Running;
+        run.created_at = now;
+        run.started_at = Some(now);
+        stores.runs.create(&run, None).await.unwrap();
+        let mut policy = crawlx_policy::EgressPolicy::new(false);
+        policy.extra_allow = vec!["127.0.0.1/32".parse().unwrap()];
+        policy.extra_ports = vec![address.port()];
+        let fetcher = Arc::new(
+            Fetcher::new(
+                crawlx_fetch::FetchConfig::default(),
+                Arc::new(policy),
+                Arc::new(crawlx_fetch::StaticResolver::new()),
+            )
+            .unwrap(),
+        );
+        let runner = UrlPlaneRunner::new(
+            run_id,
+            crawl,
+            WorkerId::new(),
+            UrlPlaneDeps {
+                runs: stores.runs.clone(),
+                frontier: stores.frontier.clone(),
+                request_commits: stores.request_commits.clone(),
+                source_memo: stores.source_memo.clone(),
+                leases: stores.leases.clone(),
+                pages: stores.pages.clone(),
+                events: stores.events.clone(),
+                artifacts: stores.artifacts.clone(),
+                archives: stores.archives.clone(),
+                clock,
+            },
+            fetcher,
+            RunCounters::default(),
+            CanonicalizeOptions::default(),
+        )
+        .unwrap();
+        runner.seed_if_empty().await.unwrap();
+        let outcome = tokio::time::timeout(Duration::from_secs(30), runner.run(&CancellationToken::new()))
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+        assert_eq!(outcome.terminal, TerminalReason::PolicyStopped);
+        assert_eq!(outcome.detail, Some(TerminalDetail::IdleTimeout));
+        // the seed, then two failing rows of 600 ms each: the second crosses the one second limit
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        let rows = stores.frontier.list(run_id).await.unwrap();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.status == FrontierStatus::Pending)
+                .count(),
+            4,
+            "the run stopped before it drained the frontier"
+        );
     }
 
     #[tokio::test]

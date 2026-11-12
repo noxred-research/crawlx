@@ -111,6 +111,7 @@ pub mod span {
     pub const PERSIST: &str = "persist";
 }
 
+pub use llm::{cluster_chunks, ChunkClusterRequest, ChunkClusters};
 pub use media::DEFAULT_MEDIA_MAX_BYTES;
 pub use render::{ActionOutputs, BrowserRenderer, PageRenderer, RenderError, RenderRequest, Rendered, Shot};
 
@@ -332,6 +333,10 @@ pub struct ScrapeEngine {
     extraction: Option<Arc<ExtractionRouter>>,
     /// Refines the markup-derived `branding` profile (`BRANDING_LLM_*`).
     branding_llm: Option<Arc<dyn LlmExtractor>>,
+    /// Embeds the chunks of the `clusters` option.
+    embeddings: Option<crate::config::ClusterEmbeddings>,
+    /// Run seed; clustering derives its initial centroid from it.
+    seed: crawlx_core::seed::CrawlSeed,
     /// Largest media file the `audio` / `video` formats download (see [`media`]).
     media_max_bytes: usize,
 }
@@ -595,6 +600,8 @@ impl ScrapeEngine {
             reach: Mutex::new(BTreeMap::new()),
             extraction: None,
             branding_llm: None,
+            embeddings: None,
+            seed: crawlx_core::seed::CrawlSeed(crawl.seed.unwrap_or_default()),
             media_max_bytes: DEFAULT_MEDIA_MAX_BYTES,
         })
     }
@@ -708,6 +715,13 @@ impl ScrapeEngine {
     #[must_use]
     pub fn with_branding_llm(mut self, llm: Arc<dyn LlmExtractor>) -> Self {
         self.branding_llm = Some(llm);
+        self
+    }
+
+    /// Embed the chunks of the `clusters` option with `embeddings`.
+    #[must_use]
+    pub fn with_embeddings(mut self, embeddings: crate::config::ClusterEmbeddings) -> Self {
+        self.embeddings = Some(embeddings);
         self
     }
 
@@ -1033,6 +1047,12 @@ impl ScrapeEngine {
             return Ok(Outcome::Failed(ScrapeFailure::new(
                 FailReason::LlmNotConfigured,
                 "a requested format needs an LLM and this worker has none configured",
+            )));
+        }
+        if opts.clusters.is_some() && self.embeddings.is_none() {
+            return Ok(Outcome::Failed(ScrapeFailure::new(
+                FailReason::LlmNotConfigured,
+                "the clusters option needs an embedding model and this worker has none configured",
             )));
         }
 
@@ -1495,6 +1515,30 @@ impl ScrapeEngine {
         if let Some(llm) = step_llm.as_deref() {
             if let Err(f) = llm::run_formats(llm, &formats, markdown, &mut doc).await {
                 return Ok(Outcome::Failed(f));
+            }
+        }
+        if let Some(policy) = opts.clusters {
+            // the ranges index the exact final text the article pipeline admitted
+            let (Some(text), Some(chunks)) = (
+                composed.article_text.as_deref(),
+                self.extract.content.as_ref().and_then(|content| content.chunks),
+            ) else {
+                return Ok(Outcome::Failed(ScrapeFailure::new(
+                    FailReason::ExtractFailed,
+                    "the clusters option needs the extracted article text and contentPolicy chunks",
+                )));
+            };
+            let request = ChunkClusterRequest::new(
+                self.embeddings.as_ref().map(|e| e.client.as_ref()),
+                text,
+                chunks,
+                policy,
+                self.embeddings.as_ref().map_or("", |e| e.model.as_str()),
+                self.seed,
+            );
+            match cluster_chunks(&request, &mut doc).await {
+                Ok(done) => doc.clusters = Some(done.clusters),
+                Err(failure) => return Ok(Outcome::Failed(failure)),
             }
         }
         if let Some(FormatSpec::ChangeTracking {
@@ -2501,9 +2545,10 @@ impl ScrapeEngine {
         let mut used = 0usize;
         let stylesheets = {
             // `stylesheet_urls` parses the page on this task; hold a charge for that DOM
-            let _charge = crawlx_extract::parse_budget::charge(html.len())
+            let mut charge = crawlx_extract::parse_budget::charge(html.len())
                 .map_err(|e| WorkerError::Extraction(e.into()))?;
-            branding::stylesheet_urls(&html, &acq.final_url)
+            branding::stylesheet_urls(&mut charge, &html, &acq.final_url)
+                .map_err(|e| WorkerError::Extraction(e.into()))?
         };
         for sheet in stylesheets.into_iter().take(BRANDING_STYLESHEETS) {
             let remaining = BRANDING_CSS_BYTES.saturating_sub(used);
@@ -2531,17 +2576,18 @@ impl ScrapeEngine {
             .map(|_| branding_llm::excerpts(&sheets));
         let mut profile = cpu
             .run(move || {
-                let _charge = crawlx_extract::parse_budget::charge(html.len())
+                let mut charge = crawlx_extract::parse_budget::charge(html.len())
                     .map_err(|e| WorkerError::Extraction(e.into()))?;
                 let input = BrandingInput {
                     html: &html,
                     base: &base,
                     stylesheets: &sheets,
                 };
-                Ok::<_, WorkerError>(match &computed {
-                    Some(styles) => branding::branding_computed(&input, styles),
-                    None => branding::branding(&input),
-                })
+                match &computed {
+                    Some(styles) => branding::branding_computed(&mut charge, &input, styles),
+                    None => branding::branding(&mut charge, &input),
+                }
+                .map_err(|e| WorkerError::Extraction(e.into()))
             })
             .await
             .map_err(|e| WorkerError::Other(format!("branding task failed: {e}")))??;

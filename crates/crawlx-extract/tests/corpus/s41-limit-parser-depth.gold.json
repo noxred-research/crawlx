@@ -1,0 +1,28 @@
+{
+  "id": "s41-limit-parser-depth",
+  "family": "selector",
+  "note": "one-over limit: 63 nested parentheses or unary minus signs parse, 64 fail before the parser stack grows",
+  "expectedText": "1\nerror:Budget(parser depth)\n-1\nerror:Budget(parser depth)",
+  "spans": [
+    {
+      "label": "p_ok",
+      "start": 0,
+      "end": 1
+    },
+    {
+      "label": "p_over",
+      "start": 2,
+      "end": 28
+    },
+    {
+      "label": "m_ok",
+      "start": 29,
+      "end": 31
+    },
+    {
+      "label": "m_over",
+      "start": 32,
+      "end": 58
+    }
+  ]
+}
