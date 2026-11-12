@@ -1,6 +1,8 @@
 name: release
 
-# Source-release workflow: runs on a `vX.Y.Z` tag, re-verifies the tagged tree, then builds a
+# Source-release workflow: runs on a `vX.Y.Z` tag push, or by hand (`workflow_dispatch`) for a tag
+# that already exists, for example when the tag-push run failed for a reason outside the tagged
+# tree (tags are protected and cannot be moved). It re-verifies the tagged tree, then builds a
 # deterministic source archive plus SHA256SUMS and creates a *draft* GitHub release. A person
 # publishes the draft after review. No binaries, container images or crates.io packages are
 # built or pushed by this workflow. On a public repository the release files carry build
@@ -20,14 +22,22 @@ name: release
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify and draft (vX.Y.Z)
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
+  # The tag under release: the pushed tag, or the dispatch input (validated in `verify`).
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   # No debug info: full debug info for every test binary exhausts the hosted runner disk.
@@ -62,7 +72,7 @@ jobs:
             exit 0
           }
           case "$EVENT_NAME" in
-            push) ;;
+            push|workflow_dispatch) ;;
             *) deny "event ${EVENT_NAME} is not allowed" ;;
           esac
           # CODEOWNERS comes from the default branch through the API, never from the checkout
@@ -113,11 +123,25 @@ jobs:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
-      - name: Free runner disk space
+      - name: Free runner disk space, drop preinstalled browsers
         # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
+        # The runner's preinstalled Chrome cannot create its sandbox here (unprivileged user
+        # namespaces are restricted), and tests that discover a system browser would start it;
+        # the browser suites below run the pinned Chromium instead, as ci.yml does.
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser
           df -h /
+      - name: The release tag must be an existing vX.Y.Z tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=release tag::'$RELEASE_TAG' is not a vX.Y.Z tag"
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .ref >/dev/null
       - name: Secret-custody Valkey, persistence-free (same image as docker-compose)
         # A step, not a `services:` container: services cannot pass server arguments.
         run: |
@@ -130,13 +154,13 @@ jobs:
           exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
       - name: Tag must match the workspace version and have a changelog section
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')
-          if [ "$GITHUB_REF_NAME" != "v${version}" ]; then
-            echo "::error title=version mismatch::tag $GITHUB_REF_NAME does not match workspace version v${version} in Cargo.toml"
+          if [ "$RELEASE_TAG" != "v${version}" ]; then
+            echo "::error title=version mismatch::tag $RELEASE_TAG does not match workspace version v${version} in Cargo.toml"
             exit 1
           fi
           if ! grep -qF "## [${version}]" CHANGELOG.md; then
@@ -151,7 +175,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: ci/lint-deps.sh
       - name: Workspace tests (PostgreSQL service; Chromium-gated tests skip here)
-        run: cargo test --workspace --locked
+        # As in ci.yml: the bench crate's browser tests run in the pinned-Chromium step below.
+        run: |
+          cargo test --workspace --locked --exclude crawlx-bench
+          cargo test -p crawlx-bench --locked -- --skip browser_
       # The Chromium-gated suites run against the pinned build exactly as ci.yml's `browser` job
       # does (the pin is sha256-verified by ci/fetch-chromium.sh). A release build restores no
       # caches: a cache written by an earlier run must not influence what is released.
@@ -159,6 +186,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
+      - name: Let the pinned Chromium start with its sandbox on
+        run: ci/chromium-sandbox.sh
       - name: Browser suites on the pinned Chromium
         run: |
           cargo test -p crawlx-bench --locked -- browser_ --test-threads 1
@@ -180,7 +209,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
       - name: Build the source archive and checksums
         run: |
@@ -189,7 +218,7 @@ jobs:
           # git archive output depends only on the tagged tree: entries take the commit time,
           # and git's built-in gzip writes no file name or timestamp.
           git archive --format=tar.gz --prefix="crawlx-${version}/" \
-            -o "dist/crawlx-${version}-source.tar.gz" "$GITHUB_SHA"
+            -o "dist/crawlx-${version}-source.tar.gz" "$(git rev-parse HEAD)"
           (cd dist && sha256sum "crawlx-${version}-source.tar.gz" > SHA256SUMS && sha256sum --check SHA256SUMS)
           echo "VERSION=${version}" >> "$GITHUB_ENV"
       - name: Extract the release notes from CHANGELOG.md
@@ -239,7 +268,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             "dist/crawlx-${VERSION}-source.tar.gz" "dist/crawlx-${VERSION}-source.cdx.json" dist/SHA256SUMS \
             --verify-tag \
             --draft \
