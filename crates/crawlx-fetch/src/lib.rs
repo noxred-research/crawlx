@@ -26,6 +26,7 @@ pub mod lists;
 pub mod preflight;
 pub mod protocol;
 pub mod proxyx;
+mod realm;
 pub mod redirect;
 pub mod resolver;
 pub mod resolver_https;

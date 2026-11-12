@@ -145,6 +145,11 @@ impl CdpContext {
                 *headers = self.mask_captcha(std::mem::take(headers))?;
                 *content_type = self.mask_captcha(content_type.take())?;
             }
+            PageOpResult::Subresources(items) => {
+                for item in items {
+                    item.target = secrets.redact(&item.target)?;
+                }
+            }
             _ => {}
         }
         Ok(result)

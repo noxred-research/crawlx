@@ -8,6 +8,59 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed: origin admission waits instead of timing out under contention
+
+Origin admission on PostgreSQL and MariaDB no longer fails a queued caller with a pool timeout.
+Callers beyond the private pool bound wait without a connection or a deadline and leave by
+dropping the request; the pool timeout now applies only to reaching the database, so an
+unreachable server still fails. On MariaDB, a waiter for a held slot no longer parks a
+metadata connection, so the holder's own pacing start cannot starve.
+
+### Fixed: word segmentation of combining marks, contractions and unspaced scripts
+
+`unicode_rules_v1` keeps Devanagari vowel signs, virama, nukta, Thai tone marks and other
+combining marks inside their word, keeps letter-apostrophe-letter contractions as one word,
+no longer reports the katakana middle dot as a word, and cuts Thai, Lao, Khmer and Myanmar
+runs into dictionary words with the offline segmenter. Keyword output and `Document.word_count`
+change for those scripts. Rules segmentation on the language corpus moves from macro F1 0.936
+to 1.000, and its floors are raised.
+
+### Added: URL-plane transport controls
+
+`fetch.clientCertificate` presents a TLS client certificate by credential reference under one
+shared deadline; the key never appears in logs, errors or results. `fetch.realmCredentials`
+answers `Basic` and `Digest` challenges only for the exact origin and realm, and the
+credential is never sent across a cross-origin redirect or an `https` to `http` downgrade.
+`fetch.proxyRules` adds ordered, named per-host proxy rules with stable first-match selection
+and no direct fallback. `source-import` converts ordered proxy rules; an unsafe rule is
+reported `restricted` and nothing is applied. The native crawl schema documents the three keys.
+
+### Added: adaptive crawling, recorded seeding and typed hops
+
+`dynamic.adaptive` adds a seeded static/browser probe, paid from the request's effect budget,
+with a recorded draw and predictor version that replay deterministically. `adaptive` is a
+query-driven stop policy (page limit, saturation and confidence target) with versioned export
+and import; it never reports exhaustive coverage. `scope.seeding` takes candidate URLs from
+recorded archive-index, certificate-transparency, sitemap, robots, feed and homepage files:
+every candidate passes scope, robots and the budget, and an optional HEAD live check runs
+through the checked fetcher and governor. `scope.hops` and `scope.queueCost` type every hop
+(link, embed, prerequisite, redirect), record it per page, end calendar traps with hop-chain
+and repeated-segment limits, and order the queue by a stable cost. Endpoint discovery follows
+the same hop kinds: an iframe, script or stylesheet that `scope.hops` declines is no longer
+fetched as a link.
+
+### Added: blocked-resource provenance and recrawl completeness
+
+`dynamic.blockRules` blocks browser-plane requests by URL pattern, child-frame document
+pattern, URL text or an allow-only list. Every blocked resource is listed in the archive
+manifest as an omission naming its rule kind and approved target. A revisit now reports
+completeness: an unchanged document with a changed, added, skipped or unmeasured subresource
+is `incomplete` and lists those resources (scheduling metadata and archive omissions), and a
+revisit with no known subresources is `document_only`. A browser render under
+`orchestration.recrawl` measures the page's images, stylesheets, scripts and fonts (a bounded
+digest of each response, never the bytes) so a fully measured, unchanged revisit reports
+`complete`.
+
 ### Added: URL-plane referrer policy, URL length cap and run stop criteria
 
 The static plane sends an outbound `Referer` under `fetch.referrerPolicy` (default

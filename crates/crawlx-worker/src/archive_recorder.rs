@@ -386,6 +386,9 @@ async fn finalize_claimed(
                 }
             }
         }
+        manifest
+            .omissions
+            .extend(history::recrawl_omissions(&request, &page));
         wire::record_page_response(
             &mut recorder,
             &mut manifest,

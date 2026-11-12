@@ -1,5 +1,5 @@
 {
-  "id": "l106-rules-unsupported-katakana-middle-dot",
+  "id": "l106-rules-han-kana-katakana-middle-dot",
   "family": "language",
   "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
   "expectedText": "コ|ー|ヒ|ー|紅|茶|を|注|文|し|た",

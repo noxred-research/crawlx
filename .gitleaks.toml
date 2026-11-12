@@ -12,6 +12,9 @@ paths = [
   '''crates/crawlx-browser/tests/fixtures/selfsigned\.key''',
   '''crates/crawlx-fetch/tests/fixtures/selfsigned\.key''',
   '''crates/crawlx-fetch/tests/fixtures/proxy-leaf\.key''',
+  # Throwaway client-certificate keys of the loopback mTLS tests; see the same README.md.
+  '''crates/crawlx-fetch/tests/fixtures/mtls-client\.key''',
+  '''crates/crawlx-fetch/tests/fixtures/mtls-rogue\.key''',
   # Content hashes (sha256 digests), not credentials.
   '''crates/crawlx-bench/fixtures/golden/traces/g03\.json''',
   '''crates/crawlx-model/tests/fixtures/smoke-bundle/manifest\.json''',

@@ -2499,6 +2499,17 @@ impl BrowserContext for FakeContext {
                 self.inner.lock().block_urls(patterns);
                 Ok(PageOpResult::BlockInstalled(install))
             }
+            // the fake issues no subresource requests, so rules install and nothing is ever blocked
+            PageOp::BlockRules(rules) => {
+                Ok(PageOpResult::BlockInstalled(crawlx_core::page_op::BlockInstall {
+                    patterns: u32::try_from(rules.len()).unwrap_or(u32::MAX),
+                    sessions_applied: 1,
+                    sessions_failed: 0,
+                }))
+            }
+            PageOp::DrainBlocked => Ok(PageOpResult::Blocked(
+                crawlx_core::block_rules::BlockedResources::default(),
+            )),
             PageOp::Html => {
                 let inner = self.inner.lock();
                 let tab = inner.tab(&inner.current)?;

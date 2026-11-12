@@ -16,6 +16,9 @@ use std::collections::BTreeMap;
 /// Safe version-pinned declarative upstream queue imports.
 pub mod import;
 
+/// Typed hop kinds, hop paths and their limits.
+pub mod hops;
+
 /// Hard upper bound on an append transaction.
 pub const MAX_REQUEST_BATCH: usize = 1000;
 /// Hard upper bound on serialized queue metadata in one transaction.
@@ -292,6 +295,13 @@ impl RequestEnvelopeV1 {
             .get("autothrottle_dont_adjust_delay")
             .is_some_and(|value| !value.is_boolean())
         {
+            return Err(RequestError::InvalidMetadata);
+        }
+        if self.metadata.get(hops::HOP_PATH_KEY).is_some_and(|value| {
+            value
+                .as_str()
+                .is_none_or(|text| hops::HopPathV1::try_from(text.to_owned()).is_err())
+        }) {
             return Err(RequestError::InvalidMetadata);
         }
         Ok(())

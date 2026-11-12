@@ -34,24 +34,24 @@
       }
     },
     {
-      "id": "l100-rules-unsupported-contractions-english",
+      "id": "l100-rules-latin-contractions-english",
       "family": "language",
       "license": "authored-for-this-repo",
-      "pageUrl": "https://corpus.test/l100-rules-unsupported-contractions-english",
+      "pageUrl": "https://corpus.test/l100-rules-latin-contractions-english",
       "files": {
         "input": {
-          "path": "l100-rules-unsupported-contractions-english.html",
+          "path": "l100-rules-latin-contractions-english.html",
           "sha256": "b8bbf1a219e95059c58bc78268c8505b2c7758d3c90702841c0a67a29a735bb3"
         },
         "gold": {
-          "path": "l100-rules-unsupported-contractions-english.gold.json",
-          "sha256": "45a3d3a6ec2c3c2dbd89a20704550c74992fd3054d340ae8700bcf4b164f7862"
+          "path": "l100-rules-latin-contractions-english.gold.json",
+          "sha256": "162982e371536b8818f2fe2e6dd4ff5cd603cd60afeac3a74a669326b6e848e2"
         }
       },
       "params": {
         "tokenizer": "unicode_rules_v1",
-        "class": "unsupported_contractions",
-        "supported": false,
+        "class": "latin",
+        "supported": true,
         "mode": "declared_only",
         "language": {
           "value": null,
@@ -61,67 +61,28 @@
           "evidence": []
         },
         "qualityReasons": [],
-        "qualityStatus": "accepted",
-        "knownDivergence": {
-          "reason": "unicode_rules_v1 splits a contraction at every apostrophe; the gold keeps each contraction as one word",
-          "measured": {
-            "keywords": [
-              [
-                "they",
-                1
-              ],
-              [
-                "don",
-                1
-              ],
-              [
-                "t",
-                1
-              ],
-              [
-                "wait",
-                1
-              ],
-              [
-                "we",
-                1
-              ],
-              [
-                "ll",
-                1
-              ],
-              [
-                "go",
-                1
-              ],
-              [
-                "home",
-                1
-              ]
-            ]
-          }
-        }
+        "qualityStatus": "accepted"
       }
     },
     {
-      "id": "l101-rules-unsupported-contractions-french",
+      "id": "l101-rules-latin-contractions-french",
       "family": "language",
       "license": "authored-for-this-repo",
-      "pageUrl": "https://corpus.test/l101-rules-unsupported-contractions-french",
+      "pageUrl": "https://corpus.test/l101-rules-latin-contractions-french",
       "files": {
         "input": {
-          "path": "l101-rules-unsupported-contractions-french.html",
+          "path": "l101-rules-latin-contractions-french.html",
           "sha256": "da83a166c303e018259e816a3ed5bf2123d7acfcdccbfe8653b0a8c2a67706de"
         },
         "gold": {
-          "path": "l101-rules-unsupported-contractions-french.gold.json",
-          "sha256": "c59aa9e0953e39354c732f80db4e4696895e2a16b50a74e128d1e050357fafda"
+          "path": "l101-rules-latin-contractions-french.gold.json",
+          "sha256": "69e862988032d80171cfdc03981b711db47256fdf278de2e67b56c342c8c5bf5"
         }
       },
       "params": {
         "tokenizer": "unicode_rules_v1",
-        "class": "unsupported_contractions",
-        "supported": false,
+        "class": "latin",
+        "supported": true,
         "mode": "declared_only",
         "language": {
           "value": null,
@@ -131,59 +92,28 @@
           "evidence": []
         },
         "qualityReasons": [],
-        "qualityStatus": "accepted",
-        "knownDivergence": {
-          "reason": "unicode_rules_v1 splits a contraction at every apostrophe; the gold keeps each contraction as one word",
-          "measured": {
-            "keywords": [
-              [
-                "l",
-                2
-              ],
-              [
-                "eau",
-                1
-              ],
-              [
-                "est",
-                1
-              ],
-              [
-                "claire",
-                1
-              ],
-              [
-                "école",
-                1
-              ],
-              [
-                "ouvre",
-                1
-              ]
-            ]
-          }
-        }
+        "qualityStatus": "accepted"
       }
     },
     {
-      "id": "l102-rules-unsupported-thai-fish",
+      "id": "l102-rules-thai-fish",
       "family": "language",
       "license": "authored-for-this-repo",
-      "pageUrl": "https://corpus.test/l102-rules-unsupported-thai-fish",
+      "pageUrl": "https://corpus.test/l102-rules-thai-fish",
       "files": {
         "input": {
-          "path": "l102-rules-unsupported-thai-fish.html",
+          "path": "l102-rules-thai-fish.html",
           "sha256": "2ac4528a6bc42d4f23df68b4926f42ba6265a950a46d0b39c68d937b080a46d6"
         },
         "gold": {
-          "path": "l102-rules-unsupported-thai-fish.gold.json",
-          "sha256": "7ca9fb1ce51f875cd7519ae00c275cc2ae8f570e7cd190e9b08bff6f70825b24"
+          "path": "l102-rules-thai-fish.gold.json",
+          "sha256": "4b6fed2935c0d9b3a181b249ab84d7111eefe1ff6da0a4b71ea12cd9b223f462"
         }
       },
       "params": {
         "tokenizer": "unicode_rules_v1",
-        "class": "unsupported_thai",
-        "supported": false,
+        "class": "thai",
+        "supported": true,
         "mode": "declared_only",
         "language": {
           "value": "th",
@@ -198,55 +128,28 @@
           ]
         },
         "qualityReasons": [],
-        "qualityStatus": "accepted",
-        "knownDivergence": {
-          "reason": "unicode_rules_v1 treats Thai vowel and tone marks as non-alphanumeric, so words fragment at every mark",
-          "measured": {
-            "keywords": [
-              [
-                "ปลาว",
-                1
-              ],
-              [
-                "ายน",
-                1
-              ],
-              [
-                "ำ",
-                1
-              ],
-              [
-                "แมวนอนบนเก",
-                1
-              ],
-              [
-                "าอี",
-                1
-              ]
-            ]
-          }
-        }
+        "qualityStatus": "accepted"
       }
     },
     {
-      "id": "l103-rules-unsupported-thai-bird",
+      "id": "l103-rules-thai-bird",
       "family": "language",
       "license": "authored-for-this-repo",
-      "pageUrl": "https://corpus.test/l103-rules-unsupported-thai-bird",
+      "pageUrl": "https://corpus.test/l103-rules-thai-bird",
       "files": {
         "input": {
-          "path": "l103-rules-unsupported-thai-bird.html",
+          "path": "l103-rules-thai-bird.html",
           "sha256": "787c181019eece8e88bc1e4ad5271767796381c65934bfa2d796e4d44c04f0c5"
         },
         "gold": {
-          "path": "l103-rules-unsupported-thai-bird.gold.json",
-          "sha256": "f4a472826fa102d11da8e174eabd9782dc8e10b15407a31b9a8ace0d0b0a7a48"
+          "path": "l103-rules-thai-bird.gold.json",
+          "sha256": "9994937516daff8d676721ab39d2a572b113fd8bceed7829f0e3f49b9ce94724"
         }
       },
       "params": {
         "tokenizer": "unicode_rules_v1",
-        "class": "unsupported_thai",
-        "supported": false,
+        "class": "thai",
+        "supported": true,
         "mode": "declared_only",
         "language": {
           "value": "th",
@@ -261,55 +164,28 @@
           ]
         },
         "qualityReasons": [],
-        "qualityStatus": "accepted",
-        "knownDivergence": {
-          "reason": "unicode_rules_v1 treats Thai vowel and tone marks as non-alphanumeric, so words fragment at every mark",
-          "measured": {
-            "keywords": [
-              [
-                "นกบินขึ",
-                1
-              ],
-              [
-                "นฟ",
-                1
-              ],
-              [
-                "า",
-                1
-              ],
-              [
-                "เด",
-                1
-              ],
-              [
-                "กมองดู",
-                1
-              ]
-            ]
-          }
-        }
+        "qualityStatus": "accepted"
       }
     },
     {
-      "id": "l104-rules-unsupported-devanagari-school",
+      "id": "l104-rules-devanagari-school",
       "family": "language",
       "license": "authored-for-this-repo",
-      "pageUrl": "https://corpus.test/l104-rules-unsupported-devanagari-school",
+      "pageUrl": "https://corpus.test/l104-rules-devanagari-school",
       "files": {
         "input": {
-          "path": "l104-rules-unsupported-devanagari-school.html",
+          "path": "l104-rules-devanagari-school.html",
           "sha256": "8ebc373eabe8d4c8ed447786c3b53eccdaa2972ca2831a6f9e6374b65b3286b6"
         },
         "gold": {
-          "path": "l104-rules-unsupported-devanagari-school.gold.json",
-          "sha256": "6a717fefed712f7014badf0a70b5787f7fbc2ab12f1258710d1bd06eee69d13f"
+          "path": "l104-rules-devanagari-school.gold.json",
+          "sha256": "3d3c5c73f109ea0c41ec412207b8df348f22e7d93b79ad27bd1f2939960a129e"
         }
       },
       "params": {
         "tokenizer": "unicode_rules_v1",
-        "class": "unsupported_devanagari",
-        "supported": false,
+        "class": "devanagari",
+        "supported": true,
         "mode": "declared_only",
         "language": {
           "value": "hi",
@@ -324,75 +200,28 @@
           ]
         },
         "qualityReasons": [],
-        "qualityStatus": "accepted",
-        "knownDivergence": {
-          "reason": "unicode_rules_v1 treats Devanagari vowel signs, virama and nukta as non-alphanumeric, so words fragment at every mark",
-          "measured": {
-            "keywords": [
-              [
-                "है",
-                2
-              ],
-              [
-                "मेरी",
-                1
-              ],
-              [
-                "बहन",
-                1
-              ],
-              [
-                "स",
-                1
-              ],
-              [
-                "कूल",
-                1
-              ],
-              [
-                "जाती",
-                1
-              ],
-              [
-                "वह",
-                1
-              ],
-              [
-                "किताब",
-                1
-              ],
-              [
-                "पढ",
-                1
-              ],
-              [
-                "ती",
-                1
-              ]
-            ]
-          }
-        }
+        "qualityStatus": "accepted"
       }
     },
     {
-      "id": "l105-rules-unsupported-devanagari-market",
+      "id": "l105-rules-devanagari-market",
       "family": "language",
       "license": "authored-for-this-repo",
-      "pageUrl": "https://corpus.test/l105-rules-unsupported-devanagari-market",
+      "pageUrl": "https://corpus.test/l105-rules-devanagari-market",
       "files": {
         "input": {
-          "path": "l105-rules-unsupported-devanagari-market.html",
+          "path": "l105-rules-devanagari-market.html",
           "sha256": "ec74627d064dd82a3de712c07b286554fb9b32197dfd12676a794ce338847705"
         },
         "gold": {
-          "path": "l105-rules-unsupported-devanagari-market.gold.json",
-          "sha256": "6d64474c836486f555e84cba051bd092f64bfd4497df082ab3f70e6698a5e243"
+          "path": "l105-rules-devanagari-market.gold.json",
+          "sha256": "b9d712709f90467eaf5208ee9a3757b1a9055bbc69aeb65ec4eac5e69f860414"
         }
       },
       "params": {
         "tokenizer": "unicode_rules_v1",
-        "class": "unsupported_devanagari",
-        "supported": false,
+        "class": "devanagari",
+        "supported": true,
         "mode": "declared_only",
         "language": {
           "value": "hi",
@@ -407,63 +236,28 @@
           ]
         },
         "qualityReasons": [],
-        "qualityStatus": "accepted",
-        "knownDivergence": {
-          "reason": "unicode_rules_v1 treats Devanagari vowel signs, virama and nukta as non-alphanumeric, so words fragment at every mark",
-          "measured": {
-            "keywords": [
-              [
-                "हम",
-                1
-              ],
-              [
-                "बाज",
-                1
-              ],
-              [
-                "ार",
-                1
-              ],
-              [
-                "गए",
-                1
-              ],
-              [
-                "दुकान",
-                1
-              ],
-              [
-                "खुली",
-                1
-              ],
-              [
-                "थी",
-                1
-              ]
-            ]
-          }
-        }
+        "qualityStatus": "accepted"
       }
     },
     {
-      "id": "l106-rules-unsupported-katakana-middle-dot",
+      "id": "l106-rules-han-kana-katakana-middle-dot",
       "family": "language",
       "license": "authored-for-this-repo",
-      "pageUrl": "https://corpus.test/l106-rules-unsupported-katakana-middle-dot",
+      "pageUrl": "https://corpus.test/l106-rules-han-kana-katakana-middle-dot",
       "files": {
         "input": {
-          "path": "l106-rules-unsupported-katakana-middle-dot.html",
+          "path": "l106-rules-han-kana-katakana-middle-dot.html",
           "sha256": "2a9e6bf992e1456c9e25defdcafaa08694f5246277b5d544d596cf9b77fd3d0e"
         },
         "gold": {
-          "path": "l106-rules-unsupported-katakana-middle-dot.gold.json",
-          "sha256": "d7dea244a2391806583419101f59900c9948105c7cce47adb69768ee75010ba9"
+          "path": "l106-rules-han-kana-katakana-middle-dot.gold.json",
+          "sha256": "7294fb956ad82eceef2822161d131060c5d23e397ea9b0c8d3fab6a287d10ea0"
         }
       },
       "params": {
         "tokenizer": "unicode_rules_v1",
-        "class": "unsupported_katakana_middle_dot",
-        "supported": false,
+        "class": "han_kana",
+        "supported": true,
         "mode": "declared_only",
         "language": {
           "value": "ja",
@@ -478,58 +272,115 @@
           ]
         },
         "qualityReasons": [],
-        "qualityStatus": "accepted",
-        "knownDivergence": {
-          "reason": "unicode_rules_v1 emits the katakana middle dot U+30FB as a token because it lies in the kana range",
-          "measured": {
-            "keywords": [
-              [
-                "ー",
-                2
-              ],
-              [
-                "コ",
-                1
-              ],
-              [
-                "ヒ",
-                1
-              ],
-              [
-                "・",
-                1
-              ],
-              [
-                "紅",
-                1
-              ],
-              [
-                "茶",
-                1
-              ],
-              [
-                "を",
-                1
-              ],
-              [
-                "注",
-                1
-              ],
-              [
-                "文",
-                1
-              ],
-              [
-                "し",
-                1
-              ],
-              [
-                "た",
-                1
-              ]
-            ]
-          }
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l107-rules-devanagari-school-day",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l107-rules-devanagari-school-day",
+      "files": {
+        "input": {
+          "path": "l107-rules-devanagari-school-day.html",
+          "sha256": "db32fde14de7d9fea32f3736ff8fa096911e4f0c2615f28886921124b02d2d68"
+        },
+        "gold": {
+          "path": "l107-rules-devanagari-school-day.gold.json",
+          "sha256": "af263e66dc92993ad3ffaf73c35f295c63c1964f047da20f2c656837ac830d38"
         }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi",
+          "declared": "hi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l108-rules-devanagari-marathi-village",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l108-rules-devanagari-marathi-village",
+      "files": {
+        "input": {
+          "path": "l108-rules-devanagari-marathi-village.html",
+          "sha256": "12f5c65a8490a0e7c2eb4be514583fadf6781511c16608933f39166c1e9d724c"
+        },
+        "gold": {
+          "path": "l108-rules-devanagari-marathi-village.gold.json",
+          "sha256": "eed963794f3c58c7f589d0306b9fae38795f2dc41d845b1258ecd194984ce9b5"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "mr",
+          "declared": "mr",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "mr"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l109-rules-devanagari-cricket",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l109-rules-devanagari-cricket",
+      "files": {
+        "input": {
+          "path": "l109-rules-devanagari-cricket.html",
+          "sha256": "1477160dff1c2fd9eefc54720f51d2412d4e38bca552a754973814a34180b960"
+        },
+        "gold": {
+          "path": "l109-rules-devanagari-cricket.gold.json",
+          "sha256": "80af4bfd1bc43056a2fb9244c34a2b26b0d2dde14a9398dc7ce352799333a300"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "devanagari",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "hi",
+          "declared": "hi",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "hi"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
       }
     },
     {
@@ -1448,6 +1299,114 @@
           "model_unavailable"
         ],
         "qualityStatus": "unavailable"
+      }
+    },
+    {
+      "id": "l137-rules-thai-market-day",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l137-rules-thai-market-day",
+      "files": {
+        "input": {
+          "path": "l137-rules-thai-market-day.html",
+          "sha256": "decfed5be0a333cab9cb7e2e7e272cc712b994ba16d73384326a9d039488774f"
+        },
+        "gold": {
+          "path": "l137-rules-thai-market-day.gold.json",
+          "sha256": "0b17cba1377e95be5526393908bf3ab77b918a43d781d1b08b8805ea7a4795b7"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l138-rules-thai-fruit",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l138-rules-thai-fruit",
+      "files": {
+        "input": {
+          "path": "l138-rules-thai-fruit.html",
+          "sha256": "9b59960b68cfa888d0da3b85444014285821f2e45ab043c4eab30b883ab294ed"
+        },
+        "gold": {
+          "path": "l138-rules-thai-fruit.gold.json",
+          "sha256": "cb0d75b883d41ee976ad0b8675b3687f5c2b3be01fb2183b97c2e3e1da97d3c3"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
+      }
+    },
+    {
+      "id": "l139-rules-thai-school",
+      "family": "language",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/l139-rules-thai-school",
+      "files": {
+        "input": {
+          "path": "l139-rules-thai-school.html",
+          "sha256": "f2d4faf74de30d8f9f7faa716e370cce5ab51653053a13fa57112bf87b4d23fd"
+        },
+        "gold": {
+          "path": "l139-rules-thai-school.gold.json",
+          "sha256": "48956bd779407fd3257046094cfa9d5cb2f9620311f72b738cce355c2b358408"
+        }
+      },
+      "params": {
+        "tokenizer": "unicode_rules_v1",
+        "class": "thai",
+        "supported": true,
+        "mode": "declared_only",
+        "language": {
+          "value": "th",
+          "declared": "th",
+          "uncertain": false,
+          "unavailable": false,
+          "evidence": [
+            [
+              "document_fallback",
+              "th"
+            ]
+          ]
+        },
+        "qualityReasons": [],
+        "qualityStatus": "accepted"
       }
     },
     {

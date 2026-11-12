@@ -652,3 +652,342 @@ fn anonymous_warc_package_retains_exact_member_and_adjacent_index() {
             .unwrap()
     );
 }
+
+/// Two visits of one page whose document never changes. Each visit's page metadata carries the
+/// subresource measurement given for it (`None`: the visit measured none), so the recrawl
+/// baseline the second visit leases comes out of the real commit path.
+async fn measured_revisits(
+    stores: &Stores,
+    clock: &ManualClock,
+    measured: [Option<serde_json::Value>; 2],
+    rules: Option<crawlx_core::block_rules::BlockRulesV1>,
+) -> (CrawlRun, Vec<PageRecord>) {
+    let mut config = create_crawl("https://generation.example.test/article", &[], 1);
+    config.retention.days = 1;
+    config.output.archive = Some(crawlx_core::archive::ArchiveConfigV1::default());
+    config.output.archive.as_mut().unwrap().max_records = 16;
+    config.dynamic.block_rules = rules;
+    let mut policy = OrchestrationConfigV1::default();
+    policy.recrawl = Some(
+        serde_json::from_value(serde_json::json!({
+            "version":1,"minIntervalMs":1000,"maxIntervalMs":1000,"maxVisits":2,
+            "endAt":clock.now()+chrono::Duration::minutes(1)
+        }))
+        .unwrap(),
+    );
+    config.orchestration = Some(policy);
+    let mut run = crawl_run(stores.tenant, config);
+    run.created_at = clock.now();
+    stores.runs.create(&run, None).await.unwrap();
+    let url = canonical_url("https://generation.example.test/article");
+    stores
+        .frontier
+        .append_batch(RequestBatchV1::new(
+            run.tenant,
+            run.id,
+            "anonymous".into(),
+            Digest::of("test/archive", b"measured-revisits"),
+            vec![RequestEnvelopeV1::get(url.clone(), 0, None)],
+        ))
+        .await
+        .unwrap();
+    let body = b"the document never changes".as_slice();
+    let mut pages = Vec::new();
+    for measurement in measured {
+        let (entry, fence) = stores
+            .frontier
+            .lease_batch_fenced(run.id, WorkerId::new(), 1)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let source = ArtifactSink::over(stores.artifacts.as_ref())
+            .put_page(
+                run.id,
+                entry.id,
+                Sensitivity::Content,
+                "text/markdown",
+                &ArtifactRedactor::new().redact_artifact(body).unwrap(),
+            )
+            .await
+            .unwrap();
+        let page = PageRecord {
+            run: run.id,
+            frontier_id: entry.id,
+            url: url.clone(),
+            status: 200,
+            content_type: Some("text/markdown".into()),
+            content_digest: Digest::of("test/body", body),
+            title: None,
+            markdown: Some(source),
+            html: None,
+            metadata: measurement.map_or_else(
+                || serde_json::json!({}),
+                |resources| serde_json::json!({ "recrawl": { "resources": resources } }),
+            ),
+            links: Vec::new(),
+            fetched_at: clock.now(),
+            lane: TrustLane::Diagnostic,
+        };
+        let mut commit =
+            RequestCommitV1::terminal(run.id, entry.id, fence, 1, FrontierStatus::Succeeded, None);
+        commit.page = Some(page.clone());
+        stores.request_commits.commit_fenced(commit).await.unwrap();
+        pages.push(page);
+        if pages.len() == 1 {
+            clock.advance_ms(1000);
+        }
+    }
+    (run, pages)
+}
+
+async fn memory_stores(root: &Path, clock: &Arc<ManualClock>) -> Stores {
+    let memory = Arc::new(MemoryStore::with_clock(clock.clone()));
+    let mut stores = Stores::over_memory(memory.clone(), root).await.unwrap();
+    stores.artifacts = Arc::new(
+        FsArtifactStore::open(root, memory.clone(), clock.clone())
+            .await
+            .unwrap()
+            .with_index(memory.clone()),
+    );
+    stores
+}
+
+async fn published_omissions(
+    stores: &Stores,
+    run: &CrawlRun,
+    clock: &Arc<ManualClock>,
+) -> Vec<ArchiveOmissionV1> {
+    let cancel = CancellationToken::new();
+    assert_eq!(
+        finalize(
+            stores,
+            run,
+            clock.clone(),
+            &cancel,
+            TerminalReason::FrontierExhausted
+        )
+        .await
+        .unwrap(),
+        Finalization::Ready
+    );
+    let ArchiveReadV1::Available(export) = stores
+        .archives
+        .get(run.tenant, run.id.0, clock.now())
+        .await
+        .unwrap()
+    else {
+        panic!("published export missing");
+    };
+    export.manifest.unwrap().omissions
+}
+
+fn logo(bytes: &[u8]) -> serde_json::Value {
+    serde_json::json!({
+        "target": "https://generation.example.test/logo.png",
+        "digest": Digest::of("test/image", bytes),
+    })
+}
+
+fn recrawl_facts(omissions: &[ArchiveOmissionV1]) -> Vec<(String, String, Option<String>)> {
+    omissions
+        .iter()
+        .filter(|omission| omission.reason.starts_with("recrawl_"))
+        .map(|omission| {
+            (
+                omission.source_event.clone(),
+                omission.reason.clone(),
+                omission.target.clone(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn unchanged_html_with_a_changed_or_unmeasured_image_is_not_a_complete_recrawl() {
+    for (second, reason) in [
+        (Some(serde_json::json!([logo(b"v2")])), "recrawl_resource_changed"),
+        (None, "recrawl_resource_not_measured"),
+        (
+            Some(
+                serde_json::json!([{ "target": "https://generation.example.test/logo.png", "digest": null }]),
+            ),
+            "recrawl_resource_not_measured",
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+        let stores = memory_stores(root.path(), &clock).await;
+        let (run, pages) = measured_revisits(
+            &stores,
+            &clock,
+            [Some(serde_json::json!([logo(b"v1")])), second],
+            None,
+        )
+        .await;
+        let omissions = published_omissions(&stores, &run, &clock).await;
+        // only the second visit has a baseline to compare against, and it names the image
+        assert_eq!(
+            recrawl_facts(&omissions),
+            vec![(
+                format!("page:{}:resource:0", pages[1].frontier_id),
+                reason.to_owned(),
+                Some("https://generation.example.test/logo.png".to_owned()),
+            )]
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_fully_measured_unchanged_recrawl_reports_nothing_and_a_document_only_one_says_so() {
+    let root = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let stores = memory_stores(root.path(), &clock).await;
+    let both = Some(serde_json::json!([logo(b"v1")]));
+    let (run, _) = measured_revisits(&stores, &clock, [both.clone(), both], None).await;
+    assert!(recrawl_facts(&published_omissions(&stores, &run, &clock).await).is_empty());
+
+    let root = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let stores = memory_stores(root.path(), &clock).await;
+    let (run, pages) = measured_revisits(&stores, &clock, [None, None], None).await;
+    assert_eq!(
+        recrawl_facts(&published_omissions(&stores, &run, &clock).await),
+        vec![(
+            format!("page:{}", pages[1].frontier_id),
+            "recrawl_subresources_not_measured_document_only".to_owned(),
+            None,
+        )]
+    );
+}
+
+#[tokio::test]
+async fn every_resource_the_block_rules_blocked_carries_an_omission_with_its_rule_kind() {
+    use crate::browser_evidence::{BlockedEvent, BLOCKED_EVENT};
+    use crawlx_core::block_rules::{BlockRuleKind, BlockRulesV1, BlockedResourceV1, BlockedResources};
+    let root = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let stores = memory_stores(root.path(), &clock).await;
+    let mut rules = BlockRulesV1::default();
+    rules.urls = vec!["*/ads/*".into()];
+    let (run, _) = measured_revisits(&stores, &clock, [None, None], Some(rules)).await;
+    let session = crawlx_core::SessionId::new();
+    let blocked = |items: &[(&str, BlockRuleKind, &str)], dropped: u64| {
+        let mut log = BlockedResources::default();
+        for (url, kind, resource_type) in items {
+            log.push(BlockedResourceV1::new(
+                (*url).into(),
+                *kind,
+                (*resource_type).into(),
+            ));
+        }
+        log.dropped = dropped;
+        serde_json::to_value(BlockedEvent {
+            version: 1,
+            session,
+            captured_at: clock.now(),
+            blocked: log,
+        })
+        .unwrap()
+    };
+    for payload in [
+        blocked(
+            &[
+                (
+                    "https://generation.example.test/ads/a.png",
+                    BlockRuleKind::Url,
+                    "Image",
+                ),
+                (
+                    "https://generation.example.test/embed",
+                    BlockRuleKind::Frame,
+                    "Document",
+                ),
+                (
+                    "https://generation.example.test/tracker.js",
+                    BlockRuleKind::Text,
+                    "Script",
+                ),
+                (
+                    "https://cdn.example.test/font.woff",
+                    BlockRuleKind::AllowOnly,
+                    "Font",
+                ),
+            ],
+            0,
+        ),
+        // the same resource blocked again on a later page is listed once; overflow is stated
+        blocked(
+            &[(
+                "https://generation.example.test/ads/a.png",
+                BlockRuleKind::Url,
+                "Image",
+            )],
+            3,
+        ),
+    ] {
+        stores
+            .events
+            .append(run.id, BLOCKED_EVENT, payload)
+            .await
+            .unwrap();
+    }
+    let omissions = published_omissions(&stores, &run, &clock).await;
+    let listed: Vec<(&str, Option<&str>)> = omissions
+        .iter()
+        .filter(|omission| omission.reason.starts_with("blocked_"))
+        .map(|omission| (omission.reason.as_str(), omission.target.as_deref()))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (
+                "blocked_by_url_rule",
+                Some("https://generation.example.test/ads/a.png")
+            ),
+            (
+                "blocked_by_frame_rule",
+                Some("https://generation.example.test/embed")
+            ),
+            (
+                "blocked_by_text_rule",
+                Some("https://generation.example.test/tracker.js")
+            ),
+            (
+                "blocked_by_allow_only_rule",
+                Some("https://cdn.example.test/font.woff")
+            ),
+            ("blocked_resources_beyond_session_log_not_listed", None),
+        ]
+    );
+    assert!(omissions
+        .iter()
+        .filter(|omission| omission.reason.starts_with("blocked_by_"))
+        .all(|omission| omission.source_event.starts_with("browser_blocked:")));
+
+    // a run without block rules never reads blocked-resource events
+    let root = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::new(chrono::Utc::now()));
+    let stores = memory_stores(root.path(), &clock).await;
+    let (plain, _) = measured_revisits(&stores, &clock, [None, None], None).await;
+    stores
+        .events
+        .append(
+            plain.id,
+            BLOCKED_EVENT,
+            blocked(
+                &[(
+                    "https://generation.example.test/ads/a.png",
+                    BlockRuleKind::Url,
+                    "Image",
+                )],
+                0,
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(!published_omissions(&stores, &plain, &clock)
+        .await
+        .iter()
+        .any(|omission| omission.reason.starts_with("blocked_")));
+}

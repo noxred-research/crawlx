@@ -2,7 +2,7 @@
   "id": "n17-single-quotes",
   "family": "nlp",
   "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
-  "expectedText": "The ferry's captain said 'we sail'.\nNobody objected.\nthe=1\nferry=1\ns=1\ncaptain=1\nsaid=1",
+  "expectedText": "The ferry's captain said 'we sail'.\nNobody objected.\nthe=1\nferry's=1\ncaptain=1\nsaid=1\nwe=1",
   "spans": [
     {
       "label": "sentence",
@@ -27,42 +27,42 @@
     {
       "label": "keyword",
       "start": 59,
-      "end": 64
-    },
-    {
-      "label": "score",
-      "start": 65,
       "end": 66
     },
     {
-      "label": "keyword",
+      "label": "score",
       "start": 67,
       "end": 68
     },
     {
-      "label": "score",
+      "label": "keyword",
       "start": 69,
-      "end": 70
+      "end": 76
     },
     {
-      "label": "keyword",
-      "start": 71,
+      "label": "score",
+      "start": 77,
       "end": 78
     },
     {
-      "label": "score",
+      "label": "keyword",
       "start": 79,
-      "end": 80
+      "end": 83
     },
     {
-      "label": "keyword",
-      "start": 81,
+      "label": "score",
+      "start": 84,
       "end": 85
     },
     {
-      "label": "score",
+      "label": "keyword",
       "start": 86,
-      "end": 87
+      "end": 88
+    },
+    {
+      "label": "score",
+      "start": 89,
+      "end": 90
     }
   ]
 }

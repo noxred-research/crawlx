@@ -170,6 +170,9 @@ pub struct ContextConfig {
     pub browser_capture_sink: Option<Arc<dyn crate::browser_capture::BrowserCaptureSink>>,
     /// Explicit response/diagnostic projection bounds; disabled by default.
     pub browser_evidence: crate::browser_capture::BrowserEvidenceConfig,
+    /// Keep the identity of every subresource response so [`crate::page_op::PageOp::MeasureSubresources`]
+    /// can digest it later (recrawl completeness). Identities only, at most 128, never bodies.
+    pub measure_subresources: bool,
     /// Explicit opt-in solver credentials, resolved immediately before context construction.
     pub captcha: Option<crate::captcha::CaptchaCredentials>,
     /// Stops an in-flight solver request when the owning crawl is cancelled.
@@ -207,6 +210,7 @@ impl ContextConfig {
             response_body_sink: None,
             browser_capture_sink: None,
             browser_evidence: crate::browser_capture::BrowserEvidenceConfig::default(),
+            measure_subresources: false,
             captcha: None,
             captcha_cancel: tokio_util::sync::CancellationToken::new(),
             captcha_secrets: crate::captcha::CaptchaSecrets::default(),

@@ -1,5 +1,5 @@
 {
-  "id": "l104-rules-unsupported-devanagari-school",
+  "id": "l104-rules-devanagari-school",
   "family": "language",
   "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
   "expectedText": "मेरी|बहन|स्कूल|जाती|है|वह|किताब|पढ़ती|है",

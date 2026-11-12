@@ -1,38 +1,38 @@
 {
-  "id": "l105-rules-unsupported-devanagari-market",
+  "id": "l139-rules-thai-school",
   "family": "language",
   "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
-  "expectedText": "हम|बाज़ार|गए|दुकान|खुली|थी",
+  "expectedText": "ครู|สอน|หนังสือ|นักเรียน|อ่าน|หนังสือ",
   "spans": [
     {
       "label": "token",
       "start": 0,
-      "end": 6
+      "end": 9
     },
     {
       "label": "token",
-      "start": 7,
-      "end": 25
+      "start": 10,
+      "end": 19
     },
     {
       "label": "token",
-      "start": 26,
-      "end": 32
+      "start": 20,
+      "end": 41
     },
     {
       "label": "token",
-      "start": 33,
-      "end": 48
+      "start": 42,
+      "end": 66
     },
     {
       "label": "token",
-      "start": 49,
-      "end": 61
+      "start": 67,
+      "end": 79
     },
     {
       "label": "token",
-      "start": 62,
-      "end": 68
+      "start": 80,
+      "end": 101
     }
   ]
 }

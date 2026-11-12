@@ -169,6 +169,13 @@ impl Fixture {
                                     "/unauthorized" => ("401 Unauthorized", String::new()),
                                     "/bound-first" => ("200 OK", "Set-Cookie: sid=producer-cookie; Path=/\r\n".to_owned()),
                                     "/limited" => ("429 Too Many Requests", String::new()),
+                                    p if p.starts_with("/members/") => if auth == REALM_AUTH && p == "/members/cross" {
+                                        ("302 Found", format!("Location: {}\r\n", cross.as_ref().unwrap()))
+                                    } else if auth == REALM_AUTH {
+                                        ("200 OK", String::new())
+                                    } else {
+                                        ("401 Unauthorized", "WWW-Authenticate: Basic realm=\"members\"\r\n".to_owned())
+                                    },
                                     _ => ("200 OK", String::new()),
                                 };
                                 let content_type = if path.starts_with("/bound-") { "text/html" } else { "text/plain" };
@@ -464,6 +471,75 @@ async fn cross_origin_redirect_strips_initial_and_learned_session_secrets() {
     assert_eq!(fields(&response)[1..], ["", ""]);
     let own = fetch(&manager, &fixture, "owned", &binding, "/echo").await;
     assert_eq!(fields(&own)[1..], ["sid=alpha", "Bearer session-secret"]);
+}
+
+/// `Basic base64("alice:s3cr3t-pass")`.
+const REALM_AUTH: &str = "Basic YWxpY2U6czNjcjN0LXBhc3M=";
+
+struct RealmSecrets;
+
+#[async_trait::async_trait]
+impl crawlx_core::secret::SecretResolver for RealmSecrets {
+    async fn resolve(
+        &self,
+        reference: &crawlx_core::secret::CredentialRef,
+    ) -> Result<crawlx_core::secret::SecretOr<String>, crawlx_core::CoreError> {
+        match reference.0.as_str() {
+            "env://MEMBERS" => Ok(crawlx_core::secret::SecretOr::secret(
+                "alice:s3cr3t-pass".to_owned(),
+            )),
+            _ => Err(crawlx_core::CoreError::CredentialUnavailable(reference.0.clone())),
+        }
+    }
+}
+
+#[tokio::test]
+async fn realm_credentials_answer_the_session_origin_and_never_follow_a_cross_origin_redirect() {
+    let target = Fixture::start(None).await;
+    let fixture = Fixture::start(Some(target.at("/echo"))).await;
+    let clock = clock();
+    let manager = manager(&clock, HttpSessionLimits::default());
+    let binding = binding(&clock, 3);
+    let mut config = config(&manager);
+    let controls = crawlx_core::config::Fetch {
+        realm_credentials: vec![crawlx_core::transport_policy::RealmCredentialRef::basic(
+            Url::parse(&fixture.url.origin().ascii_serialization()).unwrap(),
+            "members",
+            "env://MEMBERS",
+        )],
+        ..crawlx_core::config::Fetch::default()
+    };
+    config.controls =
+        crawlx_core::request_controls::RequestControls::resolve(&controls, "127.0.0.1", Some(&RealmSecrets))
+            .await
+            .unwrap();
+    let mut policy = EgressPolicy::new(true).with_seed_port(&fixture.url);
+    policy.extra_ports.push(target.url.port().unwrap());
+    manager
+        .register(
+            "owned",
+            binding.clone(),
+            config,
+            Arc::new(policy),
+            Arc::new(StaticResolver::new()),
+        )
+        .unwrap();
+    // The session answers the origin's challenge once ...
+    let first = fetch(&manager, &fixture, "owned", &binding, "/members/page").await;
+    assert_eq!(fields(&first)[2], REALM_AUTH);
+    // ... then offers the credential preemptively inside the learned protection space ...
+    let before = fixture.requests.lock().len();
+    let second = fetch(&manager, &fixture, "owned", &binding, "/members/other").await;
+    assert_eq!(fields(&second)[2], REALM_AUTH);
+    assert_eq!(
+        fixture.requests.lock().len(),
+        before + 1,
+        "no second 401 round trip"
+    );
+    // ... and the redirect to another origin carries none, although the first hop did.
+    let crossed = fetch(&manager, &fixture, "owned", &binding, "/members/cross").await;
+    assert_eq!(fields(&crossed)[2], "");
+    assert_eq!(crossed.final_url.port(), target.url.port());
 }
 
 async fn fetch_session_cookie(manager: &NamedHttpSessions, fixture: &Fixture, binding: &SessionBindingV1) {

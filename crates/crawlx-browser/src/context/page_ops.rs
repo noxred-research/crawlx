@@ -13,10 +13,12 @@
 //! `Runtime.enable` nor the isolated world, so they work under every launch profile; they read
 //! the page and never change it. Every command is bounded by an explicit timeout.
 
+use super::guard;
 use super::selector::describe;
 use super::state::State;
 use super::{CdpContext, Ctl};
 use crate::cdp::CdpSession;
+use crawlx_core::block_rules::BlockRulesV1;
 use crawlx_core::browser::BrowserError;
 use crawlx_core::ids::{BackendNodeId, FrameId, TabId};
 use crawlx_core::observation::RuntimeLocator;
@@ -94,6 +96,9 @@ pub(super) async fn apply_overrides(
     if !overrides.block_urls.is_empty() {
         set_blocked_urls(sess, &overrides.block_urls).await?;
     }
+    if overrides.block_rules.is_some() {
+        set_fetch_patterns(sess, ctl, kind, true).await?;
+    }
     if let Some(em) = &overrides.emulation {
         apply_emulation(sess, ctl, kind, em, None, false).await?;
     }
@@ -105,6 +110,26 @@ async fn set_blocked_urls(sess: &CdpSession, patterns: &[String]) -> Result<(), 
     sess.send("Network.setBlockedURLs", json!({ "urls": patterns }))
         .await
         .map(|_| ())
+}
+
+/// Pause the session's requests as far as the guard and the block rules need
+/// (`guard::fetch_patterns`). A child frame pauses only for the rules, never for the guard.
+async fn set_fetch_patterns(
+    sess: &CdpSession,
+    ctl: &Ctl,
+    kind: SessionKind,
+    rules: bool,
+) -> Result<(), BrowserError> {
+    let patterns = if kind == SessionKind::Frame && !rules {
+        Vec::new()
+    } else {
+        guard::fetch_patterns(ctl, rules)
+    };
+    if patterns.is_empty() {
+        sess.send("Fetch.disable", json!({})).await.map(|_| ())
+    } else {
+        sess.fetch_enable(Value::Array(patterns)).await
+    }
 }
 
 /// The viewport in effect: `viewport` (a per-capture override), else the emulation's, else
@@ -470,11 +495,16 @@ impl CdpContext {
             PageOp::BlockResources(spec) => {
                 self.block_resources(spec).await.map(PageOpResult::BlockInstalled)
             }
+            PageOp::BlockRules(rules) => self.block_rules(rules).await.map(PageOpResult::BlockInstalled),
+            PageOp::DrainBlocked => Ok(PageOpResult::Blocked(std::mem::take(
+                &mut self.state.lock().blocked_resources,
+            ))),
             PageOp::FlattenedHtml(spec) => self.flattened_html(spec).await,
             PageOp::MeasureDevice { probe_geolocation } => self
                 .measure_device(probe_geolocation)
                 .await
                 .map(PageOpResult::Device),
+            PageOp::MeasureSubresources => self.measure_subresources().await.map(PageOpResult::Subresources),
         }?;
         self.mask_captcha_page_result(result)
     }
@@ -542,6 +572,36 @@ impl CdpContext {
                 Ok(()) => install.sessions_applied = install.sessions_applied.saturating_add(1),
                 Err(e) if self.session_alive(&sess.session_id) => {
                     tracing::warn!(error = %e, "block list rejected by an open session");
+                    install.sessions_failed = install.sessions_failed.saturating_add(1);
+                }
+                Err(_) => {}
+            }
+        }
+        Ok(install)
+    }
+
+    /// `PageOp::BlockRules`: store the rules for the tabs and frames attached later, switch the
+    /// request pause the rules need on (off for an empty list) on every open session and report
+    /// how many sessions took it. A session that rejects it while still open is counted, not
+    /// hidden.
+    async fn block_rules(&self, rules: BlockRulesV1) -> Result<BlockInstall, BrowserError> {
+        rules
+            .validate()
+            .map_err(|reason| BrowserError::Unsupported(format!("block rules: {reason}")))?;
+        let active = !rules.is_empty();
+        let mut install = BlockInstall {
+            patterns: u32::try_from(rules.len()).unwrap_or(u32::MAX),
+            ..BlockInstall::default()
+        };
+        self.state.lock().overrides.block_rules = active.then_some(rules);
+        self.ctl
+            .rules_fetch
+            .store(active, std::sync::atomic::Ordering::Release);
+        for (sess, kind) in self.sessions() {
+            match set_fetch_patterns(&sess, &self.ctl, kind, active).await {
+                Ok(()) => install.sessions_applied = install.sessions_applied.saturating_add(1),
+                Err(e) if self.session_alive(&sess.session_id) => {
+                    tracing::warn!(error = %e, "block rules rejected by an open session");
                     install.sessions_failed = install.sessions_failed.saturating_add(1);
                 }
                 Err(_) => {}

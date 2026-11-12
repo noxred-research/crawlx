@@ -2,24 +2,30 @@
 
 use super::resource::{RecordOutcome, Recorder, ResourceInput};
 use super::{approved_target, stopped};
-use crate::browser_evidence::{EvidenceEvent, EvidencePhase, EVENT};
+use crate::browser_evidence::{BlockedEvent, EvidenceEvent, EvidencePhase, BLOCKED_EVENT, EVENT};
 use crate::WorkerError;
 use crawlx_core::archive::{
     ArchiveCaptureFactsV1, ArchiveManifestV1, ArchiveOmissionV1, ArchiveRepresentation,
 };
+use crawlx_core::block_rules::BlockRuleKind;
 use crawlx_core::browser_capture::{CaptureCompleteness, CaptureKind};
 
-/// Convert opt-in browser evidence events without refetching any live resource.
+/// Convert opt-in browser evidence events without refetching any live resource, and turn every
+/// resource the run's block rules blocked into an omission that names the rule kind.
 pub(super) async fn record(
     recorder: &mut Recorder<'_>,
     manifest: &mut ArchiveManifestV1,
     committed_records: &mut u64,
 ) -> Result<(), WorkerError> {
-    if !recorder.run.config.capture.browser.durable() {
+    let durable = recorder.run.config.capture.browser.durable();
+    let blocked_rules = recorder.run.config.dynamic.block_rules.is_some();
+    if !durable && !blocked_rules {
         return Ok(());
     }
     let mut after = 0;
     let mut scanned = 0u32;
+    let mut budget_noted = false;
+    let mut listed = BlockedListing::default();
     loop {
         if recorder.cancel.is_cancelled() {
             return Err(stopped());
@@ -33,17 +39,35 @@ pub(super) async fn record(
             break;
         };
         after = event.seq;
-        if event.kind != EVENT {
+        if event.kind == BLOCKED_EVENT {
+            if blocked_rules {
+                listed.record(
+                    manifest,
+                    event.seq,
+                    event.payload,
+                    recorder.export.config.max_records,
+                );
+            }
+            continue;
+        }
+        if event.kind != EVENT || !durable {
             continue;
         }
         if *committed_records >= u64::from(recorder.export.config.max_records)
             || scanned >= recorder.export.config.max_records
         {
-            manifest.omissions.push(ArchiveOmissionV1::new(
-                "browser_evidence",
-                "remaining_resources_not_evaluated_record_budget",
-            ));
-            break;
+            if !budget_noted {
+                manifest.omissions.push(ArchiveOmissionV1::new(
+                    "browser_evidence",
+                    "remaining_resources_not_evaluated_record_budget",
+                ));
+                budget_noted = true;
+            }
+            if !blocked_rules {
+                break;
+            }
+            // only blocked-resource events can still add anything
+            continue;
         }
         scanned = scanned.saturating_add(1);
         let source_event = format!("browser_evidence:{}", event.seq);
@@ -151,4 +175,64 @@ pub(super) async fn record(
         }
     }
     Ok(())
+}
+
+/// The blocked resources already listed as omissions, so a resource blocked on several pages of a
+/// run is listed once per rule kind, and the listing stays inside the record budget.
+#[derive(Default)]
+struct BlockedListing {
+    seen: std::collections::BTreeSet<(BlockRuleKind, String)>,
+    full: bool,
+}
+
+impl BlockedListing {
+    fn record(
+        &mut self,
+        manifest: &mut ArchiveManifestV1,
+        seq: u64,
+        payload: serde_json::Value,
+        max_listed: u32,
+    ) {
+        let source = format!("browser_blocked:{seq}");
+        let event = match serde_json::from_value::<BlockedEvent>(payload) {
+            Ok(event) if event.version == 1 => event,
+            _ => {
+                manifest.omissions.push(ArchiveOmissionV1::new(
+                    source,
+                    "blocked_resources_descriptor_unavailable",
+                ));
+                return;
+            }
+        };
+        let limit = usize::try_from(max_listed).unwrap_or(usize::MAX);
+        for (index, resource) in event.blocked.resources.iter().enumerate() {
+            let key = (resource.kind, resource.url.clone());
+            if self.seen.contains(&key) {
+                continue;
+            }
+            if self.seen.len() >= limit {
+                if !self.full {
+                    self.full = true;
+                    manifest.omissions.push(ArchiveOmissionV1::new(
+                        "browser_blocked",
+                        "remaining_blocked_resources_not_listed_record_budget",
+                    ));
+                }
+                return;
+            }
+            self.seen.insert(key);
+            let mut omission =
+                ArchiveOmissionV1::new(format!("{source}:{index}"), resource.kind.omission_reason());
+            if let Ok(target) = approved_target(&resource.url) {
+                omission = omission.with_target(target);
+            }
+            manifest.omissions.push(omission);
+        }
+        if event.blocked.dropped > 0 {
+            manifest.omissions.push(ArchiveOmissionV1::new(
+                source,
+                "blocked_resources_beyond_session_log_not_listed",
+            ));
+        }
+    }
 }

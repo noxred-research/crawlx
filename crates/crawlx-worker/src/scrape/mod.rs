@@ -422,6 +422,8 @@ struct RenderExtras {
     computed: Option<ComputedStyles>,
     /// Block list, device and flatten facts of the render.
     browser_page: Option<crawlx_core::scrape::BrowserPageReportV1>,
+    /// Subresource digests of the render, measured when the run revisits pages.
+    subresources: Option<Vec<crawlx_core::page_op::MeasuredSubresource>>,
 }
 
 /// Does a run need the production browser renderer: a scrape job that renders and no renderer
@@ -1990,6 +1992,10 @@ impl ScrapeEngine {
                         .evidence
                         .as_ref()
                         .and_then(|evidence| evidence.browser_page.clone()),
+                    subresources: rendered
+                        .evidence
+                        .as_ref()
+                        .and_then(|evidence| evidence.subresources.clone()),
                 }),
                 metadata,
                 document,
@@ -2334,6 +2340,10 @@ impl ScrapeEngine {
                             .evidence
                             .as_ref()
                             .and_then(|evidence| evidence.browser_page.clone()),
+                        subresources: rendered
+                            .evidence
+                            .as_ref()
+                            .and_then(|evidence| evidence.subresources.clone()),
                     }),
                     metadata,
                     document,

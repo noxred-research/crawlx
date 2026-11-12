@@ -508,6 +508,8 @@ pub struct SessionConfig {
     /// Request URL patterns blocked in the browser from the first navigation on
     /// (`dynamic.blockConsentBanners`); empty blocks nothing.
     pub block_urls: Vec<String>,
+    /// Rule-based request blocking (`dynamic.blockRules`); `None` blocks nothing.
+    pub block_rules: Option<crawlx_core::block_rules::BlockRulesV1>,
     /// Lazy-content scroll run after every new document settles (`dynamic.maxScrollSteps`).
     pub lazy_scroll: Option<LazyScrollSpec>,
     /// Receives an exchange for every request the browser makes (`WorkerConfig::traffic_export`).
@@ -566,6 +568,7 @@ impl SessionConfig {
             identity_version: crawlx_core::config::IdentityVersion::V1,
             settle: QuiescencePolicy::default(),
             block_urls: Vec::new(),
+            block_rules: None,
             lazy_scroll: None,
             traffic_export: None,
             origin_governor: Arc::new(crawlx_fetch::OriginGovernor::new(
@@ -587,6 +590,7 @@ impl SessionConfig {
     /// Take the browser-plane settings of the request's `dynamic` block: the consent-banner
     /// blocklist and the lazy-content scroll.
     pub fn apply_dynamic(&mut self, dynamic: &Dynamic) {
+        self.block_rules = dynamic.block_rules.clone();
         self.block_urls = if dynamic.block_consent_banners {
             crawlx_browser::consent::patterns().to_vec()
         } else {
@@ -2900,6 +2904,19 @@ impl SessionActor {
     /// consent-banner blocklist (`dynamic.blockConsentBanners`). Failing to block is logged, not
     /// fatal: the crawl is still correct, only noisier.
     pub(crate) async fn prepare_context(&mut self) {
+        if let Some(rules) = self.cfg.block_rules.clone() {
+            match self.ctx.page_op(PageOp::BlockRules(rules)).await {
+                Ok(PageOpResult::BlockInstalled(install)) if install.sessions_failed == 0 => {
+                    tracing::debug!(session = %self.cfg.session, entries = install.patterns, "block rules are installed")
+                }
+                Ok(_) => {
+                    tracing::warn!(session = %self.cfg.session, "block rules not applied to every browser session")
+                }
+                Err(e) => {
+                    tracing::warn!(session = %self.cfg.session, error = %e, "block rules not applied")
+                }
+            }
+        }
         if self.cfg.block_urls.is_empty() {
             return;
         }

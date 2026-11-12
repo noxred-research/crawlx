@@ -877,8 +877,13 @@ impl ExplorationDriver {
         let started = Instant::now();
         let result = self.explore_session(start).await;
         self.collect_xhr().await;
+        // blocked requests are provenance of what the archive lacks, kept even when the session failed
+        let blocked = crate::browser_evidence::record_blocked(&self.handle, &self.rc).await;
         self.record_diagnostics(started, &result);
-        result
+        match (result, blocked) {
+            (Ok(end), Ok(())) => Ok(end),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        }
     }
 
     /// Run the operator-approved actor recipe through the ordinary driven path: every step is a

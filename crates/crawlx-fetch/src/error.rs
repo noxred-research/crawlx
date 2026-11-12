@@ -19,6 +19,31 @@ pub enum HttpError {
     /// Opt-in synthetic ClientHello transport.
     #[error(transparent)]
     Randomized(#[from] wreq::Error),
+    /// A transport control (client identity, proxy rules) cannot be used.
+    #[error(transparent)]
+    TransportControl(#[from] TransportControlError),
+}
+
+/// Why a transport control cannot be used. Messages are fixed: they never carry the
+/// certificate, the key or any parser output derived from them.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TransportControlError {
+    /// The client certificate is not a PEM chain with a parsable leaf.
+    #[error("client certificate is not a valid PEM certificate chain")]
+    Certificate,
+    /// The client key is not an unencrypted PKCS#8 PEM private key.
+    #[error("client private key is not an unencrypted PKCS#8 PEM key")]
+    Key,
+    /// The client key does not belong to the leaf certificate.
+    #[error("client private key does not match the client certificate")]
+    Mismatch,
+    /// A transport refused the client identity.
+    #[error("client identity was refused by the TLS transport")]
+    Transport,
+    /// The control cannot be combined with the selected route.
+    #[error("transport controls conflict: {0}")]
+    Conflict(&'static str),
 }
 
 /// Everything `Fetcher::fetch`, the resolvers and the egress proxy can fail with.

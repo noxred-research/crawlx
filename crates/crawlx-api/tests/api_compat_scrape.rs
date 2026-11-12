@@ -2542,7 +2542,10 @@ async fn append_to_id_waits_for_a_queued_batch_to_start_and_warns_about_ignored_
     let gate = Arc::new(Gate::default());
     let rig = Rig::start(RigConfig {
         worker_start_delay: Some(Duration::from_millis(600)),
-        ..gate_rig(&gate, Duration::from_millis(10))
+        // The first page is held long enough that the batch is still running when the
+        // waiting append lands; a batch that already finished answers 409, which another
+        // test covers.
+        ..gate_rig(&gate, Duration::from_secs(3))
     })
     .await;
     let (_, _, v) = batch(&rig, j!({ "urls": [rig.url("/gate/1")] })).await;

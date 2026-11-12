@@ -252,62 +252,35 @@ fn dates(
         });
     MetadataValueV1::new(value, raw.evidence, uncertain, raw.truncated)
 }
-fn is_cjk(c: char) -> bool {
-    ('\u{3400}'..='\u{9fff}').contains(&c) || ('\u{3040}'..='\u{30ff}').contains(&c)
-}
-fn tokens(source: &str) -> Vec<(String, SourceRangeV1)> {
+fn tokens(source: &str) -> (Vec<(String, SourceRangeV1)>, bool) {
     let mut result = Vec::new();
-    let mut start = None;
-    for (offset, ch) in source.char_indices().chain(std::iter::once((source.len(), ' '))) {
-        if ch.is_alphanumeric() && !is_cjk(ch) {
-            if start.is_none() {
-                start = Some(offset);
-            }
-        } else {
-            if let Some(begin) = start.take() {
-                if offset.saturating_sub(begin) <= 128 && result.len() < 100_000 {
-                    result.push((
-                        source[begin..offset].to_lowercase(),
-                        SourceRangeV1::new(begin, offset),
-                    ));
-                }
-            }
-            if is_cjk(ch) && result.len() < 100_000 {
-                result.push((ch.to_string(), SourceRangeV1::new(offset, offset + ch.len_utf8())));
-            }
+    let mut truncated = false;
+    crate::article_tokens::rules_words(source, |start, end| {
+        if result.len() == 100_000 {
+            truncated = true;
+            return false;
         }
-    }
-    result
+        result.push((source[start..end].to_lowercase(), SourceRangeV1::new(start, end)));
+        true
+    });
+    (result, truncated)
 }
 fn policy_tokens(source: &str, policy: &ExtractionPolicyV1) -> (Vec<(String, SourceRangeV1)>, bool) {
     match policy.tokenizer {
         crawlx_core::extraction::ArticleTokenizerV1::IcuDictionaryUax29V17V1 => {
             crate::article_tokens::dictionary(source)
         }
-        _ => (tokens(source), word_count(source) > 100_000),
+        _ => tokens(source),
     }
 }
 
 /// Count version-one Unicode lexical units, including individual CJK scalars.
 pub(crate) fn word_count(source: &str) -> usize {
     let mut count = 0usize;
-    let mut start = None;
-    for (offset, ch) in source.char_indices().chain(std::iter::once((source.len(), ' '))) {
-        if ch.is_alphanumeric() && !is_cjk(ch) {
-            if start.is_none() {
-                start = Some(offset);
-            }
-        } else {
-            if let Some(begin) = start.take() {
-                if offset.saturating_sub(begin) <= 128 {
-                    count = count.saturating_add(1);
-                }
-            }
-            if is_cjk(ch) {
-                count = count.saturating_add(1);
-            }
-        }
-    }
+    crate::article_tokens::rules_words(source, |_, _| {
+        count = count.saturating_add(1);
+        true
+    });
     count
 }
 fn sentences(source: &str) -> Vec<SourceRangeV1> {

@@ -1,5 +1,5 @@
 {
-  "id": "l102-rules-unsupported-thai-fish",
+  "id": "l102-rules-thai-fish",
   "family": "language",
   "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
   "expectedText": "ปลา|ว่าย|น้ำ|แมว|นอน|บน|เก้าอี้",

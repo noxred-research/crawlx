@@ -1,0 +1,58 @@
+{
+  "id": "l107-rules-devanagari-school-day",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "विद्यालय|में|बच्चे|पढ़ते|हैं|शिक्षक|कक्षा|में|आते|हैं",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 50
+    },
+    {
+      "label": "token",
+      "start": 51,
+      "end": 66
+    },
+    {
+      "label": "token",
+      "start": 67,
+      "end": 76
+    },
+    {
+      "label": "token",
+      "start": 77,
+      "end": 95
+    },
+    {
+      "label": "token",
+      "start": 96,
+      "end": 111
+    },
+    {
+      "label": "token",
+      "start": 112,
+      "end": 121
+    },
+    {
+      "label": "token",
+      "start": 122,
+      "end": 131
+    },
+    {
+      "label": "token",
+      "start": 132,
+      "end": 141
+    }
+  ]
+}

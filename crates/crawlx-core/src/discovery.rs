@@ -715,6 +715,157 @@ pub enum DiscoveryErrorV1 {
     Limit(&'static str),
 }
 
+/// Most recorded seed fixtures one crawl carries.
+pub const MAX_SEED_FIXTURES: usize = 8;
+/// Largest recorded seed fixture, in bytes.
+pub const MAX_SEED_FIXTURE_BYTES: usize = 1024 * 1024;
+/// Largest candidate count `scope.seeding.maxUrls` may ask for.
+pub const MAX_SEED_URLS: u32 = 100_000;
+
+/// What kind of recorded document a seed fixture is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SeedSourceKindV1 {
+    /// A capture-index listing: one record per line (`urlkey timestamp original ...`), JSON
+    /// lines, or a JSON table with an `original`/`url` column.
+    ArchiveIndex,
+    /// A certificate-transparency log search result (a JSON array of entries naming hosts).
+    CertificateTransparency,
+    /// A sitemap or sitemap index.
+    Sitemap,
+    /// A `robots.txt`: its sitemap lines and its literal allow/disallow paths.
+    Robots,
+    /// An RSS, Atom or JSON feed.
+    Feed,
+    /// An HTML home page: its links.
+    Homepage,
+}
+
+impl SeedSourceKindV1 {
+    /// Stable `snake_case` name, identical to the serde form.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ArchiveIndex => "archive_index",
+            Self::CertificateTransparency => "certificate_transparency",
+            Self::Sitemap => "sitemap",
+            Self::Robots => "robots",
+            Self::Feed => "feed",
+            Self::Homepage => "homepage",
+        }
+    }
+}
+
+/// One recorded document. It holds the bytes themselves, never a path or an address: the caller
+/// reads a file before it builds the crawl, and nothing here touches a network or a disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct SeedFixtureV1 {
+    /// What the document is.
+    pub kind: SeedSourceKindV1,
+    /// The recorded document text, at most [`MAX_SEED_FIXTURE_BYTES`].
+    pub content: String,
+}
+
+impl SeedFixtureV1 {
+    /// A fixture of `kind` holding `content`.
+    #[must_use]
+    pub fn new(kind: SeedSourceKindV1, content: impl Into<String>) -> Self {
+        Self {
+            kind,
+            content: content.into(),
+        }
+    }
+}
+
+/// Whether a candidate must answer a live request before it is queued.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SeedLiveCheckV1 {
+    /// Queue every in-scope, robots-allowed candidate without a request.
+    #[default]
+    Off,
+    /// Send one `HEAD` request per candidate first and queue it only on a status of 200 to 399.
+    /// The request is made only after scope and robots admit the candidate, goes through the
+    /// run's checked fetcher and origin governor, and follows no redirect.
+    Head,
+}
+
+/// `scope.seeding`: candidate URLs read from recorded sources, queued next to the seed.
+///
+/// Candidates are parsed from [`SeedFixtureV1`] documents in order, deduplicated by their
+/// normalized text (first sighting wins), capped at `maxUrls`, and queued at depth 1. A
+/// candidate is only a proposal: it must pass scope, robots, authorization and the budget like
+/// any discovered link, so a source can never widen the crawl.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct SeedSourcesV1 {
+    /// Exactly one.
+    #[serde(default = "SeedSourcesV1::default_version")]
+    pub version: u16,
+    /// Recorded documents, parsed in order.
+    pub fixtures: Vec<SeedFixtureV1>,
+    /// Candidates kept after deduplication, `1..=100000` (default 1000).
+    #[serde(default = "SeedSourcesV1::default_max_urls")]
+    pub max_urls: u32,
+    /// Live check applied to each candidate (default off).
+    #[serde(default)]
+    pub live_check: SeedLiveCheckV1,
+}
+
+impl SeedSourcesV1 {
+    const fn default_version() -> u16 {
+        1
+    }
+    const fn default_max_urls() -> u32 {
+        1000
+    }
+
+    /// Sources over `fixtures` with the documented defaults.
+    #[must_use]
+    pub fn new(fixtures: Vec<SeedFixtureV1>) -> Self {
+        Self {
+            version: 1,
+            fixtures,
+            max_urls: Self::default_max_urls(),
+            live_check: SeedLiveCheckV1::Off,
+        }
+    }
+
+    /// Check count and byte bounds.
+    ///
+    /// # Errors
+    /// An unsupported version, no fixture, too many or too large fixtures, or `maxUrls` out of
+    /// range.
+    pub fn validate(&self) -> Result<(), CoreError> {
+        let invalid = |reason: &str| CoreError::Invalid {
+            field: "scope.seeding",
+            reason: reason.to_owned(),
+        };
+        if self.version != 1 {
+            return Err(invalid("unsupported version"));
+        }
+        if self.fixtures.is_empty() || self.fixtures.len() > MAX_SEED_FIXTURES {
+            return Err(invalid("between 1 and 8 fixtures"));
+        }
+        if self
+            .fixtures
+            .iter()
+            .any(|fixture| fixture.content.len() > MAX_SEED_FIXTURE_BYTES)
+        {
+            return Err(invalid("a fixture is at most 1 MiB"));
+        }
+        if !(1..=MAX_SEED_URLS).contains(&self.max_urls) {
+            return Err(invalid("maxUrls is between 1 and 100000"));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

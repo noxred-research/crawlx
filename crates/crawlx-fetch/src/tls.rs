@@ -12,11 +12,15 @@
 
 use crate::client::FetchConfig;
 use crate::error::FetchError;
+use crate::error::TransportControlError;
 use crate::resolver::Resolver;
 use crate::{EgressOptions, EgressProxy, EgressProxyHandle, UpstreamProxy};
+use boring2::pkey::PKey;
 use boring2::ssl::SslCurve;
+use boring2::x509::X509;
 use bytes::Bytes;
 use crawlx_core::seed::CrawlSeed;
+use crawlx_core::transport_policy::ClientIdentity;
 use crawlx_policy::egress::EgressPolicy;
 use http::{HeaderMap, Method, StatusCode, Version};
 use rand::seq::SliceRandom;
@@ -128,6 +132,73 @@ fn joined<'a>(names: impl Iterator<Item = &'a str>) -> String {
     joined
 }
 
+/// A TLS client identity in the form both transports consume. Built once per fetcher from the
+/// resolved [`ClientIdentity`]; nothing here prints or serializes the key, and every failure
+/// is a [`TransportControlError`] with a fixed, value-free message.
+#[derive(Clone)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "checked transport adapter owns the native identity of both raw clients"
+)]
+pub(crate) struct TlsIdentity {
+    rustls: reqwest::Identity,
+    /// Public roots plus the identity: `wreq` takes both from one certificate store.
+    store: wreq::tls::CertStore,
+}
+
+impl std::fmt::Debug for TlsIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsIdentity").finish_non_exhaustive()
+    }
+}
+
+#[allow(
+    clippy::disallowed_types,
+    reason = "checked transport adapter owns the native identity of both raw clients"
+)]
+impl TlsIdentity {
+    /// Parse and cross-check `identity`: a PEM certificate chain, an unencrypted PKCS#8 PEM key
+    /// and the proof that the key belongs to the leaf certificate, before any socket opens.
+    pub(crate) fn new(identity: &ClientIdentity) -> Result<Self, TransportControlError> {
+        let certificate = identity.certificate_pem().as_bytes();
+        let key = identity.private_key_pem().trim_start().as_bytes();
+        if !key.starts_with(b"-----BEGIN PRIVATE KEY-----") {
+            return Err(TransportControlError::Key);
+        }
+        let chain = X509::stack_from_pem(certificate).map_err(|_| TransportControlError::Certificate)?;
+        let leaf = chain.first().ok_or(TransportControlError::Certificate)?;
+        let private = PKey::private_key_from_pem(key).map_err(|_| TransportControlError::Key)?;
+        let leaf_key = leaf
+            .public_key()
+            .map_err(|_| TransportControlError::Certificate)?;
+        if !leaf_key.public_eq(&private) {
+            return Err(TransportControlError::Mismatch);
+        }
+        let mut combined = zeroize::Zeroizing::new(Vec::with_capacity(key.len() + certificate.len() + 1));
+        combined.extend_from_slice(key);
+        combined.push(b'\n');
+        combined.extend_from_slice(certificate);
+        let rustls = reqwest::Identity::from_pem(&combined).map_err(|_| TransportControlError::Transport)?;
+        let native = wreq::tls::Identity::from_pkcs8_pem(certificate, key)
+            .map_err(|_| TransportControlError::Transport)?;
+        let store = wreq::tls::CertStore::builder()
+            .identity(native)
+            .add_der_certs(
+                webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                    .iter()
+                    .map(AsRef::<[u8]>::as_ref),
+            )
+            .build()
+            .map_err(|_| TransportControlError::Transport)?;
+        Ok(Self { rustls, store })
+    }
+
+    /// The identity for the rustls transport.
+    pub(crate) const fn rustls(&self) -> &reqwest::Identity {
+        &self.rustls
+    }
+}
+
 #[allow(
     clippy::disallowed_types,
     reason = "checked transport adapter encapsulates both raw native clients"
@@ -161,6 +232,7 @@ impl HttpClient {
         policy: Arc<EgressPolicy>,
         resolver: Arc<dyn Resolver>,
         pool_adapter: Option<SocketAddr>,
+        identity: Option<&TlsIdentity>,
     ) -> Result<Self, FetchError> {
         let coherent = cfg.identity_profile.is_some();
         let provider = if coherent {
@@ -186,6 +258,9 @@ impl HttpClient {
         }
         // Acquisition owns every retry and allowance reservation, including HTTP/2 retries.
         builder = builder.http2_max_retry_count(0);
+        if let Some(identity) = identity {
+            builder = builder.cert_store(identity.store.clone());
+        }
         if let Some(read) = cfg.read_timeout {
             builder = builder.read_timeout(read);
         }

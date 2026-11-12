@@ -145,6 +145,8 @@ Discovery order: the seed, the links of the seed page in document order, then th
 
 Run control: besides `limits.urls` and `limits.durationSeconds`, `limits.items` (pages kept), `limits.errors` (failed or unreachable fetches), `limits.idleSeconds` (no newly kept page) and `limits.diskPressurePermille` (artifact spool occupancy) end a run at the first criterion that holds. The run seals its producers and leases nothing more; the `completed` event and the `summary` report carry `terminalDetail` (`urls_limit`, `items_limit`, `errors_limit`, `idle_timeout`, `deadline`, `disk_pressure`). A run that drains with no page kept names why: `seed_error`, `content_validation_failed`, `byte_limit` or `retries_exhausted`. `fetch.referrerPolicy` (default `no-referrer`) sends the parent page as `Referer` with credentials, fragment and secret query parameters removed; `scope.maxUrlLength` (default 8192) refuses a longer link as policy-blocked `url_too_long`.
 
+URL-plane transport controls (all credential material is a reference, never a literal; browser-only mode refuses them): `fetch.clientCertificate` (`certificate`, `key`, optional `hosts`) presents a TLS client certificate to `https` servers that request one. `certificate` resolves to a PEM chain (leaf first), `key` to an unencrypted PKCS#8 PEM key, both through the credential resolvers (`env://`, `file://` not world-readable, `vault://`, `cloud-sm://`) under one shared deadline of `fetch.timeoutMs`. The pair is cross-checked before any socket opens, is presented only to `hosts` (default: the seed's registrable domain, like `extraHeaders`) and never appears in logs, errors, `Debug` output, captures or results; a missing, untrusted or mismatched certificate is a typed failure, never a downgrade to an anonymous request. `fetch.realmCredentials` (`origin`, `realm`, `scheme` `basic` (default) or `digest`, `credential` resolving to `user:password`) answers `Basic` and `Digest` challenges (`Digest` with `qop=auth` and `MD5` or `SHA-256`; the password never goes on the wire, and `-sess`, `qop=auth-int`, `userhash` and other algorithms are not answered): the credential is sent only to the exact origin (scheme, host and port) whose `WWW-Authenticate` challenge names exactly that realm, once per `401`, and preemptively inside the protection spaces learned earlier on that origin; it is never offered after a redirect left the origin or downgraded `https` to `http` (not even when the chain returns), never replaces a caller's own `Authorization`, and a refused credential is dropped from its space. The retry is charged to the acquisition's request allowance. `fetch.proxyRules` (`name`, `hosts`, `proxy`) routes requests through ordered per-host proxies: `example.test` matches that host, `*.example.test` any subdomain, the first matching rule in declaration order wins, a host no rule matches follows `fetch.proxy`, and a selected rule fails closed (no other rule, no direct connection) while its proxy host stays subject to the egress policy. None of the three combines with a coherent identity profile or an acquisition service, and rules cannot be combined with a pool route. In the browser plane only `fetch.proxy` applies. `crawlx source-import` converts an ordered `proxy.rules` list to `fetch.proxyRules`; a rule that asks for a direct or alternate fallback or an unverified proxy transport is reported `restricted`, a malformed one `rejected`, and nothing is applied until every rule converts.
+
 Leased runs use `ContentDedupeClaimV1` in the request result transaction, not a local-cache checkpoint as shared authority. Both normalized title/body SHA-256 and the report's distinct main digest are required. The hash-only registry partitions claims by tenant, run, role/session representation, extractor, policy and normalization; the first successful commit owns the canonical frontier ID and storage record time. Later commits persist `duplicate_main` receipts and reject accepted-item, state-delta and outbox publication atomically while keeping acquisition and immutable rendition evidence. Failed transactions consume no claim. `DigestRegistryRepo::digest_outcome` reads the exact frontier receipt, including after a worker restart. Registry rows contain no text, URLs, role labels or artifact references, are permitted in ZDR, and are erased with the owning run. Pure parse quality remains separate from the final ingestion rejection; no rejected article artifact is fabricated from an earlier accepted serialization.
 
 
@@ -916,6 +918,112 @@ representation, redaction, MIME and retention context. Failed uploads, expired s
 foreign tenants and sensitive source packages never become ordinary content baselines.
 Indexed lookup is bounded and deterministic. Source erasure or authority changes
 invalidate dependent content; omission and incomplete-capture reporting stay explicit.
+
+## Blocked resources and recrawl completeness in archives
+
+`dynamic.blockRules` blocks browser-plane requests before they leave the browser and is
+omitted by default, which leaves the serialized configuration and its hash unchanged. It has
+four lists of at most 64 entries of at most 512 bytes each:
+
+- `urls`: `*`-wildcard patterns over the full request URL; any request.
+- `frames`: the same patterns, applied only to documents loaded by a child frame (iframe).
+  The page being visited is never a child frame.
+- `text`: case-insensitive substrings of the request URL; any request.
+- `allowOnly`: when non-empty, every subresource or child-frame request matching none of
+  these `*`-wildcard patterns is blocked. The page being visited is governed by scope and
+  robots policy, not by block rules.
+
+Only `http` and `https` requests are considered. Every blocked resource is listed once per
+rule kind in the archive manifest as an omission with the privacy-approved target and the
+reason `blocked_by_url_rule`, `blocked_by_frame_rule`, `blocked_by_text_rule` or
+`blocked_by_allow_only_rule`. Resources beyond the per-session log bound
+(256 distinct blocked requests between two drains) are stated with
+`blocked_resources_beyond_session_log_not_listed`, never dropped silently.
+
+A recrawl compares the document and the page's subresources. A visit records the
+subresources it measured under `recrawl.resources` in its page metadata
+(`{"target": ..., "digest": ...}`, `digest` null for one it could not measure); the
+baseline of the next visit carries at most 16 of them. An unchanged document is reported
+as a complete recrawl only when every known subresource was measured again with the same
+digest. Otherwise the scheduling decision carries `crawlx_recrawl_completeness_v1`
+(`incomplete`, with each changed, added, skipped or unmeasured resource listed, or
+`document_only` when no subresource is known at all), and the archive manifest lists the
+same resources as omissions `recrawl_resource_changed`, `recrawl_resource_added` and
+`recrawl_resource_not_measured`, or `recrawl_subresources_not_measured_document_only`.
+
+The browser render of a scrape (`waitFor`, actions, screenshot and the other options that need
+a browser) records the subresources automatically when the run has `orchestration.recrawl`:
+the images, stylesheets, scripts and fonts the page loaded, sorted by privacy-approved target
+(no credentials, no fragment), each with a digest of the response bytes the browser received.
+At most 16 are measured; a page with more lists a 17th entry without a digest, so it can never
+be reported complete. A resource that failed, was not held by the browser, exceeded 4 MiB (16
+MiB per page) or whose address failed privacy approval is listed without a digest. Only a
+digest and a target leave the browser, never bytes. `data:` and `blob:` resources are part of
+the document itself. The list is what the browser's resource tree names at the end of the
+visit; the browser can drop a stylesheet or script from it, and a resource an earlier visit
+knew that this visit's list does not name is reported unmeasured, so the revisit is
+`incomplete`, never complete. Planes that measure no subresources, such as the static HTTP
+plane and dynamic sessions, record none, so their revisits are never reported complete.
+
+## Adaptive crawling, recorded seeding and typed hops
+
+All of these keys are omitted by default and leave the serialized configuration and its hash
+unchanged.
+
+`dynamic.adaptive` (`predictorVersion` 1, `probePerMille` 0 to 1000 default 100, `maxProbes`
+default 16, `probeEffects` 1 to 8 default 1) adds a seeded probe to the static/browser
+decision. Besides the heuristic classifier, a URL selected by a draw that depends only on the
+run seed, the predictor version and the URL is also handed to the browser plane once, so a
+wrong static prediction is noticed. It needs `hybrid` mode, `orchestration` effect limits and
+no native `acquisition` policy. Every probe adds `probeEffects` to the request's effect
+charge before the page is fetched; a probe the budget or the run allowance cannot pay for is
+denied and recorded, and the page is still fetched. Each decision is written to the
+`dynamic.predictor` run event and to the page as `dynamicPredictor`; a row never pays twice
+and a restarted run replays the recorded decisions instead of drawing again.
+
+`adaptive` is a query-driven stop policy: `query`, `maxPages` (default 100), `minPages`
+(default 3), `window` (default 3), `minGainPermille` (default 50), `targetConfidencePermille`
+(default 0, off, at most 950), `maxVocabulary` (default 4096) and `import`. Each kept page
+gets a relevance and a gain (relevance times novelty over the query terms and the vocabulary
+seen so far). The crawl stops at the first of `maxPages` evaluated pages (`limit_reached`),
+saturation, when the average gain of the last `window` pages falls below `minGainPermille`
+(`policy_stopped`), and the confidence target (`policy_stopped`). Confidence is a coverage
+estimate over the fetched pages and is capped at 950 thousandths; the `adaptive.stopped` event
+always states `exhaustive: false`. The state, terms and counts only and bound to the query by
+digest, is written as the `adaptive.export` event every 16 pages, at each stop and when the
+plane stops. A later crawl of the same query passes it as `adaptive.import` and continues; an
+export of another query, version or shape is refused at admission.
+
+`scope.seeding` (`fixtures`, `maxUrls`, `liveCheck`) queues candidate URLs from recorded
+documents next to the seed, at depth 1. A fixture is `{kind, content}` with `kind` one of
+`archive_index`, `certificate_transparency`, `sitemap`, `robots`, `feed` or `homepage` and the
+document text as `content` (at most 1 MiB each, at most 8 fixtures). Nothing is read from a
+network or a disk. Candidates are deduplicated by normalized text, capped at `maxUrls`
+(default 1000) and are only proposals: each passes scope, robots, authorization and the budget
+like any discovered link, so a source can never widen the crawl. `liveCheck: "head"` sends one
+HEAD request per admitted candidate through the checked fetcher and the origin governor,
+follows no redirect and queues the candidate only on a status of 200 to 399. The
+`seed.sources` event records the tally.
+
+`scope.hops` (`followEmbeds`, `followPrerequisites`, `maxHops` default 32, `maxTransitiveHops`
+default 3, `maxRepeatedSegments` default 3) types every discovered URL as a link, an embed
+(image, frame, object, media), a prerequisite (script, stylesheet) or a redirect. Links are
+always followed; embeds and prerequisites only when asked for, and a declined one is recorded
+`policy_blocked` as `embed_not_followed` or `prerequisite_not_followed`, never fetched. That
+holds for the endpoint discovery too, which finds the same iframes, scripts and stylesheets.
+The hop path (`L`, `E`, `P`, `R` per hop) is limited: a longer path is `hop_limit`, more than
+`maxTransitiveHops` embeds, prerequisites and redirects in a row is `transitive_hop_limit` and
+a path segment repeated more than `maxRepeatedSegments` times is `pathological_path`; these
+end calendar-style traps and are checked before robots. A page records `request.hop` with its
+path, kind and priority. Scope, robots, authorization and the budget still decide every hop.
+
+`scope.queueCost` (`linkCost` 1, `embedCost`, `prerequisiteCost`, `redirectCost` 0,
+`calendarPenalty` 4 per date-like path segment or query name, `repeatPenalty` 2, `successStep`
+with `successPenalty` per completed step of pages a host yielded, `maxCost` 1000, at most
+32000) queues each discovered URL with the explicit priority `base - cost`, so cheap URLs
+dequeue first and ties break on the stable row id. The cost is integer arithmetic over facts the
+crawl already holds, assigned once at discovery, so a restart cannot change the order. It is
+ordering only and never admits a URL.
 
 ## Anonymous staging and recoverable WARC bundle publication
 

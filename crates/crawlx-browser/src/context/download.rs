@@ -246,11 +246,7 @@ async fn transport(
 }
 
 fn original_patterns(ctl: &Ctl) -> Vec<Value> {
-    match ctl.config.navigation_guard.as_ref() {
-        Some(guard) if guard.intercepts_subresources() => vec![json!({ "requestStage": "Request" })],
-        Some(_) => vec![json!({ "resourceType": "Document", "requestStage": "Request" })],
-        None => Vec::new(),
-    }
+    super::guard::fetch_patterns(ctl, ctl.rules_fetch.load(std::sync::atomic::Ordering::Acquire))
 }
 
 impl Transfer {

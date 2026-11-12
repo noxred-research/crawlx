@@ -44,6 +44,8 @@
 #![deny(clippy::disallowed_types)]
 
 pub mod ab;
+pub mod adaptive_render;
+pub mod adaptive_stop;
 pub mod arbiter;
 pub mod context;
 pub mod enablement;

@@ -178,7 +178,30 @@ pub fn credential_digest(
         })
         .collect();
     cookies.sort_unstable();
-    let mut encoded = serde_json::to_vec(&(1u8, headers, cookies))
+    // Realm credentials and the TLS client identity decide what a server answers, so they are
+    // part of the identity; without them the encoding (and the digest) is the original one.
+    let mut realms: Vec<_> = controls
+        .realm_credentials()
+        .iter()
+        .map(|c| {
+            (
+                c.origin().origin().ascii_serialization(),
+                c.realm(),
+                c.scheme().token(),
+                c.encoded_secret(),
+            )
+        })
+        .collect();
+    realms.sort_unstable();
+    let identity = controls
+        .client_identity()
+        .map(|i| (i.certificate_pem(), i.private_key_pem(), i.hosts()));
+    let serialized = if realms.is_empty() && identity.is_none() {
+        serde_json::to_vec(&(1u8, headers, cookies))
+    } else {
+        serde_json::to_vec(&(2u8, headers, cookies, realms, identity))
+    };
+    let mut encoded = serialized
         .map_err(|_| CoreError::Serialization("credential identity serialization failed".into()))?;
     let digest = Digest::keyed(&tenant_key, "crawlx/credential-request-identity/v1", &encoded);
     encoded.zeroize();

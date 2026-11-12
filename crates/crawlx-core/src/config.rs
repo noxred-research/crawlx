@@ -811,6 +811,19 @@ pub struct Scope {
         skip_serializing_if = "is_default_max_url_length"
     )]
     pub max_url_length: u32,
+    /// Typed hop policy: whether embedded resources and prerequisites are followed, and the
+    /// hop-chain and repeated-segment limits that end calendar-style traps. Absent follows links
+    /// only, bounded by `maxDiscoveryDepth`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hops: Option<crate::request::hops::HopPolicyV1>,
+    /// Queue cost policy: each discovered URL is queued with the explicit priority
+    /// `base - cost`, so cheap URLs dequeue first. Absent keeps strategy order alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_cost: Option<crate::priority::cost::QueueCostPolicyV1>,
+    /// Recorded seed sources (archive index, certificate transparency, sitemap, robots, feed,
+    /// homepage) that add candidate URLs next to the seed. Absent adds none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeding: Option<crate::discovery::SeedSourcesV1>,
 }
 
 impl Scope {
@@ -867,6 +880,9 @@ impl Default for Scope {
             disable_unique_filter: false,
             host_scope_pattern: None,
             max_url_length: Self::default_max_url_length(),
+            hops: None,
+            queue_cost: None,
+            seeding: None,
         }
     }
 }
@@ -1108,6 +1124,16 @@ pub struct Dynamic {
     /// local storage) kept under the worker's `--profiles-dir` and reused across runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_profile: Option<BrowserProfile>,
+    /// Rule-based request blocking of the browser plane: `*`-wildcard URL rules, child-frame
+    /// document rules, URL text rules and an allow-only list. Every blocked resource is
+    /// reported to the archive with the kind of rule that blocked it. Absent blocks nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_rules: Option<crate::block_rules::BlockRulesV1>,
+    /// Adaptive static/browser render prediction with a seeded, recorded probe draw. Needs
+    /// `hybrid` mode and `orchestration` effect limits, because every probe is charged to the
+    /// request's effect budget. Absent runs the heuristic classifier alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive: Option<crate::adaptive::AdaptiveRendering>,
 }
 
 impl Dynamic {
@@ -1192,6 +1218,8 @@ impl Default for Dynamic {
             page_hook_options: PageHookOptions::default(),
             stealth_patches: false,
             browser_profile: None,
+            block_rules: None,
+            adaptive: None,
         }
     }
 }
@@ -1529,6 +1557,19 @@ pub struct Fetch {
     /// A `referer` header configured in `extraHeaders` is never replaced.
     #[serde(default, skip_serializing_if = "ReferrerPolicy::is_default")]
     pub referrer_policy: ReferrerPolicy,
+    /// TLS client certificate presented to servers that request one, by credential reference
+    /// (URL plane). The key is never logged or echoed in an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_certificate: Option<crate::transport_policy::ClientCertificate>,
+    /// Credentials sent only to the exact origin and realm they name, never after a redirect
+    /// left the origin or downgraded `https` to `http` (URL plane).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub realm_credentials: Vec<crate::transport_policy::RealmCredentialRef>,
+    /// Ordered, named per-host proxy rules (URL plane). The first matching rule
+    /// routes the request; a selected rule never falls back to another rule or a direct
+    /// connection, and a host no rule matches follows `proxy`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proxy_rules: Vec<crate::transport_policy::ProxyRule>,
 }
 
 impl Fetch {
@@ -1564,6 +1605,9 @@ impl Default for Fetch {
             identity_profile: None,
             acquisition_service: None,
             referrer_policy: ReferrerPolicy::NoReferrer,
+            client_certificate: None,
+            realm_credentials: Vec::new(),
+            proxy_rules: Vec::new(),
         }
     }
 }
@@ -1844,6 +1888,10 @@ pub struct CreateCrawl {
     /// scrape engine with these options and the run is reported as a crawl or batch scrape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scrape: Option<crate::scrape::ScrapeJob>,
+    /// Query-driven stop policy: the crawl ends when more pages stop adding information about
+    /// the query. Absent has no such stop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adaptive: Option<crate::adaptive::AdaptiveStopConfigV1>,
 }
 
 impl CreateCrawl {
@@ -1883,6 +1931,7 @@ impl CreateCrawl {
             datasets: crate::dataset::DatasetConfigV1::default(),
             extract: Extract::default(),
             scrape: None,
+            adaptive: None,
         }
     }
 
@@ -2337,6 +2386,51 @@ impl CreateCrawl {
                 reason: "alwaysBrowserPaths only applies to hybrid mode".to_owned(),
             });
         }
+        if let Some(adaptive) = &self.dynamic.adaptive {
+            if let Err(error) = adaptive.validate() {
+                errs.push(error);
+            }
+            if self.mode != CrawlMode::Hybrid {
+                errs.push(CoreError::Conflict {
+                    a: "mode",
+                    b: "dynamic.adaptive",
+                    reason: "render prediction only applies to hybrid mode".to_owned(),
+                });
+            }
+            if self.orchestration.is_none() || self.acquisition.is_some() {
+                errs.push(CoreError::Conflict {
+                    a: "dynamic.adaptive",
+                    b: "orchestration",
+                    reason: "probes are charged to the request effect budget: configure orchestration limits and no native acquisition policy".to_owned(),
+                });
+            }
+        }
+        if let Some(hops) = &self.scope.hops {
+            if hops.validate().is_err() {
+                errs.push(CoreError::Invalid {
+                    field: "scope.hops",
+                    reason: "unsupported version or limit out of range".to_owned(),
+                });
+            }
+        }
+        if let Some(cost) = &self.scope.queue_cost {
+            if cost.validate().is_err() {
+                errs.push(CoreError::Invalid {
+                    field: "scope.queueCost",
+                    reason: "unsupported version or maxCost out of range".to_owned(),
+                });
+            }
+        }
+        if let Some(seeding) = &self.scope.seeding {
+            if let Err(error) = seeding.validate() {
+                errs.push(error);
+            }
+        }
+        if let Some(adaptive) = &self.adaptive {
+            if let Err(error) = adaptive.validate() {
+                errs.push(error);
+            }
+        }
         let roles = self.effective_roles();
         if roles.len() * usize::from(self.runs_per_role) > 64 {
             errs.push(CoreError::Invalid {
@@ -2441,6 +2535,7 @@ impl CreateCrawl {
         self.fetch.timeout_ms = self.fetch.timeout_ms.clamp(100, 300_000);
         self.fetch.retries = self.fetch.retries.min(10);
         self.fetch.normalize_controls(&mut errs);
+        self.fetch.normalize_transport(&mut errs);
         if let Some(preflight) = &self.fetch.preflight {
             if let Err(error) = preflight.validate() {
                 errs.push(CoreError::Invalid {
@@ -2473,6 +2568,7 @@ impl CreateCrawl {
                 || self.fetch.user_agent.is_some()
                 || !self.fetch.extra_headers.is_empty()
                 || self.fetch.preflight.is_some()
+                || self.fetch.has_transport_controls()
             {
                 errs.push(CoreError::Conflict {
                     a: "fetch.identityProfile",
@@ -2494,6 +2590,7 @@ impl CreateCrawl {
                 || self.fetch.skip_tls_verification
                 || self.fetch.proxy.is_some()
                 || self.fetch.preflight.is_some()
+                || self.fetch.has_transport_controls()
             {
                 errs.push(CoreError::Invalid {
                     field: "fetch.acquisitionService",
@@ -2510,6 +2607,22 @@ impl CreateCrawl {
                     field: "fetch.proxy",
                     reason: "proxy must be an http, https or socks5 URL with a host".to_owned(),
                 });
+            }
+        }
+        if self.mode == CrawlMode::Dynamic {
+            for (set, field) in [
+                (self.fetch.client_certificate.is_some(), "fetch.clientCertificate"),
+                (!self.fetch.realm_credentials.is_empty(), "fetch.realmCredentials"),
+                (!self.fetch.proxy_rules.is_empty(), "fetch.proxyRules"),
+            ] {
+                if set {
+                    errs.push(CoreError::Conflict {
+                        a: field,
+                        b: "mode",
+                        reason: "only the URL plane honors it, and browser-only mode runs no URL plane"
+                            .to_owned(),
+                    });
+                }
             }
         }
         self.dynamic.dom_wait_ms = self.dynamic.dom_wait_ms.min(60_000);
@@ -2684,6 +2797,14 @@ impl CreateCrawl {
                          authorized_security_test"
                     .to_owned(),
             });
+        }
+        if let Some(rules) = &d.block_rules {
+            if let Err(reason) = rules.validate() {
+                errs.push(CoreError::Invalid {
+                    field: "dynamic.blockRules",
+                    reason,
+                });
+            }
         }
         if let Some(p) = &d.browser_profile {
             if !BrowserProfile::name_is_valid(&p.name) {

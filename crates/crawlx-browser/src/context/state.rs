@@ -453,6 +453,8 @@ pub struct Overrides {
     pub block_urls: Vec<String>,
     /// The emulation in effect; `None` keeps the context configuration.
     pub emulation: Option<Emulation>,
+    /// Rule-based request blocking (`PageOp::BlockRules`); `None` blocks nothing.
+    pub block_rules: Option<crawlx_core::block_rules::BlockRulesV1>,
 }
 
 /// All mutable state of one browser context.
@@ -493,6 +495,8 @@ pub struct State {
     pub blocked_by_egress: Vec<String>,
     /// Document navigations the guard refused and nobody collected yet, oldest first.
     pub blocked_navigations: Vec<BlockedNavigation>,
+    /// Requests the block rules blocked and nobody collected yet.
+    pub blocked_resources: crawlx_core::block_rules::BlockedResources,
     /// Popup targets accepted by the graph but not yet attached.
     pub attaching: BTreeSet<String>,
     /// Configured request headers and cookies: their values never enter captured traffic.
@@ -660,6 +664,7 @@ impl State {
             console_capture,
             blocked_by_egress: Vec::new(),
             blocked_navigations: Vec::new(),
+            blocked_resources: crawlx_core::block_rules::BlockedResources::default(),
             attaching: BTreeSet::new(),
             controls: RequestControls::default(),
             overrides: Overrides::default(),

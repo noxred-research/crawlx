@@ -16,6 +16,7 @@ use crate::config::Fetch;
 use crate::error::CoreError;
 use crate::secret::{CredentialRef, SecretOr, SecretResolver};
 use crate::traffic::REDACTED_PLACEHOLDER;
+use crate::transport_policy::{host_matches, ClientIdentity, RealmCredential, TransportSecrets};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -278,11 +279,13 @@ impl Fetch {
     /// Clone with every header and cookie value replaced by `[redacted]`.
     #[must_use]
     pub fn redacted(&self) -> Self {
-        Self {
+        let mut out = Self {
             extra_headers: self.extra_headers.redacted(),
             cookies: self.cookies.iter().map(FetchCookie::redacted).collect(),
             ..self.clone()
-        }
+        };
+        out.redact_transport();
+        out
     }
 
     /// Whether any header or cookie contains a literal secret instead of a credential reference.
@@ -493,6 +496,8 @@ pub struct RequestControls {
     robots_user_agent: Option<String>,
     skip_tls_verification: bool,
     scope_domain: String,
+    client_identity: Option<ClientIdentity>,
+    realm_credentials: Vec<RealmCredential>,
 }
 
 impl RequestControls {
@@ -541,6 +546,7 @@ impl RequestControls {
                 path: c.path.clone().unwrap_or_else(|| "/".to_owned()),
             });
         }
+        let transport = TransportSecrets::resolve(fetch, secrets).await?;
         Ok(Self {
             headers,
             cookies,
@@ -548,6 +554,8 @@ impl RequestControls {
             robots_user_agent: fetch.robots_user_agent.clone(),
             skip_tls_verification: fetch.skip_tls_verification,
             scope_domain: default_domain,
+            client_identity: transport.identity,
+            realm_credentials: transport.realms,
         })
     }
 
@@ -580,6 +588,31 @@ impl RequestControls {
     #[must_use]
     pub const fn skip_tls_verification(&self) -> bool {
         self.skip_tls_verification
+    }
+
+    /// The TLS client identity to present to `host` (lower-case): the configured one when its
+    /// host patterns match, or, without patterns, when `host` is in the controls' scope domain.
+    #[must_use]
+    pub fn client_identity_for(&self, host: &str) -> Option<&ClientIdentity> {
+        let identity = self.client_identity.as_ref()?;
+        let in_scope = if identity.hosts().is_empty() {
+            self.applies_to(host)
+        } else {
+            identity.hosts().iter().any(|pattern| host_matches(pattern, host))
+        };
+        in_scope.then_some(identity)
+    }
+
+    /// The resolved TLS client identity, whatever host it is scoped to.
+    #[must_use]
+    pub const fn client_identity(&self) -> Option<&ClientIdentity> {
+        self.client_identity.as_ref()
+    }
+
+    /// Realm credentials in configuration order.
+    #[must_use]
+    pub fn realm_credentials(&self) -> &[RealmCredential] {
+        &self.realm_credentials
     }
 
     /// Header values go to `host` (lower-case): the seed's domain and its subdomains. A
@@ -623,6 +656,16 @@ impl RequestControls {
             .values()
             .map(|v| v.expose().as_str())
             .chain(self.cookies.iter().map(|c| c.value.expose().as_str()))
+            .chain(
+                self.realm_credentials
+                    .iter()
+                    .flat_map(RealmCredential::secret_values),
+            )
+            .chain(
+                self.client_identity
+                    .iter()
+                    .flat_map(ClientIdentity::secret_values),
+            )
             .filter(|v| v.len() >= 4)
     }
 

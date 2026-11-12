@@ -1603,6 +1603,209 @@ fn native_identity_and_service_selectors_match_typed_fetch_and_backend_policy() 
         .contains_key("extensionRecipe"));
 }
 
+/// The `createCrawl` request schema of one top-level property, or of a property of one.
+fn crawl_property(document: &Value, path: &[&str]) -> Value {
+    let (_, _, operation) = op_by_id(document, "createCrawl");
+    let (_, request) = request_schema(operation).unwrap();
+    let mut schema = resolve(document, &request).clone();
+    for name in path {
+        schema = schema["properties"][name].clone();
+    }
+    schema
+}
+
+#[test]
+fn native_transport_control_schema_matches_typed_fetch_and_admission() {
+    let document = doc();
+    let validate = validator(&document, &crawl_property(&document, &["fetch"]));
+    let accepted = [
+        json!({"clientCertificate": null, "realmCredentials": [], "proxyRules": []}),
+        json!({"clientCertificate": {
+            "certificate": "env://CLIENT_CERT", "key": "file:///run/secrets/client-key",
+            "hosts": ["api.example.test", "*.example.test"]}}),
+        json!({"realmCredentials": [
+            {"origin": "https://a.example.test", "realm": "staff area", "credential": "env://BASIC"},
+            {"origin": "http://a.example.test:8080", "realm": "ops", "scheme": "digest",
+             "credential": "cloud-sm://prod/ops"}]}),
+        json!({"proxyRules": [
+            {"name": "eu-1", "hosts": ["*.example.test"], "proxy": "http://127.0.0.1:3128"},
+            {"name": "tor_2", "hosts": ["onion.example.test"], "proxy": "socks5h://127.0.0.1:9050"}]}),
+    ];
+    for value in accepted {
+        assert!(errors_of(&validate, &value).is_empty(), "{value}");
+        let mut crawl: crawlx_core::CreateCrawl =
+            serde_json::from_value(json!({"seedUrl": "https://example.test/", "fetch": value.clone()}))
+                .unwrap();
+        crawl
+            .normalize()
+            .unwrap_or_else(|errors| panic!("{value}: {errors:?}"));
+    }
+    // each of these is refused by the schema and by typed admission or deserialization
+    let refused = [
+        json!({"clientCertificate": {"certificate": "-----BEGIN CERTIFICATE-----", "key": "env://K"}}),
+        json!({"clientCertificate": {"certificate": "env://C"}}),
+        json!({"clientCertificate": {"certificate": "env://C", "key": "env://K", "extra": 1}}),
+        json!({"realmCredentials": [{"origin": "https://a.example.test", "realm": "r", "credential": "user:pw"}]}),
+        json!({"realmCredentials": [{"origin": "https://a.example.test", "realm": "a\"b", "credential": "env://C"}]}),
+        json!({"realmCredentials": [{"origin": "https://a.example.test", "realm": "r",
+            "scheme": "ntlm", "credential": "env://C"}]}),
+        json!({"proxyRules": [{"name": "Upper", "hosts": ["a.example.test"], "proxy": "http://127.0.0.1:1"}]}),
+        json!({"proxyRules": [{"name": "empty", "hosts": [], "proxy": "http://127.0.0.1:1"}]}),
+        json!({"proxyRules": [{"name": "ftp", "hosts": ["a.example.test"], "proxy": "ftp://127.0.0.1:1"}]}),
+        json!({"proxyRules": (0..17).map(|n| json!({
+            "name": format!("rule-{n}"), "hosts": ["a.example.test"], "proxy": "http://127.0.0.1:1"
+        })).collect::<Vec<_>>()}),
+    ];
+    for value in refused {
+        assert!(!errors_of(&validate, &value).is_empty(), "{value}");
+        let crawl: Result<crawlx_core::CreateCrawl, _> =
+            serde_json::from_value(json!({"seedUrl": "https://example.test/", "fetch": value.clone()}));
+        if let Ok(mut crawl) = crawl {
+            assert!(crawl.normalize().is_err(), "{value}");
+        }
+    }
+}
+
+#[test]
+fn native_adaptive_hop_and_seeding_schemas_match_typed_config() {
+    let document = doc();
+    let dynamic = validator(&document, &crawl_property(&document, &["dynamic"]));
+    for value in [
+        json!({"adaptive": null, "blockRules": null}),
+        json!({"adaptive": {}}),
+        json!({"adaptive": {"predictorVersion": 1, "probePerMille": 1000, "maxProbes": 100000, "probeEffects": 8}}),
+        json!({"blockRules": {"urls": ["*/ads/*"], "frames": ["*/embed"], "text": ["tracker"],
+            "allowOnly": ["https://example.test/*"]}}),
+    ] {
+        assert!(errors_of(&dynamic, &value).is_empty(), "{value}");
+        let typed: crawlx_core::config::Dynamic = serde_json::from_value(value).unwrap();
+        if let Some(adaptive) = &typed.adaptive {
+            adaptive.validate().unwrap();
+        }
+        if let Some(rules) = &typed.block_rules {
+            rules.validate().unwrap();
+        }
+    }
+    for value in [
+        json!({"adaptive": {"probePerMille": 1001}}),
+        json!({"adaptive": {"probeEffects": 0}}),
+        json!({"adaptive": {"probeEffects": 9}}),
+        json!({"adaptive": {"maxProbes": 100001}}),
+        json!({"adaptive": {"predictorVersion": 2}}),
+        json!({"adaptive": {"ratio": 1}}),
+        json!({"blockRules": {"urls": [""]}}),
+        json!({"blockRules": {"urls": ["x".repeat(513)]}}),
+        json!({"blockRules": {"urls": vec!["*"; 65]}}),
+        json!({"blockRules": {"regex": ["a"]}}),
+    ] {
+        assert!(!errors_of(&dynamic, &value).is_empty(), "{value}");
+        let typed: Result<crawlx_core::config::Dynamic, _> = serde_json::from_value(value.clone());
+        if let Ok(typed) = typed {
+            let rejected = typed
+                .adaptive
+                .is_some_and(|adaptive| adaptive.validate().is_err())
+                || typed.block_rules.is_some_and(|rules| rules.validate().is_err());
+            assert!(rejected, "{value}");
+        }
+    }
+
+    let scope = validator(&document, &crawl_property(&document, &["scope"]));
+    for value in [
+        json!({"hops": null, "queueCost": null, "seeding": null}),
+        json!({"hops": {}}),
+        json!({"hops": {"version": 1, "followEmbeds": true, "followPrerequisites": true,
+            "maxHops": 64, "maxTransitiveHops": 64, "maxRepeatedSegments": 255}}),
+        json!({"queueCost": {}}),
+        json!({"queueCost": {"linkCost": 2, "embedCost": 1, "calendarPenalty": 0, "successStep": 10, "maxCost": 32000}}),
+        json!({"seeding": {"fixtures": [{"kind": "sitemap", "content": "<urlset/>"}]}}),
+        json!({"seeding": {"fixtures": [
+            {"kind": "archive_index", "content": ""}, {"kind": "certificate_transparency", "content": "[]"},
+            {"kind": "robots", "content": ""}, {"kind": "feed", "content": ""}, {"kind": "homepage", "content": ""}],
+            "maxUrls": 100000, "liveCheck": "head"}}),
+    ] {
+        assert!(errors_of(&scope, &value).is_empty(), "{value}");
+        let typed: crawlx_core::config::Scope = serde_json::from_value(value).unwrap();
+        if let Some(hops) = &typed.hops {
+            hops.validate().unwrap();
+        }
+        if let Some(cost) = &typed.queue_cost {
+            cost.validate().unwrap();
+        }
+        if let Some(seeding) = &typed.seeding {
+            seeding.validate().unwrap();
+        }
+    }
+    for value in [
+        json!({"hops": {"maxHops": 0}}),
+        json!({"hops": {"maxHops": 65}}),
+        json!({"hops": {"maxTransitiveHops": 65}}),
+        json!({"hops": {"version": 2}}),
+        json!({"hops": {"followImages": true}}),
+        json!({"queueCost": {"maxCost": 0}}),
+        json!({"queueCost": {"maxCost": 32001}}),
+        json!({"queueCost": {"version": 2}}),
+        json!({"seeding": {"fixtures": []}}),
+        json!({"seeding": {"fixtures": [{"kind": "ftp", "content": ""}]}}),
+        json!({"seeding": {"fixtures": [{"kind": "sitemap", "content": "", "path": "/x"}]}}),
+        json!({"seeding": {"fixtures": [{"kind": "sitemap", "content": ""}], "maxUrls": 0}}),
+        json!({"seeding": {"fixtures": [{"kind": "sitemap", "content": ""}], "liveCheck": "get"}}),
+        json!({"seeding": {"fixtures": vec![json!({"kind": "sitemap", "content": ""}); 9]}}),
+    ] {
+        assert!(!errors_of(&scope, &value).is_empty(), "{value}");
+        let typed: Result<crawlx_core::config::Scope, _> = serde_json::from_value(value.clone());
+        if let Ok(typed) = typed {
+            let rejected = typed.hops.is_some_and(|hops| hops.validate().is_err())
+                || typed.queue_cost.is_some_and(|cost| cost.validate().is_err())
+                || typed.seeding.is_some_and(|seeding| seeding.validate().is_err());
+            assert!(rejected, "{value}");
+        }
+    }
+
+    let adaptive = validator(&document, &crawl_property(&document, &["adaptive"]));
+    for value in [
+        json!(null),
+        json!({"query": "rust async runtimes"}),
+        json!({"query": "rust", "maxPages": 100000, "minPages": 0, "window": 1000, "minGainPermille": 1000,
+            "targetConfidencePermille": 950, "maxVocabulary": 65536}),
+    ] {
+        assert!(errors_of(&adaptive, &value).is_empty(), "{value}");
+        if !value.is_null() {
+            let typed: crawlx_core::adaptive::AdaptiveStopConfigV1 = serde_json::from_value(value).unwrap();
+            typed.validate().unwrap();
+        }
+    }
+    let exported = {
+        let mut config = crawlx_core::adaptive::AdaptiveStopConfigV1::new("rust");
+        config.import = Some(
+            serde_json::from_value(json!({
+                "version": 1, "queryDigest": crawlx_core::adaptive::query_digest("rust").to_hex(),
+                "pages": 4, "relevantPages": 2, "recentGains": [500, 100],
+                "termPages": {"rust": 2}, "vocabulary": ["async", "rust"], "stopped": null
+            }))
+            .unwrap(),
+        );
+        serde_json::to_value(config).unwrap()
+    };
+    assert!(errors_of(&adaptive, &exported).is_empty(), "{exported}");
+    for value in [
+        json!({}),
+        json!({"query": ""}),
+        json!({"query": "x".repeat(513)}),
+        json!({"query": "rust", "maxPages": 0}),
+        json!({"query": "rust", "window": 0}),
+        json!({"query": "rust", "targetConfidencePermille": 951}),
+        json!({"query": "rust", "maxVocabulary": 15}),
+        json!({"query": "rust", "stop": true}),
+        json!({"query": "rust", "import": {"version": 1}}),
+    ] {
+        assert!(!errors_of(&adaptive, &value).is_empty(), "{value}");
+    }
+    // the schema cannot see that an exhausted policy bound or a foreign export is wrong; admission can
+    let mut foreign = crawlx_core::adaptive::AdaptiveStopConfigV1::new("rust");
+    foreign.min_pages = foreign.max_pages + 1;
+    assert!(foreign.validate().is_err());
+}
+
 #[test]
 fn native_browser_profile_generation_schema_matches_typed_config() {
     let document = doc();
