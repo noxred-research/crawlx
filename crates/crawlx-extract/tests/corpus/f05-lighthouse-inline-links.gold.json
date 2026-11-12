@@ -1,0 +1,93 @@
+{
+  "id": "f05-lighthouse-inline-links",
+  "family": "focus",
+  "note": "long read with inline read-also lines made entirely of links and a sidebar of latest and trending lists",
+  "expectedText": "Tidemark Features Long reads Photography Audio Support us\nThe Long Winter of the Skerry Light\nFor ninety years the keepers of the Skerry Light lived on a rock the size of a football pitch, three miles from the nearest road. The lamp was automated in 1971, and the buildings were left to the gulls. Last autumn a small charity took the lease and began to put the place back together.\nVolunteers reached the rock by inflatable boat whenever the swell dropped below a metre, which in the first month was on only four days. They carried slates, lime mortar and a generator up a stair cut into the stone, and slept in the old oil store with a stove that smoked.\nRead also: the keepers' diary, 1923\nThe lantern room was the hardest job. Salt had eaten through the brass frames, and two of the glass panes were cracked from top to bottom. A glazier from the mainland spent three weeks replacing them, working only on windless mornings.\nBy December the kitchen had a roof again. Project leader Dilys Penhallow keeps a list on the wall of everything the team has found beneath the floorboards, including a tin whistle, a ration book and a letter that was never posted.\nRelated: the tin whistle that started a search\nThe charity hopes to open the light to day visitors by next summer, weather permitting. For now it is a work site, and the only audience is the seals that gather on the northern ledge.\nLatest from Tidemark\nThe last ferry pilot\nFishing under licence\nA school on seven islands\nTrending\nWhat happened to the herring?\nPhotographing storms\nAbout Contact Privacy Terms",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 57
+    },
+    {
+      "label": "body",
+      "start": 58,
+      "end": 93
+    },
+    {
+      "label": "body",
+      "start": 94,
+      "end": 382
+    },
+    {
+      "label": "body",
+      "start": 383,
+      "end": 656
+    },
+    {
+      "label": "boilerplate",
+      "start": 657,
+      "end": 692
+    },
+    {
+      "label": "body",
+      "start": 693,
+      "end": 928
+    },
+    {
+      "label": "body",
+      "start": 929,
+      "end": 1159
+    },
+    {
+      "label": "boilerplate",
+      "start": 1160,
+      "end": 1206
+    },
+    {
+      "label": "body",
+      "start": 1207,
+      "end": 1391
+    },
+    {
+      "label": "boilerplate",
+      "start": 1392,
+      "end": 1412
+    },
+    {
+      "label": "boilerplate",
+      "start": 1413,
+      "end": 1433
+    },
+    {
+      "label": "boilerplate",
+      "start": 1434,
+      "end": 1455
+    },
+    {
+      "label": "boilerplate",
+      "start": 1456,
+      "end": 1481
+    },
+    {
+      "label": "boilerplate",
+      "start": 1482,
+      "end": 1490
+    },
+    {
+      "label": "boilerplate",
+      "start": 1491,
+      "end": 1520
+    },
+    {
+      "label": "boilerplate",
+      "start": 1521,
+      "end": 1541
+    },
+    {
+      "label": "boilerplate",
+      "start": 1542,
+      "end": 1569
+    }
+  ]
+}

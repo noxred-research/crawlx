@@ -1,0 +1,78 @@
+{
+  "id": "c06-blog-comment-quotes-main",
+  "family": "comments",
+  "note": "blog post whose first comment intentionally quotes a sentence of the post",
+  "expectedText": "Willowbank Notes News Events Contact\nWhy Our Library Needs a Reading Garden\nThe courtyard behind the library has been locked for six years, filled with broken paving and weeds. A reading garden would turn it into the only public outdoor room in the village, free to use and open whenever the library is.\nOur proposal costs less than a new roof for the bicycle shed. Volunteers will lay a gravel path, plant a border of lavender and install four benches made from reclaimed timber by the school woodwork club.\nNothing in this plan requires paid maintenance. Local gardeners have promised to look after the beds on a rota, and the parish council has agreed to cover the water bill for the first three years.\nIngrid Sallow says:\nI agree with the main point of the post, that\na reading garden would turn it into the only public outdoor room in the village\nand I would add that it should have shade for the summer.\nDesmond Achterberg says:\nWho is going to weed it in August when the volunteers are on holiday? Pledges are easy to make and hard to keep.\nIngrid Sallow says:\nFair question, Desmond. The rota already lists two names for every week of the summer.\nPrivacy Archive",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 36
+    },
+    {
+      "label": "body",
+      "start": 37,
+      "end": 75
+    },
+    {
+      "label": "body",
+      "start": 76,
+      "end": 303
+    },
+    {
+      "label": "body",
+      "start": 304,
+      "end": 508
+    },
+    {
+      "label": "body",
+      "start": 509,
+      "end": 705
+    },
+    {
+      "label": "comment",
+      "start": 706,
+      "end": 725
+    },
+    {
+      "label": "comment",
+      "start": 726,
+      "end": 771
+    },
+    {
+      "label": "quote",
+      "start": 772,
+      "end": 851
+    },
+    {
+      "label": "comment",
+      "start": 852,
+      "end": 909
+    },
+    {
+      "label": "comment",
+      "start": 910,
+      "end": 934
+    },
+    {
+      "label": "comment",
+      "start": 935,
+      "end": 1047
+    },
+    {
+      "label": "comment",
+      "start": 1048,
+      "end": 1067
+    },
+    {
+      "label": "comment",
+      "start": 1068,
+      "end": 1154
+    },
+    {
+      "label": "boilerplate",
+      "start": 1155,
+      "end": 1170
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "id": "n14-curly-quotes",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "“Stop right there,” the guard said.\n“Show your pass.”\nThe traveler obeyed.\nthe=2\nstop=1\nright=1\nthere=1\nguard=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 39
+    },
+    {
+      "label": "sentence",
+      "start": 40,
+      "end": 61
+    },
+    {
+      "label": "sentence",
+      "start": 62,
+      "end": 82
+    },
+    {
+      "label": "keyword",
+      "start": 83,
+      "end": 86
+    },
+    {
+      "label": "score",
+      "start": 87,
+      "end": 88
+    },
+    {
+      "label": "keyword",
+      "start": 89,
+      "end": 93
+    },
+    {
+      "label": "score",
+      "start": 94,
+      "end": 95
+    },
+    {
+      "label": "keyword",
+      "start": 96,
+      "end": 101
+    },
+    {
+      "label": "score",
+      "start": 102,
+      "end": 103
+    },
+    {
+      "label": "keyword",
+      "start": 104,
+      "end": 109
+    },
+    {
+      "label": "score",
+      "start": 110,
+      "end": 111
+    },
+    {
+      "label": "keyword",
+      "start": 112,
+      "end": 117
+    },
+    {
+      "label": "score",
+      "start": 118,
+      "end": 119
+    }
+  ]
+}

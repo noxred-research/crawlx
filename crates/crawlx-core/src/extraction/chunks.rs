@@ -1,20 +1,88 @@
-//! Native Unicode-whitespace word windows over finalized privacy-approved text.
+//! Native chunking over finalized privacy-approved text: Unicode-whitespace word windows,
+//! regex-delimited spans and UAX 29 sentence groups.
 //!
-//! These ranges preserve internal whitespace. They do not claim Python splitting,
-//! sentence-tokenizer-model, regex capture, TextTiling, or model-backed tokenizer equivalence.
+//! These ranges are source-only (byte offsets into the exact final text) and preserve internal
+//! whitespace. They do not claim Python splitting, trained sentence-tokenizer, TextTiling or
+//! model-backed tokenizer equivalence.
+use super::regex_admission::{admit_regex, check_pattern_len, RegexAdmissionError, MAX_REGEX_PATTERN_LEN};
 use super::SourceRangeV1;
 use crate::hash::Digest;
 use serde::{Deserialize, Serialize};
 
-const IMPLEMENTATION: &str = "native_unicode_whitespace_word_windows_v1";
+const WORD_IMPLEMENTATION: &str = "native_unicode_whitespace_word_windows_v1";
+const REGEX_IMPLEMENTATION: &str = "native_regex_delimited_spans_v1";
+const SENTENCE_IMPLEMENTATION: &str = "native_uax29_sentence_groups_v1";
 const MAX_BYTES: usize = 16_777_216;
 const MAX_WORDS: usize = 1_000_000;
 const MAX_RANGES: usize = 20_000;
 
-/// Native word-window strategy. Words are maximal runs of non-Unicode-whitespace scalars.
+/// Pinned implementation identifier recorded on the envelope for `strategy`.
+const fn implementation_of(strategy: &WordChunkStrategyV1) -> &'static str {
+    match strategy {
+        WordChunkStrategyV1::Regex { .. } => REGEX_IMPLEMENTATION,
+        WordChunkStrategyV1::Sentences { .. } => SENTENCE_IMPLEMENTATION,
+        _ => WORD_IMPLEMENTATION,
+    }
+}
+
+/// A delimiter pattern held inline so [`WordChunkStrategyV1`] stays `Copy`. Length is checked
+/// when the value is made; full admission runs when the policy is validated.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ChunkPatternV1 {
+    len: u16,
+    bytes: [u8; MAX_REGEX_PATTERN_LEN],
+}
+impl ChunkPatternV1 {
+    /// Hold `pattern`.
+    ///
+    /// # Errors
+    /// [`RegexAdmissionError::Empty`] or [`RegexAdmissionError::TooLong`].
+    pub fn new(pattern: &str) -> Result<Self, RegexAdmissionError> {
+        check_pattern_len(pattern)?;
+        let mut bytes = [0_u8; MAX_REGEX_PATTERN_LEN];
+        let target = bytes
+            .get_mut(..pattern.len())
+            .ok_or(RegexAdmissionError::TooLong { len: pattern.len() })?;
+        target.copy_from_slice(pattern.as_bytes());
+        let len =
+            u16::try_from(pattern.len()).map_err(|_| RegexAdmissionError::TooLong { len: pattern.len() })?;
+        Ok(Self { len, bytes })
+    }
+
+    /// The pattern text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.bytes
+            .get(..usize::from(self.len))
+            .and_then(|slice| std::str::from_utf8(slice).ok())
+            .unwrap_or_default()
+    }
+}
+impl std::fmt::Debug for ChunkPatternV1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ChunkPatternV1").field(&self.as_str()).finish()
+    }
+}
+impl Serialize for ChunkPatternV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+impl<'de> Deserialize<'de> for ChunkPatternV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::new(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Native chunk strategy: Unicode-whitespace word windows, regex-delimited spans or UAX 29
+/// sentence groups. Words are maximal runs of non-Unicode-whitespace scalars.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
+// The inline pattern keeps the policy `Copy`, which every extraction caller relies on; boxing it
+// would force a clone at each of them for a value built once per document.
+#[allow(clippy::large_enum_variant)]
 pub enum WordChunkStrategyV1 {
     /// Disjoint groups, including a short final group; empty input has no groups.
     Fixed {
@@ -35,6 +103,19 @@ pub enum WordChunkStrategyV1 {
         /// Number of shared words; must be strictly smaller than window.
         overlap: usize,
     },
+    /// Whitespace-trimmed spans between the non-empty matches of an admitted linear-time
+    /// pattern; delimiters are excluded and empty spans are dropped. Patterns that need
+    /// backtracking (backreferences, look-around) are refused at policy validation.
+    Regex {
+        /// Delimiter pattern, at most 512 bytes.
+        pattern: ChunkPatternV1,
+    },
+    /// Unicode (UAX 29) sentences, whitespace-trimmed, `window` consecutive sentences per range.
+    /// The final range may be short. This is rule-based segmentation, not a trained tokenizer.
+    Sentences {
+        /// Positive number of sentences per range, at most one million.
+        window: usize,
+    },
 }
 impl Default for WordChunkStrategyV1 {
     fn default() -> Self {
@@ -49,13 +130,14 @@ impl Default for WordChunkStrategyV1 {
 pub struct WordChunkPolicyV1 {
     /// Exactly one.
     pub version: u16,
-    /// Native fixed, sliding, or overlapping word windows.
+    /// Native word windows, regex-delimited spans, or UAX 29 sentence groups.
     pub strategy: WordChunkStrategyV1,
     /// Final text byte ceiling, at most 16 MiB, checked before scanning or hashing.
     pub max_input_bytes: usize,
     /// Unicode scalar scan ceiling, at most 16,777,216; each input scalar is visited once.
     pub max_scan_chars: usize,
-    /// Retained word-boundary ceiling, at most one million.
+    /// Retained word-boundary ceiling, at most one million; for regex and sentence strategies the
+    /// ceiling on retained segments.
     pub max_words: usize,
     /// Emitted source-range ceiling, at most 20,000.
     pub max_ranges: usize,
@@ -89,18 +171,24 @@ impl WordChunkPolicyV1 {
         {
             return Err(WordChunkErrorV1::InvalidPolicy);
         }
+        if let WordChunkStrategyV1::Regex { pattern } = &self.strategy {
+            admit_regex(pattern.as_str()).map_err(WordChunkErrorV1::Pattern)?;
+        }
         Ok(())
     }
 
     fn window_step(&self) -> Result<(usize, usize), WordChunkErrorV1> {
         match self.strategy {
-            WordChunkStrategyV1::Fixed { window } => Ok((window, window)),
+            WordChunkStrategyV1::Fixed { window } | WordChunkStrategyV1::Sentences { window } => {
+                Ok((window, window))
+            }
             WordChunkStrategyV1::Sliding { window, step } => Ok((window, step)),
             WordChunkStrategyV1::Overlapping { window, overlap } => window
                 .checked_sub(overlap)
                 .filter(|step| *step > 0)
                 .map(|step| (window, step))
                 .ok_or(WordChunkErrorV1::InvalidPolicy),
+            WordChunkStrategyV1::Regex { .. } => Ok((1, 1)),
         }
     }
 }
@@ -138,6 +226,10 @@ pub enum WordChunkErrorV1 {
     /// Persisted metadata no longer matches exact final text, implementation or policy.
     #[error("word chunk envelope does not match finalized text and policy")]
     InvalidEnvelope,
+    /// The pattern of a regex strategy was not admitted (backtracking construct, too long or too
+    /// complex for the linear-time engine).
+    #[error("chunk pattern rejected: {0}")]
+    Pattern(#[source] RegexAdmissionError),
 }
 
 impl WordChunkEnvelopeV1 {
@@ -157,7 +249,7 @@ impl WordChunkEnvelopeV1 {
         })?;
         Ok(Self {
             version: 1,
-            implementation: IMPLEMENTATION.into(),
+            implementation: implementation_of(&policy.strategy).into(),
             policy,
             final_text_digest: text_digest(text),
             ranges,
@@ -174,7 +266,7 @@ impl WordChunkEnvelopeV1 {
     pub fn validate(&self, text: &str, policy: &WordChunkPolicyV1) -> Result<(), WordChunkErrorV1> {
         policy.validate()?;
         if self.version != 1
-            || self.implementation != IMPLEMENTATION
+            || self.implementation != implementation_of(&policy.strategy)
             || self.policy != *policy
             || text.len() > policy.max_input_bytes
             || self.ranges.len() > policy.max_ranges
@@ -252,6 +344,11 @@ fn visit_ranges(
         count = count.checked_add(1).ok_or(WordChunkErrorV1::Arithmetic)?;
         emit(range)
     };
+    match policy.strategy {
+        WordChunkStrategyV1::Regex { pattern } => return visit_regex(text, policy, &pattern, emit),
+        WordChunkStrategyV1::Sentences { window } => return visit_sentences(text, policy, window, emit),
+        _ => {}
+    }
     let (window, step) = policy.window_step()?;
     if matches!(policy.strategy, WordChunkStrategyV1::Fixed { .. }) {
         // Disjoint groups need only their first/last boundary, never a per-word buffer.
@@ -307,6 +404,108 @@ fn visit_ranges(
             .ok_or(WordChunkErrorV1::Arithmetic)?;
         let last = words.len().checked_sub(1).ok_or(WordChunkErrorV1::Arithmetic)?;
         emit(SourceRangeV1::new(words[first].start, words[last].end))?;
+    }
+    Ok(())
+}
+
+/// Candidate source range `[start, end)` with Unicode whitespace trimmed from both ends, or
+/// `None` when nothing but whitespace is left. Offsets stay on UTF-8 boundaries because
+/// `str::trim_start`/`trim_end` only remove whole scalars.
+fn trimmed_range(text: &str, start: usize, end: usize) -> Option<SourceRangeV1> {
+    let slice = text.get(start..end)?;
+    let head = slice.trim_start();
+    if head.is_empty() {
+        return None;
+    }
+    let lead = slice.len().checked_sub(head.len())?;
+    let body = head.trim_end();
+    let first = start.checked_add(lead)?;
+    Some(SourceRangeV1::new(first, first.checked_add(body.len())?))
+}
+
+/// Refuse a scan above the configured scalar ceiling before any pattern or boundary work, using
+/// a count that stops one past the ceiling.
+fn check_scan(text: &str, policy: &WordChunkPolicyV1) -> Result<(), WordChunkErrorV1> {
+    let ceiling = policy.max_scan_chars;
+    if text.len() > ceiling && text.chars().take(ceiling.saturating_add(1)).count() > ceiling {
+        return Err(WordChunkErrorV1::Limit("scanned scalars"));
+    }
+    Ok(())
+}
+
+/// Count one retained unit against `max_words`, failing one over the ceiling.
+fn charge_unit(units: &mut usize, policy: &WordChunkPolicyV1) -> Result<(), WordChunkErrorV1> {
+    if *units == policy.max_words {
+        return Err(WordChunkErrorV1::Limit("segments"));
+    }
+    *units = units.checked_add(1).ok_or(WordChunkErrorV1::Arithmetic)?;
+    Ok(())
+}
+
+/// Spans between non-empty matches of the admitted pattern, whitespace-trimmed, empty spans
+/// dropped, in text order. The matcher is the linear-time engine, so work is bounded by the
+/// input ceiling regardless of the pattern.
+fn visit_regex(
+    text: &str,
+    policy: &WordChunkPolicyV1,
+    pattern: &ChunkPatternV1,
+    mut emit: impl FnMut(SourceRangeV1) -> Result<(), WordChunkErrorV1>,
+) -> Result<(), WordChunkErrorV1> {
+    check_scan(text, policy)?;
+    let regex = admit_regex(pattern.as_str()).map_err(WordChunkErrorV1::Pattern)?;
+    let mut units = 0_usize;
+    let mut visit = |start: usize, end: usize| -> Result<(), WordChunkErrorV1> {
+        if let Some(range) = trimmed_range(text, start, end) {
+            charge_unit(&mut units, policy)?;
+            emit(range)?;
+        }
+        Ok(())
+    };
+    let mut previous = 0_usize;
+    for found in regex.find_iter(text) {
+        if found.is_empty() {
+            continue;
+        }
+        visit(previous, found.start())?;
+        previous = found.end();
+    }
+    visit(previous, text.len())
+}
+
+/// UAX 29 sentences, whitespace-trimmed, `window` consecutive sentences per range (the last
+/// range may be short), in text order. Empty or all-whitespace text has no ranges.
+fn visit_sentences(
+    text: &str,
+    policy: &WordChunkPolicyV1,
+    window: usize,
+    mut emit: impl FnMut(SourceRangeV1) -> Result<(), WordChunkErrorV1>,
+) -> Result<(), WordChunkErrorV1> {
+    use unicode_segmentation::UnicodeSegmentation;
+    check_scan(text, policy)?;
+    let mut units = 0_usize;
+    let mut group: Option<(usize, usize)> = None;
+    let mut in_group = 0_usize;
+    let mut offset = 0_usize;
+    for sentence in text.split_sentence_bounds() {
+        let start = offset;
+        offset = offset
+            .checked_add(sentence.len())
+            .ok_or(WordChunkErrorV1::Arithmetic)?;
+        let Some(range) = trimmed_range(text, start, offset) else {
+            continue;
+        };
+        charge_unit(&mut units, policy)?;
+        group = Some(group.map_or((range.start, range.end), |(first, _)| (first, range.end)));
+        in_group = in_group.checked_add(1).ok_or(WordChunkErrorV1::Arithmetic)?;
+        if in_group == window {
+            if let Some((first, last)) = group.take() {
+                emit(SourceRangeV1::new(first, last))?;
+            }
+            in_group = 0;
+        }
+    }
+    if let Some((first, last)) = group {
+        emit(SourceRangeV1::new(first, last))?;
     }
     Ok(())
 }

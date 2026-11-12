@@ -1,0 +1,18 @@
+{
+  "id": "s44-quadratic-predicates-large",
+  "family": "selector",
+  "note": "the same quadratic predicates over eight hundred paragraphs exhaust the shared operation budget and fail with a typed error instead of running on",
+  "expectedText": "error:Budget(operations)\nerror:Budget(operations)",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 24
+    },
+    {
+      "label": "r2",
+      "start": 25,
+      "end": 49
+    }
+  ]
+}

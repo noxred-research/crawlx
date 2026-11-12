@@ -1,0 +1,93 @@
+{
+  "id": "a18-definitions-and-details",
+  "family": "article_body",
+  "note": "definition list and collapsible details blocks that belong to the article",
+  "expectedText": "Shoreline Guide\nLearn\nCharts\nA Short Glossary of Tide Terms\nAnyone who walks the flats at low water should know a handful of words. These definitions come from the harbour pilots who taught the local sailing school.\nNeap tide\nA tide with a small range, which happens when the moon is at its first or last quarter.\nSpring tide\nA tide with a large range, which follows the new and the full moon.\nSlack water\nThe short time when the water neither rises nor falls.\nCommon questions\nWhy are there two high tides a day?\nThe moon pulls the sea on its near side and, in effect, leaves a bulge on the far side too, so most coasts see two highs and two lows in a little over a day.\nIs slack water the safest time to swim?\nIt is often calmer, but local currents can start without warning, so swimmers should check the harbour chart first.\nShoreline Guide. Not for navigation.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "boilerplate",
+      "start": 16,
+      "end": 21
+    },
+    {
+      "label": "boilerplate",
+      "start": 22,
+      "end": 28
+    },
+    {
+      "label": "body",
+      "start": 29,
+      "end": 59
+    },
+    {
+      "label": "body",
+      "start": 60,
+      "end": 215
+    },
+    {
+      "label": "body",
+      "start": 216,
+      "end": 225
+    },
+    {
+      "label": "body",
+      "start": 226,
+      "end": 313
+    },
+    {
+      "label": "body",
+      "start": 314,
+      "end": 325
+    },
+    {
+      "label": "body",
+      "start": 326,
+      "end": 393
+    },
+    {
+      "label": "body",
+      "start": 394,
+      "end": 405
+    },
+    {
+      "label": "body",
+      "start": 406,
+      "end": 460
+    },
+    {
+      "label": "body",
+      "start": 461,
+      "end": 477
+    },
+    {
+      "label": "body",
+      "start": 478,
+      "end": 513
+    },
+    {
+      "label": "body",
+      "start": 514,
+      "end": 671
+    },
+    {
+      "label": "body",
+      "start": 672,
+      "end": 711
+    },
+    {
+      "label": "body",
+      "start": 712,
+      "end": 827
+    },
+    {
+      "label": "boilerplate",
+      "start": 828,
+      "end": 864
+    }
+  ]
+}

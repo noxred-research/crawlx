@@ -413,7 +413,7 @@ impl Extractor {
             None => parse_budget::charge(html.len())?,
         };
         charge.cover(html.len())?;
-        let doc = Html::parse_document(html);
+        let doc = dom::parse_document(&mut charge, html)?;
         let max_nodes = if opts.content.is_some() {
             opts.max_nodes.min(document::DEFAULT_MAX_NODES)
         } else {

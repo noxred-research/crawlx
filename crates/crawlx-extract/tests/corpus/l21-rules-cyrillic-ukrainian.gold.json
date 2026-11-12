@@ -1,0 +1,93 @@
+{
+  "id": "l21-rules-cyrillic-ukrainian",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "потяг|відправляється|з|вокзалу|о|восьмій|пасажири|чекають|на|пероні|дівчинка|читає|газету|а|провідник|перевіряє|квитки",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 60
+    },
+    {
+      "label": "token",
+      "start": 61,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 92
+    },
+    {
+      "label": "token",
+      "start": 93,
+      "end": 107
+    },
+    {
+      "label": "token",
+      "start": 108,
+      "end": 112
+    },
+    {
+      "label": "token",
+      "start": 113,
+      "end": 125
+    },
+    {
+      "label": "token",
+      "start": 126,
+      "end": 142
+    },
+    {
+      "label": "token",
+      "start": 143,
+      "end": 153
+    },
+    {
+      "label": "token",
+      "start": 154,
+      "end": 166
+    },
+    {
+      "label": "token",
+      "start": 167,
+      "end": 169
+    },
+    {
+      "label": "token",
+      "start": 170,
+      "end": 188
+    },
+    {
+      "label": "token",
+      "start": 189,
+      "end": 207
+    },
+    {
+      "label": "token",
+      "start": 208,
+      "end": 220
+    }
+  ]
+}

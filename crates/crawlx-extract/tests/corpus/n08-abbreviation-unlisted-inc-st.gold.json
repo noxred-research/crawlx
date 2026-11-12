@@ -1,0 +1,68 @@
+{
+  "id": "n08-abbreviation-unlisted-inc-st",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Harlan Rowe Inc. hired Elena Voss on St. Anselm Street.\nShe starts on Monday.\non=2\nharlan=1\nrowe=1\ninc=1\nhired=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 55
+    },
+    {
+      "label": "sentence",
+      "start": 56,
+      "end": 77
+    },
+    {
+      "label": "keyword",
+      "start": 78,
+      "end": 80
+    },
+    {
+      "label": "score",
+      "start": 81,
+      "end": 82
+    },
+    {
+      "label": "keyword",
+      "start": 83,
+      "end": 89
+    },
+    {
+      "label": "score",
+      "start": 90,
+      "end": 91
+    },
+    {
+      "label": "keyword",
+      "start": 92,
+      "end": 96
+    },
+    {
+      "label": "score",
+      "start": 97,
+      "end": 98
+    },
+    {
+      "label": "keyword",
+      "start": 99,
+      "end": 102
+    },
+    {
+      "label": "score",
+      "start": 103,
+      "end": 104
+    },
+    {
+      "label": "keyword",
+      "start": 105,
+      "end": 110
+    },
+    {
+      "label": "score",
+      "start": 111,
+      "end": 112
+    }
+  ]
+}

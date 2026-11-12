@@ -1,0 +1,68 @@
+{
+  "id": "n09-abbreviation-unlisted-etc-us",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Crates, bags, etc. were stacked near the U.S. depot.\nA clerk counted them twice.\ncrates=1\nbags=1\netc=1\nwere=1\nstacked=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 52
+    },
+    {
+      "label": "sentence",
+      "start": 53,
+      "end": 80
+    },
+    {
+      "label": "keyword",
+      "start": 81,
+      "end": 87
+    },
+    {
+      "label": "score",
+      "start": 88,
+      "end": 89
+    },
+    {
+      "label": "keyword",
+      "start": 90,
+      "end": 94
+    },
+    {
+      "label": "score",
+      "start": 95,
+      "end": 96
+    },
+    {
+      "label": "keyword",
+      "start": 97,
+      "end": 100
+    },
+    {
+      "label": "score",
+      "start": 101,
+      "end": 102
+    },
+    {
+      "label": "keyword",
+      "start": 103,
+      "end": 107
+    },
+    {
+      "label": "score",
+      "start": 108,
+      "end": 109
+    },
+    {
+      "label": "keyword",
+      "start": 110,
+      "end": 117
+    },
+    {
+      "label": "score",
+      "start": 118,
+      "end": 119
+    }
+  ]
+}

@@ -1498,8 +1498,10 @@ mod tests {
         request.engine = Engine::Extractor;
         let error = run(&parser, &budget, hostile, request).await.unwrap_err();
         assert!(error.is_resource_exhausted(), "{error:?}");
+        let converted = error.into_extract_error();
         assert!(
-            matches!(error.into_extract_error(), ExtractError::ParseMemory(exhausted) if exhausted.exceeds_budget())
+            matches!(&converted, ExtractError::ParseMemory(exhausted) if exhausted.exceeds_budget()),
+            "{converted:?}"
         );
         assert_eq!(budget.used(), 0);
         let body = page(3);

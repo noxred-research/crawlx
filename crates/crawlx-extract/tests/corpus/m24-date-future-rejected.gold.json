@@ -1,0 +1,23 @@
+{
+  "id": "m24-date-future-rejected",
+  "family": "meta_exact",
+  "note": "a meta date after the caller's reference date is rejected, the next evidence wins and the field is uncertain",
+  "expectedText": "title=Night Bus Route Extended\nlanguage=en\npublished=2026-02-27",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 30
+    },
+    {
+      "label": "language",
+      "start": 40,
+      "end": 42
+    },
+    {
+      "label": "published",
+      "start": 53,
+      "end": 63
+    }
+  ]
+}

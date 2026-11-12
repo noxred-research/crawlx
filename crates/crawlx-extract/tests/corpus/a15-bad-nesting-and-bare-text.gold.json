@@ -1,0 +1,108 @@
+{
+  "id": "a15-bad-nesting-and-bare-text",
+  "family": "article_body",
+  "note": "block elements inside paragraphs, list items and cells without end tags, text directly in the container and bare ampersands",
+  "expectedText": "Weekend Workshop\nWoodwork\nGarden\nWorkshop Notes: Building a Bat Box\nA bat box takes one afternoon, a single plank and basic tools. Fix it three metres above ground on a wall that gets sun for most of the day, & keep the entrance facing south.\nCut the plank into one back panel, one front panel and two sides.\nThe back should be longer than the front so that the bats have a landing strip.\nMaterials\nOne untreated plank, 1.2 metres long\nTwenty galvanised screws\nA strip of rough mesh for the landing\nMeasurements\nBack panel\n40 cm\nFront panel\n30 cm\nRoof\n25 cm\nNever paint the inside of the box. Bats avoid fresh paint, and rough wood gives them something to grip. R&D on the topic shows that a gap of two centimetres is the most popular.\nWeekend Workshop. Safety first: always wear eye protection.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 16
+    },
+    {
+      "label": "boilerplate",
+      "start": 17,
+      "end": 25
+    },
+    {
+      "label": "boilerplate",
+      "start": 26,
+      "end": 32
+    },
+    {
+      "label": "body",
+      "start": 33,
+      "end": 67
+    },
+    {
+      "label": "body",
+      "start": 68,
+      "end": 242
+    },
+    {
+      "label": "body",
+      "start": 243,
+      "end": 308
+    },
+    {
+      "label": "body",
+      "start": 309,
+      "end": 388
+    },
+    {
+      "label": "body",
+      "start": 389,
+      "end": 398
+    },
+    {
+      "label": "body",
+      "start": 399,
+      "end": 435
+    },
+    {
+      "label": "body",
+      "start": 436,
+      "end": 460
+    },
+    {
+      "label": "body",
+      "start": 461,
+      "end": 498
+    },
+    {
+      "label": "body",
+      "start": 499,
+      "end": 511
+    },
+    {
+      "label": "body",
+      "start": 512,
+      "end": 522
+    },
+    {
+      "label": "body",
+      "start": 523,
+      "end": 528
+    },
+    {
+      "label": "body",
+      "start": 529,
+      "end": 540
+    },
+    {
+      "label": "body",
+      "start": 541,
+      "end": 546
+    },
+    {
+      "label": "body",
+      "start": 547,
+      "end": 551
+    },
+    {
+      "label": "body",
+      "start": 552,
+      "end": 557
+    },
+    {
+      "label": "body",
+      "start": 558,
+      "end": 735
+    },
+    {
+      "label": "boilerplate",
+      "start": 736,
+      "end": 795
+    }
+  ]
+}

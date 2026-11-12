@@ -1,0 +1,33 @@
+{
+  "id": "d16-budget-rss-exact",
+  "family": "feed",
+  "note": "entry budget of exactly the item count: nothing is truncated",
+  "expectedText": "https://news.corpus.test/five/1\nhttps://news.corpus.test/five/2\nhttps://news.corpus.test/five/3\nhttps://news.corpus.test/five/4\nhttps://news.corpus.test/five/5",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 31
+    },
+    {
+      "label": "item",
+      "start": 32,
+      "end": 63
+    },
+    {
+      "label": "item",
+      "start": 64,
+      "end": 95
+    },
+    {
+      "label": "item",
+      "start": 96,
+      "end": 127
+    },
+    {
+      "label": "item",
+      "start": 128,
+      "end": 159
+    }
+  ]
+}

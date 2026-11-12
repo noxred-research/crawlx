@@ -560,3 +560,68 @@ pub async fn seal(
         &json!({"sealed":true,"producerEpoch":input.producer_epoch}),
     ))
 }
+
+/// Add `urls` at depth zero to the frontier of `run` through legacy discovery, the path the
+/// worker itself uses for the extra seeds of a batch scrape, and return the ids of the rows
+/// inserted.
+///
+/// Every URL is canonicalised exactly as the run canonicalises it, so a URL the run already
+/// holds never becomes a second row: repeating a call inserts nothing. An action-bearing query
+/// is recorded `policy_blocked`, like the worker records it. Scope, robots and egress are
+/// decided by the worker when it leases a row, not here. The run's producer state is untouched,
+/// so the run still finishes when its frontier drains.
+///
+/// `capacity` is the most rows the run may hold (its `limits.urls`).
+///
+/// # Errors
+/// `400` when the new rows would exceed `capacity`, `409` when the frontier refuses them
+/// (queue quota), and repository errors.
+pub(crate) async fn discover_urls(
+    state: &AppState,
+    run: &crawlx_core::repo::CrawlRun,
+    urls: &[Url],
+    capacity: usize,
+) -> ApiResult<Vec<i64>> {
+    use crawlx_core::repo::FrontierStatus;
+    let canonical = CanonicalizeOptions::from_scope(
+        &run.config.scope,
+        run.seed.derive("resource-id-key", &[run.id.0.as_bytes()]),
+    );
+    let mut held: std::collections::BTreeSet<String> = state
+        .repos
+        .frontier
+        .list(run.id)
+        .await?
+        .into_iter()
+        .map(|row| row.url.url.to_string())
+        .collect();
+    let rows = held.len();
+    let mut fresh = Vec::new();
+    for url in urls {
+        let detailed = Canonicalizer::canonicalize_detailed(url.as_str(), url, &canonical)
+            .map_err(|_| HttpError::malformed("invalid request URL"))?;
+        if held.insert(detailed.url.url.to_string()) {
+            fresh.push(detailed);
+        }
+    }
+    if rows.saturating_add(fresh.len()) > capacity {
+        return Err(HttpError::bad_request(vec![crate::errors::Detail::new(
+            "/urls",
+            "too_big",
+            format!("the batch holds {rows} of at most {capacity} URLs"),
+        )]));
+    }
+    let mut inserted = Vec::with_capacity(fresh.len());
+    for detailed in fresh {
+        let denial = detailed
+            .action_bearing
+            .then(|| (FrontierStatus::PolicyBlocked, "action_bearing_query".to_owned()));
+        let (_, id) = state
+            .repos
+            .frontier
+            .discover(run.id, &detailed.url, 0, None, denial)
+            .await?;
+        inserted.extend(id);
+    }
+    Ok(inserted)
+}

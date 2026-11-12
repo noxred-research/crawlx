@@ -1,0 +1,73 @@
+{
+  "id": "n25-thai-paragraph-sentences",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under dictionary_uax29",
+  "expectedText": "แม่ทำอาหารให้ลูกกินทุกเช้า\nพ่อขับรถไปทำงานที่เมืองใหญ่\nลูกเดินไปโรงเรียนกับเพื่อนทุกวัน\nลูก=2\nทุก=2\nไป=2\nแม่=1\nทำ=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 78
+    },
+    {
+      "label": "sentence",
+      "start": 79,
+      "end": 160
+    },
+    {
+      "label": "sentence",
+      "start": 161,
+      "end": 257
+    },
+    {
+      "label": "keyword",
+      "start": 258,
+      "end": 267
+    },
+    {
+      "label": "score",
+      "start": 268,
+      "end": 269
+    },
+    {
+      "label": "keyword",
+      "start": 270,
+      "end": 279
+    },
+    {
+      "label": "score",
+      "start": 280,
+      "end": 281
+    },
+    {
+      "label": "keyword",
+      "start": 282,
+      "end": 288
+    },
+    {
+      "label": "score",
+      "start": 289,
+      "end": 290
+    },
+    {
+      "label": "keyword",
+      "start": 291,
+      "end": 300
+    },
+    {
+      "label": "score",
+      "start": 301,
+      "end": 302
+    },
+    {
+      "label": "keyword",
+      "start": 303,
+      "end": 309
+    },
+    {
+      "label": "score",
+      "start": 310,
+      "end": 311
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "id": "f08-why-ice-floats",
+  "family": "focus",
+  "note": "explainer with section headings, a share bar and a grid of recommended articles",
+  "expectedText": "Plain Physics\nMatter Energy Waves Quizzes\nShare Link Mail\nWhy Ice Floats and Why It Matters\nAlmost every solid sinks in its own liquid. Ice does the opposite, and the reason lies in the shape of the water molecule and the way its neighbours arrange themselves when the temperature falls.\nAn open lattice\nAs water cools toward freezing, the molecules slow down and begin to link up through hydrogen bonds. Each molecule settles into a spot with four neighbours arranged in a hexagonal pattern, and that pattern leaves a lot of empty space.\nThe result is that ice is about nine percent less dense than liquid water. A block of it displaces slightly more water than it weighs, so it rides on the surface with roughly nine tenths of its volume underneath.\nWhat would happen otherwise\nIf ice sank, lakes would freeze from the bottom up. Each winter the new ice would pile up on the lakebed, insulated from the warm air, and many ponds would never fully thaw in summer.\nInstead the floating sheet acts as a lid. Beneath it the water stays close to four degrees Celsius, where it is densest, and fish and plants survive the cold months in a quiet layer of liquid.\nA quick experiment\nFill a clear glass with water, drop in an ice cube and mark the water level with a pen. When the cube melts, the level will not change. The melted ice exactly fills the space that the submerged part had taken up.\nRecommended for you\nWhy water boils faster with a lid\nPressure, steam and a pan on the hob.\nHow a raindrop gets its shape\nNot teardrops, as it turns out.\nSalt, roads and freezing points\nChemistry in the gritter lorry.\nSix sides of every snowflake\nCrystal growth in a cloud.\nAbout For teachers Privacy Contact Support Plain Physics",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 13
+    },
+    {
+      "label": "boilerplate",
+      "start": 14,
+      "end": 41
+    },
+    {
+      "label": "boilerplate",
+      "start": 42,
+      "end": 57
+    },
+    {
+      "label": "body",
+      "start": 58,
+      "end": 91
+    },
+    {
+      "label": "body",
+      "start": 92,
+      "end": 287
+    },
+    {
+      "label": "body",
+      "start": 288,
+      "end": 303
+    },
+    {
+      "label": "body",
+      "start": 304,
+      "end": 538
+    },
+    {
+      "label": "body",
+      "start": 539,
+      "end": 751
+    },
+    {
+      "label": "body",
+      "start": 752,
+      "end": 779
+    },
+    {
+      "label": "body",
+      "start": 780,
+      "end": 963
+    },
+    {
+      "label": "body",
+      "start": 964,
+      "end": 1156
+    },
+    {
+      "label": "body",
+      "start": 1157,
+      "end": 1175
+    },
+    {
+      "label": "body",
+      "start": 1176,
+      "end": 1388
+    },
+    {
+      "label": "boilerplate",
+      "start": 1389,
+      "end": 1408
+    },
+    {
+      "label": "boilerplate",
+      "start": 1409,
+      "end": 1442
+    },
+    {
+      "label": "boilerplate",
+      "start": 1443,
+      "end": 1480
+    },
+    {
+      "label": "boilerplate",
+      "start": 1481,
+      "end": 1510
+    },
+    {
+      "label": "boilerplate",
+      "start": 1511,
+      "end": 1542
+    },
+    {
+      "label": "boilerplate",
+      "start": 1543,
+      "end": 1574
+    },
+    {
+      "label": "boilerplate",
+      "start": 1575,
+      "end": 1606
+    },
+    {
+      "label": "boilerplate",
+      "start": 1607,
+      "end": 1635
+    },
+    {
+      "label": "boilerplate",
+      "start": 1636,
+      "end": 1662
+    },
+    {
+      "label": "boilerplate",
+      "start": 1663,
+      "end": 1719
+    }
+  ]
+}

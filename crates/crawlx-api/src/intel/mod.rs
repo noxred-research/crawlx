@@ -62,6 +62,8 @@ pub struct WorkerLlm {
     pub extraction: Option<Arc<ExtractionRouter>>,
     /// The LLM that refines the `branding` profile (`BRANDING_LLM_*`).
     pub branding: Option<Arc<dyn LlmExtractor>>,
+    /// The embedding model of the scrape `clusters` option (`intel.embeddings`).
+    pub embeddings: Option<crawlx_worker::ClusterEmbeddings>,
 }
 
 fn default_llm(cfg: &IntelConfig) -> Result<Option<Arc<dyn LlmExtractor>>, ApiError> {
@@ -160,9 +162,25 @@ pub fn worker_llm(cfg: &IntelConfig) -> Result<WorkerLlm, ApiError> {
         }
         None => None,
     };
+    let embeddings = match &cfg.embeddings {
+        Some(settings) => {
+            let resolved = settings
+                .resolve(cfg.llm.as_ref())
+                .map_err(|e| ApiError::Config(format!("intel.embeddings: {e}")))?;
+            let model = resolved.model.clone();
+            let client = HttpEmbeddings::new(resolved)
+                .map_err(|e| ApiError::Config(format!("intel.embeddings: {e}")))?;
+            Some(crawlx_worker::ClusterEmbeddings::new(
+                Arc::new(client) as Arc<dyn EmbeddingsClient>,
+                model,
+            ))
+        }
+        None => None,
+    };
     Ok(WorkerLlm {
         llm,
         extraction,
         branding,
+        embeddings,
     })
 }

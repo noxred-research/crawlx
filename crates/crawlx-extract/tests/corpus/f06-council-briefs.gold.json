@@ -1,0 +1,128 @@
+{
+  "id": "f06-council-briefs",
+  "family": "focus",
+  "note": "local news report with kicker, dateline, short in-brief items adjacent to the article, share bar and sidebar boxes",
+  "expectedText": "Weather warning: heavy rain expected overnight. Check road closures before you travel.\nEastgate Herald\nNews Sport Business What's on Obituaries\nLocal government\nCouncil Approves Riverside Cycle Path\nPublished Wednesday 14 May, 17:40\nEastgate council voted eleven to four on Wednesday night to build a two mile cycle path along the south bank of the river, closing a gap that has divided the town's two main parks for decades.\nThe path will be three metres wide and lit from dusk, with a separate strip for walkers. Work is expected to start in September and finish before the following spring, subject to a final check on flood defences.\nCouncillor Tomas Verhoeven, who proposed the scheme, said it would give children a safe route to the secondary school. Opponents raised the cost, which has risen from 1.8 million to 2.6 million pounds since the first estimate.\nThe money will come from a regional transport grant and from the sale of a depot site on Anchor Lane, so no increase in council tax is planned.\nResidents can inspect the final drawings at the library until the end of June.\nIn brief\nBin collections move to Tuesdays in the north ward.\nThe ice rink reopens on Saturday.\nLibrary late opening is suspended this week.\nShare this Copy link Email Print\nLocal weather\nRain overnight, clearing by mid morning. High of fourteen degrees.\nJobs near you\nWarehouse operative\nCare assistant\nBus driver\nEastgate Herald, part of Riverside Newspapers. Registered in England.\nTerms Privacy Complaints",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 86
+    },
+    {
+      "label": "boilerplate",
+      "start": 87,
+      "end": 102
+    },
+    {
+      "label": "boilerplate",
+      "start": 103,
+      "end": 143
+    },
+    {
+      "label": "boilerplate",
+      "start": 144,
+      "end": 160
+    },
+    {
+      "label": "body",
+      "start": 161,
+      "end": 198
+    },
+    {
+      "label": "boilerplate",
+      "start": 199,
+      "end": 232
+    },
+    {
+      "label": "body",
+      "start": 233,
+      "end": 425
+    },
+    {
+      "label": "body",
+      "start": 426,
+      "end": 637
+    },
+    {
+      "label": "body",
+      "start": 638,
+      "end": 864
+    },
+    {
+      "label": "body",
+      "start": 865,
+      "end": 1008
+    },
+    {
+      "label": "body",
+      "start": 1009,
+      "end": 1087
+    },
+    {
+      "label": "boilerplate",
+      "start": 1088,
+      "end": 1096
+    },
+    {
+      "label": "boilerplate",
+      "start": 1097,
+      "end": 1148
+    },
+    {
+      "label": "boilerplate",
+      "start": 1149,
+      "end": 1182
+    },
+    {
+      "label": "boilerplate",
+      "start": 1183,
+      "end": 1227
+    },
+    {
+      "label": "boilerplate",
+      "start": 1228,
+      "end": 1260
+    },
+    {
+      "label": "boilerplate",
+      "start": 1261,
+      "end": 1274
+    },
+    {
+      "label": "boilerplate",
+      "start": 1275,
+      "end": 1341
+    },
+    {
+      "label": "boilerplate",
+      "start": 1342,
+      "end": 1355
+    },
+    {
+      "label": "boilerplate",
+      "start": 1356,
+      "end": 1375
+    },
+    {
+      "label": "boilerplate",
+      "start": 1376,
+      "end": 1390
+    },
+    {
+      "label": "boilerplate",
+      "start": 1391,
+      "end": 1401
+    },
+    {
+      "label": "boilerplate",
+      "start": 1402,
+      "end": 1471
+    },
+    {
+      "label": "boilerplate",
+      "start": 1472,
+      "end": 1496
+    }
+  ]
+}

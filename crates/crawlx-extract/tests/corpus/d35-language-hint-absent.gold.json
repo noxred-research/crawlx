@@ -1,0 +1,43 @@
+{
+  "id": "d35-language-hint-absent",
+  "family": "feed",
+  "note": "without a language hint the source order is kept",
+  "expectedText": "https://news.corpus.test/de/a\nhttps://news.corpus.test/en/b\nhttps://news.corpus.test/pt-BR/c\nhttps://news.corpus.test/plain/d\nhttps://de.news.corpus.test/e\nhttps://news.corpus.test/f?lang=de\nhttps://news.corpus.test/de/g?hl=en",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 29
+    },
+    {
+      "label": "item",
+      "start": 30,
+      "end": 59
+    },
+    {
+      "label": "item",
+      "start": 60,
+      "end": 92
+    },
+    {
+      "label": "item",
+      "start": 93,
+      "end": 125
+    },
+    {
+      "label": "item",
+      "start": 126,
+      "end": 155
+    },
+    {
+      "label": "item",
+      "start": 156,
+      "end": 190
+    },
+    {
+      "label": "item",
+      "start": 191,
+      "end": 226
+    }
+  ]
+}

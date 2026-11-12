@@ -1,0 +1,28 @@
+{
+  "id": "m49-script-canary-not-selected",
+  "family": "meta_exact",
+  "note": "canary text in inline scripts, a non-structured data script, a template and a body script is never selected or kept as evidence",
+  "expectedText": "title=Beekeepers Count Winter Losses\nauthors=Lotte Haverkamp\nlanguage=en\npublished=2026-02-20",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "authors",
+      "start": 45,
+      "end": 60
+    },
+    {
+      "label": "language",
+      "start": 70,
+      "end": 72
+    },
+    {
+      "label": "published",
+      "start": 83,
+      "end": 93
+    }
+  ]
+}

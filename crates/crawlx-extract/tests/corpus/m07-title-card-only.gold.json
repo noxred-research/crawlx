@@ -1,0 +1,18 @@
+{
+  "id": "m07-title-card-only",
+  "family": "meta_exact",
+  "note": "only a card title and a title element with a site suffix exist; the card title is selected and the element stays an alternative",
+  "expectedText": "title=Bakery Strike Ends After Three Days\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 41
+    },
+    {
+      "label": "language",
+      "start": 51,
+      "end": 53
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "l117-short-main-thai",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "ขอบคุณ",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 18
+    }
+  ]
+}

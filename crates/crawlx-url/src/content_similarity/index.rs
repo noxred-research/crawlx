@@ -161,51 +161,67 @@ impl Index {
     }
 
     /// Decide whether `body` should be fully processed. Low-signal bodies and
-    /// every body under `Off` are accepted without touching the index.
-    pub fn accept(&mut self, body: &[u8]) -> Accept {
-        self.stats.processed += 1;
+    /// every body under `Off` are accepted without touching the index. An HTML body is parsed
+    /// by `parse`; see [`normalize`].
+    ///
+    /// # Errors
+    /// The error `parse` returns for an HTML body; the index and its counters are unchanged.
+    pub fn accept<E>(
+        &mut self,
+        body: &[u8],
+        parse: impl FnOnce(&str) -> Result<scraper::Html, E>,
+    ) -> Result<Accept, E> {
         let mode = self.cfg.mode;
-        if mode == SimilarityMode::Off {
+        let doc = if mode == SimilarityMode::Off {
+            None
+        } else {
+            normalize(body, parse)?
+        };
+        self.stats.processed += 1;
+        let Some(doc) = doc else {
             self.stats.accepted += 1;
-            return Accept {
+            return Ok(Accept {
                 cluster_id: None,
                 filtered: false,
                 mode,
-            };
-        }
-        let Some(doc) = normalize(body) else {
-            self.stats.accepted += 1;
-            return Accept {
-                cluster_id: None,
-                filtered: false,
-                mode,
-            };
+            });
         };
         if let Some(cluster) = self.matching_cluster(&doc) {
             let count = self.clusters.entry(cluster.clone()).or_insert(0);
             if *count >= self.cfg.budget {
                 self.stats.filtered += 1;
-                return Accept {
+                return Ok(Accept {
                     cluster_id: Some(cluster),
                     filtered: true,
                     mode,
-                };
+                });
             }
             *count += 1;
             self.stats.accepted += 1;
-            return Accept {
+            return Ok(Accept {
                 cluster_id: Some(cluster),
                 filtered: false,
                 mode,
-            };
+            });
         }
         let cluster = self.remember(&doc);
         self.clusters.insert(cluster.clone(), 1);
         self.stats.accepted += 1;
-        Accept {
+        Ok(Accept {
             cluster_id: Some(cluster),
             filtered: false,
             mode,
+        })
+    }
+
+    /// Test-only [`Index::accept`] with the plain, uncharged `scraper` parse.
+    #[cfg(test)]
+    pub(crate) fn accept_plain(&mut self, body: &[u8]) -> Accept {
+        match self.accept(body, |html| {
+            Ok::<_, std::convert::Infallible>(scraper::Html::parse_document(html))
+        }) {
+            Ok(accept) => accept,
+            Err(never) => match never {},
         }
     }
 
@@ -302,7 +318,7 @@ mod tests {
     }
 
     fn ok(idx: &mut Index, body: &[u8]) -> bool {
-        !idx.accept(body).filtered
+        !idx.accept_plain(body).filtered
     }
 
     #[test]
@@ -314,11 +330,11 @@ mod tests {
             "Deep Dive Into Distributed Consensus Algorithms",
             "Raft Paxos Viewstamped Replication quorum election log replication safety liveness detailed analysis for engineers building reliable systems",
         );
-        let first = idx.accept(&p1);
+        let first = idx.accept_plain(&p1);
         assert!(!first.filtered);
         assert_eq!(first.cluster_id.as_deref(), Some("simhash:0"));
         assert_eq!(first.mode, SimilarityMode::Simhash);
-        let second = idx.accept(&p2);
+        let second = idx.accept_plain(&p2);
         assert!(
             second.filtered,
             "near-duplicate product is filtered with budget 1"
@@ -391,8 +407,8 @@ mod tests {
     fn low_signal_always_accepted_in_every_mode() {
         for mode in MODES {
             let mut idx = Index::new(cfg(mode, 1));
-            let a = idx.accept(b"ok");
-            let b = idx.accept(b"ok");
+            let a = idx.accept_plain(b"ok");
+            let b = idx.accept_plain(b"ok");
             assert!(!a.filtered && !b.filtered, "{mode:?}");
             assert!(a.cluster_id.is_none() && b.cluster_id.is_none());
             assert_eq!(idx.stats().accepted, 2);
@@ -406,7 +422,7 @@ mod tests {
             ..Config::default()
         });
         for _ in 0..3 {
-            let a = idx.accept(&product(1, "red"));
+            let a = idx.accept_plain(&product(1, "red"));
             assert!(!a.filtered && a.cluster_id.is_none());
         }
         assert_eq!(idx.stats().filtered, 0);

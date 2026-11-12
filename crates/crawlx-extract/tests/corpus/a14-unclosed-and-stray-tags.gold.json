@@ -1,0 +1,53 @@
+{
+  "id": "a14-unclosed-and-stray-tags",
+  "family": "article_body",
+  "note": "unclosed paragraph and container tags, stray end tags, crossed inline tags and unquoted attributes",
+  "expectedText": "Greenfield Notes\nPlots\nRules\nAllotment Waiting List Falls Below Two Hundred\nThe waiting list for council allotments has dropped below two hundred names for the first time in nine years, after the parks department opened thirty new plots on the old rail embankment.\nOfficials say the average wait is now fourteen months, down from three years. Gardeners on the longest-waiting list were offered the first choice of plots, and most accepted within a week.\nEach new plot comes with a water tap shared between four neighbours, a locked shed for tools and a compost bay. Rent is set at thirty euros a year, with half price for people over sixty-five.\nThe parks department has promised to review the list again in September. Anyone who no longer wants a plot is asked to tell the office so that the next person can be called.\nGreenfield Notes is published by the neighbourhood association.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 16
+    },
+    {
+      "label": "boilerplate",
+      "start": 17,
+      "end": 22
+    },
+    {
+      "label": "boilerplate",
+      "start": 23,
+      "end": 28
+    },
+    {
+      "label": "body",
+      "start": 29,
+      "end": 75
+    },
+    {
+      "label": "body",
+      "start": 76,
+      "end": 264
+    },
+    {
+      "label": "body",
+      "start": 265,
+      "end": 453
+    },
+    {
+      "label": "body",
+      "start": 454,
+      "end": 645
+    },
+    {
+      "label": "body",
+      "start": 646,
+      "end": 819
+    },
+    {
+      "label": "boilerplate",
+      "start": 820,
+      "end": 883
+    }
+  ]
+}

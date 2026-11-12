@@ -235,6 +235,9 @@ pub(crate) async fn render(
     {
         data.insert("modelContent".to_owned(), model);
     }
+    if let (Some(_), Some(clusters)) = (&o.clusters, &doc.clusters) {
+        data.insert("clusters".to_owned(), json!(clusters));
+    }
     if let Some(w) = &doc.warning {
         data.insert("warning".to_owned(), json!(w));
     }

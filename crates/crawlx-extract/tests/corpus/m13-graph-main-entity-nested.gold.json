@@ -1,0 +1,33 @@
+{
+  "id": "m13-graph-main-entity-nested",
+  "family": "meta_exact",
+  "note": "the article is the mainEntity of a page node in a second JSON-LD block, next to an organization block",
+  "expectedText": "title=Reef Survey Finds Early Recovery\nauthors=Ibrahim Sorel\nlanguage=en\nmodified=2026-02-02\nmodifiedTimestamp=2026-02-02T10:00:00+00:00",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 38
+    },
+    {
+      "label": "authors",
+      "start": 47,
+      "end": 60
+    },
+    {
+      "label": "language",
+      "start": 70,
+      "end": 72
+    },
+    {
+      "label": "modified",
+      "start": 82,
+      "end": 92
+    },
+    {
+      "label": "modifiedTimestamp",
+      "start": 111,
+      "end": 136
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "id": "l97-dict-uax29-underscores",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "the|file_name|field|holds|user_id|values|rename|file_name|to|doc_name",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 13
+    },
+    {
+      "label": "token",
+      "start": 14,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 33
+    },
+    {
+      "label": "token",
+      "start": 34,
+      "end": 40
+    },
+    {
+      "label": "token",
+      "start": 41,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 60
+    },
+    {
+      "label": "token",
+      "start": 61,
+      "end": 69
+    }
+  ]
+}

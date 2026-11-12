@@ -1,0 +1,7 @@
+<feed xmlns="http://www.w3.org/2005/Atom" xml:base="https://news.corpus.test/journal/"><title>Journal</title>
+<entry xml:base="2026/"><link href="launch"/></entry>
+<entry xml:base="../2025/"><link href="relaunch"/></entry>
+<entry><link href="plain"/></entry>
+<entry><link href="https://news.corpus.test/abs/ignores-base"/></entry>
+<entry><link xml:base="https://news.corpus.test/link-base/" href="inner"/></entry>
+</feed>

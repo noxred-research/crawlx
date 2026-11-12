@@ -1,0 +1,1650 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "d01-rss2-basic",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d01-rss2-basic.xml",
+      "files": {
+        "input": {
+          "path": "d01-rss2-basic.xml",
+          "sha256": "b153a9a74fa9f0af99eed9ede8d4fbd368f2372acfd502f766ded43011ac1a93"
+        },
+        "gold": {
+          "path": "d01-rss2-basic.gold.json",
+          "sha256": "f403b9d534afccfb920318790cef899b486bf186a8542b0a677d762def8ca7f3"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "denied": [
+          "https://partner.corpus.test/stories/spotlight",
+          "https://cdn.corpus.test/img/crane.jpg"
+        ],
+        "streamParity": true
+      }
+    },
+    {
+      "id": "d02-rss2-cdata-entities",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d02-rss2-cdata-entities.xml",
+      "files": {
+        "input": {
+          "path": "d02-rss2-cdata-entities.xml",
+          "sha256": "29123b99fed8ca85ec5dbdc2223ac18bbe8e7c5fd21fbdfd132ed44c31bf556f"
+        },
+        "gold": {
+          "path": "d02-rss2-cdata-entities.gold.json",
+          "sha256": "17b41f8a8c51074dd507d7a4aff64a5a9b47c71d18497cd12e8155b031613118"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        }
+      }
+    },
+    {
+      "id": "d03-rss2-base-and-relative",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d03-rss2-base-and-relative.xml",
+      "files": {
+        "input": {
+          "path": "d03-rss2-base-and-relative.xml",
+          "sha256": "0224bd143090d413e710953eeac63a7dc1190281dc1d4a6b476037657a58d499"
+        },
+        "gold": {
+          "path": "d03-rss2-base-and-relative.gold.json",
+          "sha256": "b26dcc38993196d95cecdf27130289a81dc724c4a8767cadfcc3d2bf1f13bb48"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        }
+      }
+    },
+    {
+      "id": "d04-rss2-self-next-and-item-links",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d04-rss2-self-next-and-item-links.xml",
+      "files": {
+        "input": {
+          "path": "d04-rss2-self-next-and-item-links.xml",
+          "sha256": "0d420e79da81a2247c9e7b636101a579c0db65fc1a9741bd4ab956b580a9b190"
+        },
+        "gold": {
+          "path": "d04-rss2-self-next-and-item-links.gold.json",
+          "sha256": "521c1922b397b876a761708e8f5b336fd26dfc8b5a61ba778abb92038e0e3cb4"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "denied": [
+          "https://partner.corpus.test/feeds/weather.xml?page=2"
+        ],
+        "neverProposed": [
+          "https://news.corpus.test/feeds/weather.xml",
+          "https://news.corpus.test/weather/gale/comments"
+        ]
+      }
+    },
+    {
+      "id": "d05-rdf-rss1-basic",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d05-rdf-rss1-basic.xml",
+      "files": {
+        "input": {
+          "path": "d05-rdf-rss1-basic.xml",
+          "sha256": "dd7a0ee960fba6f0393a95523ace968cd2c6223a75acf3951ce7d14e7469f950"
+        },
+        "gold": {
+          "path": "d05-rdf-rss1-basic.gold.json",
+          "sha256": "fe2de580373e71cd92c4c6f185705ddec62f89ef3df44f8801cbeb6d1a87abbc"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rdf"
+        },
+        "denied": [
+          "https://partner.corpus.test/pears"
+        ],
+        "streamParity": true
+      }
+    },
+    {
+      "id": "d06-rdf-prefix-aliases",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d06-rdf-prefix-aliases.xml",
+      "files": {
+        "input": {
+          "path": "d06-rdf-prefix-aliases.xml",
+          "sha256": "aaa08ab01c26866ba5d6d17c586c3d7200ee01031365dafb7615c9c8ba340572"
+        },
+        "gold": {
+          "path": "d06-rdf-prefix-aliases.gold.json",
+          "sha256": "86e877ca44ccbb3628381b220a5d2452df1561a6290f3dc27954622ac4324387"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rdf"
+        }
+      }
+    },
+    {
+      "id": "d07-atom-basic-self-alternate",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d07-atom-basic-self-alternate.xml",
+      "files": {
+        "input": {
+          "path": "d07-atom-basic-self-alternate.xml",
+          "sha256": "6334faa7b61d0787e845cfd149277959d071b5fb5801f345c0dbbbc9e45a3336"
+        },
+        "gold": {
+          "path": "d07-atom-basic-self-alternate.gold.json",
+          "sha256": "08ddbe79a95514dd9385ac2f36c9986cc6c39cbe93b893182b243c5217507f24"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Atom"
+        },
+        "denied": [
+          "https://mirror.corpus.test/quay/dredging"
+        ],
+        "neverProposed": [
+          "https://news.corpus.test/feeds/atom.xml",
+          "https://news.corpus.test/feeds/atom/1",
+          "https://news.corpus.test/admin/edit/1",
+          "https://news.corpus.test/quay/new-moorings/comments",
+          "https://news.corpus.test/quay/"
+        ],
+        "streamParity": true
+      }
+    },
+    {
+      "id": "d08-atom-xml-base",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d08-atom-xml-base.xml",
+      "files": {
+        "input": {
+          "path": "d08-atom-xml-base.xml",
+          "sha256": "3bf635024615c718b1a189dba8f5afd144638d5aa0759902bf4db8eb9b108c50"
+        },
+        "gold": {
+          "path": "d08-atom-xml-base.gold.json",
+          "sha256": "c9514391704dbfd915e69abc8ae907cc1be5aa78965f260c7cf5c0c1a0369d98"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Atom"
+        }
+      }
+    },
+    {
+      "id": "d09-atom-pagination-loop",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d09-atom-pagination-loop.xml",
+      "files": {
+        "input": {
+          "path": "d09-atom-pagination-loop.xml",
+          "sha256": "f0a731ee5a513f180175a8f7b6f51f0122dbf7845a26be1836116d7f9e2b1ece"
+        },
+        "gold": {
+          "path": "d09-atom-pagination-loop.gold.json",
+          "sha256": "d0c0fe5f44fe5c7d2e9390001fc5d44334697996df4381a581b8a9127a1a0396"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Atom"
+        },
+        "denied": [
+          "https://partner.corpus.test/feeds/page2.xml"
+        ],
+        "documents": {
+          "https://news.corpus.test/feeds/page2.xml": "<feed xmlns=\"http://www.w3.org/2005/Atom\"><link rel=\"next\" href=\"https://news.corpus.test/feeds/page3.xml\"/><entry><link href=\"https://news.corpus.test/p/3\"/></entry><entry><link href=\"https://news.corpus.test/p/1\"/></entry></feed>",
+          "https://news.corpus.test/feeds/page3.xml": "<feed xmlns=\"http://www.w3.org/2005/Atom\"><link rel=\"next\" href=\"https://news.corpus.test/feeds/d09-atom-pagination-loop.xml\"/><entry><link href=\"https://news.corpus.test/p/4\"/></entry></feed>"
+        },
+        "follow": true
+      }
+    },
+    {
+      "id": "d10-atom-media-references",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d10-atom-media-references.xml",
+      "files": {
+        "input": {
+          "path": "d10-atom-media-references.xml",
+          "sha256": "25d77e4b062d7e54cfa8a43628c2d8970f6c1ca2e94b9eb0435a8a2def5e77a3"
+        },
+        "gold": {
+          "path": "d10-atom-media-references.gold.json",
+          "sha256": "537f087987df0070d1be997d715a6a9e675acecfca3ab793521b1f829749c796"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Atom"
+        },
+        "denied": [
+          "https://cdn.corpus.test/gallery/1-large.png"
+        ],
+        "streamParity": true
+      }
+    },
+    {
+      "id": "d11-atom-alternate-types",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d11-atom-alternate-types.xml",
+      "files": {
+        "input": {
+          "path": "d11-atom-alternate-types.xml",
+          "sha256": "e92892cc4362e8c21454a3252ac09a38d843808db6e73456305ebfdf69f243c1"
+        },
+        "gold": {
+          "path": "d11-atom-alternate-types.gold.json",
+          "sha256": "ee18af16de7e46c64843c8d779b15304728b2e8366632cd475a2f416da082813"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Atom"
+        },
+        "neverProposed": [
+          "https://news.corpus.test/docs/report.pdf",
+          "https://news.corpus.test/docs/both.pdf",
+          "https://news.corpus.test/docs/related"
+        ]
+      }
+    },
+    {
+      "id": "d12-jsonfeed-1-1",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d12-jsonfeed-1-1.json",
+      "files": {
+        "input": {
+          "path": "d12-jsonfeed-1-1.json",
+          "sha256": "ab84d543f4aa5d5328ad5bb05486d093e40dbdf131d8b6e33578dbfd5da018fc"
+        },
+        "gold": {
+          "path": "d12-jsonfeed-1-1.gold.json",
+          "sha256": "d964532bb05f97c2cf5ff60af2314c30d65eab746dcbfe0bdbdd2bf1c66886fe"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Json"
+        },
+        "denied": [
+          "https://partner.corpus.test/lantern/three"
+        ],
+        "neverProposed": [
+          "https://news.corpus.test/lantern/four-linked"
+        ]
+      }
+    },
+    {
+      "id": "d13-jsonfeed-1-0-filtered-urls",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d13-jsonfeed-1-0-filtered-urls.json",
+      "files": {
+        "input": {
+          "path": "d13-jsonfeed-1-0-filtered-urls.json",
+          "sha256": "c4e0fa3a4763c8f612613bebea38a8de78c25a0210ce930a719b3f5098b95305"
+        },
+        "gold": {
+          "path": "d13-jsonfeed-1-0-filtered-urls.gold.json",
+          "sha256": "1e6ccdc825b6f6cc570476b1ad39a19e8fc335cfe81a504605ddee1e3a48029d"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Json"
+        },
+        "neverProposed": [
+          "https://news.corpus.test/ledger/c",
+          "https://news.corpus.test/ledger/d"
+        ]
+      }
+    },
+    {
+      "id": "d14-jsonfeed-unsupported-version",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d14-jsonfeed-unsupported-version.json",
+      "files": {
+        "input": {
+          "path": "d14-jsonfeed-unsupported-version.json",
+          "sha256": "3de1ad9017017cbc70a32a86d3dfbb1dd3610ec25b2ada0756d2756b2c45d63c"
+        },
+        "gold": {
+          "path": "d14-jsonfeed-unsupported-version.gold.json",
+          "sha256": "2a9186f3c09fdcbe4dbd1a960b12e179740542dd5d0bf0b9d46e1b21e9cb2dea"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "id": "d15-jsonfeed-items-absent",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d15-jsonfeed-items-absent.json",
+      "files": {
+        "input": {
+          "path": "d15-jsonfeed-items-absent.json",
+          "sha256": "2df3c91bcfb12feb4be8021d8eb6587d4a8a76f1ad7504f2ea1f7bc1556e33f0"
+        },
+        "gold": {
+          "path": "d15-jsonfeed-items-absent.gold.json",
+          "sha256": "cd3f5560722248e6f1d69abe533019d91bc0569dfa52163270fa482562461582"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "id": "d16-budget-rss-exact",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d16-budget-rss-exact.xml",
+      "files": {
+        "input": {
+          "path": "d16-budget-rss-exact.xml",
+          "sha256": "322f41eb390f2ab05dcfa71a09c2587c068a00d7f97a3ea1d18376353048fdcb"
+        },
+        "gold": {
+          "path": "d16-budget-rss-exact.gold.json",
+          "sha256": "71a7869ae9eeec87341db0159edc74c7e4703ae79e37cb8ee1df5f0bd79c7d92"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "policy": {
+          "maxEntries": 5
+        }
+      }
+    },
+    {
+      "id": "d17-budget-rss-over",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d17-budget-rss-over.xml",
+      "files": {
+        "input": {
+          "path": "d17-budget-rss-over.xml",
+          "sha256": "322f41eb390f2ab05dcfa71a09c2587c068a00d7f97a3ea1d18376353048fdcb"
+        },
+        "gold": {
+          "path": "d17-budget-rss-over.gold.json",
+          "sha256": "0123667b2464e65e82112ec66f47524ce2702eab6bc0c010c7b58ef8f0a0acbe"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": true,
+          "kind": "Rss"
+        },
+        "policy": {
+          "maxEntries": 4
+        }
+      }
+    },
+    {
+      "id": "d18-budget-atom-over",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d18-budget-atom-over.xml",
+      "files": {
+        "input": {
+          "path": "d18-budget-atom-over.xml",
+          "sha256": "cc5116ff678755b8ef10188ec116024030442e641b259ccf863676bdc681df3b"
+        },
+        "gold": {
+          "path": "d18-budget-atom-over.gold.json",
+          "sha256": "2e65f34f82de51d323b6ed5dc77e5ce84fcc43eb17c98f445fb71deb5914934f"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": true,
+          "kind": "Atom"
+        },
+        "policy": {
+          "maxEntries": 2
+        }
+      }
+    },
+    {
+      "id": "d19-budget-json-exact",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d19-budget-json-exact.json",
+      "files": {
+        "input": {
+          "path": "d19-budget-json-exact.json",
+          "sha256": "6256e50532d8a50eb37bd5258a9f1b2801bce2a0ded42b723b3fe550eaca81fe"
+        },
+        "gold": {
+          "path": "d19-budget-json-exact.gold.json",
+          "sha256": "13f8034fbd574e1202a3c10859150b35b61f617565be0c867ff694f424984db4"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Json"
+        },
+        "policy": {
+          "maxEntries": 3
+        }
+      }
+    },
+    {
+      "id": "d20-budget-json-over",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d20-budget-json-over.json",
+      "files": {
+        "input": {
+          "path": "d20-budget-json-over.json",
+          "sha256": "6256e50532d8a50eb37bd5258a9f1b2801bce2a0ded42b723b3fe550eaca81fe"
+        },
+        "gold": {
+          "path": "d20-budget-json-over.gold.json",
+          "sha256": "4181de29c198800439a02948bc66eeb3dc9977eee6f0245a9186a2f80802ef01"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": true,
+          "kind": "Json"
+        },
+        "policy": {
+          "maxEntries": 2
+        }
+      }
+    },
+    {
+      "id": "d21-budget-bytes-exact",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d21-budget-bytes-exact.xml",
+      "files": {
+        "input": {
+          "path": "d21-budget-bytes-exact.xml",
+          "sha256": "73edac1d5e3fc65ad8b57d0fdda6d70e9a5126ecbd6dbcef7bcad86acd053eb8"
+        },
+        "gold": {
+          "path": "d21-budget-bytes-exact.gold.json",
+          "sha256": "8754f6398f1a15aff6bb5c88ae3c9720d5463073122cbc124378196df61552ea"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "policy": {
+          "maxFeedBytes": 103
+        }
+      }
+    },
+    {
+      "id": "d22-budget-bytes-over",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d22-budget-bytes-over.xml",
+      "files": {
+        "input": {
+          "path": "d22-budget-bytes-over.xml",
+          "sha256": "73edac1d5e3fc65ad8b57d0fdda6d70e9a5126ecbd6dbcef7bcad86acd053eb8"
+        },
+        "gold": {
+          "path": "d22-budget-bytes-over.gold.json",
+          "sha256": "c2d128b5f4a894daf52aaf8dd1ed1de894603080bbf22b77d705d2b25102c342"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        },
+        "policy": {
+          "maxFeedBytes": 102
+        }
+      }
+    },
+    {
+      "id": "d23-nesting-exact",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d23-nesting-exact.xml",
+      "files": {
+        "input": {
+          "path": "d23-nesting-exact.xml",
+          "sha256": "ea6d71aa636d14e8b347f8501260c619eb590600f212ac934eccdc076811eb18"
+        },
+        "gold": {
+          "path": "d23-nesting-exact.gold.json",
+          "sha256": "72f195b7ccafc172bd775e983600416bc1e7163f90d3cf2c8930f10acc96b504"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        }
+      }
+    },
+    {
+      "id": "d24-nesting-over",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d24-nesting-over.xml",
+      "files": {
+        "input": {
+          "path": "d24-nesting-over.xml",
+          "sha256": "affb2ee02916a3035879f2473c5369a48b22c457d94a6d60450345c48e1fa988"
+        },
+        "gold": {
+          "path": "d24-nesting-over.gold.json",
+          "sha256": "c8fa600386cc51b9f3b20a09efeedd0a3102277a3fcfe4edfe90104bc86aa6e9"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "id": "d25-rejected-dtd-entity",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d25-rejected-dtd-entity.xml",
+      "files": {
+        "input": {
+          "path": "d25-rejected-dtd-entity.xml",
+          "sha256": "3d1b09e816cc01454f505cca885f076f2680eba9c7d58f1098a9b602d0b22a32"
+        },
+        "gold": {
+          "path": "d25-rejected-dtd-entity.gold.json",
+          "sha256": "eb315273197de9d7fef8400d99b96baefb1f51f5e32524e3b7af5b6a7bec6b06"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        },
+        "probe": true
+      }
+    },
+    {
+      "id": "d26-rejected-undefined-entity",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d26-rejected-undefined-entity.xml",
+      "files": {
+        "input": {
+          "path": "d26-rejected-undefined-entity.xml",
+          "sha256": "268d793e1a8581ff35925476515e5b2595948800721d7da552bc1d6f51ea2f28"
+        },
+        "gold": {
+          "path": "d26-rejected-undefined-entity.gold.json",
+          "sha256": "e5a415acae2b1f8b65e0f183a9c44b75cda0eb50857f5c30a72a0c03334afe4c"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "id": "d27-rejected-malformed-xml",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d27-rejected-malformed-xml.xml",
+      "files": {
+        "input": {
+          "path": "d27-rejected-malformed-xml.xml",
+          "sha256": "be3441e2c4985b30ae3b836c820871789ffa882e55b670c666d251a3406930c6"
+        },
+        "gold": {
+          "path": "d27-rejected-malformed-xml.gold.json",
+          "sha256": "50e5e2326dabc92f121329a70f055b1fc5402c931d7e54cd9ad5cd44bc48a5d4"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "id": "d28-rejected-blank-body",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d28-rejected-blank-body.xml",
+      "files": {
+        "input": {
+          "path": "d28-rejected-blank-body.xml",
+          "sha256": "b7950e0823131075bc5b1b7b79039ba8c103b15624255b609510ba6f991beb49"
+        },
+        "gold": {
+          "path": "d28-rejected-blank-body.gold.json",
+          "sha256": "77deef9cd6ac47a5ee628072389d3de925ea8fbbbcb8f58d47b98bec636f26e9"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "id": "d29-rejected-html-root",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d29-rejected-html-root.xml",
+      "files": {
+        "input": {
+          "path": "d29-rejected-html-root.xml",
+          "sha256": "79598b3b28646cbfad31bc8a82281e7c6164e8f320428e3e0d759abcb6251d10"
+        },
+        "gold": {
+          "path": "d29-rejected-html-root.gold.json",
+          "sha256": "1d5a525e1023a423478dc25c10e7f31ca6cea722147edddd6bcfde28f8172700"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        }
+      }
+    },
+    {
+      "id": "d30-transport-gzip-feed",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d30-transport-gzip-feed.b64",
+      "files": {
+        "input": {
+          "path": "d30-transport-gzip-feed.b64",
+          "sha256": "5a337d093896469fc6dd90e0afc09115ef7a557319ad63597b7967a144b4abba"
+        },
+        "gold": {
+          "path": "d30-transport-gzip-feed.gold.json",
+          "sha256": "3c0f550cc5a170b147b2ceb0160625db9a474222b3d17f27077d7e92d087b6df"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        },
+        "encoding": "base64"
+      }
+    },
+    {
+      "id": "d31-transport-decoded-feed",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d31-transport-decoded-feed.xml",
+      "files": {
+        "input": {
+          "path": "d31-transport-decoded-feed.xml",
+          "sha256": "fd9a6d9620350fbf3cda47739cffb3b207e72e8b815d9c8be30acfce34088e8f"
+        },
+        "gold": {
+          "path": "d31-transport-decoded-feed.gold.json",
+          "sha256": "cef0f810d4edb98229b3e201e3666888fc1973ffd86e19510c3274617d177271"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        }
+      }
+    },
+    {
+      "id": "d32-scope-same-host-only",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d32-scope-same-host-only.xml",
+      "files": {
+        "input": {
+          "path": "d32-scope-same-host-only.xml",
+          "sha256": "c0cf36683cafa94f50cdb96ce4d181c3f41a1e370ad7d74615cb5e94b2a0fc59"
+        },
+        "gold": {
+          "path": "d32-scope-same-host-only.gold.json",
+          "sha256": "2fe53065914c5abb61ed6b860cb03177ef7ffadc3750be99ce0d34b74c002b33"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "denied": [
+          "https://blog.news.corpus.test/in/two",
+          "https://partner.corpus.test/out/three",
+          "https://news.corpus.test.lookalike.test/out/five",
+          "https://notnews.corpus.test/out/six"
+        ]
+      }
+    },
+    {
+      "id": "d33-scope-subdomains-allowed",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d33-scope-subdomains-allowed.xml",
+      "files": {
+        "input": {
+          "path": "d33-scope-subdomains-allowed.xml",
+          "sha256": "c0cf36683cafa94f50cdb96ce4d181c3f41a1e370ad7d74615cb5e94b2a0fc59"
+        },
+        "gold": {
+          "path": "d33-scope-subdomains-allowed.gold.json",
+          "sha256": "4439fbae4b48ba55b897851955906e133bf2fb894db7e3556a90a5e093977718"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": true
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "denied": [
+          "https://partner.corpus.test/out/three",
+          "https://news.corpus.test.lookalike.test/out/five",
+          "https://notnews.corpus.test/out/six"
+        ]
+      }
+    },
+    {
+      "id": "d34-language-hint-orders-only",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d34-language-hint-orders-only.xml",
+      "files": {
+        "input": {
+          "path": "d34-language-hint-orders-only.xml",
+          "sha256": "177aa6b6d50bc1c52c774ce96f34807e91e6c4a672f01e0c5217f35e38265f24"
+        },
+        "gold": {
+          "path": "d34-language-hint-orders-only.gold.json",
+          "sha256": "61f82fe6980fdb64dc3b658942e8e43e02814d9b4be6f4c9e898c325b25e4266"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": true
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "policy": {
+          "urlLanguageHint": "de"
+        }
+      }
+    },
+    {
+      "id": "d35-language-hint-absent",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d35-language-hint-absent.xml",
+      "files": {
+        "input": {
+          "path": "d35-language-hint-absent.xml",
+          "sha256": "177aa6b6d50bc1c52c774ce96f34807e91e6c4a672f01e0c5217f35e38265f24"
+        },
+        "gold": {
+          "path": "d35-language-hint-absent.gold.json",
+          "sha256": "ea7eb6e8a3a32e383e5aefc2b283270554786499b4d3d51f0323c359f0203ee0"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": true
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        }
+      }
+    },
+    {
+      "id": "d36-probe-rss-loopback-references",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d36-probe-rss-loopback-references.xml",
+      "files": {
+        "input": {
+          "path": "d36-probe-rss-loopback-references.xml",
+          "sha256": "fc97600c41c71a24ebb746de69e709163a13d72b7311746c4774c57975304f64"
+        },
+        "gold": {
+          "path": "d36-probe-rss-loopback-references.gold.json",
+          "sha256": "91334ba643bdbce3bcc9c9d4aa9b6dbe69e9aa2abb792630a058f2c505ca9933"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        },
+        "denied": [
+          "{{probe}}/loopback/one",
+          "{{probe}}/pixel.gif",
+          "{{probe}}/clip.mp4",
+          "{{probe}}/more",
+          "{{probe}}/feed?page=2"
+        ],
+        "probe": true
+      }
+    },
+    {
+      "id": "d37-probe-atom-base-redirect",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d37-probe-atom-base-redirect.xml",
+      "files": {
+        "input": {
+          "path": "d37-probe-atom-base-redirect.xml",
+          "sha256": "c10477cfff5520213d595a9e253afbf2d4be34a4a3914dda260cb5d1f6ff4dda"
+        },
+        "gold": {
+          "path": "d37-probe-atom-base-redirect.gold.json",
+          "sha256": "bd884cd959833bd87336755cff183b81f8ae421f6ee3d875f2f5ca29fb40a2e9"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Atom"
+        },
+        "denied": [
+          "{{probe}}/relative-one"
+        ],
+        "probe": true
+      }
+    },
+    {
+      "id": "d38-rss2-byte-order-mark",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d38-rss2-byte-order-mark.xml",
+      "files": {
+        "input": {
+          "path": "d38-rss2-byte-order-mark.xml",
+          "sha256": "150f9fb066e7b028fc6b574b51ba6ef0a6b612336869cde09bf38da9b503155c"
+        },
+        "gold": {
+          "path": "d38-rss2-byte-order-mark.gold.json",
+          "sha256": "73606b3e5932b674ea41b7e91a0cb3194b02357316a061b6d016cf416c84e0ed"
+        }
+      },
+      "params": {
+        "format": "feed",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "kind": "Rss"
+        }
+      }
+    },
+    {
+      "id": "d40-sitemap-urlset",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d40-sitemap-urlset.xml",
+      "files": {
+        "input": {
+          "path": "d40-sitemap-urlset.xml",
+          "sha256": "214fa1590a01913689f3f2adbb37b4865e92a5fe06394ad782c8fe997cb6de2c"
+        },
+        "gold": {
+          "path": "d40-sitemap-urlset.gold.json",
+          "sha256": "181070de74758ac47fed0b880d4c426fcc749e3f1139792c1d7d93ad3bdbeeb0"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 5
+        },
+        "denied": [
+          "https://partner.corpus.test/shop/guest"
+        ]
+      }
+    },
+    {
+      "id": "d41-sitemap-index-traversal",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/sitemaps/d41-sitemap-index-traversal.xml",
+      "files": {
+        "input": {
+          "path": "d41-sitemap-index-traversal.xml",
+          "sha256": "f2194e7b2a2d132ce23b95217b37f3a2df2b25ca686109a548f9662a7c5d799d"
+        },
+        "gold": {
+          "path": "d41-sitemap-index-traversal.gold.json",
+          "sha256": "76a7e5ddeb3655f62d92e616ab3bbd2811cd962b55b67bd30e5cdfbe0273bf3b"
+        }
+      },
+      "params": {
+        "format": "sitemap-traversal",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        },
+        "denied": [
+          "https://partner.corpus.test/sitemaps/theirs.xml"
+        ],
+        "documents": {
+          "https://news.corpus.test/sitemaps/posts.xml": "<?xml version=\"1.0\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://news.corpus.test/posts/harbor-fees</loc></url><url><loc>https://news.corpus.test/posts/ferry-routes</loc></url></urlset>",
+          "https://news.corpus.test/sitemaps/pages.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/posts.xml</loc></sitemap><sitemap><loc>https://news.corpus.test/sitemaps/pages-2.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/pages-2.xml": "<?xml version=\"1.0\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://news.corpus.test/pages/contact</loc></url></urlset>",
+          "https://partner.corpus.test/sitemaps/theirs.xml": "<?xml version=\"1.0\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://partner.corpus.test/their/page</loc></url></urlset>"
+        }
+      }
+    },
+    {
+      "id": "d42-sitemap-text-format",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d42-sitemap-text-format.txt",
+      "files": {
+        "input": {
+          "path": "d42-sitemap-text-format.txt",
+          "sha256": "095a48a73ecc85bfa6dd73cd6472cbf35ee7a545ed0733cf5535c362955f9957"
+        },
+        "gold": {
+          "path": "d42-sitemap-text-format.gold.json",
+          "sha256": "322309f2acbd339fa1229800e8a4cd3969a00e233535fde78664e23fb034fff6"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 4
+        },
+        "denied": [
+          "https://partner.corpus.test/text/four"
+        ]
+      }
+    },
+    {
+      "id": "d43-sitemap-hreflang-variants",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d43-sitemap-hreflang-variants.xml",
+      "files": {
+        "input": {
+          "path": "d43-sitemap-hreflang-variants.xml",
+          "sha256": "e3b7c4f7ac40e4ba5893dd432156634cb21def67022942bd6cdc505a08b7e486"
+        },
+        "gold": {
+          "path": "d43-sitemap-hreflang-variants.gold.json",
+          "sha256": "8a6058b69727f698e8268666e8e5c9ca101d12a70cc33ae5f7f2deffdb6dcb66"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 2
+        },
+        "denied": [
+          "https://de.partner.corpus.test/at/gezeiten"
+        ],
+        "neverProposed": [
+          "https://news.corpus.test/de/style.css"
+        ]
+      }
+    },
+    {
+      "id": "d44-sitemap-hreflang-language-hint",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d44-sitemap-hreflang-language-hint.xml",
+      "files": {
+        "input": {
+          "path": "d44-sitemap-hreflang-language-hint.xml",
+          "sha256": "e3b7c4f7ac40e4ba5893dd432156634cb21def67022942bd6cdc505a08b7e486"
+        },
+        "gold": {
+          "path": "d44-sitemap-hreflang-language-hint.gold.json",
+          "sha256": "652f0aba72d4868ecab3ec5d0ff8473f8ca0dc70c657012346ab8960ee076528"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 2
+        },
+        "denied": [
+          "https://de.partner.corpus.test/at/gezeiten"
+        ],
+        "policy": {
+          "urlLanguageHint": "de"
+        }
+      }
+    },
+    {
+      "id": "d45-transport-gzip-sitemap",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d45-transport-gzip-sitemap.b64",
+      "files": {
+        "input": {
+          "path": "d45-transport-gzip-sitemap.b64",
+          "sha256": "6f833e96c2c6913fc1099f4ae86fb5e2b5256f4f1161496825628e9206d70094"
+        },
+        "gold": {
+          "path": "d45-transport-gzip-sitemap.gold.json",
+          "sha256": "a0399366f242081f1c8974f88b9c8fc0a12397714c62ab3fe76686da0df8225e"
+        }
+      },
+      "params": {
+        "format": "sitemap-gzip",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        },
+        "encoding": "base64"
+      }
+    },
+    {
+      "id": "d46-transport-decoded-sitemap",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d46-transport-decoded-sitemap.xml",
+      "files": {
+        "input": {
+          "path": "d46-transport-decoded-sitemap.xml",
+          "sha256": "1cde1fefda0e1e1c439ed4e67ae32dc08a38d9cbc0433c0e3a23074355f6fde6"
+        },
+        "gold": {
+          "path": "d46-transport-decoded-sitemap.gold.json",
+          "sha256": "a70cad08e864a6dc40ca0425d4910333647bbe0d3a7a72662cc8362b60f513ca"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 2
+        }
+      }
+    },
+    {
+      "id": "d47-sitemap-lastmod-window-exclude-unknown",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d47-sitemap-lastmod-window-exclude-unknown.xml",
+      "files": {
+        "input": {
+          "path": "d47-sitemap-lastmod-window-exclude-unknown.xml",
+          "sha256": "e83e9067c09c204c888e5473551371dbc0204d11d21dbb55b38ba5b6673f6f28"
+        },
+        "gold": {
+          "path": "d47-sitemap-lastmod-window-exclude-unknown.gold.json",
+          "sha256": "3d78efa89fbba27de294d3ddc7f8bc970f5572c747f6896d0f105a27d5620982"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 7
+        },
+        "policy": {
+          "sitemapLastmod": {
+            "lower": "2026-06-01T00:00:00Z",
+            "upper": "2026-09-30T23:59:59Z",
+            "missingOrUnparseable": "exclude"
+          }
+        }
+      }
+    },
+    {
+      "id": "d48-sitemap-lastmod-window-include-unknown",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d48-sitemap-lastmod-window-include-unknown.xml",
+      "files": {
+        "input": {
+          "path": "d48-sitemap-lastmod-window-include-unknown.xml",
+          "sha256": "e83e9067c09c204c888e5473551371dbc0204d11d21dbb55b38ba5b6673f6f28"
+        },
+        "gold": {
+          "path": "d48-sitemap-lastmod-window-include-unknown.gold.json",
+          "sha256": "517dedf41c3158a189ff95a94bd160582f1ba376fac24a9f94023a1c8dca8bdc"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 7
+        },
+        "policy": {
+          "sitemapLastmod": {
+            "lower": "2026-06-01T00:00:00Z",
+            "upper": "2026-09-30T23:59:59Z"
+          }
+        }
+      }
+    },
+    {
+      "id": "d49-sitemap-cap-exact",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d49-sitemap-cap-exact.xml",
+      "files": {
+        "input": {
+          "path": "d49-sitemap-cap-exact.xml",
+          "sha256": "ab3190cc021cf4e89eb497e67acb10bb7f8f348e74ad3a3d8456977348f72b1c"
+        },
+        "gold": {
+          "path": "d49-sitemap-cap-exact.gold.json",
+          "sha256": "cbe3aa9c23295a83f683bb16c8647c25599d167bf5fc248a07765bbab8476bd4"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "entries": 5
+        },
+        "policy": {
+          "maxEntries": 5
+        }
+      }
+    },
+    {
+      "id": "d50-sitemap-cap-over",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d50-sitemap-cap-over.xml",
+      "files": {
+        "input": {
+          "path": "d50-sitemap-cap-over.xml",
+          "sha256": "ab3190cc021cf4e89eb497e67acb10bb7f8f348e74ad3a3d8456977348f72b1c"
+        },
+        "gold": {
+          "path": "d50-sitemap-cap-over.gold.json",
+          "sha256": "754642a9d453e4d0fdce1ccbb5d25f09e88a7e0c8c39b809bfbab2d43d54680e"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": true,
+          "entries": 4
+        },
+        "policy": {
+          "maxEntries": 4
+        }
+      }
+    },
+    {
+      "id": "d51-sitemap-depth-exact",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d51-sitemap-depth-exact.xml",
+      "files": {
+        "input": {
+          "path": "d51-sitemap-depth-exact.xml",
+          "sha256": "91254cf50a08a5829a686daf8c72a2b2f8719d8f985c44b7c6904cff52f9a243"
+        },
+        "gold": {
+          "path": "d51-sitemap-depth-exact.gold.json",
+          "sha256": "5a215ed8481e465c7ba593e23306ebb94ccab0fe98d4109acec2eff72eddf333"
+        }
+      },
+      "params": {
+        "format": "sitemap-traversal",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "skippedForDepth": 0
+        },
+        "documents": {
+          "https://news.corpus.test/sitemaps/c1.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c2.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c2.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c3.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c3.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c4.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c4.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c5.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c5.xml": "<?xml version=\"1.0\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://news.corpus.test/deep/page</loc></url></urlset>"
+        }
+      }
+    },
+    {
+      "id": "d52-sitemap-depth-over",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d52-sitemap-depth-over.xml",
+      "files": {
+        "input": {
+          "path": "d52-sitemap-depth-over.xml",
+          "sha256": "91254cf50a08a5829a686daf8c72a2b2f8719d8f985c44b7c6904cff52f9a243"
+        },
+        "gold": {
+          "path": "d52-sitemap-depth-over.gold.json",
+          "sha256": "7de63489b6f2c6516a47774a87e0865e885f470000071c78d5726cf4f72a90d3"
+        }
+      },
+      "params": {
+        "format": "sitemap-traversal",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false,
+          "skippedForDepth": 1
+        },
+        "documents": {
+          "https://news.corpus.test/sitemaps/c1.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c2.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c2.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c3.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c3.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c4.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c4.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c5.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c5.xml": "<?xml version=\"1.0\"?><sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sitemap><loc>https://news.corpus.test/sitemaps/c6.xml</loc></sitemap></sitemapindex>",
+          "https://news.corpus.test/sitemaps/c6.xml": "<?xml version=\"1.0\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://news.corpus.test/deep/page</loc></url></urlset>"
+        }
+      }
+    },
+    {
+      "id": "d53-sitemap-index-lastmod-does-not-prune",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d53-sitemap-index-lastmod-does-not-prune.xml",
+      "files": {
+        "input": {
+          "path": "d53-sitemap-index-lastmod-does-not-prune.xml",
+          "sha256": "fb3cb8171e089c53670b8f2cc6b57aeef91c23648ef73cc3ff7be1be9862b02f"
+        },
+        "gold": {
+          "path": "d53-sitemap-index-lastmod-does-not-prune.gold.json",
+          "sha256": "56f77db9ce9c15aa0f69ed11ccd4144de9f343492c91069e6552d56feda1cfac"
+        }
+      },
+      "params": {
+        "format": "sitemap-traversal",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        },
+        "documents": {
+          "https://news.corpus.test/sitemaps/stale.xml": "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc>https://news.corpus.test/stale/in-window</loc><lastmod>2026-07-01</lastmod></url><url><loc>https://news.corpus.test/stale/too-old</loc><lastmod>2019-05-05</lastmod></url></urlset>"
+        },
+        "policy": {
+          "sitemapLastmod": {
+            "lower": "2026-01-01T00:00:00Z"
+          }
+        }
+      }
+    },
+    {
+      "id": "d54-sitemap-dtd-rejected",
+      "family": "feed",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://news.corpus.test/feeds/d54-sitemap-dtd-rejected.xml",
+      "files": {
+        "input": {
+          "path": "d54-sitemap-dtd-rejected.xml",
+          "sha256": "9cebb7edf89353fa232ad9908b1818c05c73b4a3c9b7b4ea9f65a638ff922ba1"
+        },
+        "gold": {
+          "path": "d54-sitemap-dtd-rejected.gold.json",
+          "sha256": "c8893e9c456c06227cb9bebf8eb5c81a2dbd680312a619fc7361e40e2f5f87e8"
+        }
+      },
+      "params": {
+        "format": "sitemap",
+        "seed": "https://news.corpus.test/",
+        "scope": {
+          "crawlEntireDomain": true,
+          "allowSubdomains": false
+        },
+        "expect": {
+          "truncated": false
+        },
+        "probe": true
+      }
+    }
+  ]
+}

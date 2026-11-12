@@ -32,6 +32,14 @@ const fn is_zero_u64(v: &u64) -> bool {
 const fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+const fn is_zero_u16(v: &u16) -> bool {
+    *v == 0
+}
+#[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+const fn is_default_max_url_length(v: &u32) -> bool {
+    *v == 8192
+}
 
 /// Maximum length in bytes of one caller-supplied regex pattern.
 pub const MAX_PATTERN_LEN: usize = 512;
@@ -633,6 +641,23 @@ pub struct Limits {
     /// Wall-clock budget in seconds before the run ends; clamped to 1..=604,800 (default 14,400).
     #[serde(default = "Limits::default_duration")]
     pub duration_seconds: u32,
+    /// Stop once this many pages were kept (succeeded); clamped to 0..=1,000,000 (default 0 =
+    /// no item criterion). The URL plane leases no more rows than the criterion still allows, so
+    /// the count is never overshot.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub items: u32,
+    /// Stop once this many URL fetches ended failed or unreachable; clamped to 0..=1,000,000
+    /// (default 0 = no error criterion).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub errors: u32,
+    /// Stop after this many seconds without a newly kept page; clamped to 0..=604,800 (default 0
+    /// = no idle criterion). Measured on the run clock from the plane's start.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub idle_seconds: u32,
+    /// Stop leasing new work (a drain) once the artifact upload spool occupies this many
+    /// permille of its capacity; clamped to 0..=1000 (default 0 = no disk criterion).
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub disk_pressure_permille: u16,
 }
 
 impl Limits {
@@ -657,6 +682,10 @@ impl Default for Limits {
             interactions: Self::default_interactions(),
             states: Self::default_states(),
             duration_seconds: Self::default_duration(),
+            items: 0,
+            errors: 0,
+            idle_seconds: 0,
+            disk_pressure_permille: 0,
         }
     }
 }
@@ -774,9 +803,20 @@ pub struct Scope {
     /// scope in addition to what `hostScope` admits; `None` is off. At most 512 bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_scope_pattern: Option<String>,
+    /// Longest URL in bytes the crawl accepts, checked before canonicalization and again on the
+    /// canonical form; a longer link is refused with the stable reason `url_too_long` and counted
+    /// as policy-blocked, never fetched. Clamped to 256..=65,536 (default 8,192).
+    #[serde(
+        default = "Scope::default_max_url_length",
+        skip_serializing_if = "is_default_max_url_length"
+    )]
+    pub max_url_length: u32,
 }
 
 impl Scope {
+    const fn default_max_url_length() -> u32 {
+        8192
+    }
     const fn default_depth() -> u16 {
         10
     }
@@ -826,6 +866,7 @@ impl Default for Scope {
             path_climb: false,
             disable_unique_filter: false,
             host_scope_pattern: None,
+            max_url_length: Self::default_max_url_length(),
         }
     }
 }
@@ -1370,6 +1411,55 @@ impl Default for Politeness {
     }
 }
 
+/// Which part of the parent page's URL an outbound request may carry as its `Referer`
+/// (`fetch.referrerPolicy`). The wire names are the standard policy tokens.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum ReferrerPolicy {
+    /// Never send a `Referer` (default).
+    #[default]
+    NoReferrer,
+    /// Send the full referrer, except on an `https` to `http` downgrade.
+    NoReferrerWhenDowngrade,
+    /// Send the full referrer to the same origin only.
+    SameOrigin,
+    /// Send only the referrer's origin.
+    Origin,
+    /// Send only the referrer's origin, except on an `https` to `http` downgrade.
+    StrictOrigin,
+    /// Send the full referrer to the same origin and only the origin elsewhere.
+    OriginWhenCrossOrigin,
+    /// Like `origin-when-cross-origin`, and nothing on an `https` to `http` downgrade.
+    StrictOriginWhenCrossOrigin,
+    /// Always send the full referrer.
+    UnsafeUrl,
+}
+
+impl ReferrerPolicy {
+    /// Whether this is the default policy ([`Self::NoReferrer`]).
+    #[must_use]
+    #[allow(clippy::trivially_copy_pass_by_ref, reason = "serde passes `&T`")]
+    pub const fn is_default(&self) -> bool {
+        matches!(self, Self::NoReferrer)
+    }
+
+    /// The standard policy token, identical to the serde form.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoReferrer => "no-referrer",
+            Self::NoReferrerWhenDowngrade => "no-referrer-when-downgrade",
+            Self::SameOrigin => "same-origin",
+            Self::Origin => "origin",
+            Self::StrictOrigin => "strict-origin",
+            Self::OriginWhenCrossOrigin => "origin-when-cross-origin",
+            Self::StrictOriginWhenCrossOrigin => "strict-origin-when-cross-origin",
+            Self::UnsafeUrl => "unsafe-url",
+        }
+    }
+}
+
 /// `fetch`: static-plane request tuning.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -1433,6 +1523,12 @@ pub struct Fetch {
     /// Operator registry id of an approved HTML acquisition service; never an endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acquisition_service: Option<String>,
+    /// Outbound `Referer` policy of the static plane for a URL found on a page (default
+    /// `no-referrer`: none is sent). The referrer is the parent page's URL without credentials or
+    /// fragment and with secret query parameters removed; it is recomputed for every redirect hop.
+    /// A `referer` header configured in `extraHeaders` is never replaced.
+    #[serde(default, skip_serializing_if = "ReferrerPolicy::is_default")]
+    pub referrer_policy: ReferrerPolicy,
 }
 
 impl Fetch {
@@ -1467,6 +1563,7 @@ impl Default for Fetch {
             oversize: None,
             identity_profile: None,
             acquisition_service: None,
+            referrer_policy: ReferrerPolicy::NoReferrer,
         }
     }
 }
@@ -2191,6 +2288,11 @@ impl CreateCrawl {
         self.limits.interactions = self.limits.interactions.clamp(0, 100_000);
         self.limits.states = self.limits.states.clamp(0, 100_000);
         self.limits.duration_seconds = self.limits.duration_seconds.clamp(1, 7 * 86_400);
+        self.limits.items = self.limits.items.clamp(0, 1_000_000);
+        self.limits.errors = self.limits.errors.clamp(0, 1_000_000);
+        self.limits.idle_seconds = self.limits.idle_seconds.clamp(0, 7 * 86_400);
+        self.limits.disk_pressure_permille = self.limits.disk_pressure_permille.min(1000);
+        self.scope.max_url_length = self.scope.max_url_length.clamp(256, 65_536);
         self.scope.max_discovery_depth = self.scope.max_discovery_depth.min(100);
         self.runs_per_role = self.runs_per_role.clamp(1, 10);
         self.dynamic.max_tabs = self.dynamic.max_tabs.clamp(1, 8);
@@ -2947,6 +3049,70 @@ mod tests {
         assert!(r.normalize().is_ok());
         assert_eq!(r.effective_roles()[0].name, "anonymous");
         assert_eq!(r.limits.urls, 10_000);
+    }
+
+    #[test]
+    fn run_control_and_url_policy_options_default_off_and_stay_off_the_wire() {
+        let mut r = req(r#"{"seedUrl":"https://app.example.test/"}"#);
+        assert!(r.normalize().is_ok());
+        let limits = &r.limits;
+        assert_eq!(
+            (
+                limits.items,
+                limits.errors,
+                limits.idle_seconds,
+                limits.disk_pressure_permille
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(r.fetch.referrer_policy, ReferrerPolicy::NoReferrer);
+        assert_eq!(r.scope.max_url_length, 8192);
+        // defaults serialize exactly as before the options existed, so stored digests hold
+        let wire = serde_json::to_value(&r).unwrap();
+        for key in ["items", "errors", "idleSeconds", "diskPressurePermille"] {
+            assert!(wire["limits"].get(key).is_none(), "{key}");
+        }
+        assert!(wire["fetch"].get("referrerPolicy").is_none());
+        assert!(wire["scope"].get("maxUrlLength").is_none());
+    }
+
+    #[test]
+    fn run_control_and_url_policy_options_are_clamped_and_round_trip() {
+        let mut r = req(r#"{"seedUrl":"https://app.example.test/",
+                "limits":{"items":3,"errors":2000000,"idleSeconds":9999999,"diskPressurePermille":5000},
+                "fetch":{"referrerPolicy":"strict-origin-when-cross-origin"},
+                "scope":{"maxUrlLength":10}}"#);
+        assert!(r.normalize().is_ok());
+        assert_eq!(r.limits.items, 3);
+        assert_eq!(r.limits.errors, 1_000_000);
+        assert_eq!(r.limits.idle_seconds, 7 * 86_400);
+        assert_eq!(r.limits.disk_pressure_permille, 1000);
+        assert_eq!(r.scope.max_url_length, 256);
+        assert_eq!(
+            r.fetch.referrer_policy,
+            ReferrerPolicy::StrictOriginWhenCrossOrigin
+        );
+        let wire = serde_json::to_value(&r).unwrap();
+        assert_eq!(wire["fetch"]["referrerPolicy"], "strict-origin-when-cross-origin");
+        assert_eq!(wire["scope"]["maxUrlLength"], 256);
+        assert_eq!(wire["limits"]["items"], 3);
+        for policy in [
+            ReferrerPolicy::NoReferrer,
+            ReferrerPolicy::NoReferrerWhenDowngrade,
+            ReferrerPolicy::SameOrigin,
+            ReferrerPolicy::Origin,
+            ReferrerPolicy::StrictOrigin,
+            ReferrerPolicy::OriginWhenCrossOrigin,
+            ReferrerPolicy::StrictOriginWhenCrossOrigin,
+            ReferrerPolicy::UnsafeUrl,
+        ] {
+            let back: ReferrerPolicy = serde_json::from_value(serde_json::json!(policy.as_str())).unwrap();
+            assert_eq!(back, policy);
+        }
+        assert!(serde_json::from_str::<CreateCrawl>(
+            r#"{"seedUrl":"https://a.test/","fetch":{"referrerPolicy":"sometimes"}}"#
+        )
+        .is_err());
     }
 
     #[test]

@@ -1,0 +1,88 @@
+{
+  "id": "l80-dict-japanese-exhibit",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "市立|図書館|で|展示|が|あり|ます|子供|たち|は|紙|の|ランタン|を|見|ます",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 20
+    },
+    {
+      "label": "token",
+      "start": 21,
+      "end": 27
+    },
+    {
+      "label": "token",
+      "start": 28,
+      "end": 31
+    },
+    {
+      "label": "token",
+      "start": 32,
+      "end": 38
+    },
+    {
+      "label": "token",
+      "start": 39,
+      "end": 45
+    },
+    {
+      "label": "token",
+      "start": 46,
+      "end": 52
+    },
+    {
+      "label": "token",
+      "start": 53,
+      "end": 59
+    },
+    {
+      "label": "token",
+      "start": 60,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 67
+    },
+    {
+      "label": "token",
+      "start": 68,
+      "end": 71
+    },
+    {
+      "label": "token",
+      "start": 72,
+      "end": 84
+    },
+    {
+      "label": "token",
+      "start": 85,
+      "end": 88
+    },
+    {
+      "label": "token",
+      "start": 89,
+      "end": 92
+    },
+    {
+      "label": "token",
+      "start": 93,
+      "end": 99
+    }
+  ]
+}

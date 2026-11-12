@@ -1,0 +1,68 @@
+{
+  "id": "l93-dict-devanagari-marathi",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "आमच्या|गावात|आज|बाजार|भरला|आहे|शेतकरी|भाजी|आणि|फळे|घेऊन|आले",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 18
+    },
+    {
+      "label": "token",
+      "start": 19,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 70
+    },
+    {
+      "label": "token",
+      "start": 71,
+      "end": 80
+    },
+    {
+      "label": "token",
+      "start": 81,
+      "end": 99
+    },
+    {
+      "label": "token",
+      "start": 100,
+      "end": 112
+    },
+    {
+      "label": "token",
+      "start": 113,
+      "end": 122
+    },
+    {
+      "label": "token",
+      "start": 123,
+      "end": 132
+    },
+    {
+      "label": "token",
+      "start": 133,
+      "end": 145
+    },
+    {
+      "label": "token",
+      "start": 146,
+      "end": 155
+    }
+  ]
+}

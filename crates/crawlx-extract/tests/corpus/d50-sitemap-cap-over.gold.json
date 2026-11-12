@@ -1,0 +1,28 @@
+{
+  "id": "d50-sitemap-cap-over",
+  "family": "feed",
+  "note": "one over the sitemap entry cap: four entries kept, flagged truncated",
+  "expectedText": "https://news.corpus.test/cap/1\nhttps://news.corpus.test/cap/2\nhttps://news.corpus.test/cap/3\nhttps://news.corpus.test/cap/4",
+  "spans": [
+    {
+      "label": "page",
+      "start": 0,
+      "end": 30
+    },
+    {
+      "label": "page",
+      "start": 31,
+      "end": 61
+    },
+    {
+      "label": "page",
+      "start": 62,
+      "end": 92
+    },
+    {
+      "label": "page",
+      "start": 93,
+      "end": 123
+    }
+  ]
+}

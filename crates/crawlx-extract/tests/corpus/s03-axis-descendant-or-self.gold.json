@@ -1,0 +1,48 @@
+{
+  "id": "s03-axis-descendant-or-self",
+  "family": "selector",
+  "note": "descendant-or-self axis: self included, double-slash expansion, whole-document node count",
+  "expectedText": "outer-inner\ninner\ninner\nouter-inner\ninner\nsolo\nsolo\n10",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 11
+    },
+    {
+      "label": "r1",
+      "start": 12,
+      "end": 17
+    },
+    {
+      "label": "r2",
+      "start": 18,
+      "end": 23
+    },
+    {
+      "label": "r3",
+      "start": 24,
+      "end": 35
+    },
+    {
+      "label": "r3",
+      "start": 36,
+      "end": 41
+    },
+    {
+      "label": "r3",
+      "start": 42,
+      "end": 46
+    },
+    {
+      "label": "r4",
+      "start": 47,
+      "end": 51
+    },
+    {
+      "label": "r5",
+      "start": 52,
+      "end": 54
+    }
+  ]
+}

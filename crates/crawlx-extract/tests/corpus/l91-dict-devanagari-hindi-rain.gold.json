@@ -1,0 +1,68 @@
+{
+  "id": "l91-dict-devanagari-hindi-rain",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "बारिश|के|बाद|सड़क|पर|पानी|भर|गया|लोग|छाता|लेकर|निकले",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "token",
+      "start": 16,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 45
+    },
+    {
+      "label": "token",
+      "start": 46,
+      "end": 52
+    },
+    {
+      "label": "token",
+      "start": 53,
+      "end": 65
+    },
+    {
+      "label": "token",
+      "start": 66,
+      "end": 72
+    },
+    {
+      "label": "token",
+      "start": 73,
+      "end": 82
+    },
+    {
+      "label": "token",
+      "start": 83,
+      "end": 92
+    },
+    {
+      "label": "token",
+      "start": 93,
+      "end": 105
+    },
+    {
+      "label": "token",
+      "start": 106,
+      "end": 118
+    },
+    {
+      "label": "token",
+      "start": 119,
+      "end": 134
+    }
+  ]
+}

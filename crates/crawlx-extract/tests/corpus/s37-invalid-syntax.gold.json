@@ -1,0 +1,148 @@
+{
+  "id": "s37-invalid-syntax",
+  "family": "selector",
+  "note": "invalid expressions fail with typed errors, never an empty match: syntax, arity, node-set required, unsupported functions",
+  "expectedText": "error:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:Syntax\nerror:NodeSetRequired\nerror:NodeSetRequired\nerror:NodeSetRequired\nerror:NodeSetRequired\nerror:NodeSetRequired\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:UnsupportedFunction\nerror:Syntax\nerror:Syntax\nerror:Syntax",
+  "spans": [
+    {
+      "label": "e01",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "e02",
+      "start": 13,
+      "end": 25
+    },
+    {
+      "label": "e03",
+      "start": 26,
+      "end": 38
+    },
+    {
+      "label": "e04",
+      "start": 39,
+      "end": 51
+    },
+    {
+      "label": "e05",
+      "start": 52,
+      "end": 64
+    },
+    {
+      "label": "e06",
+      "start": 65,
+      "end": 77
+    },
+    {
+      "label": "e07",
+      "start": 78,
+      "end": 90
+    },
+    {
+      "label": "e08",
+      "start": 91,
+      "end": 103
+    },
+    {
+      "label": "e09",
+      "start": 104,
+      "end": 116
+    },
+    {
+      "label": "e10",
+      "start": 117,
+      "end": 129
+    },
+    {
+      "label": "e11",
+      "start": 130,
+      "end": 142
+    },
+    {
+      "label": "e12",
+      "start": 143,
+      "end": 155
+    },
+    {
+      "label": "e13",
+      "start": 156,
+      "end": 168
+    },
+    {
+      "label": "e14",
+      "start": 169,
+      "end": 181
+    },
+    {
+      "label": "e15",
+      "start": 182,
+      "end": 194
+    },
+    {
+      "label": "e16",
+      "start": 195,
+      "end": 207
+    },
+    {
+      "label": "e17",
+      "start": 208,
+      "end": 220
+    },
+    {
+      "label": "e18",
+      "start": 221,
+      "end": 242
+    },
+    {
+      "label": "e19",
+      "start": 243,
+      "end": 264
+    },
+    {
+      "label": "e20",
+      "start": 265,
+      "end": 286
+    },
+    {
+      "label": "e21",
+      "start": 287,
+      "end": 308
+    },
+    {
+      "label": "e22",
+      "start": 309,
+      "end": 330
+    },
+    {
+      "label": "e23",
+      "start": 331,
+      "end": 356
+    },
+    {
+      "label": "e24",
+      "start": 357,
+      "end": 382
+    },
+    {
+      "label": "e25",
+      "start": 383,
+      "end": 408
+    },
+    {
+      "label": "e26",
+      "start": 409,
+      "end": 421
+    },
+    {
+      "label": "e27",
+      "start": 422,
+      "end": 434
+    },
+    {
+      "label": "e28",
+      "start": 435,
+      "end": 447
+    }
+  ]
+}

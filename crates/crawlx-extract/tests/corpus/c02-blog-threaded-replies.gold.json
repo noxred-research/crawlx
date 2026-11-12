@@ -1,0 +1,98 @@
+{
+  "id": "c02-blog-threaded-replies",
+  "family": "comments",
+  "note": "blog post with nested threaded replies two levels deep",
+  "expectedText": "Field Margin Journal Wildlife Gardens Contact\nPlanting a Hedge for Birds\nA mixed native hedge gives birds shelter in winter, nesting sites in spring and berries in autumn, all in a strip of ground no wider than a path. The trick is to plant several species rather than a single row of one shrub.\nHawthorn and blackthorn make a dense structure that small birds use to hide from predators. Add hazel for nuts, dog rose for hips and a few holly bushes so that there is green cover in the coldest weeks.\nPlant the whips in a staggered double row, thirty centimetres apart, and cut them back by half after planting. It feels harsh, but it forces the roots to establish and the hedge to thicken from the base.\nOdette Marsh wrote:\nWe planted forty metres last autumn and the wrens moved in before Christmas.\nRuben Alvarez replied:\nHow far apart did you put the hollies? Mine seem to be sulking in the shade.\nOdette Marsh replied:\nAbout two metres. They sulk for the first year and then take off, so be patient.\nWilhelmina Tran replied:\nDo not forget to leave the clippings in a pile at the end of the row for the hedgehogs.\nCallum Reid wrote:\nIs it too late to plant bare roots in March?\nBird of the month\nThe long tailed tit builds a nest from moss, lichen and spider silk.\nPrivacy Feed",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 45
+    },
+    {
+      "label": "body",
+      "start": 46,
+      "end": 72
+    },
+    {
+      "label": "body",
+      "start": 73,
+      "end": 295
+    },
+    {
+      "label": "body",
+      "start": 296,
+      "end": 499
+    },
+    {
+      "label": "body",
+      "start": 500,
+      "end": 703
+    },
+    {
+      "label": "comment",
+      "start": 704,
+      "end": 723
+    },
+    {
+      "label": "comment",
+      "start": 724,
+      "end": 800
+    },
+    {
+      "label": "comment",
+      "start": 801,
+      "end": 823
+    },
+    {
+      "label": "comment",
+      "start": 824,
+      "end": 900
+    },
+    {
+      "label": "comment",
+      "start": 901,
+      "end": 922
+    },
+    {
+      "label": "comment",
+      "start": 923,
+      "end": 1003
+    },
+    {
+      "label": "comment",
+      "start": 1004,
+      "end": 1028
+    },
+    {
+      "label": "comment",
+      "start": 1029,
+      "end": 1116
+    },
+    {
+      "label": "comment",
+      "start": 1117,
+      "end": 1135
+    },
+    {
+      "label": "comment",
+      "start": 1136,
+      "end": 1180
+    },
+    {
+      "label": "boilerplate",
+      "start": 1181,
+      "end": 1198
+    },
+    {
+      "label": "boilerplate",
+      "start": 1199,
+      "end": 1267
+    },
+    {
+      "label": "boilerplate",
+      "start": 1268,
+      "end": 1280
+    }
+  ]
+}

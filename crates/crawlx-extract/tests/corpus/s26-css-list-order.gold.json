@@ -1,0 +1,78 @@
+{
+  "id": "s26-css-list-order",
+  "family": "selector",
+  "note": "css selector lists: results merge in document order and duplicates collapse",
+  "expectedText": "Chart room\nPilot notes\nfirst\nthird\nfirst\nsecond\nthird\nPilot notes\nEntry lights\nChannel marks\nChart room\nTide desk\nfirst\nthird",
+  "spans": [
+    {
+      "label": "c1",
+      "start": 0,
+      "end": 10
+    },
+    {
+      "label": "c1",
+      "start": 11,
+      "end": 22
+    },
+    {
+      "label": "c1",
+      "start": 23,
+      "end": 28
+    },
+    {
+      "label": "c1",
+      "start": 29,
+      "end": 34
+    },
+    {
+      "label": "c2",
+      "start": 35,
+      "end": 40
+    },
+    {
+      "label": "c2",
+      "start": 41,
+      "end": 47
+    },
+    {
+      "label": "c2",
+      "start": 48,
+      "end": 53
+    },
+    {
+      "label": "c3",
+      "start": 54,
+      "end": 65
+    },
+    {
+      "label": "c3",
+      "start": 66,
+      "end": 78
+    },
+    {
+      "label": "c3",
+      "start": 79,
+      "end": 92
+    },
+    {
+      "label": "c4",
+      "start": 93,
+      "end": 103
+    },
+    {
+      "label": "c4",
+      "start": 104,
+      "end": 113
+    },
+    {
+      "label": "c4",
+      "start": 114,
+      "end": 119
+    },
+    {
+      "label": "c4",
+      "start": 120,
+      "end": 125
+    }
+  ]
+}

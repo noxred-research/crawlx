@@ -1,0 +1,33 @@
+{
+  "id": "d49-sitemap-cap-exact",
+  "family": "feed",
+  "note": "sitemap entry cap equal to the entry count: complete, not truncated",
+  "expectedText": "https://news.corpus.test/cap/1\nhttps://news.corpus.test/cap/2\nhttps://news.corpus.test/cap/3\nhttps://news.corpus.test/cap/4\nhttps://news.corpus.test/cap/5",
+  "spans": [
+    {
+      "label": "page",
+      "start": 0,
+      "end": 30
+    },
+    {
+      "label": "page",
+      "start": 31,
+      "end": 61
+    },
+    {
+      "label": "page",
+      "start": 62,
+      "end": 92
+    },
+    {
+      "label": "page",
+      "start": 93,
+      "end": 123
+    },
+    {
+      "label": "page",
+      "start": 124,
+      "end": 154
+    }
+  ]
+}

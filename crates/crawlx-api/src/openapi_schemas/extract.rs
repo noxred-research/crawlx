@@ -28,6 +28,9 @@ pub(super) struct ExtractRequest {
     /// Return `sources` in the status response.
     #[serde(rename = "showSources")]
     show_sources: Option<bool>,
+    /// Return `urlTrace` in the status response: every attempted page, failed ones included.
+    #[serde(rename = "urlTrace")]
+    url_trace: Option<bool>,
     /// Scrape options per page (`markdown` is always among the formats).
     #[serde(rename = "scrapeOptions")]
     scrape_options: Option<ScrapeOptions>,
@@ -62,6 +65,24 @@ pub(super) struct ExtractCreated {
     warning: Option<String>,
 }
 
+/// One page the extract job attempted.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct UrlTraceEntry {
+    /// The URL as the job attempted it (a glob is expanded to the pages it matched).
+    url: String,
+    /// `scraped`, or `error` when the page could not be scraped.
+    status: String,
+    /// Why the page could not be scraped (`status: error`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// A note about a page that was scraped but gave nothing to read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+    /// Whether the model read the page (a page cut by ranking, or without text, is `false`).
+    used_in_completion: bool,
+}
+
 /// `GET /extract/{id}`.
 #[derive(JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +109,10 @@ pub(super) struct ExtractStatus {
     /// Notes of the job, joined by `; `.
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,
+    /// Every page the job attempted and what happened to it, in the order of the attempts
+    /// (`urlTrace: true` requests only; present once the job has finished).
+    #[serde(rename = "urlTrace", skip_serializing_if = "Option::is_none")]
+    url_trace: Option<Vec<UrlTraceEntry>>,
 }
 
 pub(super) fn spec(id: &str) -> Option<Spec> {

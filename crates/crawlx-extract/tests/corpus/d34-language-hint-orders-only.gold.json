@@ -1,0 +1,43 @@
+{
+  "id": "d34-language-hint-orders-only",
+  "family": "feed",
+  "note": "a target-language hint only orders candidates (matching evidence first, none next, conflicting last, stable inside each class) and never removes one",
+  "expectedText": "https://news.corpus.test/de/a\nhttps://de.news.corpus.test/e\nhttps://news.corpus.test/f?lang=de\nhttps://news.corpus.test/plain/d\nhttps://news.corpus.test/de/g?hl=en\nhttps://news.corpus.test/en/b\nhttps://news.corpus.test/pt-BR/c",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 29
+    },
+    {
+      "label": "item",
+      "start": 30,
+      "end": 59
+    },
+    {
+      "label": "item",
+      "start": 60,
+      "end": 94
+    },
+    {
+      "label": "item",
+      "start": 95,
+      "end": 127
+    },
+    {
+      "label": "item",
+      "start": 128,
+      "end": 163
+    },
+    {
+      "label": "item",
+      "start": 164,
+      "end": 193
+    },
+    {
+      "label": "item",
+      "start": 194,
+      "end": 226
+    }
+  ]
+}

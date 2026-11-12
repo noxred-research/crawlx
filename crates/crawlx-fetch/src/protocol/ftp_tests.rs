@@ -151,10 +151,10 @@ async fn fixture(
 }
 
 fn registry(target: &Url) -> FtpRegistry {
-    FtpRegistry {
-        origins: BTreeSet::from([crawlx_core::protocol::protocol_origin(target).unwrap()]),
-        policy_digests: BTreeSet::from(["fixture-policy".to_owned()]),
-    }
+    FtpRegistry::new(
+        BTreeSet::from([crawlx_core::protocol::protocol_origin(target).unwrap()]),
+        BTreeSet::from(["fixture-policy".to_owned()]),
+    )
 }
 
 async fn acquire(
@@ -164,16 +164,13 @@ async fn acquire(
     token: &CancellationToken,
     deadline: Duration,
 ) -> Result<ProtocolResource, ProtocolError> {
+    let resolver = StaticResolver::new().with("fixture.test", ["127.0.0.1".parse().unwrap()]);
+    let governor = Arc::new(OriginGovernor::new(GovernorConfig::default()));
     registry(target)
         .acquire(
-            target,
-            "fixture-policy",
-            max_bytes,
-            deadline,
+            &FtpRequest::new(target, "fixture-policy", max_bytes, deadline),
+            &FtpNetwork::new(policy, &resolver, &governor),
             token,
-            policy,
-            &StaticResolver::new().with("fixture.test", ["127.0.0.1".parse().unwrap()]),
-            &Arc::new(OriginGovernor::new(GovernorConfig::default())),
         )
         .await
 }
@@ -255,16 +252,12 @@ async fn cancellation_and_deadline_close_both_sockets_and_release_origin_permit(
             base_delay: Duration::ZERO,
             ..GovernorConfig::default()
         }));
+        let resolver = StaticResolver::new().with("fixture.test", ["127.0.0.1".parse().unwrap()]);
         let result = registry(&url)
             .acquire(
-                &url,
-                "fixture-policy",
-                4096,
-                Duration::from_secs(1),
+                &FtpRequest::new(&url, "fixture-policy", 4096, Duration::from_secs(1)),
+                &FtpNetwork::new(&policy, &resolver, &governor),
                 &token,
-                &policy,
-                &StaticResolver::new().with("fixture.test", ["127.0.0.1".parse().unwrap()]),
-                &governor,
             )
             .await;
         if cancel {
@@ -295,16 +288,13 @@ async fn private_dns_and_invalid_authority_fail_before_control_socket() {
     registry.validate().unwrap();
     let mut policy = EgressPolicy::new(false);
     policy.extra_ports.push(listener.local_addr().unwrap().port());
+    let resolver = StaticResolver::new().with("fixture.test", ["169.254.169.254".parse().unwrap()]);
+    let governor = Arc::new(OriginGovernor::new(GovernorConfig::default()));
     let result = registry
         .acquire(
-            &target,
-            "fixture-policy",
-            4096,
-            Duration::from_secs(1),
+            &FtpRequest::new(&target, "fixture-policy", 4096, Duration::from_secs(1)),
+            &FtpNetwork::new(&policy, &resolver, &governor),
             &CancellationToken::new(),
-            &policy,
-            &StaticResolver::new().with("fixture.test", ["169.254.169.254".parse().unwrap()]),
-            &Arc::new(OriginGovernor::new(GovernorConfig::default())),
         )
         .await;
     assert!(matches!(result, Err(ProtocolError::Refused("FTP DNS policy"))));

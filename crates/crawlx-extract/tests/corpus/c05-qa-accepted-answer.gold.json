@@ -1,0 +1,98 @@
+{
+  "id": "c05-qa-accepted-answer",
+  "family": "comments",
+  "note": "question with an accepted answer and a second answer; reader comments sit under the question and each answer",
+  "expectedText": "Handy Answers Questions Tags Ask a question\nHow do I stop a door from sticking in summer?\nThe bathroom door in our flat swells in warm weather and scrapes on the frame. In winter it is perfect. I would rather not plane it. Is there a lasting way to fix this?\n12 votes\nIs the door painted on all four edges? Dalia, 4 hours ago\nOnly the faces. The top and bottom are bare wood. Ivo, 3 hours ago\nAccepted answer\nBare edges soak up moisture from the air, which is why the door swells. Take it off its hinges, sand the top and bottom lightly and seal them with two coats of exterior varnish. Rehang it and the problem should not come back.\n31 votes\nThis worked for me on three doors. Thank you! Marguerite, 1 hour ago\nIf you only need a quick fix, rub a candle along the edge that scrapes. It is not permanent but it buys you the rest of the season.\n4 votes\nA bar of soap works as well as a candle. Tobiah, 20 minutes ago\nBoth leave a greasy mark on paintwork, careful. Dalia, 10 minutes ago\nLinked questions\nHinge screws keep loosening\nPlaning a door in place\nHelp Privacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 43
+    },
+    {
+      "label": "body",
+      "start": 44,
+      "end": 89
+    },
+    {
+      "label": "body",
+      "start": 90,
+      "end": 258
+    },
+    {
+      "label": "boilerplate",
+      "start": 259,
+      "end": 267
+    },
+    {
+      "label": "comment",
+      "start": 268,
+      "end": 325
+    },
+    {
+      "label": "comment",
+      "start": 326,
+      "end": 392
+    },
+    {
+      "label": "boilerplate",
+      "start": 393,
+      "end": 408
+    },
+    {
+      "label": "body",
+      "start": 409,
+      "end": 634
+    },
+    {
+      "label": "boilerplate",
+      "start": 635,
+      "end": 643
+    },
+    {
+      "label": "comment",
+      "start": 644,
+      "end": 712
+    },
+    {
+      "label": "body",
+      "start": 713,
+      "end": 844
+    },
+    {
+      "label": "boilerplate",
+      "start": 845,
+      "end": 852
+    },
+    {
+      "label": "comment",
+      "start": 853,
+      "end": 916
+    },
+    {
+      "label": "comment",
+      "start": 917,
+      "end": 986
+    },
+    {
+      "label": "boilerplate",
+      "start": 987,
+      "end": 1003
+    },
+    {
+      "label": "boilerplate",
+      "start": 1004,
+      "end": 1031
+    },
+    {
+      "label": "boilerplate",
+      "start": 1032,
+      "end": 1055
+    },
+    {
+      "label": "boilerplate",
+      "start": 1056,
+      "end": 1068
+    }
+  ]
+}

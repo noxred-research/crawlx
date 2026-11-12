@@ -246,6 +246,7 @@ mod tests {
             interactions,
             states,
             duration_seconds: secs,
+            ..Limits::default()
         }
     }
 

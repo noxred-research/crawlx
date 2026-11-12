@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "f01-rural-bus-carousel",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f01-rural-bus-carousel",
+      "files": {
+        "input": {
+          "path": "f01-rural-bus-carousel.html",
+          "sha256": "a2db93774715ae7aaea1b9452d14f8d147e9ceb5b30d937ed0be824bb594e436"
+        },
+        "gold": {
+          "path": "f01-rural-bus-carousel.gold.json",
+          "sha256": "49738e7f9e44cd3df1ee8ee1fb30c7c5796dbc90ce9a0c8165231d107c9ca270"
+        }
+      }
+    },
+    {
+      "id": "f02-slow-garden-sponsor",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f02-slow-garden-sponsor",
+      "files": {
+        "input": {
+          "path": "f02-slow-garden-sponsor.html",
+          "sha256": "1b5988539677b94a5d8c5c41c266106dadd207d3fdc1deafaee2f53f2049c1a7"
+        },
+        "gold": {
+          "path": "f02-slow-garden-sponsor.gold.json",
+          "sha256": "f09bc7f8793008fe778c13827030b48640946b7d443c2488d2a951ddfd7ee432"
+        }
+      }
+    },
+    {
+      "id": "f03-crumpets-steps",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f03-crumpets-steps",
+      "files": {
+        "input": {
+          "path": "f03-crumpets-steps.html",
+          "sha256": "9b8d45cde8561d37043cae4d982f5b88f12168dc1c2c95fd5194840874dec2b1"
+        },
+        "gold": {
+          "path": "f03-crumpets-steps.gold.json",
+          "sha256": "b997cb98a8a6c59d574048ad5ce84a8f015eb654f32b1bd58297f9cf65c63312"
+        }
+      }
+    },
+    {
+      "id": "f04-reader-review-specs",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f04-reader-review-specs",
+      "files": {
+        "input": {
+          "path": "f04-reader-review-specs.html",
+          "sha256": "f7af99585d24cd25fcf9047e31d4e21a7120270f22fedb03b6d683e63113a99f"
+        },
+        "gold": {
+          "path": "f04-reader-review-specs.gold.json",
+          "sha256": "9747f15b356335a2c84c5bc5381c65bed4ad9cf341927f2bce74197aabeb5248"
+        }
+      }
+    },
+    {
+      "id": "f05-lighthouse-inline-links",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f05-lighthouse-inline-links",
+      "files": {
+        "input": {
+          "path": "f05-lighthouse-inline-links.html",
+          "sha256": "bdb55a291801a9309470434bd405361eec42ffc3452f312b8e361f2fcba07248"
+        },
+        "gold": {
+          "path": "f05-lighthouse-inline-links.gold.json",
+          "sha256": "6707a833339988aeb9753b9b17d472adc06262737e3c4409b63cb2a9c6518be2"
+        }
+      }
+    },
+    {
+      "id": "f06-council-briefs",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f06-council-briefs",
+      "files": {
+        "input": {
+          "path": "f06-council-briefs.html",
+          "sha256": "06546133c3f830220c74158d207ecf24529b7b2f08580cb8749d6ccdcb670296"
+        },
+        "gold": {
+          "path": "f06-council-briefs.gold.json",
+          "sha256": "728a558a4e3534a377e2cf87a957ae1c8cce25d312ec32a8ba5438ee2f72d8ad"
+        }
+      }
+    },
+    {
+      "id": "f07-bahnhof-umbau",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f07-bahnhof-umbau",
+      "files": {
+        "input": {
+          "path": "f07-bahnhof-umbau.html",
+          "sha256": "c458b42b5f75ff160a01ab652a3f1a0d0c0544d22eeb9fc65c7a0a2bbb208a33"
+        },
+        "gold": {
+          "path": "f07-bahnhof-umbau.gold.json",
+          "sha256": "151c8414e5154d108f2b413ee82f5525e9e242c5aeb744cab4a0aabfbf3fa058"
+        }
+      }
+    },
+    {
+      "id": "f08-why-ice-floats",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f08-why-ice-floats",
+      "files": {
+        "input": {
+          "path": "f08-why-ice-floats.html",
+          "sha256": "5be6d65d2d67f5f88fb370ed05e969563b81f80fbb90adf0b94bb8f5b23e1271"
+        },
+        "gold": {
+          "path": "f08-why-ice-floats.gold.json",
+          "sha256": "0eab0f83c26a0e4b9809be1249277d0cb228c7578058091f43b0bab09b90d9c6"
+        }
+      }
+    },
+    {
+      "id": "f09-opinion-author-footer",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f09-opinion-author-footer",
+      "files": {
+        "input": {
+          "path": "f09-opinion-author-footer.html",
+          "sha256": "bf08d4ad93b54a026ffb86ff8821a9bbd52ed517770597171bdb07c4b8f839e3"
+        },
+        "gold": {
+          "path": "f09-opinion-author-footer.gold.json",
+          "sha256": "33b77067154b343d96e16731f50e61815dd99d7d205877b53d4df4e28ecf611b"
+        }
+      }
+    },
+    {
+      "id": "f10-cup-tie-report",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f10-cup-tie-report",
+      "files": {
+        "input": {
+          "path": "f10-cup-tie-report.html",
+          "sha256": "be0c414410bdecd2feb887da246b91df539ac54788b384c388edee61427cfc21"
+        },
+        "gold": {
+          "path": "f10-cup-tie-report.gold.json",
+          "sha256": "c9afc4c6034e302f064920292c256baaa602794f890d5ac9702c2c0a86827228"
+        }
+      }
+    },
+    {
+      "id": "f11-marche-producteurs",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f11-marche-producteurs",
+      "files": {
+        "input": {
+          "path": "f11-marche-producteurs.html",
+          "sha256": "1e5bfd1fbbe9f29af93200fd4d5b7d66495b5f1c3890ea15b3868b5a874cb427"
+        },
+        "gold": {
+          "path": "f11-marche-producteurs.gold.json",
+          "sha256": "27736654a3dfb758683d96e6611003fac9b1087e775a38eca24b63e6cc6beb7b"
+        }
+      }
+    },
+    {
+      "id": "f12-toshokan-yoru",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f12-toshokan-yoru",
+      "files": {
+        "input": {
+          "path": "f12-toshokan-yoru.html",
+          "sha256": "57eb5964fe92544c1cc93fe0631bcb3b8b21ffd741583e529d12f2886fcefc5a"
+        },
+        "gold": {
+          "path": "f12-toshokan-yoru.gold.json",
+          "sha256": "3bb4f05ef3117e4811deeb3d6b5d3c17c1e71158f797d22c2879f2a32437639b"
+        }
+      }
+    },
+    {
+      "id": "f13-bike-launch",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f13-bike-launch",
+      "files": {
+        "input": {
+          "path": "f13-bike-launch.html",
+          "sha256": "8957c7381be34c47614021457432a0f1f2443fd8d68a0f8eb4044cf3165d21a3"
+        },
+        "gold": {
+          "path": "f13-bike-launch.gold.json",
+          "sha256": "912b4d17803c1a69a53c205c0958401363ab372c66070b25611f5d2a325b08d2"
+        }
+      }
+    },
+    {
+      "id": "f14-short-note-heavy-chrome",
+      "family": "focus",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://focus.test/f14-short-note-heavy-chrome",
+      "files": {
+        "input": {
+          "path": "f14-short-note-heavy-chrome.html",
+          "sha256": "8f2839e50d47efc9acaf78c67bc734e9145a6c9378e8023e8a3b1ecc6398d524"
+        },
+        "gold": {
+          "path": "f14-short-note-heavy-chrome.gold.json",
+          "sha256": "36e5523847cef7b5316dd286d5416bf506d28348aeae87b270205a7ebf8cf076"
+        }
+      }
+    }
+  ]
+}

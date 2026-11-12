@@ -16,6 +16,12 @@ use serde::{Deserialize, Serialize};
 /// Maximum ordered discovery rules in one recipe.
 pub const MAX_RECIPE_RULES: usize = 32;
 
+mod script;
+pub use script::{
+    compile_script, ScriptError, MAX_SCRIPT_BYTES, MAX_SCRIPT_DEPTH, MAX_SCRIPT_EVALUATIONS,
+    MAX_SCRIPT_REPEAT, MAX_SCRIPT_VALUE, MAX_SCRIPT_VARIABLES,
+};
+
 /// A closed actor vocabulary, compiled into existing governed native actions.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
@@ -50,6 +56,11 @@ pub enum ActorActionV1 {
         /// Static CSS target, or the page when absent.
         selector: Option<String>,
     },
+    /// Type text into the focused element through governed native input.
+    Write {
+        /// Sensitive input; never included in debug output or dispositions.
+        text: String,
+    },
 }
 
 impl ActorActionV1 {
@@ -69,6 +80,7 @@ impl ActorActionV1 {
                 text: text.clone(),
             },
             Self::Press { key } => ScrapeAction::Press { key: key.clone() },
+            Self::Write { text } => ScrapeAction::Write { text: text.clone() },
             Self::Scroll { direction, selector } => ScrapeAction::Scroll {
                 direction: *direction,
                 selector: selector.clone(),
@@ -85,6 +97,7 @@ impl std::fmt::Debug for ActorActionV1 {
             Self::Fill { .. } => "Fill",
             Self::Press { .. } => "Press",
             Self::Scroll { .. } => "Scroll",
+            Self::Write { .. } => "Write",
         })
     }
 }
@@ -172,6 +185,11 @@ pub struct ExtensionRecipeV1 {
     /// Finite safe native actor actions; still require ordinary action admission.
     #[serde(default)]
     pub actor_actions: Vec<ActorActionV1>,
+    /// Bounded actor script (see [`compile_script`]) that unrolls into the same flat actions;
+    /// exclusive with `actor_actions`. It adds no authority: the result passes the same
+    /// native allowlist, registry approval and action admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_script: Option<String>,
     /// Discovery rules in stable first-match order.
     #[serde(default)]
     pub rules: Vec<DiscoveryRuleV1>,
@@ -198,6 +216,7 @@ impl std::fmt::Debug for ExtensionRecipeV1 {
             .field("revision", &self.revision)
             .field("start_count", &self.start_requests.len())
             .field("action_count", &self.actor_actions.len())
+            .field("scripted", &self.actor_script.is_some())
             .field("rule_count", &self.rules.len())
             .finish_non_exhaustive()
     }
@@ -214,6 +233,7 @@ impl ExtensionRecipeV1 {
             start_requests: Vec::new(),
             pipeline: ExtensionPipelineV1::default(),
             actor_actions: Vec::new(),
+            actor_script: None,
             rules: Vec::new(),
             follow_sitemaps: false,
             sitemap_alternates: false,
@@ -301,16 +321,30 @@ impl ExtensionRecipeV1 {
         Ok(())
     }
 
-    /// Compile into the existing finite native action recipe, not another executor.
+    /// Compile into the existing finite native action recipe, not another executor. A bounded
+    /// `actor_script` is unrolled here, before any run exists, into the same flat action list.
     ///
     /// # Errors
-    /// Rejects unsafe actions, excessive action counts and unbounded waits or text.
+    /// Rejects unsafe actions, excessive action counts and unbounded waits or text, a script
+    /// that does not compile (loops over their cap, `EVAL`, unbound variables) and a recipe
+    /// that holds both `actor_actions` and `actor_script`.
     pub fn compile_actor(&self) -> Result<RecipeV1, ExtensionRecipeError> {
-        if self.actor_actions.len() > crate::archive_behaviors::MAX_RECIPE_STEPS {
+        let scripted;
+        let actions: &[ActorActionV1] = match &self.actor_script {
+            Some(source) => {
+                if !self.actor_actions.is_empty() {
+                    return Err(ExtensionRecipeError::Invalid);
+                }
+                scripted = compile_script(source)?;
+                &scripted
+            }
+            None => &self.actor_actions,
+        };
+        if actions.len() > crate::archive_behaviors::MAX_RECIPE_STEPS {
             return Err(ExtensionRecipeError::Limit);
         }
         let mut recipe = RecipeV1::new(self.id.clone(), self.revision);
-        for (index, action) in self.actor_actions.iter().enumerate() {
+        for (index, action) in actions.iter().enumerate() {
             let index = u32::try_from(index).map_err(|_| ExtensionRecipeError::Limit)?;
             recipe.steps.push(RecipeStepV1::new(index, action.native()));
         }
@@ -379,6 +413,9 @@ pub enum ExtensionRecipeError {
     /// Run cancellation won before completion; no partial result is returned.
     #[error("recipe cancelled")]
     Cancelled,
+    /// The bounded actor script did not compile.
+    #[error("recipe actor script refused")]
+    Script(#[from] ScriptError),
 }
 
 #[cfg(test)]
@@ -447,5 +484,58 @@ mod tests {
         let ordered = recipe.pin().unwrap();
         recipe.rules.reverse();
         assert_ne!(ordered.digest, recipe.pin().unwrap().digest);
+    }
+
+    #[test]
+    fn scripts_compile_before_any_run_and_keep_the_native_allowlist() {
+        let mut recipe = ExtensionRecipeV1::new("scripted".into(), 1);
+        recipe.actor_script = Some(
+            "LET name = \"fixture\"\nREPEAT 2 AS n\nCLICK `li:nth-child(${n})`\nFILL `input` \"${name}\"\nEND\nTYPE \"done\"\nPRESS Enter"
+                .into(),
+        );
+        recipe.validate().unwrap();
+        let compiled = recipe.compile_actor().unwrap();
+        let kinds: Vec<&str> = compiled.steps.iter().map(|s| s.action.name()).collect();
+        assert_eq!(kinds, ["click", "fill", "click", "fill", "write", "press"]);
+        assert!(compiled
+            .steps
+            .windows(2)
+            .all(|pair| pair[0].source_index < pair[1].source_index));
+        let first = recipe.pin().unwrap();
+        assert_eq!(first, recipe.pin().unwrap(), "the pin is stable");
+        assert!(!format!("{recipe:?}").contains("li:nth-child"));
+        recipe.actor_script = recipe.actor_script.take().map(|s| s.replace("fixture", "other"));
+        assert_ne!(first.digest, recipe.pin().unwrap().digest);
+        let wire = serde_json::to_value(&recipe).unwrap();
+        assert!(wire["actorScript"].is_string());
+        assert_eq!(serde_json::from_value::<ExtensionRecipeV1>(wire).unwrap(), recipe);
+        let plain = serde_json::to_value(ExtensionRecipeV1::new("plain".into(), 1)).unwrap();
+        assert!(plain.get("actorScript").is_none(), "existing pins do not change");
+    }
+
+    #[test]
+    fn refused_scripts_fail_validation_and_cannot_mix_with_actions() {
+        let mut recipe = ExtensionRecipeV1::new("scripted".into(), 1);
+        for source in [
+            "EVAL `window.name`",
+            "REPEAT 21\nCLICK `a`\nEND",
+            "REPEAT 20\nREPEAT 3\nCLICK `a`\nEND\nEND",
+            "SET `input` \"x\"",
+            "WAIT 60000\nWAIT 1",
+        ] {
+            recipe.actor_script = Some(source.into());
+            assert!(recipe.validate().is_err(), "{source}");
+            assert!(recipe.pin().is_err(), "{source}");
+        }
+        recipe.actor_script = Some("EVAL `x`".into());
+        assert!(matches!(
+            recipe.validate(),
+            Err(ExtensionRecipeError::Script(ScriptError::Eval { line: 1 }))
+        ));
+        recipe.actor_script = Some("CLICK `a`".into());
+        recipe
+            .actor_actions
+            .push(ActorActionV1::Click { selector: "b".into() });
+        assert!(matches!(recipe.validate(), Err(ExtensionRecipeError::Invalid)));
     }
 }

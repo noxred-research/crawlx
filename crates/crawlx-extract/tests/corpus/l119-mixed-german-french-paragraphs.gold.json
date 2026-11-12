@@ -1,0 +1,93 @@
+{
+  "id": "l119-mixed-german-french-paragraphs",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "der|zug|hält|in|basel|die|reisenden|steigen|aus|le|train|arrive|à|genève|les|voyageurs|descendent",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 7
+    },
+    {
+      "label": "token",
+      "start": 8,
+      "end": 13
+    },
+    {
+      "label": "token",
+      "start": 14,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 26
+    },
+    {
+      "label": "token",
+      "start": 27,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 44
+    },
+    {
+      "label": "token",
+      "start": 45,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 51
+    },
+    {
+      "label": "token",
+      "start": 52,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 64
+    },
+    {
+      "label": "token",
+      "start": 65,
+      "end": 67
+    },
+    {
+      "label": "token",
+      "start": 68,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 79
+    },
+    {
+      "label": "token",
+      "start": 80,
+      "end": 89
+    },
+    {
+      "label": "token",
+      "start": 90,
+      "end": 100
+    }
+  ]
+}

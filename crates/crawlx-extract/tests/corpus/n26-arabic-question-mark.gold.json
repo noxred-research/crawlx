@@ -1,0 +1,68 @@
+{
+  "id": "n26-arabic-question-mark",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "هل وصل القطار؟\nنعم وصل في الصباح.\nوصل=2\nهل=1\nالقطار=1\nنعم=1\nفي=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 26
+    },
+    {
+      "label": "sentence",
+      "start": 27,
+      "end": 59
+    },
+    {
+      "label": "keyword",
+      "start": 60,
+      "end": 66
+    },
+    {
+      "label": "score",
+      "start": 67,
+      "end": 68
+    },
+    {
+      "label": "keyword",
+      "start": 69,
+      "end": 73
+    },
+    {
+      "label": "score",
+      "start": 74,
+      "end": 75
+    },
+    {
+      "label": "keyword",
+      "start": 76,
+      "end": 88
+    },
+    {
+      "label": "score",
+      "start": 89,
+      "end": 90
+    },
+    {
+      "label": "keyword",
+      "start": 91,
+      "end": 97
+    },
+    {
+      "label": "score",
+      "start": 98,
+      "end": 99
+    },
+    {
+      "label": "keyword",
+      "start": 100,
+      "end": 104
+    },
+    {
+      "label": "score",
+      "start": 105,
+      "end": 106
+    }
+  ]
+}

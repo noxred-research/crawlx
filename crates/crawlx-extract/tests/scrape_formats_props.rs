@@ -90,8 +90,9 @@ proptest! {
         let html = format!("{}<style>{css}</style>", html_parts.concat());
         let sheets = [css.clone()];
         let input = BrandingInput { html: &html, base: &page(), stylesheets: &sheets };
-        let a = branding(&input);
-        prop_assert_eq!(&a, &branding(&input));
+        let mut charge = crawlx_extract::parse_budget::charge(html.len()).unwrap();
+        let a = branding(&mut charge, &input).unwrap();
+        prop_assert_eq!(&a, &branding(&mut charge, &input).unwrap());
         for (_, c) in a["colors"].as_object().into_iter().flatten() {
             let s = c.as_str().unwrap();
             prop_assert!(s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_lowercase()), "{s}");
@@ -101,7 +102,8 @@ proptest! {
 
     #[test]
     fn images_attributes_and_base64_never_panic(html in "[<>a-z=\"'/ .:;,0-9#-]{0,400}") {
-        let _ = images::images(&html, &page());
+        let mut charge = crawlx_extract::parse_budget::charge(html.len()).unwrap();
+        let _ = images::images(&mut charge, &html, &page()).unwrap();
         let sel = [AttributeSelector { selector: "a, img[src]".to_owned(), attribute: "href".to_owned() }];
         let _ = attributes::attributes(&html, &sel);
         let once = base64_images::strip_base64_images(&html).into_owned();

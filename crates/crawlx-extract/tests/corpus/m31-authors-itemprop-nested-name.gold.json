@@ -1,0 +1,23 @@
+{
+  "id": "m31-authors-itemprop-nested-name",
+  "family": "meta_exact",
+  "note": "a person element with a nested name property is one author; a meta element with an itemprop author attribute carries no text and adds none",
+  "expectedText": "title=Cobbled Lane Gets Quiet Paving\nauthors=Corrie Lund\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "authors",
+      "start": 45,
+      "end": 56
+    },
+    {
+      "label": "language",
+      "start": 66,
+      "end": 68
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "d40-sitemap-urlset",
+  "family": "feed",
+  "note": "sitemap urlset: CDATA and entity-escaped locations, non-HTTP and relative and missing locations are not entries, an out-of-range priority does not drop the entry, cross-origin entry is denied",
+  "expectedText": "https://news.corpus.test/shop/anchors\nhttps://news.corpus.test/shop/rope?size=3&color=red\nhttps://news.corpus.test/shop/lamps?a=1&b=2\nhttps://news.corpus.test/shop/buoys",
+  "spans": [
+    {
+      "label": "page",
+      "start": 0,
+      "end": 37
+    },
+    {
+      "label": "page",
+      "start": 38,
+      "end": 89
+    },
+    {
+      "label": "page",
+      "start": 90,
+      "end": 133
+    },
+    {
+      "label": "page",
+      "start": 134,
+      "end": 169
+    }
+  ]
+}

@@ -301,6 +301,7 @@ pub(crate) async fn worker(
         llm: llms.llm,
         extraction_llm: llms.extraction,
         branding_llm: llms.branding,
+        embeddings: llms.embeddings,
         ocr,
         traffic_export: crawlx_worker::surface::traffic_export::TrafficExportConfig::from_env(getenv)
             .context("traffic export")?,

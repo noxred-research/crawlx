@@ -26,7 +26,7 @@ use crate::evidence::{BodyEvidence, FetchEvidence, EVIDENCE_HEADER};
 use crate::governor::{GlobalOriginCap, GovernorConfig, Origin, OriginGovernor};
 use crate::preflight::HeadPreflight;
 use crate::proxyx::{PoolBinding, PoolTunnel};
-use crate::redirect::{is_redirect, location, strip_credentials, DEFAULT_MAX_REDIRECTS};
+use crate::redirect::{is_redirect, location, strip_credentials, Referrer, DEFAULT_MAX_REDIRECTS};
 use crate::resolver::{CheckedResolution, Resolver};
 use crate::retry::{is_retryable_status, parse_retry_after, RetryPolicy};
 use crate::tls::HttpClient;
@@ -320,6 +320,10 @@ pub struct FetchOptions {
     pub preflight: Option<HeadPreflight>,
     /// Caller admission on native headers, including redirects, before any body polling.
     pub header_gate: Option<Arc<dyn ResponseHeaderGate>>,
+    /// The page the request was found on and the policy for its `Referer`; evaluated for every
+    /// hop against that hop's URL. A `Referer` in `headers` or in the configured request
+    /// controls always wins.
+    pub referrer: Option<Referrer>,
 }
 
 impl Default for FetchOptions {
@@ -341,6 +345,7 @@ impl Default for FetchOptions {
             declaration: ResponseDeclaration::default(),
             preflight: None,
             header_gate: None,
+            referrer: None,
         }
     }
 }
@@ -1054,6 +1059,31 @@ impl Fetcher {
                 .is_some_and(|suffix| suffix.eq_ignore_ascii_case(b"+json"))
     }
 
+    /// The per-request headers of the hop to `url`: `headers`, plus the `Referer` the policy
+    /// of `referrer` allows for this target. A `Referer` already in `headers` or among the
+    /// configured extra headers is never replaced.
+    fn hop_headers<'h>(
+        &self,
+        headers: &'h HeaderMap,
+        referrer: Option<&Referrer>,
+        url: &Url,
+    ) -> Cow<'h, HeaderMap> {
+        let configured = self.cfg.controls.headers().contains_key("referer")
+            && self
+                .cfg
+                .controls
+                .applies_to(&url.host_str().unwrap_or_default().to_ascii_lowercase());
+        let Some(value) = referrer
+            .filter(|_| !configured && !headers.contains_key(header::REFERER))
+            .and_then(|referrer| referrer.header_for(url))
+        else {
+            return Cow::Borrowed(headers);
+        };
+        let mut out = headers.clone();
+        out.insert(header::REFERER, value);
+        Cow::Owned(out)
+    }
+
     /// Headers of one hop: the configured extra headers when `url`'s host is in the controls'
     /// scope, the cookies whose domain and path match, then the per-request `headers`, which
     /// replace a configured header of the same name.
@@ -1320,11 +1350,12 @@ impl Fetcher {
             } else {
                 None
             };
+            let hop_headers = self.hop_headers(&headers, opts.referrer.as_ref(), &current);
             let hop = self
                 .fetch_hop(
                     &current,
                     &opts.method,
-                    &headers,
+                    &hop_headers,
                     validators,
                     &controls,
                     opts.follow_redirects && self.cfg.follow_redirects,

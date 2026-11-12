@@ -1,0 +1,73 @@
+{
+  "id": "n21-chinese-dictionary",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under dictionary_uax29",
+  "expectedText": "今天的集市很热闹！\n人们买菜，也买花。\n你去过吗？\n买=2\n今天=1\n的=1\n集市=1\n很=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 27
+    },
+    {
+      "label": "sentence",
+      "start": 28,
+      "end": 55
+    },
+    {
+      "label": "sentence",
+      "start": 56,
+      "end": 71
+    },
+    {
+      "label": "keyword",
+      "start": 72,
+      "end": 75
+    },
+    {
+      "label": "score",
+      "start": 76,
+      "end": 77
+    },
+    {
+      "label": "keyword",
+      "start": 78,
+      "end": 84
+    },
+    {
+      "label": "score",
+      "start": 85,
+      "end": 86
+    },
+    {
+      "label": "keyword",
+      "start": 87,
+      "end": 90
+    },
+    {
+      "label": "score",
+      "start": 91,
+      "end": 92
+    },
+    {
+      "label": "keyword",
+      "start": 93,
+      "end": 99
+    },
+    {
+      "label": "score",
+      "start": 100,
+      "end": 101
+    },
+    {
+      "label": "keyword",
+      "start": 102,
+      "end": 105
+    },
+    {
+      "label": "score",
+      "start": 106,
+      "end": 107
+    }
+  ]
+}

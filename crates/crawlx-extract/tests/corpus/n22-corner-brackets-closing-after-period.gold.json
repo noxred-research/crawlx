@@ -1,0 +1,68 @@
+{
+  "id": "n22-corner-brackets-closing-after-period",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "「ここで待って」と母は言った。\n私たちは待った。\nっ=3\nた=3\nこ=2\n待=2\nは=2",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 45
+    },
+    {
+      "label": "sentence",
+      "start": 46,
+      "end": 70
+    },
+    {
+      "label": "keyword",
+      "start": 71,
+      "end": 74
+    },
+    {
+      "label": "score",
+      "start": 75,
+      "end": 76
+    },
+    {
+      "label": "keyword",
+      "start": 77,
+      "end": 80
+    },
+    {
+      "label": "score",
+      "start": 81,
+      "end": 82
+    },
+    {
+      "label": "keyword",
+      "start": 83,
+      "end": 86
+    },
+    {
+      "label": "score",
+      "start": 87,
+      "end": 88
+    },
+    {
+      "label": "keyword",
+      "start": 89,
+      "end": 92
+    },
+    {
+      "label": "score",
+      "start": 93,
+      "end": 94
+    },
+    {
+      "label": "keyword",
+      "start": 95,
+      "end": 98
+    },
+    {
+      "label": "score",
+      "start": 99,
+      "end": 100
+    }
+  ]
+}

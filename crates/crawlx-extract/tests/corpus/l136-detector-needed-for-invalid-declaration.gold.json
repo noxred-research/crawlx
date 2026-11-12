@@ -1,0 +1,48 @@
+{
+  "id": "l136-detector-needed-for-invalid-declaration",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "der|müller|mahlt|korn|das|mehl|liegt|bereit",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 11
+    },
+    {
+      "label": "token",
+      "start": 12,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 26
+    },
+    {
+      "label": "token",
+      "start": 27,
+      "end": 31
+    },
+    {
+      "label": "token",
+      "start": 32,
+      "end": 37
+    },
+    {
+      "label": "token",
+      "start": 38,
+      "end": 44
+    }
+  ]
+}

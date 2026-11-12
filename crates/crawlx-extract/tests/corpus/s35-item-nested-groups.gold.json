@@ -1,0 +1,18 @@
+{
+  "id": "s35-item-nested-groups",
+  "family": "selector",
+  "note": "item loader groups: nested rules run relative to each base element, an absent optional field is left out, a sibling source reads the next element",
+  "expectedText": "berths=[{\"name\":\"A1\",\"length\":12,\"note\":\"Shore power\"},{\"name\":\"A2\",\"length\":9},{\"name\":\"B1\",\"length\":15,\"note\":\"Fuel dock\"}]\nterms=[{\"term\":\"Pier\",\"meaning\":\"Fixed dock\"},{\"term\":\"Buoy\",\"meaning\":\"Mooring ball\"}]",
+  "spans": [
+    {
+      "label": "berths",
+      "start": 0,
+      "end": 125
+    },
+    {
+      "label": "terms",
+      "start": 126,
+      "end": 213
+    }
+  ]
+}

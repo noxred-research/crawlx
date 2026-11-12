@@ -1,0 +1,23 @@
+{
+  "id": "n35-keywords-disabled-by-zero",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 0 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "The garden gate stays shut until spring.\nBees wake first and the roses follow.\nThe gardener opens the gate in April.",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 40
+    },
+    {
+      "label": "sentence",
+      "start": 41,
+      "end": 78
+    },
+    {
+      "label": "sentence",
+      "start": 79,
+      "end": 116
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Why does my cron job not run on the first of the month? - Terminal Tips</title>
+</head>
+<body>
+<nav class="site-nav"><a href="/">Terminal Tips</a> <a href="/questions">Questions</a> <a href="/unanswered">Unanswered</a> <a href="/ask">Ask</a></nav>
+<div class="q-page">
+<div class="q" id="q-1">
+<h1>Why does my cron job not run on the first of the month?</h1>
+<div class="q-text"><p>I scheduled a backup script with the entry shown below, but it only runs when the first of the month also falls on a Monday. What is going wrong?</p>
+<pre>0 3 1 * 1 /usr/local/bin/backup.sh</pre></div>
+<div class="comments">
+<div class="comment">Show us the output of your crontab listing, please. Nia, 2 days ago</div>
+<div class="comment">It is the line above. I copied it exactly. Hugo, 2 days ago</div>
+</div>
+</div>
+<div class="a accepted-answer" id="a-1">
+<div class="mark">Accepted</div>
+<div class="a-text"><p>The fifth field is the day of the week, and when both the day of the month and the day of the week are set, the job runs when either one matches. Remove the final number and use an asterisk instead.</p>
+<pre>0 3 1 * * /usr/local/bin/backup.sh</pre></div>
+<div class="comments">
+<div class="comment">That fixed it, thank you so much. The manual page does mention it but it is easy to miss. Hugo, 1 day ago</div>
+<div class="comment">See also the notes at <a href="https://docs.example.test/cron">the scheduler manual</a> about the either-or rule. Nia, 1 day ago</div>
+</div>
+</div>
+</div>
+<aside class="hot-network"><h3>Hot questions</h3><ul><li><a href="/q/10">Rotating logs by size</a></li><li><a href="/q/11">Run a script at boot</a></li></ul></aside>
+<footer><a href="/privacy">Privacy</a> <a href="/help">Help</a></footer>
+</body>
+</html>

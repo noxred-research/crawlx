@@ -1,0 +1,188 @@
+{
+  "id": "a23-long-numbered-list",
+  "family": "article_body",
+  "note": "listicle with twelve numbered items under a heading, with a sidebar and newsletter strip",
+  "expectedText": "Homely Ledger\nHome\nMoney\nEnergy\nTwelve Ways to Cut Winter Heating Costs\nA cold house does not have to mean a large bill. These twelve changes cost little and most can be done in a weekend.\nBleed the radiators.\nTrapped air leaves the top of a radiator cold, so release it once at the start of the season.\nClose the curtains at dusk.\nThick fabric holds heat that would otherwise leak through the glass.\nSeal the gaps.\nA tube of flexible filler around window frames pays for itself within one winter.\nAdd foil behind radiators.\nReflective sheets push heat into the room and away from the outside wall.\nLower the thermostat by one degree.\nMost people never notice, and the saving can reach a tenth of the bill.\nUse a draught excluder.\nA rolled towel at the base of the door works nearly as well as a bought one.\nService the boiler.\nA yearly check keeps it efficient and finds small faults before they grow.\nMove furniture off radiators.\nA sofa in front of a heater blocks warm air from reaching the room.\nInsulate the hot water tank.\nA fitted jacket cuts heat loss and costs about the price of a pizza.\nCover bare floors.\nRugs on wooden boards stop cold rising through the gaps.\nHeat the person, not the house.\nA warm jumper and a blanket make a lower temperature comfortable.\nCheck your tariff.\nCompare offers every year, because prices change and loyalty is rarely rewarded.\nMoney guides\nPlan a monthly budget\nUnderstand loan rates\nGet our free weekly money tips by email.\nSubscribe now\nHomely Ledger. General advice only, not financial guidance.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 13
+    },
+    {
+      "label": "boilerplate",
+      "start": 14,
+      "end": 18
+    },
+    {
+      "label": "boilerplate",
+      "start": 19,
+      "end": 24
+    },
+    {
+      "label": "boilerplate",
+      "start": 25,
+      "end": 31
+    },
+    {
+      "label": "body",
+      "start": 32,
+      "end": 71
+    },
+    {
+      "label": "body",
+      "start": 72,
+      "end": 188
+    },
+    {
+      "label": "body",
+      "start": 189,
+      "end": 209
+    },
+    {
+      "label": "body",
+      "start": 210,
+      "end": 303
+    },
+    {
+      "label": "body",
+      "start": 304,
+      "end": 331
+    },
+    {
+      "label": "body",
+      "start": 332,
+      "end": 400
+    },
+    {
+      "label": "body",
+      "start": 401,
+      "end": 415
+    },
+    {
+      "label": "body",
+      "start": 416,
+      "end": 497
+    },
+    {
+      "label": "body",
+      "start": 498,
+      "end": 524
+    },
+    {
+      "label": "body",
+      "start": 525,
+      "end": 598
+    },
+    {
+      "label": "body",
+      "start": 599,
+      "end": 634
+    },
+    {
+      "label": "body",
+      "start": 635,
+      "end": 706
+    },
+    {
+      "label": "body",
+      "start": 707,
+      "end": 730
+    },
+    {
+      "label": "body",
+      "start": 731,
+      "end": 807
+    },
+    {
+      "label": "body",
+      "start": 808,
+      "end": 827
+    },
+    {
+      "label": "body",
+      "start": 828,
+      "end": 902
+    },
+    {
+      "label": "body",
+      "start": 903,
+      "end": 932
+    },
+    {
+      "label": "body",
+      "start": 933,
+      "end": 1000
+    },
+    {
+      "label": "body",
+      "start": 1001,
+      "end": 1029
+    },
+    {
+      "label": "body",
+      "start": 1030,
+      "end": 1098
+    },
+    {
+      "label": "body",
+      "start": 1099,
+      "end": 1117
+    },
+    {
+      "label": "body",
+      "start": 1118,
+      "end": 1174
+    },
+    {
+      "label": "body",
+      "start": 1175,
+      "end": 1206
+    },
+    {
+      "label": "body",
+      "start": 1207,
+      "end": 1272
+    },
+    {
+      "label": "body",
+      "start": 1273,
+      "end": 1291
+    },
+    {
+      "label": "body",
+      "start": 1292,
+      "end": 1372
+    },
+    {
+      "label": "boilerplate",
+      "start": 1373,
+      "end": 1385
+    },
+    {
+      "label": "boilerplate",
+      "start": 1386,
+      "end": 1407
+    },
+    {
+      "label": "boilerplate",
+      "start": 1408,
+      "end": 1429
+    },
+    {
+      "label": "boilerplate",
+      "start": 1430,
+      "end": 1470
+    },
+    {
+      "label": "boilerplate",
+      "start": 1471,
+      "end": 1484
+    },
+    {
+      "label": "boilerplate",
+      "start": 1485,
+      "end": 1544
+    }
+  ]
+}

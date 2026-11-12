@@ -1,0 +1,28 @@
+{
+  "id": "d10-atom-media-references",
+  "family": "feed",
+  "note": "Atom media: image and video enclosures are media references, an audio enclosure is not, a cross-origin media reference is denied",
+  "expectedText": "https://news.corpus.test/gallery/1\nhttps://news.corpus.test/gallery/1.jpg\nhttps://news.corpus.test/gallery/1.mp4\nhttps://news.corpus.test/gallery/1-thumb.png",
+  "spans": [
+    {
+      "label": "alternate",
+      "start": 0,
+      "end": 34
+    },
+    {
+      "label": "media",
+      "start": 35,
+      "end": 73
+    },
+    {
+      "label": "media",
+      "start": 74,
+      "end": 112
+    },
+    {
+      "label": "media",
+      "start": 113,
+      "end": 157
+    }
+  ]
+}

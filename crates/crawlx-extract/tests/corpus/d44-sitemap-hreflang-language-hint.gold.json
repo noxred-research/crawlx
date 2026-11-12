@@ -1,0 +1,28 @@
+{
+  "id": "d44-sitemap-hreflang-language-hint",
+  "family": "feed",
+  "note": "with a target-language hint the sitemap candidates are ordered matching first, conflicting last, and none is dropped",
+  "expectedText": "https://news.corpus.test/de/gezeiten\nhttps://news.corpus.test/de/hafen\nhttps://news.corpus.test/en/tides\nhttps://news.corpus.test/fr/marees",
+  "spans": [
+    {
+      "label": "variant",
+      "start": 0,
+      "end": 36
+    },
+    {
+      "label": "page",
+      "start": 37,
+      "end": 70
+    },
+    {
+      "label": "page",
+      "start": 71,
+      "end": 104
+    },
+    {
+      "label": "variant",
+      "start": 105,
+      "end": 139
+    }
+  ]
+}

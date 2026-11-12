@@ -1,0 +1,8 @@
+<rss version="2.0"><channel xml:base="https://news.corpus.test/archive/2026/"><title>Archive</title>
+<item><link>nov/ship-names</link></item>
+<item><link>../2025/dec/old-pier</link></item>
+<item xml:base="https://news.corpus.test/special/"><link>one</link></item>
+<item><link>/root-relative</link></item>
+<item><link>//news.corpus.test/scheme-relative</link></item>
+<item><link>?page=3</link></item>
+</channel></rss>

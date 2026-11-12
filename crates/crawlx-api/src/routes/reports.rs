@@ -416,6 +416,9 @@ enum Row {
     Summary {
         status: crawlx_core::counters::RunStatus,
         terminal_reason: Option<crawlx_core::counters::TerminalReason>,
+        /// The stop criterion or failure class behind the reason, from the run's stop record.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        terminal_detail: Option<crawlx_core::counters::TerminalDetail>,
         counters: crawlx_core::counters::PlaneCounters,
         created_at: Timestamp,
         started_at: Option<Timestamp>,
@@ -980,6 +983,7 @@ fn classify(row: &FrontierEntry) -> Option<Class> {
             | "extension_filtered"
             | "external_homepage"
             | "authorization_scope"
+            | "url_too_long"
     ) {
         return Some(Class::OutOfScope);
     }
@@ -1353,7 +1357,12 @@ pub async fn search(
         "report_history" => history_page(&state, &principal, &run, kind, &query, &mut page).await?,
         "run_metadata" if query.after == 0 => {
             page.scanned = 1;
-            page.rows.push(snapshot_row(kind, &run));
+            let detail = if kind == Kind::Provenance {
+                None
+            } else {
+                stop_detail(&state, &run).await?
+            };
+            page.rows.push(snapshot_row(kind, &run, detail));
         }
         _ => {}
     }
@@ -1364,7 +1373,7 @@ pub async fn search(
 }
 
 /// Run-metadata row for the snapshot reports (`summary`, `provenance`, `progress_log`).
-fn snapshot_row(kind: Kind, run: &RunMetadata) -> Row {
+fn snapshot_row(kind: Kind, run: &RunMetadata, detail: Option<crawlx_core::counters::TerminalDetail>) -> Row {
     if kind == Kind::Provenance {
         Row::Provenance {
             config_digest: run.config_digest,
@@ -1376,12 +1385,57 @@ fn snapshot_row(kind: Kind, run: &RunMetadata) -> Row {
         Row::Summary {
             status: run.status,
             terminal_reason: run.terminal_reason,
+            terminal_detail: detail,
             counters: run.counters,
             created_at: run.created_at,
             started_at: run.started_at,
             finished_at: run.finished_at,
         }
     }
+}
+
+/// Event pages read to find the run's stop record: bounded, never a whole-run scan.
+const STOP_EVENT_PAGES: usize = 20;
+/// Events per page of that read.
+const STOP_EVENT_PAGE: u32 = 500;
+
+/// The `terminalDetail` of the run's last `run.stopped` event, when it names the cause of the
+/// run's own terminal reason. Only the closed [`TerminalDetail`] vocabulary is read from the
+/// payload; nothing else in it reaches the report.
+///
+/// [`TerminalDetail`]: crawlx_core::counters::TerminalDetail
+async fn stop_detail(
+    state: &AppState,
+    run: &RunMetadata,
+) -> ApiResult<Option<crawlx_core::counters::TerminalDetail>> {
+    let Some(reason) = run.terminal_reason else {
+        return Ok(None);
+    };
+    let mut after = 0;
+    let mut found = None;
+    for _ in 0..STOP_EVENT_PAGES {
+        let events = state
+            .repos
+            .events
+            .list_metadata_after(run.id, after, STOP_EVENT_PAGE)
+            .await
+            .map_err(report_error)?;
+        let Some(last) = events.last().map(|event| event.seq) else {
+            break;
+        };
+        for event in events.iter().filter(|event| event.kind == "run.stopped") {
+            found = event
+                .payload
+                .get("terminalDetail")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|name| name.parse::<crawlx_core::counters::TerminalDetail>().ok());
+        }
+        if events.len() < usize::try_from(STOP_EVENT_PAGE).unwrap_or(usize::MAX) {
+            break;
+        }
+        after = last;
+    }
+    Ok(found.filter(|detail| detail.reason() == reason))
 }
 
 /// Fill a primary history page from the filtered fact keyset.

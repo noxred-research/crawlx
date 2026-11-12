@@ -564,32 +564,48 @@ async fn serve_bootstraps_fc_keys_with_the_flag_or_the_environment() {
     let key = format!("fc-{}", "0123456789abcdef".repeat(2));
     for fc_keys in [FcKeys::Flag, FcKeys::Env] {
         let dir = tempfile::tempdir().unwrap();
-        let port = free_port();
-        let mut child = spawn_serve(dir.path(), port, &key, fc_keys);
         let client = reqwest::Client::new();
-        let mut ready = false;
-        for _ in 0..200 {
-            if let Some(status) = child.try_wait().unwrap() {
-                let mut stderr = String::new();
-                if let Some(mut pipe) = child.stderr.take() {
-                    tokio::io::AsyncReadExt::read_to_string(&mut pipe, &mut stderr)
-                        .await
-                        .unwrap();
+        // `free_port` releases the port before `crawlx serve` binds it, so another process can
+        // take it in between: only that bind failure is retried, on a fresh port.
+        let mut started = None;
+        for _ in 0..3 {
+            let port = free_port();
+            let mut child = spawn_serve(dir.path(), port, &key, fc_keys);
+            let mut ready = false;
+            let mut port_taken = false;
+            for _ in 0..200 {
+                if let Some(status) = child.try_wait().unwrap() {
+                    let mut stderr = String::new();
+                    if let Some(mut pipe) = child.stderr.take() {
+                        tokio::io::AsyncReadExt::read_to_string(&mut pipe, &mut stderr)
+                            .await
+                            .unwrap();
+                    }
+                    if stderr.contains("Address already in use") {
+                        port_taken = true;
+                        break;
+                    }
+                    panic!("crawlx serve exited early: {status}; stderr: {stderr}");
                 }
-                panic!("crawlx serve exited early: {status}; stderr: {stderr}");
+                if client
+                    .get(format!("http://127.0.0.1:{port}/v0/health/liveness"))
+                    .send()
+                    .await
+                    .is_ok_and(|r| r.status().is_success())
+                {
+                    ready = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            if client
-                .get(format!("http://127.0.0.1:{port}/v0/health/liveness"))
-                .send()
-                .await
-                .is_ok_and(|r| r.status().is_success())
-            {
-                ready = true;
-                break;
+            if port_taken {
+                continue;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(ready, "crawlx serve did not come up on port {port}");
+            started = Some((port, child));
+            break;
         }
-        assert!(ready, "crawlx serve did not come up on port {port}");
+        let (port, mut child) = started.expect("a free port for crawlx serve within three attempts");
         let usage = "/compat/v2/team/credit-usage";
         assert_eq!(get_status(&client, port, usage, &key).await, 200);
         assert_eq!(

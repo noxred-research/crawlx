@@ -1,0 +1,123 @@
+{
+  "id": "s25-css-selectors",
+  "family": "selector",
+  "note": "css selectors: class, id, attribute operators, combinators, structural pseudo-classes, negation, empty result",
+  "expectedText": "A\nB\nB\nQuay guide\nLead text\nSecond\nNote one\nSecond\nLead text\nSecond\nNote one\nB\nA\nB\ntwo\nthree\none\nSecond\nNote one\nNote one\nA\none\nthree",
+  "spans": [
+    {
+      "label": "c1",
+      "start": 0,
+      "end": 1
+    },
+    {
+      "label": "c1",
+      "start": 2,
+      "end": 3
+    },
+    {
+      "label": "c2",
+      "start": 4,
+      "end": 5
+    },
+    {
+      "label": "c3",
+      "start": 6,
+      "end": 16
+    },
+    {
+      "label": "c4",
+      "start": 17,
+      "end": 26
+    },
+    {
+      "label": "c4",
+      "start": 27,
+      "end": 33
+    },
+    {
+      "label": "c4",
+      "start": 34,
+      "end": 42
+    },
+    {
+      "label": "c5",
+      "start": 43,
+      "end": 49
+    },
+    {
+      "label": "c6",
+      "start": 50,
+      "end": 59
+    },
+    {
+      "label": "c6",
+      "start": 60,
+      "end": 66
+    },
+    {
+      "label": "c6",
+      "start": 67,
+      "end": 75
+    },
+    {
+      "label": "c7",
+      "start": 76,
+      "end": 77
+    },
+    {
+      "label": "c8",
+      "start": 78,
+      "end": 79
+    },
+    {
+      "label": "c9",
+      "start": 80,
+      "end": 81
+    },
+    {
+      "label": "c10",
+      "start": 82,
+      "end": 85
+    },
+    {
+      "label": "c11",
+      "start": 86,
+      "end": 91
+    },
+    {
+      "label": "c12",
+      "start": 92,
+      "end": 95
+    },
+    {
+      "label": "c13",
+      "start": 96,
+      "end": 102
+    },
+    {
+      "label": "c13",
+      "start": 103,
+      "end": 111
+    },
+    {
+      "label": "c14",
+      "start": 112,
+      "end": 120
+    },
+    {
+      "label": "c15",
+      "start": 121,
+      "end": 122
+    },
+    {
+      "label": "c16",
+      "start": 123,
+      "end": 126
+    },
+    {
+      "label": "c16",
+      "start": 127,
+      "end": 132
+    }
+  ]
+}

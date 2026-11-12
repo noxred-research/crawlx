@@ -1,0 +1,83 @@
+{
+  "id": "c08-hosted-thread-static-list",
+  "family": "comments",
+  "note": "blog post followed by a hosted-discussion container with a static list of posts",
+  "expectedText": "The Workbench Diary Projects Tools About\nBuilding a Rain Barrel Stand\nA full rain barrel weighs more than two hundred kilograms, so the stand underneath it matters more than the barrel itself. This one is made from six treated posts, eight cross braces and a plywood top, and it took me one afternoon.\nSet the posts on concrete slabs, not directly on soil, and check that they are level in both directions before you screw anything together. A tilted stand will creep further out of true every time the barrel fills.\nRaise the barrel high enough that a watering can fits under the tap. Thirty centimetres is plenty, and it lets gravity do the work.\ngreenfingers_gil\nWould a paving slab base be strong enough, or do I really need poured concrete?\nWorkbench Diary\nSlabs are fine as long as they sit on compacted sand. I used four and have had no sinking after a year.\ntomasz_k\nAdded a sloped plywood lid so that leaves slide off. Cheap and works well.\nTools I use\nCordless drill\nSpirit level\nPrivacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 40
+    },
+    {
+      "label": "body",
+      "start": 41,
+      "end": 69
+    },
+    {
+      "label": "body",
+      "start": 70,
+      "end": 301
+    },
+    {
+      "label": "body",
+      "start": 302,
+      "end": 516
+    },
+    {
+      "label": "body",
+      "start": 517,
+      "end": 648
+    },
+    {
+      "label": "comment",
+      "start": 649,
+      "end": 665
+    },
+    {
+      "label": "comment",
+      "start": 666,
+      "end": 745
+    },
+    {
+      "label": "comment",
+      "start": 746,
+      "end": 761
+    },
+    {
+      "label": "comment",
+      "start": 762,
+      "end": 865
+    },
+    {
+      "label": "comment",
+      "start": 866,
+      "end": 874
+    },
+    {
+      "label": "comment",
+      "start": 875,
+      "end": 949
+    },
+    {
+      "label": "boilerplate",
+      "start": 950,
+      "end": 961
+    },
+    {
+      "label": "boilerplate",
+      "start": 962,
+      "end": 976
+    },
+    {
+      "label": "boilerplate",
+      "start": 977,
+      "end": 989
+    },
+    {
+      "label": "boilerplate",
+      "start": 990,
+      "end": 997
+    }
+  ]
+}

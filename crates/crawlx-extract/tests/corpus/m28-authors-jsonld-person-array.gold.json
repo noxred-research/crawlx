@@ -1,0 +1,23 @@
+{
+  "id": "m28-authors-jsonld-person-array",
+  "family": "meta_exact",
+  "note": "an array of three person nodes is the author list in order; a meta author with a desk name is kept as an alternative",
+  "expectedText": "title=Tidal Mill Grinds Grain Again\nauthors=Ilse Brandt; Tomas Okoro; Wen Zhao\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 35
+    },
+    {
+      "label": "authors",
+      "start": 44,
+      "end": 78
+    },
+    {
+      "label": "language",
+      "start": 88,
+      "end": 90
+    }
+  ]
+}

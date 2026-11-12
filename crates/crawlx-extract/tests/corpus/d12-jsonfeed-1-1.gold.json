@@ -1,0 +1,38 @@
+{
+  "id": "d12-jsonfeed-1-1",
+  "family": "feed",
+  "note": "JSON Feed 1.1: the item url wins over the external url, an item without any url is skipped, image and attachments are media, next_url is pagination, cross-origin item is denied",
+  "expectedText": "https://news.corpus.test/lantern/one\nhttps://news.corpus.test/lantern/one.png\nhttps://news.corpus.test/lantern/one-clip.mp4\nhttps://news.corpus.test/lantern/two\nhttps://news.corpus.test/lantern/four-canonical\nhttps://news.corpus.test/feeds/lantern.json?cursor=2",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 36
+    },
+    {
+      "label": "media",
+      "start": 37,
+      "end": 77
+    },
+    {
+      "label": "media",
+      "start": 78,
+      "end": 123
+    },
+    {
+      "label": "item",
+      "start": 124,
+      "end": 160
+    },
+    {
+      "label": "item",
+      "start": 161,
+      "end": 208
+    },
+    {
+      "label": "next",
+      "start": 209,
+      "end": 261
+    }
+  ]
+}

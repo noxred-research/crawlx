@@ -1,0 +1,78 @@
+{
+  "id": "c03-forum-json-ld-topic",
+  "family": "comments",
+  "note": "forum topic marked as a discussion posting; every post is main content",
+  "expectedText": "Brewbench Forum Boards Members Log in\nBoards / Ingredients / Hops\nBest way to dry hops at home?\npilsner_pete\nI grew a few bines this year and picked about two kilos of cones last weekend. What is the best way to dry them without a proper kiln? I do not want to lose the aroma.\nmalt_marta\nSpread them thinly on a mesh rack in a dark, airy room. Mine take three or four days. Turn them once a day and they are ready when the stem snaps instead of bending.\nkettle_kev\nA fan heater on its lowest setting works too, but keep the temperature under forty degrees or you will drive off the oils.\nVacuum seal them afterwards and freeze.\npilsner_pete\nThanks both. I will try the mesh rack in the spare bedroom and report back in a week.\nPage 1 of 1\nForum rules Privacy Help",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 37
+    },
+    {
+      "label": "boilerplate",
+      "start": 38,
+      "end": 65
+    },
+    {
+      "label": "body",
+      "start": 66,
+      "end": 95
+    },
+    {
+      "label": "body",
+      "start": 96,
+      "end": 108
+    },
+    {
+      "label": "body",
+      "start": 109,
+      "end": 276
+    },
+    {
+      "label": "body",
+      "start": 277,
+      "end": 287
+    },
+    {
+      "label": "body",
+      "start": 288,
+      "end": 453
+    },
+    {
+      "label": "body",
+      "start": 454,
+      "end": 464
+    },
+    {
+      "label": "body",
+      "start": 465,
+      "end": 587
+    },
+    {
+      "label": "body",
+      "start": 588,
+      "end": 627
+    },
+    {
+      "label": "body",
+      "start": 628,
+      "end": 640
+    },
+    {
+      "label": "body",
+      "start": 641,
+      "end": 726
+    },
+    {
+      "label": "boilerplate",
+      "start": 727,
+      "end": 738
+    },
+    {
+      "label": "boilerplate",
+      "start": 739,
+      "end": 763
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "id": "f12-toshokan-yoru",
+  "family": "focus",
+  "note": "Japanese news article with recommended articles, an access ranking and company footer",
+  "expectedText": "海辺新報\n地域 スポーツ 文化 お知らせ 購読\n市立図書館が夜間の閲覧室を開設\n市立図書館は十日から、午後九時まで利用できる夜間閲覧室を開設した。仕事帰りの住民が静かに勉強できる場所として、旧地図資料室を改装した。\n閲覧室には席が四十あり、電源と無料の印刷機を備える。館長の三浦さんは、昼間は来館できない人から要望が多かったと話した。\n利用は無料で、予約は不要である。図書館は三か月後に利用状況を調べ、日曜日にも開くかどうかを決める方針だ。\nおすすめ記事\n港まつりの日程が決まる\n今年は三日間の開催です。\n商店街で新しい朝市が始まる\n毎週日曜日の午前に開かれます。\n中学校の吹奏楽部が県大会へ\n部員三十人が出場します。\nアクセスランキング\nバス路線の見直し案\n海岸清掃に千人参加\n新しい消防署が完成\n会社案内 個人情報 お問い合わせ 広告掲載\n海辺新報社。無断転載を禁じます。",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "boilerplate",
+      "start": 13,
+      "end": 59
+    },
+    {
+      "label": "body",
+      "start": 60,
+      "end": 105
+    },
+    {
+      "label": "body",
+      "start": 106,
+      "end": 307
+    },
+    {
+      "label": "body",
+      "start": 308,
+      "end": 485
+    },
+    {
+      "label": "body",
+      "start": 486,
+      "end": 642
+    },
+    {
+      "label": "boilerplate",
+      "start": 643,
+      "end": 661
+    },
+    {
+      "label": "boilerplate",
+      "start": 662,
+      "end": 695
+    },
+    {
+      "label": "boilerplate",
+      "start": 696,
+      "end": 732
+    },
+    {
+      "label": "boilerplate",
+      "start": 733,
+      "end": 772
+    },
+    {
+      "label": "boilerplate",
+      "start": 773,
+      "end": 818
+    },
+    {
+      "label": "boilerplate",
+      "start": 819,
+      "end": 858
+    },
+    {
+      "label": "boilerplate",
+      "start": 859,
+      "end": 895
+    },
+    {
+      "label": "boilerplate",
+      "start": 896,
+      "end": 923
+    },
+    {
+      "label": "boilerplate",
+      "start": 924,
+      "end": 951
+    },
+    {
+      "label": "boilerplate",
+      "start": 952,
+      "end": 979
+    },
+    {
+      "label": "boilerplate",
+      "start": 980,
+      "end": 1007
+    },
+    {
+      "label": "boilerplate",
+      "start": 1008,
+      "end": 1065
+    },
+    {
+      "label": "boilerplate",
+      "start": 1066,
+      "end": 1114
+    }
+  ]
+}

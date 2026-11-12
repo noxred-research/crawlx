@@ -1,0 +1,83 @@
+{
+  "id": "s20-function-number",
+  "family": "selector",
+  "note": "number functions: number, sum, floor, ceiling, round on ties and negatives, NaN handling in comparisons",
+  "expectedText": "NaN\n17\n42\nNaN\n2\n3\n3\n-2\n2\n-2\n0\n12.5\n7.5\nn/a\n-3",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "r2",
+      "start": 4,
+      "end": 6
+    },
+    {
+      "label": "r3",
+      "start": 7,
+      "end": 9
+    },
+    {
+      "label": "r4",
+      "start": 10,
+      "end": 13
+    },
+    {
+      "label": "r5",
+      "start": 14,
+      "end": 15
+    },
+    {
+      "label": "r6",
+      "start": 16,
+      "end": 17
+    },
+    {
+      "label": "r7",
+      "start": 18,
+      "end": 19
+    },
+    {
+      "label": "r8",
+      "start": 20,
+      "end": 22
+    },
+    {
+      "label": "r9",
+      "start": 23,
+      "end": 24
+    },
+    {
+      "label": "r10",
+      "start": 25,
+      "end": 27
+    },
+    {
+      "label": "r11",
+      "start": 28,
+      "end": 29
+    },
+    {
+      "label": "r12",
+      "start": 30,
+      "end": 34
+    },
+    {
+      "label": "r13",
+      "start": 35,
+      "end": 38
+    },
+    {
+      "label": "r14",
+      "start": 39,
+      "end": 42
+    },
+    {
+      "label": "r15",
+      "start": 43,
+      "end": 45
+    }
+  ]
+}

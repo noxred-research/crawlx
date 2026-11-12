@@ -1,0 +1,23 @@
+{
+  "id": "m33-authors-by-and-rel-author",
+  "family": "meta_exact",
+  "note": "a rel=author link whose text reads By A and B names two authors",
+  "expectedText": "title=Quarry Lake Opens for Swimming\nauthors=Nils Aaberg; Iris Quade\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "authors",
+      "start": 45,
+      "end": 68
+    },
+    {
+      "label": "language",
+      "start": 78,
+      "end": 80
+    }
+  ]
+}

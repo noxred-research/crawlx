@@ -1,0 +1,13 @@
+{
+  "id": "d26-rejected-undefined-entity",
+  "family": "feed",
+  "note": "an entity outside the five predefined ones is rejected",
+  "expectedText": "Policy::Protocol(custom XML entities are forbidden)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 51
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "m15-date-jsonld-offset-vs-time",
+  "family": "meta_exact",
+  "note": "JSON-LD dates carry an offset: the calendar date is the local one and the timestamp keeps the offset; a visible time element for the same instant in UTC makes the publication date uncertain",
+  "expectedText": "title=Night Ferry Timetable Published\nlanguage=en\npublished=2026-04-02\npublishedTimestamp=2026-04-02T23:30:00-05:00\nmodified=2026-04-03\nmodifiedTimestamp=2026-04-03T08:10:00-05:00",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 37
+    },
+    {
+      "label": "language",
+      "start": 47,
+      "end": 49
+    },
+    {
+      "label": "published",
+      "start": 60,
+      "end": 70
+    },
+    {
+      "label": "publishedTimestamp",
+      "start": 90,
+      "end": 115
+    },
+    {
+      "label": "modified",
+      "start": 125,
+      "end": 135
+    },
+    {
+      "label": "modifiedTimestamp",
+      "start": 154,
+      "end": 179
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "id": "n30-case-folding-merges-counts",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Éclair éclair ÉCLAIR.\nTulip tulip TULIP.\nStraße STRASSE straße.\néclair=3\ntulip=3\nstraße=2\nstrasse=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 24
+    },
+    {
+      "label": "sentence",
+      "start": 25,
+      "end": 43
+    },
+    {
+      "label": "sentence",
+      "start": 44,
+      "end": 68
+    },
+    {
+      "label": "keyword",
+      "start": 69,
+      "end": 76
+    },
+    {
+      "label": "score",
+      "start": 77,
+      "end": 78
+    },
+    {
+      "label": "keyword",
+      "start": 79,
+      "end": 84
+    },
+    {
+      "label": "score",
+      "start": 85,
+      "end": 86
+    },
+    {
+      "label": "keyword",
+      "start": 87,
+      "end": 94
+    },
+    {
+      "label": "score",
+      "start": 95,
+      "end": 96
+    },
+    {
+      "label": "keyword",
+      "start": 97,
+      "end": 104
+    },
+    {
+      "label": "score",
+      "start": 105,
+      "end": 106
+    }
+  ]
+}

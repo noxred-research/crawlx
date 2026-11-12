@@ -467,6 +467,62 @@ async fn real_inventory_and_all_eight_row_variants_match_finite_report_schemas()
 }
 
 #[tokio::test]
+async fn the_summary_report_carries_the_terminal_detail_of_the_stop_record() {
+    use crawlx_core::counters::{RunStatus, TerminalReason};
+
+    let fixture = Fixture::new().await;
+    let run = fixture.populate().await;
+    let path = format!("/v1/crawls/{run}/reports/summary");
+    let document = crawlx_api::openapi::document();
+
+    // a run that has not stopped names no detail
+    let (status, page) = fixture.get(&path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page["rows"][0].get("terminalDetail").is_none(), "{page}");
+
+    // a stop record that disagrees with the run's own terminal reason is not reported
+    fixture
+        .store
+        .set_status(run, RunStatus::Completed, Some(TerminalReason::PolicyStopped))
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append(
+            run,
+            "run.stopped",
+            json!({"terminalReason": "limit_reached", "terminalDetail": "items_limit"}),
+        )
+        .await
+        .unwrap();
+    let (_, page) = fixture.get(&path).await;
+    assert!(page["rows"][0].get("terminalDetail").is_none(), "{page}");
+
+    // the run's last stop record that names the reason's own cause is
+    fixture
+        .store
+        .append(
+            run,
+            "run.stopped",
+            json!({
+                "terminalReason": "policy_stopped",
+                "terminalDetail": "errors_limit",
+                "note": "must-not-be-projected",
+            }),
+        )
+        .await
+        .unwrap();
+    let (status, page) = fixture.get(&path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_valid(&document, response_schema(&document, SEARCH, "200"), &page);
+    let row = &page["rows"][0];
+    assert_eq!(row["rowType"], "summary", "{page}");
+    assert_eq!(row["terminalReason"], "policy_stopped", "{page}");
+    assert_eq!(row["terminalDetail"], "errors_limit", "{page}");
+    assert!(!page.to_string().contains("must-not-be-projected"), "{page}");
+}
+
+#[tokio::test]
 async fn documented_report_kinds_and_query_allowlists_match_runtime_inventory() {
     let fixture = Fixture::new().await;
     let run = fixture.populate().await;

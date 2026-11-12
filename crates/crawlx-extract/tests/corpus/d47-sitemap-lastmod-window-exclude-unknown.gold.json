@@ -1,0 +1,23 @@
+{
+  "id": "d47-sitemap-lastmod-window-exclude-unknown",
+  "family": "feed",
+  "note": "last-modified window with inclusive bounds: entries outside it are dropped, and unknown or unparseable hints are dropped when the policy says exclude",
+  "expectedText": "https://news.corpus.test/mod/summer\nhttps://news.corpus.test/mod/edge-high\nhttps://news.corpus.test/mod/edge-low",
+  "spans": [
+    {
+      "label": "page",
+      "start": 0,
+      "end": 35
+    },
+    {
+      "label": "page",
+      "start": 36,
+      "end": 74
+    },
+    {
+      "label": "page",
+      "start": 75,
+      "end": 112
+    }
+  ]
+}

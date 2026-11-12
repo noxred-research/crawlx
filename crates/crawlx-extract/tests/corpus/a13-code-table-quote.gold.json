@@ -1,0 +1,138 @@
+{
+  "id": "a13-code-table-quote",
+  "family": "article_body",
+  "note": "technical article with a code block, a results table and a quotation with attribution",
+  "expectedText": "Field Notes\nOperations\nDevelopment\nFeed\nRotating Log Files Without Losing a Line\nA busy service writes thousands of lines a minute, and the usual advice to stop the process before rotating is not acceptable when the service must stay up. The safer approach is to rename the file and ask the writer to reopen it.\nmv /var/log/app/service.log /var/log/app/service.log.1 kill -HUP $(cat /run/app/service.pid) gzip /var/log/app/service.log.1\nThe script above renames first, so the writer keeps appending to the same open handle until it receives the signal. Only then does it switch to a fresh file, which means no line is written to a deleted file.\nLines lost during one hundred rotations\nMethod\nLines lost\nPause in ms\nCopy and truncate\n412\n3\nRename and signal\n0\n1\nStop and restart\n0\n2800\nA log file is a promise that nothing important happened without being written down.\nOperations handbook, chapter nine\nWhatever method you pick, test it under load. The copy approach looks harmless on a quiet machine and only shows its losses when the service is writing at full speed.\nSubscribe to Field Notes for one short article every Friday.\nField Notes is licensed for reuse with credit. Back to top.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 11
+    },
+    {
+      "label": "boilerplate",
+      "start": 12,
+      "end": 22
+    },
+    {
+      "label": "boilerplate",
+      "start": 23,
+      "end": 34
+    },
+    {
+      "label": "boilerplate",
+      "start": 35,
+      "end": 39
+    },
+    {
+      "label": "body",
+      "start": 40,
+      "end": 80
+    },
+    {
+      "label": "body",
+      "start": 81,
+      "end": 311
+    },
+    {
+      "label": "body",
+      "start": 312,
+      "end": 436
+    },
+    {
+      "label": "body",
+      "start": 437,
+      "end": 644
+    },
+    {
+      "label": "body",
+      "start": 645,
+      "end": 684
+    },
+    {
+      "label": "body",
+      "start": 685,
+      "end": 691
+    },
+    {
+      "label": "body",
+      "start": 692,
+      "end": 702
+    },
+    {
+      "label": "body",
+      "start": 703,
+      "end": 714
+    },
+    {
+      "label": "body",
+      "start": 715,
+      "end": 732
+    },
+    {
+      "label": "body",
+      "start": 733,
+      "end": 736
+    },
+    {
+      "label": "body",
+      "start": 737,
+      "end": 738
+    },
+    {
+      "label": "body",
+      "start": 739,
+      "end": 756
+    },
+    {
+      "label": "body",
+      "start": 757,
+      "end": 758
+    },
+    {
+      "label": "body",
+      "start": 759,
+      "end": 760
+    },
+    {
+      "label": "body",
+      "start": 761,
+      "end": 777
+    },
+    {
+      "label": "body",
+      "start": 778,
+      "end": 779
+    },
+    {
+      "label": "body",
+      "start": 780,
+      "end": 784
+    },
+    {
+      "label": "body",
+      "start": 785,
+      "end": 868
+    },
+    {
+      "label": "body",
+      "start": 869,
+      "end": 902
+    },
+    {
+      "label": "body",
+      "start": 903,
+      "end": 1069
+    },
+    {
+      "label": "boilerplate",
+      "start": 1070,
+      "end": 1130
+    },
+    {
+      "label": "boilerplate",
+      "start": 1131,
+      "end": 1190
+    }
+  ]
+}

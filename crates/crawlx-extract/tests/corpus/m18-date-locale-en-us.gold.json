@@ -1,0 +1,23 @@
+{
+  "id": "m18-date-locale-en-us",
+  "family": "meta_exact",
+  "note": "the same numeric date text with a month-first locale supplied by the caller",
+  "expectedText": "title=Ice Rink Opens Two Weeks Early\nlanguage=en\npublished=2026-03-04",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "language",
+      "start": 46,
+      "end": 48
+    },
+    {
+      "label": "published",
+      "start": 59,
+      "end": 69
+    }
+  ]
+}

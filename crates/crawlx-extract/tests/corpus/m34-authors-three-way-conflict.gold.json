@@ -1,0 +1,23 @@
+{
+  "id": "m34-authors-three-way-conflict",
+  "family": "meta_exact",
+  "note": "a JSON-LD author string, a differently written meta author and a matching visible author: the JSON-LD value wins and the meta value makes the field uncertain",
+  "expectedText": "title=Gus Marlow on the Pickle Harvest\nauthors=Gus Marlow\nlanguage=en",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 38
+    },
+    {
+      "label": "authors",
+      "start": 47,
+      "end": 57
+    },
+    {
+      "label": "language",
+      "start": 67,
+      "end": 69
+    }
+  ]
+}

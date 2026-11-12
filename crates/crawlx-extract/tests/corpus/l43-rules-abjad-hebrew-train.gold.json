@@ -1,0 +1,78 @@
+{
+  "id": "l43-rules-abjad-hebrew-train",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "הרכבת|יוצאת|מהתחנה|בשמונה|הנוסעים|ממתינים|ברציף|ילדה|קוראת|עיתון|והמוביל|בודק|את|הכרטיסים",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 21
+    },
+    {
+      "label": "token",
+      "start": 22,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 47
+    },
+    {
+      "label": "token",
+      "start": 48,
+      "end": 62
+    },
+    {
+      "label": "token",
+      "start": 63,
+      "end": 77
+    },
+    {
+      "label": "token",
+      "start": 78,
+      "end": 88
+    },
+    {
+      "label": "token",
+      "start": 89,
+      "end": 97
+    },
+    {
+      "label": "token",
+      "start": 98,
+      "end": 108
+    },
+    {
+      "label": "token",
+      "start": 109,
+      "end": 119
+    },
+    {
+      "label": "token",
+      "start": 120,
+      "end": 134
+    },
+    {
+      "label": "token",
+      "start": 135,
+      "end": 143
+    },
+    {
+      "label": "token",
+      "start": 144,
+      "end": 148
+    },
+    {
+      "label": "token",
+      "start": 149,
+      "end": 165
+    }
+  ]
+}

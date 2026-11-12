@@ -1,0 +1,93 @@
+{
+  "id": "c12-blog-nested-quote-reply",
+  "family": "comments",
+  "note": "blog post with nested replies; one nested reply quotes a sentence of the post",
+  "expectedText": "Morning Pages Archive Subscribe Contact\nThree Weeks Without a Phone Alarm\nFor three weeks I woke up to a plain mechanical clock with a bell the size of a walnut. It was loud, unreasonable and impossible to snooze, and by the second morning I had stopped fighting it.\nThe biggest surprise was not the earlier mornings but the quieter evenings. Once the phone no longer slept beside my bed, I stopped reaching for it at ten at night, and my sleep got deeper without any other change.\nI have gone back to the phone for travel, but the clock stays on the shelf for ordinary weeks.\nReplies\nLucinda Hardwick\nI tried the same experiment and gave up on day four. How did you stop yourself from simply turning the bell off and going back to sleep?\nMorning Pages\nPut the clock across the room. Once your feet are on the floor, the battle is half won.\nLucinda Hardwick\nYou wrote that\nThe biggest surprise was not the earlier mornings but the quieter evenings.\nand that is the part I want. I will try again this weekend.\nFerdinand Oyelaran\nA cheap wind-up clock changed my routine more than any app ever did.\nPrivacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 39
+    },
+    {
+      "label": "body",
+      "start": 40,
+      "end": 73
+    },
+    {
+      "label": "body",
+      "start": 74,
+      "end": 266
+    },
+    {
+      "label": "body",
+      "start": 267,
+      "end": 481
+    },
+    {
+      "label": "body",
+      "start": 482,
+      "end": 576
+    },
+    {
+      "label": "boilerplate",
+      "start": 577,
+      "end": 584
+    },
+    {
+      "label": "comment",
+      "start": 585,
+      "end": 601
+    },
+    {
+      "label": "comment",
+      "start": 602,
+      "end": 738
+    },
+    {
+      "label": "comment",
+      "start": 739,
+      "end": 752
+    },
+    {
+      "label": "comment",
+      "start": 753,
+      "end": 840
+    },
+    {
+      "label": "comment",
+      "start": 841,
+      "end": 857
+    },
+    {
+      "label": "comment",
+      "start": 858,
+      "end": 872
+    },
+    {
+      "label": "quote",
+      "start": 873,
+      "end": 948
+    },
+    {
+      "label": "comment",
+      "start": 949,
+      "end": 1008
+    },
+    {
+      "label": "comment",
+      "start": 1009,
+      "end": 1027
+    },
+    {
+      "label": "comment",
+      "start": 1028,
+      "end": 1096
+    },
+    {
+      "label": "boilerplate",
+      "start": 1097,
+      "end": 1104
+    }
+  ]
+}

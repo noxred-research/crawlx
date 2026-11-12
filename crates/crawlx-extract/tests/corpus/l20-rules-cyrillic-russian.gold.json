@@ -1,0 +1,98 @@
+{
+  "id": "l20-rules-cyrillic-russian",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "поезд|отправляется|с|вокзала|в|восемь|часов|пассажиры|ждут|на|платформе|девочка|читает|газету|а|проводник|проверяет|билеты",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 38
+    },
+    {
+      "label": "token",
+      "start": 39,
+      "end": 53
+    },
+    {
+      "label": "token",
+      "start": 54,
+      "end": 56
+    },
+    {
+      "label": "token",
+      "start": 57,
+      "end": 69
+    },
+    {
+      "label": "token",
+      "start": 70,
+      "end": 80
+    },
+    {
+      "label": "token",
+      "start": 81,
+      "end": 99
+    },
+    {
+      "label": "token",
+      "start": 100,
+      "end": 108
+    },
+    {
+      "label": "token",
+      "start": 109,
+      "end": 113
+    },
+    {
+      "label": "token",
+      "start": 114,
+      "end": 132
+    },
+    {
+      "label": "token",
+      "start": 133,
+      "end": 147
+    },
+    {
+      "label": "token",
+      "start": 148,
+      "end": 160
+    },
+    {
+      "label": "token",
+      "start": 161,
+      "end": 173
+    },
+    {
+      "label": "token",
+      "start": 174,
+      "end": 176
+    },
+    {
+      "label": "token",
+      "start": 177,
+      "end": 195
+    },
+    {
+      "label": "token",
+      "start": 196,
+      "end": 214
+    },
+    {
+      "label": "token",
+      "start": 215,
+      "end": 227
+    }
+  ]
+}

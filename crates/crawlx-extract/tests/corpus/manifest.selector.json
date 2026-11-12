@@ -1,0 +1,4313 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "s01-axis-child",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s01-axis-child",
+      "files": {
+        "input": {
+          "path": "s01-axis-child.html",
+          "sha256": "dfcf0664f4b96ae9477987d1b7d30c1ff70f80d09203bae76580a67b56b68f7a"
+        },
+        "gold": {
+          "path": "s01-axis-child.gold.json",
+          "sha256": "b9f72da9c07cb853b2b87c19ba40fa13162037bc9d464b48f23d87f2a824999a"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "/html/body/div/*"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//div[@id='log']/child::p[2]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//div[@id='log']/child::comment()"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "/child::html/child::head/child::title"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "count(/html/body/*)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "//ul/child::text()",
+            "empty": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "s02-axis-descendant",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s02-axis-descendant",
+      "files": {
+        "input": {
+          "path": "s02-axis-descendant.html",
+          "sha256": "4a1f55c34dbd9f9be8dd6e03586d365b5419c1b5989652b010f88ca61b9da1b1"
+        },
+        "gold": {
+          "path": "s02-axis-descendant.gold.json",
+          "sha256": "8cb80a570e1f0613fa0e1d74246765161957de307400b1d027aa9059a0fc640e"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//article/descendant::p"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//section[@id='b']/descendant::*"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//article/descendant::b"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//article/descendant::text()"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "count(//body/descendant::*)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "//aside/descendant::section",
+            "empty": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "s03-axis-descendant-or-self",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s03-axis-descendant-or-self",
+      "files": {
+        "input": {
+          "path": "s03-axis-descendant-or-self.html",
+          "sha256": "a18f8118d1c51afd5312a12c3f27436b22f53b8b4f10574f1f14f3228304dc0d"
+        },
+        "gold": {
+          "path": "s03-axis-descendant-or-self.gold.json",
+          "sha256": "aa7d7f5a45e2abaff984a08f157a6a25c457adb0455cbda7271126564e2321a9"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//div[@id='outer']/descendant-or-self::div"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//div[@id='inner']/descendant-or-self::*"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//*[@class='box']"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "/descendant-or-self::node()/p"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "count(descendant-or-self::node())"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s04-axis-parent",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s04-axis-parent",
+      "files": {
+        "input": {
+          "path": "s04-axis-parent.html",
+          "sha256": "0d00c8bf6f19e9c2cc597b661197228e7cc7da118dfafca3f2ca5e1bbaf0b848"
+        },
+        "gold": {
+          "path": "s04-axis-parent.gold.json",
+          "sha256": "fd0b4f0f81a3001d04f31730bb8a21d88c5218848d163fe0fba5d85531d2c330"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//td[@id='k2']/parent::tr"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//a/.."
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//a/parent::*/parent::ul"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//td/parent::tr/parent::tbody/parent::table"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "name(//a/parent::*)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "/html/parent::*",
+            "empty": true
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "/html/parent::node()"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s05-axis-ancestor",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s05-axis-ancestor",
+      "files": {
+        "input": {
+          "path": "s05-axis-ancestor.html",
+          "sha256": "fa88b128a881e46a1db10001c984e8db1e4f8f3ef93996b2ef1df1e2f7a2d0b2"
+        },
+        "gold": {
+          "path": "s05-axis-ancestor.gold.json",
+          "sha256": "575adb2f16daa2c571e55f0163573b4de88aaf7251b09f20b2b34eeb7941fd53"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//p/ancestor::*"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//p/ancestor::*[1]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//p/ancestor::*[last()]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//p/ancestor::section/@class"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "count(//p/ancestor::*)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "//p/ancestor::p",
+            "empty": true
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "//p/ancestor::*[@id]/@id"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s06-axis-ancestor-or-self",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s06-axis-ancestor-or-self",
+      "files": {
+        "input": {
+          "path": "s06-axis-ancestor-or-self.html",
+          "sha256": "936d8bcb51da703d57708febac1358d80cd32bcb1c6290e08689c2bca503cef9"
+        },
+        "gold": {
+          "path": "s06-axis-ancestor-or-self.gold.json",
+          "sha256": "bcf818216641944d555f79951bb84942624042ea0271d90c5f15ad27b0ed448f"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//li[@id='t']/ancestor-or-self::li"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//li[@id='t']/ancestor-or-self::ol"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//li[@id='t']/ancestor-or-self::*[1]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "count(//li[@id='t']/ancestor-or-self::*)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s07-axis-following-sibling",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s07-axis-following-sibling",
+      "files": {
+        "input": {
+          "path": "s07-axis-following-sibling.html",
+          "sha256": "2f4db892148185fc194637d79e4ab7509eced2e1a90c499405bc0153d01a7ab4"
+        },
+        "gold": {
+          "path": "s07-axis-following-sibling.gold.json",
+          "sha256": "b066f7ccc4d7207b42ca09220df0042ea3b6fca81fd66f098e09be03c2e7c40c"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//dt[@id='t1']/following-sibling::dd"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//dt[@id='t2']/following-sibling::*[1]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//dt[@id='t2']/following-sibling::dt"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//dt/following-sibling::dd[1]"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//dd[last()]/following-sibling::*"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "count(//dt[@id='t3']/following-sibling::node())"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s08-axis-preceding-sibling",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s08-axis-preceding-sibling",
+      "files": {
+        "input": {
+          "path": "s08-axis-preceding-sibling.html",
+          "sha256": "caf3c0de489abdc1c5c6f255285acd2cd4194e55bc1b6f5e15d1ac9c21599107"
+        },
+        "gold": {
+          "path": "s08-axis-preceding-sibling.gold.json",
+          "sha256": "bc2ed4239e69888432dc46abe26c72891fe62582c55a77111598371fc9b8c8f3"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//li[@id='cur']/preceding-sibling::li"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//li[@id='cur']/preceding-sibling::li[1]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//li[@id='cur']/preceding-sibling::li[last()]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//li[@id='cur']/preceding-sibling::*[position() <= 2]"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//li[. = 'Dock']/preceding-sibling::li[. = 'Moor']"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "count(//li[@id='cur']/following-sibling::li | //li[@id='cur']/preceding-sibling::li)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s09-axis-following",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s09-axis-following",
+      "files": {
+        "input": {
+          "path": "s09-axis-following.html",
+          "sha256": "61f83826eec0e24af0e239c11d2f38db064b45dc6ee88b42d56d1d97f09533c2"
+        },
+        "gold": {
+          "path": "s09-axis-following.gold.json",
+          "sha256": "766d5232921a1b692a9721aec79c80a65df90d331badd8ede4a14c1ffc03bfdd"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//p[@id='a1']/following::p"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//section[@id='a']/following::p"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//h1/following::section[1]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//p[@id='b1']/following::*"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "count(//p[@id='f1']/following::node())"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s10-axis-preceding",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s10-axis-preceding",
+      "files": {
+        "input": {
+          "path": "s10-axis-preceding.html",
+          "sha256": "3a39016f38a0258d21f0c1fdfb731a8d05e9c4676d95d8b9739a30f2aebfbc05"
+        },
+        "gold": {
+          "path": "s10-axis-preceding.gold.json",
+          "sha256": "eca34a4b04264107de8e3e11347856c373d06c3e4cff6b2af06fdd18bfc6bcc1"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//p[@id='p3']/preceding::p"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//p[@id='p3']/preceding::p[1]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//p[@id='p4']/preceding::div"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//p[@id='p4']/preceding::*[self::h1 or self::div]"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "count(//h1/preceding::*)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s11-axis-self",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s11-axis-self",
+      "files": {
+        "input": {
+          "path": "s11-axis-self.html",
+          "sha256": "906af31a72a54f267b3bf2aaa0daa07b29a5c299423421c79b93ddd09a61254f"
+        },
+        "gold": {
+          "path": "s11-axis-self.gold.json",
+          "sha256": "50490c52fa4e1f0c18b1a25b031c9548afc74527b53ff791d5dbd5bfa8f45a25"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//li/self::li[@class='x']"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//li/self::*[. = 'b']"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//ul/self::li",
+            "empty": true
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//ul/./li[2]"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//li[self::node()]"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "count(/self::node())"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s12-axis-attribute",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s12-axis-attribute",
+      "files": {
+        "input": {
+          "path": "s12-axis-attribute.html",
+          "sha256": "5d5ffee88b209fe9a6a0acacab2d26572cee49d54a5a07bb482ed850440a46f9"
+        },
+        "gold": {
+          "path": "s12-axis-attribute.gold.json",
+          "sha256": "d58f1903518fd87c2e7340b1a5b5a22205de651dafbe2af03d7ce549d8a34827"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//a/@href"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//a/attribute::title"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "count(//a/@*)"
+          },
+          {
+            "id": "r10",
+            "kind": "xpath",
+            "expression": "//a/@*[starts-with(., 'n')]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//a[@data-rank > 5]/@id"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "count(//img/@alt)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "string(//img/@alt)"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "//a/@missing",
+            "empty": true
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "sum(//a/@data-rank)"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "//a[@title]/@id"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s13-axis-namespace",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s13-axis-namespace",
+      "files": {
+        "input": {
+          "path": "s13-axis-namespace.html",
+          "sha256": "5e7491c7bb0659c90111bf216986e11f3a05e45ffff28cbbf439bd5dc68020a3"
+        },
+        "gold": {
+          "path": "s13-axis-namespace.gold.json",
+          "sha256": "fcd48f5bfb46ebfd7a6c959ac18cbf9356d096f33685e9274746ebebc76c9819"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "namespaces": {
+          "svg": "http://www.w3.org/2000/svg",
+          "xl": "http://www.w3.org/1999/xlink",
+          "h": "http://www.w3.org/1999/xhtml"
+        },
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//svg:title"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//svg:use/@xl:href"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//title",
+            "empty": true
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//h:p"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//p/namespace::*"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "//svg:svg/namespace::xlink"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "namespace-uri(//svg:use)"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "count(//svg:svg/namespace::*)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s14-function-node-set",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s14-function-node-set",
+      "files": {
+        "input": {
+          "path": "s14-function-node-set.html",
+          "sha256": "8cc7f7ae147ba1648e6acc9870e29cad3538a79799c697cd3502df50312d7382"
+        },
+        "gold": {
+          "path": "s14-function-node-set.gold.json",
+          "sha256": "d88dcfc246576aae0c7cea3c5b7af5b4a55aea57a105afc0099b37365a3e34a7"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//li[position() = 2]"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//li[last()]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//li[position() = last() - 1]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "count(//li[@class='ship'])"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "id('p-rope p-net')"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "id(//p[@id='ref']/@data-ids)"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "//li[position() mod 2 = 1]"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "//ul/li[last()][@class='ship']"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "position()"
+          },
+          {
+            "id": "r10",
+            "kind": "xpath",
+            "expression": "last()"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s15-function-names",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s15-function-names",
+      "files": {
+        "input": {
+          "path": "s15-function-names.html",
+          "sha256": "9d7767b4f72a835905b645a0b75fe881e3a7e9c5e38e665edf4391010985ebfb"
+        },
+        "gold": {
+          "path": "s15-function-names.gold.json",
+          "sha256": "decbf03ad18830817eb70499d184d4dc004ac3c20163aa064eec797599829877"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "namespaces": {
+          "svg": "http://www.w3.org/2000/svg"
+        },
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "local-name(//h2)"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "name(//svg:circle)"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "namespace-uri(//svg:circle)"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "namespace-uri(//h2)"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "name(//data/@value)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "//*[local-name() = 'data']"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "count(//*[name() = 'circle'])"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "name(//missing)"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "local-name(/)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s16-function-string-compare",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s16-function-string-compare",
+      "files": {
+        "input": {
+          "path": "s16-function-string-compare.html",
+          "sha256": "afa8d5b07185a8be23925a9e4966998c384a784462bdc92427169d8222790ccd"
+        },
+        "gold": {
+          "path": "s16-function-string-compare.gold.json",
+          "sha256": "ece2983c48672287ec5ff61d2d942daccf7ac4771da9c489801b46ad98125dbe"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "string(//p[@id='s1'])"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "concat(//p[@id='s1'], ' / ', //p[@id='s3'])"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//a[starts-with(@href, 'https://')]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//a[contains(@href, '.pdf')]"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//a[not(starts-with(@href, 'mailto:'))]/@href"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "string(//p[@id='s2'])"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "contains('abc', '')"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "starts-with('abc', '')"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "contains('', 'a')"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s17-function-substring",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s17-function-substring",
+      "files": {
+        "input": {
+          "path": "s17-function-substring.html",
+          "sha256": "e21d6558e617d1ed1f98a97ecf5ffac4da8b2ad11b9e212617a65525be504168"
+        },
+        "gold": {
+          "path": "s17-function-substring.gold.json",
+          "sha256": "59132aec1a4946e7f2d395bfff6cdd0487e7dc951ce4b8c6118e5eeed3f806a0"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "substring-before(//p[@id='d'], '-')"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "substring-after(//p[@id='d'], '-')"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "substring-after(substring-after(//p[@id='d'], '-'), '-')"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "substring(//p[@id='f'], 9, 3)"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "substring(//p[@id='f'], 14)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "substring('12345', 1.5, 2.6)"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "substring('12345', 0, 3)"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "substring-before('abc', 'x')"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "substring('12345', -42, 1 div 0)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s18-function-string-measure",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s18-function-string-measure",
+      "files": {
+        "input": {
+          "path": "s18-function-string-measure.html",
+          "sha256": "720a7051964ebca20d3b3e52062c698dd26bee54807dcc7904f4e92fe6e3d66e"
+        },
+        "gold": {
+          "path": "s18-function-string-measure.gold.json",
+          "sha256": "55c9debd06cac361639c7287a38aa9de3c2c9907d7fccb98d71c90140b281df4"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "string-length(//p[@id='b'])"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "string-length('')"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "normalize-space(//p[@id='a'])"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "translate(//p[@id='c'], 'ABCDEFGHIJKLMNOPQRSTUVWXYZ-', 'abcdefghijklmnopqrstuvwxyz_')"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "translate('--aa--', 'a-', 'A')"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "//p[string-length(normalize-space(.)) > 10]"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "//p[string-length() = 8]"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "//p[normalize-space() = 'Gate twelve']"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s19-function-boolean-lang",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s19-function-boolean-lang",
+      "files": {
+        "input": {
+          "path": "s19-function-boolean-lang.html",
+          "sha256": "2ac26744443e8287695d307f3ab5437666c032b10658fb6fce9640716e8320f0"
+        },
+        "gold": {
+          "path": "s19-function-boolean-lang.gold.json",
+          "sha256": "08a4f00cb1050edd59a7064d0eb097df30c5eeba8d590a0bcad029dd182e40f2"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "true()"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "false()"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "boolean(//p)"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "boolean(//nothing)"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "not(//nothing)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "boolean('')"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "boolean(0)"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "boolean('false')"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "boolean(0 div 0)"
+          },
+          {
+            "id": "r10",
+            "kind": "xpath",
+            "expression": "//p[lang('de')]"
+          },
+          {
+            "id": "r11",
+            "kind": "xpath",
+            "expression": "//p[lang('en')]"
+          },
+          {
+            "id": "r12",
+            "kind": "xpath",
+            "expression": "//p[@hidden]"
+          },
+          {
+            "id": "r13",
+            "kind": "xpath",
+            "expression": "//p[not(@hidden)]"
+          },
+          {
+            "id": "r14",
+            "kind": "xpath",
+            "expression": "lang('en')"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s20-function-number",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s20-function-number",
+      "files": {
+        "input": {
+          "path": "s20-function-number.html",
+          "sha256": "ff1402941bcc444d6b1fbad58c5ac8c84fb038d54cf1f1877092bc57617e7cb3"
+        },
+        "gold": {
+          "path": "s20-function-number.gold.json",
+          "sha256": "2d129f150390908f3d56a8d72fe967312f2638cd081b14eaa2ce82b352a72279"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "sum(//td)"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "sum(//td[position() < 4])"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "number(//p[@id='q'])"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "number('abc')"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "floor(2.7)"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "ceiling(2.1)"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "round(2.5)"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "round(-2.5)"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "round(2.4)"
+          },
+          {
+            "id": "r10",
+            "kind": "xpath",
+            "expression": "floor(-1.5)"
+          },
+          {
+            "id": "r11",
+            "kind": "xpath",
+            "expression": "ceiling(-0.5)"
+          },
+          {
+            "id": "r12",
+            "kind": "xpath",
+            "expression": "//td[number(.) > 10]"
+          },
+          {
+            "id": "r13",
+            "kind": "xpath",
+            "expression": "//td[. = 7.5]"
+          },
+          {
+            "id": "r14",
+            "kind": "xpath",
+            "expression": "//td[number(.) != number(.)]"
+          },
+          {
+            "id": "r15",
+            "kind": "xpath",
+            "expression": "//td[number(.) < 0]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s21-operators",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s21-operators",
+      "files": {
+        "input": {
+          "path": "s21-operators.html",
+          "sha256": "42498023e03e10f5ffce93c375613bd7d03a421b99a3a00924783db97c540270"
+        },
+        "gold": {
+          "path": "s21-operators.gold.json",
+          "sha256": "0b8c3415aa22cf1208c717fafab5c1c7626eee518558a045de1676918cb0520a"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//li[1] | //p"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//p | //li[3] | //li[1]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//li[@data-n = 2 or @data-n = 3]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//li[@data-n >= 2 and @data-n < 3]"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//li[@data-n != 2]"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "2 * 3 + 1"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "7 mod 3"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "-7 mod 3"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "7 div 2"
+          },
+          {
+            "id": "r10",
+            "kind": "xpath",
+            "expression": "1 div 0"
+          },
+          {
+            "id": "r11",
+            "kind": "xpath",
+            "expression": "-1 div 0"
+          },
+          {
+            "id": "r12",
+            "kind": "xpath",
+            "expression": "0 div 0"
+          },
+          {
+            "id": "r13",
+            "kind": "xpath",
+            "expression": "5 - 2 - 1"
+          },
+          {
+            "id": "r14",
+            "kind": "xpath",
+            "expression": "10 div 4 * 2"
+          },
+          {
+            "id": "r15",
+            "kind": "xpath",
+            "expression": "count(//li) = 3"
+          },
+          {
+            "id": "r16",
+            "kind": "xpath",
+            "expression": "//li = 'beta'"
+          },
+          {
+            "id": "r17",
+            "kind": "xpath",
+            "expression": "//li = //p"
+          },
+          {
+            "id": "r18",
+            "kind": "xpath",
+            "expression": "//li != 'beta'"
+          },
+          {
+            "id": "r19",
+            "kind": "xpath",
+            "expression": "true() = 'x'"
+          },
+          {
+            "id": "r20",
+            "kind": "xpath",
+            "expression": "'10' > '9'"
+          },
+          {
+            "id": "r21",
+            "kind": "xpath",
+            "expression": "1 + 2 = 3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s22-predicates",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s22-predicates",
+      "files": {
+        "input": {
+          "path": "s22-predicates.html",
+          "sha256": "ef35e35e2107dbe674eb9b8514424f179d423aef0d6367246c554fd06dc9c65a"
+        },
+        "gold": {
+          "path": "s22-predicates.gold.json",
+          "sha256": "8f4cb566b489fc139d03acd23778617bebe7dbf0358cd15f6427704c01e027da"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//div[@class='row'][2]/span"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//div[@class='row']/span[2]"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "(//span)[4]"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "(//span)[last()]"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//div[@class='row'][span[3]]"
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "//div[count(span) > 1][last()]"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "//span[position() = 1 and last() = 1]"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "//div[@class='row'][position() = last()]/span[1]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s23-node-tests",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s23-node-tests",
+      "files": {
+        "input": {
+          "path": "s23-node-tests.html",
+          "sha256": "655b8a086b5eaf9213ce53305c4ce2227183710fdb8b16d50def90e0293f4514"
+        },
+        "gold": {
+          "path": "s23-node-tests.gold.json",
+          "sha256": "700399624a166e79418ea3628eb33aab24754e4537f9d3b3e512fdbe70cc77a4"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "//div[@id='t']/comment()"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "//div[@id='t']/text()"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "//div[@id='t']/node()"
+          },
+          {
+            "id": "r4",
+            "kind": "xpath",
+            "expression": "//div[@id='t']/*"
+          },
+          {
+            "id": "r5",
+            "kind": "xpath",
+            "expression": "//processing-instruction()",
+            "empty": true
+          },
+          {
+            "id": "r6",
+            "kind": "xpath",
+            "expression": "count(//comment())"
+          },
+          {
+            "id": "r7",
+            "kind": "xpath",
+            "expression": "//b/preceding-sibling::text()"
+          },
+          {
+            "id": "r8",
+            "kind": "xpath",
+            "expression": "string(//div[@id='t'])"
+          },
+          {
+            "id": "r9",
+            "kind": "xpath",
+            "expression": "//text()[. = 'alpha']"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s24-relative-context",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s24-relative-context",
+      "files": {
+        "input": {
+          "path": "s24-relative-context.html",
+          "sha256": "3a4c2459bbc1b55fbe08cf250828747b5ee5e78ec53243b34d9a62a3ac022748"
+        },
+        "gold": {
+          "path": "s24-relative-context.gold.json",
+          "sha256": "9bb2e2aa133c6a2aa09f785cdefa677e6764063d4836ef28be8445bcbe90d0f4"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "c1",
+            "kind": "xpath",
+            "expression": ".",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c2",
+            "kind": "xpath",
+            "expression": "..",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c3",
+            "kind": "xpath",
+            "expression": "following-sibling::p",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c4",
+            "kind": "xpath",
+            "expression": "./@id",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c5",
+            "kind": "xpath",
+            "expression": "//p",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c6",
+            "kind": "xpath",
+            "expression": "p",
+            "context": "//p[@id='p1']",
+            "empty": true
+          },
+          {
+            "id": "c7",
+            "kind": "xpath",
+            "expression": "../*",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c8",
+            "kind": "xpath",
+            "expression": "self::p/@id",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c9",
+            "kind": "xpath",
+            "expression": "ancestor::div/@id",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c10",
+            "kind": "xpath",
+            "expression": "string(.)",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c11",
+            "kind": "xpath",
+            "expression": "/html/body/div/p[2]",
+            "context": "//p[@id='p1']"
+          },
+          {
+            "id": "c12",
+            "kind": "xpath",
+            "expression": "count(preceding::*)",
+            "context": "//p[@id='p1']"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s25-css-selectors",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s25-css-selectors",
+      "files": {
+        "input": {
+          "path": "s25-css-selectors.html",
+          "sha256": "14d94bb764f3aef571740cad9682a174c99daa69271a3f8c475d46ef93a0bb4b"
+        },
+        "gold": {
+          "path": "s25-css-selectors.gold.json",
+          "sha256": "a75cdf7e8d9aa091a2f1594699bde43716e62e3331f68e3c274c197e73785a93"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "c1",
+            "kind": "css",
+            "expression": "a.lnk"
+          },
+          {
+            "id": "c2",
+            "kind": "css",
+            "expression": "a.ext[rel=noopener]"
+          },
+          {
+            "id": "c3",
+            "kind": "css",
+            "expression": "#title"
+          },
+          {
+            "id": "c4",
+            "kind": "css",
+            "expression": "main > p"
+          },
+          {
+            "id": "c5",
+            "kind": "css",
+            "expression": "p.lead + p"
+          },
+          {
+            "id": "c6",
+            "kind": "css",
+            "expression": "h1 ~ p"
+          },
+          {
+            "id": "c7",
+            "kind": "css",
+            "expression": "a[href^='https']"
+          },
+          {
+            "id": "c8",
+            "kind": "css",
+            "expression": "a[href$='/a']"
+          },
+          {
+            "id": "c9",
+            "kind": "css",
+            "expression": "a[href*='o.test']"
+          },
+          {
+            "id": "c10",
+            "kind": "css",
+            "expression": "li:nth-child(2)"
+          },
+          {
+            "id": "c11",
+            "kind": "css",
+            "expression": "li:last-child"
+          },
+          {
+            "id": "c12",
+            "kind": "css",
+            "expression": "li:first-child"
+          },
+          {
+            "id": "c13",
+            "kind": "css",
+            "expression": "p:not(.lead)"
+          },
+          {
+            "id": "c14",
+            "kind": "css",
+            "expression": "p.note.warn"
+          },
+          {
+            "id": "c15",
+            "kind": "css",
+            "expression": "nav a:first-child"
+          },
+          {
+            "id": "c16",
+            "kind": "css",
+            "expression": "ul > li:nth-child(odd)"
+          },
+          {
+            "id": "c17",
+            "kind": "css",
+            "expression": ".nonexistent",
+            "empty": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "s26-css-list-order",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s26-css-list-order",
+      "files": {
+        "input": {
+          "path": "s26-css-list-order.html",
+          "sha256": "7cfa72aa7a8f119364009a83511dcbb63e02e5e5d66a6c9f3f5c91f7a1aabf80"
+        },
+        "gold": {
+          "path": "s26-css-list-order.gold.json",
+          "sha256": "78e60f7ba1c493aa2534e69864514a8f52dc6cc472fe0f84eaaf069d37135c05"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "c1",
+            "kind": "css",
+            "expression": "h1, li:nth-child(odd), nav a:first-child"
+          },
+          {
+            "id": "c2",
+            "kind": "css",
+            "expression": "li, li:first-child"
+          },
+          {
+            "id": "c3",
+            "kind": "css",
+            "expression": "p, h1"
+          },
+          {
+            "id": "c4",
+            "kind": "css",
+            "expression": "li:last-child, li:first-child, a"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s27-css-projections",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s27-css-projections",
+      "files": {
+        "input": {
+          "path": "s27-css-projections.html",
+          "sha256": "38bda63cc70161ec21be4e737254b34a408db0dae7a4928a59807a075211ec4f"
+        },
+        "gold": {
+          "path": "s27-css-projections.gold.json",
+          "sha256": "ac5835ae4ae3855ad562b869e3f8946eaceb626da9427adcb2554dedcb6ce4a0"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "c1",
+            "kind": "css",
+            "expression": "h2::text"
+          },
+          {
+            "id": "c2",
+            "kind": "css",
+            "expression": "a::attr(href)"
+          },
+          {
+            "id": "c3",
+            "kind": "css",
+            "expression": "a::attr(DATA-ID)"
+          },
+          {
+            "id": "c4",
+            "kind": "css",
+            "expression": "h2::text, a::attr(href)"
+          },
+          {
+            "id": "c5",
+            "kind": "css",
+            "expression": "h2 em::text"
+          },
+          {
+            "id": "c6",
+            "kind": "css",
+            "expression": "a::attr(missing)",
+            "empty": true
+          },
+          {
+            "id": "c7",
+            "kind": "css",
+            "expression": "a::attr('href')"
+          },
+          {
+            "id": "c8",
+            "kind": "css",
+            "expression": "em::text"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s28-css-errors-and-limits",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s28-css-errors-and-limits",
+      "files": {
+        "input": {
+          "path": "s28-css-errors-and-limits.html",
+          "sha256": "dbb775e281204de77b235bcbcf2acfa4841283f02d00fe8195ed78a3973e7fa4"
+        },
+        "gold": {
+          "path": "s28-css-errors-and-limits.gold.json",
+          "sha256": "3da86ddd3fd4d665ed6a6f348ef0594d018431dad3a6113d6813dbc1b40afd52"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "c1",
+            "kind": "css",
+            "expression": "a["
+          },
+          {
+            "id": "c2",
+            "kind": "css",
+            "expression": "div > > p"
+          },
+          {
+            "id": "c3",
+            "kind": "css",
+            "expression": "p::before"
+          },
+          {
+            "id": "c4",
+            "kind": "css",
+            "expression": "a::attr()"
+          },
+          {
+            "id": "c5",
+            "kind": "css",
+            "expression": "a::attr(on click)"
+          },
+          {
+            "id": "c6",
+            "kind": "css",
+            "expression": "p::text::text"
+          },
+          {
+            "id": "c7",
+            "kind": "css",
+            "expression": "p::first-line"
+          },
+          {
+            "id": "c8",
+            "kind": "css",
+            "expression": ""
+          },
+          {
+            "id": "c9",
+            "kind": "css",
+            "repeat": {
+              "prefix": "",
+              "unit": "p,",
+              "count": 63,
+              "suffix": "p"
+            }
+          },
+          {
+            "id": "c10",
+            "kind": "css",
+            "repeat": {
+              "prefix": "",
+              "unit": "p,",
+              "count": 64,
+              "suffix": "p"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s29-item-cardinality-valid",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s29-item-cardinality-valid",
+      "files": {
+        "input": {
+          "path": "s29-item-cardinality-valid.html",
+          "sha256": "bc318adf8ff73338c524d570dce2e3506f8951640f58dfd68c886bd2ac567065"
+        },
+        "gold": {
+          "path": "s29-item-cardinality-valid.gold.json",
+          "sha256": "6c3b89039759c2a6e87509a3eaa356d608e4670c6a84d36d22254785ea2c1a67"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "title",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "h1"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "required": true,
+              "transforms": [
+                {
+                  "kind": "trim"
+                }
+              ]
+            },
+            {
+              "name": "price",
+              "selectors": [
+                {
+                  "kind": "xpath",
+                  "expression": "//p[@class='price']"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "regex",
+                  "pattern": "([0-9]+\\.[0-9]+)",
+                  "group": 1
+                },
+                {
+                  "kind": "number"
+                }
+              ]
+            },
+            {
+              "name": "tags",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "ul.tags li"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "transforms": [
+                {
+                  "kind": "dedupe"
+                }
+              ]
+            },
+            {
+              "name": "nickname",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".nickname"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            },
+            {
+              "name": "source",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".source"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "default": "unknown"
+            },
+            {
+              "name": "more",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "a.more"
+                }
+              ],
+              "extraction": {
+                "kind": "attribute",
+                "name": "href"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "resolve_url"
+                }
+              ]
+            }
+          ]
+        },
+        "expect": {
+          "valid": true,
+          "quality": {
+            "title": "selected",
+            "price": "selected",
+            "tags": "selected",
+            "nickname": "missing",
+            "source": "defaulted",
+            "more": "selected"
+          }
+        }
+      }
+    },
+    {
+      "id": "s30-item-cardinality-violations",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s30-item-cardinality-violations",
+      "files": {
+        "input": {
+          "path": "s30-item-cardinality-violations.html",
+          "sha256": "a7f5bfa16be283b8be4be85b164918b379a1fb48bd173798c3b05124244ef5e8"
+        },
+        "gold": {
+          "path": "s30-item-cardinality-violations.gold.json",
+          "sha256": "324f5e19c846e27bbebdf0eb9e465aef1bc45c8d6a6bce4f9da85a91e132cc92"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "exact_one",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "p.stock"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "required": true
+            },
+            {
+              "name": "two_for_one",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".price"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "required": true
+            },
+            {
+              "name": "required_missing",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".nope"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "required": true
+            },
+            {
+              "name": "optional_missing",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".nope"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            },
+            {
+              "name": "many_all",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".price"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many"
+            },
+            {
+              "name": "many_missing",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".nope"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many"
+            },
+            {
+              "name": "first_only",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".price:first-child"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            }
+          ]
+        },
+        "expect": {
+          "valid": false,
+          "quality": {
+            "exact_one": "selected",
+            "two_for_one": "cardinality_mismatch",
+            "required_missing": "missing",
+            "optional_missing": "missing",
+            "many_all": "selected",
+            "many_missing": "missing",
+            "first_only": "selected"
+          }
+        }
+      }
+    },
+    {
+      "id": "s31-item-text-transforms",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s31-item-text-transforms",
+      "files": {
+        "input": {
+          "path": "s31-item-text-transforms.html",
+          "sha256": "c9e27056e0308c8955f8690c0dfbbb6f7cd1a8d63329cb423cd912a43f6a66b0"
+        },
+        "gold": {
+          "path": "s31-item-text-transforms.gold.json",
+          "sha256": "22de3c83d2919330dee2c796d20c7a3bb6636146c986a9e7af60cee3fd1f1039"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "joined",
+              "selectors": [
+                {
+                  "kind": "xpath",
+                  "expression": "//li[position() < 5]"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "transforms": [
+                {
+                  "kind": "trim"
+                },
+                {
+                  "kind": "normalize_whitespace"
+                },
+                {
+                  "kind": "dedupe"
+                },
+                {
+                  "kind": "join",
+                  "separator": "|"
+                }
+              ]
+            },
+            {
+              "name": "cleaned",
+              "selectors": [
+                {
+                  "kind": "xpath",
+                  "expression": "//li[5]"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "clean"
+                }
+              ]
+            },
+            {
+              "name": "limited",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "li"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "transforms": [
+                {
+                  "kind": "normalize_whitespace"
+                },
+                {
+                  "kind": "limit",
+                  "count": 2
+                }
+              ]
+            },
+            {
+              "name": "deduped",
+              "selectors": [
+                {
+                  "kind": "xpath",
+                  "expression": "//li[position() < 5]"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "inputProcessors": [
+                {
+                  "kind": "normalize_whitespace"
+                },
+                {
+                  "kind": "trim"
+                }
+              ],
+              "transforms": [
+                {
+                  "kind": "dedupe"
+                }
+              ]
+            }
+          ]
+        },
+        "expect": {
+          "valid": true,
+          "quality": {
+            "joined": "selected",
+            "cleaned": "selected",
+            "limited": "selected",
+            "deduped": "selected"
+          }
+        }
+      }
+    },
+    {
+      "id": "s32-item-typed-transforms",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/harbor/guide/s32-item-typed-transforms",
+      "files": {
+        "input": {
+          "path": "s32-item-typed-transforms.html",
+          "sha256": "1b067a9c0a7306c8208ff745485f634be15c596b3a5fdd510c6c3500f9eac586"
+        },
+        "gold": {
+          "path": "s32-item-typed-transforms.gold.json",
+          "sha256": "8e0fecc98f37fef6643082d063865fdb7fa8da3fd8fa7320459f21b1cd250449"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "d1",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "time.d1"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "iso_date"
+                }
+              ]
+            },
+            {
+              "name": "d2",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "time.d2"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "iso_date"
+                }
+              ]
+            },
+            {
+              "name": "n1",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "span.n1"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "number"
+                }
+              ]
+            },
+            {
+              "name": "n2",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "span.n2"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "number"
+                }
+              ]
+            },
+            {
+              "name": "u1",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "a.u1"
+                }
+              ],
+              "extraction": {
+                "kind": "attribute",
+                "name": "href"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "resolve_url"
+                }
+              ]
+            },
+            {
+              "name": "u2",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "a.u2"
+                }
+              ],
+              "extraction": {
+                "kind": "attribute",
+                "name": "href"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "resolve_url"
+                }
+              ]
+            },
+            {
+              "name": "emails",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "p.mail"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "transforms": [
+                {
+                  "kind": "builtin",
+                  "name": "email",
+                  "all": true
+                }
+              ]
+            },
+            {
+              "name": "cfg",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "script#cfg"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "json_parse"
+                }
+              ]
+            }
+          ]
+        },
+        "expect": {
+          "valid": true,
+          "quality": {
+            "d1": "selected",
+            "d2": "selected",
+            "n1": "selected",
+            "n2": "selected",
+            "u1": "selected",
+            "u2": "selected",
+            "emails": "selected",
+            "cfg": "selected"
+          }
+        }
+      }
+    },
+    {
+      "id": "s33-item-malformed-transforms",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s33-item-malformed-transforms",
+      "files": {
+        "input": {
+          "path": "s33-item-malformed-transforms.html",
+          "sha256": "f73a70e684abfd06e501e101387dec550fc126b83675c6ebb8a8f21bafc9a1da"
+        },
+        "gold": {
+          "path": "s33-item-malformed-transforms.gold.json",
+          "sha256": "c0c2926088a8764235f804b3862613d1d79289493814453cf1fa724a25a5ab8a"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "d3",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "time.d3"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "iso_date"
+                }
+              ]
+            },
+            {
+              "name": "d3_default",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "time.d3"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "default": "n/a",
+              "transforms": [
+                {
+                  "kind": "iso_date"
+                }
+              ]
+            },
+            {
+              "name": "d4",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "b.d4"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "iso_date"
+                }
+              ]
+            },
+            {
+              "name": "n3",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "span.n3"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "number"
+                }
+              ]
+            },
+            {
+              "name": "bad",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "script#bad"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "json_parse"
+                }
+              ]
+            },
+            {
+              "name": "ok",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "span.ok"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            }
+          ]
+        },
+        "expect": {
+          "valid": false,
+          "quality": {
+            "d3": "malformed_transform",
+            "d3_default": "malformed_transform",
+            "d4": "malformed_transform",
+            "n3": "malformed_transform",
+            "bad": "malformed_transform",
+            "ok": "selected"
+          }
+        }
+      }
+    },
+    {
+      "id": "s34-item-regex-and-input-processors",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s34-item-regex-and-input-processors",
+      "files": {
+        "input": {
+          "path": "s34-item-regex-and-input-processors.html",
+          "sha256": "9d845d8475a7a2d0a30e237cee560a3a94021decda44e68cf8c08ea79bd283ca"
+        },
+        "gold": {
+          "path": "s34-item-regex-and-input-processors.gold.json",
+          "sha256": "3d88d990d7de33613dd94d80f25d5e43b60d671d88ffdadc5ad0a0e7683bbb79"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "code",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "p.ref"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "regex",
+                  "pattern": "HB-([0-9]+)",
+                  "group": 1
+                },
+                {
+                  "kind": "number"
+                }
+              ]
+            },
+            {
+              "name": "rev",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "p.ref"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "regex",
+                  "pattern": "rev ([0-9]+)",
+                  "group": 1
+                }
+              ]
+            },
+            {
+              "name": "nums",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "p.ref"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "transforms": [
+                {
+                  "kind": "regex",
+                  "pattern": "[0-9]+",
+                  "all": true
+                }
+              ]
+            },
+            {
+              "name": "nomatch_one",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "p.ref"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "transforms": [
+                {
+                  "kind": "regex",
+                  "pattern": "ZZ-[0-9]+"
+                }
+              ]
+            },
+            {
+              "name": "nomatch_many",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "p.ref"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "transforms": [
+                {
+                  "kind": "regex",
+                  "pattern": "ZZ-[0-9]+"
+                }
+              ]
+            },
+            {
+              "name": "prices",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "ul.prices li"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many",
+              "inputProcessors": [
+                {
+                  "kind": "trim"
+                },
+                {
+                  "kind": "regex",
+                  "pattern": "\\$([0-9.]+)",
+                  "group": 1
+                }
+              ],
+              "transforms": [
+                {
+                  "kind": "number"
+                }
+              ]
+            },
+            {
+              "name": "free_only",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "ul.prices li:nth-child(2)"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one",
+              "inputProcessors": [
+                {
+                  "kind": "regex",
+                  "pattern": "\\$([0-9.]+)",
+                  "group": 1
+                }
+              ]
+            }
+          ]
+        },
+        "expect": {
+          "valid": false,
+          "quality": {
+            "code": "selected",
+            "rev": "selected",
+            "nums": "selected",
+            "nomatch_one": "malformed_transform",
+            "nomatch_many": "selected",
+            "prices": "selected",
+            "free_only": "missing"
+          }
+        }
+      }
+    },
+    {
+      "id": "s35-item-nested-groups",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s35-item-nested-groups",
+      "files": {
+        "input": {
+          "path": "s35-item-nested-groups.html",
+          "sha256": "f63c30e9db7fb848966b23a13da439780c360e80b4743cf6f8375070bc925f52"
+        },
+        "gold": {
+          "path": "s35-item-nested-groups.gold.json",
+          "sha256": "abd1a9a90a8b99aa8e62a1d9c1c10edc88a17560485ad4cec41327674411c8e6"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "berths",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".berth"
+                }
+              ],
+              "extraction": {
+                "kind": "group"
+              },
+              "cardinality": "many",
+              "fields": [
+                {
+                  "name": "name",
+                  "selectors": [
+                    {
+                      "kind": "css",
+                      "expression": "h3"
+                    }
+                  ],
+                  "extraction": {
+                    "kind": "text"
+                  },
+                  "cardinality": "one",
+                  "required": true
+                },
+                {
+                  "name": "length",
+                  "selectors": [
+                    {
+                      "kind": "css",
+                      "expression": ".len"
+                    }
+                  ],
+                  "extraction": {
+                    "kind": "text"
+                  },
+                  "cardinality": "one",
+                  "transforms": [
+                    {
+                      "kind": "regex",
+                      "pattern": "([0-9]+)",
+                      "group": 1
+                    },
+                    {
+                      "kind": "number"
+                    }
+                  ]
+                },
+                {
+                  "name": "note",
+                  "selectors": [
+                    {
+                      "kind": "css",
+                      "expression": ".note"
+                    }
+                  ],
+                  "extraction": {
+                    "kind": "text"
+                  },
+                  "cardinality": "one"
+                }
+              ]
+            },
+            {
+              "name": "terms",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "dt"
+                }
+              ],
+              "extraction": {
+                "kind": "group"
+              },
+              "cardinality": "many",
+              "fields": [
+                {
+                  "name": "term",
+                  "selectors": [
+                    {
+                      "kind": "xpath",
+                      "expression": "."
+                    }
+                  ],
+                  "extraction": {
+                    "kind": "text"
+                  },
+                  "cardinality": "one"
+                },
+                {
+                  "name": "meaning",
+                  "selectors": [
+                    {
+                      "kind": "xpath",
+                      "expression": "."
+                    }
+                  ],
+                  "extraction": {
+                    "kind": "text"
+                  },
+                  "cardinality": "one",
+                  "source": {
+                    "kind": "next_sibling"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "expect": {
+          "valid": true,
+          "quality": {
+            "berths": "selected",
+            "terms": "selected"
+          }
+        }
+      }
+    },
+    {
+      "id": "s36-namespace-bindings",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s36-namespace-bindings",
+      "files": {
+        "input": {
+          "path": "s36-namespace-bindings.html",
+          "sha256": "cd7449dbbcddb19281cc468976ee004b21d11ea907b5202ad72d24fa5cccdd52"
+        },
+        "gold": {
+          "path": "s36-namespace-bindings.gold.json",
+          "sha256": "1fab764286b7c3b46aced659cdcf7652d7f48b0fb779ae5ee58ef96765b8b161"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "namespaces": {
+          "svg": "http://www.w3.org/2000/svg"
+        },
+        "rules": [
+          {
+            "id": "n1",
+            "kind": "xpath",
+            "expression": "//svg:rect/@width"
+          },
+          {
+            "id": "n2",
+            "kind": "xpath",
+            "expression": "count(//svg:*)"
+          },
+          {
+            "id": "n3",
+            "kind": "xpath",
+            "expression": "count(//*[namespace-uri() = 'http://www.w3.org/2000/svg'])"
+          },
+          {
+            "id": "n4",
+            "kind": "xpath",
+            "expression": "//svg:rect",
+            "namespaces": {}
+          },
+          {
+            "id": "n5",
+            "kind": "xpath",
+            "expression": "//p[svg:rect]",
+            "namespaces": {}
+          },
+          {
+            "id": "n6",
+            "kind": "xpath",
+            "expression": "//rect",
+            "empty": true
+          },
+          {
+            "id": "n7",
+            "kind": "xpath",
+            "expression": "//xml:*",
+            "empty": true
+          },
+          {
+            "id": "n8",
+            "kind": "xpath",
+            "expression": "count(//svg:svg/@*)"
+          },
+          {
+            "id": "n10",
+            "kind": "xpath",
+            "expression": "local-name(//svg:circle/..)"
+          },
+          {
+            "id": "n11",
+            "kind": "xpath",
+            "expression": "//svg:circle/preceding-sibling::svg:rect/@height"
+          },
+          {
+            "id": "n12",
+            "kind": "xpath",
+            "expression": "//*[local-name() = 'p' and namespace-uri() = 'http://www.w3.org/1999/xhtml']"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s37-invalid-syntax",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s37-invalid-syntax",
+      "files": {
+        "input": {
+          "path": "s37-invalid-syntax.html",
+          "sha256": "9092843df1b7646b4b4f8a6c7aa0d0a1563c38144b19ea266614ee5689d87869"
+        },
+        "gold": {
+          "path": "s37-invalid-syntax.gold.json",
+          "sha256": "990a56d829269bc07c59ca971c652b5c021b07cec3b188404f763f840e10f9ae"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "e01",
+            "kind": "xpath",
+            "expression": "//a["
+          },
+          {
+            "id": "e02",
+            "kind": "xpath",
+            "expression": "//a[1"
+          },
+          {
+            "id": "e03",
+            "kind": "xpath",
+            "expression": ""
+          },
+          {
+            "id": "e04",
+            "kind": "xpath",
+            "expression": "//"
+          },
+          {
+            "id": "e05",
+            "kind": "xpath",
+            "expression": "1 +"
+          },
+          {
+            "id": "e06",
+            "kind": "xpath",
+            "expression": "//a/"
+          },
+          {
+            "id": "e07",
+            "kind": "xpath",
+            "expression": "bogus::a"
+          },
+          {
+            "id": "e08",
+            "kind": "xpath",
+            "expression": "@attribute::x"
+          },
+          {
+            "id": "e09",
+            "kind": "xpath",
+            "expression": "'unterminated"
+          },
+          {
+            "id": "e10",
+            "kind": "xpath",
+            "expression": "a b"
+          },
+          {
+            "id": "e11",
+            "kind": "xpath",
+            "expression": "substring('x')"
+          },
+          {
+            "id": "e12",
+            "kind": "xpath",
+            "expression": "count()"
+          },
+          {
+            "id": "e13",
+            "kind": "xpath",
+            "expression": "a ! b"
+          },
+          {
+            "id": "e14",
+            "kind": "xpath",
+            "expression": "//a#b"
+          },
+          {
+            "id": "e15",
+            "kind": "xpath",
+            "expression": "1 ++ 2"
+          },
+          {
+            "id": "e16",
+            "kind": "xpath",
+            "expression": "//text(1)"
+          },
+          {
+            "id": "e17",
+            "kind": "xpath",
+            "expression": "//a[@href = ]"
+          },
+          {
+            "id": "e18",
+            "kind": "xpath",
+            "expression": "count(1)"
+          },
+          {
+            "id": "e19",
+            "kind": "xpath",
+            "expression": "1 | 2"
+          },
+          {
+            "id": "e20",
+            "kind": "xpath",
+            "expression": "sum('a')"
+          },
+          {
+            "id": "e21",
+            "kind": "xpath",
+            "expression": "(1)/a"
+          },
+          {
+            "id": "e22",
+            "kind": "xpath",
+            "expression": "1[1]"
+          },
+          {
+            "id": "e23",
+            "kind": "xpath",
+            "expression": "frobnicate(1)"
+          },
+          {
+            "id": "e24",
+            "kind": "xpath",
+            "expression": "ends-with('abc', 'c')"
+          },
+          {
+            "id": "e25",
+            "kind": "xpath",
+            "expression": "lower-case('A')"
+          },
+          {
+            "id": "e26",
+            "kind": "xpath",
+            "expression": "//p[1 = ]"
+          },
+          {
+            "id": "e27",
+            "kind": "xpath",
+            "expression": "p/@"
+          },
+          {
+            "id": "e28",
+            "kind": "xpath",
+            "expression": "//p[]"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s38-limit-expression-bytes",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s38-limit-expression-bytes",
+      "files": {
+        "input": {
+          "path": "s38-limit-expression-bytes.html",
+          "sha256": "dbb775e281204de77b235bcbcf2acfa4841283f02d00fe8195ed78a3973e7fa4"
+        },
+        "gold": {
+          "path": "s38-limit-expression-bytes.gold.json",
+          "sha256": "04876d3380986e5177822bab766bdc7751fcc2df0addd340149cf4c083bba4d7"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "x_ok",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "string-length('",
+              "unit": "x",
+              "count": 4079,
+              "suffix": "')"
+            }
+          },
+          {
+            "id": "x_over",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "string-length('",
+              "unit": "x",
+              "count": 4080,
+              "suffix": "')"
+            }
+          },
+          {
+            "id": "c_ok",
+            "kind": "css",
+            "repeat": {
+              "prefix": "p",
+              "unit": " ",
+              "count": 4095,
+              "suffix": ""
+            }
+          },
+          {
+            "id": "c_over",
+            "kind": "css",
+            "repeat": {
+              "prefix": "p",
+              "unit": " ",
+              "count": 4096,
+              "suffix": ""
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s39-limit-ast-nodes",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s39-limit-ast-nodes",
+      "files": {
+        "input": {
+          "path": "s39-limit-ast-nodes.html",
+          "sha256": "c3e827fbb16f4a10a04d3238525f2d6e27f9733327afbfdd7fce3024346ee215"
+        },
+        "gold": {
+          "path": "s39-limit-ast-nodes.gold.json",
+          "sha256": "df8210560e7fa96393e009dcf108e2931b0c9fce37cceb139ccdd722baf65803"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "f_ok",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "string-length(concat(",
+              "unit": "'a',",
+              "count": 509,
+              "suffix": "'a'))"
+            }
+          },
+          {
+            "id": "f_over",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "string-length(concat(",
+              "unit": "'a',",
+              "count": 510,
+              "suffix": "'a'))"
+            }
+          },
+          {
+            "id": "s_ok",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "",
+              "unit": "a/",
+              "count": 510,
+              "suffix": "a"
+            },
+            "empty": true
+          },
+          {
+            "id": "s_over",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "",
+              "unit": "a/",
+              "count": 511,
+              "suffix": "a"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s40-limit-ast-depth-and-unions",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s40-limit-ast-depth-and-unions",
+      "files": {
+        "input": {
+          "path": "s40-limit-ast-depth-and-unions.html",
+          "sha256": "6ef4c0eeb899b53840b6ac864e64add09aecb25e16bd0f50facddf5271267865"
+        },
+        "gold": {
+          "path": "s40-limit-ast-depth-and-unions.gold.json",
+          "sha256": "e91e1528d03576954bd552da54843984dd61d95aadc4f8af0bed75004d60df29"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "u_ok",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "",
+              "unit": "//p | ",
+              "count": 63,
+              "suffix": "//p"
+            }
+          },
+          {
+            "id": "u_over",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "",
+              "unit": "//p | ",
+              "count": 64,
+              "suffix": "//p"
+            }
+          },
+          {
+            "id": "a_ok",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "",
+              "unit": "1+",
+              "count": 63,
+              "suffix": "1"
+            }
+          },
+          {
+            "id": "a_over",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "",
+              "unit": "1+",
+              "count": 64,
+              "suffix": "1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s41-limit-parser-depth",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s41-limit-parser-depth",
+      "files": {
+        "input": {
+          "path": "s41-limit-parser-depth.html",
+          "sha256": "9092843df1b7646b4b4f8a6c7aa0d0a1563c38144b19ea266614ee5689d87869"
+        },
+        "gold": {
+          "path": "s41-limit-parser-depth.gold.json",
+          "sha256": "96c2648fdbe1070e6cb5cdbd4a5db336ae71a9f6c188e6e9f88a1ef7b7d65fc6"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "p_ok",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((",
+              "unit": "",
+              "count": 0,
+              "suffix": "1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"
+            }
+          },
+          {
+            "id": "p_over",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((",
+              "unit": "",
+              "count": 0,
+              "suffix": "1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"
+            }
+          },
+          {
+            "id": "m_ok",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "---------------------------------------------------------------",
+              "unit": "",
+              "count": 0,
+              "suffix": "1"
+            }
+          },
+          {
+            "id": "m_over",
+            "kind": "xpath",
+            "repeat": {
+              "prefix": "----------------------------------------------------------------",
+              "unit": "",
+              "count": 0,
+              "suffix": "1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s42-limit-selected-nodes",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s42-limit-selected-nodes",
+      "files": {
+        "input": {
+          "path": "s42-limit-selected-nodes.html",
+          "sha256": "7bde4278d61146afff5782ad8cddb5688f252e97467ecc0a54d17e1fa734097a"
+        },
+        "gold": {
+          "path": "s42-limit-selected-nodes.gold.json",
+          "sha256": "d449fd5669016b4387a5503d885cbad070346f9673e7c196fa8434970110b691"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "count(/html/body/p[position() <= 10000])"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "count(/html/body/p)"
+          },
+          {
+            "id": "r3",
+            "kind": "xpath",
+            "expression": "count(//p)"
+          },
+          {
+            "id": "r4",
+            "kind": "css",
+            "expression": "p"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s43-quadratic-predicates-small",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s43-quadratic-predicates-small",
+      "files": {
+        "input": {
+          "path": "s43-quadratic-predicates-small.html",
+          "sha256": "89bf7ff3c332518ce9c3bd3c7fe563f0c1e070ba9b1436d0acfcb79cde545777"
+        },
+        "gold": {
+          "path": "s43-quadratic-predicates-small.gold.json",
+          "sha256": "0dc9650b8c4ba1dfd428b4066c95b2994366dbc39ed9b35fa4c72ea96f80c7bf"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "count(//p[count(preceding::p) >= 10])"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "count(//p[. = //p])"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s44-quadratic-predicates-large",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s44-quadratic-predicates-large",
+      "files": {
+        "input": {
+          "path": "s44-quadratic-predicates-large.html",
+          "sha256": "e82d94963c64c7fdbb9453836f336033787f20a1e66ebdbdf6856f3fc8f60550"
+        },
+        "gold": {
+          "path": "s44-quadratic-predicates-large.gold.json",
+          "sha256": "565d28c0d3dab3932a5de6ac07e085b54e87323876ce0dd7c4786f189cedcc92"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r1",
+            "kind": "xpath",
+            "expression": "count(//p[count(preceding::p) >= 10])"
+          },
+          {
+            "id": "r2",
+            "kind": "xpath",
+            "expression": "count(//p[. = //p])"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s45-extension-functions-no-network",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s45-extension-functions-no-network",
+      "files": {
+        "input": {
+          "path": "s45-extension-functions-no-network.html",
+          "sha256": "acb648de0ab1e9772613ead555747f836f9db0ef9e3b17607260b7438746392b"
+        },
+        "gold": {
+          "path": "s45-extension-functions-no-network.gold.json",
+          "sha256": "28f8fe6fae4f6ca489e1ad8a73cf7ccbc509dc491af06f950be57ce65622d397"
+        }
+      },
+      "params": {
+        "mode": "rules",
+        "rules": [
+          {
+            "id": "r01",
+            "kind": "xpath",
+            "expression": "//a/@href"
+          },
+          {
+            "id": "r02",
+            "kind": "xpath",
+            "expression": "//p[@id='doc']"
+          },
+          {
+            "id": "r03",
+            "kind": "xpath",
+            "expression": "//iframe/@src"
+          },
+          {
+            "id": "r04",
+            "kind": "xpath",
+            "expression": "//link/@href"
+          },
+          {
+            "id": "r05",
+            "kind": "xpath",
+            "expression": "//img/@src"
+          },
+          {
+            "id": "r06",
+            "kind": "xpath",
+            "expression": "count(//*[@src or @href])"
+          },
+          {
+            "id": "e01",
+            "kind": "xpath",
+            "expression": "document('{{probe}}/doc.xml')"
+          },
+          {
+            "id": "e02",
+            "kind": "xpath",
+            "expression": "document(//p[@id='doc'])/*"
+          },
+          {
+            "id": "e03",
+            "kind": "xpath",
+            "expression": "doc('{{probe}}/x')"
+          },
+          {
+            "id": "e04",
+            "kind": "xpath",
+            "expression": "unparsed-text('{{probe}}/x')"
+          },
+          {
+            "id": "e05",
+            "kind": "xpath",
+            "expression": "key('k', 'v')"
+          },
+          {
+            "id": "e06",
+            "kind": "xpath",
+            "expression": "format-number(1, '#')"
+          },
+          {
+            "id": "e07",
+            "kind": "xpath",
+            "expression": "current()"
+          },
+          {
+            "id": "e08",
+            "kind": "xpath",
+            "expression": "system-property('xsl:version')"
+          },
+          {
+            "id": "e09",
+            "kind": "xpath",
+            "expression": "generate-id()"
+          },
+          {
+            "id": "e10",
+            "kind": "xpath",
+            "expression": "unparsed-entity-uri('x')"
+          },
+          {
+            "id": "e11",
+            "kind": "xpath",
+            "expression": "function-available('x')"
+          },
+          {
+            "id": "e12",
+            "kind": "xpath",
+            "expression": "string-join(//p, ',')"
+          },
+          {
+            "id": "e13",
+            "kind": "xpath",
+            "expression": "matches('a', 'a')"
+          },
+          {
+            "id": "e14",
+            "kind": "xpath",
+            "expression": "ext:fetch('{{probe}}/x')"
+          },
+          {
+            "id": "e15",
+            "kind": "xpath",
+            "expression": "exsl:node-set(1)"
+          },
+          {
+            "id": "e16",
+            "kind": "xpath",
+            "expression": "&xxe;"
+          }
+        ],
+        "probe": true
+      }
+    },
+    {
+      "id": "s46-schema-cycles",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s46-schema-cycles",
+      "files": {
+        "input": {
+          "path": "s46-schema-cycles.html",
+          "sha256": "dbb775e281204de77b235bcbcf2acfa4841283f02d00fe8195ed78a3973e7fa4"
+        },
+        "gold": {
+          "path": "s46-schema-cycles.gold.json",
+          "sha256": "2ca4b5cdefbdec488adfdcf1cb86576f7ee216480e7f918ab90188c02a7e2e65"
+        }
+      },
+      "params": {
+        "mode": "compile",
+        "variants": [
+          {
+            "id": "self_ref",
+            "schema": {
+              "$ref": "#"
+            }
+          },
+          {
+            "id": "def_loop",
+            "schema": {
+              "$defs": {
+                "loop": {
+                  "$ref": "#/$defs/loop"
+                }
+              },
+              "$ref": "#/$defs/loop"
+            }
+          },
+          {
+            "id": "mutual",
+            "schema": {
+              "$defs": {
+                "a": {
+                  "$ref": "#/$defs/b"
+                },
+                "b": {
+                  "$ref": "#/$defs/a"
+                }
+              },
+              "$ref": "#/$defs/a"
+            }
+          },
+          {
+            "id": "recursive_tree",
+            "schema": {
+              "$defs": {
+                "node": {
+                  "type": "object",
+                  "properties": {
+                    "next": {
+                      "$ref": "#/$defs/node"
+                    }
+                  }
+                }
+              },
+              "$ref": "#/$defs/node"
+            }
+          },
+          {
+            "id": "through_allof",
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#"
+                }
+              ]
+            }
+          },
+          {
+            "id": "shared_definition",
+            "schema": {
+              "$defs": {
+                "n": {
+                  "type": "number"
+                }
+              },
+              "type": "object",
+              "properties": {
+                "a": {
+                  "$ref": "#/$defs/n"
+                },
+                "b": {
+                  "$ref": "#/$defs/n"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s47-schema-remote-and-unsupported",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s47-schema-remote-and-unsupported",
+      "files": {
+        "input": {
+          "path": "s47-schema-remote-and-unsupported.html",
+          "sha256": "dbb775e281204de77b235bcbcf2acfa4841283f02d00fe8195ed78a3973e7fa4"
+        },
+        "gold": {
+          "path": "s47-schema-remote-and-unsupported.gold.json",
+          "sha256": "6135483b3a56fb2183af24cae0e359df83195de50a2c287a0cb4986f8c0f410c"
+        }
+      },
+      "params": {
+        "mode": "compile",
+        "variants": [
+          {
+            "id": "remote_https",
+            "schema": {
+              "$ref": "https://schemas.corpus.test/item.json"
+            }
+          },
+          {
+            "id": "remote_file",
+            "schema": {
+              "$ref": "file:///etc/passwd"
+            }
+          },
+          {
+            "id": "remote_loopback",
+            "schema": {
+              "$ref": "{{probe}}/schema"
+            }
+          },
+          {
+            "id": "relative_file",
+            "schema": {
+              "$ref": "item.json"
+            }
+          },
+          {
+            "id": "unpinned_registry",
+            "schema": {
+              "$ref": "registry:0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          {
+            "id": "missing_pointer",
+            "schema": {
+              "$ref": "#/$defs/nowhere"
+            }
+          },
+          {
+            "id": "named_anchor",
+            "schema": {
+              "$ref": "#anchor"
+            }
+          },
+          {
+            "id": "unknown_keyword",
+            "schema": {
+              "madeUpAssertion": true
+            }
+          },
+          {
+            "id": "dynamic_ref",
+            "schema": {
+              "$dynamicRef": "#x"
+            }
+          },
+          {
+            "id": "id_keyword",
+            "schema": {
+              "$id": "https://schemas.corpus.test/x"
+            }
+          },
+          {
+            "id": "bad_type",
+            "schema": {
+              "type": "floaty"
+            }
+          },
+          {
+            "id": "plain_object",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false
+            }
+          }
+        ],
+        "probe": true
+      }
+    },
+    {
+      "id": "s48-limit-schema-depth",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s48-limit-schema-depth",
+      "files": {
+        "input": {
+          "path": "s48-limit-schema-depth.html",
+          "sha256": "dbb775e281204de77b235bcbcf2acfa4841283f02d00fe8195ed78a3973e7fa4"
+        },
+        "gold": {
+          "path": "s48-limit-schema-depth.gold.json",
+          "sha256": "3786f220a15e46be29d85d52540cc9e9770fbcd0105e4958ddc52b9eae9b0937"
+        }
+      },
+      "params": {
+        "mode": "compile",
+        "variants": [
+          {
+            "id": "chain_64",
+            "generate": {
+              "schemaChain": 64
+            }
+          },
+          {
+            "id": "chain_65",
+            "generate": {
+              "schemaChain": 65
+            }
+          },
+          {
+            "id": "branches_511",
+            "generate": {
+              "schemaAllOf": 511
+            }
+          },
+          {
+            "id": "branches_512",
+            "generate": {
+              "schemaAllOf": 512
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s49-limit-item-loader-shape",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s49-limit-item-loader-shape",
+      "files": {
+        "input": {
+          "path": "s49-limit-item-loader-shape.html",
+          "sha256": "dbb775e281204de77b235bcbcf2acfa4841283f02d00fe8195ed78a3973e7fa4"
+        },
+        "gold": {
+          "path": "s49-limit-item-loader-shape.gold.json",
+          "sha256": "6b5fb3cb1f4e118a19a4d08ed40b7973f01d36966d2a211c2a1c8ddd7c0e17cd"
+        }
+      },
+      "params": {
+        "mode": "compile",
+        "variants": [
+          {
+            "id": "fields_64",
+            "generate": {
+              "fields": 64
+            }
+          },
+          {
+            "id": "fields_65",
+            "generate": {
+              "fields": 65
+            }
+          },
+          {
+            "id": "selectors_16",
+            "generate": {
+              "selectors": 16
+            }
+          },
+          {
+            "id": "selectors_17",
+            "generate": {
+              "selectors": 17
+            }
+          },
+          {
+            "id": "transforms_16",
+            "generate": {
+              "transforms": 16
+            }
+          },
+          {
+            "id": "transforms_17",
+            "generate": {
+              "transforms": 17
+            }
+          },
+          {
+            "id": "input_processors_16",
+            "generate": {
+              "inputProcessors": 16
+            }
+          },
+          {
+            "id": "input_processors_17",
+            "generate": {
+              "inputProcessors": 17
+            }
+          },
+          {
+            "id": "nesting_3",
+            "generate": {
+              "nesting": 3
+            }
+          },
+          {
+            "id": "nesting_4",
+            "generate": {
+              "nesting": 4
+            }
+          },
+          {
+            "id": "namespaces_32",
+            "generate": {
+              "namespaces": 32
+            }
+          },
+          {
+            "id": "namespaces_33",
+            "generate": {
+              "namespaces": 33
+            }
+          },
+          {
+            "id": "default_65536",
+            "generate": {
+              "defaultBytes": 65536
+            }
+          },
+          {
+            "id": "default_65537",
+            "generate": {
+              "defaultBytes": 65537
+            }
+          },
+          {
+            "id": "limit_10000",
+            "generate": {
+              "limit": 10000
+            }
+          },
+          {
+            "id": "limit_10001",
+            "generate": {
+              "limit": 10001
+            }
+          },
+          {
+            "id": "limit_0",
+            "generate": {
+              "limit": 0
+            }
+          },
+          {
+            "id": "separator_1024",
+            "generate": {
+              "separator": 1024
+            }
+          },
+          {
+            "id": "separator_1025",
+            "generate": {
+              "separator": 1025
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "s50-item-schema-valid",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s50-item-schema-valid",
+      "files": {
+        "input": {
+          "path": "s50-item-schema-valid.html",
+          "sha256": "b744d07b82d4cc4c9dd3106f9d5dc95681ce662f9fa70cbfff8cbca6fd84a6e2"
+        },
+        "gold": {
+          "path": "s50-item-schema-valid.gold.json",
+          "sha256": "a5d34d7724e985a34ec871621994173efbc357baee977e8d37dc125af1a88b03"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "count",
+              "selectors": [
+                {
+                  "kind": "xpath",
+                  "expression": "count(//li)"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            },
+            {
+              "name": "name",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".name"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            },
+            {
+              "name": "tags",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "ul.n li"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many"
+            }
+          ]
+        },
+        "expect": {
+          "valid": true,
+          "schemaValid": true,
+          "quality": {
+            "count": "selected",
+            "name": "selected",
+            "tags": "selected"
+          }
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "number",
+              "minimum": 2
+            },
+            "name": {
+              "type": "string",
+              "minLength": 2
+            },
+            "tags": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/digits"
+              }
+            }
+          },
+          "required": [
+            "count",
+            "name"
+          ],
+          "additionalProperties": false,
+          "$defs": {
+            "digits": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "s51-item-schema-invalid",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s51-item-schema-invalid",
+      "files": {
+        "input": {
+          "path": "s51-item-schema-invalid.html",
+          "sha256": "b744d07b82d4cc4c9dd3106f9d5dc95681ce662f9fa70cbfff8cbca6fd84a6e2"
+        },
+        "gold": {
+          "path": "s51-item-schema-invalid.gold.json",
+          "sha256": "762eff039e0d2609a9eb357b274cd2cceae25533ec315432bc23b555a7c357ea"
+        }
+      },
+      "params": {
+        "mode": "item",
+        "itemLoader": {
+          "version": 1,
+          "fields": [
+            {
+              "name": "count",
+              "selectors": [
+                {
+                  "kind": "xpath",
+                  "expression": "count(//li)"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            },
+            {
+              "name": "name",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": ".name"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "one"
+            },
+            {
+              "name": "tags",
+              "selectors": [
+                {
+                  "kind": "css",
+                  "expression": "ul.n li"
+                }
+              ],
+              "extraction": {
+                "kind": "text"
+              },
+              "cardinality": "many"
+            }
+          ]
+        },
+        "expect": {
+          "valid": false,
+          "schemaValid": false,
+          "quality": {
+            "count": "selected",
+            "name": "selected",
+            "tags": "selected"
+          }
+        },
+        "schema": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "number",
+              "minimum": 5
+            },
+            "name": {
+              "enum": [
+                "Grace"
+              ]
+            }
+          },
+          "required": [
+            "count",
+            "name"
+          ]
+        }
+      }
+    },
+    {
+      "id": "s52-selector-policy",
+      "family": "selector",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://corpus.test/s52-selector-policy",
+      "files": {
+        "input": {
+          "path": "s52-selector-policy.html",
+          "sha256": "0c3d8c684599eea7f698eeaae0d99f39a57a1b29a91dcb5d07c4987e40754a7c"
+        },
+        "gold": {
+          "path": "s52-selector-policy.gold.json",
+          "sha256": "5323c6bb33413910c78c12a2ca8af6fbc9c6dec56b4d2f4f065cfdcd2abf06ba"
+        }
+      },
+      "params": {
+        "mode": "policy",
+        "variants": [
+          {
+            "id": "mixed",
+            "policy": {
+              "include": [
+                {
+                  "kind": "xpath",
+                  "expression": "//article"
+                },
+                {
+                  "kind": "css",
+                  "expression": "footer"
+                }
+              ],
+              "exclude": [
+                {
+                  "kind": "css",
+                  "expression": ".ad"
+                }
+              ]
+            }
+          },
+          {
+            "id": "attribute_include",
+            "policy": {
+              "include": [
+                {
+                  "kind": "xpath",
+                  "expression": "//article/@id"
+                }
+              ]
+            }
+          },
+          {
+            "id": "scalar_include",
+            "policy": {
+              "include": [
+                {
+                  "kind": "xpath",
+                  "expression": "count(//p)"
+                }
+              ]
+            }
+          },
+          {
+            "id": "rules_64",
+            "generate": {
+              "include": 64
+            }
+          },
+          {
+            "id": "rules_65",
+            "generate": {
+              "include": 65
+            }
+          },
+          {
+            "id": "namespaces_32",
+            "generate": {
+              "namespaces": 32
+            }
+          },
+          {
+            "id": "namespaces_33",
+            "generate": {
+              "namespaces": 33
+            }
+          },
+          {
+            "id": "expression_4096",
+            "generate": {
+              "expressionBytes": 4096
+            }
+          },
+          {
+            "id": "expression_4097",
+            "generate": {
+              "expressionBytes": 4097
+            }
+          },
+          {
+            "id": "empty_expression",
+            "policy": {
+              "include": [
+                {
+                  "kind": "xpath",
+                  "expression": ""
+                }
+              ]
+            }
+          },
+          {
+            "id": "unbound_prefix",
+            "policy": {
+              "include": [
+                {
+                  "kind": "xpath",
+                  "expression": "//svg:rect"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

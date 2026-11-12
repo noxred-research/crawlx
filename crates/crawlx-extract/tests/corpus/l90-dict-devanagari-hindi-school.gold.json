@@ -1,0 +1,78 @@
+{
+  "id": "l90-dict-devanagari-hindi-school",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "मेरी|बहन|सुबह|स्कूल|जाती|है|वह|किताबें|और|कलम|बैग|में|रखती|है",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 51
+    },
+    {
+      "label": "token",
+      "start": 52,
+      "end": 64
+    },
+    {
+      "label": "token",
+      "start": 65,
+      "end": 71
+    },
+    {
+      "label": "token",
+      "start": 72,
+      "end": 78
+    },
+    {
+      "label": "token",
+      "start": 79,
+      "end": 100
+    },
+    {
+      "label": "token",
+      "start": 101,
+      "end": 107
+    },
+    {
+      "label": "token",
+      "start": 108,
+      "end": 117
+    },
+    {
+      "label": "token",
+      "start": 118,
+      "end": 127
+    },
+    {
+      "label": "token",
+      "start": 128,
+      "end": 137
+    },
+    {
+      "label": "token",
+      "start": 138,
+      "end": 150
+    },
+    {
+      "label": "token",
+      "start": 151,
+      "end": 157
+    }
+  ]
+}

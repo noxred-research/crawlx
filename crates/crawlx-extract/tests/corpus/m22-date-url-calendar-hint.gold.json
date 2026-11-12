@@ -1,0 +1,23 @@
+{
+  "id": "m22-date-url-calendar-hint",
+  "family": "meta_exact",
+  "note": "no date markup at all: the year, month and day path segments of the page URL are the only date evidence",
+  "expectedText": "title=Orchard Survey Counts Old Varieties\nlanguage=en\npublished=2026-02-19",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 41
+    },
+    {
+      "label": "language",
+      "start": 51,
+      "end": 53
+    },
+    {
+      "label": "published",
+      "start": 64,
+      "end": 74
+    }
+  ]
+}

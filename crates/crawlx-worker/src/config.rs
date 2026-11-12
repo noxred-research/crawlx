@@ -16,7 +16,7 @@ use crawlx_fetch::proxyx::{PoolBinding, PoolTier, ProxyxRoute};
 use crawlx_fetch::{
     EgressOptions, EgressProxy, EgressProxyHandle, GlobalOriginCap, HickoryResolver, Resolver, UpstreamProxy,
 };
-use crawlx_model::llm::{ExtractionRouter, LlmExtractor};
+use crawlx_model::llm::{EmbeddingsClient, ExtractionRouter, LlmExtractor};
 use crawlx_policy::{AuthorizationRecord, EgressPolicy, SharedEgressLists};
 use crawlx_strategies::Gates;
 use crawlx_telemetry::TelemetryConfig;
@@ -492,6 +492,28 @@ impl RetainedProfilePolicy {
     }
 }
 
+/// The embedding model of the scrape `clusters` option: the client and the label recorded on the
+/// result (a model name, never a credential).
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct ClusterEmbeddings {
+    /// Turns the chunks of a page into vectors.
+    pub client: Arc<dyn EmbeddingsClient>,
+    /// Model label recorded on the cluster envelope.
+    pub model: String,
+}
+
+impl ClusterEmbeddings {
+    /// Embed with `client`, recording `model` on every result.
+    #[must_use]
+    pub fn new(client: Arc<dyn EmbeddingsClient>, model: impl Into<String>) -> Self {
+        Self {
+            client,
+            model: model.into(),
+        }
+    }
+}
+
 /// Everything a worker process (or an in-process local run) needs.
 #[derive(Clone)]
 pub struct WorkerConfig {
@@ -602,6 +624,9 @@ pub struct WorkerConfig {
     /// profile stays as the markup heuristics produced it. A refinement that fails keeps the
     /// markup profile and adds a warning to the document.
     pub branding_llm: Option<Arc<dyn LlmExtractor>>,
+    /// The embedding model behind the scrape `clusters` option. `None`: a page that asks for
+    /// clusters fails with `llm_not_configured` before it is fetched.
+    pub embeddings: Option<ClusterEmbeddings>,
     /// Renders the pages of scrape runs whose options need a browser (`waitFor`, `actions`,
     /// `mobile`, `screenshot`) instead of the production
     /// [`BrowserRenderer`](crate::scrape::BrowserRenderer): a remote browser service, or a
@@ -670,6 +695,7 @@ impl Default for WorkerConfig {
             llm: None,
             extraction_llm: None,
             branding_llm: None,
+            embeddings: None,
             renderer: None,
             protocol_registry: None,
             archive_behaviors: None,
@@ -1026,6 +1052,7 @@ impl fmt::Debug for WorkerConfig {
             .field("llm", &self.llm.as_ref().map(|_| "[set]"))
             .field("extraction_llm", &self.extraction_llm)
             .field("branding_llm", &self.branding_llm.as_ref().map(|_| "[set]"))
+            .field("embeddings", &self.embeddings.as_ref().map(|e| &e.model))
             .field("renderer", &self.renderer.as_ref().map(|_| "[set]"))
             .field(
                 "protocol_registry",

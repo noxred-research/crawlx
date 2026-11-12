@@ -1,0 +1,108 @@
+{
+  "id": "f02-slow-garden-sponsor",
+  "family": "focus",
+  "note": "div-only blog layout with a sponsor box inside the post text and an unlabeled keep-reading list",
+  "expectedText": "Slow Garden Notes Archive About Seed swap\nWinter Composting Without the Smell\nMost gardeners stop thinking about the compost heap when the first frost arrives, and that is exactly when it starts to go wrong. A cold, wet pile slows down, packs together and begins to smell like a drain.\nThe fix is not more effort but better layering. I keep a sack of shredded cardboard beside the kitchen door and add a generous handful every time the peelings go out. The cardboard soaks up moisture, keeps air moving through the pile and gives the microbes something dry to chew on.\nCover the heap with an old woollen rug or a sheet of thick plastic weighted at the corners. Heat that would otherwise escape stays inside, and the rain stays out.\nSponsored\nKeep your bin warm all season with the Thermal Cone from Fernwick Garden Supplies. Free delivery on orders above forty pounds, this month only.\nShop now\nTurn the pile once every three weeks, even in January. A garden fork pushed in and wiggled around is enough to let fresh air reach the middle. If you find a layer that looks grey and slimy, mix in dry leaves until it crumbles in your hand.\nBy March the bottom of the heap should be dark and sweet smelling. Sieve it, spread it on the beds and start again.\nKeep reading\nLeaf mould in a bin bag\nSetting up a worm bin indoors\nWhen to mulch your beds\nJoin the seed swap\nSend an envelope with your spare seeds and we will post you someone else's.\nPopular posts\nSlugs and beer, honestly\nFrost dates by postcode\nSlow Garden Notes is written by hand in a shed. Privacy Contact",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 41
+    },
+    {
+      "label": "boilerplate",
+      "start": 42,
+      "end": 77
+    },
+    {
+      "label": "body",
+      "start": 78,
+      "end": 285
+    },
+    {
+      "label": "body",
+      "start": 286,
+      "end": 568
+    },
+    {
+      "label": "body",
+      "start": 569,
+      "end": 731
+    },
+    {
+      "label": "boilerplate",
+      "start": 732,
+      "end": 741
+    },
+    {
+      "label": "boilerplate",
+      "start": 742,
+      "end": 885
+    },
+    {
+      "label": "boilerplate",
+      "start": 886,
+      "end": 894
+    },
+    {
+      "label": "body",
+      "start": 895,
+      "end": 1134
+    },
+    {
+      "label": "body",
+      "start": 1135,
+      "end": 1250
+    },
+    {
+      "label": "boilerplate",
+      "start": 1251,
+      "end": 1263
+    },
+    {
+      "label": "boilerplate",
+      "start": 1264,
+      "end": 1287
+    },
+    {
+      "label": "boilerplate",
+      "start": 1288,
+      "end": 1317
+    },
+    {
+      "label": "boilerplate",
+      "start": 1318,
+      "end": 1341
+    },
+    {
+      "label": "boilerplate",
+      "start": 1342,
+      "end": 1360
+    },
+    {
+      "label": "boilerplate",
+      "start": 1361,
+      "end": 1436
+    },
+    {
+      "label": "boilerplate",
+      "start": 1437,
+      "end": 1450
+    },
+    {
+      "label": "boilerplate",
+      "start": 1451,
+      "end": 1475
+    },
+    {
+      "label": "boilerplate",
+      "start": 1476,
+      "end": 1499
+    },
+    {
+      "label": "boilerplate",
+      "start": 1500,
+      "end": 1563
+    }
+  ]
+}

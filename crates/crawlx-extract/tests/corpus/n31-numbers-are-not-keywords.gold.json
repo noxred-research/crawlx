@@ -1,0 +1,68 @@
+{
+  "id": "n31-numbers-are-not-keywords",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "In 2026 the 1500 members voted.\nThe 3d model and the b2b portal won.\nthe=3\nin=1\nmembers=1\nvoted=1\n3d=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 31
+    },
+    {
+      "label": "sentence",
+      "start": 32,
+      "end": 68
+    },
+    {
+      "label": "keyword",
+      "start": 69,
+      "end": 72
+    },
+    {
+      "label": "score",
+      "start": 73,
+      "end": 74
+    },
+    {
+      "label": "keyword",
+      "start": 75,
+      "end": 77
+    },
+    {
+      "label": "score",
+      "start": 78,
+      "end": 79
+    },
+    {
+      "label": "keyword",
+      "start": 80,
+      "end": 87
+    },
+    {
+      "label": "score",
+      "start": 88,
+      "end": 89
+    },
+    {
+      "label": "keyword",
+      "start": 90,
+      "end": 95
+    },
+    {
+      "label": "score",
+      "start": 96,
+      "end": 97
+    },
+    {
+      "label": "keyword",
+      "start": 98,
+      "end": 100
+    },
+    {
+      "label": "score",
+      "start": 101,
+      "end": 102
+    }
+  ]
+}

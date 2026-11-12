@@ -1,0 +1,123 @@
+{
+  "id": "l15-rules-latin-italian",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "il|treno|parte|dalla|stazione|alle|otto|i|viaggiatori|aspettano|sul|binario|una|ragazza|legge|il|giornale|mentre|il|capotreno|controlla|i|biglietti",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "token",
+      "start": 3,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 14
+    },
+    {
+      "label": "token",
+      "start": 15,
+      "end": 20
+    },
+    {
+      "label": "token",
+      "start": 21,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 39
+    },
+    {
+      "label": "token",
+      "start": 40,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 53
+    },
+    {
+      "label": "token",
+      "start": 54,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 67
+    },
+    {
+      "label": "token",
+      "start": 68,
+      "end": 75
+    },
+    {
+      "label": "token",
+      "start": 76,
+      "end": 79
+    },
+    {
+      "label": "token",
+      "start": 80,
+      "end": 87
+    },
+    {
+      "label": "token",
+      "start": 88,
+      "end": 93
+    },
+    {
+      "label": "token",
+      "start": 94,
+      "end": 96
+    },
+    {
+      "label": "token",
+      "start": 97,
+      "end": 105
+    },
+    {
+      "label": "token",
+      "start": 106,
+      "end": 112
+    },
+    {
+      "label": "token",
+      "start": 113,
+      "end": 115
+    },
+    {
+      "label": "token",
+      "start": 116,
+      "end": 125
+    },
+    {
+      "label": "token",
+      "start": 126,
+      "end": 135
+    },
+    {
+      "label": "token",
+      "start": 136,
+      "end": 137
+    },
+    {
+      "label": "token",
+      "start": 138,
+      "end": 147
+    }
+  ]
+}

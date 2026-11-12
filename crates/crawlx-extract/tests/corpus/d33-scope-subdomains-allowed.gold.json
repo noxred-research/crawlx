@@ -1,0 +1,23 @@
+{
+  "id": "d33-scope-subdomains-allowed",
+  "family": "feed",
+  "note": "scope with subdomains on: the subdomain joins the admitted set, look-alike hosts stay denied",
+  "expectedText": "https://news.corpus.test/in/one\nhttps://blog.news.corpus.test/in/two\nhttps://news.corpus.test/in/four",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 31
+    },
+    {
+      "label": "item",
+      "start": 32,
+      "end": 68
+    },
+    {
+      "label": "item",
+      "start": 69,
+      "end": 101
+    }
+  ]
+}

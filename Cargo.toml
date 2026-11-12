@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["crates/*"]
 # `fuzz/` is its own cargo-fuzz workspace; it must not inherit the lints or profiles.
-exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver"]
+exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver", "vendor/ego-tree"]
 
 [workspace.package]
 version = "0.1.0"
@@ -66,6 +66,8 @@ jsonschema = { version = "0.60", default-features = false }
 schemars = "1"
 # HIR walk of the HTML `pattern` attribute so a conforming form value can be generated (`crawlx-extract::form_fill`)
 regex-syntax = "0.8"
+# UAX 29 sentence boundaries of the native sentence chunker (`crawlx-core::extraction`); MIT/Apache-2.0
+unicode-segmentation = "1"
 quick-xml = "0.42"
 # document parsers for `crawlx-extract::parse` (the `/parse` upload endpoint); all MIT-licensed.
 # `zip`: OOXML/ODF/EPUB containers; `calamine`: xlsx/xls/xlsb cells; `lopdf`: PDF text layer
@@ -213,3 +215,5 @@ strip = false
 lopdf = { path = "vendor/pdf-loader/lopdf-0.46.0" }
 # Keep baseline DNS failover and configured TCP retry on the security-patched release.
 hickory-resolver = { path = "vendor/hickory-resolver" }
+# Reserve HTML tree node storage fallibly (`Tree::try_reserve`) so the parse can refuse memory instead of aborting.
+ego-tree = { path = "vendor/ego-tree" }

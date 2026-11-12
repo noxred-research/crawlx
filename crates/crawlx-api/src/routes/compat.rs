@@ -234,6 +234,13 @@ pub async fn create(
         }) {
             llm(st)?;
         }
+        if crawl
+            .scrape
+            .as_ref()
+            .is_some_and(|job| job.options.clusters.is_some())
+        {
+            crate::intel::common::embeddings(st)?;
+        }
         if robots_override {
             lower_robots_gate(st, &mut crawl)?;
         }

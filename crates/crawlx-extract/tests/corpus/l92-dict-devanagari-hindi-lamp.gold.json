@@ -1,0 +1,78 @@
+{
+  "id": "l92-dict-devanagari-hindi-lamp",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "दादी|हर|शाम|आँगन|में|दीपक|जलाती|हैं|बच्चे|पास|बैठकर|कहानी|सुनते|हैं",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 52
+    },
+    {
+      "label": "token",
+      "start": 53,
+      "end": 65
+    },
+    {
+      "label": "token",
+      "start": 66,
+      "end": 81
+    },
+    {
+      "label": "token",
+      "start": 82,
+      "end": 91
+    },
+    {
+      "label": "token",
+      "start": 92,
+      "end": 107
+    },
+    {
+      "label": "token",
+      "start": 108,
+      "end": 117
+    },
+    {
+      "label": "token",
+      "start": 118,
+      "end": 133
+    },
+    {
+      "label": "token",
+      "start": 134,
+      "end": 149
+    },
+    {
+      "label": "token",
+      "start": 150,
+      "end": 165
+    },
+    {
+      "label": "token",
+      "start": 166,
+      "end": 175
+    }
+  ]
+}

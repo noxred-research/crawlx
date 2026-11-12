@@ -244,6 +244,31 @@ async fn crawl_with_scrape_options_returns_compat_documents() {
 }
 
 #[tokio::test]
+async fn a_limited_crawl_keeps_the_seed_page_links_before_the_sitemap_entries() {
+    let rig = Rig::start(RigConfig::default()).await;
+    // the sitemap names `/c`, which only a sitemap entry reaches; the seed links `/a` and `/b` first
+    let id = start_crawl(&rig, &json!({"url": rig.url("/"), "limit": 3})).await;
+    let v = rig.wait_crawl(&id).await;
+    assert_eq!(v["status"], "completed", "{v}");
+    assert_eq!(
+        sources(&v),
+        BTreeSet::from([rig.url("/"), rig.url("/a"), rig.url("/b")]),
+        "{v}"
+    );
+    for path in ["/c", "/blog-post"] {
+        assert_eq!(
+            rig.seen.hits(path),
+            0,
+            "{path} is a sitemap entry, behind the seed's links"
+        );
+    }
+    // the same crawl again keeps the same pages
+    let again = start_crawl(&rig, &json!({"url": rig.url("/"), "limit": 3})).await;
+    assert_eq!(sources(&rig.wait_crawl(&again).await), sources(&v));
+    rig.stop().await;
+}
+
+#[tokio::test]
 async fn regex_on_full_url_matches_the_whole_url() {
     let rig = Rig::start(RigConfig::default()).await;
     // control: a pathname regex never sees the query string, so `/page?id=1` is crawled

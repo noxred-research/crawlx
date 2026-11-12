@@ -1,0 +1,128 @@
+{
+  "id": "f10-cup-tie-report",
+  "family": "focus",
+  "note": "match report with result table, a latest scores widget, top stories list and cookie notice",
+  "expectedText": "We use cookies to count visitors and remember your team.\nAccept\nChoices\nWeekend Terrace\nFootball Rugby Cricket Tables Fixtures\nDockside Hold Out for a Replay\nDockside Rovers came from behind twice at Millbrook Park on Saturday to earn a 2-2 draw in the third round of the county cup, and the tie will now be settled at their own ground on Tuesday evening.\nMillbrook went ahead after eleven minutes when Joss Randall turned in a corner at the near post. Dockside equalised just before the break through a long range shot from midfielder Aiden Kaur that dipped under the bar.\nThe home side restored their lead early in the second half, but Rovers substitute Lena Marsh headed in a free kick with seven minutes left to rescue the draw.\nResult\nMillbrook Town\n2\nDockside Rovers\n2\nThe winner will play the holders in the fourth round on the first weekend of December.\nLatest scores\nHarbour United 1 Eastfield 0\nGreenway 3 Oldbury 1\nStonebridge 0 Ashworth 0\nTop stories\nManager signs new deal\nFixture list changes\nYouth cup draw made\nAbout Advertise Privacy Contact",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 56
+    },
+    {
+      "label": "boilerplate",
+      "start": 57,
+      "end": 63
+    },
+    {
+      "label": "boilerplate",
+      "start": 64,
+      "end": 71
+    },
+    {
+      "label": "boilerplate",
+      "start": 72,
+      "end": 87
+    },
+    {
+      "label": "boilerplate",
+      "start": 88,
+      "end": 126
+    },
+    {
+      "label": "body",
+      "start": 127,
+      "end": 157
+    },
+    {
+      "label": "body",
+      "start": 158,
+      "end": 355
+    },
+    {
+      "label": "body",
+      "start": 356,
+      "end": 573
+    },
+    {
+      "label": "body",
+      "start": 574,
+      "end": 732
+    },
+    {
+      "label": "body",
+      "start": 733,
+      "end": 739
+    },
+    {
+      "label": "body",
+      "start": 740,
+      "end": 754
+    },
+    {
+      "label": "body",
+      "start": 755,
+      "end": 756
+    },
+    {
+      "label": "body",
+      "start": 757,
+      "end": 772
+    },
+    {
+      "label": "body",
+      "start": 773,
+      "end": 774
+    },
+    {
+      "label": "body",
+      "start": 775,
+      "end": 861
+    },
+    {
+      "label": "boilerplate",
+      "start": 862,
+      "end": 875
+    },
+    {
+      "label": "boilerplate",
+      "start": 876,
+      "end": 904
+    },
+    {
+      "label": "boilerplate",
+      "start": 905,
+      "end": 925
+    },
+    {
+      "label": "boilerplate",
+      "start": 926,
+      "end": 950
+    },
+    {
+      "label": "boilerplate",
+      "start": 951,
+      "end": 962
+    },
+    {
+      "label": "boilerplate",
+      "start": 963,
+      "end": 985
+    },
+    {
+      "label": "boilerplate",
+      "start": 986,
+      "end": 1006
+    },
+    {
+      "label": "boilerplate",
+      "start": 1007,
+      "end": 1026
+    },
+    {
+      "label": "boilerplate",
+      "start": 1027,
+      "end": 1058
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "id": "c01-blog-flat-comments",
+  "family": "comments",
+  "note": "blog post with a flat ordered list of four comments and a comment form",
+  "expectedText": "Needle and Thread Notes\nHome Patterns Mending About\nMending a Wool Jumper Without Anyone Noticing\nA small moth hole in a good jumper does not have to mean the end of it. With a matching thread and a darning needle you can close the gap in about twenty minutes, and the repair will survive many washes.\nStart by turning the jumper inside out and finding yarn from the hem or the inside of a seam. Wool thread taken from the garment itself will always match, because it has aged in the same way as the rest of the fabric.\nWeave the needle in a grid across the hole, first in one direction and then at right angles, catching a few intact stitches at every edge. Do not pull the thread tight. Leave the patch slightly loose so that it can relax into the knit when the jumper is steamed.\n4 thoughts on this post\nHester Lowe, 2 March\nThis saved my favourite cardigan. I used the thread from inside the cuff and you honestly cannot see where the hole was.\nPavel D., 3 March\nWould the same trick work on cashmere or is it too delicate for a darning needle?\nAmara Quist, 3 March\nCashmere is fine if you choose the finest needle you own. I steam mine twice and the patch disappears completely.\nBryn Falk, 5 March\nThank you for the photographs on the last step, they made everything clear for a beginner like me.\nLeave a reply\nYour name\nYour email\nYour comment\nPost comment\nRecent posts\nChoosing a darning mushroom\nSock heels, step by step\nNeedle and Thread Notes is a personal blog.\nPrivacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 23
+    },
+    {
+      "label": "boilerplate",
+      "start": 24,
+      "end": 51
+    },
+    {
+      "label": "body",
+      "start": 52,
+      "end": 97
+    },
+    {
+      "label": "body",
+      "start": 98,
+      "end": 301
+    },
+    {
+      "label": "body",
+      "start": 302,
+      "end": 519
+    },
+    {
+      "label": "body",
+      "start": 520,
+      "end": 782
+    },
+    {
+      "label": "boilerplate",
+      "start": 783,
+      "end": 806
+    },
+    {
+      "label": "comment",
+      "start": 807,
+      "end": 827
+    },
+    {
+      "label": "comment",
+      "start": 828,
+      "end": 948
+    },
+    {
+      "label": "comment",
+      "start": 949,
+      "end": 966
+    },
+    {
+      "label": "comment",
+      "start": 967,
+      "end": 1048
+    },
+    {
+      "label": "comment",
+      "start": 1049,
+      "end": 1069
+    },
+    {
+      "label": "comment",
+      "start": 1070,
+      "end": 1183
+    },
+    {
+      "label": "comment",
+      "start": 1184,
+      "end": 1202
+    },
+    {
+      "label": "comment",
+      "start": 1203,
+      "end": 1301
+    },
+    {
+      "label": "boilerplate",
+      "start": 1302,
+      "end": 1315
+    },
+    {
+      "label": "boilerplate",
+      "start": 1316,
+      "end": 1325
+    },
+    {
+      "label": "boilerplate",
+      "start": 1326,
+      "end": 1336
+    },
+    {
+      "label": "boilerplate",
+      "start": 1337,
+      "end": 1349
+    },
+    {
+      "label": "boilerplate",
+      "start": 1350,
+      "end": 1362
+    },
+    {
+      "label": "boilerplate",
+      "start": 1363,
+      "end": 1375
+    },
+    {
+      "label": "boilerplate",
+      "start": 1376,
+      "end": 1403
+    },
+    {
+      "label": "boilerplate",
+      "start": 1404,
+      "end": 1428
+    },
+    {
+      "label": "boilerplate",
+      "start": 1429,
+      "end": 1472
+    },
+    {
+      "label": "boilerplate",
+      "start": 1473,
+      "end": 1480
+    }
+  ]
+}

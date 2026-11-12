@@ -45,6 +45,7 @@ use self::css::{Rule, Sheet};
 use self::style::Facts;
 use crate::dom::{resolve, srcset_urls, walk};
 use crate::metadata::effective_base;
+use crate::parse_budget::{ParseBudgetExhausted, ParseCharge};
 use crate::ExtractOptions;
 
 pub use self::computed::{ComputedStyles, ElementStyle, LinkedIcon, COLLECT_SCRIPT};
@@ -77,14 +78,20 @@ pub struct BrandingInput<'a> {
 /// `rel=stylesheet` (and `rel=preload as=style`) URLs of `html`: absolute, `http`/`https` only,
 /// de-duplicated, in document order, at most [`MAX_STYLESHEET_URLS`]; `media=print` sheets and
 /// disabled links are skipped. `<base href>` is honoured. Input beyond the default extraction
-/// limits yields an empty list. The parse is not charged to [`crate::parse_budget`]: callers hold
-/// a [`crate::parse_budget::charge`] around this call.
-#[must_use]
-pub fn stylesheet_urls(html: &str, base: &Url) -> Vec<Url> {
+/// limits yields an empty list. The DOM is built under `charge`, a [`crate::parse_budget::charge`]
+/// the caller holds until the result is no longer needed.
+///
+/// # Errors
+/// [`ParseBudgetExhausted`] when the process-wide parse-memory budget cannot hold the tree.
+pub fn stylesheet_urls(
+    charge: &mut ParseCharge,
+    html: &str,
+    base: &Url,
+) -> Result<Vec<Url>, ParseBudgetExhausted> {
     if crate::precheck(html, &ExtractOptions::default()).is_err() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let doc = Html::parse_document(html);
+    let doc = crate::dom::parse_document(charge, html)?;
     let base = effective_base(&doc, base);
     let mut out: Vec<Url> = Vec::new();
     walk(doc.tree.root(), |el| {
@@ -115,7 +122,7 @@ pub fn stylesheet_urls(html: &str, base: &Url) -> Vec<Url> {
             _ => true,
         }
     });
-    out
+    Ok(out)
 }
 
 /// A `<link rel=icon|apple-touch-icon>` candidate.
@@ -730,26 +737,39 @@ fn motion_and_layout(f: &Facts, out: &mut Map<String, Value>) {
 }
 
 /// The brand profile of the page described by `input` (compatibility API `BrandingProfile` shape).
-/// Input beyond the default extraction limits yields an empty object. The parse is not charged
-/// to [`crate::parse_budget`]: callers hold a [`crate::parse_budget::charge`] around this call.
-#[must_use]
-pub fn branding(input: &BrandingInput<'_>) -> Value {
-    profile(input, None)
+/// Input beyond the default extraction limits yields an empty object. The DOM is built under
+/// `charge`, a [`crate::parse_budget::charge`] the caller holds until the result is no longer
+/// needed.
+///
+/// # Errors
+/// [`ParseBudgetExhausted`] when the process-wide parse-memory budget cannot hold the tree.
+pub fn branding(charge: &mut ParseCharge, input: &BrandingInput<'_>) -> Result<Value, ParseBudgetExhausted> {
+    profile(charge, input, None)
 }
 
 /// As [`branding`] for a page rendered in a browser: `computed` (what [`COLLECT_SCRIPT`]
 /// reported, see [`ComputedStyles::from_value`]) is read as the ground truth of what the page
 /// paints, over what the stylesheets declare. An empty report changes nothing.
-#[must_use]
-pub fn branding_computed(input: &BrandingInput<'_>, computed: &ComputedStyles) -> Value {
-    profile(input, Some(computed))
+///
+/// # Errors
+/// [`ParseBudgetExhausted`] when the process-wide parse-memory budget cannot hold the tree.
+pub fn branding_computed(
+    charge: &mut ParseCharge,
+    input: &BrandingInput<'_>,
+    computed: &ComputedStyles,
+) -> Result<Value, ParseBudgetExhausted> {
+    profile(charge, input, Some(computed))
 }
 
-fn profile(input: &BrandingInput<'_>, computed: Option<&ComputedStyles>) -> Value {
+fn profile(
+    charge: &mut ParseCharge,
+    input: &BrandingInput<'_>,
+    computed: Option<&ComputedStyles>,
+) -> Result<Value, ParseBudgetExhausted> {
     if crate::precheck(input.html, &ExtractOptions::default()).is_err() {
-        return json!({});
+        return Ok(json!({}));
     }
-    let doc = Html::parse_document(input.html);
+    let doc = crate::dom::parse_document(charge, input.html)?;
     let base = effective_base(&doc, input.base);
     let mut scan = Scan::default();
     for sheet in input.stylesheets.iter().take(MAX_STYLESHEETS) {
@@ -855,7 +875,7 @@ fn profile(input: &BrandingInput<'_>, computed: Option<&ComputedStyles>) -> Valu
     if let Some(v) = non_empty(personality) {
         out.insert("personality".to_owned(), v);
     }
-    Value::Object(out)
+    Ok(Value::Object(out))
 }
 
 #[cfg(test)]
@@ -902,11 +922,21 @@ mod tests {
     }
 
     fn run(html: &str, sheets: &[String]) -> Value {
-        branding(&BrandingInput {
-            html,
-            base: &base(),
-            stylesheets: sheets,
-        })
+        let mut charge = crate::parse_budget::charge(html.len()).unwrap();
+        branding(
+            &mut charge,
+            &BrandingInput {
+                html,
+                base: &base(),
+                stylesheets: sheets,
+            },
+        )
+        .unwrap()
+    }
+
+    fn sheet_urls(html: &str) -> Vec<Url> {
+        let mut charge = crate::parse_budget::charge(html.len()).unwrap();
+        stylesheet_urls(&mut charge, html, &base()).unwrap()
     }
 
     #[test]
@@ -1055,7 +1085,7 @@ mod tests {
 
     #[test]
     fn stylesheet_urls_are_absolute_deduplicated_and_ordered() {
-        let urls = stylesheet_urls(FIXTURE, &base());
+        let urls = sheet_urls(FIXTURE);
         let got: Vec<&str> = urls.iter().map(Url::as_str).collect();
         assert_eq!(
             got,
@@ -1072,7 +1102,7 @@ mod tests {
         let html = r#"<head><base href="https://static.example.net/v1/">
             <link rel="stylesheet" href="a.css"><link rel="stylesheet" href="a.css#x">
             <link rel="stylesheet" href="data:text/css,a{}"><link rel="stylesheet" href="b.css" disabled></head>"#;
-        let urls = stylesheet_urls(html, &base());
+        let urls = sheet_urls(html);
         assert_eq!(
             urls.iter().map(Url::as_str).collect::<Vec<_>>(),
             ["https://static.example.net/v1/a.css"]

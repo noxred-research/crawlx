@@ -1,0 +1,63 @@
+{
+  "id": "l73-dict-chinese-digits-latin",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "2026|年|我们|买|了|新|电脑|电脑|有|radio|功能",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "token",
+      "start": 5,
+      "end": 8
+    },
+    {
+      "label": "token",
+      "start": 9,
+      "end": 15
+    },
+    {
+      "label": "token",
+      "start": 16,
+      "end": 19
+    },
+    {
+      "label": "token",
+      "start": 20,
+      "end": 23
+    },
+    {
+      "label": "token",
+      "start": 24,
+      "end": 27
+    },
+    {
+      "label": "token",
+      "start": 28,
+      "end": 34
+    },
+    {
+      "label": "token",
+      "start": 35,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 45
+    },
+    {
+      "label": "token",
+      "start": 46,
+      "end": 51
+    },
+    {
+      "label": "token",
+      "start": 52,
+      "end": 58
+    }
+  ]
+}

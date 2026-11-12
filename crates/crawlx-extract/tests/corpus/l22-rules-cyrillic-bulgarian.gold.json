@@ -1,0 +1,98 @@
+{
+  "id": "l22-rules-cyrillic-bulgarian",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "влакът|тръгва|от|гарата|в|осем|часа|пътниците|чакат|на|перона|момичето|чете|вестник|а|кондукторът|проверява|билетите",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 30
+    },
+    {
+      "label": "token",
+      "start": 31,
+      "end": 43
+    },
+    {
+      "label": "token",
+      "start": 44,
+      "end": 46
+    },
+    {
+      "label": "token",
+      "start": 47,
+      "end": 55
+    },
+    {
+      "label": "token",
+      "start": 56,
+      "end": 64
+    },
+    {
+      "label": "token",
+      "start": 65,
+      "end": 83
+    },
+    {
+      "label": "token",
+      "start": 84,
+      "end": 94
+    },
+    {
+      "label": "token",
+      "start": 95,
+      "end": 99
+    },
+    {
+      "label": "token",
+      "start": 100,
+      "end": 112
+    },
+    {
+      "label": "token",
+      "start": 113,
+      "end": 129
+    },
+    {
+      "label": "token",
+      "start": 130,
+      "end": 138
+    },
+    {
+      "label": "token",
+      "start": 139,
+      "end": 153
+    },
+    {
+      "label": "token",
+      "start": 154,
+      "end": 156
+    },
+    {
+      "label": "token",
+      "start": 157,
+      "end": 179
+    },
+    {
+      "label": "token",
+      "start": 180,
+      "end": 198
+    },
+    {
+      "label": "token",
+      "start": 199,
+      "end": 215
+    }
+  ]
+}

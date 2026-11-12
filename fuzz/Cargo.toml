@@ -112,3 +112,4 @@ debug = 1
 [patch.crates-io]
 lopdf = { path = "../vendor/pdf-loader/lopdf-0.46.0" }
 hickory-resolver = { path = "../vendor/hickory-resolver" }
+ego-tree = { path = "../vendor/ego-tree" }

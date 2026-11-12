@@ -1,0 +1,78 @@
+{
+  "id": "a19-second-page-of-three",
+  "family": "article_body",
+  "note": "middle page of a paginated article with page links and a previous and next control",
+  "expectedText": "Old Town Chronicle\nHistory\nPeople\nThe Last Lamplighters, Page 2 of 3\nThe final rounds\nBy the winter of 1958 only two lamplighters were left in the old town. Anselm Greaves walked the north streets and a woman known only as Mrs Carr took the market lanes, each carrying a long pole with a small brass hook.\nTheir rounds began at dusk. A lamp had to be lit, checked and left burning, then turned off again at dawn, and the work was done in all weathers. Greaves once lit forty lamps in a snowstorm with a scarf tied across his face.\nWhen the electric switch came, the council held a small ceremony. The last gas lamp on Cobbler's Row was put out by Mrs Carr, who kept her pole and hung it above her door.\nPrevious page\nPage 2 of 3\nNext page\nMore history\nThe market clock\nOld Town Chronicle, a local history society.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 18
+    },
+    {
+      "label": "boilerplate",
+      "start": 19,
+      "end": 26
+    },
+    {
+      "label": "boilerplate",
+      "start": 27,
+      "end": 33
+    },
+    {
+      "label": "body",
+      "start": 34,
+      "end": 68
+    },
+    {
+      "label": "body",
+      "start": 69,
+      "end": 85
+    },
+    {
+      "label": "body",
+      "start": 86,
+      "end": 305
+    },
+    {
+      "label": "body",
+      "start": 306,
+      "end": 530
+    },
+    {
+      "label": "body",
+      "start": 531,
+      "end": 702
+    },
+    {
+      "label": "boilerplate",
+      "start": 703,
+      "end": 716
+    },
+    {
+      "label": "boilerplate",
+      "start": 717,
+      "end": 728
+    },
+    {
+      "label": "boilerplate",
+      "start": 729,
+      "end": 738
+    },
+    {
+      "label": "boilerplate",
+      "start": 739,
+      "end": 751
+    },
+    {
+      "label": "boilerplate",
+      "start": 752,
+      "end": 768
+    },
+    {
+      "label": "boilerplate",
+      "start": 769,
+      "end": 813
+    }
+  ]
+}

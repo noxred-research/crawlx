@@ -1,0 +1,13 @@
+{
+  "id": "d22-budget-bytes-over",
+  "family": "feed",
+  "note": "byte budget one byte below the document length: typed limit error before parsing",
+  "expectedText": "Policy::Limit(feed_bytes)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 25
+    }
+  ]
+}

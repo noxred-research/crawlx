@@ -1,0 +1,9 @@
+<rss version="2.0"><channel>
+<item><link>https://news.corpus.test/de/a</link></item>
+<item><link>https://news.corpus.test/en/b</link></item>
+<item><link>https://news.corpus.test/pt-BR/c</link></item>
+<item><link>https://news.corpus.test/plain/d</link></item>
+<item><link>https://de.news.corpus.test/e</link></item>
+<item><link>https://news.corpus.test/f?lang=de</link></item>
+<item><link>https://news.corpus.test/de/g?hl=en</link></item>
+</channel></rss>

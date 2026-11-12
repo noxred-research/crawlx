@@ -30,8 +30,8 @@ pub fn attributes(html: &str, selectors: &[AttributeSelector]) -> Result<Vec<Att
     }
     crate::precheck(html, &ExtractOptions::default())?;
     // declared before `doc`: released after the parsed tree is dropped
-    let _charge = crate::parse_budget::charge(html.len())?;
-    let doc = Html::parse_document(html);
+    let mut charge = crate::parse_budget::charge(html.len())?;
+    let doc = crate::dom::parse_document(&mut charge, html)?;
     Ok(evaluate(&doc, selectors, &compiled))
 }
 

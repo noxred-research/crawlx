@@ -1,0 +1,23 @@
+{
+  "id": "m51-entities-and-whitespace",
+  "family": "meta_exact",
+  "note": "character references and runs of whitespace in meta content are decoded and collapsed in both the title and the description",
+  "expectedText": "title=Fish & Chips Return\nlanguage=en\ndescription=Fish & chips — the van returns on Friday.",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 25
+    },
+    {
+      "label": "language",
+      "start": 35,
+      "end": 37
+    },
+    {
+      "label": "description",
+      "start": 50,
+      "end": 93
+    }
+  ]
+}

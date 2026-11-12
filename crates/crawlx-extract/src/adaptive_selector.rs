@@ -106,9 +106,10 @@ fn parse_owned_html(html: &str) -> Result<(crate::parse_budget::ParseCharge, scr
     if html.len() > 8 * 1024 * 1024 {
         return Err(SelectorError::Budget("adaptive input bytes"));
     }
-    let charge =
+    let mut charge =
         crate::parse_budget::charge(html.len()).map_err(|_| SelectorError::Budget("parse memory"))?;
-    let parsed = scraper::Html::parse_document(html);
+    let parsed =
+        crate::dom::parse_document(&mut charge, html).map_err(|_| SelectorError::Budget("parse memory"))?;
     crate::dom::check_limits(&parsed, 100_000).map_err(|_| SelectorError::Budget("adaptive DOM shape"))?;
     Ok((charge, parsed))
 }

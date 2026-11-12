@@ -16,10 +16,18 @@
 //!
 //! Ranking is deterministic: scores are accumulated in `f64` in index order and ties keep the
 //! candidate order, so one input always produces one output.
+//!
+//! [`cluster_ranges`] groups source ranges of the final text by the cosine geometry of their
+//! embeddings (spherical k-means in `crawlx-core`, seeded from the run seed). The vector cap is
+//! checked before the embedding call, a missing model is the typed
+//! [`ClusterTextsError::Unavailable`], and the model weights stay operator-supplied: the real
+//! client talks to the operator's endpoint, tests use [`MockEmbeddings`].
 
 use super::extractor::truncate_chars;
 use async_trait::async_trait;
+use crawlx_core::extraction::{ClusterEnvelopeV1, ClusterErrorV1, ClusterPolicyV1, SourceRangeV1};
 use crawlx_core::secret::SecretOr;
+use crawlx_core::seed::CrawlSeed;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::json;
@@ -313,7 +321,7 @@ fn check_vectors(vectors: &[Vec<f32>], dims: &mut Option<usize>) -> Result<(), E
                     "vectors of {} and {} dimensions in one reply",
                     d,
                     v.len()
-                )))
+                )));
             }
             Some(_) => {}
             None => *dims = Some(v.len()),
@@ -537,6 +545,113 @@ pub async fn rank_texts(
     }
     Ok(Ranking {
         order: rank_by_cosine(q, rest)?,
+        tokens: embedded.tokens,
+    })
+}
+
+/// Why a clustering run did not produce clusters.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ClusterTextsError {
+    /// No embedding model is configured; nothing was sent anywhere.
+    #[error("no embedding model is configured")]
+    Unavailable,
+    /// The embeddings call failed or returned an unusable reply.
+    #[error(transparent)]
+    Embeddings(#[from] EmbeddingsError),
+    /// The input or the policy was refused (cap, ranges, vectors).
+    #[error(transparent)]
+    Cluster(#[from] ClusterErrorV1),
+}
+
+/// What to cluster: source ranges of the final text, grouped by the embedding of their text.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct ClusterRequest<'a> {
+    /// The exact final (privacy-projected) text the ranges index into.
+    pub text: &'a str,
+    /// Source ranges to embed and group, for example the ranges of a chunk envelope.
+    pub ranges: &'a [SourceRangeV1],
+    /// Label of the embedding model, recorded on the result (not a credential).
+    pub model: &'a str,
+    /// Cluster count and hard caps.
+    pub policy: ClusterPolicyV1,
+    /// Run seed; clustering is derived from it and from nothing else random.
+    pub seed: CrawlSeed,
+}
+
+impl<'a> ClusterRequest<'a> {
+    /// A request over `ranges` of `text`.
+    #[must_use]
+    pub const fn new(
+        text: &'a str,
+        ranges: &'a [SourceRangeV1],
+        model: &'a str,
+        policy: ClusterPolicyV1,
+        seed: CrawlSeed,
+    ) -> Self {
+        Self {
+            text,
+            ranges,
+            model,
+            policy,
+            seed,
+        }
+    }
+}
+
+/// Clusters and the embedding tokens they cost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Clustered {
+    /// Source-only clusters bound to the final text.
+    pub envelope: ClusterEnvelopeV1,
+    /// Input tokens the endpoint reported.
+    pub tokens: u64,
+}
+
+/// Embed the text of every range with `client` in one call and group the ranges.
+///
+/// The policy cap and the ranges are checked before the call, so an over-cap or malformed
+/// request costs nothing; a missing model is [`ClusterTextsError::Unavailable`] and sends
+/// nothing. Vectors are never logged and never leave this function.
+///
+/// # Errors
+/// [`ClusterTextsError`]: unavailable model, a refused request, or the embeddings failure.
+pub async fn cluster_ranges(
+    client: Option<&dyn EmbeddingsClient>,
+    request: &ClusterRequest<'_>,
+) -> Result<Clustered, ClusterTextsError> {
+    let Some(client) = client else {
+        return Err(ClusterTextsError::Unavailable);
+    };
+    request.policy.check_count(request.ranges.len())?;
+    ClusterEnvelopeV1::check_ranges(request.text, request.ranges)?;
+    let texts: Vec<String> = request
+        .ranges
+        .iter()
+        .filter_map(|range| request.text.get(range.start..range.end))
+        .map(str::to_owned)
+        .collect();
+    let embedded = client.embed(&texts).await?;
+    if embedded.vectors.len() != texts.len() {
+        return Err(EmbeddingsError::InvalidOutput(format!(
+            "{} vectors for {} inputs",
+            embedded.vectors.len(),
+            texts.len()
+        ))
+        .into());
+    }
+    let envelope = ClusterEnvelopeV1::build(
+        request.text,
+        request.ranges,
+        &embedded.vectors,
+        request.model,
+        request.policy,
+        request.seed,
+    )?;
+    Ok(Clustered {
+        envelope,
         tokens: embedded.tokens,
     })
 }
@@ -854,5 +969,151 @@ mod tests {
             rank_texts(&failing, "q", &texts(&["a"])).await,
             Err(EmbeddingsError::Status { status: 500 })
         );
+    }
+
+    /// Six paragraphs about three subjects; the mock hashes words, so same-subject paragraphs
+    /// share vocabulary and are cosine-close.
+    const SUBJECTS: [&str; 6] = [
+        "river water flows past the river bank",
+        "the lake water meets the river shore",
+        "market price trade stock market rally",
+        "stock trade price falls in the market",
+        "mountain trail hiking trail summit",
+        "hiking the summit trail on the mountain",
+    ];
+
+    fn paragraphs() -> (String, Vec<SourceRangeV1>) {
+        let mut text = String::new();
+        let mut ranges = Vec::new();
+        for line in SUBJECTS {
+            let start = text.len();
+            text.push_str(line);
+            ranges.push(SourceRangeV1::new(start, text.len()));
+            text.push_str("\n\n");
+        }
+        (text, ranges)
+    }
+
+    fn three() -> ClusterPolicyV1 {
+        let mut policy = ClusterPolicyV1::default();
+        policy.clusters = 3;
+        policy
+    }
+
+    #[tokio::test]
+    async fn mock_embeddings_cluster_by_subject_and_are_stable_under_seed_and_order() {
+        let (text, ranges) = paragraphs();
+        let mock = MockEmbeddings::new(256);
+        let request = ClusterRequest::new(&text, &ranges, "mock", three(), CrawlSeed(21));
+        let first = cluster_ranges(Some(&mock), &request).await.unwrap();
+        let members: Vec<Vec<usize>> = first
+            .envelope
+            .clusters
+            .iter()
+            .map(|c| {
+                c.members
+                    .iter()
+                    .map(|m| ranges.iter().position(|r| r == m).unwrap())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(members, [vec![0, 1], vec![2, 3], vec![4, 5]]);
+        assert!(first.tokens > 0);
+        assert_eq!(first.envelope.model, "mock");
+        first.envelope.validate(&text, &three()).unwrap();
+        // Same seed: identical. Reversed input order: identical. Other seeds: same grouping.
+        assert_eq!(first, cluster_ranges(Some(&mock), &request).await.unwrap());
+        let reversed: Vec<SourceRangeV1> = ranges.iter().rev().copied().collect();
+        let request_reversed = ClusterRequest::new(&text, &reversed, "mock", three(), CrawlSeed(21));
+        assert_eq!(
+            first,
+            cluster_ranges(Some(&mock), &request_reversed).await.unwrap()
+        );
+        for seed in [0, 5, 77, u64::MAX] {
+            let request = ClusterRequest::new(&text, &ranges, "mock", three(), CrawlSeed(seed));
+            let other = cluster_ranges(Some(&mock), &request).await.unwrap();
+            assert_eq!(other.envelope.clusters, first.envelope.clusters, "seed {seed}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_vector_cap_is_enforced_before_any_embedding_call() {
+        let text = "x".repeat(40);
+        let ranges: Vec<SourceRangeV1> = (0..20).map(|i| SourceRangeV1::new(i, i + 1)).collect();
+        let mut policy = three();
+        policy.max_vectors = 19;
+        let mock = MockEmbeddings::new(8);
+        let request = ClusterRequest::new(&text, &ranges, "mock", policy, CrawlSeed(1));
+        assert_eq!(
+            cluster_ranges(Some(&mock), &request).await,
+            Err(ClusterTextsError::Cluster(ClusterErrorV1::TooManyVectors {
+                count: 20,
+                max: 19
+            }))
+        );
+        assert!(
+            mock.calls().is_empty(),
+            "an over-cap request must not reach the model"
+        );
+        // Exactly at the cap succeeds and sends every text once, in one call.
+        policy.max_vectors = 20;
+        let request = ClusterRequest::new(&text, &ranges, "mock", policy, CrawlSeed(1));
+        let done = cluster_ranges(Some(&mock), &request).await.unwrap();
+        assert_eq!(
+            done.envelope
+                .clusters
+                .iter()
+                .map(|c| c.members.len())
+                .sum::<usize>(),
+            20
+        );
+        assert_eq!(mock.calls().len(), 1);
+        // Malformed ranges are refused before the call as well.
+        let bad = [SourceRangeV1::new(0, 1), SourceRangeV1::new(0, 1)];
+        let request = ClusterRequest::new(&text, &bad, "mock", three(), CrawlSeed(1));
+        assert!(matches!(
+            cluster_ranges(Some(&mock), &request).await,
+            Err(ClusterTextsError::Cluster(ClusterErrorV1::InvalidInput(_)))
+        ));
+        assert_eq!(mock.calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_missing_model_is_typed_unavailable_and_failures_are_typed_not_partial() {
+        let (text, ranges) = paragraphs();
+        let request = ClusterRequest::new(&text, &ranges, "none", three(), CrawlSeed(1));
+        assert_eq!(
+            cluster_ranges(None, &request).await,
+            Err(ClusterTextsError::Unavailable)
+        );
+        let failing = MockEmbeddings::new(8).failing(EmbeddingsError::Status { status: 503 });
+        assert_eq!(
+            cluster_ranges(Some(&failing), &request).await,
+            Err(ClusterTextsError::Embeddings(EmbeddingsError::Status {
+                status: 503
+            }))
+        );
+    }
+
+    /// A client that drops the last vector, as a broken endpoint would.
+    struct Short;
+    #[async_trait]
+    impl EmbeddingsClient for Short {
+        async fn embed(&self, texts: &[String]) -> Result<Embedded, EmbeddingsError> {
+            Ok(Embedded {
+                vectors: texts.iter().skip(1).map(|_| vec![1.0, 0.0]).collect(),
+                tokens: 0,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reply_with_the_wrong_vector_count_is_invalid_output() {
+        let (text, ranges) = paragraphs();
+        let request = ClusterRequest::new(&text, &ranges, "short", three(), CrawlSeed(1));
+        assert!(matches!(
+            cluster_ranges(Some(&Short), &request).await,
+            Err(ClusterTextsError::Embeddings(EmbeddingsError::InvalidOutput(_)))
+        ));
     }
 }

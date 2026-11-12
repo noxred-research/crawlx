@@ -1,0 +1,13 @@
+{
+  "id": "d54-sitemap-dtd-rejected",
+  "family": "feed",
+  "note": "a sitemap with a document type declaration is rejected and nothing is resolved",
+  "expectedText": "Sitemap(DTD and entity declarations are forbidden)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 50
+    }
+  ]
+}

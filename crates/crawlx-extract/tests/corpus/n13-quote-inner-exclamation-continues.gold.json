@@ -1,0 +1,68 @@
+{
+  "id": "n13-quote-inner-exclamation-continues",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "\"Come here!\" she called.\nHe did not move.\ncome=1\nhere=1\nshe=1\ncalled=1\nhe=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 24
+    },
+    {
+      "label": "sentence",
+      "start": 25,
+      "end": 41
+    },
+    {
+      "label": "keyword",
+      "start": 42,
+      "end": 46
+    },
+    {
+      "label": "score",
+      "start": 47,
+      "end": 48
+    },
+    {
+      "label": "keyword",
+      "start": 49,
+      "end": 53
+    },
+    {
+      "label": "score",
+      "start": 54,
+      "end": 55
+    },
+    {
+      "label": "keyword",
+      "start": 56,
+      "end": 59
+    },
+    {
+      "label": "score",
+      "start": 60,
+      "end": 61
+    },
+    {
+      "label": "keyword",
+      "start": 62,
+      "end": 68
+    },
+    {
+      "label": "score",
+      "start": 69,
+      "end": 70
+    },
+    {
+      "label": "keyword",
+      "start": 71,
+      "end": 73
+    },
+    {
+      "label": "score",
+      "start": 74,
+      "end": 75
+    }
+  ]
+}

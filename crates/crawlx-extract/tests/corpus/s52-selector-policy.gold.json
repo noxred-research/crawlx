@@ -1,0 +1,78 @@
+{
+  "id": "s52-selector-policy",
+  "family": "selector",
+  "note": "selector policy: include and exclude lists mixing xpath and css resolve to elements in document order; attribute or scalar results, oversize lists and expressions are typed errors",
+  "expectedText": "keep onead one\nkeep two\nfoot\nad one\nerror:NodeSetRequired\nerror:NodeSetRequired\nfoot\nerror:Policy\nfoot\nerror:Policy\nok\nerror:Policy\nerror:Policy\nerror:Namespace",
+  "spans": [
+    {
+      "label": "mixed.include",
+      "start": 0,
+      "end": 14
+    },
+    {
+      "label": "mixed.include",
+      "start": 15,
+      "end": 23
+    },
+    {
+      "label": "mixed.include",
+      "start": 24,
+      "end": 28
+    },
+    {
+      "label": "mixed.exclude",
+      "start": 29,
+      "end": 35
+    },
+    {
+      "label": "attribute_include",
+      "start": 36,
+      "end": 57
+    },
+    {
+      "label": "scalar_include",
+      "start": 58,
+      "end": 79
+    },
+    {
+      "label": "rules_64.include",
+      "start": 80,
+      "end": 84
+    },
+    {
+      "label": "rules_65",
+      "start": 85,
+      "end": 97
+    },
+    {
+      "label": "namespaces_32.include",
+      "start": 98,
+      "end": 102
+    },
+    {
+      "label": "namespaces_33",
+      "start": 103,
+      "end": 115
+    },
+    {
+      "label": "expression_4096",
+      "start": 116,
+      "end": 118
+    },
+    {
+      "label": "expression_4097",
+      "start": 119,
+      "end": 131
+    },
+    {
+      "label": "empty_expression",
+      "start": 132,
+      "end": 144
+    },
+    {
+      "label": "unbound_prefix",
+      "start": 145,
+      "end": 160
+    }
+  ]
+}

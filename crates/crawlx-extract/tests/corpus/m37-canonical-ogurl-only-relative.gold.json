@@ -1,0 +1,23 @@
+{
+  "id": "m37-canonical-ogurl-only-relative",
+  "family": "meta_exact",
+  "note": "with no canonical link a relative Open Graph URL is the canonical, resolved against the page",
+  "expectedText": "title=Kelp Farms Come to the Bay\nlanguage=en\ncanonical=https://corpus.test/stories/kelp-farms",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 32
+    },
+    {
+      "label": "language",
+      "start": 42,
+      "end": 44
+    },
+    {
+      "label": "canonical",
+      "start": 55,
+      "end": 93
+    }
+  ]
+}

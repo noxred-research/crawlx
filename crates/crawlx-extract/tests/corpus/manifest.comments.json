@@ -1,0 +1,249 @@
+{
+  "version": 1,
+  "rights": "Every file in this directory was written for this repository and is licensed with it. No page, text, markup, name or data was copied from any website, dataset or product. All hostnames use the reserved .test domain.",
+  "cases": [
+    {
+      "id": "c01-blog-flat-comments",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c01-blog-flat-comments",
+      "files": {
+        "input": {
+          "path": "c01-blog-flat-comments.html",
+          "sha256": "0921ebba7716043c4a8ca7e7aa63d7f2b71e8aaec7348a0bbb1f05683bf257dd"
+        },
+        "gold": {
+          "path": "c01-blog-flat-comments.gold.json",
+          "sha256": "60300251a1d3c92272a6055e0ef5948c564b82716e742dabc06eda4ae0174f98"
+        }
+      }
+    },
+    {
+      "id": "c02-blog-threaded-replies",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c02-blog-threaded-replies",
+      "files": {
+        "input": {
+          "path": "c02-blog-threaded-replies.html",
+          "sha256": "6b77ef20b470560ac25afd453109d39cd8643f1a131cfb703525d77bdcae4463"
+        },
+        "gold": {
+          "path": "c02-blog-threaded-replies.gold.json",
+          "sha256": "28c717bfaace1afc774f92cdca019f9a25b7ebed7519cf7c15120bb5cb40b8ce"
+        }
+      }
+    },
+    {
+      "id": "c03-forum-json-ld-topic",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c03-forum-json-ld-topic",
+      "files": {
+        "input": {
+          "path": "c03-forum-json-ld-topic.html",
+          "sha256": "4146ac4d5105a48dcecc34678c3929d3e94db5f300de10b4211a02b1d6733056"
+        },
+        "gold": {
+          "path": "c03-forum-json-ld-topic.gold.json",
+          "sha256": "d6ca3add0763d92fe7ae4eeac7f82cf13430a984e70f290937a4eb61606ec00e"
+        }
+      },
+      "params": {
+        "forum": true
+      }
+    },
+    {
+      "id": "c04-forum-plain-topic",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c04-forum-plain-topic",
+      "files": {
+        "input": {
+          "path": "c04-forum-plain-topic.html",
+          "sha256": "12fc95ba13174d82d78e458c534489ff6b522be52652b99dae137392c673d357"
+        },
+        "gold": {
+          "path": "c04-forum-plain-topic.gold.json",
+          "sha256": "7c14cb33727a51cc6561bd6671d962c9e9cd9c7fa6a6224522605eecc051cb9e"
+        }
+      },
+      "params": {
+        "forum": true
+      }
+    },
+    {
+      "id": "c05-qa-accepted-answer",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c05-qa-accepted-answer",
+      "files": {
+        "input": {
+          "path": "c05-qa-accepted-answer.html",
+          "sha256": "d2100c93545243d1046a898f5eeab2aebe4ad995c32b5001c89a0b03069a4065"
+        },
+        "gold": {
+          "path": "c05-qa-accepted-answer.gold.json",
+          "sha256": "2fb4848a0cadb85d7d5d55e870cd27b1c8925290fa91fa6c1c60e47eb0a44061"
+        }
+      }
+    },
+    {
+      "id": "c06-blog-comment-quotes-main",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c06-blog-comment-quotes-main",
+      "files": {
+        "input": {
+          "path": "c06-blog-comment-quotes-main.html",
+          "sha256": "c2560713cccca17852fd136bd203c289bb4c6a2e8d0b949f66fe75627efe9112"
+        },
+        "gold": {
+          "path": "c06-blog-comment-quotes-main.gold.json",
+          "sha256": "ca3af0ad06e86ecf0ec0ef28f49459cb6761bbdf7aad0ce80efbaa409e35be6a"
+        }
+      },
+      "params": {
+        "quote": true
+      }
+    },
+    {
+      "id": "c07-news-no-comment-section",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c07-news-no-comment-section",
+      "files": {
+        "input": {
+          "path": "c07-news-no-comment-section.html",
+          "sha256": "4918587097c76b95bfe660309909c00f8f8ca72c8043c2629504af260dd86d4e"
+        },
+        "gold": {
+          "path": "c07-news-no-comment-section.gold.json",
+          "sha256": "3b743f41b7ea32cb73edaa4af63e99549fee70bf7dbd1bd3db67b93efd501c90"
+        }
+      },
+      "params": {
+        "noComments": true
+      }
+    },
+    {
+      "id": "c08-hosted-thread-static-list",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c08-hosted-thread-static-list",
+      "files": {
+        "input": {
+          "path": "c08-hosted-thread-static-list.html",
+          "sha256": "fcbc8f77a73cade06e486e43b38afe7a955d11633604e94f68ba8b93206bcf63"
+        },
+        "gold": {
+          "path": "c08-hosted-thread-static-list.gold.json",
+          "sha256": "7b67740dc48b008186b7a7254c503572e416199f1653a59a691b03df027baab1"
+        }
+      }
+    },
+    {
+      "id": "c09-japanese-blog-comments",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c09-japanese-blog-comments",
+      "files": {
+        "input": {
+          "path": "c09-japanese-blog-comments.html",
+          "sha256": "9372df0f17b50614a1b9a5cb1a6d1b3f0e0677ed1fbe7a8f23a59abc327ae602"
+        },
+        "gold": {
+          "path": "c09-japanese-blog-comments.gold.json",
+          "sha256": "b37ceeecfc53d604ade6fb7cb9c40998dc11d94667ef7473c284b5d7f55f56b8"
+        }
+      }
+    },
+    {
+      "id": "c10-german-forum-quoted-posts",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c10-german-forum-quoted-posts",
+      "files": {
+        "input": {
+          "path": "c10-german-forum-quoted-posts.html",
+          "sha256": "c8f75aa92bfaabf20395c1eeb3ca3c0373e1e62eedd4808fe7e7de7dde4a29be"
+        },
+        "gold": {
+          "path": "c10-german-forum-quoted-posts.gold.json",
+          "sha256": "2a4e0b94a2828ea743977f322d05672f310b45ea541a3385c47abca4436214d4"
+        }
+      },
+      "params": {
+        "forum": true,
+        "quote": true
+      }
+    },
+    {
+      "id": "c11-qa-comments-with-code-and-links",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c11-qa-comments-with-code-and-links",
+      "files": {
+        "input": {
+          "path": "c11-qa-comments-with-code-and-links.html",
+          "sha256": "8150e6725e5ed61da2e7f7bff06a85122b0b80d55f505dd1221eae45aa1d615d"
+        },
+        "gold": {
+          "path": "c11-qa-comments-with-code-and-links.gold.json",
+          "sha256": "22116968067701762c67f3530a44dca7080e790c8f19c925bf029cfba6992dc2"
+        }
+      }
+    },
+    {
+      "id": "c12-blog-nested-quote-reply",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c12-blog-nested-quote-reply",
+      "files": {
+        "input": {
+          "path": "c12-blog-nested-quote-reply.html",
+          "sha256": "acae4f739eb2e31f50978d31d9168409cfc06b2b4477a623aae3305afc937df7"
+        },
+        "gold": {
+          "path": "c12-blog-nested-quote-reply.gold.json",
+          "sha256": "ff349cfa18ef0d27d497697218f460596599eae8e8145350a137e2782a6bb823"
+        }
+      },
+      "params": {
+        "quote": true
+      }
+    },
+    {
+      "id": "c13-news-reader-comments-article-items",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c13-news-reader-comments-article-items",
+      "files": {
+        "input": {
+          "path": "c13-news-reader-comments-article-items.html",
+          "sha256": "b510c9632e541a5e802ee8903490860a4be922ebd959532538c7739d01fd0c26"
+        },
+        "gold": {
+          "path": "c13-news-reader-comments-article-items.gold.json",
+          "sha256": "df6cecef211668d7a534a6d4a639d89428df1a4db005fc1e83b3021d59b39f40"
+        }
+      }
+    },
+    {
+      "id": "c14-french-blog-short-comments",
+      "family": "comments",
+      "license": "authored-for-this-repo",
+      "pageUrl": "https://comments.test/c14-french-blog-short-comments",
+      "files": {
+        "input": {
+          "path": "c14-french-blog-short-comments.html",
+          "sha256": "9d78d61de1d51b2bead6c35fc1ea539b944fe21571a5f8d5a108d850fb00f0ca"
+        },
+        "gold": {
+          "path": "c14-french-blog-short-comments.gold.json",
+          "sha256": "4f223a0c6e1b715cc122598bc11d9c6a037e36e71537d27fed77892e8e80027d"
+        }
+      }
+    }
+  ]
+}

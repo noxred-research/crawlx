@@ -1,0 +1,33 @@
+{
+  "id": "m46-keywords-section-image",
+  "family": "meta_exact",
+  "note": "duplicate-free keyword list, a section meta tag and the first image reference in document order; a second card image and a body image follow as proposals only",
+  "expectedText": "title=Kelp Rafts Reach Their First Harvest\nlanguage=en\nkeywords=kelp; aquaculture; coast; harbour\nsection=Environment\nimage=https://img.corpus.test/kelp/hero.jpg",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 42
+    },
+    {
+      "label": "language",
+      "start": 52,
+      "end": 54
+    },
+    {
+      "label": "keywords",
+      "start": 64,
+      "end": 97
+    },
+    {
+      "label": "section",
+      "start": 106,
+      "end": 117
+    },
+    {
+      "label": "image",
+      "start": 124,
+      "end": 161
+    }
+  ]
+}

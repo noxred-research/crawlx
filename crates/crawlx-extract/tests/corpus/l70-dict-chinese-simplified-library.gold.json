@@ -1,0 +1,68 @@
+{
+  "id": "l70-dict-chinese-simplified-library",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "今天|我们|去|图书馆|借|书|老师|在|教室|里|讲|故事",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 13
+    },
+    {
+      "label": "token",
+      "start": 14,
+      "end": 17
+    },
+    {
+      "label": "token",
+      "start": 18,
+      "end": 27
+    },
+    {
+      "label": "token",
+      "start": 28,
+      "end": 31
+    },
+    {
+      "label": "token",
+      "start": 32,
+      "end": 35
+    },
+    {
+      "label": "token",
+      "start": 36,
+      "end": 42
+    },
+    {
+      "label": "token",
+      "start": 43,
+      "end": 46
+    },
+    {
+      "label": "token",
+      "start": 47,
+      "end": 53
+    },
+    {
+      "label": "token",
+      "start": 54,
+      "end": 57
+    },
+    {
+      "label": "token",
+      "start": 58,
+      "end": 61
+    },
+    {
+      "label": "token",
+      "start": 62,
+      "end": 68
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "id": "l13-rules-latin-spanish-region",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "el|mercado|abre|temprano|cada|sábado|los|vendedores|traen|frutas|pan|y|queso|los|niños|compran|naranjas|dulces|y|las|llevan|a|casa",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 2
+    },
+    {
+      "label": "token",
+      "start": 3,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 15
+    },
+    {
+      "label": "token",
+      "start": 16,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 29
+    },
+    {
+      "label": "token",
+      "start": 30,
+      "end": 37
+    },
+    {
+      "label": "token",
+      "start": 38,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 52
+    },
+    {
+      "label": "token",
+      "start": 53,
+      "end": 58
+    },
+    {
+      "label": "token",
+      "start": 59,
+      "end": 65
+    },
+    {
+      "label": "token",
+      "start": 66,
+      "end": 69
+    },
+    {
+      "label": "token",
+      "start": 70,
+      "end": 71
+    },
+    {
+      "label": "token",
+      "start": 72,
+      "end": 77
+    },
+    {
+      "label": "token",
+      "start": 78,
+      "end": 81
+    },
+    {
+      "label": "token",
+      "start": 82,
+      "end": 88
+    },
+    {
+      "label": "token",
+      "start": 89,
+      "end": 96
+    },
+    {
+      "label": "token",
+      "start": 97,
+      "end": 105
+    },
+    {
+      "label": "token",
+      "start": 106,
+      "end": 112
+    },
+    {
+      "label": "token",
+      "start": 113,
+      "end": 114
+    },
+    {
+      "label": "token",
+      "start": 115,
+      "end": 118
+    },
+    {
+      "label": "token",
+      "start": 119,
+      "end": 125
+    },
+    {
+      "label": "token",
+      "start": 126,
+      "end": 127
+    },
+    {
+      "label": "token",
+      "start": 128,
+      "end": 132
+    }
+  ]
+}

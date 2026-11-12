@@ -1,0 +1,5 @@
+<r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:p="http://purl.org/rss/1.0/">
+<p:item><p:title>Alias one</p:title><p:link>https://news.corpus.test/alias/one</p:link></p:item>
+<p:item><p:link>https://news.corpus.test/alias/two</p:link></p:item>
+<x:item xmlns:x="urn:corpus:other"><x:link>https://news.corpus.test/alias/foreign-namespace</x:link></x:item>
+</r:RDF>

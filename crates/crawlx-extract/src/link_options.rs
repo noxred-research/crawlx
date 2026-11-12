@@ -283,8 +283,8 @@ impl LinkFilter {
         let opts = crate::ExtractOptions::default();
         crate::precheck(html, &opts)?;
         // declared before `doc`: released after the parsed tree is dropped
-        let _charge = crate::parse_budget::charge(html.len()).map_err(ExtractError::from)?;
-        let doc = Html::parse_document(html);
+        let mut charge = crate::parse_budget::charge(html.len()).map_err(ExtractError::from)?;
+        let doc = crate::dom::parse_document(&mut charge, html).map_err(ExtractError::from)?;
         crate::dom::check_limits(&doc, opts.max_nodes)?;
         let base = effective_base(&doc, page);
         self.links_in(&doc, page, &base)

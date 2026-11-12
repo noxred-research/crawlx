@@ -1,0 +1,48 @@
+{
+  "id": "s13-axis-namespace",
+  "family": "selector",
+  "note": "namespace axis and prefixed names: HTML elements live in the XHTML namespace, inline SVG in its own, the xml prefix is always bound",
+  "expectedText": "Anchor\n#icon-anchor\nplain\nhttp://www.w3.org/1999/xhtml\nhttp://www.w3.org/XML/1998/namespace\nhttp://www.w3.org/1999/xlink\n\"http://www.w3.org/2000/svg\"\n3",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "r2",
+      "start": 7,
+      "end": 19
+    },
+    {
+      "label": "r4",
+      "start": 20,
+      "end": 25
+    },
+    {
+      "label": "r5",
+      "start": 26,
+      "end": 54
+    },
+    {
+      "label": "r5",
+      "start": 55,
+      "end": 91
+    },
+    {
+      "label": "r6",
+      "start": 92,
+      "end": 120
+    },
+    {
+      "label": "r7",
+      "start": 121,
+      "end": 149
+    },
+    {
+      "label": "r8",
+      "start": 150,
+      "end": 151
+    }
+  ]
+}

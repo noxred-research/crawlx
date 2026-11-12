@@ -125,11 +125,16 @@ pub(crate) fn convert(
             }
         }
     }
-    // `images` re-parses the document; hold a charge for that parse (the extractor's own
-    // charge was released with its DOM when `Extractor::extract` returned)
-    let imgs = {
-        let _charge = crate::parse_budget::charge(raw.len()).map_err(ParseError::ParseMemory)?;
-        images::images(&raw, &base)
+    // the image list re-parses the document; hold a charge for that parse (the extractor's own
+    // charge was released with its DOM when `Extractor::extract` returned) and let the fallible
+    // tree sink refuse it like any other parse
+    let imgs = if crate::precheck(&raw, &ExtractOptions::default()).is_err() {
+        Vec::new()
+    } else {
+        let mut charge = crate::parse_budget::charge(raw.len()).map_err(ParseError::ParseMemory)?;
+        let tree = crate::dom::parse_document(&mut charge, &raw).map_err(ParseError::ParseMemory)?;
+        let page = crate::metadata::effective_base(&tree, &base);
+        images::from_document(&tree, &page)
             .into_iter()
             .map(|u| unbase(&u))
             .collect()

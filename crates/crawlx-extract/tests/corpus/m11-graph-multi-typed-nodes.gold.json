@@ -1,0 +1,33 @@
+{
+  "id": "m11-graph-multi-typed-nodes",
+  "family": "meta_exact",
+  "note": "a graph with site, organization, page and breadcrumb nodes next to the article node: only the article node supplies the title, author, publisher and date",
+  "expectedText": "title=Seed Swap Draws a Record Crowd\nauthors=Ruth Calloway\npublisher=Fenwick Cooperative\nlanguage=en\npublished=2026-03-21",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "authors",
+      "start": 45,
+      "end": 58
+    },
+    {
+      "label": "publisher",
+      "start": 69,
+      "end": 88
+    },
+    {
+      "label": "language",
+      "start": 98,
+      "end": 100
+    },
+    {
+      "label": "published",
+      "start": 111,
+      "end": 121
+    }
+  ]
+}

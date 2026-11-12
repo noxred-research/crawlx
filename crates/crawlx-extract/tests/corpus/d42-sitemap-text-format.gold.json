@@ -1,0 +1,23 @@
+{
+  "id": "d42-sitemap-text-format",
+  "family": "feed",
+  "note": "plain-text sitemap: one HTTP(S) URL per line, blank-padded lines trimmed, comments, non-URLs and other schemes skipped, cross-origin line denied",
+  "expectedText": "https://news.corpus.test/text/one\nhttps://news.corpus.test/text/two\nhttp://news.corpus.test/text/five",
+  "spans": [
+    {
+      "label": "page",
+      "start": 0,
+      "end": 33
+    },
+    {
+      "label": "page",
+      "start": 34,
+      "end": 67
+    },
+    {
+      "label": "page",
+      "start": 68,
+      "end": 101
+    }
+  ]
+}

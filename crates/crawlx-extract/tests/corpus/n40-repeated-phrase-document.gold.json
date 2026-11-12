@@ -1,0 +1,53 @@
+{
+  "id": "n40-repeated-phrase-document",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 3 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "Rain rain rain.\nRain again tomorrow.\nDry weather returns later.\nrain=4\nagain=1\ntomorrow=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 15
+    },
+    {
+      "label": "sentence",
+      "start": 16,
+      "end": 36
+    },
+    {
+      "label": "sentence",
+      "start": 37,
+      "end": 63
+    },
+    {
+      "label": "keyword",
+      "start": 64,
+      "end": 68
+    },
+    {
+      "label": "score",
+      "start": 69,
+      "end": 70
+    },
+    {
+      "label": "keyword",
+      "start": 71,
+      "end": 76
+    },
+    {
+      "label": "score",
+      "start": 77,
+      "end": 78
+    },
+    {
+      "label": "keyword",
+      "start": 79,
+      "end": 87
+    },
+    {
+      "label": "score",
+      "start": 88,
+      "end": 89
+    }
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "id": "f03-crumpets-steps",
+  "family": "focus",
+  "note": "recipe with ingredient list and numbered steps, a next-recipe line, recommended tiles and a signup box",
+  "expectedText": "Pantry Table | Breakfast | Bread | Preserves | Shop\nRecipes > Breakfast > Crumpets\nSourdough Crumpets From Discard\nCrumpets are the ideal home for the sourdough starter you would otherwise throw away. The batter is thin, the holes appear on their own, and a griddle with a few steel rings is all the equipment you need.\nIngredients\n250 g sourdough discard, straight from the fridge\n150 ml warm milk\n1 teaspoon fine salt\n1 teaspoon sugar\nhalf a teaspoon of bicarbonate of soda\nMethod\nWhisk the discard with the milk, salt and sugar until smooth. Leave the bowl in a warm corner for forty minutes.\nDissolve the bicarbonate in two tablespoons of warm water and stir it in. The batter will bubble and loosen.\nGrease the rings and set them on a medium heat griddle. Pour in about two centimetres of batter.\nCook for six to eight minutes without touching. When the surface is covered in open holes and no longer shiny, lift the rings away.\nFlip for one minute to colour the top, then serve at once with plenty of butter.\nLeftover crumpets freeze well. Toast them straight from the freezer.\nUp next: Quick soda bread\nYou might also like\nButtermilk pancakes\nFluffy stacks in twenty minutes.\nOat and apple muffins\nPacked lunch friendly and freezer safe.\nMaple granola\nCrunchy clusters with toasted seeds.\nWeekly recipes\nGet one tested recipe in your inbox every Thursday.\nSign me up\nAbout Contact Terms Privacy",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 51
+    },
+    {
+      "label": "boilerplate",
+      "start": 52,
+      "end": 82
+    },
+    {
+      "label": "body",
+      "start": 83,
+      "end": 114
+    },
+    {
+      "label": "body",
+      "start": 115,
+      "end": 319
+    },
+    {
+      "label": "body",
+      "start": 320,
+      "end": 331
+    },
+    {
+      "label": "body",
+      "start": 332,
+      "end": 381
+    },
+    {
+      "label": "body",
+      "start": 382,
+      "end": 398
+    },
+    {
+      "label": "body",
+      "start": 399,
+      "end": 419
+    },
+    {
+      "label": "body",
+      "start": 420,
+      "end": 436
+    },
+    {
+      "label": "body",
+      "start": 437,
+      "end": 475
+    },
+    {
+      "label": "body",
+      "start": 476,
+      "end": 482
+    },
+    {
+      "label": "body",
+      "start": 483,
+      "end": 595
+    },
+    {
+      "label": "body",
+      "start": 596,
+      "end": 704
+    },
+    {
+      "label": "body",
+      "start": 705,
+      "end": 801
+    },
+    {
+      "label": "body",
+      "start": 802,
+      "end": 933
+    },
+    {
+      "label": "body",
+      "start": 934,
+      "end": 1014
+    },
+    {
+      "label": "body",
+      "start": 1015,
+      "end": 1083
+    },
+    {
+      "label": "boilerplate",
+      "start": 1084,
+      "end": 1109
+    },
+    {
+      "label": "boilerplate",
+      "start": 1110,
+      "end": 1129
+    },
+    {
+      "label": "boilerplate",
+      "start": 1130,
+      "end": 1149
+    },
+    {
+      "label": "boilerplate",
+      "start": 1150,
+      "end": 1182
+    },
+    {
+      "label": "boilerplate",
+      "start": 1183,
+      "end": 1204
+    },
+    {
+      "label": "boilerplate",
+      "start": 1205,
+      "end": 1244
+    },
+    {
+      "label": "boilerplate",
+      "start": 1245,
+      "end": 1258
+    },
+    {
+      "label": "boilerplate",
+      "start": 1259,
+      "end": 1295
+    },
+    {
+      "label": "boilerplate",
+      "start": 1296,
+      "end": 1310
+    },
+    {
+      "label": "boilerplate",
+      "start": 1311,
+      "end": 1362
+    },
+    {
+      "label": "boilerplate",
+      "start": 1363,
+      "end": 1373
+    },
+    {
+      "label": "boilerplate",
+      "start": 1374,
+      "end": 1401
+    }
+  ]
+}

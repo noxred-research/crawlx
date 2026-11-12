@@ -1,0 +1,23 @@
+{
+  "id": "m26-date-month-name-text",
+  "family": "meta_exact",
+  "note": "a visible date written with a month name and no machine-readable attribute",
+  "expectedText": "title=Cheese Fair Adds a Third Day\nlanguage=en\npublished=2026-03-14",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 34
+    },
+    {
+      "label": "language",
+      "start": 44,
+      "end": 46
+    },
+    {
+      "label": "published",
+      "start": 57,
+      "end": 67
+    }
+  ]
+}

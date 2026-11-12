@@ -1,0 +1,63 @@
+{
+  "id": "n23-corner-brackets-inner-terminator",
+  "family": "nlp",
+  "note": "semantic sentence list of the main text, then the top 5 keywords with counts by the documented rule (count descending, first occurrence, token) under unicode_rules_v1",
+  "expectedText": "「待って。」と母は言った。\nっ=2\n待=1\nて=1\nと=1\n母=1",
+  "spans": [
+    {
+      "label": "sentence",
+      "start": 0,
+      "end": 39
+    },
+    {
+      "label": "keyword",
+      "start": 40,
+      "end": 43
+    },
+    {
+      "label": "score",
+      "start": 44,
+      "end": 45
+    },
+    {
+      "label": "keyword",
+      "start": 46,
+      "end": 49
+    },
+    {
+      "label": "score",
+      "start": 50,
+      "end": 51
+    },
+    {
+      "label": "keyword",
+      "start": 52,
+      "end": 55
+    },
+    {
+      "label": "score",
+      "start": 56,
+      "end": 57
+    },
+    {
+      "label": "keyword",
+      "start": 58,
+      "end": 61
+    },
+    {
+      "label": "score",
+      "start": 62,
+      "end": 63
+    },
+    {
+      "label": "keyword",
+      "start": 64,
+      "end": 67
+    },
+    {
+      "label": "score",
+      "start": 68,
+      "end": 69
+    }
+  ]
+}

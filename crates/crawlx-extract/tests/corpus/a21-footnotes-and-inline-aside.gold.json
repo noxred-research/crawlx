@@ -1,0 +1,98 @@
+{
+  "id": "a21-footnotes-and-inline-aside",
+  "family": "article_body",
+  "note": "numbered footnote markers with a notes list at the end and a related-reading aside inside the text",
+  "expectedText": "Heritage Trail Notes\nRoads\nMaps\nHow the Salt Road Got Its Name\nThe Salt Road crosses the moor in a long curve that no modern engineer would have drawn. Pack animals followed it from the coastal pans to the market towns inland.\n1\nEach mule carried about two hundred pounds of salt in woven panniers.\n2\nRelated reading:\nMules and merchants on the moor\nThe road is mentioned in a charter of the twelfth century, but the name appears much later. A parish clerk wrote it down in a tax roll, probably because it was how local people already spoke of the track.\n3\nToday the path is a popular walk. Stone markers set every mile show how far travellers had to go before the next inn.\nNotes\nThe earliest drawn route is on a parish map kept at the county archive.\nThe figure comes from a toll ledger of the fourteenth century.\nThe tax roll was rediscovered during repairs to the vestry roof.\nHeritage Trail Notes. Content may be shared with credit.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 20
+    },
+    {
+      "label": "boilerplate",
+      "start": 21,
+      "end": 26
+    },
+    {
+      "label": "boilerplate",
+      "start": 27,
+      "end": 31
+    },
+    {
+      "label": "body",
+      "start": 32,
+      "end": 62
+    },
+    {
+      "label": "body",
+      "start": 63,
+      "end": 226
+    },
+    {
+      "label": "body",
+      "start": 227,
+      "end": 228
+    },
+    {
+      "label": "body",
+      "start": 229,
+      "end": 298
+    },
+    {
+      "label": "body",
+      "start": 299,
+      "end": 300
+    },
+    {
+      "label": "boilerplate",
+      "start": 301,
+      "end": 317
+    },
+    {
+      "label": "boilerplate",
+      "start": 318,
+      "end": 349
+    },
+    {
+      "label": "body",
+      "start": 350,
+      "end": 554
+    },
+    {
+      "label": "body",
+      "start": 555,
+      "end": 556
+    },
+    {
+      "label": "body",
+      "start": 557,
+      "end": 674
+    },
+    {
+      "label": "body",
+      "start": 675,
+      "end": 680
+    },
+    {
+      "label": "body",
+      "start": 681,
+      "end": 752
+    },
+    {
+      "label": "body",
+      "start": 753,
+      "end": 815
+    },
+    {
+      "label": "body",
+      "start": 816,
+      "end": 880
+    },
+    {
+      "label": "boilerplate",
+      "start": 881,
+      "end": 937
+    }
+  ]
+}

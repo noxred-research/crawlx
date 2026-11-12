@@ -1,0 +1,48 @@
+{
+  "id": "s01-axis-child",
+  "family": "selector",
+  "note": "child axis: abbreviated and explicit steps, positional predicate, comment and text node tests, element count",
+  "expectedText": "Tuesday\nFog until nine.\nHigh tide at 14:05.\nbuoychain\nHigh tide at 14:05.\nkeeper\nHarbor log\n2",
+  "spans": [
+    {
+      "label": "r1",
+      "start": 0,
+      "end": 7
+    },
+    {
+      "label": "r1",
+      "start": 8,
+      "end": 23
+    },
+    {
+      "label": "r1",
+      "start": 24,
+      "end": 43
+    },
+    {
+      "label": "r1",
+      "start": 44,
+      "end": 53
+    },
+    {
+      "label": "r2",
+      "start": 54,
+      "end": 73
+    },
+    {
+      "label": "r3",
+      "start": 74,
+      "end": 80
+    },
+    {
+      "label": "r4",
+      "start": 81,
+      "end": 91
+    },
+    {
+      "label": "r5",
+      "start": 92,
+      "end": 93
+    }
+  ]
+}

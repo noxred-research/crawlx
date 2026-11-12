@@ -1,0 +1,28 @@
+{
+  "id": "s30-item-cardinality-violations",
+  "family": "selector",
+  "note": "item loader: a singular rule over two matches is a mismatch, required and optional absence differ, many keeps an empty list",
+  "expectedText": "exact_one=\"in stock\"\nmany_all=[\"$10\",\"$12\"]\nmany_missing=[]\nfirst_only=\"$10\"",
+  "spans": [
+    {
+      "label": "exact_one",
+      "start": 0,
+      "end": 20
+    },
+    {
+      "label": "many_all",
+      "start": 21,
+      "end": 43
+    },
+    {
+      "label": "many_missing",
+      "start": 44,
+      "end": 59
+    },
+    {
+      "label": "first_only",
+      "start": 60,
+      "end": 76
+    }
+  ]
+}

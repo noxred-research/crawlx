@@ -1,0 +1,13 @@
+{
+  "id": "d25-rejected-dtd-entity",
+  "family": "feed",
+  "note": "a document type declaration with an external entity is rejected without any resolution",
+  "expectedText": "Policy::Protocol(DTD and entity declarations are forbidden)",
+  "spans": [
+    {
+      "label": "error",
+      "start": 0,
+      "end": 59
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "id": "d36-probe-rss-loopback-references",
+  "family": "feed",
+  "note": "references to a listening loopback socket are proposals that scope denies; parsing and admission open no connection",
+  "expectedText": "https://news.corpus.test/probe/two",
+  "spans": [
+    {
+      "label": "item",
+      "start": 0,
+      "end": 34
+    }
+  ]
+}

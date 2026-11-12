@@ -1,0 +1,83 @@
+{
+  "id": "l98-dict-uax29-hyphen-splits",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "the|state|of|the|art|lab|opened|last|week|visitors|praised|the|well|known|director",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 9
+    },
+    {
+      "label": "token",
+      "start": 10,
+      "end": 12
+    },
+    {
+      "label": "token",
+      "start": 13,
+      "end": 16
+    },
+    {
+      "label": "token",
+      "start": 17,
+      "end": 20
+    },
+    {
+      "label": "token",
+      "start": 21,
+      "end": 24
+    },
+    {
+      "label": "token",
+      "start": 25,
+      "end": 31
+    },
+    {
+      "label": "token",
+      "start": 32,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 41
+    },
+    {
+      "label": "token",
+      "start": 42,
+      "end": 50
+    },
+    {
+      "label": "token",
+      "start": 51,
+      "end": 58
+    },
+    {
+      "label": "token",
+      "start": 59,
+      "end": 62
+    },
+    {
+      "label": "token",
+      "start": 63,
+      "end": 67
+    },
+    {
+      "label": "token",
+      "start": 68,
+      "end": 73
+    },
+    {
+      "label": "token",
+      "start": 74,
+      "end": 82
+    }
+  ]
+}

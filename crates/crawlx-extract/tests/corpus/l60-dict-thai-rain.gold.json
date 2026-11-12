@@ -1,0 +1,98 @@
+{
+  "id": "l60-dict-thai-rain",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "ฝน|ตก|หนัก|มาก|ฉัน|ไม่|มี|ร่ม|ฉัน|จึง|รอ|ที่|บ้าน|แม่|ทำ|อาหาร|ให้|ลูก",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 13
+    },
+    {
+      "label": "token",
+      "start": 14,
+      "end": 26
+    },
+    {
+      "label": "token",
+      "start": 27,
+      "end": 36
+    },
+    {
+      "label": "token",
+      "start": 37,
+      "end": 46
+    },
+    {
+      "label": "token",
+      "start": 47,
+      "end": 56
+    },
+    {
+      "label": "token",
+      "start": 57,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 73
+    },
+    {
+      "label": "token",
+      "start": 74,
+      "end": 83
+    },
+    {
+      "label": "token",
+      "start": 84,
+      "end": 93
+    },
+    {
+      "label": "token",
+      "start": 94,
+      "end": 100
+    },
+    {
+      "label": "token",
+      "start": 101,
+      "end": 110
+    },
+    {
+      "label": "token",
+      "start": 111,
+      "end": 123
+    },
+    {
+      "label": "token",
+      "start": 124,
+      "end": 133
+    },
+    {
+      "label": "token",
+      "start": 134,
+      "end": 140
+    },
+    {
+      "label": "token",
+      "start": 141,
+      "end": 156
+    },
+    {
+      "label": "token",
+      "start": 157,
+      "end": 166
+    },
+    {
+      "label": "token",
+      "start": 167,
+      "end": 176
+    }
+  ]
+}

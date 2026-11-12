@@ -77,6 +77,9 @@ impl UrlPlaneRunner {
             if let Some(llm) = &cfg.branding_llm {
                 engine = engine.with_branding_llm(Arc::clone(llm));
             }
+            if let Some(embeddings) = &cfg.embeddings {
+                engine = engine.with_embeddings(embeddings.clone());
+            }
             if let Some(ocr) = &cfg.ocr {
                 engine = engine.with_ocr(Arc::clone(ocr));
             }

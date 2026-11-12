@@ -1,0 +1,78 @@
+{
+  "id": "l83-dict-japanese-kitchen",
+  "family": "language",
+  "note": "expected tokens of the main text under dictionary_uax29, joined by |",
+  "expectedText": "母|は|台所|で|魚|を|焼き|ます|父|は|新聞|を|読み|ます",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 3
+    },
+    {
+      "label": "token",
+      "start": 4,
+      "end": 7
+    },
+    {
+      "label": "token",
+      "start": 8,
+      "end": 14
+    },
+    {
+      "label": "token",
+      "start": 15,
+      "end": 18
+    },
+    {
+      "label": "token",
+      "start": 19,
+      "end": 22
+    },
+    {
+      "label": "token",
+      "start": 23,
+      "end": 26
+    },
+    {
+      "label": "token",
+      "start": 27,
+      "end": 33
+    },
+    {
+      "label": "token",
+      "start": 34,
+      "end": 40
+    },
+    {
+      "label": "token",
+      "start": 41,
+      "end": 44
+    },
+    {
+      "label": "token",
+      "start": 45,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 55
+    },
+    {
+      "label": "token",
+      "start": 56,
+      "end": 59
+    },
+    {
+      "label": "token",
+      "start": 60,
+      "end": 66
+    },
+    {
+      "label": "token",
+      "start": 67,
+      "end": 73
+    }
+  ]
+}

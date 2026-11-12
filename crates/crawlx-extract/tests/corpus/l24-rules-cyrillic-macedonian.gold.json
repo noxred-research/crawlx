@@ -1,0 +1,103 @@
+{
+  "id": "l24-rules-cyrillic-macedonian",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "возот|тргнува|од|станицата|во|осум|часот|патниците|чекаат|на|перонот|девојчето|чита|весник|а|кондукторот|ги|проверува|билетите",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 10
+    },
+    {
+      "label": "token",
+      "start": 11,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 30
+    },
+    {
+      "label": "token",
+      "start": 31,
+      "end": 49
+    },
+    {
+      "label": "token",
+      "start": 50,
+      "end": 54
+    },
+    {
+      "label": "token",
+      "start": 55,
+      "end": 63
+    },
+    {
+      "label": "token",
+      "start": 64,
+      "end": 74
+    },
+    {
+      "label": "token",
+      "start": 75,
+      "end": 93
+    },
+    {
+      "label": "token",
+      "start": 94,
+      "end": 106
+    },
+    {
+      "label": "token",
+      "start": 107,
+      "end": 111
+    },
+    {
+      "label": "token",
+      "start": 112,
+      "end": 126
+    },
+    {
+      "label": "token",
+      "start": 127,
+      "end": 145
+    },
+    {
+      "label": "token",
+      "start": 146,
+      "end": 154
+    },
+    {
+      "label": "token",
+      "start": 155,
+      "end": 167
+    },
+    {
+      "label": "token",
+      "start": 168,
+      "end": 170
+    },
+    {
+      "label": "token",
+      "start": 171,
+      "end": 193
+    },
+    {
+      "label": "token",
+      "start": 194,
+      "end": 198
+    },
+    {
+      "label": "token",
+      "start": 199,
+      "end": 217
+    },
+    {
+      "label": "token",
+      "start": 218,
+      "end": 234
+    }
+  ]
+}

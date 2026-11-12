@@ -1,0 +1,38 @@
+{
+  "id": "l105-rules-unsupported-devanagari-market",
+  "family": "language",
+  "note": "expected tokens of the main text under unicode_rules_v1, joined by |",
+  "expectedText": "हम|बाज़ार|गए|दुकान|खुली|थी",
+  "spans": [
+    {
+      "label": "token",
+      "start": 0,
+      "end": 6
+    },
+    {
+      "label": "token",
+      "start": 7,
+      "end": 25
+    },
+    {
+      "label": "token",
+      "start": 26,
+      "end": 32
+    },
+    {
+      "label": "token",
+      "start": 33,
+      "end": 48
+    },
+    {
+      "label": "token",
+      "start": 49,
+      "end": 61
+    },
+    {
+      "label": "token",
+      "start": 62,
+      "end": 68
+    }
+  ]
+}

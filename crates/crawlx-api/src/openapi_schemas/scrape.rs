@@ -685,7 +685,8 @@ pub(super) enum ContentRequiredMetadata {
     Language,
 }
 
-/// Native Unicode-whitespace segmentation; no regex, Python or NLTK equivalence.
+/// Native segmentation: Unicode-whitespace words, linear-time regex-delimited spans or UAX 29
+/// sentence groups; no Python or NLTK equivalence.
 #[derive(JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WordChunkStrategy {
@@ -709,6 +710,17 @@ pub(super) enum WordChunkStrategy {
         #[schemars(range(min = 0, max = 999999))]
         overlap: usize,
     },
+    /// Whitespace-trimmed spans between non-empty matches of a linear-time pattern (no
+    /// backreferences or look-around), pattern 1..=512 bytes.
+    Regex {
+        #[schemars(length(min = 1, max = 512))]
+        pattern: String,
+    },
+    /// UAX 29 sentences, `window` consecutive sentences per range.
+    Sentences {
+        #[schemars(range(min = 1, max = 1000000))]
+        window: usize,
+    },
 }
 
 /// Inclusive native word-window limits. One over fails without partial results.
@@ -723,6 +735,7 @@ pub(super) struct WordChunkPolicy {
     max_input_bytes: Option<usize>,
     #[schemars(range(min = 1, max = 16777216))]
     max_scan_chars: Option<usize>,
+    /// For regex and sentence strategies: ceiling on retained segments.
     #[schemars(range(min = 1, max = 1000000))]
     max_words: Option<usize>,
     #[schemars(range(min = 1, max = 20000))]
@@ -743,13 +756,70 @@ pub(super) struct WordChunkRange {
 pub(super) struct WordChunkEnvelope {
     #[schemars(extend("const" = 1))]
     version: u16,
-    #[schemars(extend("const" = "native_unicode_whitespace_word_windows_v1"))]
+    #[schemars(extend("enum" = ["native_unicode_whitespace_word_windows_v1", "native_regex_delimited_spans_v1", "native_uax29_sentence_groups_v1"]))]
     implementation: String,
     policy: WordChunkPolicy,
     /// Digest of exact final main text bytes under crawlx.extract.chunks.final_text.v1.
     final_text_digest: String,
     #[schemars(length(max = 20000))]
     ranges: Vec<WordChunkRange>,
+}
+
+/// `clusters`: group the chunks of the final extracted text by embedding similarity. Needs
+/// `contentPolicy` with `chunks` (the units that are embedded) and an operator-configured
+/// embedding model: without one the page fails as `llm_not_configured` before it is fetched. One
+/// range over `maxVectors` fails the page; no vector is requested and nothing is truncated.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ClusterPolicy {
+    /// Exactly one; omitted fields use version-one defaults.
+    #[schemars(extend("const" = 1))]
+    version: Option<u16>,
+    /// Requested cluster count (default 3); fewer when there are fewer chunks.
+    #[schemars(range(min = 1, max = 64))]
+    clusters: Option<usize>,
+    /// Chunk (vector) ceiling checked before the embedding call (default 256).
+    #[schemars(range(min = 1, max = 512))]
+    max_vectors: Option<usize>,
+    /// Lloyd iteration ceiling (default 25).
+    #[schemars(range(min = 1, max = 100))]
+    max_iterations: Option<u32>,
+}
+
+/// One cluster: member chunks in text order and their cohesion.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ClusterGroup {
+    /// Member source ranges in text order; every chunk belongs to exactly one cluster.
+    members: Vec<WordChunkRange>,
+    /// Mean cosine similarity of the members to the centroid in thousandths.
+    #[schemars(range(min = 0, max = 1000))]
+    cohesion_millis: u16,
+}
+
+/// Source-only clusters bound to the exact final text and the effective policy; no page text is
+/// copied.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ClusterEnvelope {
+    #[schemars(extend("const" = 1))]
+    version: u16,
+    #[schemars(extend("const" = "native_spherical_kmeans_v1"))]
+    implementation: String,
+    policy: ClusterPolicy,
+    /// Label of the embedding model that produced the vectors.
+    #[schemars(length(max = 128))]
+    model: String,
+    /// Dimension of every vector.
+    dimensions: usize,
+    /// Lloyd iterations performed.
+    iterations: u32,
+    /// The assignment reached a fixed point before the iteration ceiling.
+    converged: bool,
+    /// Digest of the exact final text bytes.
+    final_text_digest: String,
+    /// Clusters ordered by their first member's position in the text.
+    clusters: Vec<ClusterGroup>,
 }
 
 /// Which content operation a `modelV1` content strategy performs.
@@ -869,6 +939,9 @@ pub(super) struct ScrapeOptions {
     /// Opt-in native article policy. Unknown keys and excessive bounds fail before admission.
     #[serde(rename = "contentPolicy")]
     content_policy: Option<ContentPolicy>,
+    /// Opt-in embedding clusters over the chunks of the final text; needs `contentPolicy.chunks`
+    /// and an embedding model.
+    clusters: Option<ClusterPolicy>,
     /// Opt-in native content outputs; omitted by default.
     outputs: Option<super::outputs::ContentOutputOptions>,
     /// Opt-in byte decoding diagnostics.
@@ -988,6 +1061,16 @@ pub(super) struct BatchScrapeRequest {
     /// request when one is invalid.
     #[serde(rename = "ignoreInvalidURLs")]
     ignore_invalid_urls: Option<bool>,
+    /// Id of an unfinished batch of the caller to add `urls` to instead of starting a new one.
+    /// The URLs join that batch's own queue and run under its concurrency ceiling; a URL the
+    /// batch already holds is not added twice, so repeating the request adds nothing. The
+    /// response carries the same `id`. Options, `webhook` and `maxConcurrency` of this request
+    /// do not apply (each is reported in `warnings`). An unknown or foreign id, or the id of
+    /// something that is not a batch, is `404`; a finished batch, or one that has not started
+    /// within a few seconds, is `409`; more URLs than the batch can hold is `400`.
+    #[serde(rename = "appendToId")]
+    #[schemars(extend("format" = "uuid"))]
+    append_to_id: Option<String>,
     #[serde(flatten)]
     options: ScrapeOptions,
 }
@@ -1128,13 +1211,13 @@ pub(super) fn spec(id: &str) -> Option<Spec> {
                 None,
             )
             .reply::<ScrapeStatusResponse>("200", "The stored scrape, or `status: scraping` while it runs."),
-        "compatBatchScrape" => Spec::new(&[400, 403, 409, 413, 422])
+        "compatBatchScrape" => Spec::new(&[400, 403, 404, 409, 413, 422])
             .json::<BatchScrapeRequest>("The URLs and the scrape options every page uses.")
             .header(
                 "Idempotency-Key",
                 "Replays the first response for the same body; the same key with another body is `422 idempotency_key_reuse`.",
             )
-            .reply::<BatchCreated>("200", "The batch was started."),
+            .reply::<BatchCreated>("200", "The batch was started, or the URLs were added to the batch named by `appendToId`."),
         "compatBatchScrapeStatus" => Spec::new(&[400, 404])
             .path("id", "Id of the batch.", Some("uuid"))
             .query::<BatchStatusQuery>()

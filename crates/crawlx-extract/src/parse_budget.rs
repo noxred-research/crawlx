@@ -1,16 +1,29 @@
 //! Process-wide parse-memory budget.
 //!
-//! `scraper`/`html5ever` allocate while they parse, so the parse cannot be refused part way.
-//! The release bar is therefore an *admission* bound, not a fully fallible parser:
+//! A parse is bounded twice. Admission refuses it up front; the fallible tree sink then keeps
+//! the tree it builds inside what was admitted:
 //!
 //! * every HTML parse in this crate that can report a typed error first charges
 //!   [`charge_bytes`]`(input_len)` against the process-wide [`global`] budget;
 //! * the charge is a nonwaiting compare-and-swap, so a refused parse never blocks while it
 //!   holds a CPU-pool permit or a parent's permit;
+//! * the tree is built by [`crate::dom::parse_document`] / [`crate::dom::parse_fragment`], which
+//!   spend that reservation allocation by allocation *before* each allocation happens (node
+//!   storage is reserved fallibly, every payload is charged first) and, when the model needs
+//!   more than was admitted, grow the reservation from this same budget. A refusal there is
+//!   [`ParseBudgetExhausted`], the partial tree is dropped with the parser and the growth is
+//!   released at once;
 //! * the [`ParseCharge`] guard lives until the parsed DOM and everything derived from it have
 //!   been dropped;
 //! * [`PARSE_BYTES_PER_INPUT_BYTE`] is the measured worst-case peak heap per input byte plus a
-//!   margin, enforced by `tests/parse_memory_ceiling.rs`.
+//!   margin, enforced by `tests/parse_memory_ceiling.rs`, which also checks that the sink's own
+//!   model never undercounts the measured peak of a corpus shape.
+//!
+//! What the sink cannot charge individually: the tokenizer's token strings, the tree builder's
+//! stacks and the parser's own vectors are allocated inside `html5ever` and are covered by a
+//! modelled allowance (per input byte and per element), not by a fallible call of their own;
+//! the derived content tree ([`crate::dom::convert_node`]) and selector indexes are charged only
+//! through the input multiplier.
 //!
 //! # Ceiling factor
 //!
@@ -31,7 +44,7 @@
 //! (`crawlx_worker::RuntimeConfig::parse_memory_bytes`, environment `CRAWLX_PARSE_MEMORY_BYTES`)
 //! and defaults to [`DEFAULT_PARSE_MEMORY_BYTES`]: 4 GiB shared with decoded acquisition
 //! inputs and transient sink buffers. An input whose charge exceeds the whole budget is
-//! always refused. This remains measured parser admission, not fallible allocation.
+//! always refused.
 
 use crawlx_core::parser_memory::{ByteAdmissionError, ByteBudget, BytePermit};
 use std::sync::{Arc, LazyLock};
@@ -56,7 +69,8 @@ pub fn charge_bytes(input_len: usize) -> Option<usize> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ParseBudgetExhausted {
-    /// Bytes the parse asked for (`usize::MAX` when the charge overflowed).
+    /// Bytes the parse asked for (`usize::MAX` when the charge overflowed or the allocator
+    /// refused node storage the budget had admitted).
     pub requested: usize,
     /// Bytes unreserved when the request was refused.
     pub available: usize,
@@ -89,9 +103,11 @@ impl ParseBudgetExhausted {
     /// The request is larger than the whole budget, so it is refused no matter how many other
     /// parses finish: a terminal "page exceeds the parse-memory budget", not transient pressure.
     /// At the default limit this is any input above `limit / 500` bytes (about 8 MiB for 4 GiB).
+    /// A `usize::MAX` request (an overflowed charge, or node storage the allocator refused) exceeds
+    /// every budget, however large.
     #[must_use]
     pub const fn exceeds_budget(&self) -> bool {
-        self.requested > self.limit
+        self.requested > self.limit || self.requested == usize::MAX
     }
 }
 
@@ -148,6 +164,7 @@ impl ParseBudget {
         Ok(ParseCharge {
             budget: Arc::clone(self),
             permit,
+            tree_bytes: 0,
         })
     }
 }
@@ -160,6 +177,8 @@ impl ParseBudget {
 pub struct ParseCharge {
     budget: Arc<ParseBudget>,
     permit: BytePermit,
+    /// Peak bytes the fallible tree sink modelled for the last tree built under this charge.
+    tree_bytes: usize,
 }
 
 impl ParseCharge {
@@ -184,9 +203,39 @@ impl ParseCharge {
         self.permit.bytes()
     }
 
+    /// Peak live parse heap the fallible tree sink ([`crate::dom::parse_document`]) modelled
+    /// for the tree it last built under this charge. It is spent from the reservation this
+    /// guard holds, which grows only when the model needs more.
+    #[must_use]
+    pub const fn tree_bytes(&self) -> usize {
+        self.tree_bytes
+    }
+
     /// Move ownership to a document or sink carrier after parsing finishes.
     pub fn into_permit(self) -> BytePermit {
         self.permit
+    }
+
+    pub(crate) fn budget(&self) -> &ParseBudget {
+        &self.budget
+    }
+
+    /// Start a tree build: the prepaid bytes, an empty permit the build grows past them, and
+    /// the budget the growth is taken from.
+    pub(crate) fn begin_tree(
+        &mut self,
+    ) -> Result<(BytePermit, usize, Arc<ParseBudget>), ParseBudgetExhausted> {
+        let extra = self.permit.split(0).map_err(memory_error)?;
+        Ok((extra, self.permit.bytes(), Arc::clone(&self.budget)))
+    }
+
+    /// Keep what a finished tree build grew: the tree lives as long as this guard.
+    pub(crate) fn end_tree(&mut self, grown: BytePermit, peak: usize) {
+        // `grown` was split from this guard's permit, so the budgets always match
+        if let Err(donor) = self.permit.merge(grown) {
+            drop(donor);
+        }
+        self.tree_bytes = peak;
     }
 }
 

@@ -1,0 +1,73 @@
+{
+  "id": "a24-nested-layout-tables",
+  "family": "article_body",
+  "note": "page laid out with four levels of nested tables, font elements and line breaks",
+  "expectedText": "Little Marsh Parish News\nHome\nDiary\nClubs\nQuick links\nBin days\nHall booking\nParish council\nThe Village Hall Roof Fund\nThe parish has raised sixty percent of the money needed to replace the village hall roof, after a bring-and-buy sale on Saturday added more than four thousand euros to the total.\nThe old tiles have been leaking above the stage since the autumn, and the badminton club has already moved its games to the school gym. A builder's survey says the timbers underneath are still sound.\nVolunteers will run a quiz night next month and a sponsored walk in the spring. Anyone wishing to give can leave an envelope at the post office or ask the treasurer, Edda Pryce, for a form.\nLittle Marsh Parish News is printed by volunteers. Page last updated by the clerk.",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 24
+    },
+    {
+      "label": "boilerplate",
+      "start": 25,
+      "end": 29
+    },
+    {
+      "label": "boilerplate",
+      "start": 30,
+      "end": 35
+    },
+    {
+      "label": "boilerplate",
+      "start": 36,
+      "end": 41
+    },
+    {
+      "label": "boilerplate",
+      "start": 42,
+      "end": 53
+    },
+    {
+      "label": "boilerplate",
+      "start": 54,
+      "end": 62
+    },
+    {
+      "label": "boilerplate",
+      "start": 63,
+      "end": 75
+    },
+    {
+      "label": "boilerplate",
+      "start": 76,
+      "end": 90
+    },
+    {
+      "label": "body",
+      "start": 91,
+      "end": 117
+    },
+    {
+      "label": "body",
+      "start": 118,
+      "end": 296
+    },
+    {
+      "label": "body",
+      "start": 297,
+      "end": 496
+    },
+    {
+      "label": "body",
+      "start": 497,
+      "end": 686
+    },
+    {
+      "label": "boilerplate",
+      "start": 687,
+      "end": 769
+    }
+  ]
+}

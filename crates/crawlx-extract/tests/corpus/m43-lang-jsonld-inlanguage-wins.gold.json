@@ -1,0 +1,18 @@
+{
+  "id": "m43-lang-jsonld-inlanguage-wins",
+  "family": "meta_exact",
+  "note": "a Portuguese page with a wrong html lang: JSON-LD inLanguage outranks the Open Graph locale and the html lang",
+  "expectedText": "title=Feira de livros chega ao porto\nlanguage=pt-BR",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 36
+    },
+    {
+      "label": "language",
+      "start": 46,
+      "end": 51
+    }
+  ]
+}

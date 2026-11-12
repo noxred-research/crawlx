@@ -1,0 +1,73 @@
+{
+  "id": "c10-german-forum-quoted-posts",
+  "family": "comments",
+  "note": "German forum topic whose replies quote earlier posts; quotes are part of the posts",
+  "expectedText": "Gartenforum Nordlicht Bereiche Suche Anmelden\nWelche Hecke für den Sichtschutz?\nhortensie77\nWir suchen eine immergrüne Hecke als Sichtschutz zur Straße. Sie soll schnell wachsen, aber nicht jeden Monat geschnitten werden müssen. Der Boden ist lehmig, die Lage halbschattig.\nkirschblüte\nSie soll schnell wachsen, aber nicht jeden Monat geschnitten werden müssen.\nDann nimm keinen Kirschlorbeer. Eibe wächst langsamer, verträgt aber Halbschatten und lehmigen Boden und braucht nur einen Schnitt im Jahr.\nwurzelwerner\nIch habe vor zehn Jahren Liguster gepflanzt und bereue es nicht. Zweimal im Jahr schneiden, dafür ist er in zwei Jahren blickdicht.\nhortensie77\nZweimal im Jahr schneiden, dafür ist er in zwei Jahren blickdicht.\nDas klingt gut. Dann probieren wir es mit Liguster und geben im Frühjahr Bescheid.\nForenregeln Impressum Datenschutz",
+  "spans": [
+    {
+      "label": "boilerplate",
+      "start": 0,
+      "end": 45
+    },
+    {
+      "label": "body",
+      "start": 46,
+      "end": 80
+    },
+    {
+      "label": "body",
+      "start": 81,
+      "end": 92
+    },
+    {
+      "label": "body",
+      "start": 93,
+      "end": 277
+    },
+    {
+      "label": "body",
+      "start": 278,
+      "end": 290
+    },
+    {
+      "label": "quote",
+      "start": 291,
+      "end": 367
+    },
+    {
+      "label": "body",
+      "start": 368,
+      "end": 509
+    },
+    {
+      "label": "body",
+      "start": 510,
+      "end": 522
+    },
+    {
+      "label": "body",
+      "start": 523,
+      "end": 655
+    },
+    {
+      "label": "body",
+      "start": 656,
+      "end": 667
+    },
+    {
+      "label": "quote",
+      "start": 668,
+      "end": 735
+    },
+    {
+      "label": "body",
+      "start": 736,
+      "end": 819
+    },
+    {
+      "label": "boilerplate",
+      "start": 820,
+      "end": 853
+    }
+  ]
+}

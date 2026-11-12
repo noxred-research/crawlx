@@ -1,0 +1,28 @@
+{
+  "id": "m39-rights-copyright-and-license-anchor",
+  "family": "meta_exact",
+  "note": "a copyright meta tag gives the rights statement and a footer link with rel=license gives the license URL",
+  "expectedText": "title=Orchard Lane Press Opens a Reading Room\nlanguage=en\nrights=© 2026 Orchard Lane Press\nlicense=https://licenses.corpus.test/open-text/1.0",
+  "spans": [
+    {
+      "label": "title",
+      "start": 6,
+      "end": 45
+    },
+    {
+      "label": "language",
+      "start": 55,
+      "end": 57
+    },
+    {
+      "label": "rights",
+      "start": 65,
+      "end": 91
+    },
+    {
+      "label": "license",
+      "start": 100,
+      "end": 142
+    }
+  ]
+}

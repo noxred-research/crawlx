@@ -1,0 +1,28 @@
+{
+  "id": "s38-limit-expression-bytes",
+  "family": "selector",
+  "note": "one-over limit: an expression of exactly 4096 bytes compiles and evaluates, one byte more fails before parsing, for xpath and css",
+  "expectedText": "4079\nerror:Budget(expression bytes)\nonly\nerror:Budget(expression bytes)",
+  "spans": [
+    {
+      "label": "x_ok",
+      "start": 0,
+      "end": 4
+    },
+    {
+      "label": "x_over",
+      "start": 5,
+      "end": 35
+    },
+    {
+      "label": "c_ok",
+      "start": 36,
+      "end": 40
+    },
+    {
+      "label": "c_over",
+      "start": 41,
+      "end": 71
+    }
+  ]
+}
