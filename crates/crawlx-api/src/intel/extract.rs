@@ -10,7 +10,7 @@ use crate::intel::search::SearchQuery;
 use crate::intel::usage::{self, Cost};
 use crate::intel::webhook::{JobEvent, JobWebhook};
 use crate::state::AppState;
-use crawlx_core::TenantId;
+use crawlx_core::{TenantId, Timestamp};
 use crawlx_model::llm::{ExtractDocument, LlmError, TokenUsage};
 use crawlx_storage::JobStatus;
 use futures::StreamExt;
@@ -373,7 +373,7 @@ async fn extract_validated(
 ///
 /// The entries follow the order of the attempts, which is the order of `urls` (a glob expands in
 /// the order the map tool returns its matches), then the web search hits. Nothing in the order
-/// depends on how long a page took.
+/// depends on how long a page took; only the `timing` stamps do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct UrlTrace {
     /// The URL as the job attempted it.
@@ -388,10 +388,20 @@ struct UrlTrace {
     final_url: Option<String>,
     /// The page was among those the model read.
     used_in_completion: bool,
+    /// When the URL joined the job's page list (glob expansion or web search).
+    discovered_at: Timestamp,
+    /// When the scrape returned the page; `None` when the scrape failed.
+    scraped_at: Option<Timestamp>,
 }
 
 impl UrlTrace {
-    fn scraped(url: &str, final_url: Option<String>, warning: Option<String>) -> Self {
+    fn scraped(
+        url: &str,
+        final_url: Option<String>,
+        warning: Option<String>,
+        discovered_at: Timestamp,
+        scraped_at: Timestamp,
+    ) -> Self {
         Self {
             url: url.to_owned(),
             status: "scraped",
@@ -399,10 +409,12 @@ impl UrlTrace {
             warning,
             final_url,
             used_in_completion: false,
+            discovered_at,
+            scraped_at: Some(scraped_at),
         }
     }
 
-    fn failed(url: &str, error: String) -> Self {
+    fn failed(url: &str, error: String, discovered_at: Timestamp) -> Self {
         Self {
             url: url.to_owned(),
             status: "error",
@@ -410,13 +422,24 @@ impl UrlTrace {
             warning: None,
             final_url: None,
             used_in_completion: false,
+            discovered_at,
+            scraped_at: None,
         }
     }
 
-    fn to_json(&self) -> Value {
+    /// The wire entry; `completed_at` is when the job finished with its page list.
+    fn to_json(&self, completed_at: Timestamp) -> Value {
+        let mut timing = json!({
+            "discoveredAt": crate::util::ts(self.discovered_at),
+            "completedAt": crate::util::ts(completed_at),
+        });
+        if let Some(at) = self.scraped_at {
+            timing["scrapedAt"] = json!(crate::util::ts(at));
+        }
         let mut out = json!({
             "url": self.url,
             "status": self.status,
+            "timing": timing,
             "usedInCompletion": self.used_in_completion,
         });
         if let Some(error) = &self.error {
@@ -439,13 +462,13 @@ fn mark_used(trace: &mut [UrlTrace], docs: &[ExtractDocument]) {
     }
 }
 
-fn trace_json(trace: &[UrlTrace]) -> Value {
-    Value::Array(trace.iter().map(UrlTrace::to_json).collect())
+fn trace_json(trace: &[UrlTrace], completed_at: Timestamp) -> Value {
+    Value::Array(trace.iter().map(|t| t.to_json(completed_at)).collect())
 }
 
 /// The stored result of a job that failed: only the trace, and only when it was asked for.
-fn trace_result(req: &ExtractRequest, trace: &[UrlTrace]) -> Option<Value> {
-    (req.url_trace && !trace.is_empty()).then(|| json!({ "urlTrace": trace_json(trace) }))
+fn trace_result(req: &ExtractRequest, trace: &[UrlTrace], completed_at: Timestamp) -> Option<Value> {
+    (req.url_trace && !trace.is_empty()).then(|| json!({ "urlTrace": trace_json(trace, completed_at) }))
 }
 
 struct Gathered {
@@ -470,6 +493,9 @@ async fn gather(
 ) -> Result<Gathered, String> {
     let tools = common::tools(state).map_err(|e| e.message)?;
     let (mut pages, mut warnings) = expand(state, tenant, req).await;
+    let expanded_at = state.clock.now();
+    let expanded = pages.len();
+    let mut searched_at = expanded_at;
     let mut credits = 0_u64;
     let mut search_credits = 0_u64;
     if req.enable_web_search {
@@ -490,43 +516,62 @@ async fn gather(
             .map_err(|e| common::search_error(&e).message)?;
         search_credits = search_credits.saturating_add(2);
         warnings.extend(found.warnings);
+        searched_at = state.clock.now();
         for h in found.web {
             if pages.len() < MAX_PAGES && is_http_url(&h.url) && !pages.contains(&h.url) {
                 pages.push(h.url);
             }
         }
     }
-    let scraped: Vec<(String, Result<crate::intel::tools::ScrapedPage, String>)> =
-        futures::stream::iter(pages.into_iter().map(|url| {
-            let tools = tools.clone();
-            let options = req.scrape_options.clone();
-            async move {
-                let r = tools
-                    .scrape(tenant, &url, &options)
-                    .await
-                    .map_err(|e| e.to_string());
-                (url, r)
-            }
-        }))
-        .buffered(SCRAPE_CONCURRENCY)
-        .take_until(cancel.cancelled())
-        .collect()
-        .await;
+    type Attempt = (
+        String,
+        Result<crate::intel::tools::ScrapedPage, String>,
+        Timestamp,
+    );
+    let scraped: Vec<Attempt> = futures::stream::iter(pages.into_iter().map(|url| {
+        let tools = tools.clone();
+        let clock = state.clock.clone();
+        let options = req.scrape_options.clone();
+        async move {
+            let r = tools
+                .scrape(tenant, &url, &options)
+                .await
+                .map_err(|e| e.to_string());
+            (url, r, clock.now())
+        }
+    }))
+    .buffered(SCRAPE_CONCURRENCY)
+    .take_until(cancel.cancelled())
+    .collect()
+    .await;
     let mut docs = Vec::new();
     let mut trace = Vec::new();
-    for (url, r) in scraped {
+    for (i, (url, r, returned_at)) in scraped.into_iter().enumerate() {
+        let discovered_at = if i < expanded { expanded_at } else { searched_at };
         match r {
             Ok(page) => {
                 credits = credits.saturating_add(page.credits);
                 if page.markdown().trim().is_empty() {
                     warnings.push(format!("{url} had no text content"));
-                    trace.push(UrlTrace::scraped(&url, None, Some("no text content".to_owned())));
+                    trace.push(UrlTrace::scraped(
+                        &url,
+                        None,
+                        Some("no text content".to_owned()),
+                        discovered_at,
+                        returned_at,
+                    ));
                 } else {
                     let final_url = Some(page.source_url())
                         .filter(|s| !s.is_empty())
                         .unwrap_or(&url)
                         .to_owned();
-                    trace.push(UrlTrace::scraped(&url, Some(final_url.clone()), None));
+                    trace.push(UrlTrace::scraped(
+                        &url,
+                        Some(final_url.clone()),
+                        None,
+                        discovered_at,
+                        returned_at,
+                    ));
                     docs.push(ExtractDocument {
                         url: final_url,
                         markdown: page.markdown().to_owned(),
@@ -534,7 +579,7 @@ async fn gather(
                 }
             }
             Err(e) => {
-                trace.push(UrlTrace::failed(&url, e.clone()));
+                trace.push(UrlTrace::failed(&url, e.clone(), discovered_at));
                 warnings.push(format!("{url} could not be scraped: {e}"));
             }
         }
@@ -646,7 +691,7 @@ pub async fn run(
                 "warnings": warnings,
             });
             if req.url_trace {
-                stored["urlTrace"] = trace_json(&trace);
+                stored["urlTrace"] = trace_json(&trace, state.clock.now());
             }
             jobs::finish(
                 &state,
@@ -717,7 +762,7 @@ pub async fn run(
                 job,
                 Outcome {
                     status: JobStatus::Failed,
-                    result: trace_result(&req, &trace),
+                    result: trace_result(&req, &trace, state.clock.now()),
                     error: Some(message.clone()),
                     stop_reason: None,
                     tokens_used: tokens.total(),

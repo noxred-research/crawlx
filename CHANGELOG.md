@@ -8,6 +8,15 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed: extract `urlTrace` entries carry the required `timing` object
+
+Every `urlTrace` entry of `GET /v2/extract/{id}` now has `timing`, which the compatibility
+wire type declares required: `discoveredAt` (the URL joined the job's page list through
+glob expansion or web search), `scrapedAt` (the scrape returned the page; absent on failed
+pages) and `completedAt` (the job finished with its page list). Clients that read
+`timing.discoveredAt` no longer find it undefined. The stamps come from the API clock; the
+order of the entries still does not depend on them.
+
 ### Security: backported the cache iterator aliasing fix to the pinned TLS-profile client
 
 The pinned TLS-profile HTTP client requires `lru` 0.13, whose `IterMut` created a mutable

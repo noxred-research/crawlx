@@ -114,7 +114,7 @@ Mounted by `crates/crawlx-api/src/routes/mod.rs` behind the key check, all under
 | crawl | `POST /v2/crawl`, `GET`/`DELETE /v2/crawl/{id}`, `GET /v2/crawl/{id}/errors`, `GET /v2/crawl/{id}/ws`, `GET /v2/crawl/active`, `POST /v2/crawl/params-preview` |
 | map | `POST /v2/map` |
 | search | `POST /v2/search`, `POST /v2/search/{jobId}/feedback`, `GET`/`POST /v2/search/developer`, `GET`/`POST /v2/search/gov`, `GET /v2/search/research/papers[/{paperId}[/similar]]` |
-| extract | `POST /v2/extract`, `GET /v2/extract/{id}` (`urlTrace: true` adds every attempted page, failed ones included, to the status) |
+| extract | `POST /v2/extract`, `GET /v2/extract/{id}` (`urlTrace: true` adds every attempted page, failed ones included, to the status, each with `timing.discoveredAt`, `timing.completedAt` and, for scraped pages, `timing.scrapedAt`) |
 | agent | `GET`/`POST /v2/agent`, `GET`/`DELETE /v2/agent/{jobId}`, `GET /v2/agent/{jobId}/trace`, `GET /v2/agent/{jobId}/snapshots/{snapshotId}` |
 | parse | `POST /v2/parse`, `GET /v2/parse/formats` |
 | monitor | `POST`/`GET /v2/monitor`, `GET`/`PATCH`/`DELETE /v2/monitor/{monitorId}`, `POST /v2/monitor/{monitorId}/run`, `GET /v2/monitor/{monitorId}/checks[/{checkId}]` |
