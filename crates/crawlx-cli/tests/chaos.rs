@@ -775,9 +775,9 @@ async fn sigkill_on_counter_fixture_repeats_no_non_idempotent_action() {
         return;
     };
     let seed_url = h.gym.fixture_url("counter");
-    // The failpoint sleeps after `perform`: kill once a click is `intended` *and* its POST
-    // reached the server (the count exceeds the clicks that already succeeded), so the kill
-    // lands with the effect applied and T2 unwritten.
+    // The failpoint sleeps after `perform`: kill once a button press is `intended` *and* its
+    // POST reached the server (the count exceeds the presses that already succeeded), so the
+    // kill lands with the effect applied and T2 unwritten.
     let gym = &h.gym;
     let killed = h
         .crawl_and_kill(
@@ -786,12 +786,15 @@ async fn sigkill_on_counter_fixture_repeats_no_non_idempotent_action() {
             "6",
             "after_perform_before_outcome",
             |rows| {
-                let intended_click = rows.iter().any(|(_, k, s)| k == "click" && s == "intended");
-                let succeeded_clicks = rows
+                // The button is pressed by a `click` or a `keyboard_activate`; the seeded
+                // strategies may pick either for the same control.
+                let activation = |k: &str| k == "click" || k == "keyboard_activate";
+                let intended_press = rows.iter().any(|(_, k, s)| activation(k) && s == "intended");
+                let succeeded_presses = rows
                     .iter()
-                    .filter(|(_, k, s)| k == "click" && s == "succeeded")
+                    .filter(|(_, k, s)| activation(k) && s == "succeeded")
                     .count();
-                (intended_click && gym.counter() > u64::try_from(succeeded_clicks).unwrap())
+                (intended_press && gym.counter() > u64::try_from(succeeded_presses).unwrap())
                     || succeeded(rows) >= 2
             },
         )
