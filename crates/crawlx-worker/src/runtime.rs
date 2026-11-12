@@ -32,7 +32,6 @@ pub mod diagnostics {
     ///
     /// Requires the opt-in `tokio_unstable` runtime hooks. Unlike a request wrapper,
     /// these estimates include every task scheduled on each worker.
-    #[must_use]
     pub fn worker_mean_polls(handle: &tokio::runtime::Handle) -> impl Iterator<Item = std::time::Duration> {
         let metrics = handle.metrics();
         (0..metrics.num_workers()).map(move |worker| metrics.worker_mean_poll_time(worker))

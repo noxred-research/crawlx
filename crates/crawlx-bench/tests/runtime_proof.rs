@@ -32,6 +32,12 @@ use tracing_subscriber::prelude::*;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// Size of the shared PostgreSQL pool. A pooled connection is opened on demand and then lives
+/// for the process; each one keeps its own prepared-statement cache and protocol buffers
+/// (about 130 KiB resident, measured). That is a bounded, one-time cost per connection, so the
+/// proof drives the pool to this size before the baseline and asserts it never changes.
+const POOL_CONNECTIONS: u32 = 16;
+
 #[test]
 #[ignore = "requires PostgreSQL, Chromium, tokio_unstable, Linux /proc; real 30-second pressure window"]
 fn resource_reactor_200rps_with_saturated_browser_and_cpu_pools() {
@@ -66,7 +72,9 @@ fn execute(duration: Duration, mode: EvidenceMode) {
     // Explicit execution without prerequisites fails, never silently passes as a skip.
     let db = std::env::var("CRAWLX_TEST_DATABASE_URL").expect("set CRAWLX_TEST_DATABASE_URL");
     let executable = crawlx_browser::launch::find_executable().expect("set CRAWLX_CHROMIUM_PATH");
-    assert!(cfg!(target_os = "linux"), "RSS proof requires Linux /proc");
+    if !cfg!(target_os = "linux") {
+        panic!("RSS proof requires Linux /proc");
+    }
     // Subscriber owns a separate bounded aggregator runtime. Only static task names and
     // counters are exported. No page, request, credential or model payload is logged.
     static CONSOLE: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
@@ -136,7 +144,7 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
         db,
         StoreConfig {
             schema: Some(format!("runtime_proof_{}", uuid::Uuid::now_v7().simple())),
-            max_connections: 16,
+            max_connections: POOL_CONNECTIONS,
             ..StoreConfig::default()
         },
     )
@@ -151,7 +159,7 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
             .unwrap()
             .with_index(Arc::new(pg.clone())),
     );
-    let repos = Repos::pg(&pg, artifacts.clone());
+    let repos = Repos::over_store(&pg, artifacts.clone());
     let key = generate_key();
     let tenant = tenant_id_for("runtime-proof");
     repos
@@ -257,6 +265,9 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
     cfg.launch.executable = executable;
     cfg.launch.allow_unpinned = true;
     cfg.launch.unsafe_no_sandbox_for_ci = std::env::var_os("CRAWLX_UNSAFE_NO_SANDBOX_FOR_CI").is_some();
+    // Private access without an authorization record needs the operator's explicit CIDR: the
+    // fixture origin is loopback only.
+    cfg.egress.extra_allow = vec!["127.0.0.1/32".parse().unwrap()];
     let mut rc = RunContext::build(&run, &cfg, stores.clone(), None, None, stop.clone(), None, None)
         .await
         .unwrap();
@@ -390,6 +401,33 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
         ..LoadConfig::default()
     };
     let load_report_path = dir.path().join("load-report.json");
+    // Saturate the database pool first. The measured 200 rps load needs only a few connections
+    // at once, so a latency spike during the window would otherwise open one more (and with it
+    // another prepared-statement cache), which reads as RSS growth although it is bounded by
+    // `POOL_CONNECTIONS`. A scheduled rate far above capacity keeps all 64 client slots busy,
+    // which holds more requests than the pool has connections.
+    for _ in 0..6 {
+        assert!(spawn_load(
+            &LoadConfig {
+                rps: 20_000.0,
+                duration: Duration::from_secs(5),
+                ..load_cfg.clone()
+            },
+            &load_report_path,
+        )
+        .wait()
+        .await
+        .unwrap()
+        .success());
+        if pg.pool().size() == POOL_CONNECTIONS {
+            break;
+        }
+    }
+    assert_eq!(
+        pg.pool().size(),
+        POOL_CONNECTIONS,
+        "saturating warmup did not open every pooled connection"
+    );
     assert!(spawn_load(
         &LoadConfig {
             duration: Duration::from_secs(5),
@@ -425,6 +463,7 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
     let mut max_rss = initial;
     let mut first_window = [0_u64; 30];
     let mut last_window = [0_u64; 30];
+    let mut series = Vec::<u64>::new();
     let mut samples = 0_usize;
     let monitor = RuntimeMonitor::new(&tokio::runtime::Handle::current());
     let mut intervals = monitor.intervals();
@@ -453,6 +492,7 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
                 first_window[samples] = rss;
             }
             last_window[samples % 30] = rss;
+            series.push(rss);
         }
         samples = samples.saturating_add(1);
         let occupancy = handle.mailbox_bound().saturating_sub(handle.mailbox_capacity());
@@ -463,6 +503,11 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
         assert!(
             !waiting_context.is_finished(),
             "browser permit escaped saturation"
+        );
+        assert_eq!(
+            pg.pool().size(),
+            POOL_CONNECTIONS,
+            "database pool changed size inside the measured window"
         );
         assert_eq!(rc.pool.browsers(), 1);
         assert_eq!(rc.pool.available_contexts(), 0);
@@ -542,7 +587,12 @@ async fn proof(db: &str, executable: std::path::PathBuf, duration: Duration, mod
     eprintln!("runtime proof evidence={mode:?} elapsed={measured:?} samples={samples} worker_worst_mean={worst_worker:?} actor_slow_polls={slow_polls} mailbox_peak={max_occupancy} completed={}\n{}",
         completed.load(Ordering::Relaxed).saturating_sub(initial_completed), report.markdown());
     if mode == EvidenceMode::Resource {
-        eprintln!("resource RSS rss_kib_min={min_rss} rss_kib_max={max_rss} first30_sum={first_window} last30_sum={last_window}");
+        // Shape of the series (plateau or slope) in 30-second means, for the proof log.
+        let means: Vec<u64> = series
+            .chunks(30)
+            .map(|chunk| chunk.iter().sum::<u64>() / u64::try_from(chunk.len()).unwrap_or(1))
+            .collect();
+        eprintln!("resource RSS rss_kib_min={min_rss} rss_kib_max={max_rss} first30_sum={first_window} last30_sum={last_window} pool_connections={POOL_CONNECTIONS} mean30s_kib={means:?}");
     }
     assert_eq!(report.dropped, 0);
     assert!(
@@ -704,7 +754,9 @@ mod url_filter {
     #[test]
     #[ignore = "optimized timing gate; requires PostgreSQL, Chromium and fresh --exact process"]
     fn managed_browser_keeps_single_filter_worker_above_100k_urls_per_second() {
-        assert!(!cfg!(debug_assertions), "build this timing gate with --release");
+        if cfg!(debug_assertions) {
+            panic!("build this timing gate with --release");
+        }
         assert!(
             std::env::args().any(|arg| arg == "--exact"),
             "run this timing gate alone in a fresh process with --exact"

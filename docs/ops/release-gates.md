@@ -291,3 +291,24 @@ Exit rules:
 
 A latency window that pushes the in-window p99 above the gate therefore fails a latency-only
 run: pick a latency the gate can absorb.
+
+## Runtime resource proof
+
+An opt-in ten-minute workload exercises real PostgreSQL, Chromium, the session actor, the CPU
+pool, the HTTP API at 200 requests per second and a stalled remote model behind a bounded
+guard. It fails on any slow actor poll, any API error, or a mean resident memory in the last
+30 seconds more than 2 MiB above the first 30 seconds. Before the baseline it saturates the
+database pool and then asserts that the pool size stays fixed through the window, so pool
+growth cannot read as a leak. Run it alone on an idle host, in a fresh process:
+
+```sh
+RUSTFLAGS='--cfg tokio_unstable' CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='env RUST_MIN_STACK=1048576' \
+  cargo test --release -p crawlx-bench --features runtime-diagnostics --test runtime_proof \
+  resource_stalled_model_backpressure_rss_ten_minutes -- --ignored --exact --nocapture --test-threads=1
+```
+
+The log prints the evidence line (worst worker mean poll, slow actor polls, mailbox peak,
+completed operations), the per-route latency table and the resident-memory series as
+30-second means. A recorded run on the current tree: 600 s, 1,750,909 operations, worst worker
+mean poll 54 µs, no slow actor polls, no API errors, resident memory 57.3–58.6 MiB with the last
+30-second mean below the first.

@@ -8,6 +8,17 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed: runtime proof RSS gate counted database pool growth
+
+The ten-minute RSS proof compared a baseline taken while the shared PostgreSQL pool held four
+connections with a window in which it had grown to eight (sixteen at most). The heap did not
+leak: live allocations stayed near 3 MiB, and RSS rose by about 130 KiB for each connection
+the pool opened on a latency spike, because every connection keeps its own prepared-statement
+cache and protocol buffers. The proof now saturates the pool before the baseline, asserts that
+it holds every configured connection, and asserts that its size does not change during the
+measured window. The 2 MiB first-window/last-window gate is unchanged, and the proof log now
+prints the RSS series as 30-second means.
+
 ### Fixed: origin admission waits instead of timing out under contention
 
 Origin admission on PostgreSQL and MariaDB no longer fails a queued caller with a pool timeout.
