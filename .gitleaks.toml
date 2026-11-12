@@ -28,4 +28,6 @@ regexes = [
   '''^t=cx_live_ABCDEFGHIJKLMNOPQRSTUVWXYZ$''',
   # Digest domain labels of the ZDR projection unit test, not credentials.
   '''^crawlx/(?:test|other)/v1$''',
+  # Credential canary the archive wire-record test proves is dropped from records.
+  '''^wire-secret-key-12345678$''',
 ]
