@@ -8,6 +8,36 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Fixed: extract `urlTrace` entries carry the required `timing` object
+
+Every `urlTrace` entry of `GET /v2/extract/{id}` now has `timing`, which the compatibility
+wire type declares required: `discoveredAt` (the URL joined the job's page list through
+glob expansion or web search), `scrapedAt` (the scrape returned the page; absent on failed
+pages) and `completedAt` (the job finished with its page list). Clients that read
+`timing.discoveredAt` no longer find it undefined. The stamps come from the API clock; the
+order of the entries still does not depend on them.
+
+### Security: backported the cache iterator aliasing fix to the pinned TLS-profile client
+
+The pinned TLS-profile HTTP client requires `lru` 0.13, whose `IterMut` created a mutable
+reference to every key that the cache's own index still pointed at (GHSA-rhfx-m35p-ff5j). The
+client's idle-connection sweep walks that iterator, so the undefined behavior was reachable.
+The fixed `lru` releases need a newer toolchain than the workspace pins, so `vendor/lru` carries
+the upstream two-line fix on 0.13.0 and the workspace and fuzz builds select it through
+`[patch.crates-io]`. A Miri run reports undefined behavior on the unpatched iterator and none on
+the vendored one.
+
+### Fixed: runtime proof RSS gate counted database pool growth
+
+The ten-minute RSS proof compared a baseline taken while the shared PostgreSQL pool held four
+connections with a window in which it had grown to eight (sixteen at most). The heap did not
+leak: live allocations stayed near 3 MiB, and RSS rose by about 130 KiB for each connection
+the pool opened on a latency spike, because every connection keeps its own prepared-statement
+cache and protocol buffers. The proof now saturates the pool before the baseline, asserts that
+it holds every configured connection, and asserts that its size does not change during the
+measured window. The 2 MiB first-window/last-window gate is unchanged, and the proof log now
+prints the RSS series as 30-second means.
+
 ### Fixed: origin admission waits instead of timing out under contention
 
 Origin admission on PostgreSQL and MariaDB no longer fails a queued caller with a pool timeout.

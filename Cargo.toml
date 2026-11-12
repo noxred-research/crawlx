@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["crates/*"]
 # `fuzz/` is its own cargo-fuzz workspace; it must not inherit the lints or profiles.
-exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver", "vendor/ego-tree"]
+exclude = ["fuzz", "vendor/pdf-loader/lopdf-0.46.0", "vendor/hickory-resolver", "vendor/ego-tree", "vendor/lru"]
 
 [workspace.package]
 version = "0.1.0"
@@ -215,5 +215,7 @@ strip = false
 lopdf = { path = "vendor/pdf-loader/lopdf-0.46.0" }
 # Keep baseline DNS failover and configured TCP retry on the security-patched release.
 hickory-resolver = { path = "vendor/hickory-resolver" }
+# Backport the aliasing fix for `IterMut` to the release the pinned TLS-profile client requires.
+lru = { path = "vendor/lru" }
 # Reserve HTML tree node storage fallibly (`Tree::try_reserve`) so the parse can refuse memory instead of aborting.
 ego-tree = { path = "vendor/ego-tree" }

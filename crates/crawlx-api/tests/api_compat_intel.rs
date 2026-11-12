@@ -27,6 +27,7 @@ use crawlx_policy::AdmissionPolicy;
 use crawlx_storage::MemoryStore;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tower::ServiceExt;
@@ -901,6 +902,42 @@ async fn extract_with_web_search_reads_found_pages_and_fails_cleanly_without_con
     );
 }
 
+/// Check every entry's `timing` (RFC 3339 stamps in order; `scrapedAt` only on scraped pages; one
+/// `completedAt` per job) and return the trace without it, for exact comparison.
+fn untimed(trace: &Value) -> Value {
+    let stamp = |v: &Value| {
+        chrono::DateTime::parse_from_rfc3339(v.as_str().unwrap_or_else(|| panic!("stamp: {v}")))
+            .unwrap_or_else(|e| panic!("{v}: {e}"))
+    };
+    let entries = trace.as_array().unwrap_or_else(|| panic!("trace: {trace}"));
+    let completed: BTreeSet<String> = entries
+        .iter()
+        .map(|e| e["timing"]["completedAt"].to_string())
+        .collect();
+    assert_eq!(completed.len(), 1, "one completedAt per job: {trace}");
+    Value::Array(
+        entries
+            .iter()
+            .map(|e| {
+                let timing = &e["timing"];
+                let discovered = stamp(&timing["discoveredAt"]);
+                let completed = stamp(&timing["completedAt"]);
+                match (e["status"].as_str(), timing.get("scrapedAt")) {
+                    (Some("scraped"), Some(at)) => {
+                        let scraped = stamp(at);
+                        assert!(discovered <= scraped && scraped <= completed, "{e}");
+                    }
+                    (Some("error"), None) => assert!(discovered <= completed, "{e}"),
+                    _ => panic!("scrapedAt only on scraped pages: {e}"),
+                }
+                let mut e = e.clone();
+                e.as_object_mut().unwrap().remove("timing");
+                e
+            })
+            .collect(),
+    )
+}
+
 #[tokio::test]
 async fn extract_url_trace_lists_every_attempted_page_in_a_stable_order() {
     let t = Setup::new().llm(extract_llm()).build();
@@ -929,7 +966,7 @@ async fn extract_url_trace_lists_every_attempted_page_in_a_stable_order() {
     let done = run(json!({"urls": urls, "prompt": "Extract the site", "urlTrace": true})).await;
     assert_eq!(done["status"], "completed", "{done}");
     assert_eq!(
-        done["urlTrace"],
+        untimed(&done["urlTrace"]),
         json!([
             {"url": "https://example.com/d", "status": "scraped", "usedInCompletion": true},
             {"url": "https://example.com/b", "status": "error", "error": "blocked", "usedInCompletion": false},
@@ -940,7 +977,8 @@ async fn extract_url_trace_lists_every_attempted_page_in_a_stable_order() {
     );
     let again = run(json!({"urls": urls, "prompt": "Extract the site", "urlTrace": true})).await;
     assert_eq!(
-        again["urlTrace"], done["urlTrace"],
+        untimed(&again["urlTrace"]),
+        untimed(&done["urlTrace"]),
         "the order does not change between runs"
     );
 
@@ -1002,7 +1040,7 @@ async fn extract_url_trace_follows_glob_expansion_and_survives_a_failed_job() {
         "{failed}"
     );
     assert_eq!(
-        failed["urlTrace"],
+        untimed(&failed["urlTrace"]),
         json!([
             {"url": "https://example.com/z", "status": "error", "error": "down z", "usedInCompletion": false},
             {"url": "https://example.com/m", "status": "error", "error": "down m", "usedInCompletion": false},

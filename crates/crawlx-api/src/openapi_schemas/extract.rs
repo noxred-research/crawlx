@@ -79,8 +79,26 @@ pub(super) struct UrlTraceEntry {
     /// A note about a page that was scraped but gave nothing to read.
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,
+    /// When the page was found, scraped and finished with.
+    timing: UrlTraceTiming,
     /// Whether the model read the page (a page cut by ranking, or without text, is `false`).
     used_in_completion: bool,
+}
+
+/// RFC 3339 stamps of one `urlTrace` entry.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct UrlTraceTiming {
+    /// When the URL joined the job's page list (glob expansion or web search).
+    #[schemars(extend("format" = "date-time"))]
+    discovered_at: String,
+    /// When the scrape returned the page (absent when the scrape failed).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("format" = "date-time"))]
+    scraped_at: Option<String>,
+    /// When the job finished with its page list (the same for every entry of a job).
+    #[schemars(extend("format" = "date-time"))]
+    completed_at: String,
 }
 
 /// `GET /extract/{id}`.
