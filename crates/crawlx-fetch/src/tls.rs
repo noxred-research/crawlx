@@ -234,15 +234,20 @@ impl HttpClient {
         method: Method,
         url: Url,
         headers: HeaderMap,
+        body: Option<Bytes>,
     ) -> Result<HttpResponse, FetchError> {
         match self {
-            Self::Rustls(client) => client
-                .request(method, url)
-                .headers(headers)
-                .send()
-                .await
-                .map(HttpResponse::Rustls)
-                .map_err(FetchError::from_reqwest),
+            Self::Rustls(client) => {
+                let mut request = client.request(method, url).headers(headers);
+                if let Some(body) = body {
+                    request = request.body(body);
+                }
+                request
+                    .send()
+                    .await
+                    .map(HttpResponse::Rustls)
+                    .map_err(FetchError::from_reqwest)
+            }
             Self::Randomized {
                 client,
                 socks,
@@ -263,6 +268,9 @@ impl HttpClient {
                     None => None,
                 };
                 let mut request = client.request(method, url).headers(headers);
+                if let Some(body) = body {
+                    request = request.body(body);
+                }
                 if let Some(proxy) = &adapter {
                     request = request.proxy(
                         wreq::Proxy::all(format!("http://{}", proxy.addr()))

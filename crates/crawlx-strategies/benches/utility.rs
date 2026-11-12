@@ -82,8 +82,6 @@ fn ledger(page_keys: &[ActionContextKey]) -> InMemoryLedger {
         }
         i += 1;
     }
-    ledger.record_latency(ActionKind::Click, 420);
-    ledger.record_latency(ActionKind::Type, 910);
     ledger
 }
 

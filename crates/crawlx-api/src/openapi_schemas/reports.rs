@@ -59,6 +59,7 @@ enum OperationalReportFilter {
     Class,
     UrlKey,
     HostKey,
+    RouteKey,
     Event,
     Since,
     Until,
@@ -436,9 +437,27 @@ struct OperationalReportFact {
     request_id: Option<OperationalReportRowId>,
     url_key: Option<OperationalReportDigest>,
     host_key: Option<OperationalReportDigest>,
+    /// Opaque digest of the request's route label; absent when the route is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    route_key: Option<OperationalReportDigest>,
+    /// Failure snapshot, on alert facts only; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<OperationalReportErrorSnapshot>,
     #[schemars(range(min = 1, max = 65535))]
     attempt: u16,
     data: OperationalReportFactData,
+}
+
+/// Failure snapshot of an alert fact: stage, bounded code and status. Its redacted diagnostic
+/// text is never part of a report.
+#[derive(JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OperationalReportErrorSnapshot {
+    stage: Option<OperationalReportProcessorStage>,
+    #[schemars(length(min = 1, max = 128), regex(pattern = "^[A-Za-z0-9_:-]+$"))]
+    code: String,
+    #[schemars(range(min = 100, max = 599))]
+    http_status: Option<u16>,
 }
 
 /// A fact with its repository sequence, as carried in a page's companion `facts`.
@@ -632,7 +651,7 @@ struct OperationalReportInventoryEntry {
     name: OperationalReportKind,
     source: OperationalReportSource,
     aggregation_scope: OperationalReportScope,
-    #[schemars(length(max = 10), extend("uniqueItems" = true))]
+    #[schemars(length(max = 11), extend("uniqueItems" = true))]
     filters: Vec<OperationalReportFilter>,
     /// Not recorded by this source projection; a returned fact page narrows it only by what it proves.
     #[schemars(length(max = 11), extend("uniqueItems" = true))]
@@ -809,6 +828,8 @@ struct OperationalReportQuery {
     url_key: Option<OperationalReportQueryDigest>,
     /// Frontier, committed-page or fact-history reports; full hostname text is not accepted.
     host_key: Option<OperationalReportQueryDigest>,
+    /// Fact-history reports only; full route label text is not accepted.
+    route_key: Option<OperationalReportQueryDigest>,
     /// Event-derived reports only; other selects unrecognized source event names.
     event: Option<OperationalReportEvent>,
     /// Event, committed-page and fact-history reports; inclusive. Must be strictly before until for
@@ -980,6 +1001,7 @@ const REPORTS: [Report; 21] = [
         &[
             "urlKey",
             "hostKey",
+            "routeKey",
             "since",
             "until",
             "minDurationUs",
@@ -1024,7 +1046,7 @@ const REPORTS: [Report; 21] = [
         "facts_page",
         "fact",
         Facts::Primary(Some("alert")),
-        &["urlKey", "hostKey", "since", "until"],
+        &["urlKey", "hostKey", "routeKey", "since", "until"],
     ),
     report(
         "events",
@@ -1044,6 +1066,7 @@ const REPORTS: [Report; 21] = [
             "kind",
             "urlKey",
             "hostKey",
+            "routeKey",
             "since",
             "until",
             "minDurationUs",
@@ -1062,6 +1085,7 @@ const REPORTS: [Report; 21] = [
         &[
             "urlKey",
             "hostKey",
+            "routeKey",
             "since",
             "until",
             "minDurationUs",
@@ -1079,6 +1103,7 @@ const REPORTS: [Report; 21] = [
         &[
             "urlKey",
             "hostKey",
+            "routeKey",
             "since",
             "until",
             "minDurationUs",
@@ -1091,7 +1116,7 @@ const REPORTS: [Report; 21] = [
         "facts_page",
         "fact",
         Facts::Primary(Some("pipeline")),
-        &["urlKey", "hostKey", "since", "until"],
+        &["urlKey", "hostKey", "routeKey", "since", "until"],
     ),
 ];
 

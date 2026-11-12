@@ -233,7 +233,9 @@ pub enum OriginAdmissions {
 
 impl OriginAdmissions {
     /// Admission for one run: the deployment `limit` across runs and tenants plus the run's
-    /// own `per_run_limit`.
+    /// own `per_run_limit` per origin. Physical-address keys (`ip:`), which the governor charges
+    /// for every checked target, take the deployment `limit` only: the run limit never applies
+    /// to an address, and an address leaves no run row.
     #[must_use]
     pub fn for_run(&self, limit: usize, run: CrawlRunId, per_run_limit: usize) -> Arc<dyn OriginAdmission> {
         match self {

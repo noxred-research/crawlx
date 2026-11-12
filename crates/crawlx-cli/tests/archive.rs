@@ -913,3 +913,447 @@ async fn empty_export_reports_retained_object_omission() {
     assert!(error.contains("retained_object_missing"), "{error}");
     assert!(!fixture.dir.path().join("empty.wacz").exists());
 }
+
+mod manage {
+    //! `archive remove|cancel|commit`: every failure has its own nonzero exit code, and the
+    //! catalog (not the CLI) decides what may be abandoned or erased.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use crawlx_cli::archive::{manage, ManageCommand, ManageOutcome};
+    use crawlx_core::archive::{
+        ArchiveCaptureFactsV1, ArchiveConfigV1, ArchiveFormat, ArchiveManifestV1, ArchiveRepresentation,
+    };
+    use crawlx_core::archive_catalog::{
+        ArchiveDependencyV1, ArchiveExportV1, ArchiveFailureV1, ArchiveHistoryKeyV1, ArchiveHistoryV1,
+        ArchiveRecordV1, ArchiveRepo,
+    };
+    use crawlx_core::counters::TerminalReason;
+    use crawlx_core::repo::{ArtifactStore, RunRepo, Sensitivity};
+    use crawlx_core::time::ManualClock;
+    use crawlx_core::{TenantId, Timestamp};
+    use crawlx_storage::archive::{warc, Limits};
+    use crawlx_storage::testkit::{crawl_run, create_crawl};
+    use crawlx_storage::{FsArtifactStore, MemoryStore};
+    use std::collections::BTreeMap;
+    use std::io::Cursor;
+    use std::sync::Arc;
+
+    struct Rig {
+        store: Arc<MemoryStore>,
+        artifacts: FsArtifactStore,
+        tenant: TenantId,
+        now: Timestamp,
+        _dir: tempfile::TempDir,
+    }
+
+    async fn rig() -> Rig {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let clock = Arc::new(ManualClock::new(now));
+        let store = Arc::new(MemoryStore::with_clock(clock.clone()));
+        let dir = tempfile::tempdir().unwrap();
+        let artifacts = FsArtifactStore::open(dir.path(), store.clone(), clock)
+            .await
+            .unwrap()
+            .with_index(store.clone());
+        Rig {
+            store,
+            artifacts,
+            tenant: TenantId::new(),
+            now,
+            _dir: dir,
+        }
+    }
+
+    fn config() -> ArchiveConfigV1 {
+        let mut config = ArchiveConfigV1::default();
+        config.format = ArchiveFormat::Warc;
+        config
+    }
+
+    struct Staged {
+        id: uuid::Uuid,
+        fence: i64,
+        record: ArchiveRecordV1,
+        key: ArchiveHistoryKeyV1,
+        shard_len: u64,
+        index: crawlx_core::ArtifactRef,
+    }
+
+    /// A recording export with one committed shard; `dependency` makes it a revisit dependent.
+    async fn recording(rig: &Rig, dependency: Option<(uuid::Uuid, &ArchiveHistoryKeyV1)>) -> Staged {
+        let mut cfg = create_crawl("https://archive.example.test/data", &[], 1);
+        cfg.retention.days = 7;
+        cfg.output.archive = Some(config());
+        let mut run = crawl_run(rig.tenant, cfg);
+        run.created_at = rig.now;
+        rig.store.create(&run, None).await.unwrap();
+        let pending = ArchiveExportV1::pending(
+            rig.tenant,
+            run.id,
+            config(),
+            rig.now,
+            Some(rig.now + chrono::Duration::days(7)),
+            TerminalReason::FrontierExhausted,
+        );
+        rig.store.begin(&pending).await.unwrap();
+        let claim = rig
+            .store
+            .claim(rig.tenant, pending.id, rig.now)
+            .await
+            .unwrap()
+            .unwrap();
+        let header = warc::RecordHeader {
+            fields: BTreeMap::from([
+                ("WARC-Type".into(), "resource".into()),
+                (
+                    "WARC-Record-ID".into(),
+                    format!("<urn:uuid:{}>", uuid::Uuid::now_v7()),
+                ),
+                ("WARC-Date".into(), warc::date(rig.now)),
+                (
+                    "WARC-Target-URI".into(),
+                    "https://archive.example.test/data".into(),
+                ),
+                ("Content-Type".into(), "text/plain".into()),
+            ]),
+            payload_offset: 0,
+        };
+        let mut encoded = Cursor::new(Vec::new());
+        let summary = warc::write_record(
+            &mut encoded,
+            &header,
+            &mut Cursor::new(b"owned retained body"),
+            19,
+            Limits::default(),
+        )
+        .unwrap();
+        let shard = rig
+            .artifacts
+            .put(
+                run.id,
+                Sensitivity::Content,
+                "application/warc",
+                encoded.get_ref(),
+            )
+            .await
+            .unwrap();
+        let index = rig
+            .artifacts
+            .put(run.id, Sensitivity::Content, "application/cdxj", b"index")
+            .await
+            .unwrap();
+        let facts = ArchiveCaptureFactsV1::retained(
+            "event:1",
+            rig.now,
+            ArchiveRepresentation::ProtocolResource,
+            "retained_native_decoded_response_body",
+        );
+        let mut record = ArchiveRecordV1::resource(
+            run.id.0,
+            1,
+            summary.id,
+            shard,
+            summary.offset,
+            summary.length,
+            summary.payload_digest,
+            "https://archive.example.test/data".into(),
+            facts,
+            "text/plain".into(),
+        );
+        let key = dependency.as_ref().map_or_else(
+            || {
+                ArchiveHistoryKeyV1::new(
+                    record.target.clone(),
+                    "GET".into(),
+                    "anonymous".into(),
+                    "variant-v1".into(),
+                    "redaction-v1".into(),
+                )
+            },
+            |(_, key)| (*key).clone(),
+        );
+        record.dependency = dependency.map(|(export, _)| ArchiveDependencyV1::new(export, 1));
+        let history = ArchiveHistoryV1::new(
+            key.clone(),
+            ArchiveDependencyV1::new(record.export, 1),
+            Some("\"v1\"".into()),
+            None,
+            rig.now,
+        );
+        rig.store
+            .commit_record(rig.tenant, claim.fence, &record, Some(&history), rig.now)
+            .await
+            .unwrap();
+        Staged {
+            id: pending.id,
+            fence: claim.fence,
+            shard_len: summary.length,
+            index,
+            record,
+            key,
+        }
+    }
+
+    async fn publish(rig: &Rig, staged: &Staged) {
+        let mut manifest =
+            ArchiveManifestV1::available(rig.tenant, crawlx_core::CrawlRunId(staged.id), rig.now);
+        manifest.records = 1;
+        manifest.package_bytes = staged.shard_len;
+        rig.store
+            .publish(
+                rig.tenant,
+                staged.id,
+                staged.fence,
+                &staged.record.artifact,
+                Some(&staged.index),
+                &manifest,
+                rig.now,
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn run(rig: &Rig, id: uuid::Uuid, command: ManageCommand) -> (ManageOutcome, serde_json::Value) {
+        manage(rig.store.as_ref(), rig.tenant, id, command, rig.now)
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn every_failure_has_its_own_nonzero_exit_code() {
+        use ManageOutcome::*;
+        let failures = [
+            NotFound,
+            Expired,
+            StillRecording,
+            ExportFailed,
+            AlreadyCommitted,
+            DependentsPresent,
+            ReceiptUnavailable,
+        ];
+        let mut codes: Vec<u8> = failures.iter().map(|outcome| outcome.exit_code()).collect();
+        assert_eq!(Done.exit_code(), 0);
+        assert!(
+            codes.iter().all(|code| *code > 2),
+            "1 and 2 stay reserved: {codes:?}"
+        );
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), failures.len(), "exit codes must be distinct");
+    }
+
+    #[test]
+    fn manage_commands_are_registered_with_their_arguments() {
+        use clap::Parser;
+        let id = "00000000-0000-8000-8000-000000000002";
+        let tenant = "00000000-0000-8000-8000-000000000001";
+        for command in ["remove", "cancel", "commit"] {
+            let cli = crawlx_cli::Cli::try_parse_from(["crawlx", "archive", command, id, "--tenant", tenant])
+                .unwrap();
+            assert!(
+                matches!(cli.command, crawlx_cli::Command::Archive(_)),
+                "{command}"
+            );
+        }
+        assert!(crawlx_cli::Cli::try_parse_from([
+            "crawlx",
+            "archive",
+            "remove",
+            id,
+            "--tenant",
+            tenant,
+            "--cascade"
+        ])
+        .is_ok());
+        assert!(crawlx_cli::Cli::try_parse_from(["crawlx", "archive", "cancel", id, "--cascade"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn unknown_export_is_not_found_for_every_command() {
+        let rig = rig().await;
+        let id = uuid::Uuid::new_v4();
+        for command in [
+            ManageCommand::Commit,
+            ManageCommand::Cancel,
+            ManageCommand::Remove { cascade: false },
+        ] {
+            let (outcome, body) = run(&rig, id, command).await;
+            assert_eq!(outcome, ManageOutcome::NotFound, "{command:?}");
+            assert_eq!(body["exit"], 20);
+        }
+    }
+
+    #[tokio::test]
+    async fn recording_export_is_not_committed_but_can_be_cancelled_once() {
+        let rig = rig().await;
+        let staged = recording(&rig, None).await;
+        assert_eq!(
+            run(&rig, staged.id, ManageCommand::Commit).await.0,
+            ManageOutcome::StillRecording
+        );
+        // Removal of something not committed points at cancel instead of erasing it.
+        let (outcome, body) = run(&rig, staged.id, ManageCommand::Remove { cascade: true }).await;
+        assert_eq!(outcome, ManageOutcome::StillRecording);
+        assert_eq!(body["exit"], 22);
+        assert_eq!(
+            run(&rig, staged.id, ManageCommand::Cancel).await.0,
+            ManageOutcome::Done
+        );
+        // It is gone: a second cancel and a commit both report not found.
+        assert_eq!(
+            run(&rig, staged.id, ManageCommand::Cancel).await.0,
+            ManageOutcome::NotFound
+        );
+        assert_eq!(
+            run(&rig, staged.id, ManageCommand::Commit).await.0,
+            ManageOutcome::NotFound
+        );
+        // Its shard is queued for physical erasure.
+        assert!(!rig
+            .store
+            .erased_artifacts(rig.tenant, 64)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_export_is_reported_and_never_a_receipt() {
+        let rig = rig().await;
+        let staged = recording(&rig, None).await;
+        rig.store
+            .fail(
+                rig.tenant,
+                staged.id,
+                staged.fence,
+                ArchiveFailureV1::LimitExceeded,
+                rig.now,
+            )
+            .await
+            .unwrap();
+        let (outcome, body) = run(&rig, staged.id, ManageCommand::Commit).await;
+        assert_eq!(outcome, ManageOutcome::ExportFailed);
+        assert_eq!(body["exit"], 23);
+        assert!(body.get("receipt").is_none());
+        assert_eq!(
+            run(&rig, staged.id, ManageCommand::Cancel).await.0,
+            ManageOutcome::ExportFailed
+        );
+    }
+
+    #[tokio::test]
+    async fn committed_export_prints_hash_and_size_and_refuses_cancel() {
+        let rig = rig().await;
+        let staged = recording(&rig, None).await;
+        publish(&rig, &staged).await;
+        let (outcome, body) = run(&rig, staged.id, ManageCommand::Commit).await;
+        assert_eq!(outcome, ManageOutcome::Done);
+        let receipt = &body["receipt"];
+        assert_eq!(receipt["state"], "committed");
+        assert_eq!(receipt["packageBytes"], staged.shard_len);
+        assert_eq!(
+            receipt["package"]["digest"],
+            staged.record.artifact.digest.to_hex()
+        );
+        let (outcome, body) = run(&rig, staged.id, ManageCommand::Cancel).await;
+        assert_eq!(outcome, ManageOutcome::AlreadyCommitted);
+        assert_eq!(body["exit"], 24);
+        // Still committed after the refused cancel.
+        assert_eq!(
+            run(&rig, staged.id, ManageCommand::Commit).await.0,
+            ManageOutcome::Done
+        );
+    }
+
+    #[tokio::test]
+    async fn published_export_without_a_size_receipt_reports_receipt_unavailable() {
+        let rig = rig().await;
+        let staged = recording(&rig, None).await;
+        let mut manifest =
+            ArchiveManifestV1::available(rig.tenant, crawlx_core::CrawlRunId(staged.id), rig.now);
+        manifest.records = 1;
+        rig.store
+            .publish(
+                rig.tenant,
+                staged.id,
+                staged.fence,
+                &staged.record.artifact,
+                Some(&staged.index),
+                &manifest,
+                rig.now,
+            )
+            .await
+            .unwrap();
+        let (outcome, body) = run(&rig, staged.id, ManageCommand::Commit).await;
+        assert_eq!(outcome, ManageOutcome::ReceiptUnavailable);
+        assert_eq!(body["exit"], 26);
+    }
+
+    #[tokio::test]
+    async fn remove_refuses_an_orphaning_removal_until_cascade_and_then_erases_the_closure() {
+        let rig = rig().await;
+        let base = recording(&rig, None).await;
+        publish(&rig, &base).await;
+        let dependent = recording(&rig, Some((base.id, &base.key))).await;
+        publish(&rig, &dependent).await;
+        let (outcome, body) = run(&rig, base.id, ManageCommand::Remove { cascade: false }).await;
+        assert_eq!(outcome, ManageOutcome::DependentsPresent);
+        assert_eq!(body["exit"], 25);
+        assert_eq!(body["dependents"], serde_json::json!([dependent.id.to_string()]));
+        // The refusal changed nothing.
+        assert_eq!(
+            run(&rig, base.id, ManageCommand::Commit).await.0,
+            ManageOutcome::Done
+        );
+        assert_eq!(
+            run(&rig, dependent.id, ManageCommand::Commit).await.0,
+            ManageOutcome::Done
+        );
+        let (outcome, body) = run(&rig, base.id, ManageCommand::Remove { cascade: true }).await;
+        assert_eq!(outcome, ManageOutcome::Done);
+        assert_eq!(
+            body["removedDependents"],
+            serde_json::json!([dependent.id.to_string()])
+        );
+        assert_eq!(
+            run(&rig, base.id, ManageCommand::Commit).await.0,
+            ManageOutcome::NotFound
+        );
+        assert_eq!(
+            run(&rig, dependent.id, ManageCommand::Commit).await.0,
+            ManageOutcome::NotFound
+        );
+        // A leaf can be removed without the flag.
+        let leaf = recording(&rig, None).await;
+        publish(&rig, &leaf).await;
+        assert_eq!(
+            run(&rig, leaf.id, ManageCommand::Remove { cascade: false })
+                .await
+                .0,
+            ManageOutcome::Done
+        );
+    }
+
+    #[tokio::test]
+    async fn another_tenants_export_is_not_found() {
+        let rig = rig().await;
+        let staged = recording(&rig, None).await;
+        publish(&rig, &staged).await;
+        let (outcome, _) = manage(
+            rig.store.as_ref(),
+            TenantId::new(),
+            staged.id,
+            ManageCommand::Remove { cascade: true },
+            rig.now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, ManageOutcome::NotFound);
+        assert_eq!(
+            run(&rig, staged.id, ManageCommand::Commit).await.0,
+            ManageOutcome::Done
+        );
+    }
+}

@@ -1013,6 +1013,20 @@ pub(crate) fn http_metadata(
         }
         .to_owned()
     });
+    if let Some(certificate) = response.certificate_evidence().observed() {
+        metadata.connection.certificate_observed = true;
+        metadata.connection.certificate = Some(crawlx_core::acquisition::PeerCertificateFactsV1::new(
+            certificate.sha256.clone(),
+            certificate.not_before,
+            certificate.not_after,
+            certificate.self_issued,
+            certificate.der_len,
+        ));
+        metadata
+            .backend
+            .limitations
+            .retain(|limitation| limitation != "certificate_evidence_unavailable");
+    }
     metadata.redirects = response
         .hops
         .iter()

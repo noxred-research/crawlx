@@ -61,6 +61,30 @@ statuses (an allowed `429` still reaches the governor), refuse-on-oversize, and 
 charged to the same admission and request allowance as the `GET`. See the
 [safety model](safety-model.md#egress-and-ssrf).
 
+**Origin and address admission.** One deployment-wide admission store caps what the whole deployment
+sends to one origin and spaces its starts: PostgreSQL advisory-lock slots, MariaDB row-lock slots, or
+in-process slots with persisted pacing on SQLite. This per-origin admission replaces any fixed shard
+lease over a hash of the origin (such as `hash(origin) mod 64`). There are no shards to own or hand
+over: each origin has its own FIFO of slots, distinct origins never share a lock, a permit is a held
+transaction (or an in-process slot), not an expiring lease, and the limit counts permits, so worker
+count, restarts and cancellation cannot change it. The conformance case
+`two_workers_contending_for_one_origin_never_exceed_the_admission_limit` runs on every database
+engine. Native HTTP also charges one store slot per checked physical IP under the key `ip:<address>`
+(canonical form), after the origin slot and in canonical address order. Host aliases that resolve to
+one address therefore share one cap across worker processes, not only inside one process. An address
+key carries capacity only: no per-run limit, run lease row, pacing or cooldown follows it. Browser
+proxy connections still charge the process-local address cap only.
+
+**Route dimension and failure snapshots.** Every report fact of a request carries `routeKey`, the
+digest of the request's route label; the repository stamps it from the committed frontier row, so a
+producer cannot file a fact under another route, and facts from before the dimension existed stay
+unknown, never `default`. Per-route counters (`route_counters`) count retained checkpoint, stage and
+alert facts per route and outcome from committed rows alone, so a restarted reader sees the numbers
+the frontier shows. A failed attempt records a failure snapshot inside its alert fact: the failed
+stage, the committed reason code, the final HTTP status and a short free-text detail. The detail is
+redacted, stripped of URLs and bounded before it is stored, whoever produced it, and report APIs
+never serve it. A snapshot shares its fact's deadline, so it disappears with the run's retention.
+
 **Extraction.** `Extractor::extract` parses once and returns title, description, language, canonical
 URL, Markdown, plain text, cleaned HTML of the selected content, metadata and absolute deduplicated
 links and assets. Content selection follows `main`/`[role=main]`, a dominant `article`, then
@@ -200,9 +224,16 @@ widen silently. Targets are element identities or clusters.
   least 0.8, create a route-template edge keyed by the action family.
 - **Retirement.** Edges with three consecutive failures, or at least five trials with `p < 0.2`, are
   pruned; a retired route edge is blocked from regeneration. A build change marks edges unverified.
-- **Search.** Dijkstra over edge costs `-ln p + latency + risk + staleness + context penalty`.
-- **Calibration** helpers (expected calibration error) exist as library functions; they are exercised by
-  tests, not enforced at run time.
+- **Search.** Dijkstra over edge costs `-ln p + latency + risk + staleness + context penalty`. Edge latency
+  comes only from timed replays; the exploration driver records none, so live timing never steers a path.
+- **Calibration** is checked in service as well as at release. `crawlx_model::calibration::DriftMonitor`
+  keeps a rolling window of graded outcomes (the top option's calibrated probability and whether it
+  was right) and a second window of gate decisions. The worker exports the window's expected
+  calibration error as `crawlx.model.calibration.ece` once it holds 200 outcomes, with
+  `crawlx.model.calibration.samples` and `crawlx.model.abstention.rate` beside it; a window above the
+  0.05 release ceiling for 15 minutes raises `CrawlxModelCalibrationDrift`. A new calibration version
+  starts a new window. Only observed outcomes count; agreement with the deterministic leader is not
+  an outcome. See [model calibration](../ops/model-calibration.md).
 
 ## Coverage ledger and action contexts
 
@@ -237,11 +268,12 @@ locator present, right principal), merged by action-context id, and **classified
 before scoring**, so denied and approval-required proposals never compete on utility. Survivors are
 scored with a utility function
 
-`U = 1.00·novelty + 0.80·expected_coverage_gain + 0.55·enablement_probability + 0.35·strategy_confidence − 1.50·safety_risk − 0.30·latency_cost − 0.45·repetition_penalty`
+`U = 1.00·novelty + 0.80·expected_coverage_gain + 0.55·enablement_probability + 0.35·strategy_confidence − 1.50·safety_risk − 0.45·repetition_penalty`
 
 and sorted (fresh-key tier first, then utility, then a seeded tie-break, then the key id). The tie-break
 is a ChaCha8 draw derived from the crawl seed, the principal and the decision index, so a recorded run
-replays identically. The driver then asks the kernel to adjudicate the winner.
+replays identically. No utility term reads measured wall-clock latency, so a slow browser cannot change
+which action a seed picks. The driver then asks the kernel to adjudicate the winner.
 
 **Switching policy.** Phases: `Greedy`, `StateRecovery`, `EnablementRecovery`, `System1`, `Planner`,
 `Done`. The policy moves on after configurable stall counts (50 stalled rounds by default, 25 in

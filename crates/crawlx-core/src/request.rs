@@ -1,9 +1,15 @@
 //! Versioned request identity and retention-safe queue envelopes.
 //!
-//! These values are proposals, not authority to execute HTTP writes. Unsafe methods
-//! still require the independent safety kernel and admitted-effect journal.
+//! An envelope is a proposal, not authority to execute. A mutating method (`POST`, `PUT`,
+//! `PATCH`, `DELETE`) is executable only through the URL plane's write admission: the run's
+//! safety profile and authorization record decide it, a reviewer approval carried in the
+//! envelope can lift an approval-gated class (never a denial), and the dispatch is journaled
+//! before the first byte leaves. Bodies are never queue JSON: an envelope holds a handle to
+//! retained bytes plus a tenant-keyed digest of them.
 
-use crate::{hash::Digest, url::CanonicalUrl, CrawlRunId, TenantId, Timestamp};
+use crate::{
+    hash::Digest, ids::ArtifactRef, safety::RiskClass, url::CanonicalUrl, CrawlRunId, TenantId, Timestamp,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -14,6 +20,10 @@ pub mod import;
 pub const MAX_REQUEST_BATCH: usize = 1000;
 /// Hard upper bound on serialized queue metadata in one transaction.
 pub const MAX_REQUEST_BATCH_BYTES: usize = 1024 * 1024;
+/// Hard upper bound on one request body the URL plane will replay to a target.
+pub const MAX_WRITE_BODY_BYTES: u64 = 1024 * 1024;
+/// Methods the URL plane may execute as admitted writes. `GET` and `HEAD` never carry a body.
+pub const WRITE_METHODS: [&str; 4] = ["POST", "PUT", "PATCH", "DELETE"];
 
 /// Separately pinned source identity dialects; not source-language execution modes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +64,90 @@ pub struct RequestBodyV1 {
     pub media_type: String,
 }
 
+impl RequestBodyV1 {
+    /// Handle prefix of a body retained as an artifact.
+    const ARTIFACT_PREFIX: &'static str = "artifact:";
+
+    /// Reference to body bytes retained as an artifact.
+    ///
+    /// `digest` is the tenant-keyed correlation digest of the bytes ([`keyed_body_digest`]),
+    /// never the artifact's own fixity hash.
+    #[must_use]
+    pub fn for_artifact(
+        artifact: &ArtifactRef,
+        digest: Digest,
+        key_version: u32,
+        length: u64,
+        media_type: String,
+    ) -> Self {
+        Self {
+            handle: format!(
+                "{}{}:{}",
+                Self::ARTIFACT_PREFIX,
+                artifact.id,
+                artifact.digest.to_hex()
+            ),
+            digest,
+            key_version,
+            length,
+            media_type,
+        }
+    }
+
+    /// The retained artifact this body points at; `None` for a handle of another kind or a
+    /// malformed one.
+    #[must_use]
+    pub fn artifact(&self) -> Option<ArtifactRef> {
+        let rest = self.handle.strip_prefix(Self::ARTIFACT_PREFIX)?;
+        let (id, digest) = rest.split_once(':')?;
+        Some(ArtifactRef {
+            id: id.parse().ok()?,
+            digest: Digest::from_hex(digest).ok()?,
+        })
+    }
+}
+
+/// Tenant-keyed correlation digest of request body bytes. `root` is the operator request
+/// identity key; the per-tenant key is derived from it, so equal bytes of two tenants never
+/// correlate and no unkeyed hash of a possibly secret body is persisted.
+#[must_use]
+pub fn keyed_body_digest(root: &[u8; 32], tenant: TenantId, body: &[u8]) -> Digest {
+    let tenant_key = Digest::keyed(root, "crawlx/tenant-request-key/v1", tenant.0.as_bytes());
+    Digest::keyed(&tenant_key.0, "crawlx/request-body/v1", body)
+}
+
+/// Reviewer approval that lifts an approval-gated write class for exactly one request.
+///
+/// The approval lives inside the envelope whose identity covers method, URL, body digest and
+/// principal, so it cannot be applied to another body, target or principal; the row executes
+/// at most once, so it cannot be spent twice. It never overrides a denial.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct WriteApprovalV1 {
+    /// Exactly one.
+    pub version: u16,
+    /// Risk class the reviewer approved; must equal the class of the request's method.
+    pub risk: RiskClass,
+    /// Audit actor that granted it (an authenticated API key, never request content).
+    pub approved_by: String,
+    /// When it was granted.
+    pub approved_at: Timestamp,
+}
+
+impl WriteApprovalV1 {
+    /// Approval of `risk` by `approved_by` at `approved_at`.
+    #[must_use]
+    pub fn new(risk: RiskClass, approved_by: String, approved_at: Timestamp) -> Self {
+        Self {
+            version: 1,
+            risk,
+            approved_by,
+            approved_at,
+        }
+    }
+}
+
 /// Immutable request proposal. Admission assigns run and principal separately.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -89,6 +183,9 @@ pub struct RequestEnvelopeV1 {
     pub session_generation: Option<u64>,
     /// Earliest allowed dispatch time; current authorization still applies.
     pub not_before: Option<Timestamp>,
+    /// Reviewer approval for an approval-gated write class; never part of identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<WriteApprovalV1>,
 }
 
 impl RequestEnvelopeV1 {
@@ -120,6 +217,26 @@ impl RequestEnvelopeV1 {
             revisit_generation: 0,
             session_generation: None,
             not_before: None,
+            approval: None,
+        }
+    }
+
+    /// Whether `method` is one the URL plane may execute as an admitted write.
+    #[must_use]
+    pub fn is_write_method(method: &str) -> bool {
+        WRITE_METHODS.contains(&method)
+    }
+
+    /// Risk class of this request's method, the same classes the safety kernel assigns to
+    /// observed traffic: `DELETE` is destructive, other mutating methods are persistent
+    /// writes to the acting principal's data. `None` for a method that is not an executable
+    /// write (`GET`, `HEAD`, or one the URL plane never sends).
+    #[must_use]
+    pub fn write_risk(&self) -> Option<RiskClass> {
+        match self.method.as_str() {
+            "POST" | "PUT" | "PATCH" => Some(RiskClass::PersistentWriteOwn),
+            "DELETE" => Some(RiskClass::Destructive),
+            _ => None,
         }
     }
 
@@ -141,8 +258,19 @@ impl RequestEnvelopeV1 {
         if let Some(body) = &self.body {
             if !safe_id(&body.handle)
                 || body.key_version == 0
+                || body.length > MAX_WRITE_BODY_BYTES
                 || body.media_type.len() > 128
                 || body.media_type.bytes().any(|b| b.is_ascii_control())
+                // a safe method never carries a body
+                || matches!(self.method.as_str(), "GET" | "HEAD")
+            {
+                return Err(RequestError::InvalidEnvelope);
+            }
+        }
+        if let Some(approval) = &self.approval {
+            if approval.version != 1
+                || !safe_id(&approval.approved_by)
+                || self.write_risk() != Some(approval.risk)
             {
                 return Err(RequestError::InvalidEnvelope);
             }
@@ -226,7 +354,9 @@ impl RequestEnvelopeV1 {
                 self.dialect,
                 self.url.key,
                 &self.method,
-                self.body.as_ref().map(|body| (body.digest, body.key_version)),
+                self.body
+                    .as_ref()
+                    .map(|body| (body.digest, body.key_version, &body.media_type)),
                 varying_headers,
                 self.session_generation,
                 self.source_key,

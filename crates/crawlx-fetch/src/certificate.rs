@@ -123,6 +123,77 @@ impl CertificateEvidence {
     }
 }
 
+/// Reserved response header carrying the base64 DER of the leaf certificate. Attached only
+/// when the request asked for the export; the fetch plane strips the whole reserved namespace
+/// from wire headers first, so a server cannot forge it.
+pub const PEER_CERTIFICATE_HEADER: &str = "x-crawlx-stream-peer-certificate";
+
+/// Capped export of the leaf certificate observed on a request's own connection.
+///
+/// Holds a well-formed X.509 certificate of at most [`MAX_CERTIFICATE_BYTES`]; nothing else
+/// (no chain, no key material) is ever exported.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertificateExport {
+    der: Vec<u8>,
+}
+
+impl CertificateExport {
+    /// Copy `der` when it is a well-formed certificate inside the cap.
+    #[must_use]
+    pub fn from_der(der: &[u8]) -> Option<Self> {
+        (der.len() <= MAX_CERTIFICATE_BYTES && parse(der).is_some()).then(|| Self { der: der.to_vec() })
+    }
+
+    /// DER encoding.
+    #[must_use]
+    pub fn der(&self) -> &[u8] {
+        &self.der
+    }
+
+    /// Lower-case hex SHA-256 of the DER encoding, the same fingerprint the facts carry.
+    #[must_use]
+    pub fn sha256(&self) -> String {
+        hex::encode(Sha256::digest(&self.der))
+    }
+
+    /// RFC 7468 `CERTIFICATE` PEM with 64-column base64 lines.
+    #[must_use]
+    pub fn pem(&self) -> String {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let body = STANDARD.encode(&self.der);
+        let mut pem = String::with_capacity(body.len() + body.len() / 64 + 64);
+        pem.push_str("-----BEGIN CERTIFICATE-----\n");
+        for line in body.as_bytes().chunks(64) {
+            // base64 output is ASCII; every chunk is valid UTF-8.
+            pem.push_str(std::str::from_utf8(line).unwrap_or_default());
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+        pem
+    }
+
+    /// Header value for [`PEER_CERTIFICATE_HEADER`].
+    #[must_use]
+    pub fn to_header_value(&self) -> Option<http::HeaderValue> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        http::HeaderValue::from_str(&STANDARD.encode(&self.der)).ok()
+    }
+
+    /// Export carried by `headers`, accepted only when it is a well-formed certificate whose
+    /// fingerprint equals the observed facts in `evidence` (so facts and export can never
+    /// describe different certificates).
+    #[must_use]
+    pub fn from_headers(headers: &http::HeaderMap, evidence: &CertificateEvidence) -> Option<Self> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let value = headers.get(PEER_CERTIFICATE_HEADER)?.as_bytes();
+        if value.len() > MAX_CERTIFICATE_BYTES.div_ceil(3) * 4 {
+            return None;
+        }
+        let export = Self::from_der(&STANDARD.decode(value).ok()?)?;
+        (evidence.observed()?.sha256 == export.sha256()).then_some(export)
+    }
+}
+
 /// One DER element: tag byte and content.
 struct Tlv<'a> {
     tag: u8,

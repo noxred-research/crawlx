@@ -10,8 +10,9 @@ use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{RequestBatchV1, RequestCommitRepo};
 use crawlx_core::repo::{CrawlRun, FrontierRepo, FrontierStatus, RunRepo};
 use crawlx_core::report_history::{
-    AlertCodeV1, AlertContextV1, AlertSeverityV1, DnsOutcomeV1, PipelineStageV1, PipelineStateV1,
-    ReportDataV1, ReportFactV1, ReportHistoryRepo, ReportKindV1, ReportQueryV1,
+    report_route_key, AlertCodeV1, AlertContextV1, AlertSeverityV1, DnsOutcomeV1, ErrorSnapshotV1,
+    PipelineStageV1, PipelineStateV1, ProcessorIdentityV1, ProcessorStageV1, ReportDataV1, ReportFactV1,
+    ReportHistoryRepo, ReportKindV1, ReportQueryV1, StageOutcomeV1,
 };
 use crawlx_core::request::RequestEnvelopeV1;
 use crawlx_core::{StoreError, TenantId, Timestamp, WorkerId};
@@ -23,6 +24,8 @@ use uuid::Uuid;
 conformance! { all:
     measured_history_contract,
     query_filters_agree_with_the_specification,
+    route_counters_equal_the_committed_frontier_rows_of_each_route,
+    direct_facts_are_stamped_with_the_route_of_their_request,
 }
 
 conformance! { databases:
@@ -30,6 +33,7 @@ conformance! { databases:
     expired_facts_are_purged_in_bounded_batches,
     pipeline_completion_requires_every_fenced_delivery_ack,
     retained_page_captures_carry_the_source_run_expiry,
+    route_counters_and_failure_snapshots_survive_a_restart_and_expire_with_the_run,
 }
 
 /// A fresh buffer for volatile operational values of ZDR runs.
@@ -1004,5 +1008,452 @@ where
             .entries
             .len(),
         page.entries.len()
+    );
+}
+
+/// A value no stored fact, served page or metric label may ever contain.
+const CANARY: &str = "canary-secret-93c1f0d4";
+
+/// What the routed run committed: request id, route label, final status and the reason code of
+/// a failure.
+type Committed = Vec<(i64, &'static str, FrontierStatus, Option<&'static str>)>;
+
+/// A run with five requests on two routes, each committed once under its own fence. A failing
+/// request records an alert whose snapshot carries a producer that skipped redaction.
+async fn routed_run<R: RunRepo + FrontierRepo + RequestCommitRepo>(
+    repo: &R,
+    tenant: TenantId,
+) -> (CrawlRun, Committed) {
+    let mut config = testkit::create_crawl("https://routes.example.test/", &[], 1);
+    config.retention.mode = RetentionMode::Standard;
+    config.retention.days = 1;
+    let run = testkit::crawl_run(tenant, config);
+    repo.create(&run, None).await.unwrap();
+    let plan: [(&str, u32, FrontierStatus, Option<&str>); 5] = [
+        ("listing", 0, FrontierStatus::Succeeded, None),
+        ("listing", 1, FrontierStatus::Succeeded, None),
+        ("listing", 2, FrontierStatus::Failed, Some("fetch_failed")),
+        ("detail", 0, FrontierStatus::Succeeded, None),
+        ("detail", 1, FrontierStatus::Unreachable, Some("dns_failure")),
+    ];
+    let envelopes = plan
+        .iter()
+        .map(|(route, n, _, _)| {
+            let mut envelope = RequestEnvelopeV1::get(
+                testkit::canonical_url(&format!("https://routes.example.test/{route}/{n}")),
+                0,
+                None,
+            );
+            envelope.route = (*route).to_owned();
+            envelope
+        })
+        .collect();
+    let batch = RequestBatchV1::new(
+        tenant,
+        run.id,
+        "anonymous".into(),
+        Digest::of("test/route-batch", run.id.0.as_bytes()),
+        envelopes,
+    );
+    repo.append_batch(batch).await.unwrap();
+    let worker = WorkerId::new();
+    let rows = repo.lease_batch_fenced(run.id, worker, 5).await.unwrap();
+    assert_eq!(rows.len(), 5);
+    let mut committed = Vec::new();
+    for (entry, fence) in &rows {
+        let path = entry.url.url.path().to_owned();
+        let (route, _, status, reason) = plan
+            .iter()
+            .find(|(route, n, _, _)| path == format!("/{route}/{n}"))
+            .copied()
+            .unwrap();
+        let lease = CustodyLease::for_url(tenant, run.id, entry.id, worker, *fence);
+        let fact = |label: &str, data| {
+            let mut fact = ReportFactV1::new(
+                &lease,
+                Digest::of("test/route-fact", format!("{}:{label}", entry.id).as_bytes()),
+                run.created_at,
+                data,
+            );
+            fact.request_id = Some(entry.id);
+            fact
+        };
+        let failed = status != FrontierStatus::Succeeded;
+        let mut facts = vec![
+            fact(
+                "fetch",
+                ReportDataV1::Pipeline {
+                    stage: PipelineStageV1::Fetch,
+                    state: if failed {
+                        PipelineStateV1::Failed
+                    } else {
+                        PipelineStateV1::Succeeded
+                    },
+                },
+            ),
+            fact(
+                "wire",
+                ReportDataV1::Wire {
+                    received_bytes: Some(10),
+                    sent_bytes: None,
+                    duration_us: Some(5),
+                },
+            ),
+        ];
+        if failed {
+            facts.push(fact(
+                "stage",
+                ReportDataV1::Stage {
+                    stage: ProcessorStageV1::Fetch,
+                    outcome: StageOutcomeV1::Failed,
+                    duration_us: 3,
+                    processor: ProcessorIdentityV1::NativeHttp,
+                    processor_version: 1,
+                },
+            ));
+            let mut alert = fact(
+                "alert",
+                ReportDataV1::Alert {
+                    severity: AlertSeverityV1::Error,
+                    code: AlertCodeV1::ProcessorFailure,
+                    context: AlertContextV1::Processing,
+                },
+            );
+            let mut snapshot =
+                ErrorSnapshotV1::new(Some(ProcessorStageV1::Fetch), "worker_code", Some(502), None).unwrap();
+            // a producer that never redacted: the repository must still keep the secret out
+            snapshot.detail = Some(format!(
+                "GET https://tenant.example.test/p?token={CANARY} failed; authorization: Bearer {CANARY} password={CANARY}"
+            ));
+            alert.error = Some(snapshot);
+            facts.push(alert);
+        }
+        let mut commit = crawlx_core::orchestration::RequestCommitV1::terminal(
+            run.id,
+            entry.id,
+            *fence,
+            1,
+            status,
+            reason.map(str::to_owned),
+        );
+        commit.report_facts = facts;
+        repo.commit_fenced(commit).await.unwrap();
+        committed.push((entry.id, route, status, reason));
+    }
+    (run, committed)
+}
+
+/// The terminal frontier rows of a run grouped by route key, read through the frontier itself:
+/// `(committed rows, succeeded rows, failed or unreachable rows)`.
+async fn frontier_counts<R: FrontierRepo>(
+    repo: &R,
+    run: &CrawlRun,
+) -> std::collections::BTreeMap<Digest, (u64, u64, u64)> {
+    let mut counts = std::collections::BTreeMap::new();
+    for entry in repo.page(run.id, 0, 1000).await.unwrap() {
+        let queued = repo.get_request(run.id, entry.id).await.unwrap();
+        let row = counts
+            .entry(report_route_key(&queued.envelope.route))
+            .or_insert((0, 0, 0));
+        match queued.entry.status {
+            FrontierStatus::Succeeded => {
+                row.0 += 1;
+                row.1 += 1;
+            }
+            FrontierStatus::Failed | FrontierStatus::Unreachable => {
+                row.0 += 1;
+                row.2 += 1;
+            }
+            _ => {}
+        }
+    }
+    counts
+}
+
+fn assert_counters_equal_frontier(
+    counters: &[crawlx_core::report_history::RouteCountersV1],
+    frontier: &std::collections::BTreeMap<Digest, (u64, u64, u64)>,
+) {
+    assert_eq!(
+        counters.len(),
+        frontier.len(),
+        "one counter set per route: {counters:?}"
+    );
+    assert!(
+        counters
+            .windows(2)
+            .all(|pair| pair[0].route_key < pair[1].route_key),
+        "ordered by route key"
+    );
+    for counter in counters {
+        let (committed, succeeded, failed) = frontier[&counter.route_key];
+        assert_eq!(counter.committed(), committed, "terminal results {counter:?}");
+        assert_eq!(
+            counter.count("pipeline:fetch:succeeded"),
+            succeeded,
+            "{counter:?}"
+        );
+        assert_eq!(counter.count("pipeline:fetch:failed"), failed, "{counter:?}");
+        assert_eq!(counter.count("alert:error"), failed, "{counter:?}");
+        assert_eq!(counter.count("stage:fetch:failed"), failed, "{counter:?}");
+    }
+}
+
+async fn route_counters_equal_the_committed_frontier_rows_of_each_route(rig: &Rig) {
+    let tenant = tenant_of(rig).await;
+    on_zdr_repo!(rig, |repo| route_counters_case(repo, tenant).await);
+}
+
+async fn route_counters_case<R: RunRepo + FrontierRepo + RequestCommitRepo + ReportHistoryRepo>(
+    repo: &R,
+    tenant: TenantId,
+) {
+    let (run, committed) = routed_run(repo, tenant).await;
+    let listing = report_route_key("listing");
+    let detail = report_route_key("detail");
+    let frontier = frontier_counts(repo, &run).await;
+    assert_eq!(frontier[&listing], (3, 2, 1));
+    assert_eq!(frontier[&detail], (2, 1, 1));
+    let counters = repo.route_counters(tenant, run.id).await.unwrap();
+    assert_counters_equal_frontier(&counters, &frontier);
+    // the counters are not a plan restated: the committed rows are exactly what was committed
+    assert_eq!(committed.len(), 5);
+    // every fact of the run, including checkpoints storage wrote itself, carries its route
+    let all = repo
+        .query_facts(tenant, Some(run.id), &ReportQueryV1::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        all.entries.len(),
+        24,
+        "5 fetch + 5 wire + 2 stage + 2 alert + 10 skipped checkpoints"
+    );
+    assert!(all.entries.iter().all(|entry| entry.fact.route_key.is_some()));
+    for (route, facts) in [(listing, 14), (detail, 10)] {
+        let mut query = ReportQueryV1::default();
+        query.route_key = Some(route);
+        let page = repo.query_facts(tenant, Some(run.id), &query).await.unwrap();
+        assert_eq!(page.entries.len(), facts);
+        assert!(page
+            .entries
+            .iter()
+            .all(|entry| entry.fact.route_key == Some(route)));
+    }
+    let mut unknown = ReportQueryV1::default();
+    unknown.route_key = Some(report_route_key("no-such-route"));
+    assert!(repo
+        .query_facts(tenant, Some(run.id), &unknown)
+        .await
+        .unwrap()
+        .entries
+        .is_empty());
+    // failure snapshots: stage and the committed reason code survive, the secret does not
+    let snapshots: Vec<_> = all
+        .entries
+        .iter()
+        .filter_map(|entry| entry.fact.error.as_ref())
+        .collect();
+    assert_eq!(snapshots.len(), 2);
+    let mut codes: Vec<_> = snapshots.iter().map(|snapshot| snapshot.code.as_str()).collect();
+    codes.sort_unstable();
+    assert_eq!(
+        codes,
+        ["dns_failure", "fetch_failed"],
+        "the committed reason is the snapshot code"
+    );
+    for snapshot in snapshots {
+        assert_eq!(snapshot.stage, Some(ProcessorStageV1::Fetch));
+        assert_eq!(snapshot.http_status, Some(502));
+        let detail = snapshot.detail.as_deref().unwrap();
+        assert!(
+            detail.contains("[url]") && detail.contains("[REDACTED]"),
+            "{detail}"
+        );
+    }
+    let served = serde_json::to_string(&all).unwrap();
+    for leaked in [CANARY, "tenant.example.test", "token=", "Bearer"] {
+        assert!(!served.contains(leaked), "{leaked} leaked: {served}");
+    }
+    // another tenant sees nothing of this run
+    assert!(repo.route_counters(TenantId::new(), run.id).await.is_err());
+}
+
+async fn direct_facts_are_stamped_with_the_route_of_their_request(rig: &Rig) {
+    let tenant = tenant_of(rig).await;
+    on_zdr_repo!(rig, |repo| stamped_case(repo, tenant).await);
+}
+
+async fn stamped_case<R: RunRepo + FrontierRepo + RequestCommitRepo + ReportHistoryRepo>(
+    repo: &R,
+    tenant: TenantId,
+) {
+    let (run, lease) = fixture(repo, tenant, false).await;
+    let request = request_of(&lease);
+    let mut plain = ReportFactV1::new(
+        &lease,
+        Digest::of("test/route-direct", b"plain"),
+        run.created_at,
+        ReportDataV1::Loss { dropped: 1 },
+    );
+    plain.request_id = request;
+    let sequence = repo.append_fact(&lease, &plain).await.unwrap();
+    assert_eq!(
+        repo.append_fact(&lease, &plain).await.unwrap(),
+        sequence,
+        "a retry stays idempotent"
+    );
+    let mut query = ReportQueryV1::default();
+    query.route_key = Some(report_route_key("default"));
+    let routed = repo.query_facts(tenant, Some(run.id), &query).await.unwrap();
+    assert_eq!(
+        routed.entries.len(),
+        1,
+        "the repository stamped the request's own route"
+    );
+    assert_eq!(routed.entries[0].sequence, sequence);
+    // a producer cannot file a fact under another request's route
+    let mut forged = plain.clone();
+    forged.id = Digest::of("test/route-direct", b"forged");
+    forged.route_key = Some(report_route_key("somewhere-else"));
+    assert!(matches!(
+        repo.append_fact(&lease, &forged).await,
+        Err(StoreError::Conflict(_))
+    ));
+    // a credential-shaped code is refused when built and cleaned when a producer smuggles it in
+    assert!(ErrorSnapshotV1::new(None, "sk-abcdefghijkl", None, None).is_err());
+    let mut alert = ReportFactV1::new(
+        &lease,
+        Digest::of("test/route-direct", b"alert"),
+        run.created_at,
+        ReportDataV1::Alert {
+            severity: AlertSeverityV1::Error,
+            code: AlertCodeV1::ProcessorFailure,
+            context: AlertContextV1::Processing,
+        },
+    );
+    alert.request_id = request;
+    let mut snapshot = ErrorSnapshotV1::new(None, "ok_code", None, None).unwrap();
+    snapshot.code = "sk-abcdefghijkl".to_owned();
+    alert.error = Some(snapshot);
+    repo.append_fact(&lease, &alert).await.unwrap();
+    let page = repo
+        .query_facts(tenant, Some(run.id), &ReportQueryV1::default())
+        .await
+        .unwrap();
+    let stored = page
+        .entries
+        .iter()
+        .find_map(|entry| entry.fact.error.as_ref())
+        .expect("the alert was stored");
+    assert_eq!(stored.code, "redacted");
+}
+
+async fn route_counters_and_failure_snapshots_survive_a_restart_and_expire_with_the_run(rig: &Rig) {
+    let tenant = tenant_of(rig).await;
+    on_zdr_db!(rig, |repo| restart_case(rig, repo, tenant).await);
+}
+
+async fn restart_case<R>(rig: &Rig, repo: &R, tenant: TenantId)
+where
+    R: RunRepo + FrontierRepo + RequestCommitRepo + ReportHistoryRepo + Purge,
+{
+    let (run, _) = routed_run(repo, tenant).await;
+    let before = repo.route_counters(tenant, run.id).await.unwrap();
+    assert_eq!(before.len(), 2);
+    // a restarted worker opens its own pool: counters come from committed rows, not memory
+    let database = reopen(rig).await;
+    let (after, frontier) = on_database!(database, |fresh| {
+        (
+            fresh.route_counters(tenant, run.id).await.unwrap(),
+            frontier_counts(fresh, &run).await,
+        )
+    });
+    assert_eq!(after, before);
+    assert_counters_equal_frontier(&after, &frontier);
+    // the stored bytes hold no secret, in the fact table or the pipeline replay copy
+    let like = format!("%{CANARY}%");
+    let (fact_text, source_text) = if rig.kind() == Some(BackendKind::Postgres) {
+        ("fact::text", "source_fact::text")
+    } else {
+        ("fact", "source_fact")
+    };
+    let run_and_pattern = [Bind::Uuid(run.id.0), Bind::Text(&like)];
+    for (table, column) in [
+        ("report_history", fact_text),
+        ("request_pipeline_history", source_text),
+    ] {
+        let template = format!("SELECT count(*) FROM {table} WHERE run_id=$1 AND {column} LIKE $2");
+        assert_eq!(scalar_i64(rig, &template, &run_and_pattern).await, 0, "{table}");
+    }
+    let run_key = [Bind::Uuid(run.id.0)];
+    // positive control: the failure snapshots are stored, with the secrets replaced by the mask
+    let masked = [Bind::Uuid(run.id.0), Bind::Text("%[REDACTED]%")];
+    let template = format!("SELECT count(*) FROM report_history WHERE run_id=$1 AND {fact_text} LIKE $2");
+    assert_eq!(scalar_i64(rig, &template, &masked).await, 2);
+    // every fact, snapshot included, expires with the run's retention, at one shared deadline
+    assert_eq!(
+        scalar_i64(
+            rig,
+            "SELECT count(*) FROM report_history WHERE run_id=$1 AND expires_at IS NULL",
+            &run_key
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            rig,
+            "SELECT count(DISTINCT expires_at) FROM report_history WHERE run_id=$1",
+            &run_key
+        )
+        .await,
+        1
+    );
+    let past = chrono::Utc::now() - chrono::Duration::hours(1);
+    exec(
+        rig,
+        "UPDATE report_history SET expires_at=$1 WHERE run_id=$2",
+        &[Bind::Ts(past), Bind::Uuid(run.id.0)],
+    )
+    .await;
+    exec(
+        rig,
+        "UPDATE request_pipeline_history SET expires_at=$1 WHERE run_id=$2",
+        &[Bind::Ts(past), Bind::Uuid(run.id.0)],
+    )
+    .await;
+    // expired snapshots are invisible before the sweep, and so are the counters they fed
+    let page = repo
+        .query_facts(tenant, Some(run.id), &ReportQueryV1::default())
+        .await
+        .unwrap();
+    assert!(page.entries.is_empty());
+    assert!(repo.route_counters(tenant, run.id).await.unwrap().is_empty());
+    let mut swept = 0;
+    loop {
+        let batch = purge_all!(repo);
+        if batch == 0 {
+            break;
+        }
+        swept += batch;
+    }
+    assert!(swept >= 24, "{swept}");
+    assert_eq!(
+        scalar_i64(
+            rig,
+            "SELECT count(*) FROM report_history WHERE run_id=$1",
+            &run_key
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar_i64(
+            rig,
+            "SELECT count(*) FROM report_history WHERE run_id=$1 AND fact IS NOT NULL",
+            &run_key
+        )
+        .await,
+        0
     );
 }

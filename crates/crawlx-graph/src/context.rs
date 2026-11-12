@@ -532,7 +532,7 @@ mod tests {
             &[hash(9)],
             t0() + Duration::seconds(10),
         );
-        o.latency_ms = 700;
+        o.latency_ms = Some(700);
         o.confounders.polling = 1;
         g.observe_transition(&o);
         g.set_action_risk(act(2), 0.25);

@@ -1,8 +1,13 @@
 //! Authenticated bounded request append, metadata keysets and producer sealing.
 //!
-//! This route accepts anonymous GET and HEAD proposals only. Body-bearing methods, session
-//! bindings and credential controls remain behind their existing admitted-effect paths.
-//! HEAD proposals are bodyless native HTTP requests, not browser or delegated execution support.
+//! A batch is either anonymous `GET`/`HEAD` proposals or admitted writes (`POST`, `PUT`, `PATCH`,
+//! `DELETE`). Write bodies are retained as credential-bearing artifacts (never queue JSON) and
+//! referenced by a tenant-keyed digest, and every write batch is recorded in the audit trail
+//! under the calling key before it is queued. This route only queues: the URL plane decides
+//! every write against the run's safety profile and authorization record, journals it and sends
+//! it at most once. A reviewer approval for an approval-gated class is accepted only from a key
+//! that also holds `approvals:decide`. Roles, session bindings and credential controls are not
+//! accepted here: a write acts as the anonymous principal.
 
 use crate::auth::Principal;
 use crate::errors::{ApiResult, HttpError};
@@ -14,9 +19,13 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Extension;
+use base64::Engine as _;
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::{LoaderCursorV1, RequestBatchV1};
-use crawlx_core::request::RequestEnvelopeV1;
+use crawlx_core::request::{
+    keyed_body_digest, RequestBodyV1, RequestEnvelopeV1, WriteApprovalV1, MAX_WRITE_BODY_BYTES,
+};
+use crawlx_core::safety::RiskClass;
 use crawlx_policy::ScopePolicy;
 use crawlx_url::{CanonicalizeOptions, Canonicalizer};
 use serde::Deserialize;
@@ -38,6 +47,136 @@ struct Proposal {
     depth: u16,
     #[serde(default)]
     priority: i32,
+    #[serde(default)]
+    body: Option<ProposalBody>,
+    #[serde(default)]
+    approval: Option<ProposalApproval>,
+}
+
+/// Body bytes of a write: exactly one of `text` (verbatim), `json` (compact serialization) or
+/// `base64` (decoded bytes).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProposalBody {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    json: Option<serde_json::Value>,
+    #[serde(default)]
+    base64: Option<String>,
+    #[serde(default)]
+    media_type: Option<String>,
+}
+
+/// A reviewer's approval of the write's risk class.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProposalApproval {
+    risk_class: RiskClass,
+}
+
+impl ProposalBody {
+    /// The exact bytes and the declared (or default) media type.
+    fn into_parts(self) -> ApiResult<(Vec<u8>, String)> {
+        let (bytes, default_type) = match (self.text, self.json, self.base64) {
+            (Some(text), None, None) => (text.into_bytes(), "text/plain; charset=utf-8"),
+            (None, Some(json), None) => (
+                serde_json::to_vec(&json).map_err(|_| HttpError::malformed("invalid request body"))?,
+                "application/json",
+            ),
+            (None, None, Some(encoded)) => (
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .map_err(|_| HttpError::malformed("request body is not valid base64"))?,
+                "application/octet-stream",
+            ),
+            _ => {
+                return Err(HttpError::malformed(
+                    "a request body holds exactly one of text, json or base64",
+                ))
+            }
+        };
+        Ok((bytes, self.media_type.unwrap_or_else(|| default_type.to_owned())))
+    }
+}
+
+/// What a write batch needs from the run and the deployment before any body is retained.
+struct WritePlan<'a> {
+    key: &'a [u8; 32],
+}
+
+impl<'a> WritePlan<'a> {
+    /// Refuse a write batch the run cannot execute, with the reason a client can act on.
+    fn prepare(state: &'a AppState, run: &crawlx_core::repo::CrawlRun) -> ApiResult<Self> {
+        if run.config.safety.profile == crawlx_core::config::SafetyProfile::ReadOnly {
+            return Err(HttpError::compat(
+                StatusCode::BAD_REQUEST,
+                "write_read_only",
+                "the run's safety profile is read_only: mutating requests are refused",
+            ));
+        }
+        if run.config.orchestration.is_none() {
+            return Err(HttpError::malformed(
+                "mutating requests require orchestration attempt limits on the run",
+            ));
+        }
+        let key = state
+            .config
+            .request_identity_key
+            .as_ref()
+            .map(crawlx_core::SecretOr::expose)
+            .ok_or_else(|| {
+                HttpError::backend_unavailable(
+                    "request_writes_unavailable",
+                    "operator request identity key is required",
+                )
+            })?;
+        Ok(Self { key })
+    }
+
+    /// Retain `body` as a credential-bearing artifact of the run and reference it by its
+    /// tenant-keyed digest. An empty body is no body.
+    async fn retain(
+        &self,
+        state: &AppState,
+        run: &crawlx_core::repo::CrawlRun,
+        body: ProposalBody,
+    ) -> ApiResult<Option<RequestBodyV1>> {
+        let (bytes, media_type) = body.into_parts()?;
+        if media_type.len() > 128 || media_type.bytes().any(|byte| byte.is_ascii_control()) {
+            return Err(HttpError::malformed("invalid request body media type"));
+        }
+        let length = u64::try_from(bytes.len()).map_err(|_| HttpError::malformed("invalid request body"))?;
+        if length > MAX_WRITE_BODY_BYTES {
+            return Err(HttpError::payload_too_large(
+                usize::try_from(MAX_WRITE_BODY_BYTES).unwrap_or(usize::MAX),
+            ));
+        }
+        if length == 0 {
+            return Ok(None);
+        }
+        let artifacts = state.repos.artifacts.artifact_store().ok_or_else(|| {
+            HttpError::backend_unavailable(
+                "request_writes_unavailable",
+                "typed request body artifact sink unavailable",
+            )
+        })?;
+        let artifact = artifacts
+            .put(
+                run.id,
+                crawlx_core::repo::Sensitivity::CredentialBearing,
+                &media_type,
+                &bytes,
+            )
+            .await?;
+        Ok(Some(RequestBodyV1::for_artifact(
+            &artifact,
+            keyed_body_digest(self.key, run.tenant, &bytes),
+            1,
+            length,
+            media_type,
+        )))
+    }
 }
 fn get_method() -> String {
     "GET".into()
@@ -263,12 +402,34 @@ pub async fn append(
     let resource_key = run.seed.derive("resource-id-key", &[run.id.0.as_bytes()]);
     let canonical = CanonicalizeOptions::from_scope(&run.config.scope, resource_key);
     let scope = ScopePolicy::new(&run.config).map_err(|_| HttpError::malformed("invalid run scope"))?;
+    let writes = input
+        .requests
+        .iter()
+        .filter(|proposal| RequestEnvelopeV1::is_write_method(&proposal.method))
+        .count();
+    if writes != 0 && writes != input.requests.len() {
+        return Err(HttpError::malformed(
+            "a request batch is either all reads or all writes",
+        ));
+    }
+    let write_plan = if writes == 0 {
+        None
+    } else {
+        Some(WritePlan::prepare(&state, &run)?)
+    };
     let mut requests = Vec::with_capacity(input.requests.len());
     for proposal in input.requests {
-        if !matches!(proposal.method.as_str(), "GET" | "HEAD") {
-            return Err(HttpError::malformed(
-                "request methods other than GET or HEAD require journalled action admission",
-            ));
+        if write_plan.is_none() {
+            if !matches!(proposal.method.as_str(), "GET" | "HEAD") {
+                return Err(HttpError::malformed(
+                    "request methods other than GET, HEAD and the write methods are not supported",
+                ));
+            }
+            if proposal.body.is_some() || proposal.approval.is_some() {
+                return Err(HttpError::malformed(
+                    "only write methods carry a body or an approval",
+                ));
+            }
         }
         if !proposal.url.username().is_empty() || proposal.url.password().is_some() {
             return Err(HttpError::malformed("URL credentials are not accepted"));
@@ -286,6 +447,24 @@ pub async fn append(
         envelope.route = proposal.route;
         envelope.metadata = proposal.metadata;
         envelope.priority = proposal.priority;
+        if let Some(plan) = &write_plan {
+            if let Some(body) = proposal.body {
+                envelope.body = plan.retain(&state, &run, body).await?;
+            }
+            if let Some(approval) = proposal.approval {
+                principal.require(Scope::ApprovalsDecide)?;
+                if envelope.write_risk() != Some(approval.risk_class) {
+                    return Err(HttpError::malformed(
+                        "the approved risk class does not match the request method",
+                    ));
+                }
+                envelope.approval = Some(WriteApprovalV1::new(
+                    approval.risk_class,
+                    principal.actor(),
+                    state.clock.now(),
+                ));
+            }
+        }
         envelope
             .validate()
             .map_err(|_| HttpError::malformed("invalid request envelope"))?;
@@ -298,6 +477,28 @@ pub async fn append(
     batch.expected_cursor = input.expected_cursor;
     batch.next_cursor = input.next_cursor;
     batch.validate().map_err(HttpError::from)?;
+    if write_plan.is_some() {
+        let approved: Vec<&str> = batch
+            .requests
+            .iter()
+            .filter_map(|request| request.approval.as_ref().map(|approval| approval.risk.as_str()))
+            .collect();
+        state
+            .repos
+            .api
+            .audit_append(
+                principal.tenant,
+                Some(run.id),
+                &principal.actor(),
+                "requests.write_submitted",
+                json!({
+                    "batch": batch.batch_id.to_hex(),
+                    "writes": batch.requests.len(),
+                    "approved": approved,
+                }),
+            )
+            .await?;
+    }
     let receipt = state.repos.frontier.append_batch(batch).await?;
     Ok(json_response(StatusCode::OK, &json!({"data":receipt})))
 }

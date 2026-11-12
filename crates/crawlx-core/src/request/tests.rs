@@ -394,3 +394,200 @@ fn import_batch_identity_does_not_bypass_row_or_byte_limits() {
         Err(import::ImportError::Limit)
     );
 }
+
+fn write(method: &str, body: &[u8], media_type: &str) -> RequestEnvelopeV1 {
+    let mut request = RequestEnvelopeV1::new(url("https://example.test/api/item"), method.into(), 0, None);
+    request.body = Some(RequestBodyV1::for_artifact(
+        &ArtifactRef {
+            id: crate::ArtifactId::new(),
+            digest: Digest::of("test/artifact", body),
+        },
+        keyed_body_digest(&[7; 32], TENANT, body),
+        1,
+        u64::try_from(body.len()).unwrap(),
+        media_type.into(),
+    ));
+    request
+}
+
+const TENANT: TenantId = TenantId(uuid::Uuid::from_u128(1));
+
+fn identity_of(request: &RequestEnvelopeV1, principal: &str) -> Digest {
+    request
+        .identity(
+            TENANT,
+            CrawlRunId(uuid::Uuid::from_u128(2)),
+            principal,
+            &BTreeMap::new(),
+            1,
+        )
+        .unwrap()
+        .key
+}
+
+#[test]
+fn write_identity_separates_body_principal_method_and_media_type_but_not_artifact_handle() {
+    let base = identity_of(
+        &write("POST", b"a=1&b=2", "application/x-www-form-urlencoded"),
+        "api_key:one",
+    );
+    // The same logical write re-submitted with a freshly retained artifact is the same request.
+    assert_eq!(
+        base,
+        identity_of(
+            &write("POST", b"a=1&b=2", "application/x-www-form-urlencoded"),
+            "api_key:one"
+        )
+    );
+    for (label, other) in [
+        (
+            "body",
+            identity_of(
+                &write("POST", b"a=1&b=3", "application/x-www-form-urlencoded"),
+                "api_key:one",
+            ),
+        ),
+        (
+            "principal",
+            identity_of(
+                &write("POST", b"a=1&b=2", "application/x-www-form-urlencoded"),
+                "api_key:two",
+            ),
+        ),
+        (
+            "method",
+            identity_of(
+                &write("PUT", b"a=1&b=2", "application/x-www-form-urlencoded"),
+                "api_key:one",
+            ),
+        ),
+        (
+            "media type",
+            identity_of(&write("POST", b"a=1&b=2", "text/plain"), "api_key:one"),
+        ),
+    ] {
+        assert_ne!(base, other, "{label} must change the identity of a write");
+    }
+    // A write never collapses into the legacy anonymous GET key of its URL.
+    assert_ne!(base, url("https://example.test/api/item").key);
+}
+
+#[test]
+fn body_digest_is_tenant_keyed_and_artifact_handle_round_trips() {
+    let other_tenant = TenantId(uuid::Uuid::from_u128(3));
+    assert_ne!(
+        keyed_body_digest(&[7; 32], TENANT, b"secret"),
+        keyed_body_digest(&[7; 32], other_tenant, b"secret")
+    );
+    assert_ne!(
+        keyed_body_digest(&[7; 32], TENANT, b"secret"),
+        keyed_body_digest(&[8; 32], TENANT, b"secret")
+    );
+    assert_ne!(
+        keyed_body_digest(&[7; 32], TENANT, b"secret"),
+        Digest::of("crawlx/request-body/v1", b"secret"),
+        "no unkeyed hash of the body may stand in for the keyed digest"
+    );
+    let artifact = ArtifactRef {
+        id: crate::ArtifactId::new(),
+        digest: Digest::of("test/artifact", b"secret"),
+    };
+    let body = RequestBodyV1::for_artifact(&artifact, Digest::of("x", b"y"), 1, 6, "text/plain".into());
+    assert_eq!(body.artifact(), Some(artifact));
+    assert!(!body.handle.contains(&Digest::of("x", b"y").to_hex()));
+    for handle in [
+        "volatile:body",
+        "artifact:",
+        "artifact:not-a-uuid:00",
+        "artifact:x",
+    ] {
+        let mut foreign = body.clone();
+        foreign.handle = handle.into();
+        assert_eq!(foreign.artifact(), None, "{handle}");
+    }
+}
+
+#[test]
+fn safe_methods_never_carry_a_body_and_oversize_bodies_are_invalid() {
+    let mut get = write("POST", b"x", "text/plain");
+    get.method = "GET".into();
+    assert!(matches!(get.validate(), Err(RequestError::InvalidEnvelope)));
+    get.method = "HEAD".into();
+    assert!(matches!(get.validate(), Err(RequestError::InvalidEnvelope)));
+    let mut put = write("PUT", b"x", "text/plain");
+    put.validate().unwrap();
+    put.body.as_mut().unwrap().length = MAX_WRITE_BODY_BYTES;
+    put.validate().unwrap();
+    put.body.as_mut().unwrap().length = MAX_WRITE_BODY_BYTES + 1;
+    assert!(matches!(put.validate(), Err(RequestError::InvalidEnvelope)));
+}
+
+#[test]
+fn write_risk_matches_the_kernel_traffic_classes_and_gates_approval_binding() {
+    let now = "2026-11-11T00:00:00Z".parse().unwrap();
+    for (method, risk) in [
+        ("POST", Some(RiskClass::PersistentWriteOwn)),
+        ("PUT", Some(RiskClass::PersistentWriteOwn)),
+        ("PATCH", Some(RiskClass::PersistentWriteOwn)),
+        ("DELETE", Some(RiskClass::Destructive)),
+        ("GET", None),
+        ("HEAD", None),
+        ("OPTIONS", None),
+        ("TRACE", None),
+    ] {
+        let request = RequestEnvelopeV1::new(url("https://example.test/x"), method.into(), 0, None);
+        assert_eq!(request.write_risk(), risk, "{method}");
+        assert_eq!(
+            RequestEnvelopeV1::is_write_method(method),
+            risk.is_some(),
+            "{method}"
+        );
+    }
+    let mut delete = RequestEnvelopeV1::new(url("https://example.test/x"), "DELETE".into(), 0, None);
+    delete.approval = Some(WriteApprovalV1::new(
+        RiskClass::Destructive,
+        "api_key:r".into(),
+        now,
+    ));
+    delete.validate().unwrap();
+    // An approval is bound to the class of its own method, and to write methods only.
+    delete.approval = Some(WriteApprovalV1::new(
+        RiskClass::PersistentWriteOwn,
+        "api_key:r".into(),
+        now,
+    ));
+    assert!(matches!(delete.validate(), Err(RequestError::InvalidEnvelope)));
+    let mut get = RequestEnvelopeV1::get(url("https://example.test/x"), 0, None);
+    get.approval = Some(WriteApprovalV1::new(
+        RiskClass::NavigationReveal,
+        "api_key:r".into(),
+        now,
+    ));
+    assert!(matches!(get.validate(), Err(RequestError::InvalidEnvelope)));
+}
+
+#[test]
+fn approval_stays_out_of_identity_and_old_envelopes_without_it_still_decode() {
+    let now = "2026-11-11T00:00:00Z".parse().unwrap();
+    let plain = write("DELETE", b"{}", "application/json");
+    let mut approved = plain.clone();
+    approved.approval = Some(WriteApprovalV1::new(
+        RiskClass::Destructive,
+        "api_key:r".into(),
+        now,
+    ));
+    assert_eq!(
+        identity_of(&plain, "api_key:one"),
+        identity_of(&approved, "api_key:one")
+    );
+    let stored = serde_json::to_value(&plain).unwrap();
+    assert!(
+        stored.get("approval").is_none(),
+        "absent approval is not serialized"
+    );
+    let restored: RequestEnvelopeV1 = serde_json::from_value(stored).unwrap();
+    assert_eq!(restored, plain);
+    let restored: RequestEnvelopeV1 =
+        serde_json::from_value(serde_json::to_value(&approved).unwrap()).unwrap();
+    assert_eq!(restored, approved);
+}

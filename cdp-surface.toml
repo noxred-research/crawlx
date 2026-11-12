@@ -37,6 +37,11 @@ name = "Browser.getVersion"
 requires = "browser"
 
 [[commands]]
+name = "Browser.setPermission"
+requires = "browser"
+params = { permission = { name = "geolocation" }, setting = "prompt" }
+
+[[commands]]
 name = "DOM.describeNode"
 requires = "page"
 params = { depth = 0 }
@@ -126,6 +131,11 @@ params = { computedStyles = [] }
 name = "Emulation.setDeviceMetricsOverride"
 requires = "page"
 params = { width = 800, height = 600, deviceScaleFactor = 1, mobile = false }
+
+[[commands]]
+name = "Emulation.setGeolocationOverride"
+requires = "page"
+params = {}
 
 [[commands]]
 name = "Emulation.setLocaleOverride"

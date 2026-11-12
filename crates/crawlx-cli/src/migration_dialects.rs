@@ -15,6 +15,7 @@ use crawlx_core::{
     session_binding::ProfileLeaseV1,
     CrawlRunId, CreateCrawl, TenantId, Timestamp,
 };
+use crawlx_extract::item_loader::{translate_struct_tags, StructTagManifestV1};
 use crawlx_url::{CanonicalizeOptions, Canonicalizer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -68,6 +69,7 @@ impl Family {
             (Self::JsActor, _) => "CJ13",
             (Self::PyActor, _) => "CP01",
             (Self::PythonSpider, _) => "SC48",
+            (Self::GoCollector, "fields") => "CO13",
             (Self::GoCollector, _) => "CO02",
             (Self::SeedlistBatch, "seeds" | "queue" | "state") => "NUT-01",
             (Self::SeedlistBatch, "profile" | "credentials") => "NUT-08",
@@ -803,6 +805,9 @@ fn apply_options(
                 Ok("RequestBatchV1.producerEpoch; expectedCursor; parentFence")
             } else { Err("restart state must match the complete tenant and fence binding") },
             "checker" => checker(value, config),
+            "fields" if matches!(report.source, Family::GoCollector) => {
+                struct_tag_fields(value, config, report, &path)
+            }
             "insecureTls" => tls_exception(value, config),
             "originOverride" => {
                 report.add(path, key, "decision_needed", None,
@@ -858,6 +863,41 @@ fn apply_options(
         }
     }
     Ok(())
+}
+
+/// The exported struct-tag manifest of a collector as an item loader of `config`'s extraction
+/// policy. Each field is a row at its position; one that cannot be translated exactly makes the
+/// option, and with it the import, unconvertible: nothing is dropped or zero-filled.
+fn struct_tag_fields(
+    value: &Value,
+    config: &mut CreateCrawl,
+    report: &mut Report,
+    path: &str,
+) -> Result<&'static str, &'static str> {
+    const TARGET: &str = "CreateCrawl.extract.content.item_loader";
+    let tags: StructTagManifestV1 = serde_json::from_value(value.clone())
+        .map_err(|_| "the option is not a version 1 struct-tag manifest; nothing is guessed from it")?;
+    let translation = translate_struct_tags(&tags);
+    for (position, row) in translation.rows.iter().enumerate() {
+        if !row.translated {
+            report.add(
+                format!("{path}.fields[{position}]"),
+                "fields",
+                "rejected",
+                None,
+                row.reason,
+            );
+        }
+    }
+    let loader = translation
+        .loader
+        .ok_or("at least one tagged field cannot be translated exactly; no item loader is produced")?;
+    config
+        .extract
+        .content
+        .get_or_insert_with(crawlx_core::extraction::ExtractionPolicyV1::default)
+        .item_loader = Some(loader);
+    Ok(TARGET)
 }
 
 fn object<'a>(value: &'a Value, allowed: &[&str]) -> Result<&'a Map<String, Value>, &'static str> {

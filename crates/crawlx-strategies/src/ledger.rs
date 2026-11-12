@@ -23,7 +23,7 @@ use crawlx_state::OutcomeClass;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-/// EWMA smoothing for the cold-start gain and latency estimates.
+/// EWMA smoothing for the cold-start gain estimate.
 const EWMA_ALPHA: f32 = 0.2;
 /// Prior for "new keys per exercised key" before any evidence.
 const COLD_START_PRIOR: f32 = 1.0;
@@ -54,8 +54,6 @@ pub trait LedgerView: Send + Sync {
     fn unexercised_total(&self) -> u32;
     /// Clusters with unexercised keys, in cluster-id order.
     fn unexercised_by_cluster(&self) -> Vec<(StateClusterId, u32)>;
-    /// Smoothed latency of actions of `kind`, if any was observed.
-    fn latency_ms(&self, kind: ActionKind) -> Option<u32>;
 }
 
 /// Per-route share of the coverage summary.
@@ -135,7 +133,6 @@ pub struct InMemoryLedger {
     registered: u64,
     registered_at_last_exercise: u64,
     families: BTreeMap<(PrincipalId, ActionKind), FamilyStat>,
-    latency: BTreeMap<ActionKind, f32>,
     /// Observable keys without a trusted execution, per cluster.
     unexercised: BTreeMap<StateClusterId, u32>,
     isolation: TargetIsolation,
@@ -159,7 +156,6 @@ impl InMemoryLedger {
             registered: 0,
             registered_at_last_exercise: 0,
             families: BTreeMap::new(),
-            latency: BTreeMap::new(),
             unexercised: BTreeMap::new(),
             isolation: TargetIsolation::Shared,
             context_counts: BTreeMap::new(),
@@ -354,13 +350,6 @@ impl InMemoryLedger {
             fam.new_keys_ewma = (1.0 - EWMA_ALPHA) * fam.new_keys_ewma + EWMA_ALPHA * new_keys;
         }
         first_trusted
-    }
-
-    /// Fold a latency sample for `kind` into its EWMA.
-    pub fn record_latency(&mut self, kind: ActionKind, ms: u32) {
-        let sample = ms as f32;
-        let e = self.latency.entry(kind).or_insert(sample);
-        *e = (1.0 - EWMA_ALPHA) * *e + EWMA_ALPHA * sample;
     }
 
     /// Is the key id known, observable and not yet exercised by a trusted execution?
@@ -570,18 +559,6 @@ impl LedgerView for InMemoryLedger {
     fn unexercised_by_cluster(&self) -> Vec<(StateClusterId, u32)> {
         self.unexercised.iter().map(|(c, n)| (*c, *n)).collect()
     }
-
-    fn latency_ms(&self, kind: ActionKind) -> Option<u32> {
-        self.latency.get(&kind).map(|v| {
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "rounded and clamped into [0, u32::MAX] first"
-            )]
-            let ms = v.round().clamp(0.0, 4.0e9) as u32;
-            ms
-        })
-    }
 }
 
 #[cfg(test)]
@@ -750,15 +727,6 @@ pub(crate) mod tests {
         }
         assert!(l.expected_gain(&k) < before);
         assert!(l.expected_gain(&k) >= 0.0);
-    }
-
-    #[test]
-    fn latency_is_smoothed() {
-        let mut l = InMemoryLedger::new();
-        assert_eq!(l.latency_ms(ActionKind::Click), None);
-        l.record_latency(ActionKind::Click, 1000);
-        l.record_latency(ActionKind::Click, 2000);
-        assert_eq!(l.latency_ms(ActionKind::Click), Some(1200));
     }
 
     #[test]

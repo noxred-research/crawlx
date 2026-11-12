@@ -36,6 +36,7 @@ conformance! { all:
     payload_source_returns_the_standalone_approved_record,
     recoverable_lists_unfinished_exports_of_active_runs,
     exports_of_two_tenants_are_isolated,
+    dependents_and_cancel_report_the_closure_and_never_touch_committed_exports,
 }
 
 conformance! { databases:
@@ -1466,4 +1467,117 @@ async fn traffic_contract<B: Sql>(rig: &Rig, pg: Store<B>, tenant: TenantId, oth
         .await
         .unwrap()
         .is_empty());
+}
+
+/// `dependents` names exactly the closure `erase` tombstones, and `cancel` abandons only an
+/// export that is still recording, on every engine.
+async fn dependents_and_cancel_report_the_closure_and_never_touch_committed_exports(rig: &Rig) {
+    let tenant = tenant_of(rig).await;
+    on_arc!(rig, |repo| closure_contract(repo, tenant).await);
+}
+
+async fn closure_contract<R>(repo: Arc<R>, tenant: TenantId)
+where
+    R: RunRepo + ArchiveRepo + ArtifactIndex + 'static,
+{
+    use crawlx_core::archive_catalog::{ArchiveCancelV1, ArchiveExportState};
+    let clock = Arc::new(ManualClock::new(at()));
+    let dir = tempfile::tempdir().unwrap();
+    let artifacts = artifacts_of(&repo, dir.path(), clock).await;
+    let now = at();
+    // A published baseline with a published dependent that revisits it.
+    let base = stage(
+        repo.as_ref(),
+        &artifacts,
+        tenant,
+        config(),
+        Some("v1"),
+        false,
+        true,
+    )
+    .await;
+    assert!(repo.dependents(tenant, base.export.id).await.unwrap().is_empty());
+    let second = source(repo.as_ref(), tenant).await;
+    let second_pending = pending(tenant, &second, config());
+    repo.begin(&second_pending).await.unwrap();
+    let claim = repo.claim(tenant, second_pending.id, now).await.unwrap().unwrap();
+    let (mut dependent, second_index) = member(&artifacts, &second, 2).await;
+    dependent.dependency = Some(ArchiveDependencyV1::new(base.export.id, 1));
+    let history = ArchiveHistoryV1::new(
+        base.key.clone(),
+        ArchiveDependencyV1::new(dependent.export, 2),
+        base.history.as_ref().unwrap().etag.clone(),
+        None,
+        now,
+    );
+    repo.commit_record(tenant, claim.fence, &dependent, Some(&history), now)
+        .await
+        .unwrap();
+    let mut manifest = ArchiveManifestV1::available(tenant, second.id, now);
+    manifest.records = 1;
+    repo.publish(
+        tenant,
+        second_pending.id,
+        claim.fence,
+        &dependent.artifact,
+        Some(&second_index),
+        &manifest,
+        now,
+    )
+    .await
+    .unwrap();
+    // The reported closure is the dependent, excluding the export itself.
+    assert_eq!(
+        repo.dependents(tenant, base.export.id).await.unwrap(),
+        vec![second_pending.id]
+    );
+    assert!(repo
+        .dependents(tenant, second_pending.id)
+        .await
+        .unwrap()
+        .is_empty());
+    // A published export is never cancelled and keeps serving.
+    assert_eq!(
+        repo.cancel(tenant, base.export.id, now).await.unwrap(),
+        ArchiveCancelV1::Refused(ArchiveExportState::Published)
+    );
+    assert!(matches!(
+        ArchiveRepo::get(repo.as_ref(), tenant, base.export.id, now)
+            .await
+            .unwrap(),
+        ArchiveReadV1::Available(_)
+    ));
+    // An unknown export is Missing, not an error.
+    assert_eq!(
+        repo.cancel(tenant, uuid::Uuid::now_v7(), now).await.unwrap(),
+        ArchiveCancelV1::Missing
+    );
+    // A recording export with a committed shard is abandoned atomically.
+    let recording = stage(repo.as_ref(), &artifacts, tenant, config(), None, false, false).await;
+    let before = repo.erased_artifacts(tenant, 64).await.unwrap().len();
+    assert_eq!(
+        repo.cancel(tenant, recording.export.id, now).await.unwrap(),
+        ArchiveCancelV1::Cancelled
+    );
+    assert!(matches!(
+        ArchiveRepo::get(repo.as_ref(), tenant, recording.export.id, now)
+            .await
+            .unwrap(),
+        ArchiveReadV1::Missing
+    ));
+    assert!(repo.erased_artifacts(tenant, 64).await.unwrap().len() > before);
+    // The abandoned writer's fence is dead: it cannot commit again.
+    assert!(repo
+        .commit_record(tenant, recording.fence, &recording.record, None, now)
+        .await
+        .is_err());
+    assert_eq!(
+        repo.cancel(tenant, recording.export.id, now).await.unwrap(),
+        ArchiveCancelV1::Missing
+    );
+    // The cancelled export did not disturb the published pair.
+    assert_eq!(
+        repo.dependents(tenant, base.export.id).await.unwrap(),
+        vec![second_pending.id]
+    );
 }

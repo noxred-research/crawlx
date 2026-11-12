@@ -1,0 +1,110 @@
+{{- if .Values.auditExport.enabled }}
+{{- $a := .Values.auditExport -}}
+{{- $bucket := required "auditExport.s3Bucket is required: name the object-lock (WORM) audit bucket" $a.s3Bucket -}}
+{{- $dbSecret := required "auditExport.databaseSecret is required: a dedicated audit-export login (key database_url), never the migration, worker or request login" $a.databaseSecret -}}
+{{- $credSecret := required "auditExport.objectStore.credentialsSecret is required: Secret with keys access_key_id and secret_access_key" $a.objectStore.credentialsSecret -}}
+{{- if has $dbSecret (list .Values.secrets.database .Values.secrets.databaseApi .Values.secrets.databaseMigrate .Values.safetyAuditor.readerSecret .Values.safetyAuditor.pauseSecret) }}
+{{- fail "auditExport.databaseSecret must be a dedicated login: it names one of the chart's migration, worker, request or safety-auditor database secrets" }}
+{{- end }}
+{{- if eq ($a.objectStore.profile | default "standard") "edge" }}
+{{- fail "auditExport.objectStore.profile=edge is refused: that profile has no object lock; use another profile for the audit bucket" }}
+{{- end }}
+# Daily Merkle export of the audit chain to the object-lock audit bucket. One pod, no
+# worker configuration, artifact volume, service account token or DDL/owner database credential.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-audit-export
+  labels: { app: crawlx-audit-export, app.kubernetes.io/part-of: crawlx }
+spec:
+  schedule: {{ $a.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $a.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      # A bucket under object lock refuses a replacement object: a retry of a half-finished day
+      # would fail on the tenants already written. Re-run by hand with `--day` instead.
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ $a.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels: { app: crawlx-audit-export, release: {{ .Release.Name }} }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            {{- include "crawlx.podSecurityContext" (dict "uid" 65532) | nindent 12 }}
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: audit-export
+              image: {{ include "crawlx.apiImage" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args: ["admin", "audit-export", "--all", "--s3-bucket", {{ $bucket | quote }}]
+              env:
+                - name: CRAWLX_ENVIRONMENT
+                  value: {{ .Values.environment | quote }}
+                - name: CRAWLX_OPERATOR
+                  value: audit-export
+                - name: CRAWLX_DATABASE_URL_FILE
+                  value: /run/secrets/audit-export/database_url
+                {{- with $a.objectStore.profile }}
+                - name: CRAWLX_S3_PROFILE
+                  value: {{ . | quote }}
+                {{- end }}
+                {{- with $a.objectStore.endpoint }}
+                - name: CRAWLX_S3_ENDPOINT
+                  value: {{ . | quote }}
+                {{- end }}
+                {{- with $a.objectStore.region }}
+                - name: CRAWLX_S3_REGION
+                  value: {{ . | quote }}
+                {{- end }}
+                # the bucket is under object lock: every upload carries the checksum it requires
+                - name: CRAWLX_S3_OBJECT_LOCK
+                  value: "1"
+                - name: AWS_ACCESS_KEY_ID # wire-compat: SDK credential variable
+                  valueFrom:
+                    secretKeyRef: { name: {{ $credSecret | quote }}, key: access_key_id }
+                - name: AWS_SECRET_ACCESS_KEY # wire-compat: SDK credential variable
+                  valueFrom:
+                    secretKeyRef: { name: {{ $credSecret | quote }}, key: secret_access_key }
+              securityContext:
+                {{- include "crawlx.containerSecurityContext" . | nindent 16 }}
+              resources:
+                {{- toYaml $a.resources | nindent 16 }}
+              volumeMounts:
+                - { name: database, mountPath: /run/secrets/audit-export, readOnly: true }
+          volumes:
+            - name: database
+              secret:
+                secretName: {{ $dbSecret | quote }}
+                items: [{ key: database_url, path: database_url }]
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-audit-export
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-audit-export, release: {{ .Release.Name }} }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.databaseSelector }} }
+      ports: [{ protocol: TCP, port: {{ include "crawlx.databasePort" . }} }]
+    - to:
+        - podSelector: { matchLabels: {{ toJson .Values.networkPolicy.objectStoreSelector }} }
+      ports: [{ protocol: TCP, port: 9000 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+{{- end }}
+{{- end }}

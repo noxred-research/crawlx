@@ -2,13 +2,16 @@
 //! request blocking, script evaluation, serialization, screenshot and PDF operations the
 //! scrape engine needs beyond the journaled `BrowserAction` vocabulary.
 //!
-//! `BlockUrls` and `Emulate` are context-wide: the value is stored in `State::overrides`,
-//! applied to every open tab and child-frame session, and re-applied by `setup_tab` /
-//! `setup_frame` ([`apply_overrides`]) to the tabs and frames attached later (popups, new
-//! iframes). Every other operation targets the active tab. Script-visible reads (`Html`,
-//! `EvaluateScript`, `WaitForSelector`) run in the page's main world with `Runtime.evaluate`,
-//! which needs neither `Runtime.enable` nor the isolated world, so they work under every
-//! launch profile. Every command is bounded by an explicit timeout.
+//! `BlockUrls`, `BlockResources` and `Emulate` are context-wide: the value is stored in
+//! `State::overrides`, applied to every open tab and child-frame session, and re-applied by
+//! `setup_tab` / `setup_frame` ([`apply_overrides`]) to the tabs and frames attached later
+//! (popups, new iframes). An emulation carries the viewport, device pixel ratio, user agent,
+//! locale, time zone and geolocation; the geolocation permission is granted for the whole
+//! browser context while one is set. Every other operation targets the active tab.
+//! Script-visible reads (`Html`, `FlattenedHtml`, `MeasureDevice`, `EvaluateScript`,
+//! `WaitForSelector`) run in the page's main world with `Runtime.evaluate`, which needs neither
+//! `Runtime.enable` nor the isolated world, so they work under every launch profile; they read
+//! the page and never change it. Every command is bounded by an explicit timeout.
 
 use super::selector::describe;
 use super::state::State;
@@ -17,7 +20,11 @@ use crate::cdp::CdpSession;
 use crawlx_core::browser::BrowserError;
 use crawlx_core::ids::{BackendNodeId, FrameId, TabId};
 use crawlx_core::observation::RuntimeLocator;
-use crawlx_core::page_op::{Emulation, PageOp, PageOpResult, PdfSpec, SelectorState, ShotSpec};
+use crawlx_core::page_op::{
+    BlockInstall, DeviceBuildV1, DeviceMatrixEntryV1, DeviceMatrixV1, DeviceMeasurement, DevicePreset,
+    Emulation, FlattenSpec, FlattenedDocument, FrameProvenance, GeoPosition, PageOp, PageOpResult, PdfSpec,
+    ResourceBlockSpec, SelectorState, ShotSpec,
+};
 use crawlx_core::parser_memory::{
     AdmittedBytes, AdmittedText, Budgeted, ByteAdmissionError, ByteBudget, BytePermit,
 };
@@ -37,6 +44,12 @@ const MIN_PROBE: Duration = Duration::from_millis(500);
 const MAX_SHOT_EDGE: u32 = 16_384;
 /// Touch points reported while `Emulation::mobile` is set.
 const MAX_TOUCH_POINTS: u8 = 5;
+/// Shallow-DOM-to-text serializer that folds shadow roots and readable iframes in; a function
+/// expression taking the [`FlattenSpec`] as JSON.
+const FLATTEN_SCRIPT: &str = include_str!("../../data/flatten_document.js");
+/// Reads viewport, pixel ratio, user agent, language, time zone, touch support and, on
+/// request, geolocation; a function expression taking the probe flag.
+const MEASURE_SCRIPT: &str = include_str!("../../data/measure_device.js");
 
 /// `DOCTYPE` plus `outerHTML` of the document element, and the document URL.
 const HTML_SCRIPT: &str = r#"(() => {
@@ -102,11 +115,23 @@ fn viewport_of(ctl: &Ctl, em: &Emulation, viewport: Option<(u32, u32)>) -> (u32,
         .unwrap_or((ctl.config.viewport.width, ctl.config.viewport.height))
 }
 
-/// `Emulation.setDeviceMetricsOverride` parameters for [`viewport_of`] at scale 1, mobile per
-/// the emulation.
+/// `Emulation.setDeviceMetricsOverride` parameters for [`viewport_of`] at the emulation's
+/// device pixel ratio (1 without one), mobile per the emulation.
 fn metrics_params(ctl: &Ctl, em: &Emulation, viewport: Option<(u32, u32)>) -> Value {
     let (width, height) = viewport_of(ctl, em, viewport);
-    json!({ "width": width, "height": height, "deviceScaleFactor": 1, "mobile": em.mobile })
+    let scale = em
+        .device_scale_milli
+        .map_or(1.0, |milli| f64::from(milli) / 1000.0);
+    let mut params = json!({
+        "width": width, "height": height, "deviceScaleFactor": scale, "mobile": em.mobile,
+    });
+    // the screen follows an explicitly requested device size; without one it stays the
+    // context's own, so clearing an emulation restores what the page saw before
+    if viewport.or(em.viewport).is_some() {
+        params["screenWidth"] = json!(width);
+        params["screenHeight"] = json!(height);
+    }
+    params
 }
 
 /// The `User-Agent` of the context without any emulation (`fetch.userAgent`, else
@@ -133,7 +158,9 @@ async fn apply_emulation(
     prev: Option<&Emulation>,
     existing: bool,
 ) -> Result<(), BrowserError> {
-    if kind == SessionKind::Tab && (next.viewport.is_some() || next.mobile || prev.is_some()) {
+    if kind == SessionKind::Tab
+        && (next.viewport.is_some() || next.mobile || next.device_scale_milli.is_some() || prev.is_some())
+    {
         sess.send(
             "Emulation.setDeviceMetricsOverride",
             metrics_params(ctl, next, None),
@@ -178,6 +205,19 @@ async fn apply_emulation(
     } else if prev.is_some_and(|p| p.timezone.is_some()) {
         sess.send("Emulation.setTimezoneOverride", json!({ "timezoneId": "" }))
             .await?;
+    }
+    if let Some(geo) = next.geolocation {
+        sess.send(
+            "Emulation.setGeolocationOverride",
+            json!({
+                "latitude": geo.latitude(),
+                "longitude": geo.longitude(),
+                "accuracy": f64::from(geo.accuracy_m),
+            }),
+        )
+        .await?;
+    } else if prev.is_some_and(|p| p.geolocation.is_some()) {
+        sess.send("Emulation.setGeolocationOverride", json!({})).await?;
     }
     Ok(())
 }
@@ -387,6 +427,11 @@ impl CdpContext {
                 "binary page captures are unavailable with captcha solving".to_owned(),
             ));
         }
+        if self.ctl.config.captcha.is_some() && matches!(&op, PageOp::FlattenedHtml(_)) {
+            return Err(BrowserError::Unsupported(
+                "flattened serialization is unavailable with captcha solving".to_owned(),
+            ));
+        }
         let result = match op {
             PageOp::Emulate(em) => self.emulate(em).await.map(|()| PageOpResult::Done),
             PageOp::BlockUrls(patterns) => self.block_urls(patterns).await.map(|()| PageOpResult::Done),
@@ -422,6 +467,14 @@ impl CdpContext {
                 .resolve_all(&selector, limit)
                 .await
                 .map(PageOpResult::Locators),
+            PageOp::BlockResources(spec) => {
+                self.block_resources(spec).await.map(PageOpResult::BlockInstalled)
+            }
+            PageOp::FlattenedHtml(spec) => self.flattened_html(spec).await,
+            PageOp::MeasureDevice { probe_geolocation } => self
+                .measure_device(probe_geolocation)
+                .await
+                .map(PageOpResult::Device),
         }?;
         self.mask_captcha_page_result(result)
     }
@@ -474,6 +527,29 @@ impl CdpContext {
         Ok(())
     }
 
+    /// `PageOp::BlockResources`: store the list's patterns for the tabs and frames attached
+    /// later, install them on every open session and report how many sessions took them. A
+    /// session that rejects the list while it is still open is counted, not hidden.
+    async fn block_resources(&self, spec: ResourceBlockSpec) -> Result<BlockInstall, BrowserError> {
+        let patterns: Vec<String> = spec.entries.into_iter().map(|e| e.pattern).collect();
+        self.state.lock().overrides.block_urls.clone_from(&patterns);
+        let mut install = BlockInstall {
+            patterns: u32::try_from(patterns.len()).unwrap_or(u32::MAX),
+            ..BlockInstall::default()
+        };
+        for (sess, _) in self.sessions() {
+            match set_blocked_urls(&sess, &patterns).await {
+                Ok(()) => install.sessions_applied = install.sessions_applied.saturating_add(1),
+                Err(e) if self.session_alive(&sess.session_id) => {
+                    tracing::warn!(error = %e, "block list rejected by an open session");
+                    install.sessions_failed = install.sessions_failed.saturating_add(1);
+                }
+                Err(_) => {}
+            }
+        }
+        Ok(install)
+    }
+
     /// `em` with its `User-Agent` filled in when only `Accept-Language` was asked for: the
     /// override command needs a user agent, and the current one is the context's own
     /// (`fetch.userAgent`, `ContextConfig::user_agent`, else the browser's).
@@ -507,6 +583,19 @@ impl CdpContext {
     /// stored for the tabs and frames attached later.
     async fn emulate(&self, em: Emulation) -> Result<(), BrowserError> {
         let next = self.resolve_emulation(em).await?;
+        // the permission is context-wide, the position override per session
+        let had_geolocation = self
+            .state
+            .lock()
+            .overrides
+            .emulation
+            .as_ref()
+            .is_some_and(|e| e.geolocation.is_some());
+        if next.geolocation.is_some() {
+            self.set_geolocation_permission(true).await?;
+        } else if had_geolocation {
+            self.set_geolocation_permission(false).await?;
+        }
         let prev = {
             let stored = (next != Emulation::default()).then(|| next.clone());
             std::mem::replace(&mut self.state.lock().overrides.emulation, stored)
@@ -519,6 +608,24 @@ impl CdpContext {
             }
         }
         Ok(())
+    }
+
+    /// Grant (`true`) or reset to the default (`false`) the geolocation permission of this
+    /// browser context. Without the grant the page cannot read the emulated position.
+    async fn set_geolocation_permission(&self, granted: bool) -> Result<(), BrowserError> {
+        self.ctl
+            .client
+            .call(
+                "Browser.setPermission",
+                None,
+                json!({
+                    "permission": { "name": "geolocation" },
+                    "setting": if granted { "granted" } else { "prompt" },
+                    "browserContextId": self.ctl.browser_context_id,
+                }),
+            )
+            .await
+            .map(|_| ())
     }
 
     /// `PageOp::DocumentResponse`: the response of the active tab's latest main-frame document.
@@ -622,6 +729,110 @@ impl CdpContext {
         let (response, permit) = reply.into_parts();
         let html = admit_text(html, response, permit)?;
         Ok(PageOpResult::Html { html, url })
+    }
+
+    /// `PageOp::FlattenedHtml`: the document serialized with open shadow roots and readable
+    /// iframes folded in. The page is only read; nothing in it is tagged or changed, so the
+    /// element identity actions rely on is the same before and after.
+    async fn flattened_html(&self, spec: FlattenSpec) -> Result<PageOpResult, BrowserError> {
+        let params = json!({
+            "shadowDom": spec.shadow_dom,
+            "frames": spec.frames,
+            "maxFrames": spec.max_frames.clamp(1, FlattenSpec::MAX_FRAMES_LIMIT),
+            "maxDepth": FlattenSpec::MAX_DEPTH,
+        });
+        let script = format!("({FLATTEN_SCRIPT})({params})");
+        let mut reply = self.evaluate_main_charged(&script, false, SCRIPT_TIMEOUT).await?;
+        if let Some(details) = reply.value().get("exceptionDetails") {
+            return Err(BrowserError::Script(exception_message(details)));
+        }
+        let shape =
+            || BrowserError::Script("flattened serialization returned an unexpected shape".to_owned());
+        let Some(Value::Object(document)) = reply.value_mut().pointer_mut("/result/value") else {
+            return Err(shape());
+        };
+        let html = match document.get_mut("html") {
+            Some(Value::String(html)) => std::mem::take(html),
+            _ => return Err(shape()),
+        };
+        let url = match document.get_mut("url") {
+            Some(Value::String(url)) => std::mem::take(url),
+            _ => return Err(shape()),
+        };
+        let frames_omitted = document
+            .get("omitted")
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(shape)?;
+        let frames: Vec<FrameProvenance> =
+            serde_json::from_value(document.get_mut("frames").map(Value::take).ok_or_else(shape)?)
+                .map_err(|_| shape())?;
+        let (response, permit) = reply.into_parts();
+        let html = admit_text(html, response, permit)?;
+        Ok(PageOpResult::Flattened(FlattenedDocument {
+            html,
+            url,
+            frames,
+            frames_omitted,
+        }))
+    }
+
+    /// `PageOp::MeasureDevice`: what the active tab's page reports about its device.
+    async fn measure_device(&self, probe_geolocation: bool) -> Result<DeviceMeasurement, BrowserError> {
+        let script = format!("({MEASURE_SCRIPT})({probe_geolocation})");
+        let value = self.evaluate_main(&script, true, SCRIPT_TIMEOUT).await?;
+        parse_measurement(&value)
+    }
+
+    /// Measure every [`DevicePreset`] on the active tab and restore the context's own
+    /// emulation afterwards. `chromium_version` and `pinned` describe the running build; the
+    /// entries are what the page itself reported under each preset, compared with the request
+    /// and with the device class.
+    ///
+    /// # Errors
+    /// The first protocol or script error of a preset; the emulation is restored first.
+    pub async fn measure_device_matrix(
+        &self,
+        chromium_version: &str,
+        pinned: bool,
+    ) -> Result<DeviceMatrixV1, BrowserError> {
+        let locale = self.ctl.config.locale.clone();
+        let mut entries = Vec::with_capacity(DevicePreset::ALL.len());
+        let mut failure = None;
+        for preset in DevicePreset::ALL {
+            let requested = preset.emulation(chromium_version, &locale);
+            let measured = async {
+                self.emulate(requested.clone()).await?;
+                self.measure_device(false).await
+            }
+            .await;
+            match measured {
+                Ok(measured) => {
+                    entries.push(DeviceMatrixEntryV1::check(
+                        preset,
+                        requested,
+                        measured,
+                        chromium_version,
+                    ));
+                }
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            }
+        }
+        let restored = self.emulate(Emulation::default()).await;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        restored?;
+        Ok(DeviceMatrixV1::new(
+            DeviceBuildV1 {
+                chromium_version: chromium_version.to_owned(),
+                pinned,
+            },
+            entries,
+        ))
     }
 
     /// `PageOp::Screenshot`: the viewport override applies for this capture only.
@@ -805,6 +1016,60 @@ fn shot_result(spec: &ShotSpec, bytes: AdmittedBytes) -> PageOpResult {
             "image/png"
         },
     }
+}
+
+/// The [`DeviceMeasurement`] a measurement script answered.
+///
+/// # Errors
+/// [`BrowserError::Script`] when a member is missing or out of range.
+fn parse_measurement(v: &Value) -> Result<DeviceMeasurement, BrowserError> {
+    let shape = || BrowserError::Script("device measurement returned an unexpected shape".to_owned());
+    let unsigned = |key: &str| -> Result<u32, BrowserError> {
+        v.get(key)
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(shape)
+    };
+    let text = |key: &str| -> Result<String, BrowserError> {
+        v.get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(shape)
+    };
+    let geolocation = match v.get("geo") {
+        None | Some(Value::Null) => None,
+        Some(geo) => {
+            let signed = |key: &str| {
+                geo.get(key)
+                    .and_then(Value::as_i64)
+                    .and_then(|n| i32::try_from(n).ok())
+            };
+            let accuracy = geo
+                .get("accuracyM")
+                .and_then(Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok())
+                .map(|n| n.clamp(1, GeoPosition::MAX_ACCURACY_M));
+            match (signed("latitudeE6"), signed("longitudeE6"), accuracy) {
+                (Some(lat), Some(lon), Some(acc)) => GeoPosition::new(lat, lon, acc).ok(),
+                _ => None,
+            }
+        }
+    };
+    Ok(DeviceMeasurement {
+        viewport: (unsigned("width")?, unsigned("height")?),
+        screen: (unsigned("screenWidth")?, unsigned("screenHeight")?),
+        device_pixel_ratio_milli: unsigned("pixelRatioMilli")?,
+        user_agent: text("userAgent")?,
+        language: text("language")?,
+        time_zone: text("timeZone")?,
+        max_touch_points: unsigned("maxTouchPoints")?,
+        pointer_coarse: v
+            .get("pointerCoarse")
+            .and_then(Value::as_bool)
+            .ok_or_else(shape)?,
+        geolocation,
+        geolocation_error: v.get("geoError").and_then(Value::as_str).map(str::to_owned),
+    })
 }
 
 #[cfg(test)]

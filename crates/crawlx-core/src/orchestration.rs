@@ -63,6 +63,11 @@ impl OrchestrationConfigV1 {
         Ok(())
     }
 }
+/// Total effects one dispatch of an admitted write charges: exactly one send, with no redirect
+/// hop and no retry. The charge is reserved durably before the send and never refunded, so a
+/// later holder of the same row spends from the same `max_total_effects` cap.
+pub const WRITE_DISPATCH_EFFECTS: u32 = 1;
+
 /// Independent ceilings; granting a budget never grants permission for an effect.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1171,6 +1176,7 @@ fn closed_head_acquisition(value: &serde_json::Value) -> bool {
                 "poolSession",
                 "poolExitIp",
                 "negotiatedProtocol",
+                "certificate",
             ],
         ),
         (

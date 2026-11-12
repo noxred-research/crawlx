@@ -347,6 +347,153 @@ impl CalibrationReport {
     }
 }
 
+/// Graded outcomes and decisions a [`DriftMonitor`] keeps by default.
+pub const DRIFT_WINDOW: usize = 1000;
+/// Graded outcomes a window needs before its ECE is trusted; fewer report `None`.
+pub const DRIFT_MIN_SAMPLES: usize = 200;
+
+/// Rolling-window calibration drift monitor of one model version.
+///
+/// The release gate judges a held-out set once. This watches the model in service: every graded
+/// outcome (the confidence the model gave its top option and whether that option turned out
+/// right) enters a bounded window, and the window's expected calibration error is compared with
+/// the same [`ECE_RELEASE_MAX`] ceiling. A second window counts decisions and abstentions, so a
+/// shift in how often the gate abstains is visible too. Old entries fall out; nothing is stored
+/// beyond the two windows and the monitor never reads a clock.
+#[derive(Clone, Debug)]
+pub struct DriftMonitor {
+    capacity: usize,
+    min_samples: usize,
+    graded: std::collections::VecDeque<(f64, bool)>,
+    decisions: std::collections::VecDeque<bool>,
+}
+
+/// What a [`DriftMonitor`] currently shows.
+#[derive(Clone, Copy, PartialEq, Debug)]
+#[non_exhaustive]
+pub struct DriftReading {
+    /// Graded outcomes in the window.
+    pub graded: usize,
+    /// Expected calibration error of the graded window; `None` until it holds
+    /// [`DriftMonitor::min_samples`] outcomes.
+    pub ece: Option<f64>,
+    /// Decisions in the abstention window.
+    pub decisions: usize,
+    /// Share of those decisions on which the gate abstained; `None` before the first.
+    pub abstention_rate: Option<f64>,
+}
+
+impl DriftReading {
+    /// Whether the window is mature and its ECE exceeds [`ECE_RELEASE_MAX`].
+    #[must_use]
+    pub fn drifted(&self) -> bool {
+        self.ece.is_some_and(|ece| ece > ECE_RELEASE_MAX)
+    }
+}
+
+impl Default for DriftMonitor {
+    fn default() -> Self {
+        Self {
+            capacity: DRIFT_WINDOW,
+            min_samples: DRIFT_MIN_SAMPLES,
+            graded: std::collections::VecDeque::new(),
+            decisions: std::collections::VecDeque::new(),
+        }
+    }
+}
+
+impl DriftMonitor {
+    /// A monitor over windows of `capacity` entries that trusts an ECE from `min_samples` outcomes.
+    ///
+    /// # Errors
+    /// [`ModelError::Calibration`] unless `0 < min_samples <= capacity`.
+    pub fn new(capacity: usize, min_samples: usize) -> Result<Self, ModelError> {
+        if min_samples == 0 || min_samples > capacity {
+            return Err(cal("drift window needs 0 < min_samples <= capacity"));
+        }
+        Ok(Self {
+            capacity,
+            min_samples,
+            graded: std::collections::VecDeque::with_capacity(capacity),
+            decisions: std::collections::VecDeque::with_capacity(capacity),
+        })
+    }
+
+    /// Outcomes a window needs before its ECE is reported.
+    #[must_use]
+    pub const fn min_samples(&self) -> usize {
+        self.min_samples
+    }
+
+    /// Record one graded outcome: the top option's calibrated probability and whether it was right.
+    ///
+    /// # Errors
+    /// [`ModelError::Calibration`] for a confidence that is not a probability; the window is unchanged.
+    pub fn observe_outcome(&mut self, confidence: f32, correct: bool) -> Result<(), ModelError> {
+        if !confidence.is_finite() || !(0.0..=1.0).contains(&confidence) {
+            return Err(cal(format!("confidence {confidence} is not a probability")));
+        }
+        if self.graded.len() == self.capacity {
+            self.graded.pop_front();
+        }
+        self.graded.push_back((f64::from(confidence), correct));
+        Ok(())
+    }
+
+    /// Record that the gate accepted (`false`) or abstained (`true`) on one decision.
+    pub fn observe_decision(&mut self, abstained: bool) {
+        if self.decisions.len() == self.capacity {
+            self.decisions.pop_front();
+        }
+        self.decisions.push_back(abstained);
+    }
+
+    /// The current window readings.
+    #[must_use]
+    pub fn reading(&self) -> DriftReading {
+        let abstentions = self.decisions.iter().filter(|abstained| **abstained).count();
+        #[allow(clippy::cast_precision_loss)]
+        let abstention_rate =
+            (!self.decisions.is_empty()).then(|| abstentions as f64 / self.decisions.len() as f64);
+        DriftReading {
+            graded: self.graded.len(),
+            ece: (self.graded.len() >= self.min_samples).then(|| window_ece(&self.graded)),
+            decisions: self.decisions.len(),
+            abstention_rate,
+        }
+    }
+}
+
+/// Expected calibration error of `(confidence, correct)` pairs with [`DEFAULT_ECE_BINS`] bins,
+/// the same binning as [`expected_calibration_error`].
+fn window_ece(samples: &std::collections::VecDeque<(f64, bool)>) -> f64 {
+    let mut conf_sum = [0.0_f64; DEFAULT_ECE_BINS];
+    let mut hits = [0_usize; DEFAULT_ECE_BINS];
+    let mut counts = [0_usize; DEFAULT_ECE_BINS];
+    for &(confidence, correct) in samples {
+        #[allow(clippy::cast_precision_loss)]
+        let width = 1.0 / DEFAULT_ECE_BINS as f64;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let bin = ((confidence / width) as usize).min(DEFAULT_ECE_BINS - 1);
+        conf_sum[bin] += confidence;
+        counts[bin] += 1;
+        hits[bin] += usize::from(correct);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let total = samples.len() as f64;
+    let mut ece = 0.0;
+    for bin in 0..DEFAULT_ECE_BINS {
+        if counts[bin] == 0 {
+            continue;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let n = counts[bin] as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let accuracy = hits[bin] as f64 / n;
+        ece += (n / total) * (accuracy - conf_sum[bin] / n).abs();
+    }
+    ece
+}
 /// Outcome of the confidence gate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GateDecision {
@@ -676,5 +823,79 @@ mod tests {
         let p = s.apply(&[3.0, -1.0, 0.5, 2.2]);
         let sum: f32 = p.iter().sum();
         assert!((sum - 1.0).abs() < 1e-6);
+    }
+
+    /// Graded outcomes whose accuracy matches their confidence: for each bucket confidence `c`
+    /// (tenths), exactly `c * 10` of every ten outcomes are right.
+    fn calibrated(monitor: &mut DriftMonitor, rounds: usize) {
+        for round in 0..rounds {
+            for tenths in [6_usize, 8, 10] {
+                #[allow(clippy::cast_precision_loss)]
+                let confidence = tenths as f32 / 10.0;
+                monitor.observe_outcome(confidence, round % 10 < tenths).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn drift_window_stays_below_the_ceiling_while_calibrated() {
+        let mut monitor = DriftMonitor::new(300, 100).unwrap();
+        calibrated(&mut monitor, 100);
+        let reading = monitor.reading();
+        assert_eq!(reading.graded, 300);
+        assert!(reading.ece.unwrap() < 0.01, "{reading:?}");
+        assert!(!reading.drifted());
+    }
+
+    #[test]
+    fn overconfident_outcomes_push_the_window_ece_above_the_ceiling() {
+        let mut monitor = DriftMonitor::new(300, 100).unwrap();
+        calibrated(&mut monitor, 100);
+        // the model keeps answering at 0.9 but is right only six times in ten
+        for i in 0..300 {
+            monitor.observe_outcome(0.9, i % 10 < 6).unwrap();
+        }
+        let reading = monitor.reading();
+        assert_eq!(reading.graded, 300, "old outcomes fell out of the window");
+        let ece = reading.ece.unwrap();
+        assert!((ece - 0.3).abs() < 1e-6, "{ece}");
+        assert!(reading.drifted());
+        // recovery: the window forgets the bad stretch
+        calibrated(&mut monitor, 100);
+        assert!(!monitor.reading().drifted());
+    }
+
+    #[test]
+    fn ece_is_withheld_until_the_window_is_mature_and_bad_input_is_refused() {
+        let mut monitor = DriftMonitor::new(300, 100).unwrap();
+        for _ in 0..99 {
+            monitor.observe_outcome(0.99, false).unwrap();
+        }
+        assert_eq!(monitor.reading().ece, None, "99 outcomes are not a reading");
+        assert!(!monitor.reading().drifted());
+        monitor.observe_outcome(0.99, false).unwrap();
+        assert!(monitor.reading().drifted());
+        for bad in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+            assert!(monitor.observe_outcome(bad, true).is_err());
+        }
+        assert_eq!(monitor.reading().graded, 100);
+        assert!(DriftMonitor::new(10, 0).is_err());
+        assert!(DriftMonitor::new(10, 11).is_err());
+    }
+
+    #[test]
+    fn abstention_window_reports_the_share_of_recent_decisions() {
+        let mut monitor = DriftMonitor::new(10, 5).unwrap();
+        assert_eq!(monitor.reading().abstention_rate, None);
+        for abstained in [true, false, false, false] {
+            monitor.observe_decision(abstained);
+        }
+        assert_eq!(monitor.reading().abstention_rate, Some(0.25));
+        for _ in 0..10 {
+            monitor.observe_decision(true);
+        }
+        let reading = monitor.reading();
+        assert_eq!(reading.decisions, 10);
+        assert_eq!(reading.abstention_rate, Some(1.0));
     }
 }

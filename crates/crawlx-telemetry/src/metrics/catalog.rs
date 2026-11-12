@@ -170,6 +170,9 @@ catalog! {
     MODEL_ABSTENTIONS = Counter "crawlx.model.abstentions" None ["provider", "model", "mode"] &[], "Model abstentions";
     MODEL_LATENCY = Histogram "crawlx.model.latency" Seconds ["provider", "model"] DEFAULT_BUCKETS, "Model call latency";
     MODEL_BREAKER_STATE = Gauge "crawlx.model.breaker.state" None ["provider"] &[], "Breaker state: 0 closed, 1 half-open, 2 open";
+    MODEL_CALIBRATION_ECE = Gauge "crawlx.model.calibration.ece" None ["provider", "model"] &[], "Expected calibration error over the rolling window of graded outcomes; exported once the window is mature";
+    MODEL_CALIBRATION_SAMPLES = Gauge "crawlx.model.calibration.samples" None ["provider", "model"] &[], "Graded outcomes in the rolling calibration window";
+    MODEL_ABSTENTION_RATE = Gauge "crawlx.model.abstention.rate" None ["provider", "model"] &[], "Share of recent model decisions on which the confidence gate abstained";
     // --- journal / scheduler / fetch
     JOURNAL_T1_DURATION = Histogram "crawlx.journal.t1.duration" Seconds [] FAST_BUCKETS, "Intent journal T1 duration";
     JOURNAL_T2_DURATION = Histogram "crawlx.journal.t2.duration" Seconds [] FAST_BUCKETS, "Intent journal T2 duration";

@@ -208,3 +208,57 @@ fn a_set_key_variable_is_present_and_no_key_is_not_configured() {
     assert_eq!(doc["intel"]["extraction"]["apiKey"]["status"], "present");
     assert_eq!(doc["intel"]["llm"]["apiKey"]["configured"], false);
 }
+
+#[test]
+fn foreign_capacity_variables_are_unmapped_warnings_naming_the_native_key() {
+    let out = check(
+        "json",
+        &[
+            ("NUM_WORKERS_PER_QUEUE", "8"),
+            ("MAX_CONCURRENT_JOBS", "16"),
+            ("BROWSER_POOL_SIZE", "4"),
+            ("CRAWL_CONCURRENT_REQUESTS", "32"),
+        ],
+        false,
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success(), "warnings alone do not fail:\n{stdout}");
+    let doc: Value = serde_json::from_str(&stdout).unwrap();
+    let unsupported = doc["intel"]["unsupported"].as_array().unwrap();
+    let found: Vec<(&str, &str)> = unsupported
+        .iter()
+        .map(|u| (u["variable"].as_str().unwrap(), u["reason"].as_str().unwrap()))
+        .collect();
+    let names: Vec<&str> = found.iter().map(|(n, _)| *n).collect();
+    assert_eq!(
+        names,
+        [
+            "NUM_WORKERS_PER_QUEUE",
+            "MAX_CONCURRENT_JOBS",
+            "BROWSER_POOL_SIZE",
+            "CRAWL_CONCURRENT_REQUESTS"
+        ]
+    );
+    for (name, native) in [
+        ("NUM_WORKERS_PER_QUEUE", "worker.max_sessions"),
+        ("MAX_CONCURRENT_JOBS", "worker.max_sessions"),
+        ("MAX_CONCURRENT_JOBS", "politeness.maxConcurrency"),
+        ("BROWSER_POOL_SIZE", "worker.max_sessions"),
+        ("CRAWL_CONCURRENT_REQUESTS", "politeness.maxConcurrency"),
+    ] {
+        let reason = found.iter().find(|(n, _)| *n == name).unwrap().1;
+        assert!(reason.contains(native), "{name} must name `{native}`: {reason}");
+        let finding = doc["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["key"] == name)
+            .unwrap_or_else(|| panic!("no finding for {name}:\n{stdout}"));
+        assert_eq!(finding["error"], false, "{name} is a warning only");
+        assert!(finding["message"].as_str().unwrap().contains(native), "{finding}");
+    }
+
+    // the same names fail `--strict` like any other variable crawlx cannot act on
+    let strict = check("json", &[("BROWSER_POOL_SIZE", "4")], true);
+    assert_eq!(strict.status.code(), Some(1));
+}

@@ -537,7 +537,6 @@ impl Fixture {
             revealed: revealed.to_vec(),
             baseline_revealed: Vec::new(),
             confounders: Confounders::default(),
-            latency_ms: 100,
             new_operation: false,
             now,
         });

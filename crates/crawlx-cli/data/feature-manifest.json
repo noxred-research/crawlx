@@ -168,10 +168,12 @@
       "id": "SR-17",
       "flags": ["crawl --extension-match", "crawl --extension-filter", "crawl --no-default-ext-filter", "crawl --match-condition", "crawl --filter-condition"],
       "compat": ["-em", "-ef", "-ndef", "-mdc", "-fdc"],
-      "policy": "native",
+      "policy": "deviation",
+      "deviation": "the condition language has the pure, bounded subset of the reference function set (listed with its argument counts by the output DSL, every other reference function with its reason); a function outside it is refused at parse time with its byte position, never evaluated, and nothing evaluates condition text as code",
       "gates": [
         "compat_flags.rs::cli_extension_matching_preserves_dotfile_and_trailing_dot_admission_and_output",
-        "compat_flags.rs::match_and_filter_conditions_select_jsonl_records"
+        "compat_flags.rs::match_and_filter_conditions_select_jsonl_records",
+        "condition_functions.rs::an_unsupported_or_unlisted_condition_function_is_refused_before_the_crawl_with_its_position"
       ]
     },
     {

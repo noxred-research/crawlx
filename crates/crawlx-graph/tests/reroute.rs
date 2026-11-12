@@ -43,7 +43,7 @@ fn obs(
         revealed: revealed.to_vec(),
         baseline_revealed: Vec::new(),
         confounders: Confounders::default(),
-        latency_ms: 100,
+        latency_ms: Some(100),
         lane: TrustLane::TrustedUi,
         now,
     }

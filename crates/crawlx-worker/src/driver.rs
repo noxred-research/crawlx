@@ -2756,7 +2756,6 @@ impl ExplorationDriver {
                         revealed: Vec::new(),
                         baseline_revealed: Vec::new(),
                         confounders: Confounders::default(),
-                        latency_ms: u32::try_from(outcome.latency_ms).unwrap_or(u32::MAX),
                         new_operation: false,
                         now: self.rc.clock.now(),
                     });
@@ -2890,7 +2889,6 @@ impl ExplorationDriver {
                 revealed,
                 baseline_revealed: Vec::new(),
                 confounders,
-                latency_ms: u32::try_from(outcome.latency_ms).unwrap_or(u32::MAX),
                 new_operation,
                 now: self.rc.clock.now(),
             });

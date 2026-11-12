@@ -9,7 +9,9 @@
 //! the response the connected peer is asserted against the checked set.
 
 use crate::body_limits::DEFAULT_MAX_BODY_BYTES;
-use crate::certificate::{CertificateEvidence, CertificateUnavailable};
+use crate::certificate::{
+    CertificateEvidence, CertificateExport, CertificateUnavailable, PEER_CERTIFICATE_HEADER,
+};
 use crate::charset::{self, CharsetEvidence, CharsetSource, DecodeError};
 use crate::codec::{
     read_body, BodyLimitKind, BodyLimits, BodyRead, ContentEncoding, DEFAULT_MAX_EXPANSION_RATIO,
@@ -343,6 +345,79 @@ impl Default for FetchOptions {
     }
 }
 
+/// One mutating request whose admission the caller already decided: method, exact body bytes
+/// and declared content type.
+///
+/// Holding a value grants nothing by itself. [`Fetcher::fetch`] and its siblings still refuse
+/// every method but `GET`/`HEAD`; only [`Fetcher::send_write`] sends one, and it never retries,
+/// follows a redirect or replays it.
+#[derive(Clone, Debug)]
+pub struct WriteRequest {
+    method: Method,
+    body: Bytes,
+    content_type: Option<HeaderValue>,
+}
+
+impl WriteRequest {
+    /// A `POST`, `PUT`, `PATCH` or `DELETE` carrying `body` (possibly empty).
+    ///
+    /// # Errors
+    /// [`FetchError::UnsupportedMethod`] for any other method and [`FetchError::InvalidHeader`]
+    /// for a content type that is not a valid header value.
+    pub fn new(method: Method, body: Bytes, content_type: Option<&str>) -> Result<Self, FetchError> {
+        if !matches!(
+            method,
+            Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+        ) {
+            return Err(FetchError::UnsupportedMethod(method.to_string()));
+        }
+        let content_type = content_type
+            .map(|value| {
+                HeaderValue::from_str(value).map_err(|_| FetchError::InvalidHeader {
+                    name: header::CONTENT_TYPE.as_str().to_owned(),
+                })
+            })
+            .transpose()?;
+        Ok(Self {
+            method,
+            body,
+            content_type,
+        })
+    }
+
+    /// The request method.
+    #[must_use]
+    pub const fn method(&self) -> &Method {
+        &self.method
+    }
+
+    /// The exact bytes sent as the request body.
+    #[must_use]
+    pub const fn body(&self) -> &Bytes {
+        &self.body
+    }
+}
+
+/// A write that failed, with whether any byte may have reached the target.
+#[derive(Debug, thiserror::Error)]
+#[error("{error}")]
+#[non_exhaustive]
+pub struct WriteFailure {
+    /// Why the write failed.
+    #[source]
+    pub error: FetchError,
+    /// `true` once the transport was handed the request: the target may have applied it, so
+    /// the outcome is unknown. `false` when the failure came first (egress, resolution,
+    /// politeness, allowance or authority checks) and no byte was sent.
+    pub dispatched: bool,
+}
+
+/// Per-send state of a write: the request and the flag set the moment the transport is handed it.
+struct WriteContext<'a> {
+    request: &'a WriteRequest,
+    dispatched: &'a std::sync::atomic::AtomicBool,
+}
+
 /// One redirect answer of a fetch: the URL that was requested and what it answered with.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -448,6 +523,14 @@ impl FetchResponse {
             CertificateEvidence::unavailable(CertificateUnavailable::NotReported),
             |e| e.certificate,
         )
+    }
+
+    /// Capped DER/PEM export of the leaf certificate observed on this response's own
+    /// connection. `None` unless the fetcher was built with
+    /// [`Fetcher::with_peer_certificate_export`] and the certificate was observed.
+    #[must_use]
+    pub fn certificate_export(&self) -> Option<CertificateExport> {
+        CertificateExport::from_headers(&self.headers, &self.certificate_evidence())
     }
 
     fn charset_evidence(&self) -> CharsetEvidence {
@@ -619,6 +702,8 @@ pub struct Fetcher {
     control_headers: Vec<(HeaderName, HeaderValue)>,
     /// Alternate deployment route, used only by GET scrape escalation.
     enhanced: Option<Box<Fetcher>>,
+    /// Attach the capped leaf certificate export to every `https` response.
+    export_peer_certificate: bool,
 }
 
 impl std::fmt::Debug for Fetcher {
@@ -740,7 +825,20 @@ impl Fetcher {
             response_body_sink: None,
             response_body_origin: None,
             enhanced: None,
+            export_peer_certificate: false,
         })
+    }
+
+    /// Attach the capped leaf certificate of every `https` response's own connection for
+    /// [`FetchResponse::certificate_export`]. No extra socket is opened: the export copies the
+    /// bytes the transport already reported for the request.
+    #[must_use]
+    pub fn with_peer_certificate_export(mut self) -> Self {
+        self.export_peer_certificate = true;
+        if let Some(enhanced) = self.enhanced.as_mut() {
+            enhanced.export_peer_certificate = true;
+        }
+        self
     }
 
     /// Configure an alternate upstream while retaining policy, credentials, pacing and capture.
@@ -781,6 +879,7 @@ impl Fetcher {
         enhanced
             .response_body_origin
             .clone_from(&self.response_body_origin);
+        enhanced.export_peer_certificate = self.export_peer_certificate;
         self.enhanced = Some(Box::new(enhanced));
         Ok(self)
     }
@@ -1105,7 +1204,7 @@ impl Fetcher {
         // Keep transport and decoder state out of every caller's async frame, including
         // robots admission nested inside page acquisition. Allocate once per fetch,
         // not once per retry or redirect, and retain cancellation through normal drop.
-        let result = Box::pin(self.fetch_inner(url, opts, max_retries, check_authority)).await;
+        let result = Box::pin(self.fetch_inner(url, opts, max_retries, check_authority, None)).await;
         let outcome = match &result {
             Ok(r) => status_class(r.status),
             Err(_) => "error",
@@ -1116,12 +1215,63 @@ impl Fetcher {
         result
     }
 
+    /// Send one admitted write: exactly one dispatch, never retried or replayed.
+    ///
+    /// Whatever `opts` says, redirects are not followed (a `3xx` answer is returned as is),
+    /// no status or transport retry runs, no conditional validators apply and no `HEAD`
+    /// preflight precedes it. Egress policy, DNS pinning, origin politeness and the shared
+    /// request allowance apply exactly as for a read. A failure reports whether the transport
+    /// was handed the request ([`WriteFailure::dispatched`]); after that point the target may
+    /// have applied the write and the caller must treat the outcome as unknown.
+    ///
+    /// # Errors
+    /// The failures of [`Self::fetch`] other than [`FetchError::UnsupportedMethod`], wrapped
+    /// in a [`WriteFailure`].
+    pub async fn send_write<F, Fut>(
+        &self,
+        url: &Url,
+        write: &WriteRequest,
+        opts: &FetchOptions,
+        check_authority: &F,
+    ) -> Result<FetchResponse, WriteFailure>
+    where
+        F: Fn() -> Fut + Sync,
+        Fut: Future<Output = Result<(), FetchError>> + Send,
+    {
+        let single = FetchOptions {
+            method: write.method.clone(),
+            follow_redirects: false,
+            validators: None,
+            suppress_validators: true,
+            preflight: None,
+            ..opts.clone()
+        };
+        let dispatched = std::sync::atomic::AtomicBool::new(false);
+        let context = WriteContext {
+            request: write,
+            dispatched: &dispatched,
+        };
+        let result = Box::pin(self.fetch_inner(url, &single, 0, check_authority, Some(&context))).await;
+        let outcome = match &result {
+            Ok(r) => status_class(r.status),
+            Err(_) => "error",
+        };
+        Metrics::global()
+            .counter(names::FETCH_RESPONSES)
+            .inc_by(1, &[("outcome", outcome)]);
+        result.map_err(|error| WriteFailure {
+            error,
+            dispatched: dispatched.load(std::sync::atomic::Ordering::Acquire),
+        })
+    }
+
     async fn fetch_inner<F, Fut>(
         &self,
         url: &Url,
         opts: &FetchOptions,
         max_retries: u32,
         check_authority: &F,
+        write: Option<&WriteContext<'_>>,
     ) -> Result<FetchResponse, FetchError>
     where
         F: Fn() -> Fut + Sync,
@@ -1133,6 +1283,7 @@ impl Fetcher {
             limits: self.body_limits(opts),
             oversize: opts.oversize,
             declaration: &opts.declaration,
+            write,
         };
         let max_redirects = opts.max_redirects.unwrap_or(self.cfg.max_redirects);
         let mut rng = self.cfg.seed.rng("fetch/retry", &[url.as_str().as_bytes()]);
@@ -1276,7 +1427,7 @@ impl Fetcher {
             declaration: ResponseDeclaration::default(),
             ..opts.clone()
         };
-        let response = Box::pin(self.fetch_inner(url, &head, max_retries, check_authority)).await?;
+        let response = Box::pin(self.fetch_inner(url, &head, max_retries, check_authority, None)).await?;
         preflight
             .evaluate(response.status.as_u16(), &response.headers, limits)
             .map_err(|refusal| FetchError::PreflightRefused { refusal })?;
@@ -1417,6 +1568,11 @@ impl Fetcher {
                 req_headers.remove(header::IF_NONE_MATCH);
                 req_headers.remove(header::IF_MODIFIED_SINCE);
             }
+            if let Some(write) = controls.write {
+                if let Some(content_type) = &write.request.content_type {
+                    req_headers.insert(header::CONTENT_TYPE, content_type.clone());
+                }
+            }
             *attempts += 1;
             let started_at = chrono::Utc::now();
             let captured_request = self
@@ -1429,7 +1585,16 @@ impl Fetcher {
             check_authority().await?;
             let request_started = tokio::time::Instant::now();
             let attempt_started = std::time::Instant::now();
-            let resp = match self.client.send(method.clone(), url.clone(), req_headers).await {
+            // From here the target may apply the request: a write's outcome is unknown.
+            if let Some(write) = controls.write {
+                write.dispatched.store(true, std::sync::atomic::Ordering::Release);
+            }
+            let body = controls.write.map(|write| write.request.body.clone());
+            let resp = match self
+                .client
+                .send(method.clone(), url.clone(), req_headers, body)
+                .await
+            {
                 Ok(resp) => resp,
                 Err(error) => return Err(self.pool_failure(url, attempt_started, error)),
             };
@@ -1568,6 +1733,11 @@ impl Fetcher {
             } else {
                 CertificateEvidence::unavailable(CertificateUnavailable::NotTls)
             };
+            // The export copies the same bytes the facts above were parsed from: the request's
+            // own connection, never a second probe.
+            let certificate_export = (self.export_peer_certificate && url.scheme() == "https")
+                .then(|| resp.peer_certificate().and_then(CertificateExport::from_der))
+                .flatten();
             let read = if method == Method::HEAD {
                 BodyRead {
                     body: Bytes::new(),
@@ -1656,6 +1826,11 @@ impl Fetcher {
             if let Some(value) = evidence.to_header_value() {
                 resp_headers.insert(HeaderName::from_static(EVIDENCE_HEADER), value);
             }
+            if let Some(export) = &certificate_export {
+                if let Some(value) = export.to_header_value() {
+                    resp_headers.insert(HeaderName::from_static(PEER_CERTIFICATE_HEADER), value);
+                }
+            }
             return Ok(Hop::Final {
                 status,
                 headers: resp_headers,
@@ -1677,6 +1852,7 @@ struct HopControls<'a> {
     limits: BodyLimits,
     oversize: OversizePolicy,
     declaration: &'a ResponseDeclaration,
+    write: Option<&'a WriteContext<'a>>,
 }
 
 /// Apply the declared MIME/encoding override to the effective `Content-Type`. Returns the

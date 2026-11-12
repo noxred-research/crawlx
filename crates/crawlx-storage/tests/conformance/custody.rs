@@ -80,6 +80,8 @@ conformance! { databases:
     competing_live_renewals_request_refresh_instead_of_failing_valid_producer_work,
     feed_finalizer_claim_seals_terminal_output_only_while_it_owns_the_unfinished_finalization,
     recovery_seals_the_feeds_of_a_run_that_already_ended_under_the_claim,
+    two_workers_contending_for_one_origin_never_exceed_the_admission_limit,
+    physical_address_keys_cap_aliases_across_workers_and_carry_no_run_rows,
 }
 
 const DEADLINE: Duration = Duration::from_secs(20);
@@ -3109,4 +3111,139 @@ fn rig_past_sql(rig: &Rig) -> &'static str {
         BackendKind::MariaDb => "(NOW(6) - INTERVAL 1 SECOND)",
         _ => "(CAST(unixepoch('subsec') * 1000000 AS INTEGER) - 1000000)",
     }
+}
+
+/// Per-origin admission is the only authority over how many workers talk to one origin: it
+/// replaces any fixed shard lease over a hash of the origin. Two workers (separate admission
+/// handles over one database) race for one origin and no instant holds more permits than the
+/// limit, while a different origin is never held back by the saturated one.
+async fn two_workers_contending_for_one_origin_never_exceed_the_admission_limit(rig: &Rig) {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    const LIMIT: usize = 2;
+    rig.migrate().await;
+    let origin = origin_name(rig, "contend");
+    let workers = [admission(rig, LIMIT), admission(rig, LIMIT)];
+    // saturate: one permit per worker, and a third caller waits
+    let held = [
+        workers[0].acquire(&origin, Duration::ZERO).await.unwrap(),
+        workers[1].acquire(&origin, Duration::ZERO).await.unwrap(),
+    ];
+    assert!(
+        timeout(
+            Duration::from_millis(300),
+            workers[0].acquire(&origin, Duration::ZERO)
+        )
+        .await
+        .is_err(),
+        "a third permit exceeds the deployment limit"
+    );
+    let independent = format!("{origin}-independent");
+    drop(
+        timeout(DEADLINE, workers[1].acquire(&independent, Duration::ZERO))
+            .await
+            .expect("a different origin is not held back")
+            .unwrap(),
+    );
+    drop(held);
+    // the race: eight starts over two workers, every permit held across a real interval
+    let live = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let mut tasks = Vec::new();
+    for ordinal in 0..8_usize {
+        let worker = Arc::clone(&workers[ordinal % 2]);
+        let (origin, live, peak) = (origin.clone(), Arc::clone(&live), Arc::clone(&peak));
+        tasks.push(tokio::spawn(async move {
+            let permit = worker.acquire(&origin, Duration::ZERO).await.unwrap();
+            let now = live.fetch_add(1, SeqCst) + 1;
+            peak.fetch_max(now, SeqCst);
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            live.fetch_sub(1, SeqCst);
+            drop(permit);
+        }));
+    }
+    for task in tasks {
+        timeout(DEADLINE, task)
+            .await
+            .expect("every start is eventually admitted")
+            .unwrap();
+    }
+    assert_eq!(live.load(SeqCst), 0);
+    assert_eq!(peak.load(SeqCst), LIMIT, "contention was real and the limit held");
+}
+
+/// Admission by checked physical address: host aliases that resolve to one address all charge
+/// the same `ip:` key, so the deployment limit holds across workers whatever the alias. An
+/// address key is deployment capacity only: the run's per-origin limit and its lease rows
+/// never apply to it.
+async fn physical_address_keys_cap_aliases_across_workers_and_carry_no_run_rows(rig: &Rig) {
+    use crawlx_core::origin::physical_address_key;
+    let world = world(rig).await;
+    let unique = Uuid::now_v7();
+    let octets = unique.as_bytes();
+    let ip = std::net::Ipv4Addr::new(198, 51, octets[14], octets[15]);
+    let key = physical_address_key(std::net::IpAddr::V4(ip));
+    assert_eq!(key, format!("ip:{ip}"));
+    assert_eq!(
+        physical_address_key(std::net::IpAddr::V6(ip.to_ipv6_mapped())),
+        key,
+        "a mapped address is the same machine"
+    );
+    let first = run_admission(rig, 1, world.run, 1);
+    let second = run_admission(rig, 1, world.run, 1);
+    let held = first.acquire(&key, Duration::ZERO).await.unwrap();
+    assert!(
+        timeout(Duration::from_millis(300), second.acquire(&key, Duration::ZERO))
+            .await
+            .is_err(),
+        "a second worker waits for the address whatever its host alias"
+    );
+    let other = physical_address_key(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+        203, 0, octets[14], octets[15],
+    )));
+    drop(
+        timeout(DEADLINE, second.acquire(&other, Duration::ZERO))
+            .await
+            .expect("another address is independent")
+            .unwrap(),
+    );
+    let rows = |origin: String| async move {
+        Raw(rig)
+            .int(
+                "SELECT count(*) FROM origin_leases WHERE origin = $1",
+                &[V::Text(&origin)],
+            )
+            .await
+    };
+    assert_eq!(
+        rows(key.clone()).await,
+        0,
+        "an address key creates no run lease row"
+    );
+    drop(held);
+    drop(
+        timeout(DEADLINE, second.acquire(&key, Duration::ZERO))
+            .await
+            .expect("the address is free again")
+            .unwrap(),
+    );
+    // the run's own limit of one still governs an origin, but not an address
+    let wide = run_admission(rig, 2, world.run, 1);
+    let origin = origin_name(rig, "run-limit");
+    let wide_key = physical_address_key(std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+        192, 0, octets[14], octets[15],
+    )));
+    let _origin_permit = wide.acquire(&origin, Duration::ZERO).await.unwrap();
+    assert!(
+        timeout(Duration::from_millis(300), wide.acquire(&origin, Duration::ZERO))
+            .await
+            .is_err(),
+        "the run limit holds for an origin"
+    );
+    assert_eq!(rows(origin).await, 1);
+    let _first_slot = wide.acquire(&wide_key, Duration::ZERO).await.unwrap();
+    let _second_slot = timeout(DEADLINE, wide.acquire(&wide_key, Duration::ZERO))
+        .await
+        .expect("the run limit does not apply to an address")
+        .unwrap();
+    assert_eq!(rows(wide_key).await, 0);
 }

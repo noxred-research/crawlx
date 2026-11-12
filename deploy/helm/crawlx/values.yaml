@@ -254,3 +254,26 @@ safetyAuditor:
   resources:
     requests: { cpu: "50m", memory: 64Mi }
     limits: { cpu: "500m", memory: 256Mi }
+
+# Daily Merkle export of the audit chain (`crawlx admin audit-export --all`) to an object-lock
+# (WORM) bucket, docs/ops/runbooks.md#audit-export. Off by default: it needs a bucket and two
+# Secrets that exist before deployment.
+#  * `databaseSecret` (key `database_url`) is a dedicated login that may read `audit_events`; the
+#    chart refuses the migration (DDL), worker, request and safety-auditor secrets.
+#  * `objectStore.credentialsSecret` has keys `access_key_id` and `secret_access_key`; the profile
+#    settings are those of docs/ops/object-storage.md (`edge` has no object lock and is refused).
+auditExport:
+  enabled: false
+  schedule: "10 0 * * *" # UTC; the day that just completed is exported
+  startingDeadlineSeconds: 3600
+  activeDeadlineSeconds: 3600
+  s3Bucket: "" # the object-lock bucket
+  databaseSecret: "" # key: database_url
+  objectStore:
+    credentialsSecret: "" # keys: access_key_id, secret_access_key
+    profile: "" # standard (default) | compatible | self-hosted
+    endpoint: ""
+    region: ""
+  resources:
+    requests: { cpu: "50m", memory: 64Mi }
+    limits: { cpu: "500m", memory: 256Mi }

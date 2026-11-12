@@ -292,7 +292,6 @@ impl DecisionFn for StrategiesDecision {
             revealed,
             baseline_revealed: Vec::new(),
             confounders: Confounders::default(),
-            latency_ms: 0,
             new_operation: false,
             now: self.clock.now(),
         };

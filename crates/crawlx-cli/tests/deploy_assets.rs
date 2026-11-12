@@ -1832,3 +1832,348 @@ fn helm_chart_selects_the_storage_engine_and_refuses_what_an_engine_cannot_serve
         assert!(stderr.contains(message), "{extra:?}: {stderr}");
     }
 }
+
+/// Every Secret name the first container or the volumes of a CronJob's pod template reference.
+fn cronjob_secret_names(cron: &Value) -> BTreeSet<String> {
+    let pod = &cron["spec"]["jobTemplate"]["spec"]["template"]["spec"];
+    let mut names = BTreeSet::new();
+    for env in pod["containers"][0]["env"].as_array().unwrap() {
+        if let Some(name) = env["valueFrom"]["secretKeyRef"]["name"].as_str() {
+            names.insert(name.to_owned());
+        }
+    }
+    for volume in pod["volumes"].as_array().unwrap() {
+        if let Some(name) = volume["secret"]["secretName"].as_str() {
+            names.insert(name.to_owned());
+        }
+        for source in volume["projected"]["sources"].as_array().into_iter().flatten() {
+            if let Some(name) = source["secret"]["name"].as_str() {
+                names.insert(name.to_owned());
+            }
+        }
+        assert!(
+            volume["secret"].is_object(),
+            "the audit export mounts only Secrets, got {volume}"
+        );
+    }
+    names
+}
+
+/// The contract of the scheduled audit export, shared by the chart and the plain manifest:
+/// a daily schedule, `crawlx admin audit-export --all` into the named bucket, an object-lock bucket
+/// declaration, a database URL that is a mounted file from the dedicated login, no other
+/// credential and a hardened pod.
+fn assert_audit_export_cronjob(cron: &Value, bucket: &str, db_secret: &str, store_secret: &str, label: &str) {
+    assert_eq!(cron["kind"], "CronJob", "{label}");
+    let spec = &cron["spec"];
+    let fields: Vec<&str> = spec["schedule"].as_str().unwrap().split(' ').collect();
+    assert_eq!(fields.len(), 5, "{label}: {}", spec["schedule"]);
+    assert!(
+        fields[2..].iter().all(|f| *f == "*")
+            && fields[0].parse::<u8>().is_ok()
+            && fields[1].parse::<u8>().is_ok(),
+        "{label}: a fixed daily time, got {}",
+        spec["schedule"]
+    );
+    assert_eq!(
+        spec["timeZone"], "Etc/UTC",
+        "{label}: the exported day is a UTC day"
+    );
+    assert_eq!(spec["concurrencyPolicy"], "Forbid", "{label}");
+    let job = &spec["jobTemplate"]["spec"];
+    assert_eq!(
+        job["backoffLimit"], 0,
+        "{label}: an object-lock bucket refuses a rewrite, so a retry could not finish a half-written day"
+    );
+    let pod = &job["template"]["spec"];
+    assert_eq!(pod["restartPolicy"], "Never", "{label}");
+    assert_eq!(pod["automountServiceAccountToken"], false, "{label}");
+    assert_eq!(pod["securityContext"]["runAsNonRoot"], true, "{label}");
+    let container = &pod["containers"][0];
+    let args: Vec<&str> = container["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        args,
+        ["admin", "audit-export", "--all", "--s3-bucket", bucket],
+        "{label}"
+    );
+    let sc = &container["securityContext"];
+    assert_eq!(sc["runAsNonRoot"], true, "{label}");
+    assert_eq!(sc["allowPrivilegeEscalation"], false, "{label}");
+    assert_eq!(sc["readOnlyRootFilesystem"], true, "{label}");
+
+    let literal: BTreeMap<&str, &str> = container["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| Some((e["name"].as_str()?, e["value"].as_str()?)))
+        .collect();
+    assert_eq!(
+        literal["CRAWLX_S3_OBJECT_LOCK"], "1",
+        "{label}: the bucket is an object-lock bucket"
+    );
+    assert_eq!(
+        literal["CRAWLX_DATABASE_URL_FILE"], "/run/secrets/audit-export/database_url",
+        "{label}: the database URL is a mounted file"
+    );
+    for var in container["env"].as_array().unwrap() {
+        let name = var["name"].as_str().unwrap();
+        // no database or secret value inline, and no variable of another component's credentials
+        assert!(
+            !matches!(
+                name,
+                "CRAWLX_DATABASE_URL" | "CRAWLX_API_DATABASE_URL" | "CRAWLX_MIGRATE_DATABASE_URL"
+            ) && !name.contains("SAFETY")
+                && !name.contains("ARTIFACT_KEY")
+                && !name.contains("SECRET_REDIS"),
+            "{label}: {name} is not an audit-export input"
+        );
+        if name.starts_with("AWS_") {
+            // wire-compat: SDK credential variables, from the object-store Secret only
+            assert_eq!(
+                var["valueFrom"]["secretKeyRef"]["name"], store_secret,
+                "{label}: {name}"
+            );
+        }
+    }
+    // the database file: mounted from the dedicated Secret, read-only
+    let mount = container["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["mountPath"] == "/run/secrets/audit-export")
+        .unwrap_or_else(|| panic!("{label}: no database mount"));
+    assert_eq!(mount["readOnly"], true, "{label}");
+    // the pod references exactly the dedicated database login and the object-store credentials
+    assert_eq!(
+        cronjob_secret_names(cron),
+        BTreeSet::from([db_secret.to_owned(), store_secret.to_owned()]),
+        "{label}: only the dedicated login and the object-store credentials"
+    );
+    // the pod never mounts the worker's configuration, artifacts, or Chromium sandbox volumes
+    let volumes: Vec<&str> = pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(volumes, ["database"], "{label}");
+}
+
+#[test]
+fn audit_export_cronjob_is_scheduled_object_locked_and_holds_no_owner_credentials() {
+    let sets = [
+        HELM_KEY_FILE,
+        HELM_SECRET_REDIS,
+        "auditExport.enabled=true",
+        "auditExport.s3Bucket=evidence-worm",
+        "auditExport.databaseSecret=crawlx-audit-export-db",
+        "auditExport.objectStore.credentialsSecret=crawlx-audit-export-store",
+        "auditExport.objectStore.profile=self-hosted",
+        "auditExport.objectStore.endpoint=https://objects.internal:9000",
+    ];
+    let Some(output) = helm_template(&sets) else {
+        return;
+    };
+    let documents = rendered_documents(&output);
+    let cron = named(&documents, "CronJob", "custody-audit-export").expect("audit export CronJob");
+    assert_audit_export_cronjob(
+        cron,
+        "evidence-worm",
+        "crawlx-audit-export-db",
+        "crawlx-audit-export-store",
+        "chart",
+    );
+    assert_eq!(cron["spec"]["schedule"], "10 0 * * *");
+    let env: BTreeMap<String, String> = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
+        [0]["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| Some((e["name"].as_str()?.to_owned(), e["value"].as_str()?.to_owned())))
+        .collect();
+    assert_eq!(env["CRAWLX_S3_PROFILE"], "self-hosted");
+    assert_eq!(env["CRAWLX_S3_ENDPOINT"], "https://objects.internal:9000");
+
+    // the chart's own database logins are not in the rendered pod, in any form
+    let rendered = cron.to_string();
+    for forbidden in [
+        "crawlx-db-migrate",
+        "crawlx-db-api",
+        "crawlx-safety",
+        "database_url_api",
+    ] {
+        assert!(
+            !rendered.contains(forbidden),
+            "{forbidden} reached the audit export: {rendered}"
+        );
+    }
+    // the export pod is isolated: no ingress, only the database, the object store and DNS
+    let policy = named(&documents, "NetworkPolicy", "custody-audit-export").expect("audit export policy");
+    assert_eq!(policy["spec"]["ingress"], serde_json::json!([]));
+    assert_eq!(policy["spec"]["egress"].as_array().unwrap().len(), 3);
+
+    // off by default: a release that did not ask for it renders no export Job
+    let Some(default) = helm_template(&[HELM_KEY_FILE, HELM_SECRET_REDIS]) else {
+        return;
+    };
+    assert!(named(&rendered_documents(&default), "CronJob", "custody-audit-export").is_none());
+
+    // the export refuses what would put owner credentials, or a bucket without object lock, behind it
+    let base = &sets[..7];
+    for (extra, message) in [
+        (
+            vec!["auditExport.databaseSecret=crawlx-db-migrate"],
+            "auditExport.databaseSecret must be a dedicated login",
+        ),
+        (
+            vec!["auditExport.databaseSecret=crawlx-db"],
+            "auditExport.databaseSecret must be a dedicated login",
+        ),
+        (
+            vec!["auditExport.databaseSecret=crawlx-db-api"],
+            "auditExport.databaseSecret must be a dedicated login",
+        ),
+        (
+            vec!["auditExport.databaseSecret=crawlx-safety-pauser"],
+            "auditExport.databaseSecret must be a dedicated login",
+        ),
+        (
+            vec!["auditExport.objectStore.profile=edge"],
+            "profile=edge is refused",
+        ),
+        (vec!["auditExport.s3Bucket="], "auditExport.s3Bucket is required"),
+        (
+            vec!["auditExport.databaseSecret="],
+            "auditExport.databaseSecret is required",
+        ),
+        (
+            vec!["auditExport.objectStore.credentialsSecret="],
+            "credentialsSecret is required",
+        ),
+    ] {
+        let mut sets: Vec<&str> = base.to_vec();
+        sets.extend(extra.iter().copied());
+        let output = helm_template(&sets).unwrap();
+        assert!(!output.status.success(), "{extra:?} must not render");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{extra:?}: {stderr}");
+    }
+}
+
+#[test]
+fn plain_audit_export_manifest_matches_the_chart_contract() {
+    let text = read("deploy/k8s/audit-export-cronjob.yaml");
+    let documents: Vec<Value> = text
+        .split("\n---\n")
+        .map(|doc| serde_yaml_ng::from_str(doc).unwrap())
+        .collect();
+    let cron = documents
+        .iter()
+        .find(|d| d["kind"] == "CronJob")
+        .expect("CronJob");
+    assert_audit_export_cronjob(
+        cron,
+        "crawlx-audit",
+        "crawlx-audit-export-db",
+        "crawlx-audit-export-objectstore",
+        "manifest",
+    );
+    let rendered = cron.to_string();
+    for forbidden in [
+        "crawlx-db-migrate",
+        "crawlx-db-api",
+        "crawlx-safety",
+        "database_url_api",
+    ] {
+        assert!(
+            !rendered.contains(forbidden),
+            "{forbidden} in the manifest pod: {rendered}"
+        );
+    }
+    let policy = documents
+        .iter()
+        .find(|d| d["kind"] == "NetworkPolicy")
+        .expect("policy");
+    assert_eq!(policy["spec"]["ingress"], serde_json::json!([]));
+    assert_eq!(policy["spec"]["egress"].as_array().unwrap().len(), 3);
+}
+
+#[test]
+fn object_store_lifecycle_expires_each_artifact_prefix_and_never_audit() {
+    let doc: Value = serde_json::from_str(&read("deploy/object-store/lifecycle.json")).unwrap();
+    let rules = doc["Rules"].as_array().expect("Rules");
+    let mut expiry: BTreeMap<String, u64> = BTreeMap::new();
+    for rule in rules {
+        assert_eq!(rule["Status"], "Enabled", "{rule}");
+        let prefix = rule["Filter"]["Prefix"]
+            .as_str()
+            .expect("every rule filters by a prefix");
+        assert!(
+            prefix.ends_with('/') || prefix.starts_with('_'),
+            "{prefix:?} must name a whole key prefix"
+        );
+        assert!(
+            !prefix.is_empty() && !"audit/".starts_with(prefix) && !prefix.starts_with("audit/"),
+            "rule {} covers the audit prefix: {prefix:?}",
+            rule["ID"]
+        );
+        let days = rule["Expiration"]["Days"].as_u64().expect("an expiry in days");
+        assert!(days >= 1, "{rule}");
+        for key in rule.as_object().unwrap().keys() {
+            assert!(
+                ["ID", "Status", "Filter", "Expiration"].contains(&key.as_str()),
+                "unexpected rule field {key}"
+            );
+        }
+        assert!(
+            expiry.insert(prefix.to_owned(), days).is_none(),
+            "one rule per prefix: {prefix}"
+        );
+    }
+    // the prefixes are the ones the store writes: `{class}/{tenant}/{run}/{digest}` per sensitivity class
+    let (tenant, run, digest) = (
+        crawlx_core::TenantId::new(),
+        crawlx_core::CrawlRunId::new(),
+        crawlx_core::hash::Digest::of("lifecycle-test", b"x"),
+    );
+    for class in [
+        crawlx_core::repo::Sensitivity::Content,
+        crawlx_core::repo::Sensitivity::Sensitive,
+        crawlx_core::repo::Sensitivity::CredentialBearing,
+    ] {
+        let key = crawlx_storage::artifacts::object_key(class, tenant, run, &digest);
+        assert!(
+            expiry.keys().any(|prefix| key.starts_with(prefix.as_str())),
+            "no lifecycle rule covers the store's own key {key}"
+        );
+    }
+    let longest_retention_days = 365;
+    for (prefix, floor) in [
+        ("credential_bearing/", 1),
+        ("zdr/", 1),
+        ("content/", longest_retention_days),
+        ("sensitive/", longest_retention_days),
+        ("_index/", longest_retention_days),
+    ] {
+        let days = *expiry
+            .get(prefix)
+            .unwrap_or_else(|| panic!("no expiry rule for {prefix}"));
+        assert!(
+            days > floor,
+            "{prefix} expires after {days} days, not after its longest retention of {floor} days"
+        );
+    }
+    // the short-lived classes expire sooner than retained content
+    assert!(expiry["credential_bearing/"] < expiry["content/"]);
+    assert!(expiry["zdr/"] < expiry["content/"]);
+    // metadata lives until the run is purged: the database decides, never a bucket rule
+    assert!(!expiry.contains_key("metadata/"));
+    assert!(!expiry.contains_key("audit/") && expiry.len() == 5, "{expiry:?}");
+    // the prefix the exporter writes is the exempt one
+    assert_eq!(crawlx_storage::audit::EXPORT_PREFIX, "audit/");
+}

@@ -10,7 +10,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// One persisted chronological traffic descriptor, without body bytes or reconstructed headers.
+/// One persisted chronological traffic descriptor, without body bytes. Request headers and the
+/// observed protocol are present only when the persisted source recorded them; nothing is
+/// reconstructed.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ArchiveTrafficV1 {
@@ -24,6 +26,14 @@ pub struct ArchiveTrafficV1 {
     pub request_body: Option<ArtifactRef>,
     /// Approved retained response body, if present.
     pub response_body: Option<ArtifactRef>,
+    /// HTTP method the capture recorded; `None` when the source did not persist it.
+    pub method: Option<String>,
+    /// Request headers as recorded (name, value) in capture order, already redacted by the
+    /// capture plane; `None` when the source did not persist headers, `Some(vec![])` for a
+    /// request that really carried none.
+    pub request_headers: Option<Vec<(String, String)>>,
+    /// Application protocol the capture backend observed; `None` when it was not persisted.
+    pub protocol: Option<crate::traffic::Protocol>,
 }
 impl ArchiveTrafficV1 {
     /// Project existing persisted capture custody; absent evidence remains absent.
@@ -41,7 +51,24 @@ impl ArchiveTrafficV1 {
             captured_at,
             request_body,
             response_body,
+            method: None,
+            request_headers: None,
+            protocol: None,
         }
+    }
+
+    /// Attach the wire facts the persisted event recorded.
+    #[must_use]
+    pub fn with_wire(
+        mut self,
+        method: Option<String>,
+        request_headers: Option<Vec<(String, String)>>,
+        protocol: Option<crate::traffic::Protocol>,
+    ) -> Self {
+        self.method = method;
+        self.request_headers = request_headers;
+        self.protocol = protocol;
+        self
     }
 }
 
@@ -456,6 +483,92 @@ pub enum ArchiveReadV1 {
     Available(Box<ArchiveExportV1>),
 }
 
+/// Result of [`ArchiveRepo::cancel`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ArchiveCancelV1 {
+    /// The recording export was abandoned by this call.
+    Cancelled,
+    /// The export is not recording and was left untouched.
+    Refused(ArchiveExportState),
+    /// Unknown, expired or foreign export.
+    Missing,
+}
+
+/// What a completion callback may say about an export: identity, hash and size of a package that
+/// is already durably committed, and nothing else. It is constructible only from a published
+/// export, so no callback can ever announce an export that failed, is still recording, was
+/// erased or has no package object.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[non_exhaustive]
+pub struct ArchiveCompletionV1 {
+    /// Contract version.
+    pub schema_version: u8,
+    /// Always `committed`.
+    pub state: String,
+    /// Committed export identity.
+    pub export: Uuid,
+    /// Source run.
+    pub run: CrawlRunId,
+    /// Package container.
+    pub format: crate::archive::ArchiveFormat,
+    /// Committed package object: identity and content digest.
+    pub package: ArtifactRef,
+    /// Exact byte length of the package object.
+    pub package_bytes: u64,
+    /// Committed resource records in the package.
+    pub records: u64,
+    /// Original wire and subresource completeness, exactly as the manifest states it.
+    pub complete: bool,
+}
+
+impl ArchiveCompletionV1 {
+    /// Describe a committed export.
+    ///
+    /// # Errors
+    /// Returns a conflict unless the export is published with its package object and a
+    /// manifest that recorded the package size.
+    pub fn committed(export: &ArchiveExportV1) -> Result<Self, StoreError> {
+        let (Some(package), Some(manifest)) = (&export.artifact, &export.manifest) else {
+            return Err(StoreError::Conflict("archive export is not committed".into()));
+        };
+        if export.state != ArchiveExportState::Published || manifest.package_bytes == 0 {
+            return Err(StoreError::Conflict("archive export is not committed".into()));
+        }
+        Ok(Self {
+            schema_version: 1,
+            state: "committed".into(),
+            export: export.id,
+            run: export.run,
+            format: export.config.format,
+            package: package.clone(),
+            package_bytes: manifest.package_bytes,
+            records: manifest.records,
+            complete: manifest.complete,
+        })
+    }
+
+    /// Stable delivery identity: the same committed package always maps to the same key, so a
+    /// retried or re-derived callback never creates a second row.
+    #[must_use]
+    pub fn idempotency_key(&self) -> String {
+        format!(
+            "archive-complete.{}.{}",
+            self.export.simple(),
+            self.package.digest.to_hex()
+        )
+    }
+
+    /// Canonical callback body.
+    ///
+    /// # Errors
+    /// Returns a serialization failure.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, StoreError> {
+        serde_json::to_vec(self).map_err(|error| StoreError::Serialization(error.to_string()))
+    }
+}
+
 /// Tenant-scoped archive operations. All writes reject ZDR and expired source runs.
 ///
 /// Implementations serialize claims, commits, publication and cascading erasure. A fence
@@ -584,4 +697,20 @@ pub trait ArchiveRepo: Send + Sync {
         after: u64,
         limit: u32,
     ) -> Result<Vec<ArchiveTrafficV1>, StoreError>;
+    /// Every export that transitively depends on `export` through revisit records, excluding
+    /// `export` itself, in ascending identity order. Empty for an unknown or foreign export.
+    ///
+    /// This is exactly the closure [`Self::erase`] tombstones, so a caller can refuse or
+    /// confirm a removal before it happens.
+    async fn dependents(&self, tenant: TenantId, export: Uuid) -> Result<Vec<Uuid>, StoreError>;
+    /// Atomically abandon an export that is still recording: its writer fence is invalidated,
+    /// it becomes a permanent tombstone and its committed shards are queued for physical
+    /// erasure. A published, failed or already deleted export is never changed; the outcome
+    /// names its state instead.
+    async fn cancel(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        now: Timestamp,
+    ) -> Result<ArchiveCancelV1, StoreError>;
 }

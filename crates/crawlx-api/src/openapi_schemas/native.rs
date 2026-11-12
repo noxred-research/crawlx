@@ -656,11 +656,23 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                     "type":"object","additionalProperties":false,"required":["url"],
                     "properties":{
                         "url":{"type":"string","format":"uri"},
-                        "method":{"type":"string","enum":["GET","HEAD"],"default":"GET"},
+                        "method":{"type":"string","enum":["GET","HEAD","POST","PUT","PATCH","DELETE"],"default":"GET",
+                            "description":"POST, PUT, PATCH and DELETE are admitted writes: the run must not be read_only and needs orchestration attempt limits; a write batch holds only writes, acts as the anonymous principal and is recorded in the audit trail under the calling key. A write is decided by the URL plane against the run's safety profile and authorization record, journaled before it is sent, sent at most once and never retried or redirected."},
                         "route":{"type":"string","maxLength":128,"default":"default"},
                         "metadata":{"type":"object","maxProperties":64},
                         "depth":{"type":"integer","minimum":0,"maximum":65535},
-                        "priority":{"type":"integer","minimum":-2147483648,"maximum":2147483647}
+                        "priority":{"type":"integer","minimum":-2147483648,"maximum":2147483647},
+                        "body":{"type":"object","additionalProperties":false,"maxProperties":2,
+                            "description":"Write methods only; at most 1 MiB. Exactly one of text (verbatim), json (compact serialization) or base64 (decoded bytes). The bytes are retained as a credential-bearing artifact and never appear in queue metadata.",
+                            "properties":{
+                                "text":{"type":"string"},
+                                "json":{},
+                                "base64":{"type":"string"},
+                                "mediaType":{"type":"string","maxLength":128,"description":"Sent as Content-Type; defaults by body kind."}
+                            }},
+                        "approval":{"type":"object","additionalProperties":false,"required":["riskClass"],
+                            "description":"Write methods only. Reviewer approval of the method's risk class (persistent_write_own for POST, PUT and PATCH; destructive for DELETE); needs the approvals:decide scope. It lifts an approval-gated class for this request only and never overrides a denial.",
+                            "properties":{"riskClass":{"type":"string","enum":["persistent_write_own","destructive"]}}}
                     }
                 }})
             } else {
@@ -750,7 +762,17 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                 "properties":{
                     "backendId":{"type":"string"}, "implementation":{"type":"string"}, "version":{"type":"string"},
                     "buildDigest":{"type":["string", "null"]}, "browser":{"type":["object", "null"]},
-                    "available":{"type":"boolean"}, "limitations":{"type":"array", "items":{"type":"string"}}
+                    "available":{"type":"boolean"}, "limitations":{"type":"array", "items":{"type":"string"}},
+                    "deviceMatrix":{"type":"object", "description":"Emulated-device matrix measured by the worker's browser: per preset the requested emulation and what the page reported.",
+                        "required":["schemaVersion", "build", "entries", "stealthClaim"],
+                        "properties":{
+                            "schemaVersion":{"type":"integer", "const":1},
+                            "build":{"type":"object", "required":["chromiumVersion", "pinned"],
+                                "properties":{"chromiumVersion":{"type":"string"}, "pinned":{"type":"boolean"}}},
+                            "entries":{"type":"array", "items":{"type":"object",
+                                "required":["preset", "requested", "measured", "coherent", "violations"]}},
+                            "stealthClaim":{"type":"boolean", "const":false}
+                        }}
                 }
             });
             let worker = json!({
@@ -769,8 +791,28 @@ pub(super) fn apply(schemas: &mut Schemas, operation: &mut Value, id: &str) {
                 }
             });
             let schema = json!({
-                "type":"object", "required":["schemaVersion", "scope", "observedAt", "maxWorkerAgeMs", "maxWorkers", "truncated", "workers"],
+                "type":"object", "required":["schemaVersion", "scope", "observedAt", "maxWorkerAgeMs", "maxWorkers", "truncated", "devices", "workers"],
                 "properties":{
+                    "devices":{
+                        "type":"object",
+                        "description":"Device presets and how many fresh workers measured them. A measured matrix is the worker's own evidence (`backends[].deviceMatrix`); it makes no stealth or detection-evasion claim.",
+                        "required":["matrixVersion", "stealthClaim", "presets", "measuredWorkers", "coherentWorkers"],
+                        "properties":{
+                            "matrixVersion":{"type":"integer", "const":1},
+                            "stealthClaim":{"type":"boolean", "const":false},
+                            "presets":{"type":"array", "items":{"type":"object",
+                                "required":["preset", "viewport", "deviceScaleFactorMilli", "mobile"],
+                                "properties":{
+                                    "preset":{"type":"string", "enum":["desktop", "phone", "tablet"]},
+                                    "viewport":{"type":"object", "required":["width", "height"],
+                                        "properties":{"width":{"type":"integer"}, "height":{"type":"integer"}}},
+                                    "deviceScaleFactorMilli":{"type":"integer"},
+                                    "mobile":{"type":"boolean"}
+                                }}},
+                            "measuredWorkers":{"type":"integer", "minimum":0},
+                            "coherentWorkers":{"type":"integer", "minimum":0}
+                        }
+                    },
                     "schemaVersion":{"type":"integer", "const":1},
                     "scope":{"type":"string", "const":"live_worker_registry"},
                     "observedAt":{"type":"string", "format":"date-time"},

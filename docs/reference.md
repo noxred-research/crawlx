@@ -523,6 +523,41 @@ Metadata-only completion does not populate the GET-resume cache or claim a retai
 response body. Volatile events retain their existing expiry; hydration does not renew
 that lifetime or substitute durable content hashes for volatile references.
 
+## Admitted write requests
+
+Native request append also accepts `POST`, `PUT`, `PATCH` and `DELETE` on the static and
+hybrid HTTP queue. A write batch holds only writes, acts as the `anonymous` principal and is
+recorded in the audit trail under the calling API key; each write may carry a `body` (exactly one of `text`, `json` or
+`base64`, at most 1 MiB, with an optional `mediaType`). Bodies are retained as
+credential-bearing artifacts and referenced by a tenant-keyed digest, never stored in queue
+JSON or listed by the metadata endpoints. Intake needs the operator request identity key (the
+worker needs the same key to verify a body before sending it) and a run that is not `read_only`
+and has orchestration attempt limits. Imports stay `GET`/`HEAD`.
+
+Identity covers method, target, body digest, media type and principal: an identical write
+dedupes, a different body, media type or principal does not. A write that names a role
+principal is refused when the worker reaches it (`write_principal_unavailable`): a role acts
+through its strict HTTP session, which writes do not use.
+
+Queueing grants nothing. When the worker reaches a write it decides it with the same profile
+table, `safety.destructiveActions` option and authorization-record narrowing the safety kernel
+applies to observed traffic (`DELETE` is destructive, the other methods are persistent writes).
+`read_only` refuses with `write_read_only`; other denials are `write_denied`. A class the
+table gates on a reviewer (every `DELETE`, and any class the record lists in `approvalRequired`)
+is sent only when the request carries `approval: {"riskClass": ...}`, which the API accepts only
+from a key that also holds `approvals:decide`; without it the row is `write_approval_required`.
+An approval never lifts a denial and cannot be reused for another body or target.
+
+A write is journaled and sent at most once. After the verdict the worker verifies the retained
+body (length and keyed digest), durably reserves one effect against the request's
+`attempts.maxTotalEffects` (never refunded), commits a `request.write_intent` event, and only
+then sends. The send is a single dispatch: no retry whatever the status, no redirect following,
+no replay. The answer is recorded as a `request.write_outcome` event (status, content type,
+size; no content). A row leased again after an earlier holder journaled its intent is never sent
+again: that holder may have sent it before dying, so it ends `write_outcome_unknown` (counted in
+`unknown_outcome`), as does a transport failure after dispatch. A missing or altered body ends
+`write_body_unavailable` or `write_body_mismatch`. Resubmitting a write is a new request.
+
 ## Bounded browser evidence
 
 `capture.browser` is opt-in and requires a browser-enabled crawl. Its `xhr` selector accepts

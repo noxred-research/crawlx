@@ -1,9 +1,32 @@
 //! Deployment-wide origin admission shared by HTTP and browser effects.
+//!
+//! Admission is keyed by an opaque string. An origin (`scheme://host[:port]`) is one kind of key;
+//! a checked physical address is the other ([`physical_address_key`]). The first caps what a
+//! site sees from the whole deployment under any host alias, the second caps what one machine
+//! sees, so aliases that resolve to one address cannot add up past the cap across workers.
 
 use crate::StoreError;
 use async_trait::async_trait;
 use std::fmt::Debug;
+use std::net::IpAddr;
 use std::time::Duration;
+
+/// Prefix of the admission key of a physical address. No origin key starts with it.
+pub const PHYSICAL_ADDRESS_KEY_PREFIX: &str = "ip:";
+
+/// The deployment admission key of one checked physical address, canonical form: an IPv4
+/// address mapped into IPv6 and the plain IPv4 address are one key.
+#[must_use]
+pub fn physical_address_key(ip: IpAddr) -> String {
+    format!("{PHYSICAL_ADDRESS_KEY_PREFIX}{}", ip.to_canonical())
+}
+
+/// Whether `key` names a physical address rather than an origin. Address keys carry capacity
+/// only: no per-run slot, pacing or cooldown follows them.
+#[must_use]
+pub fn is_physical_address_key(key: &str) -> bool {
+    key.starts_with(PHYSICAL_ADDRESS_KEY_PREFIX)
+}
 
 /// An origin slot held until this value is dropped.
 ///

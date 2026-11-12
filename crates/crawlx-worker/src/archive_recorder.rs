@@ -27,10 +27,13 @@ mod evidence;
 mod history;
 mod payload;
 mod resource;
+mod wire;
 pub(crate) use history::{conditional_baseline, ArchiveBaseline};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wire_tests;
 
 static ARCHIVE_WRITERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
@@ -359,6 +362,8 @@ async fn finalize_claimed(
                     "decoded_body_not_original_wire".into(),
                     "unchanged_privacy_approved_text".into(),
                 ];
+                let (protocol, status, tls) = wire::source_wire(&page.metadata);
+                facts = facts.with_source_wire(protocol, status, tls);
             }
             let event = facts.source_event.clone();
             match recorder
@@ -381,6 +386,15 @@ async fn finalize_claimed(
                 }
             }
         }
+        wire::record_page_response(
+            &mut recorder,
+            &mut manifest,
+            &mut committed_records,
+            &page,
+            raw_body.as_ref(),
+            &target,
+        )
+        .await?;
     }
     let mut traffic_after = 0u64;
     let mut traffic_scanned = 0u32;
@@ -437,7 +451,8 @@ async fn finalize_claimed(
                 traffic.captured_at,
                 ArchiveRepresentation::ProtocolResource,
                 "retained_journal_body",
-            );
+            )
+            .with_source_wire(traffic.protocol, None, None);
             let event = facts.source_event.clone();
             match recorder
                 .record(resource::ResourceInput {
@@ -459,6 +474,14 @@ async fn finalize_claimed(
                 }
             }
         }
+        wire::record_traffic(
+            &mut recorder,
+            &mut manifest,
+            &mut committed_records,
+            &traffic,
+            &target,
+        )
+        .await?;
     }
     evidence::record(&mut recorder, &mut manifest, &mut committed_records).await?;
     let ArchiveReadV1::Available(current_export) =
@@ -540,12 +563,17 @@ impl PackageWriter {
             .push(cdxj::Entry::from_record(&summary, &filename)?.line(&summary)?)?;
         serde_json::to_writer(self.facts.file_mut(), &record.facts)?;
         self.facts.file_mut().write_all(b"\n")?;
-        serde_json::to_writer(
-            self.pages.file_mut(),
-            &serde_json::json!({"id":record.record_id,
-            "url":record.target,"ts":warc::date(record.facts.captured_at),"title":"Retained representation"}),
-        )?;
-        self.pages.file_mut().write_all(b"\n")?;
+        // Wire evidence records (rebuilt messages, protocol facts) are not page entry points.
+        if record.facts.representation != ArchiveRepresentation::NormalizedHttp
+            && record.facts.capture_source != "retained_journal_protocol"
+        {
+            serde_json::to_writer(
+                self.pages.file_mut(),
+                &serde_json::json!({"id":record.record_id,
+                "url":record.target,"ts":warc::date(record.facts.captured_at),"title":"Retained representation"}),
+            )?;
+            self.pages.file_mut().write_all(b"\n")?;
+        }
         Ok(())
     }
     fn finish(
@@ -735,6 +763,14 @@ async fn package(
             .await
             .map_err(joined)?
             .map_err(codec)?;
+    // The published manifest states the exact package size so a completion callback can
+    // reference the committed package by hash and length.
+    manifest.package_bytes = final_files
+        .archive
+        .file()
+        .metadata()
+        .map_err(|error| codec(ArchiveError::from(error)))?
+        .len();
     let content_type = if format == ArchiveFormat::Warc {
         "application/warc"
     } else {

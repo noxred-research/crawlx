@@ -26,7 +26,13 @@ use url::Url;
 mod projection;
 #[path = "item_schema.rs"]
 mod schema;
+#[path = "item_struct_tags.rs"]
+mod struct_tags;
 pub use projection::project_outcome;
+pub use struct_tags::{
+    translate_struct_tags, StructTagFieldV1, StructTagManifestV1, StructTagRowV1, StructTagTranslation,
+    MAX_STRUCT_TAG_FIELDS,
+};
 #[derive(Debug)]
 struct TransformRegex {
     regex: Regex,

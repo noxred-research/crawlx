@@ -93,6 +93,7 @@ fn with_location(country: Option<&str>, languages: &[&str]) -> ScrapeOptions {
         location: Some(Location {
             country: country.map(str::to_owned),
             languages: languages.iter().map(|l| (*l).to_owned()).collect(),
+            geolocation: None,
         }),
         ..ScrapeOptions::default()
     }

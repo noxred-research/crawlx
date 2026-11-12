@@ -595,6 +595,13 @@ fn scrape_options_examples() -> Vec<Value> {
             "redactPII": { "mode": "accurate", "entities": ["PERSON", "EMAIL", "PHONE", "LOCATION", "FINANCIAL", "SECRET"], "replaceStyle": "tag" }
         }),
         json!({ "formats": ["rawBase64"] }),
+        json!({
+            "deviceScaleFactor": 2.625,
+            "location": { "geolocation": { "latitude": 48.137154, "longitude": 11.576124, "accuracy": 25 } },
+            "resourceBlocking": { "resourceTypes": ["font", "media", "image"], "domains": ["ads.example"] },
+            "flatten": { "shadowDom": true, "frames": false, "maxFrames": 8 }
+        }),
+        json!({ "flatten": true, "location": { "geolocation": { "latitude": -33.8, "longitude": 151.2 } } }),
         json!({ "formats": ["screenshot", "json"], "proxy": "enhanced", "redactPII": true }),
         json!({ "formats": [{ "type": "rawBase64" }], "lockdown": true, "zeroDataRetention": true }),
         json!({ "proxy": "auto", "redactPII": { "mode": "aggressive", "replaceStyle": "mask" } }),

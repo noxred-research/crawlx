@@ -13,8 +13,9 @@ use crawlx_core::custody::{CustodyLease, CustodySource};
 use crawlx_core::hash::Digest;
 use crawlx_core::orchestration::RequestCommitV1;
 use crawlx_core::report_history::{
-    PipelineProgressV1, PipelineStageV1, PipelineStateV1, ProcessorStageV1, ReportDataV1, ReportEntryV1,
-    ReportFactV1, ReportHistoryRepo, ReportKindV1, ReportPageV1, ReportQueryV1,
+    report_route_key, ErrorSnapshotV1, PipelineProgressV1, PipelineStageV1, PipelineStateV1,
+    ProcessorStageV1, ReportDataV1, ReportEntryV1, ReportFactV1, ReportHistoryRepo, ReportKindV1,
+    ReportPageV1, ReportQueryV1, RouteCountersV1, StageOutcomeV1,
 };
 use crawlx_core::{CrawlRunId, StoreError, TenantId, Timestamp};
 use uuid::Uuid;
@@ -23,6 +24,27 @@ const MAX_FACTS_PER_RUN: i64 = 65_536;
 
 fn conflict(message: &'static str) -> StoreError {
     StoreError::Conflict(message.into())
+}
+
+/// The route key of a frontier row, derived from its stored route label exactly as a producer
+/// derives it: the repository, not the producer, is the authority for which route a request is on.
+async fn request_route<B: Sql>(
+    conn: &mut Conn<B>,
+    tenant: TenantId,
+    run: CrawlRunId,
+    request: i64,
+) -> Result<Digest, StoreError> {
+    let row = stmt!(
+        B,
+        "SELECT route_id FROM url_frontier WHERE tenant_id=$1 AND run_id=$2 AND frontier_id=$3"
+    )
+    .uuid(tenant.0)
+    .uuid(run.0)
+    .i64(request)
+    .fetch_optional(conn)
+    .await?
+    .ok_or(StoreError::LeaseLost)?;
+    Ok(report_route_key(&row.text("route_id")?))
 }
 
 fn tenant_scope(tenant: TenantId) -> Result<(), StoreError> {
@@ -212,6 +234,10 @@ async fn insert_fact<B: Sql>(
     expiry: Option<Timestamp>,
     durable: bool,
 ) -> Result<(i64, bool), StoreError> {
+    // A failure snapshot is redacted again before anything is stored: no producer can persist
+    // unredacted text, and the redacted form is what the receipt and the stored fact describe.
+    let fact = fact.redacted();
+    let fact: &ReportFactV1 = &fact;
     fact.validate()?;
     let bytes = serde_json::to_vec(fact)?;
     if bytes.len() > 4096 {
@@ -261,25 +287,37 @@ async fn insert_fact<B: Sql>(
         .map(i64::try_from)
         .transpose()
         .map_err(|_| conflict("report wire size overflow"))?;
-    let sequence = stmt!(
-        B,
-        "INSERT INTO report_history(tenant_id,run_id,fact_id,receipt,kind,observed_at,url_key,host_key,duration_us,wire_bytes,fact,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING fact_sequence"
-    )
-    .uuid(fact.tenant.0)
-    .uuid(fact.run.0)
-    .bytes(fact.id.0.as_slice())
-    .bytes(receipt.0.as_slice())
-    .text(kind_label(fact.data.kind())?)
-    .ts(fact.at)
-    .opt_bytes(fact.url_key.as_ref().map(|key| key.0.as_slice()))
-    .opt_bytes(fact.host_key.as_ref().map(|key| key.0.as_slice()))
-    .opt_i64(duration)
-    .opt_i64(wire)
-    .opt_json(payload.as_ref())
-    .opt_ts(expiry)
-    .fetch_one(conn)
-    .await?
-    .i64("fact_sequence")?;
+    // Facts without a route keep the statement every earlier fact used; a routed fact also
+    // stores its route key and finite outcome label for per-route counters.
+    let outcome = fact.data.outcome_label();
+    let insert = if fact.route_key.is_some() {
+        stmt!(
+            B,
+            "INSERT INTO report_history(tenant_id,run_id,fact_id,receipt,kind,observed_at,url_key,host_key,duration_us,wire_bytes,fact,expires_at,route_key,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING fact_sequence"
+        )
+    } else {
+        stmt!(
+            B,
+            "INSERT INTO report_history(tenant_id,run_id,fact_id,receipt,kind,observed_at,url_key,host_key,duration_us,wire_bytes,fact,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING fact_sequence"
+        )
+    };
+    let mut insert = insert
+        .uuid(fact.tenant.0)
+        .uuid(fact.run.0)
+        .bytes(fact.id.0.as_slice())
+        .bytes(receipt.0.as_slice())
+        .text(kind_label(fact.data.kind())?)
+        .ts(fact.at)
+        .opt_bytes(fact.url_key.as_ref().map(|key| key.0.as_slice()))
+        .opt_bytes(fact.host_key.as_ref().map(|key| key.0.as_slice()))
+        .opt_i64(duration)
+        .opt_i64(wire)
+        .opt_json(payload.as_ref())
+        .opt_ts(expiry);
+    if let Some(route) = &fact.route_key {
+        insert = insert.bytes(route.0.as_slice()).opt_text(outcome.as_deref());
+    }
+    let sequence = insert.fetch_one(conn).await?.i64("fact_sequence")?;
     Ok((sequence, true))
 }
 
@@ -288,6 +326,8 @@ impl<B: Sql> ReportHistoryRepo for Store<B> {
     async fn append_fact(&self, lease: &CustodyLease, fact: &ReportFactV1) -> Result<u64, StoreError> {
         tenant_scope(lease.tenant)?;
         self.scope()?.authorize(lease.tenant)?;
+        // Redaction comes first: a producer's credential-shaped snapshot text is cleaned, not refused.
+        let mut fact = fact.redacted();
         fact.validate()?;
         fact.validate_lease(lease)?;
         let mut tx = self.begin_write().await?;
@@ -321,8 +361,16 @@ impl<B: Sql> ReportHistoryRepo for Store<B> {
             {
                 return Err(StoreError::LeaseLost);
             }
+            let route = request_route::<B>(tx.conn(), lease.tenant, lease.run, request).await?;
+            match fact.route_key {
+                Some(given) if given != route => {
+                    return Err(conflict("report route does not match its request"));
+                }
+                Some(_) => {}
+                None => fact.to_mut().route_key = Some(route),
+            }
         }
-        let (sequence, _) = insert_fact::<B>(tx.conn(), fact, expiry, !zdr).await?;
+        let (sequence, _) = insert_fact::<B>(tx.conn(), &fact, expiry, !zdr).await?;
         if zdr {
             let buffer = self
                 .delivery
@@ -336,7 +384,7 @@ impl<B: Sql> ReportHistoryRepo for Store<B> {
                     volatile_page(sequence)?,
                     "_report_fact",
                     "application/json",
-                    &serde_json::to_vec(fact)?,
+                    &serde_json::to_vec(&*fact)?,
                     expiry,
                 )
                 .await?;
@@ -353,6 +401,14 @@ impl<B: Sql> ReportHistoryRepo for Store<B> {
         query: &ReportQueryV1,
     ) -> Result<ReportPageV1, StoreError> {
         self.query_report_facts(tenant, run, query).await
+    }
+
+    async fn route_counters(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+    ) -> Result<Vec<RouteCountersV1>, StoreError> {
+        self.query_route_counters(tenant, run).await
     }
 }
 
@@ -409,6 +465,9 @@ impl<B: Sql> Store<B> {
         }
         if let Some(key) = query.host_key {
             push("h.host_key=$n", Filter::Bytes(key.0));
+        }
+        if let Some(key) = query.route_key {
+            push("h.route_key=$n", Filter::Bytes(key.0));
         }
         if let Some(since) = query.since {
             push("h.observed_at>=$n", Filter::Ts(since));
@@ -469,6 +528,50 @@ impl<B: Sql> Store<B> {
     }
 }
 
+impl<B: Sql> Store<B> {
+    /// Count retained routed facts per route and outcome label for one run.
+    async fn query_route_counters(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+    ) -> Result<Vec<RouteCountersV1>, StoreError> {
+        tenant_scope(tenant)?;
+        self.scope()?.authorize(tenant)?;
+        let mut tx = self.begin_write().await?;
+        let (now, zdr, _) = locked_source::<B>(tx.conn(), tenant, run).await?;
+        if zdr {
+            return Err(StoreError::RetentionDenied(
+                "volatile report history withheld".into(),
+            ));
+        }
+        let rows = stmt!(
+            B,
+            "SELECT route_key,outcome,count(*) AS n FROM report_history WHERE tenant_id=$1 AND run_id=$2 AND route_key IS NOT NULL AND outcome IS NOT NULL AND fact IS NOT NULL AND (expires_at IS NULL OR expires_at>$3) GROUP BY route_key,outcome ORDER BY route_key,outcome"
+        )
+        .uuid(tenant.0)
+        .uuid(run.0)
+        .ts(now)
+        .fetch_all(tx.conn())
+        .await?;
+        let mut counters: Vec<RouteCountersV1> = Vec::new();
+        for row in rows {
+            let key = Digest(
+                <[u8; 32]>::try_from(row.bytes("route_key")?.as_slice())
+                    .map_err(|_| conflict("report route key is not 32 bytes"))?,
+            );
+            let count = u64::try_from(row.i64("n")?).map_err(|_| conflict("report route count overflow"))?;
+            if counters.last().is_none_or(|last| last.route_key != key) {
+                counters.push(RouteCountersV1::new(key));
+            }
+            if let Some(last) = counters.last_mut() {
+                last.outcomes.insert(row.text("outcome")?, count);
+            }
+        }
+        tx.commit().await?;
+        Ok(counters)
+    }
+}
+
 /// Build checkpoints from actual commit references; parse success is never inferred.
 /// # Errors
 /// Returns malformed scope or bounded fact encoding errors.
@@ -477,6 +580,7 @@ pub(crate) fn commit_checkpoints(
     tenant: TenantId,
     at: Timestamp,
     attempt: u16,
+    route: Option<Digest>,
 ) -> Result<Vec<ReportFactV1>, StoreError> {
     use crawlx_core::repo::FrontierStatus;
     if commit.report_facts.len() > 60 {
@@ -546,6 +650,40 @@ pub(crate) fn commit_checkpoints(
             fact.url_key = fact.url_key.or(url_key);
         }
     }
+    for fact in &mut facts {
+        match (fact.route_key, route) {
+            (Some(given), Some(actual)) if given != actual => {
+                return Err(conflict("report route does not match its request"));
+            }
+            (None, Some(actual)) => fact.route_key = Some(actual),
+            _ => {}
+        }
+    }
+    // The committed disposition explains every alert of the attempt: its bounded reason code is the
+    // authority for the snapshot code, and the stage a recorded fact proves failed fills a snapshot
+    // the worker left empty.
+    let failed_stage = facts.iter().find_map(|fact| match fact.data {
+        ReportDataV1::Stage {
+            stage,
+            outcome: StageOutcomeV1::Failed,
+            ..
+        } => Some(stage),
+        _ => None,
+    });
+    let code = commit.reason.as_deref().unwrap_or_else(|| commit.status.as_str());
+    for fact in &mut facts {
+        if !matches!(fact.data, ReportDataV1::Alert { .. }) {
+            continue;
+        }
+        match &mut fact.error {
+            Some(error) => {
+                if commit.reason.is_some() {
+                    code.clone_into(&mut error.code);
+                }
+            }
+            None => fact.error = Some(ErrorSnapshotV1::new(failed_stage, code, None, None)?),
+        }
+    }
     Ok(facts)
 }
 
@@ -597,7 +735,8 @@ pub(crate) async fn append_commit_facts<B: Sql>(
     .await?
     .i16("attempts")?;
     let attempt = u16::try_from(attempt).map_err(|_| conflict("invalid report attempt"))?;
-    let facts = commit_checkpoints(commit, tenant, now, attempt.max(1))?;
+    let route = request_route::<B>(conn, tenant, commit.run, commit.request_id).await?;
+    let facts = commit_checkpoints(commit, tenant, now, attempt.max(1), Some(route))?;
     for fact in &facts {
         if fact.tenant != tenant
             || fact.run != commit.run
@@ -866,7 +1005,7 @@ mod tests {
         wire.url_key = Some(url);
         let mut commit = RequestCommitV1::terminal(run, 7, 3, 1, FrontierStatus::Succeeded, None);
         commit.report_facts.push(wire);
-        let facts = commit_checkpoints(&commit, tenant, at, 1).unwrap();
+        let facts = commit_checkpoints(&commit, tenant, at, 1, None).unwrap();
         let pipeline: Vec<_> = facts
             .iter()
             .filter(|fact| matches!(fact.data, ReportDataV1::Pipeline { .. }))
@@ -883,7 +1022,7 @@ mod tests {
         let run = CrawlRunId::new();
         let at = Timestamp::from_timestamp(1_800_000_000, 0).unwrap();
         let commit = RequestCommitV1::terminal(run, 7, 3, 1, FrontierStatus::Failed, None);
-        let facts = commit_checkpoints(&commit, tenant, at, 1).unwrap();
+        let facts = commit_checkpoints(&commit, tenant, at, 1, None).unwrap();
         assert!(!facts.is_empty());
         assert!(facts
             .iter()

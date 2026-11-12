@@ -1033,9 +1033,18 @@ async fn publish_terminal_feeds(
         let reservation =
             cpu.try_reserve_article_output(compression::reservation_bytes(feed.compression, maximum)?)?;
         let options = feed.clone();
+        // An archive completion feed delivers the committed export's hash and size instead of
+        // an empty body; every other feed keeps its empty serialization.
+        let notice =
+            crate::delivery::archive_completion_notice(stores, run, feed, &crawlx_core::time::SystemClock)
+                .await?;
         let (approved, reservation) = cpu
             .run(move || {
-                let approved = Redactor::new().verify_canonical_owned(empty_bytes(&options, article)?)?;
+                let bytes = match notice {
+                    Some(bytes) => bytes,
+                    None => empty_bytes(&options, article)?,
+                };
+                let approved = Redactor::new().verify_canonical_owned(bytes)?;
                 Ok::<_, StoreError>((
                     compression::encode_approved(approved, options.compression, maximum)?,
                     reservation,

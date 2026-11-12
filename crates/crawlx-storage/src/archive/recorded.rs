@@ -18,6 +18,11 @@ pub struct RecordedTraffic {
     pub request_body: Option<ArtifactRef>,
     /// Retained response representation, when still live in this run.
     pub response_body: Option<ArtifactRef>,
+    /// Recorded HTTP method, when persisted.
+    pub method: Option<String>,
+    /// Recorded request headers in capture order, already redacted by the capture plane;
+    /// absent when the event kept none (zero-retention events keep no headers).
+    pub request_headers: Option<Vec<(String, String)>>,
 }
 
 fn artifact(id: Option<uuid::Uuid>, hash: Option<Vec<u8>>) -> Result<Option<ArtifactRef>, StoreError> {
@@ -97,14 +102,41 @@ async fn traffic_after<B: Sql>(
     .i64(limit)
     .fetch_all_pool(&store.pool)
     .await?;
+    // Request wire facts come from a second statement so the descriptor query above stays
+    // exactly as shipped. Both read the same keyset window and are joined by event identity.
+    let wire = stmt!(
+        B,
+        "SELECT t.event_id, t.method, t.request_headers \
+         FROM traffic_events t JOIN crawl_runs r ON r.run_id = t.run_id \
+         WHERE t.run_id = $1 AND r.tenant_id = $2 AND t.event_id > $3 ORDER BY t.event_id LIMIT $4"
+    )
+    .uuid(run.0)
+    .uuid(tenant.0)
+    .i64(after)
+    .i64(limit)
+    .fetch_all_pool(&store.pool)
+    .await?;
+    let mut wire_by_event = std::collections::BTreeMap::new();
+    for row in &wire {
+        let headers = row
+            .opt_json("request_headers")?
+            .map(serde_json::from_value::<Vec<(String, String)>>)
+            .transpose()
+            .map_err(|_| StoreError::Serialization("recorded request headers are malformed".into()))?;
+        wire_by_event.insert(row.i64("event_id")?, (row.opt_text("method")?, headers));
+    }
     rows.iter()
         .map(|row| {
+            let event_id = row.i64("event_id")?;
+            let (method, request_headers) = wire_by_event.remove(&event_id).unwrap_or((None, None));
             Ok(RecordedTraffic {
-                event_id: row.i64("event_id")?,
+                event_id,
                 url: row.opt_text("url_redacted")?,
                 captured_at: row.ts("occurred_at")?,
                 request_body: artifact(row.opt_uuid("request_id")?, row.opt_bytes("request_digest")?)?,
                 response_body: artifact(row.opt_uuid("response_id")?, row.opt_bytes("response_digest")?)?,
+                method,
+                request_headers,
             })
         })
         .collect()

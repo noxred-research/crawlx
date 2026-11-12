@@ -1,0 +1,100 @@
+# Daily Merkle export of the audit chain to an object-lock (WORM) bucket.
+# Provision first (docs/ops/runbooks.md#audit-export):
+#   kubectl create -n crawlx secret generic crawlx-audit-export-db --from-file=database_url=./audit-export-database-url.txt
+#   kubectl create -n crawlx secret generic crawlx-audit-export-objectstore \
+#     --from-literal=access_key_id=... --from-literal=secret_access_key=...
+# `crawlx-audit-export-db` is a dedicated login that may read `audit_events`; never the migration
+# (DDL), owner, worker, request or safety-auditor login. Replace the bucket name below; add the
+# `CRAWLX_S3_PROFILE`/`CRAWLX_S3_ENDPOINT`/`CRAWLX_S3_REGION` settings of docs/ops/object-storage.md
+# when the bucket is not on the default profile (the `edge` profile has no object lock).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crawlx-audit-export
+  namespace: crawlx
+  labels: { app: crawlx-audit-export, app.kubernetes.io/part-of: crawlx }
+spec:
+  schedule: "10 0 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      # A bucket under object lock refuses a replacement object: a retry of a half-finished day
+      # would fail on the tenants already written. Re-run by hand with `--day` instead.
+      backoffLimit: 0
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels: { app: crawlx-audit-export }
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: audit-export
+              image: ghcr.io/noxred-research/crawlx-api:v0.1.0
+              imagePullPolicy: IfNotPresent
+              args: ["admin", "audit-export", "--all", "--s3-bucket", "crawlx-audit"]
+              env:
+                - name: CRAWLX_ENVIRONMENT
+                  value: prod
+                - name: CRAWLX_OPERATOR
+                  value: audit-export
+                - name: CRAWLX_DATABASE_URL_FILE
+                  value: /run/secrets/audit-export/database_url
+                # the bucket is under object lock: every upload carries the checksum it requires
+                - name: CRAWLX_S3_OBJECT_LOCK
+                  value: "1"
+                - name: AWS_ACCESS_KEY_ID # wire-compat: SDK credential variable
+                  valueFrom:
+                    secretKeyRef: { name: crawlx-audit-export-objectstore, key: access_key_id }
+                - name: AWS_SECRET_ACCESS_KEY # wire-compat: SDK credential variable
+                  valueFrom:
+                    secretKeyRef: { name: crawlx-audit-export-objectstore, key: secret_access_key }
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: "50m", memory: 64Mi }
+                limits: { cpu: "500m", memory: 256Mi }
+              volumeMounts:
+                - { name: database, mountPath: /run/secrets/audit-export, readOnly: true }
+          volumes:
+            - name: database
+              secret:
+                secretName: crawlx-audit-export-db
+                items: [{ key: database_url, path: database_url }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crawlx-audit-export
+  namespace: crawlx
+spec:
+  podSelector:
+    matchLabels: { app: crawlx-audit-export }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-postgres } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - podSelector: { matchLabels: { app: crawlx-minio } }
+      ports: [{ protocol: TCP, port: 9000 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

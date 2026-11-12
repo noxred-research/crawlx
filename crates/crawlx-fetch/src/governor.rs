@@ -17,6 +17,9 @@
 //! physical-IP cap through the same [`GlobalOriginCap`]. Host aliases, ports and
 //! proxy routes never partition this cap. Every checked candidate IP is charged;
 //! origin capacity and deployment-origin admission remain independent hard bounds.
+//! With a deployment admission store, [`GlobalOriginCap::acquire_admitted_physical`]
+//! also charges one store slot per checked IP (key `ip:<address>`), so aliases that
+//! resolve to one address cannot add up past the cap across worker processes.
 //!
 //! The buckets are exact sliding windows over reserved start times: the
 //! `n`-th start is never earlier than the `(n - limit)`-th start plus the
@@ -414,12 +417,16 @@ impl GlobalOriginCap {
         }))
     }
 
-    /// Reserve every possible checked target IP, independently of aliases, ports or proxy routes.
+    /// Reserve every possible checked target IP in this process, independently of aliases,
+    /// ports or proxy routes.
     ///
     /// Origin admission remains separate and authoritative. A connection charges
     /// every address it may dial because the connector can fall back between them.
     /// Dropping a partial acquisition releases its slots. No run-global slot is
     /// held while waiting. All IPs use canonical order to prevent lock cycles.
+    ///
+    /// The cap is process-local: it never consults the deployment admission store.
+    /// Native HTTP admission uses [`Self::acquire_admitted_physical`] instead.
     pub async fn acquire_physical(&self, target: &CheckedResolution) -> PhysicalPermit {
         let mut authority = self;
         while let Some(local) = &authority.local {
@@ -446,7 +453,45 @@ impl GlobalOriginCap {
                 Err(_) => std::future::pending::<()>().await,
             }
         }
-        PhysicalPermit { _slots: slots }
+        PhysicalPermit {
+            _slots: slots,
+            _deployment: Vec::new(),
+        }
+    }
+
+    /// Reserve every possible checked target IP in this process and, when a deployment
+    /// admission store is attached, one deployment slot per IP under the key
+    /// [`crawlx_core::origin::physical_address_key`].
+    ///
+    /// Process-local slots come first, in the order of [`Self::acquire_physical`], so a hot
+    /// address cannot park one store waiter per local caller; deployment slots follow in the
+    /// same canonical order, which keeps workers from waiting on each other in a cycle.
+    /// Dropping this future or the permit releases every slot taken so far.
+    ///
+    /// # Errors
+    /// Returns a storage error when the deployment store is unavailable; the target is then
+    /// not admitted.
+    pub async fn acquire_admitted_physical(
+        &self,
+        target: &CheckedResolution,
+    ) -> Result<PhysicalPermit, StoreError> {
+        let mut permit = self.acquire_physical(target).await;
+        if let Some(store) = &self.admission {
+            let mut previous = None;
+            for ip in target.addresses() {
+                let ip = ip.to_canonical();
+                if previous == Some(ip) {
+                    continue;
+                }
+                previous = Some(ip);
+                permit._deployment.push(Mutex::new(
+                    store
+                        .reserve(&crawlx_core::origin::physical_address_key(ip))
+                        .await?,
+                ));
+            }
+        }
+        Ok(permit)
     }
 
     async fn acquire_slot(&self, origin: &Origin) -> OwnedSemaphorePermit {
@@ -602,6 +647,8 @@ impl Default for GlobalOriginCap {
 #[non_exhaustive]
 pub struct PhysicalPermit {
     _slots: Vec<OwnedSemaphorePermit>,
+    /// Held only for their drop; the mutex makes the permit `Sync` so a response body can own it.
+    _deployment: Vec<Mutex<Box<dyn OriginPermit>>>,
 }
 
 /// Holding a `Permit` means one in-flight slot of the origin, one of the global
@@ -827,7 +874,7 @@ impl OriginGovernor {
         // or in another worker. Unrelated origins must remain able to progress.
         let (origin_cap, mut deployment) = self.origin_cap.reserve(origin).await?;
         let physical = match target {
-            Some(target) => Some(self.origin_cap.acquire_physical(target).await),
+            Some(target) => Some(self.origin_cap.acquire_admitted_physical(target).await?),
             None => None,
         };
         let start = {
@@ -1952,5 +1999,194 @@ mod tests {
                 assert_eq!(cap.available(&origin), 1);
             }
         }
+    }
+
+    /// A deployment admission store held in one process: counting slots per key, shared by every
+    /// cap built over it, as the database engines share theirs across worker processes.
+    struct SharedAdmission {
+        limit: usize,
+        slots: Mutex<BTreeMap<String, Arc<Semaphore>>>,
+        reserved: Mutex<Vec<String>>,
+        unavailable_for_addresses: bool,
+    }
+
+    impl SharedAdmission {
+        fn new(limit: usize) -> Arc<Self> {
+            Self::with(limit, false)
+        }
+
+        fn with(limit: usize, unavailable_for_addresses: bool) -> Arc<Self> {
+            Arc::new(Self {
+                limit,
+                slots: Mutex::new(BTreeMap::new()),
+                reserved: Mutex::new(Vec::new()),
+                unavailable_for_addresses,
+            })
+        }
+
+        fn reserved(&self) -> Vec<String> {
+            self.reserved.lock().clone()
+        }
+    }
+
+    #[derive(Debug)]
+    struct HeldSlot(#[allow(dead_code)] OwnedSemaphorePermit);
+
+    #[async_trait::async_trait]
+    impl OriginPermit for HeldSlot {
+        async fn try_start(&mut self, _spacing: Duration) -> Result<Option<Duration>, StoreError> {
+            Ok(None)
+        }
+        async fn start(&mut self, _spacing: Duration) -> Result<(), StoreError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl OriginAdmission for SharedAdmission {
+        async fn reserve(&self, origin: &str) -> Result<Box<dyn OriginPermit>, StoreError> {
+            if self.unavailable_for_addresses && crawlx_core::origin::is_physical_address_key(origin) {
+                return Err(StoreError::Unavailable("admission unavailable".to_owned()));
+            }
+            self.reserved.lock().push(origin.to_owned());
+            let slots = Arc::clone(
+                self.slots
+                    .lock()
+                    .entry(origin.to_owned())
+                    .or_insert_with(|| Arc::new(Semaphore::new(self.limit))),
+            );
+            Ok(Box::new(HeldSlot(slots.acquire_owned().await.map_err(|_| {
+                StoreError::Unavailable("admission closed".to_owned())
+            })?)))
+        }
+        async fn cooldown_remaining(&self, _origin: &str) -> Result<Duration, StoreError> {
+            Ok(Duration::ZERO)
+        }
+        async fn cooldown(
+            &self,
+            _origin: &str,
+            minimum: Duration,
+            _exponential: bool,
+        ) -> Result<Duration, StoreError> {
+            Ok(minimum)
+        }
+    }
+
+    fn worker_over(store: &Arc<SharedAdmission>) -> (Arc<GlobalOriginCap>, OriginGovernor) {
+        // Each worker has its own process-local caps; only the store is shared.
+        let cap = Arc::new(GlobalOriginCap::with_admission(
+            1,
+            Arc::clone(store) as Arc<dyn OriginAdmission>,
+        ));
+        let governor = OriginGovernor::with_global_cap(
+            GovernorConfig {
+                base_delay: Duration::ZERO,
+                max_concurrency: 4,
+                ..cfg()
+            },
+            Arc::clone(&cap),
+        );
+        (cap, governor)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn aliases_of_one_ip_share_deployment_capacity_across_workers() {
+        let store = SharedAdmission::new(1);
+        let (_, first) = worker_over(&store);
+        let (_, second) = worker_over(&store);
+        let ip = IpAddr::from([93, 184, 216, 34]);
+        let a = checked("first.test", &[ip]).await;
+        let b = checked("alias.test", &[ip]).await;
+        let other = checked("other.test", &[IpAddr::from([1, 1, 1, 1])]).await;
+        let held = first.acquire_resolved(a.origin(), &a).await.unwrap();
+        // distinct origins, one machine: the second worker waits for the address, not the origin
+        let waiting = second.acquire_resolved(b.origin(), &b);
+        tokio::pin!(waiting);
+        assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+        // an unrelated address is not held back
+        let before = Instant::now();
+        drop(second.acquire_resolved(other.origin(), &other).await.unwrap());
+        assert_eq!(before.elapsed(), Duration::ZERO);
+        drop(held);
+        let admitted = waiting.await.unwrap();
+        // the cap holds again while the second permit lives
+        let third = checked("third.test", &[ip]).await;
+        {
+            let blocked = first.acquire_resolved(third.origin(), &third);
+            tokio::pin!(blocked);
+            assert!(poll_fn(|cx| Poll::Ready(blocked.as_mut().poll(cx).is_pending())).await);
+        }
+        drop(admitted);
+        drop(first.acquire_resolved(third.origin(), &third).await.unwrap());
+        let reserved = store.reserved();
+        let addresses: Vec<_> = reserved
+            .iter()
+            .filter(|key| crawlx_core::origin::is_physical_address_key(key))
+            .collect();
+        assert!(addresses
+            .iter()
+            .all(|key| matches!(key.as_str(), "ip:93.184.216.34" | "ip:1.1.1.1")));
+        assert!(reserved
+            .iter()
+            .filter(|key| !crawlx_core::origin::is_physical_address_key(key))
+            .all(|key| key.starts_with("https://")));
+        assert_eq!(
+            addresses
+                .iter()
+                .filter(|key| key.as_str() == "ip:93.184.216.34")
+                .count(),
+            4
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_a_partial_deployment_address_charge_releases_the_addresses_taken() {
+        let store = SharedAdmission::new(1);
+        let (cap, governor) = worker_over(&store);
+        let (_, other_worker) = worker_over(&store);
+        let low = IpAddr::from([1, 1, 1, 1]);
+        let high = IpAddr::from([93, 184, 216, 34]);
+        let occupied = checked("occupied.test", &[high]).await;
+        let both = checked("multi.test", &[high, low]).await;
+        let held = other_worker
+            .acquire_resolved(occupied.origin(), &occupied)
+            .await
+            .unwrap();
+        {
+            // takes `low` in the store, then waits for `high`
+            let waiting = governor.acquire_resolved(both.origin(), &both);
+            tokio::pin!(waiting);
+            assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+        }
+        let independent = checked("independent.test", &[low]).await;
+        let before = Instant::now();
+        drop(
+            other_worker
+                .acquire_resolved(independent.origin(), &independent)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(before.elapsed(), Duration::ZERO);
+        assert_eq!(cap.available(both.origin()), 1);
+        drop(held);
+        drop(governor.acquire_resolved(both.origin(), &both).await.unwrap());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unavailable_address_admission_fails_closed_and_releases_everything() {
+        let store = SharedAdmission::with(1, true);
+        let (cap, governor) = worker_over(&store);
+        let a = checked("down.test", &[IpAddr::from([93, 184, 216, 34])]).await;
+        for _ in 0..2 {
+            let result = governor.acquire_resolved(a.origin(), &a).await;
+            assert!(matches!(result, Err(StoreError::Unavailable(_))));
+            assert_eq!(cap.available(a.origin()), 1);
+        }
+        // the process-local address slots came back too
+        let before = Instant::now();
+        drop(cap.acquire_physical(&a).await);
+        assert_eq!(before.elapsed(), Duration::ZERO);
+        // without a target the origin path never asks for an address
+        drop(governor.acquire(a.origin()).await.unwrap());
     }
 }

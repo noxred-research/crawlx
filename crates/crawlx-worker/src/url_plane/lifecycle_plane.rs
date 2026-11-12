@@ -24,8 +24,8 @@ use crawlx_core::extensions::{
     ExtensionTerminalV1,
 };
 use crawlx_core::report_history::{
-    AlertCodeV1, AlertContextV1, AlertSeverityV1, PipelineStageV1, PipelineStateV1, ProcessorIdentityV1,
-    ProcessorStageV1, ReportDataV1, ReportFactV1, StageOutcomeV1,
+    AlertCodeV1, AlertContextV1, AlertSeverityV1, ErrorSnapshotV1, PipelineStageV1, PipelineStateV1,
+    ProcessorIdentityV1, ProcessorStageV1, ReportDataV1, ReportFactV1, StageOutcomeV1,
 };
 
 /// Leased rows that can hold a lifecycle at once. A plane never holds more than one batch.
@@ -67,6 +67,8 @@ pub(super) struct ActiveAttempt {
     dns: Vec<(crawlx_core::hash::Digest, ReportDataV1)>,
     dns_dropped: u64,
     response: Option<(u16, Option<u64>)>,
+    /// Redacted-on-store diagnostic text of the failure that ended the attempt, if one was seen.
+    failure: Option<String>,
 }
 
 /// The terminal a row status requests. A lifecycle that already chose a worse terminal keeps it.
@@ -95,6 +97,17 @@ fn stop_of(result: Result<ExtensionResultV1, ExtensionError>) -> Option<Lifecycl
         }
         Ok(ExtensionResultV1::Skip(_)) => Some(LifecycleStop::Skipped),
         Ok(ExtensionResultV1::Fail(_)) | Err(_) => Some(LifecycleStop::Failed),
+        Ok(_) => None,
+    }
+}
+
+/// The text of a refusal that fails a request: a callback error, or the closed reason it chose.
+/// Policy denial and cancellation are outcomes of their own, not failures.
+fn failure_detail(result: &Result<ExtensionResultV1, ExtensionError>) -> Option<String> {
+    match result {
+        Err(ExtensionError::PolicyDenied | ExtensionError::Cancelled) => None,
+        Err(error) => Some(error.to_string()),
+        Ok(ExtensionResultV1::Fail(reason)) => Some(format!("extension failed: {reason:?}")),
         Ok(_) => None,
     }
 }
@@ -131,6 +144,7 @@ impl UrlPlaneRunner {
                 dns: Vec::new(),
                 dns_dropped: 0,
                 response: None,
+                failure: None,
             },
         );
         Ok(lifecycle)
@@ -237,7 +251,19 @@ impl UrlPlaneRunner {
     ) -> Option<LifecycleStop> {
         let mut lifecycle = self.attempt_lifecycle(id)?;
         let token = self.event_cancel(cancel);
-        stop_of(lifecycle.dispatch(event, &token))
+        let result = lifecycle.dispatch(event, &token);
+        if let Some(detail) = failure_detail(&result) {
+            self.note_failure(id, detail);
+        }
+        stop_of(result)
+    }
+
+    /// Record the text of the failure that ended this attempt. The first one wins: it is the
+    /// cause, later ones are consequences. The text is redacted when the fact is stored.
+    pub(super) fn note_failure(&self, id: i64, detail: String) {
+        if let Some(attempt) = self.attempts.lock().get_mut(&id) {
+            attempt.failure.get_or_insert(detail);
+        }
     }
 
     /// Dispatch several real boundaries in order, stopping at the first refusal.
@@ -381,7 +407,7 @@ impl UrlPlaneRunner {
         fence: i64,
         status: FrontierStatus,
     ) -> Result<Vec<ReportFactV1>, WorkerError> {
-        let (url_key, wire, stages, fetch, parse, dns, dns_dropped) = {
+        let (url_key, wire, stages, fetch, parse, dns, dns_dropped, response, failure) = {
             let attempts = self.attempts.lock();
             let Some(attempt) = attempts.get(&entry.id) else {
                 return Ok(Vec::new());
@@ -394,7 +420,36 @@ impl UrlPlaneRunner {
                 attempt.parse,
                 attempt.dns.clone(),
                 attempt.dns_dropped,
+                attempt.response,
+                attempt.failure.clone(),
             )
+        };
+        // The boundary that failed, as far as a measured stage or checkpoint proves it.
+        let failed_stage = stages
+            .iter()
+            .find_map(|stage| match stage {
+                ReportDataV1::Stage {
+                    stage,
+                    outcome: StageOutcomeV1::Failed,
+                    ..
+                } => Some(*stage),
+                _ => None,
+            })
+            .or(match (fetch, parse) {
+                (Some(PipelineStateV1::Failed), _) => Some(ProcessorStageV1::Fetch),
+                (_, Some(PipelineStateV1::Failed)) => Some(ProcessorStageV1::Parse),
+                _ => None,
+            });
+        let snapshot = match status {
+            FrontierStatus::Failed | FrontierStatus::Unreachable | FrontierStatus::Abandoned => {
+                Some(ErrorSnapshotV1::new(
+                    failed_stage,
+                    status.as_str(),
+                    response.map(|(code, _)| code),
+                    failure.as_deref(),
+                )?)
+            }
+            _ => None,
         };
         let tenant = self.deps.runs.get_metadata(self.run).await?.tenant;
         let lease = CustodyLease::for_url(tenant, self.run, entry.id, self.worker, fence);
@@ -471,6 +526,9 @@ impl UrlPlaneRunner {
             fact.url_key = url_key;
             fact.host_key = hosts.get(&label).copied().or(page_host);
             fact.attempt = attempt_no;
+            if label == "alert" {
+                fact.error = snapshot.clone();
+            }
             fact.validate()?;
             facts.push(fact);
         }

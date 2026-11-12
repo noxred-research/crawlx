@@ -271,3 +271,18 @@ groups:
         labels: { severity: page, runbook: RB-01, sev: "2" }
         annotations:
           summary: "Crawls active, frontier non-empty, no progress for 10 minutes"
+
+  - name: crawlx-model-calibration
+    rules:
+      # Rolling-window ECE of a System 1 model in service, over graded outcomes. The worker exports
+      # the gauge only once the window holds 200 outcomes; the samples guard repeats that bound.
+      - alert: CrawlxModelCalibrationDrift
+        expr: |
+          max by (provider, model) (crawlx_model_calibration_ece) > 0.05
+          and on (provider, model)
+          max by (provider, model) (crawlx_model_calibration_samples) >= 200
+        for: 15m
+        labels: { severity: ticket, runbook: model-calibration }
+        annotations:
+          summary: "Model confidence no longer matches outcomes: rolling-window ECE above 0.05"
+          runbook: docs/ops/runbooks.md#33-crawlxmodelcalibrationdrift

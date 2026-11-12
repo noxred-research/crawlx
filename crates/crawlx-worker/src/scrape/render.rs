@@ -28,7 +28,10 @@ use crawlx_core::observation::{NavigationResult, QuiescencePolicy};
 use crawlx_core::page_op::{PageOp, PageOpResult, ShotSpec};
 use crawlx_core::parser_memory::AdmittedText;
 use crawlx_core::repo::{CrawlSession, SessionStatus};
-use crawlx_core::scrape::{ActionScrape, FormatSpec, JavascriptReturn, ScrapeOptions};
+use crawlx_core::scrape::{
+    ActionScrape, BlockListReportV1, BrowserPageReportV1, DeviceReportV1, FlattenReportV1, FormatSpec,
+    JavascriptReturn, ScrapeOptions,
+};
 use crawlx_core::{BrowserError, PrincipalId, SessionId, StoreError};
 use crawlx_extract::branding::{ComputedStyles, COLLECT_SCRIPT};
 use crawlx_fetch::DENIED_HEADER;
@@ -108,6 +111,8 @@ pub struct RenderedEvidence {
     pub backend: crawlx_core::acquisition::BackendCapabilitiesV1,
     /// Serialized DOM was capped by the parent's remaining decoded-byte allowance.
     pub truncated: bool,
+    /// Block list, requested-versus-measured device and flattened frames of this render.
+    pub browser_page: Option<BrowserPageReportV1>,
 }
 
 /// A rendered page.
@@ -677,14 +682,7 @@ impl BrowserRenderer {
                 .map_err(render_error)?;
             recipe_progress.emulation_completed = true;
         }
-        if options.block_ads {
-            handle
-                .page_op(PageOp::BlockUrls(crawlx_extract::blocklist::patterns_for(
-                    &req.request.url.url,
-                )))
-                .await
-                .map_err(render_error)?;
-        }
+        let block_list = install_block_list(handle, &req.request.url.url, options).await?;
 
         recipe_progress.navigation_started = true;
         let nav = handle.navigate(req.request.clone()).await.map_err(render_error)?;
@@ -712,6 +710,7 @@ impl BrowserRenderer {
                 .await
                 .map_err(|error| RenderError::Browser(format!("origin feedback: {error}")))?;
         }
+        let device_report = device_report(handle, options).await?;
 
         let driver = Driver {
             handle,
@@ -736,12 +735,34 @@ impl BrowserRenderer {
         } else {
             None
         };
-        let (html, url) = match handle.page_op(PageOp::Html).await.map_err(render_error)? {
-            PageOpResult::Html { html, url } => (html, url),
-            _ => {
-                return Err(RenderError::Browser(
-                    "unexpected result of page operation html".to_owned(),
-                ))
+        let (html, url, flatten_report) = if let Some(spec) = options.flatten {
+            match handle
+                .page_op(PageOp::FlattenedHtml(spec))
+                .await
+                .map_err(render_error)?
+            {
+                PageOpResult::Flattened(document) => {
+                    let report = FlattenReportV1 {
+                        spec,
+                        frames: document.frames,
+                        frames_omitted: document.frames_omitted,
+                    };
+                    (document.html, document.url, Some(report))
+                }
+                _ => {
+                    return Err(RenderError::Browser(
+                        "unexpected result of page operation flattened_html".to_owned(),
+                    ))
+                }
+            }
+        } else {
+            match handle.page_op(PageOp::Html).await.map_err(render_error)? {
+                PageOpResult::Html { html, url } => (html, url, None),
+                _ => {
+                    return Err(RenderError::Browser(
+                        "unexpected result of page operation html".to_owned(),
+                    ))
+                }
             }
         };
         let truncated = allowance.is_some_and(|budget| html.len() > budget.max_decoded_bytes);
@@ -798,10 +819,83 @@ impl BrowserRenderer {
                 final_url_observed,
                 redirects: nav.redirects,
                 truncated,
+                browser_page: {
+                    let report = BrowserPageReportV1 {
+                        block_list,
+                        device: device_report,
+                        flatten: flatten_report,
+                    };
+                    (!report.is_empty()).then_some(report)
+                },
                 backend: crawlx_core::acquisition::BackendCapabilitiesV1::native_browser(effective_build),
             }),
         })
     }
+}
+
+/// Install the block list `options` ask for (`blockAds`, `resourceBlocking`) on the context and
+/// describe it: `None` when nothing is blocked. A render never starts with a list that was
+/// asked for but did not reach the browser.
+async fn install_block_list(
+    handle: &SessionHandle,
+    page: &Url,
+    options: &ScrapeOptions,
+) -> Result<Option<BlockListReportV1>, RenderError> {
+    let blocking = options.resource_blocking.as_ref();
+    let plan = crawlx_extract::blocklist::plan(
+        page,
+        &crawlx_extract::blocklist::BlockRequest {
+            ads: options.block_ads,
+            resource_types: blocking.map_or(&[], |b| b.resource_types.as_slice()),
+            domains: blocking.map_or(&[], |b| b.domains.as_slice()),
+        },
+    );
+    if plan.is_empty() {
+        return Ok(None);
+    }
+    match handle
+        .page_op(PageOp::BlockResources(plan.spec.clone()))
+        .await
+        .map_err(render_error)?
+    {
+        PageOpResult::BlockInstalled(install) => Ok(Some(plan.report(Some(install)))),
+        _ => Err(RenderError::Browser(
+            "unexpected result of page operation block_resources".to_owned(),
+        )),
+    }
+}
+
+/// What the page reports about the device the request asked for (pixel ratio, geolocation);
+/// `None` when the request asked for neither. A page whose script cannot be run answers with
+/// an absent measurement, never with a guess.
+async fn device_report(
+    handle: &SessionHandle,
+    options: &ScrapeOptions,
+) -> Result<Option<DeviceReportV1>, RenderError> {
+    let geolocation = options.location.as_ref().and_then(|l| l.geolocation);
+    if options.device_scale_milli.is_none() && geolocation.is_none() {
+        return Ok(None);
+    }
+    let measured = match handle
+        .page_op(PageOp::MeasureDevice {
+            probe_geolocation: geolocation.is_some(),
+        })
+        .await
+    {
+        Ok(PageOpResult::Device(measured)) => Some(measured),
+        Ok(_) => {
+            return Err(RenderError::Browser(
+                "unexpected result of page operation measure_device".to_owned(),
+            ))
+        }
+        Err(SessionError::Browser(BrowserError::Script(_))) => None,
+        Err(error) => return Err(render_error(error)),
+    };
+    Ok(Some(DeviceReportV1 {
+        requested_scale_milli: options.device_scale_milli,
+        requested_geolocation: geolocation,
+        measured,
+    }))
 }
 
 /// What `getComputedStyle` reports for the rendered page. A page that does not answer the

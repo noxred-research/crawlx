@@ -187,3 +187,104 @@ fn independent_reader_validates_record_matrix_zip64_fixity_and_member_ranges() {
     );
     assert!(String::from_utf8_lossy(&result.stdout).contains("member ranges verified"));
 }
+
+const NORMALIZED_READER: &str = r#"
+import io, sys
+from warcio.archiveiterator import ArchiveIterator  # wire-compat
+data = open(sys.argv[1], "rb").read()
+records = list(ArchiveIterator(io.BytesIO(data), check_digests=True))
+assert [r.rec_type for r in records] == ["response", "request", "resource"], [r.rec_type for r in records]
+response, request, protocol = records
+assert response.rec_headers.get_header("WARC-Protocol") == "h2"
+assert response.http_headers.get_statuscode() == "200"
+assert response.http_headers.get_header("Content-Length") == "16"
+assert response.content_stream().read() == b"normalized body!"
+assert request.http_headers.get_header("host") == "archive.example.test"
+assert request.rec_headers.get_header("WARC-Protocol") == "h2"
+assert protocol.content_stream().read().startswith(b"protocol: h2\r\n")
+print("normalized h2 response, request and protocol records verified")
+"#;
+
+/// A normalized HTTP/1.1 rendering of an HTTP/2 exchange names its source protocol in
+/// `WARC-Protocol`, never claims original wire bytes, and is accepted both by the native reader
+/// and (when `CRAWLX_ARCHIVE_READER_PYTHON` is set) by an independent one.
+#[test]
+fn normalized_h2_records_carry_their_source_protocol_and_are_readable() {
+    let head = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 16\r\n\r\n";
+    let response = [head.as_slice(), b"normalized body!"].concat();
+    let request = b"GET /page HTTP/1.1\r\nhost: archive.example.test\r\n\r\n";
+    let protocol = b"protocol: h2\r\nrepresentation: normalized_http\r\n";
+    let cases: [(&str, &str, &[u8], u64); 3] = [
+        (
+            "response",
+            "application/http; msgtype=response",
+            &response,
+            head.len() as u64,
+        ),
+        (
+            "request",
+            "application/http; msgtype=request",
+            request,
+            request.len() as u64,
+        ),
+        ("resource", "application/warc-fields", protocol, 0),
+    ];
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("normalized.warc.gz");
+    let mut output = File::create(&path).unwrap();
+    for (ordinal, (kind, content_type, body, payload_offset)) in cases.into_iter().enumerate() {
+        let header = warc::RecordHeader {
+            fields: BTreeMap::from([
+                ("WARC-Type".into(), kind.into()),
+                (
+                    "WARC-Record-ID".into(),
+                    format!("<urn:uuid:00000000-0000-8000-8000-{ordinal:012}>"),
+                ),
+                ("WARC-Date".into(), "2026-11-04T12:34:56.789Z".into()),
+                (
+                    "WARC-Target-URI".into(),
+                    "https://archive.example.test/page".into(),
+                ),
+                ("WARC-Protocol".into(), "h2".into()),
+                ("Content-Type".into(), content_type.into()),
+            ]),
+            payload_offset,
+        };
+        let summary = warc::write_record(
+            &mut output,
+            &header,
+            &mut Cursor::new(body),
+            u64::try_from(body.len()).unwrap(),
+            Limits::default(),
+        )
+        .unwrap();
+        if kind == "response" {
+            assert_eq!(summary.status, Some(200));
+        }
+    }
+    output.flush().unwrap();
+    // The native reader takes the whole file back and sees the same three records.
+    let bytes = std::fs::read(&path).unwrap();
+    let mut input = std::io::BufReader::new(flate2::read::MultiGzDecoder::new(&bytes[..]));
+    let mut kinds = Vec::new();
+    for _ in 0..3 {
+        let (summary, _) = warc::read_record(&mut input, Limits::default()).unwrap();
+        kinds.push(summary.record_type);
+    }
+    assert_eq!(kinds, ["response", "request", "resource"]);
+    let Some(python) = std::env::var_os("CRAWLX_ARCHIVE_READER_PYTHON") else {
+        eprintln!("skipping independent archive reader: CRAWLX_ARCHIVE_READER_PYTHON is absent");
+        return;
+    };
+    let result = std::process::Command::new(python)
+        .arg("-c")
+        .arg(NORMALIZED_READER)
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "reader failed: {}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}

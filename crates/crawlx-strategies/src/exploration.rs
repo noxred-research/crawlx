@@ -156,8 +156,6 @@ pub struct OutcomeReport {
     pub baseline_revealed: Vec<ElementIdentityHash>,
     /// Confounding signals observed around the action (concurrent changes, timers).
     pub confounders: Confounders,
-    /// Milliseconds from dispatching the action to the settled observation.
-    pub latency_ms: u32,
     /// The action produced a network operation never seen before.
     pub new_operation: bool,
     /// Time the outcome was recorded.
@@ -503,7 +501,6 @@ impl ExplorationState {
     pub fn ingest_outcome(&mut self, r: &OutcomeReport) {
         let id = r.key.id();
         self.ledger.advance(r.now);
-        self.ledger.record_latency(r.key.action_kind, r.latency_ms);
         let mut first_trusted = false;
         if r.succeeded {
             first_trusted = self.ledger.record(&r.key, &r.outcome, r.lane);
@@ -558,7 +555,9 @@ impl ExplorationState {
             revealed: r.revealed.clone(),
             baseline_revealed: r.baseline_revealed.clone(),
             confounders: r.confounders,
-            latency_ms: r.latency_ms,
+            // measured latency never feeds the graph here: edge costs steer path planning, and a
+            // wall-clock input would let timing change which action a seed picks
+            latency_ms: None,
             lane: r.lane,
             now: r.now,
         });

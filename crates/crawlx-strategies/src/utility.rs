@@ -2,8 +2,7 @@
 //!
 //! ```text
 //! U(k) =  1.00·novelty(k) + 0.80·expected_coverage_gain(k) + 0.55·enablement_probability(k)
-//!       + 0.35·strategy_confidence(k) − 1.50·safety_risk(k) − 0.30·latency_cost(k)
-//!       − 0.45·repetition_penalty(k)
+//!       + 0.35·strategy_confidence(k) − 1.50·safety_risk(k) − 0.45·repetition_penalty(k)
 //! ```
 //!
 //! All terms are in `[0, 1]` and computed over the key, never the element.
@@ -11,6 +10,9 @@
 //! allowed-but-consequential actions. The paper's layered-queue score
 //! `W + 0.3·Z + E` is available as one more feature (`queue`, weight 0 by
 //! default; [`UtilityWeights::paper_compat`] makes it the only term).
+//!
+//! No term reads measured wall-clock latency: the same seed over the same observations must
+//! pick the same actions however long the browser took to run the earlier ones.
 
 use crate::context::DecisionContext;
 use crate::frontier::{route_element, stable_path_sig};
@@ -38,8 +40,6 @@ pub struct UtilityWeights {
     pub strategy_confidence: f32,
     /// Weight of the kernel risk class (negative: risk lowers utility).
     pub safety_risk: f32,
-    /// Weight of the expected latency (negative: slow actions lower utility).
-    pub latency_cost: f32,
     /// Weight of the repetition penalty (negative: recently repeated keys lower utility).
     pub repetition_penalty: f32,
     /// Paper layered-queue score `W + 0.3·Z + E` (lower is better, so the weight is negative).
@@ -54,7 +54,6 @@ impl Default for UtilityWeights {
             enablement_probability: 0.55,
             strategy_confidence: 0.35,
             safety_risk: -1.50,
-            latency_cost: -0.30,
             repetition_penalty: -0.45,
             queue: 0.0,
         }
@@ -71,7 +70,6 @@ impl UtilityWeights {
             enablement_probability: 0.0,
             strategy_confidence: 0.0,
             safety_risk: 0.0,
-            latency_cost: 0.0,
             repetition_penalty: 0.0,
             queue: -1.0,
         }
@@ -91,8 +89,6 @@ pub struct KeyFeatures {
     pub strategy_confidence: f32,
     /// Kernel risk weight, from `0.0` (navigation) to `1.0` (out of scope).
     pub safety_risk: f32,
-    /// Smoothed action latency as a fraction of 5 s, capped at `1.0`.
-    pub latency_cost: f32,
     /// Penalty for recently or repeatedly executed keys (see `FrontierStats::repetition_penalty`).
     pub repetition_penalty: f32,
     /// Paper layered-queue score `W + 0.3·Z + E` (lower is better).
@@ -108,7 +104,6 @@ impl KeyFeatures {
             + w.enablement_probability * self.enablement_probability
             + w.strategy_confidence * self.strategy_confidence
             + w.safety_risk * self.safety_risk
-            + w.latency_cost * self.latency_cost
             + w.repetition_penalty * self.repetition_penalty
             + w.queue * self.queue
     }
@@ -232,17 +227,12 @@ impl<'c, 'a> Scorer<'c, 'a> {
         let ctx = self.ctx;
         let identity = ctx.identity_of(&key.element);
         let family = identity.map(stable_path_sig);
-        let latency = ctx
-            .ledger
-            .latency_ms(key.action_kind)
-            .map_or(0.0, |ms| (ms as f32 / 5000.0).min(1.0));
         KeyFeatures {
             novelty: ctx.ledger.novelty(key),
             expected_coverage_gain: self.expected_gain(key),
             enablement_probability: self.enablement_probability(key, reveals),
             strategy_confidence: confidence.clamp(0.0, 1.0),
             safety_risk: risk_weight(risk),
-            latency_cost: latency,
             repetition_penalty: ctx.frontier.repetition_penalty(key, identity),
             queue: family.map_or_else(
                 || ctx.frontier.layer(key) as f32,
@@ -319,10 +309,9 @@ mod tests {
                 w.enablement_probability,
                 w.strategy_confidence,
                 w.safety_risk,
-                w.latency_cost,
                 w.repetition_penalty
             ),
-            (1.00, 0.80, 0.55, 0.35, -1.50, -0.30, -0.45)
+            (1.00, 0.80, 0.55, 0.35, -1.50, -0.45)
         );
         assert_eq!(w.queue, 0.0);
     }
@@ -335,12 +324,11 @@ mod tests {
             enablement_probability: 0.2,
             strategy_confidence: 0.5,
             safety_risk: 0.5,
-            latency_cost: 0.4,
             repetition_penalty: 0.2,
             queue: 3.0,
         };
         let u = f.dot(&UtilityWeights::default());
-        let expected = 1.0 + 0.8 * 0.5 + 0.55 * 0.2 + 0.35 * 0.5 - 1.5 * 0.5 - 0.3 * 0.4 - 0.45 * 0.2;
+        let expected = 1.0 + 0.8 * 0.5 + 0.55 * 0.2 + 0.35 * 0.5 - 1.5 * 0.5 - 0.45 * 0.2;
         assert!((u - expected).abs() < 1e-6, "{u} vs {expected}");
         assert!((f.dot(&UtilityWeights::paper_compat()) + 3.0).abs() < 1e-6);
     }

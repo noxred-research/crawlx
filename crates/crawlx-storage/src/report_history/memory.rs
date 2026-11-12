@@ -9,7 +9,7 @@ use crawlx_core::custody::{CustodyLease, CustodySource};
 use crawlx_core::orchestration::RequestCommitV1;
 use crawlx_core::report_history::{
     PipelineProgressV1, ReportDataV1, ReportEntryV1, ReportFactV1, ReportHistoryRepo, ReportPageV1,
-    ReportQueryV1,
+    ReportQueryV1, RouteCountersV1,
 };
 use std::ops::Bound::{Excluded, Unbounded};
 
@@ -189,6 +189,9 @@ fn prepare_facts_with_progress(
     };
     let mut staged = BTreeMap::<Digest, usize>::new();
     for fact in facts {
+        // The redacted form is what is stored, compared and served, as in the database engines.
+        let fact = fact.redacted();
+        let fact: &ReportFactV1 = &fact;
         fact.validate()?;
         if fact.run != run.id || fact.tenant != run.tenant {
             return Err(StoreError::LeaseLost);
@@ -246,6 +249,7 @@ pub(super) fn prepare_commit(
     commit: &RequestCommitV1,
     now: Timestamp,
     attempt: u16,
+    route: Option<Digest>,
 ) -> Result<PreparedReportFacts, StoreError> {
     // A request row ends under its own fence even when the run was cancelled meanwhile (an
     // abandoned in-flight row); the run's state does not make its facts foreign.
@@ -265,7 +269,7 @@ pub(super) fn prepare_commit(
             return Err(StoreError::LeaseLost);
         }
     }
-    let facts = crate::report_history::commit_checkpoints(commit, run.tenant, now, attempt)?;
+    let facts = crate::report_history::commit_checkpoints(commit, run.tenant, now, attempt, route)?;
     prepare_facts(state, run, &facts, now)
 }
 
@@ -367,6 +371,10 @@ pub(super) fn apply_commit(state: &mut ReportState, prepared: PreparedReportFact
 #[async_trait]
 impl ReportHistoryRepo for MemoryStore {
     async fn append_fact(&self, lease: &CustodyLease, fact: &ReportFactV1) -> Result<u64, StoreError> {
+        // Redaction comes first: a producer's credential-shaped snapshot text is cleaned, not refused.
+        let redacted = fact.redacted();
+        let mut fact: &ReportFactV1 = &redacted;
+        let stamped: ReportFactV1;
         fact.validate()?;
         fact.validate_lease(lease)?;
         let binding = {
@@ -406,6 +414,26 @@ impl ReportHistoryRepo for MemoryStore {
                 .ok_or(StoreError::LeaseLost)?;
             if fact.attempt != request.e.attempts.max(1) {
                 return Err(StoreError::LeaseLost);
+            }
+        }
+        let request = match lease.source {
+            CustodySource::Url(id) => Some(id),
+            _ => fact.request_id,
+        };
+        if let Some(actual) = request.and_then(|id| g.requests.report_route_key(id)) {
+            match fact.route_key {
+                Some(given) if given != actual => {
+                    return Err(StoreError::Conflict(
+                        "report route does not match its request".into(),
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    let mut routed = fact.clone();
+                    routed.route_key = Some(actual);
+                    stamped = routed;
+                    fact = &stamped;
+                }
             }
         }
         let mut state = self.report_history.lock();
@@ -520,6 +548,58 @@ impl ReportHistoryRepo for MemoryStore {
             None
         };
         Ok(ReportPageV1::new(entries, next))
+    }
+
+    async fn route_counters(
+        &self,
+        tenant: TenantId,
+        run: CrawlRunId,
+    ) -> Result<Vec<RouteCountersV1>, StoreError> {
+        if crate::tenant::current().is_some_and(|current| current != tenant) {
+            return Err(StoreError::AccessDenied("report tenant mismatch".into()));
+        }
+        {
+            let g = self.inner.lock();
+            let owner = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+            if owner.tenant != tenant {
+                return Err(StoreError::AccessDenied("report tenant mismatch".into()));
+            }
+            if owner.config.retention.mode == RetentionMode::Zdr {
+                return Err(StoreError::RetentionDenied(
+                    "ZDR report history is volatile".into(),
+                ));
+            }
+        }
+        self.check_head_authority(run).await?;
+        let g = self.inner.lock();
+        let now = self.clock.now();
+        let owner = g.runs.get(&run).ok_or_else(|| nf("crawl run", run))?;
+        let mut state = self.report_history.lock();
+        state.expire(now);
+        let live = state
+            .runs
+            .get(&run)
+            .is_some_and(|history| !history.volatile && history.expires_at > now)
+            && retention_deadline(owner, now)? > now
+            && owner.terminal_reason != Some(TerminalReason::AuthorizationRevoked)
+            && !g.pending_purges.contains_key(&run);
+        let mut by_route: BTreeMap<Digest, RouteCountersV1> = BTreeMap::new();
+        if live {
+            for fact in state
+                .entries
+                .values()
+                .filter(|fact| fact.run == run && fact.tenant == tenant)
+            {
+                if let (Some(route), Some(label)) = (fact.route_key, fact.data.outcome_label()) {
+                    let counters = by_route
+                        .entry(route)
+                        .or_insert_with(|| RouteCountersV1::new(route));
+                    let count = counters.outcomes.entry(label).or_insert(0);
+                    *count = count.saturating_add(1);
+                }
+            }
+        }
+        Ok(by_route.into_values().collect())
     }
 }
 
@@ -812,7 +892,7 @@ mod tests {
         ));
         let mut state = ReportState::default();
         assert!(matches!(
-            prepare_commit(&state, &run, &commit, clock.now(), 1),
+            prepare_commit(&state, &run, &commit, clock.now(), 1, None),
             Err(StoreError::Conflict(_))
         ));
         assert!(state.entries.is_empty());
@@ -827,12 +907,12 @@ mod tests {
                 PipelineStateV1::Succeeded,
             ),
         );
-        let staged = prepare_commit(&state, &run, &commit, clock.now(), 1).unwrap();
+        let staged = prepare_commit(&state, &run, &commit, clock.now(), 1, None).unwrap();
         assert!(state.entries.is_empty());
         apply_commit(&mut state, staged);
         assert_eq!(state.entries.len(), 4);
         assert!(!state.runs[&run.id].pipelines[&(7, 1)].delivered());
-        let duplicate = prepare_commit(&state, &run, &commit, clock.now(), 1).unwrap();
+        let duplicate = prepare_commit(&state, &run, &commit, clock.now(), 1, None).unwrap();
         apply_commit(&mut state, duplicate);
         assert_eq!(state.sequence, 4);
         assert_eq!(state.entries.len(), 4);
@@ -1081,12 +1161,15 @@ mod tests {
             .unwrap();
         assert!(store.report_history.lock().runs[&run.id].pipelines[&(7, 1)].delivered());
         assert_eq!(store.report_history.lock().entries.len(), 7);
+        // the repository stamps the request's route on the fact it stores
+        let mut stored = failed_index.clone();
+        stored.route_key = Some(crawlx_core::report_history::report_route_key("default"));
         assert!(store
             .report_history
             .lock()
             .entries
             .values()
-            .any(|fact| fact == &failed_index));
+            .any(|fact| fact == &stored));
         clock.advance_ms(1);
         store
             .acknowledge(run.id, claims[1].id, claims[1].fence)

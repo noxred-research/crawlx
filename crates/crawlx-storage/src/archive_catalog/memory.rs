@@ -5,8 +5,8 @@ use crate::MemoryStore;
 use async_trait::async_trait;
 use crawlx_core::archive::ArchiveManifestV1;
 use crawlx_core::archive_catalog::{
-    ArchiveExportState, ArchiveExportV1, ArchiveHistoryKeyV1, ArchiveHistoryV1, ArchiveReadV1,
-    ArchiveRecordV1, ArchiveRepo,
+    ArchiveCancelV1, ArchiveExportState, ArchiveExportV1, ArchiveHistoryKeyV1, ArchiveHistoryV1,
+    ArchiveReadV1, ArchiveRecordV1, ArchiveRepo,
 };
 use crawlx_core::config::RetentionMode;
 use crawlx_core::repo::RunRepo;
@@ -226,6 +226,29 @@ impl ArchiveState {
         self.records
             .range((export.tenant, export.id, 0)..=(export.tenant, export.id, u64::MAX))
             .all(|(_, record)| self.source(export, record, now).is_ok())
+    }
+
+    /// Transitive revisit dependents of `export`, excluding itself, in identity order.
+    fn dependents(&self, tenant: TenantId, export: Uuid) -> Vec<Uuid> {
+        let mut closure = BTreeSet::from([export]);
+        loop {
+            let mut changed = false;
+            for ((owner, id, _), record) in &self.records {
+                if *owner == tenant
+                    && record
+                        .dependency
+                        .as_ref()
+                        .is_some_and(|source| closure.contains(&source.export))
+                {
+                    changed |= closure.insert(*id);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        closure.remove(&export);
+        closure.into_iter().collect()
     }
 
     fn erase(&mut self, tenant: TenantId, export: Uuid) {
@@ -682,6 +705,30 @@ impl ArchiveRepo for MemoryStore {
         scope(tenant)?;
         self.archives.lock().erase(tenant, export);
         Ok(())
+    }
+    async fn dependents(&self, tenant: TenantId, export: Uuid) -> Result<Vec<Uuid>, StoreError> {
+        scope(tenant)?;
+        Ok(self.archives.lock().dependents(tenant, export))
+    }
+    async fn cancel(
+        &self,
+        tenant: TenantId,
+        export: Uuid,
+        now: Timestamp,
+    ) -> Result<ArchiveCancelV1, StoreError> {
+        scope(tenant)?;
+        let mut state = self.archives.lock();
+        let Some(row) = state.exports.get(&(tenant, export)) else {
+            return Ok(ArchiveCancelV1::Missing);
+        };
+        if row.state == ArchiveExportState::Deleted || !live(row, now) {
+            return Ok(ArchiveCancelV1::Missing);
+        }
+        if row.state != ArchiveExportState::Recording {
+            return Ok(ArchiveCancelV1::Refused(row.state));
+        }
+        state.erase(tenant, export);
+        Ok(ArchiveCancelV1::Cancelled)
     }
     async fn renew(
         &self,

@@ -3,10 +3,10 @@
 //! Both API fast paths and workers use this implementation. Reads verify source-run
 //! ownership, retention, validator/backend identity and every referenced artifact.
 use crawlx_core::acquisition::{AcquisitionPolicyV1, AcquisitionResultV1};
-use crawlx_core::cache::CacheKeyV1;
+use crawlx_core::cache::{CacheKeyV1, SafeCacheEntryV1};
 use crawlx_core::config::RetentionMode;
 use crawlx_core::hash::Digest;
-use crawlx_core::repo::{ArtifactStore, PageRecord, PageRepo, RunRepo};
+use crawlx_core::repo::{ArtifactStore, PageRecord, PageRepo, RunRepo, Sensitivity};
 use crawlx_core::scrape::{ScrapeDocument, ScrapeOptions};
 use crawlx_core::{CanonicalUrl, CrawlRunId, StoreError, TenantId, Timestamp};
 
@@ -694,6 +694,102 @@ pub async fn replay_saved_response(
 
 fn age_ms(now: Timestamp, then: Timestamp) -> u64 {
     u64::try_from((now - then).num_milliseconds()).unwrap_or(0)
+}
+
+/// An exported cache cannot be imported into the named run.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ImportError {
+    /// The run belongs to another tenant.
+    #[error("run belongs to another tenant")]
+    ForeignRun,
+    /// The run retains nothing: zero-data retention, or its retention window has passed.
+    #[error("run does not retain responses")]
+    RunNotRetaining,
+    /// An imported URL has no canonical form.
+    #[error("imported url cannot be canonicalized")]
+    Url,
+    /// Repository or artifact service failure.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+/// Store screened response-cache entries as retained pages of an existing run, so the exported
+/// responses are visible to inspection, export and URL maps under the run's own retention.
+///
+/// The run must belong to `tenant` and retain content (not zero-data retention, not past its
+/// retention window); otherwise nothing is stored. Each body becomes a content artifact of the run
+/// and each entry one page (`frontier_id` 0, diagnostic lane) whose metadata records only that the
+/// page was imported and the validators the export declared. Imported pages carry no scrape
+/// document, so [`lookup`] never serves one as a cache hit: a cache hit needs the scoped request
+/// identity of an execution this build performed, which an export cannot supply.
+///
+/// # Errors
+/// [`ImportError::ForeignRun`] for another tenant's run, [`ImportError::RunNotRetaining`], an
+/// uncanonicalizable URL ([`ImportError::Url`]), or the repository and artifact errors. Entries stored
+/// before an error stay stored; storing is idempotent per URL (a page replaces the run's earlier
+/// page for the same URL) and the content artifacts are content-addressed.
+pub async fn import_entries(
+    pages: &dyn PageRepo,
+    runs: &dyn RunRepo,
+    artifacts: &dyn ArtifactStore,
+    tenant: TenantId,
+    run: CrawlRunId,
+    entries: &[SafeCacheEntryV1],
+    now: Timestamp,
+) -> Result<usize, ImportError> {
+    let source = runs.get_metadata(run).await?;
+    if source.tenant != tenant {
+        return Err(ImportError::ForeignRun);
+    }
+    if source.retention.mode == RetentionMode::Zdr
+        || source.retention.days == 0
+        || source.created_at + chrono::Duration::days(i64::from(source.retention.days)) <= now
+    {
+        return Err(ImportError::RunNotRetaining);
+    }
+    let options = crawlx_url::CanonicalizeOptions::default();
+    let mut stored = 0;
+    for entry in entries {
+        let url = crawlx_url::Canonicalizer::canonicalize_url(&entry.url, &options)
+            .map_err(|_| ImportError::Url)?;
+        let body = entry.body.as_bytes();
+        let html = artifacts
+            .put(run, Sensitivity::Content, &entry.content_type, body)
+            .await?;
+        let mut validators = serde_json::Map::new();
+        for (name, value) in [
+            ("etag", &entry.etag),
+            ("last-modified", &entry.last_modified),
+            ("content-language", &entry.content_language),
+        ] {
+            if let Some(value) = value {
+                validators.insert(name.to_owned(), serde_json::Value::String(value.clone()));
+            }
+        }
+        pages
+            .put(&PageRecord {
+                run,
+                frontier_id: 0,
+                url,
+                status: entry.status_code,
+                content_type: Some(entry.content_type.clone()),
+                content_digest: Digest::of("crawlx/page-body/v1", body),
+                title: None,
+                markdown: None,
+                html: Some(html),
+                metadata: serde_json::json!({
+                    "cacheImport": { "version": 1, "validators": validators },
+                    "response_headers": validators,
+                }),
+                links: Vec::new(),
+                fetched_at: entry.fetched_at,
+                lane: crawlx_core::TrustLane::Diagnostic,
+            })
+            .await?;
+        stored += 1;
+    }
+    Ok(stored)
 }
 
 #[cfg(test)]

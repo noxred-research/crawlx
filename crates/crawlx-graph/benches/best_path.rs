@@ -64,7 +64,7 @@ fn observations() -> Vec<TransitionObservation> {
                         revealed,
                         baseline_revealed: Vec::new(),
                         confounders: Confounders::default(),
-                        latency_ms: 100 + (r + c) % 50,
+                        latency_ms: Some(100 + (r + c) % 50),
                         lane: TrustLane::TrustedUi,
                         now: t0() + Duration::seconds(i),
                     });
