@@ -8,6 +8,16 @@ project is pre-1.0; minor versions may contain breaking changes.
 
 ## [Unreleased]
 
+### Security: backported the cache iterator aliasing fix to the pinned TLS-profile client
+
+The pinned TLS-profile HTTP client requires `lru` 0.13, whose `IterMut` created a mutable
+reference to every key that the cache's own index still pointed at (GHSA-rhfx-m35p-ff5j). The
+client's idle-connection sweep walks that iterator, so the undefined behavior was reachable.
+The fixed `lru` releases need a newer toolchain than the workspace pins, so `vendor/lru` carries
+the upstream two-line fix on 0.13.0 and the workspace and fuzz builds select it through
+`[patch.crates-io]`. A Miri run reports undefined behavior on the unpatched iterator and none on
+the vendored one.
+
 ### Fixed: runtime proof RSS gate counted database pool growth
 
 The ten-minute RSS proof compared a baseline taken while the shared PostgreSQL pool held four
