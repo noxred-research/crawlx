@@ -243,5 +243,5 @@ jobs:
             "dist/crawlx-${VERSION}-source.tar.gz" "dist/crawlx-${VERSION}-source.cdx.json" dist/SHA256SUMS \
             --verify-tag \
             --draft \
-            --title "crawlx ${VERSION}" \
+            --title "CrawlX ${VERSION}" \
             --notes-file dist/RELEASE_NOTES.md
