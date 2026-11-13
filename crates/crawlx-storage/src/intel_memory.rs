@@ -637,6 +637,51 @@ impl IntelRepo for MemoryIntel {
         Ok(())
     }
 
+    async fn setting_put_if_absent(
+        &self,
+        tenant: TenantId,
+        key: &str,
+        value: Value,
+        _at: Timestamp,
+    ) -> IntelResult<bool> {
+        let mut s = self.state.lock();
+        let slot = (tenant, key.to_owned());
+        if s.settings.contains_key(&slot) {
+            return Ok(false);
+        }
+        s.settings.insert(slot, value);
+        Ok(true)
+    }
+
+    async fn setting_delete(&self, tenant: TenantId, key: &str) -> IntelResult<bool> {
+        Ok(self
+            .state
+            .lock()
+            .settings
+            .remove(&(tenant, key.to_owned()))
+            .is_some())
+    }
+
+    async fn setting_list_prefix(
+        &self,
+        tenant: TenantId,
+        prefix: &str,
+        limit: u32,
+    ) -> IntelResult<Vec<(String, Value)>> {
+        if prefix.contains(['%', '_', '\\']) {
+            return Err(StoreError::Backend(
+                "setting prefix must not hold wildcards".to_owned(),
+            ));
+        }
+        let s = self.state.lock();
+        Ok(s.settings
+            .range((tenant, prefix.to_owned())..)
+            .take_while(|((t, k), _)| *t == tenant && k.starts_with(prefix))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .map(|((_, k), v)| (k.clone(), v.clone()))
+            .collect())
+    }
+
     async fn purge_expired(&self, now: Timestamp, usage_before: Timestamp) -> IntelResult<PurgeReport> {
         let mut s = self.state.lock();
         let expired_jobs: Vec<Uuid> = s

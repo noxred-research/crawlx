@@ -1374,6 +1374,95 @@ where
         Ok(())
     }
 
+    async fn setting_put_if_absent(
+        &self,
+        tenant: TenantId,
+        key: &str,
+        value: Value,
+        at: Timestamp,
+    ) -> IntelResult<bool> {
+        let _timer = self.query_timer("intel.setting_put_if_absent");
+        let scope = self.scope()?;
+        scope.authorize(tenant)?;
+        let key_col = ident::<B>("key");
+        let sql = crate::repos::api::insert_if_absent::<B>(
+            "tenant_settings",
+            &[
+                ("tenant_id", "$1"),
+                (&key_col, "$2"),
+                ("value", "$3"),
+                ("updated_at", "$4"),
+            ],
+            &["tenant_id", &key_col],
+        );
+        let inserted = scope
+            .query(
+                "tenant_settings",
+                Stmt::<B>::dynamic(&sql)
+                    .uuid(tenant.0)
+                    .text(key)
+                    .json(&value)
+                    .ts(at),
+            )?
+            .execute_write(&self.pool)
+            .await?;
+        Ok(inserted > 0)
+    }
+
+    async fn setting_delete(&self, tenant: TenantId, key: &str) -> IntelResult<bool> {
+        let _timer = self.query_timer("intel.setting_delete");
+        let scope = self.scope()?;
+        scope.authorize(tenant)?;
+        let key_col = ident::<B>("key");
+        let sql = format!("DELETE FROM tenant_settings WHERE tenant_id = $1 AND {key_col} = $2");
+        let deleted = scope
+            .query(
+                "tenant_settings",
+                Stmt::<B>::dynamic(&sql).uuid(tenant.0).text(key),
+            )?
+            .execute_write(&self.pool)
+            .await?;
+        Ok(deleted > 0)
+    }
+
+    async fn setting_list_prefix(
+        &self,
+        tenant: TenantId,
+        prefix: &str,
+        limit: u32,
+    ) -> IntelResult<Vec<(String, Value)>> {
+        let _timer = self.query_timer("intel.setting_list_prefix");
+        if prefix.contains(['%', '_', '\\']) {
+            return Err(StoreError::Backend(
+                "setting prefix must not hold wildcards".to_owned(),
+            ));
+        }
+        let scope = self.scope()?;
+        if !scope.sees(tenant) {
+            return Ok(Vec::new());
+        }
+        let key_col = ident::<B>("key");
+        let sql = format!(
+            "SELECT {key_col} AS setting_key, value FROM tenant_settings WHERE tenant_id = $1 AND {key_col} LIKE $2 \
+             ORDER BY {key_col} LIMIT {limit}"
+        );
+        let rows = scope
+            .query(
+                "tenant_settings",
+                Stmt::<B>::dynamic(&sql)
+                    .uuid(tenant.0)
+                    .text(&format!("{prefix}%")),
+            )?
+            .fetch_all_pool(&self.pool)
+            .await?;
+        rows.iter()
+            .map(|r| Ok((r.text("setting_key")?, r.json("value")?)))
+            .filter(|row: &Result<(String, Value), StoreError>| {
+                row.as_ref().map_or(true, |(k, _)| k.starts_with(prefix))
+            })
+            .collect()
+    }
+
     async fn purge_expired(&self, now: Timestamp, usage_before: Timestamp) -> IntelResult<PurgeReport> {
         let _timer = self.query_timer("intel.purge_expired");
         // Retention spans tenants: operator work.

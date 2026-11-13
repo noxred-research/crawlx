@@ -34,6 +34,43 @@ pub(crate) type SleepFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// [`tokio_sleep`]; tests pass a recorder that returns at once.
 pub(crate) type SleepFn = Arc<dyn Fn(Duration) -> SleepFuture + Send + Sync>;
 
+/// Body of a native request.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum NativeBody {
+    /// No body.
+    None,
+    /// A JSON value, serialized by the client.
+    Json(Value),
+    /// JSON text sent byte for byte.
+    Raw(Vec<u8>),
+}
+
+/// One request of the native surface, already validated and path-encoded.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NativeCall {
+    /// Upper-case HTTP method.
+    pub(crate) method: &'static str,
+    /// Encoded path below the API base URL.
+    pub(crate) path: String,
+    /// Query pairs, in order.
+    pub(crate) query: Vec<(String, String)>,
+    /// Extra headers, in order.
+    pub(crate) headers: Vec<(&'static str, String)>,
+    /// Request body.
+    pub(crate) body: NativeBody,
+}
+
+/// What the API answered, undecoded.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NativeResponse {
+    /// HTTP status code.
+    pub(crate) status: u16,
+    /// `Content-Type` of the body, when sent.
+    pub(crate) content_type: Option<String>,
+    /// Body bytes (bounded).
+    pub(crate) body: Vec<u8>,
+}
+
 /// A [`SleepFn`] over `tokio::time::sleep`.
 pub(crate) fn tokio_sleep() -> SleepFn {
     Arc::new(|duration| -> SleepFuture { Box::pin(tokio::time::sleep(duration)) })
@@ -231,6 +268,132 @@ impl Api {
         self.wait_for(endpoint, &id).await
     }
 
+    /// Send one native request and return the response whatever its status.
+    ///
+    /// # Errors
+    /// Fails with an [`ApiError`] on transport problems, timeouts and oversized bodies.
+    pub(crate) async fn native(&self, call: &NativeCall) -> Result<NativeResponse, ApiError> {
+        self.exchange(call, None).await
+    }
+
+    /// Read a server-sent event stream until `max_events` events arrived, the stream ended,
+    /// or `wait` passed without a new event. The stream is then dropped, never left open.
+    /// The answer is a JSON body `{events: [{id, event, data}], lastEventId}`; a non-success
+    /// status is returned like [`Api::native`] returns it.
+    ///
+    /// # Errors
+    /// Fails with an [`ApiError`] on transport problems, timeouts and oversized bodies.
+    pub(crate) async fn native_events(
+        &self,
+        call: &NativeCall,
+        max_events: usize,
+        wait: Duration,
+    ) -> Result<NativeResponse, ApiError> {
+        self.exchange(call, Some((max_events, wait))).await
+    }
+
+    async fn exchange(
+        &self,
+        call: &NativeCall,
+        events: Option<(usize, Duration)>,
+    ) -> Result<NativeResponse, ApiError> {
+        let method = match call.method {
+            "GET" => Method::GET,
+            "POST" => Method::POST,
+            "PUT" => Method::PUT,
+            "PATCH" => Method::PATCH,
+            _ => Method::DELETE,
+        };
+        let mut url = self.base.clone();
+        let prefix = url.path().trim_end_matches('/').to_owned();
+        url.set_path(&format!("{prefix}{}", call.path));
+        if !call.query.is_empty() {
+            url.query_pairs_mut().extend_pairs(call.query.iter());
+        }
+        let mut request = self.authorize(self.http.request(method, url.clone()));
+        for (name, value) in &call.headers {
+            request = request.header(*name, value);
+        }
+        request = match &call.body {
+            NativeBody::None => request,
+            NativeBody::Json(value) => request.json(value),
+            NativeBody::Raw(bytes) => request
+                .header("Content-Type", "application/json")
+                .body(bytes.clone()),
+        };
+        if events.is_some() {
+            request = request.header("Accept", "text/event-stream");
+        }
+        let path = url.path();
+        let mut response = request
+            .send()
+            .await
+            .map_err(|error| self.transport(path, error))?;
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let Some((max_events, wait)) = events.filter(|_| (200..300).contains(&status)) else {
+            let body = self.read_body(path, response).await?;
+            return Ok(NativeResponse {
+                status,
+                content_type,
+                body,
+            });
+        };
+        let mut parser = EventParser::default();
+        let mut found: Vec<Value> = Vec::new();
+        let mut last_id: Option<String> = None;
+        let mut buffered = 0_usize;
+        let mut idle_since = tokio::time::Instant::now();
+        'read: while found.len() < max_events {
+            // keep-alive comments must not extend the wait for a real event
+            let remaining = wait.saturating_sub(idle_since.elapsed());
+            let chunk = match tokio::time::timeout(remaining, response.chunk()).await {
+                Err(_) | Ok(Ok(None)) => break,
+                Ok(Err(error)) => return Err(self.transport(path, error)),
+                Ok(Ok(Some(chunk))) => chunk,
+            };
+            buffered = buffered.saturating_add(chunk.len());
+            if buffered > MAX_BODY_BYTES {
+                return Err(ApiError::TooLarge {
+                    path: path.to_owned(),
+                    limit: MAX_BODY_BYTES,
+                });
+            }
+            for event in parser.push(&chunk) {
+                idle_since = tokio::time::Instant::now();
+                if let Some(id) = event.get("id").and_then(Value::as_str) {
+                    last_id = Some(id.to_owned());
+                }
+                found.push(event);
+                if found.len() >= max_events {
+                    break 'read;
+                }
+            }
+        }
+        let body =
+            serde_json::to_vec(&json!({ "events": found, "lastEventId": last_id })).map_err(|source| {
+                ApiError::Decode {
+                    path: path.to_owned(),
+                    source,
+                }
+            })?;
+        Ok(NativeResponse {
+            status,
+            content_type: Some("application/json".to_owned()),
+            body,
+        })
+    }
+
+    /// The origin (`scheme://host[:port]`) of the API, as an interactive profile request
+    /// must present it.
+    pub(crate) fn origin(&self) -> String {
+        self.base.origin().ascii_serialization()
+    }
+
     /// Read `<endpoint>/{id}` until the job ends or the poll budget is spent.
     async fn wait_for(&self, endpoint: &'static str, id: &str) -> Result<Value, ApiError> {
         let path = vec![endpoint.to_owned(), id.to_owned()];
@@ -409,6 +572,69 @@ impl Api {
             }
         }
     }
+}
+
+/// Incremental parser of a server-sent event stream.
+#[derive(Default)]
+struct EventParser {
+    pending: Vec<u8>,
+}
+
+impl EventParser {
+    /// Feed bytes; returns the events completed by them.
+    fn push(&mut self, bytes: &[u8]) -> Vec<Value> {
+        self.pending.extend_from_slice(bytes);
+        let mut events = Vec::new();
+        while let Some(end) = find_block_end(&self.pending) {
+            let block: Vec<u8> = self.pending.drain(..end.0).collect();
+            self.pending.drain(..end.1);
+            if let Some(event) = parse_block(&String::from_utf8_lossy(&block)) {
+                events.push(event);
+            }
+        }
+        events
+    }
+}
+
+/// `(block length, separator length)` of the first blank-line separator in `bytes`.
+fn find_block_end(bytes: &[u8]) -> Option<(usize, usize)> {
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = bytes.get(index..)?;
+        if rest.starts_with(b"\r\n\r\n") {
+            return Some((index, 4));
+        }
+        if rest.starts_with(b"\n\n") {
+            return Some((index, 2));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn parse_block(block: &str) -> Option<Value> {
+    let mut id = None;
+    let mut name = None;
+    let mut data: Vec<&str> = Vec::new();
+    for line in block.lines() {
+        if line.starts_with(':') || line.is_empty() {
+            continue;
+        }
+        let (field, value) = line.split_once(':').unwrap_or((line, ""));
+        let value = value.strip_prefix(' ').unwrap_or(value);
+        match field {
+            "id" => id = Some(value.to_owned()),
+            "event" => name = Some(value.to_owned()),
+            "data" => data.push(value),
+            _ => {}
+        }
+    }
+    if data.is_empty() && id.is_none() && name.is_none() {
+        return None;
+    }
+    let text = data.join("\n");
+    let data = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
+    Some(json!({ "id": id, "event": name, "data": data }))
 }
 
 async fn read_upload(path: &std::path::Path) -> Result<Vec<u8>, ApiError> {

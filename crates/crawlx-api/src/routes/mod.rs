@@ -1,6 +1,8 @@
 //! Route table.
 
 pub mod adaptive_selectors;
+pub mod agent_plans;
+pub mod ai;
 pub mod approvals;
 pub mod archives;
 pub mod artifacts;
@@ -18,10 +20,12 @@ pub mod compat_search;
 pub mod compat_team;
 pub mod compat_ws;
 pub mod coverage;
+pub mod crawl_specs;
 pub mod crawls;
 pub mod datasets;
 pub mod datasets_import;
 pub mod events;
+pub mod evidence_ai;
 pub mod extensions;
 pub mod interactive_profiles;
 pub(crate) mod interactive_screencast;
@@ -61,6 +65,34 @@ pub fn router(state: AppState) -> Router {
     let authed = Router::new()
         .route("/v1/capabilities/acquisition", get(capabilities::acquisition))
         .route("/v1/capabilities/extensions", get(extensions::registry))
+        .route("/v1/capabilities/ai", get(evidence_ai::capabilities))
+        .route("/v1/crawl-specs/validate", post(crawl_specs::validate))
+        .route("/v1/crawl-specs/compile", post(crawl_specs::compile))
+        .route("/v1/crawl-specs/{spec_id}", get(crawl_specs::get))
+        .route("/v1/crawl-specs/{spec_id}/approve", post(crawl_specs::approve))
+        .route("/v1/crawl-specs/{spec_id}/create", post(crawl_specs::create))
+        .route("/v1/agent-plans", post(agent_plans::propose))
+        .route("/v1/agent-plans/{plan_id}", get(agent_plans::get))
+        .route("/v1/agent-plans/{plan_id}/approve", post(agent_plans::approve))
+        .route("/v1/agent-plans/{plan_id}/cancel", post(agent_plans::cancel))
+        .route("/v1/agent-plans/{plan_id}/execute", post(agent_plans::execute))
+        .route(
+            "/v1/crawls/{id}/extractions",
+            get(evidence_ai::list_extractions).post(evidence_ai::extract),
+        )
+        .route(
+            "/v1/crawls/{id}/triage",
+            get(evidence_ai::list_triage).post(evidence_ai::triage_run),
+        )
+        .route(
+            "/v1/crawls/{id}/summaries",
+            get(evidence_ai::list_summaries).post(evidence_ai::summarize),
+        )
+        .route("/v1/crawls/{id}/findings", get(evidence_ai::list_findings))
+        .route(
+            "/v1/crawls/{id}/findings/{finding_id}",
+            axum::routing::put(evidence_ai::put_finding),
+        )
         .route("/v1/crawls", post(crawls::create))
         .route("/v1/crawls/{id}/login-flows", post(login_flows::create))
         .route(

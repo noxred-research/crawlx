@@ -19,11 +19,12 @@ pub type Operation = (
 /// compat route module exports as its own `OPERATIONS`.
 fn all_operations() -> impl Iterator<Item = &'static Operation> {
     use crate::routes::{
-        compat_agent, compat_crawl, compat_extract, compat_map, compat_monitor, compat_parse, compat_scrape,
-        compat_search, compat_team, compat_ws,
+        ai, compat_agent, compat_crawl, compat_extract, compat_map, compat_monitor, compat_parse,
+        compat_scrape, compat_search, compat_team, compat_ws,
     };
     OPERATIONS
         .iter()
+        .chain(ai::OPERATIONS)
         .chain(compat_crawl::OPERATIONS)
         .chain(compat_map::OPERATIONS)
         .chain(compat_scrape::OPERATIONS)
@@ -574,6 +575,9 @@ fn operation(id: &str, summary: &str, scope: &str, success: &str, path: &str) ->
         "key",
         "selector_id",
         "export_id",
+        "specId",
+        "planId",
+        "findingId",
     ] {
         if path.contains(&format!("{{{name}}}")) {
             params.push(
@@ -636,6 +640,9 @@ pub fn document() -> Value {
             spec.apply(&mut schemas, &mut op);
         }
         openapi_schemas::apply_native(&mut schemas, &mut op, id);
+        if let Some(request_body) = crate::routes::ai::request_body(id) {
+            op["requestBody"] = request_body;
+        }
         if *id == "uploadLoginFlow" {
             op["security"] = json!([{"bearerAuth":["crawls:write", "crawls:read"]}]);
             op["requestBody"] = json!({
@@ -663,6 +670,20 @@ pub fn document() -> Value {
         if let Some(obj) = entry.as_object_mut() {
             obj.insert((*method).to_owned(), op);
         }
+    }
+    // the dry-run validation takes the exact body of `POST /v1/crawls`
+    let create_body = paths
+        .get("/v1/crawls")
+        .and_then(|p| p.get("post"))
+        .and_then(|op| op.get("requestBody"))
+        .cloned();
+    if let (Some(body), Some(op)) = (
+        create_body,
+        paths
+            .get_mut("/v1/crawl-specs/validate")
+            .and_then(|p| p.get_mut("post")),
+    ) {
+        op["requestBody"] = body;
     }
     let mut components: Map<String, Value> = Map::new();
     components.insert(
@@ -710,4 +731,31 @@ pub fn document() -> Value {
 #[must_use]
 pub fn operations() -> Vec<(&'static str, &'static str)> {
     all_operations().map(|(m, p, ..)| (*m, *p)).collect()
+}
+
+/// One documented operation with its identifier and required scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OperationInfo {
+    /// Lowercase HTTP method.
+    pub method: &'static str,
+    /// Path template as documented (colon verbs included).
+    pub path: &'static str,
+    /// `operationId`.
+    pub id: &'static str,
+    /// Required scope; empty for unauthenticated operations.
+    pub scope: &'static str,
+}
+
+/// Every operation of the document with its identifier and scope. Clients that derive tool
+/// catalogs from the API (the MCP native surface) classify each row and fail when one is new.
+#[must_use]
+pub fn operation_table() -> Vec<OperationInfo> {
+    all_operations()
+        .map(|(method, path, id, _, scope, _)| OperationInfo {
+            method,
+            path,
+            id,
+            scope,
+        })
+        .collect()
 }

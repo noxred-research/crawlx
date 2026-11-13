@@ -7,23 +7,31 @@
 //! holds what they share.
 
 pub mod agent;
+pub mod agent_plan;
 pub mod agent_spec;
 pub mod agent_view;
 pub mod common;
 pub mod docs_search;
+pub mod evidence;
 pub mod exchange;
 pub mod extract;
+pub mod extract_evidence;
 pub mod feedback;
+pub mod govern;
 pub mod indexes;
 pub mod jobs;
 pub mod metasearch;
 pub mod monitor;
+pub mod proposals;
 pub mod rank;
 pub mod request;
 pub mod search;
 pub mod search_http;
 pub mod serp;
+pub mod spec_compile;
+pub mod summary;
 pub mod tools;
+pub mod triage;
 pub mod usage;
 pub mod webhook;
 pub mod zdr_vault;
@@ -50,6 +58,8 @@ pub struct Backends {
     pub extraction: Option<Arc<ExtractionRouter>>,
     /// Embedding ranking of the pages `/extract` reads (`CRAWLX_EMBEDDING_MODEL`).
     pub embeddings: Option<Arc<PageRanker>>,
+    /// The model-egress governor and proposal settings of the native AI endpoints (`intel.policy`).
+    pub ai: govern::AiPolicy,
 }
 
 /// What an [`IntelConfig`] configures in a worker process: the LLM steps of the scrape formats.
@@ -136,11 +146,121 @@ pub fn backends(cfg: &IntelConfig) -> Result<Backends, ApiError> {
         ),
         None => None,
     };
+    let ai = ai_policy(cfg)?;
     Ok(Backends {
         llm,
         search,
         extraction,
         embeddings,
+        ai,
+    })
+}
+
+/// The governor of `intel.policy`: every approved provider gets its own bounded client, so a
+/// provider never inherits another endpoint's credential.
+fn ai_policy(cfg: &IntelConfig) -> Result<govern::AiPolicy, ApiError> {
+    use crawlx_model::policy::{Budgets, ModelGovernor, ModelProcessingPolicyV1, ProviderPolicy};
+    use std::collections::{BTreeMap, BTreeSet};
+    let Some(settings) = &cfg.policy else {
+        return Ok(govern::AiPolicy::default());
+    };
+    let fail = |message: String| ApiError::Config(format!("intel.policy: {message}"));
+    let mut budgets = Budgets::default();
+    if let Some(v) = settings.max_input_bytes {
+        budgets.max_input_bytes = v;
+    }
+    if let Some(v) = settings.max_output_tokens {
+        budgets.max_output_tokens = v;
+    }
+    if let Some(v) = settings.max_response_bytes {
+        budgets.max_response_bytes = v;
+    }
+    if let Some(v) = settings.max_run_calls {
+        budgets.max_run_calls = v;
+    }
+    if let Some(v) = settings.max_run_tokens {
+        budgets.max_run_tokens = v;
+    }
+    if let Some(v) = settings.deadline_ms {
+        budgets.deadline_ms = v;
+    }
+    let mut providers = BTreeMap::new();
+    let mut clients: BTreeMap<String, Arc<dyn LlmExtractor>> = BTreeMap::new();
+    for (id, provider) in &settings.providers {
+        let id_ok = (1..=32).contains(&id.len())
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_'));
+        if !id_ok {
+            return Err(fail(format!(
+                "provider id {id:?} must be 1 to 32 characters of a-z, 0-9, '-' or '_'"
+            )));
+        }
+        let inherited = cfg.llm.as_ref();
+        let own_endpoint = provider.endpoint.is_some();
+        let endpoint = provider
+            .endpoint
+            .clone()
+            .or_else(|| inherited.map(|l| l.endpoint.clone()))
+            .ok_or_else(|| fail(format!("provider {id}: no endpoint and no intel.llm to inherit")))?;
+        let model = provider
+            .model
+            .clone()
+            .or_else(|| inherited.map(|l| l.model.clone()))
+            .ok_or_else(|| fail(format!("provider {id}: no model and no intel.llm to inherit")))?;
+        // a credential is inherited only together with the endpoint it belongs to
+        let api_key_ref = provider.api_key_ref.clone().or_else(|| {
+            if own_endpoint {
+                None
+            } else {
+                inherited.and_then(|l| l.api_key_ref.clone())
+            }
+        });
+        let llm_settings = crate::config::LlmSettings {
+            endpoint,
+            model: model.clone(),
+            api_key_ref,
+            timeout_ms: provider
+                .timeout_ms
+                .or_else(|| inherited.and_then(|l| l.timeout_ms)),
+            transcribe_endpoint: None,
+            transcribe_model: None,
+        };
+        let resolved = llm_settings
+            .resolve()
+            .map_err(|e| fail(format!("provider {id}: {e}")))?;
+        let client = ChatCompletionsClient::new(resolved).map_err(|e| fail(format!("provider {id}: {e}")))?;
+        clients.insert(id.clone(), Arc::new(client));
+        providers.insert(
+            id.clone(),
+            ProviderPolicy {
+                model,
+                revision: provider.revision.clone().unwrap_or_else(|| "1".to_owned()),
+                retention: provider.retention_capability,
+                purposes: provider.allowed_purposes.iter().copied().collect::<BTreeSet<_>>(),
+            },
+        );
+    }
+    let policy = ModelProcessingPolicyV1 {
+        external_processing: settings.external_processing,
+        providers,
+        budgets,
+        ..ModelProcessingPolicyV1::default()
+    };
+    let governor = ModelGovernor::new(policy, clients).map_err(|e| fail(e.to_string()))?;
+    let ttl = settings
+        .proposal_ttl_secs
+        .unwrap_or(govern::DEFAULT_PROPOSAL_TTL_SECS);
+    if !(1..=govern::MAX_PROPOSAL_TTL_SECS).contains(&ttl) {
+        return Err(fail(format!(
+            "proposalTtlSecs must be in 1..={}",
+            govern::MAX_PROPOSAL_TTL_SECS
+        )));
+    }
+    Ok(govern::AiPolicy {
+        governor: Some(Arc::new(governor)),
+        proposal_ttl_secs: ttl,
+        allow_self_approval: settings.allow_self_approval,
     })
 }
 

@@ -34,6 +34,8 @@ CrawlX is pre-1.0. Production qualification is in progress; see the
 | Page | Covers |
 |---|---|
 | [Reference](reference.md) | Source discovery, response cache and replay, adaptive extraction, MCP, compatibility flags, JavaScript endpoint mining, wordlists, captcha solving |
+| [AI-native features](ai.md) | The model-egress policy, natural-language specifications, plan-first research agent, evidence-backed extraction, surface triage and grounded summaries |
+| [MCP server](mcp.md) | The compatibility and native tool surfaces, capability scoping, structured results, resources and upload handles |
 | [Walkthrough](walkthrough.md) | An end-to-end local run against the CrawlerGym fixture with PostgreSQL and Chromium, including a sample authorization record |
 | [Compatibility clients and integrations](integrations.md) | Pointing client libraries, command-line clients and third-party integrations at the compatibility API, the endpoints served, operator protocol and acquisition-service boundary |
 | [Operations](ops/README.md) | Provisioning and validation of optional operator capabilities |

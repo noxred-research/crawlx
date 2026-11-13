@@ -22,6 +22,16 @@ pub use crate::intel_memory::MemoryIntel;
 /// Result alias of this module.
 pub type IntelResult<T> = Result<T, StoreError>;
 
+/// Tenant-setting kinds a run owns. Their rows (`run:{run id}:{kind}`) are deleted with the run,
+/// by the erase endpoint and by the retention sweeper.
+pub const RUN_SETTING_KINDS: [&str; 4] = ["extractions", "triage", "findings", "summaries"];
+
+/// The tenant-setting key of a run-owned record of `kind` (one of [`RUN_SETTING_KINDS`]).
+#[must_use]
+pub fn run_setting_key(kind: &str, run: crawlx_core::CrawlRunId) -> String {
+    format!("run:{run}:{kind}")
+}
+
 /// Which product a job row belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -733,6 +743,38 @@ pub trait IntelRepo: Send + Sync {
     /// # Errors
     /// [`StoreError`] when the store fails.
     async fn setting_put(&self, tenant: TenantId, key: &str, value: Value, at: Timestamp) -> IntelResult<()>;
+
+    /// Create a tenant setting only when `key` does not exist yet; `true` when this call created
+    /// it. The check and the insert are one atomic statement, so of any number of concurrent
+    /// callers exactly one gets `true` (a single-use claim).
+    ///
+    /// # Errors
+    /// [`StoreError`] when the store fails.
+    async fn setting_put_if_absent(
+        &self,
+        tenant: TenantId,
+        key: &str,
+        value: Value,
+        at: Timestamp,
+    ) -> IntelResult<bool>;
+
+    /// Delete a tenant setting; `true` when it existed.
+    ///
+    /// # Errors
+    /// [`StoreError`] when the store fails.
+    async fn setting_delete(&self, tenant: TenantId, key: &str) -> IntelResult<bool>;
+
+    /// The tenant settings whose key starts with `prefix`, in key order, at most `limit`.
+    /// `prefix` must not contain `%`, `_` or `\`.
+    ///
+    /// # Errors
+    /// [`StoreError`] when the store fails or `prefix` holds a wildcard character.
+    async fn setting_list_prefix(
+        &self,
+        tenant: TenantId,
+        prefix: &str,
+        limit: u32,
+    ) -> IntelResult<Vec<(String, Value)>>;
 
     // ---- retention --------------------------------------------------------------------------------
     /// Delete jobs (with trace and snapshots) and checks (with pages) whose `expires_at <= now`,

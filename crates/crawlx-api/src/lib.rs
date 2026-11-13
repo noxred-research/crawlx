@@ -280,6 +280,7 @@ pub async fn run_until_bound(
     if let Some(router) = backends.extraction {
         builder = builder.extraction_router(router);
     }
+    builder = builder.ai_policy(backends.ai);
     if let Some(ranker) = backends.embeddings {
         builder = builder.page_ranker(ranker);
     }
