@@ -179,8 +179,18 @@ jobs:
       # caches: a cache written by an earlier run must not influence what is released.
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
+      # The sandbox check adapts to the runner, so it comes from this workflow's commit rather
+      # than the tag: a tag cut before the runner changed would otherwise reach for sudo.
+      - name: Sandbox check from the workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-ci
+          sparse-checkout: ci/chromium-sandbox.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Let the pinned Chromium start with its sandbox on
-        run: ci/chromium-sandbox.sh
+        run: .workflow-ci/ci/chromium-sandbox.sh
       - name: Browser suites on the pinned Chromium
         run: |
           cargo test -p crawlx-bench --locked -- browser_ --test-threads 1
