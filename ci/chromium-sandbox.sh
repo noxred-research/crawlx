@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Lets the pinned Chromium start with its sandbox ON on a GitHub-hosted runner, and proves it.
+# Lets the pinned Chromium start with its sandbox ON on a CI runner, and proves it.
 #
 # Ubuntu 24.04 runners restrict unprivileged user namespaces through AppArmor
 # (kernel.apparmor_restrict_unprivileged_userns=1). Chrome for Testing has no AppArmor
 # profile, so its sandbox cannot start ("No usable sandbox!") and every browser launch fails.
 # crawlx never runs Chromium with --no-sandbox outside an explicit CI opt-in; instead of
-# opting in, this script lifts the restriction for the job and then launches the binary
+# opting in, this script lifts the restriction when it applies and then launches the binary
 # named by CRAWLX_CHROMIUM_PATH exactly as the harness does, without --no-sandbox. A launch
 # that still fails stops the job here with Chromium's own message rather than surfacing later
 # as an unexplained FatalError run or "no proposals reached the kernel".
@@ -15,8 +15,12 @@ set -euo pipefail
 
 chrome="${CRAWLX_CHROMIUM_PATH:?set CRAWLX_CHROMIUM_PATH (ci/fetch-chromium.sh prints it)}"
 
+# Lift the AppArmor restriction only where this process cannot create a user namespace
+# (stock Ubuntu runners). Runners that already allow it, such as the self-hosted
+# runners, which run each job in its own rootless namespace, need no change.
 restrict=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
-if [ -e "$restrict" ] && [ "$(cat "$restrict")" != 0 ]; then
+if ! unshare --user --map-root-user true 2>/dev/null &&
+  [ -e "$restrict" ] && [ "$(cat "$restrict")" != 0 ]; then
   echo "unprivileged user namespaces are restricted by AppArmor; lifting that for this job" >&2
   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 >&2
 fi

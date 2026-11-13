@@ -40,14 +40,14 @@ env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # No debug info: full debug info for every test binary exhausts the hosted runner disk.
+  # No debug info: full debug info for every test binary exhausts the runner disk.
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   # Workflow gate (see the header comment). Every other job depends on this one.
   authorize:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, noxred]
     permissions:
       contents: read
     timeout-minutes: 5
@@ -103,8 +103,9 @@ jobs:
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
   verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    runs-on: [self-hosted, noxred]
+    # The full workspace suite plus the pinned-Chromium browser suites ran past 90 minutes.
+    timeout-minutes: 180
     needs: authorize
     if: needs.authorize.outputs.ok == 'true'
     permissions:
@@ -117,21 +118,15 @@ jobs:
           POSTGRES_PASSWORD: crawlx
           POSTGRES_DB: crawlx_test
         ports: ["5432:5432"]
+        # Database files in tmpfs: test data is disposable, and per-commit fsyncs
+        # on the shared runner disk otherwise dominate the run time.
         options: >-
           --health-cmd "pg_isready -U crawlx" --health-interval 5s --health-timeout 5s --health-retries 10
+          --tmpfs /var/lib/postgresql:rw,size=4g
     env:
       CRAWLX_TEST_DATABASE_URL: postgres://crawlx:crawlx@127.0.0.1:5432/crawlx_test
       CRAWLX_TEST_SECRET_REDIS_URL: redis://127.0.0.1:6390
     steps:
-      - name: Free runner disk space, drop preinstalled browsers
-        # Hosted runners ship ~14 GB free; drop preinstalled SDKs this workflow never uses.
-        # The runner's preinstalled Chrome cannot create its sandbox here (unprivileged user
-        # namespaces are restricted), and tests that discover a system browser would start it;
-        # the browser suites below run the pinned Chromium instead, as ci.yml does.
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          sudo rm -f /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium /usr/bin/chromium-browser
-          df -h /
       - name: The release tag must be an existing vX.Y.Z tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -182,8 +177,6 @@ jobs:
       # The Chromium-gated suites run against the pinned build exactly as ci.yml's `browser` job
       # does (the pin is sha256-verified by ci/fetch-chromium.sh). A release build restores no
       # caches: a cache written by an earlier run must not influence what is released.
-      - name: Chrome for Testing runtime libraries
-        run: sudo apt-get update && sudo apt-get install -y unzip libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libxkbcommon0 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libpango-1.0-0 libcairo2
       - name: Fetch and verify the pinned Chromium (chromium-pin.toml sha256)
         run: echo "CRAWLX_CHROMIUM_PATH=$(ci/fetch-chromium.sh)" >> "$GITHUB_ENV"
       - name: Let the pinned Chromium start with its sandbox on
@@ -198,7 +191,7 @@ jobs:
       - run: cargo deny --locked check
 
   release:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, noxred]
     timeout-minutes: 20
     needs: [authorize, verify]
     if: needs.authorize.outputs.ok == 'true'
